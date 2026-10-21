@@ -1721,6 +1721,33 @@ services:
           effect is re-running the find-or-file of the document_promotion task for a row already at
           review. Terminal rows, failed event rows, event rows at received and documents still in
           doc-tools' pipeline are refused 409 and nothing is written.
+      - method: POST
+        path: /ingest/{ingest_id}/title_leaf
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal DOC_TOOLS_SERVICE_IDENTITY (default svc:doc-tools); every other caller 403 not_doc_tools; svc:doc-tools only. An absent or event row is 404 ingest_not_found; a row not at received/extracting is 409 not_extracting"
+        exposes: action
+        consumers: [doc-tools title-read dispatch (lane 7f)]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-21: the drop is accepted and extraction starts, the header/title
+          read is the first step, and a title with no confident leaf stops the row at awaiting_kind
+          before parts extraction runs. doc-tools reports what the title read found; a confident
+          pcn/pdn title is written as leaf_source=title and the answer says which kind's passes to
+          run, otherwise the row is held with the candidates. A declared or corrected leaf is never
+          overwritten by a title. Service-only, same single-identity gate as the stage route.
+      - method: POST
+        path: /ingest/{ingest_id}/leaf
+        identity: keycloak-jwt
+        gate: "get_current_user + _ingest_review_access (dropper / open-task holder / seeding delegate); an absent or event row is 404, anyone else 403 not_entitled; every decision is audited on iagent.audit.ingest_access. A leaf outside pcn|pdn is 422 unknown_leaf; a row that is not leaf-capable is 409 no_leaf_for_kind"
+        exposes: action
+        consumers: [cortex-ui leaf chip]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-21: a dropper's or steward's change to the row's leaf re-routes
+          the drop and is recorded as leaf_source=corrected with who and when. At awaiting_kind it
+          re-opens the row at received (attempt + 1) for doc-tools' retry sensor; at awaiting_origin
+          it files the document_promotion task first and then moves the row to review; at review it
+          is refused (the open task carries the kind), and every terminal stage is refused 409.
       - method: GET
         path: /ingest/{ingest_id}/extraction
         identity: keycloak-jwt

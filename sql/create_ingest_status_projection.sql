@@ -122,3 +122,11 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS attempt INTEGER NO
 -- `doc_id` names it, written when the row moves to review. DISPLAY ONLY, never an identity (it is
 -- LLM-extracted). NULL until known. IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS notice_id TEXT;
+
+-- 2026-10-21 (spec 203, the leaf on the row): where the row's leaf came from (ingest|title|corrected),
+-- the candidates an `awaiting_kind` hold lists (JSON list text), and who/when set the leaf last.
+-- All NULLABLE, all IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_source TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_candidates TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_set_by TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_set_at BIGINT;

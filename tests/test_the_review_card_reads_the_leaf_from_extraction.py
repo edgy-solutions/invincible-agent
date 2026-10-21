@@ -14,7 +14,8 @@ from tests.test_ingest_review_card_routes import (  # noqa: E402,F401
     ID, REVIEW, FakeS3, _as, _cleanup, _gate, _get, _objects, _row,
 )
 
-leaf = gateway._review_leaf
+def leaf(ck, rv):
+    return gateway._row_leaf({"content_kind": ck}, rv)
 
 
 def _rv(dt, src="title"):
@@ -33,11 +34,11 @@ def test_row_is_normalised():
 
 
 def test_pre_191_row_reads_extraction_title():
-    assert leaf("sustainment", _rv("PDN")) == ("pdn", "extraction-title")
+    assert leaf("sustainment", _rv("PDN")) == ("pdn", "title")
 
 
 def test_none_row_lowercase_review():
-    assert leaf(None, _rv("pcn")) == ("pcn", "extraction-title")
+    assert leaf(None, _rv("pcn")) == ("pcn", "title")
 
 
 @pytest.mark.parametrize("src", ["no-title-evidence", "title-ambiguous", "defaulted", None])
@@ -67,7 +68,7 @@ def _body(monkeypatch, content_kind, **rv):
 
 def test_route_pre_191_row_gets_leaf_from_title(monkeypatch):
     b = _body(monkeypatch, "sustainment", doc_type="PDN", doc_type_source="title")
-    assert b["leaf"] == "pdn" and b["leaf_source"] == "extraction-title"
+    assert b["leaf"] == "pdn" and b["leaf_source"] == "title"
     assert b["content_kind"] == "sustainment"
 
 
@@ -79,3 +80,7 @@ def test_route_defaulted_doc_type_is_no_leaf(monkeypatch):
 def test_route_pcn_row_is_ingest_leaf(monkeypatch):
     b = _body(monkeypatch, "pcn")
     assert b["leaf"] == "pcn" and b["leaf_source"] == "ingest"
+
+
+def test_a_corrected_leaf_on_the_row_reads_corrected():
+    assert gateway._row_leaf({"content_kind": "pcn", "leaf_source": "corrected"}) == ("pcn", "corrected")

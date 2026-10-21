@@ -97,7 +97,18 @@ AWAITING_ORIGIN = "awaiting_origin"
 # review (wrong document / not a notice / duplicate) closes the task, writes nothing, and leaves the
 # row here. `detail` (the reason_code) is required -- a consumer is told WHY.
 REVIEW_REJECTED = "review_rejected"
-ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN, REVIEW_REJECTED)
+# Out-of-band (ruling 2026-10-21, spec 203): the header/title read named no confident leaf (pcn|pdn),
+# so the row stops HERE, before parts extraction runs, with the candidates on `leaf_candidates`.
+# Same shape as AWAITING_ORIGIN: terminal for doc-tools' stage route and the retry route; the ONE exit
+# is the dropper's or steward's `POST /ingest/{id}/leaf`, which re-opens the row at `received`.
+AWAITING_KIND = "awaiting_kind"
+ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN, REVIEW_REJECTED, AWAITING_KIND)
+
+# The notice leaves a drop can carry as its content_kind (single definition; the gateway imports it).
+LEAVES = ("pcn", "pdn")
+# Where a row's leaf came from: declared at the drop, adopted from doc-tools' title read, or set by
+# a dropper's / steward's correction (POST /ingest/{id}/leaf).
+LEAF_SOURCES = ("ingest", "title", "corrected")
 
 # ContentKind leaves (mesh_system.ttl's ContentKind tree, ADR-0041 §8) — deterministic,
 # declared-at-the-door, never LLM-classified (ADR-0021's precedence). XML (2026-10-07) is the
@@ -198,6 +209,14 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS attempt INTEGER NO
 -- `doc_id` names it, written when the row moves to review. DISPLAY ONLY, never an identity (it is
 -- LLM-extracted). NULL until known. IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS notice_id TEXT;
+
+-- 2026-10-21 (spec 203, the leaf on the row): where the row's leaf came from (ingest|title|corrected),
+-- the candidates an `awaiting_kind` hold lists (JSON list text), and who/when set the leaf last.
+-- All NULLABLE, all IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_source TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_candidates TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_set_by TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_set_at BIGINT;
 """
 
 
@@ -389,6 +408,17 @@ def _parse_failure(raw: Any) -> Optional[dict[str, Any]]:
     return val if isinstance(val, dict) else None
 
 
+def _parse_candidates(raw: Any) -> Optional[list]:
+    """`leaf_candidates` is stored as JSON list text; a list (or None) is what a consumer sees."""
+    if not raw:
+        return None
+    try:
+        val = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return None
+    return list(val) if isinstance(val, list) else None
+
+
 def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
     """The row for `ingest_id`, unscoped to any caller, or None if it does not exist.
 
@@ -405,7 +435,8 @@ def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, content_kind, extraction_ref,
-                          failure, run_id, attempt, notice_id
+                          failure, run_id, attempt, notice_id,
+                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -415,6 +446,7 @@ def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
         return None
     out = dict(row)
     out["failure"] = _parse_failure(out.get("failure"))
+    out["leaf_candidates"] = _parse_candidates(out.get("leaf_candidates"))
     return out
 
 
@@ -491,6 +523,81 @@ def update_status(
         conn.commit()
 
 
+def set_leaf(ingest_id: str, leaf: str, source: str, *, set_by: str, from_statuses,
+             to_status: Optional[str] = None, bump_attempt: bool = False,
+             now_ms: Optional[int] = None) -> Optional[dict]:
+    """Write the row's leaf (spec 203): ONE atomic guarded UPDATE ... RETURNING. `content_kind` is
+    OVERWRITTEN (not COALESCEd -- a correction must beat what the drop declared), `leaf_source`,
+    `leaf_set_by`, `leaf_set_at` and `updated_at` are written and `leaf_candidates` cleared. With
+    `to_status` the stage moves in the same write; with `bump_attempt` the row is re-opened for a
+    relaunch (`attempt` + 1, `failure` and `detail` cleared). The guard is
+    `status = ANY(from_statuses) AND kind <> 'event'`; a `title` source additionally requires the
+    row's `leaf_source` to be NULL or already `title`, so a title never overwrites a declared
+    (`ingest`) or corrected leaf. Returns the updated row as a dict, or None if nothing matched."""
+    if leaf not in LEAVES:
+        raise ValueError(f"leaf must be one of {LEAVES}, got {leaf!r}")
+    if source not in LEAF_SOURCES:
+        raise ValueError(f"source must be one of {LEAF_SOURCES}, got {source!r}")
+    if to_status is not None and to_status not in ALL_STATUSES:
+        raise ValueError(f"to_status must be one of {ALL_STATUSES}, got {to_status!r}")
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    sets = ["content_kind = %s", "leaf_source = %s", "leaf_set_by = %s", "leaf_set_at = %s",
+            "updated_at = %s", "leaf_candidates = NULL"]
+    params: list[Any] = [leaf, source, set_by, now, now]
+    if to_status is not None:
+        sets.append("status = %s")
+        params.append(to_status)
+    if bump_attempt:
+        sets += ["attempt = attempt + 1", "failure = NULL", "detail = NULL"]
+    where = "id = %s AND status = ANY(%s) AND kind <> 'event'"
+    params += [ingest_id, list(from_statuses)]
+    if source == "title":
+        where += " AND (leaf_source IS NULL OR leaf_source = 'title')"
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                f"UPDATE ingest_status_projection SET {', '.join(sets)} WHERE {where} RETURNING *",
+                tuple(params),
+            )
+            r = cur.fetchone()
+        conn.commit()
+    if not r:
+        return None
+    out = dict(r)
+    out["failure"] = _parse_failure(out.get("failure"))
+    out["leaf_candidates"] = _parse_candidates(out.get("leaf_candidates"))
+    return out
+
+
+def hold_for_kind(ingest_id: str, *, candidates, detail: str, run_id: Optional[str] = None,
+                  from_statuses) -> bool:
+    """Park a row at `awaiting_kind` (spec 203): the title read named no confident leaf. ONE guarded
+    UPDATE; `candidates` is filtered to LEAVES (duplicates dropped, order kept) and stored as JSON
+    list text. The guard also refuses a row that already carries a leaf (`content_kind` pcn/pdn): a
+    correction that landed between the caller's read and this write must win, never be held. True
+    when a row matched, False otherwise."""
+    seen: list[str] = []
+    for c in candidates or []:
+        c = str(c or "").strip().lower()
+        if c in LEAVES and c not in seen:
+            seen.append(c)
+    now = int(time.time() * 1000)
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE ingest_status_projection
+                      SET status = 'awaiting_kind', leaf_candidates = %s, detail = %s,
+                          run_id = COALESCE(%s, run_id), updated_at = %s
+                    WHERE id = %s AND status = ANY(%s) AND kind <> 'event'
+                      AND (content_kind IS NULL OR NOT (content_kind = ANY(%s)))""",
+                (json.dumps(seen), detail, run_id, now, ingest_id, list(from_statuses),
+                 list(LEAVES)),
+            )
+            n = cur.rowcount
+        conn.commit()
+    return n > 0
+
+
 def record_origin_suggestion(ingest_id: str, suggestion: dict[str, Any]) -> None:
     """Record an `origin_resolver.resolve()` hit on the arrival's own row (section 6).
     `suggestion` is stored as JSON text -- see the column's migration comment. Never called for
@@ -519,7 +626,8 @@ def get_status_unscoped(ingest_id: str) -> Optional[dict[str, Any]]:
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, origin_suggestion, content_kind, case_id,
-                          extraction_ref, failure, run_id, attempt, notice_id
+                          extraction_ref, failure, run_id, attempt, notice_id,
+                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -530,6 +638,7 @@ def get_status_unscoped(ingest_id: str) -> Optional[dict[str, Any]]:
     out = dict(row)
     out["origin_suggestion"] = json.loads(out["origin_suggestion"]) if out.get("origin_suggestion") else None
     out["failure"] = _parse_failure(out.get("failure"))
+    out["leaf_candidates"] = _parse_candidates(out.get("leaf_candidates"))
     return out
 
 
@@ -553,7 +662,8 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
                 """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, origin_suggestion, content_kind, case_id,
-                          extraction_ref, failure, run_id, attempt, notice_id
+                          extraction_ref, failure, run_id, attempt, notice_id,
+                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at
                      FROM ingest_status_projection
                     WHERE id = %s AND (submitted_by = %s OR on_behalf_of = %s)""",
                 (ingest_id, caller_id, caller_id),
@@ -564,6 +674,7 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
     out = dict(row)
     out["origin_suggestion"] = json.loads(out["origin_suggestion"]) if out.get("origin_suggestion") else None
     out["failure"] = _parse_failure(out.get("failure"))
+    out["leaf_candidates"] = _parse_candidates(out.get("leaf_candidates"))
     return out
 
 
@@ -583,7 +694,8 @@ def list_mine(*, caller_id: str, limit: int,
     sql = """SELECT id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                     status, extracted_count, extracted_total, duplicate_of, detail,
                     created_at, updated_at, origin_suggestion, content_kind, case_id,
-                    extraction_ref, failure, run_id, attempt, notice_id
+                    extraction_ref, failure, run_id, attempt, notice_id,
+                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at
                FROM ingest_status_projection
               WHERE (submitted_by = %s OR on_behalf_of = %s) AND kind <> 'event'"""
     params: list[Any] = [caller_id, caller_id]
@@ -603,6 +715,7 @@ def list_mine(*, caller_id: str, limit: int,
         d = dict(r)
         d["origin_suggestion"] = json.loads(d["origin_suggestion"]) if d.get("origin_suggestion") else None
         d["failure"] = _parse_failure(d.get("failure"))
+        d["leaf_candidates"] = _parse_candidates(d.get("leaf_candidates"))
         out.append(d)
     return out
 
@@ -614,8 +727,8 @@ def fail_stalled(*, stage: str, older_than_seconds: int, now_ms: Optional[int] =
     ids. ONE atomic UPDATE ... RETURNING, so two BFF replicas ticking at once cannot both claim a
     row, and the `status = <stage>` predicate is re-evaluated at write time.
 
-    Only RECEIVED and EXTRACTING are watched (ValueError otherwise). `review` and
-    `awaiting_origin` are deliberately NOT: each waits on a steward's human decision, which is not
+    Only RECEIVED and EXTRACTING are watched (ValueError otherwise). `review`,
+    `awaiting_origin` and `awaiting_kind` are deliberately NOT: each waits on a steward's human decision, which is not
     a pipeline stall, and failing it would discard a task a person is still entitled to act on.
 
     EVENT rows are excluded: an event row at `received` is the case runner's fact, not the

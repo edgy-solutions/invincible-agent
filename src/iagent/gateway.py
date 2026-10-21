@@ -112,7 +112,8 @@ _ELECTRIC_UPSTREAM_URL = os.getenv("ELECTRIC_UPSTREAM_URL", "http://iagent-elect
 # (ingest_status.fail_stalled), naming the stage in failure.step and carrying the run id if a stage
 # POST ever reported one. `extracting` joined 2026-10-16: doc-tools logs a refused stage POST and
 # still ends its run SUCCESS, so a row whose review never landed sat at `extracting` for ever.
-# `review` and `awaiting_origin` are NOT watched -- they wait on a steward, not on the pipeline.
+# `review`, `awaiting_origin` and `awaiting_kind` are NOT watched -- they wait on a person (a steward,
+# or the dropper's leaf pick), not on the pipeline.
 #
 # THE RECEIVED DEFAULT IS 600 s, NOT THE SENSOR'S 30 s INTERVAL. A row whose run is QUEUED behind
 # `max_concurrent_runs` legitimately sits at `received` for minutes; a 30 s bound would fail every
@@ -11249,7 +11250,7 @@ async def _ingest_status_body(row: dict, current_user: User) -> dict:
             logger.warning("ingest %s: the case's artifacts could not be listed: %s", row["id"], exc)
             artifacts = None
 
-    return {
+    body = {
         "ingest_id": row["id"],
         "stage": stage,
         "detail": row.get("detail"),
@@ -11269,6 +11270,16 @@ async def _ingest_status_body(row: dict, current_user: User) -> dict:
         "notice_id": notice_id,
         "artifacts": artifacts,
     }
+    # The leaf (spec 203). Present ONLY for a leaf-capable row (absent, not null, for cad / xml /
+    # s1000d / ...: absent tells cortex "no claim", so it draws no chip). A duplicate reads the
+    # ORIGINAL's leaf; an invisible original leaves the keys absent. Never reads review.json per poll.
+    if source_row is not None and _leaf_capable(source_row):
+        leaf, leaf_source = _row_leaf(source_row)
+        body["leaf"] = leaf
+        body["leaf_source"] = leaf_source
+        body["leaf_candidates"] = (source_row.get("leaf_candidates")
+                                   if stage == ingest_status.AWAITING_KIND else None)
+    return body
 
 
 @app.get("/ingest/{ingest_id}/status")
@@ -11429,7 +11440,7 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
     review.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and
     is counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /
     `extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`.
-    `leaf` / `leaf_source` are the notice's pcn|pdn and where it came from (`_review_leaf`).
+    `leaf` / `leaf_source` are the notice's pcn|pdn and where it came from (`_row_leaf`).
     A REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the
     rejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404
     `rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`."""
@@ -11488,7 +11499,7 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
             "needs_review": it.get("needs_review"), "review_reason": it.get("review_reason"),
             "source_snippet": it.get("source_snippet"), "evidence_ref": ev})
     summ = _review_notice_summary(review)
-    leaf, leaf_source = _review_leaf(row.get("content_kind"), review)
+    leaf, leaf_source = _row_leaf(row, review)
     return {
         "ingest_id": ingest_id,
         "notice_id": summ["notice_id"],
@@ -11778,6 +11789,11 @@ async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] 
                        "POST /ingest/events, which is idempotent on event_id",
         })
 
+    if stage == ingest_status.AWAITING_KIND:
+        raise HTTPException(status_code=409, detail={
+            "error": "awaiting_kind", "stage": stage,
+            "message": "pick a leaf: POST /ingest/{id}/leaf"})
+
     if stage in (ingest_status.RECEIVED, ingest_status.EXTRACTING):
         raise HTTPException(status_code=409, detail={
             "error": "in_pipeline", "pipeline": "doc-tools", "stage": stage,
@@ -11962,10 +11978,10 @@ def _extraction_row_count(review: dict) -> int:
                 if (m := _PART_FIELD_RE.match(str(it.get("field_path") or "")))})
 
 
-async def _server_extraction_row_count(extraction_ref: str, prefix: str) -> Optional[int]:
-    """The SERVER's row count for the extraction `extraction_ref` names, or None when it cannot be
-    read (no ref, not under the document's directory, store down, bad JSON). None is not zero:
-    a read failure keeps today's behaviour rather than becoming `extraction_empty`."""
+async def _server_extraction_review(extraction_ref: str, prefix: str) -> Optional[dict]:
+    """The parsed review.json beside the manifest `extraction_ref` names, or None when it cannot be
+    read (no ref, not under the document's directory, store down, bad JSON). The ONE read behind
+    both the zero-row check and the review-transition title backstop."""
     from starlette.concurrency import run_in_threadpool
 
     ref = str(extraction_ref or "").strip()
@@ -11976,8 +11992,17 @@ async def _server_extraction_row_count(extraction_ref: str, prefix: str) -> Opti
         key = _review_json_key(manifest, ref)
         if not key or not key.startswith(prefix):
             return None
-        review = await run_in_threadpool(lambda: _read_review_json(key))
-    except Exception:  # noqa: BLE001 -- HTTPException or anything else: unreadable, not empty
+        return await run_in_threadpool(lambda: _read_review_json(key))
+    except Exception:  # noqa: BLE001 -- HTTPException or anything else: unreadable
+        return None
+
+
+async def _server_extraction_row_count(extraction_ref: str, prefix: str) -> Optional[int]:
+    """The SERVER's row count for the extraction `extraction_ref` names, or None when it cannot be
+    read (no ref, not under the document's directory, store down, bad JSON). None is not zero:
+    a read failure keeps today's behaviour rather than becoming `extraction_empty`."""
+    review = await _server_extraction_review(extraction_ref, prefix)
+    if review is None:
         return None
     return _extraction_row_count(review)
 
@@ -11991,24 +12016,52 @@ def _review_notice_id(review: dict) -> Optional[str]:
     return (v.strip() or None) if isinstance(v, str) else None
 
 
-_LEAVES = ("pcn", "pdn")
+def _title_leaf(doc_type, doc_type_source) -> Optional[str]:
+    """The leaf (`pcn`/`pdn`) a title read names CONFIDENTLY, else None. Confident iff
+    `doc_type_source == "title"` AND the lowercased, stripped `doc_type` is a leaf. A defaulted
+    `doc_type` is refused: doc-tools fills `"PCN"` when it derived nothing (sources
+    `no-title-evidence`, `title-ambiguous`, `defaulted`, or absent), so it is a routing default, not
+    a fact about the notice. ONE definition, used by `_row_leaf` and by `POST /ingest/{id}/title_leaf`."""
+    from . import ingest_status
+
+    dt = str(doc_type or "").strip().lower()
+    if doc_type_source == "title" and dt in ingest_status.LEAVES:
+        return dt
+    return None
 
 
-def _review_leaf(content_kind, review) -> tuple:
-    """(leaf, leaf_source) for the review card. The ingest row wins when its `content_kind` names a
-    leaf (`pcn`/`pdn`) -> `(leaf, "ingest")`. A pre-191 row carries a family name instead, so the
-    extraction's own title evidence is read: `doc_type` counts only when `doc_type_source == "title"`
-    -> `(leaf, "extraction-title")`. A defaulted `doc_type` is refused: doc-tools fills `"PCN"` when
-    it derived nothing (sources `no-title-evidence`, `title-ambiguous`, `defaulted`, or absent), so it
-    is a routing default, not a fact about the notice. Otherwise `(None, None)`."""
-    ck = str(content_kind or "").strip().lower()
-    if ck in _LEAVES:
-        return (ck, "ingest")
-    rv = review or {}
-    dt = str(rv.get("doc_type") or "").strip().lower()
-    if rv.get("doc_type_source") == "title" and dt in _LEAVES:
-        return (dt, "extraction-title")
+def _row_leaf(row, review=None) -> tuple:
+    """(leaf, leaf_source) for a row -- the status body AND the review card read it here.
+    1. The row's `content_kind` names a leaf -> `(leaf, row.leaf_source or "ingest")`; a pre-203 row
+       with a leaf content_kind was declared at the drop, so a NULL source reads `"ingest"`.
+    2. Else, given a parsed `review`, its confident title (`_title_leaf`) -> `(leaf, "title")`.
+    3. Else `(None, None)`."""
+    from . import ingest_status
+
+    row = row or {}
+    ck = str(row.get("content_kind") or "").strip().lower()
+    if ck in ingest_status.LEAVES:
+        return (ck, row.get("leaf_source") or "ingest")
+    if review is not None:
+        rv = review or {}
+        dt = _title_leaf(rv.get("doc_type"), rv.get("doc_type_source"))
+        if dt is not None:
+            return (dt, "title")
     return (None, None)
+
+
+def _leaf_capable(row) -> bool:
+    """A leaf-capable row is not an event row and is a notice-in-waiting: its `content_kind` is a
+    leaf or `pdf`, or it is NULL and the file `kind` is `pdf`. cad / xml / s1000d / engineering-
+    document rows are not (the leaf keys are absent from their status body, `/leaf` refuses them)."""
+    from . import ingest_status
+
+    if row.get("kind") == "event":
+        return False
+    ck = str(row.get("content_kind") or "").strip().lower()
+    if ck in ingest_status.LEAVES or ck == "pdf":
+        return True
+    return (not ck) and row.get("kind") == "pdf"
 
 
 def _review_notice_summary(review: dict) -> dict:
@@ -12398,7 +12451,8 @@ async def update_ingest_stage(
     # (its one exit is a steward's accepted origin, filed by `_file_promotion_if_ready`; Q2
     # ruling 2026-10-10), so a later move (including `failed`) off it is refused 409.
     _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
-                        ingest_status.AWAITING_ORIGIN, ingest_status.REVIEW_REJECTED)
+                        ingest_status.AWAITING_ORIGIN, ingest_status.REVIEW_REJECTED,
+                        ingest_status.AWAITING_KIND)
 
     caller = (current_user.authz_id or "").strip()
     if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
@@ -12469,6 +12523,7 @@ async def update_ingest_stage(
     task_id = None
     task_status = None
     _notice: dict = {}
+    _title_adopted = None
     if req.stage == ingest_status.REVIEW:
         # THE ROW CARRIES THE FILE FORMAT, NOT THE DECLARED KIND (review-audience fix,
         # 2026-10-06): resolve the registry on `content_kind` (the declared, registry-level
@@ -12496,6 +12551,26 @@ async def update_ingest_stage(
                 logger.info("ingest %s: content_kind %r adopted from the extraction manifest",
                             ingest_id, adopted_kind)
         _adopt = {"content_kind": adopted_kind} if adopted_kind is not None else {}
+        # THE TITLE BACKSTOP (spec 203): a pdf row that reaches `review` without ever passing through
+        # `POST /ingest/{id}/title_leaf` (doc-tools before 7f's dispatch ships) adopts the leaf the
+        # extraction's own TITLE names, when that is confident -- so it files
+        # `document_promotion:SUSTAINMENT` instead of parking at `awaiting_origin` for want of a
+        # domain. Applies only to a still-generic row (`pdf`, or NULL on a pdf) that no one has typed
+        # (`leaf_source` NULL). A read failure is swallowed: today's path stands. A pdf row whose title
+        # is NOT confident still goes to `awaiting_origin`, as before.
+        _ck_now = str(row.get("content_kind") or "").strip().lower()
+        if ((_ck_now == "pdf" or (not _ck_now and row.get("kind") == ingest_status.PDF))
+                and row.get("leaf_source") is None):
+            try:
+                _rv = await _server_extraction_review(req.extraction_ref, _prefix)
+                if isinstance(_rv, dict):
+                    _title_adopted = _title_leaf(_rv.get("doc_type"), _rv.get("doc_type_source"))
+            except Exception:  # noqa: BLE001 -- keep today's path
+                _title_adopted = None
+            if _title_adopted is not None:
+                row = {**row, "content_kind": _title_adopted}
+                logger.info("ingest %s: content_kind %r adopted from the extraction title",
+                            ingest_id, _title_adopted)
         kind_reg = content_kinds.by_kind(row.get("content_kind"))
         if row.get("content_kind") in _PROMOTION_SKIPPED_KINDS:
             # NO document_promotion TASK for this kind (architect ruling 2026-10-17, on 7f's ruling
@@ -12621,6 +12696,17 @@ async def update_ingest_stage(
                                    "(%s: %s)", ingest_id, type(werr).__name__, werr)
             raise
 
+    if req.stage == ingest_status.REVIEW and _title_adopted is not None:
+        # Persist the adopted leaf AFTER the task is filed and BEFORE the row moves to `review`
+        # (TASK FIRST, STATUS SECOND). Guarded on the status the row was read at; a title never
+        # overwrites a leaf someone set meanwhile (the guard returns None and the row is left alone).
+        _was = row["status"]
+        _persisted = await run_in_threadpool(lambda: ingest_status.set_leaf(
+            ingest_id, _title_adopted, "title", set_by=caller, from_statuses=[_was]))
+        if _persisted is None:
+            logger.warning("ingest %s: the title leaf %r was not persisted (the row moved or carries "
+                           "another leaf)", ingest_id, _title_adopted)
+
     # STATUS MOVES ONLY AFTER THE TASK IS FILED (OR FOUND ALREADY_FILED) -- for `review`,
     # everything above either raised or produced a resolvable audience; only now does the row
     # move to `review`, so a 422/503 above never strands the row at `review` with no task. (A 4xx
@@ -12653,6 +12739,205 @@ async def update_ingest_stage(
         raise HTTPException(status_code=422, detail={"error": "invalid_stage_update", "message": str(exc)})
 
     return {"ingest_id": ingest_id, "stage": req.stage, "task_id": task_id, "task_status": task_status}
+
+
+class IngestTitleLeafRequest(_BaseModel):
+    """POST /ingest/{ingest_id}/title_leaf's body: what doc-tools' header/title read found."""
+    model_config = {"extra": "forbid"}
+    doc_type: Optional[str] = None
+    doc_type_source: Optional[str] = None
+    candidates: Optional[list[str]] = None
+    run_id: Optional[str] = None
+
+
+@app.post("/ingest/{ingest_id}/title_leaf")
+async def ingest_title_leaf_route(
+    ingest_id: str, req: IngestTitleLeafRequest, current_user: User = Depends(get_current_user),
+):
+    """POST /ingest/<id>/title_leaf -- SERVICE-ONLY (`svc:doc-tools`, same caller gate as the stage
+    route). doc-tools calls it after the header/title read and BEFORE parts extraction; the answer
+    says which kind's passes to run, or to stop (architect ruling 2026-10-21: a drop is never blocked
+    up front; if the title yields no leaf the row stops at `awaiting_kind` there).
+
+    Dispatch, in order: (1) a row that already carries a declared (`ingest`) or corrected leaf
+    proceeds with it, writes nothing; (2) a row that is not leaf-capable proceeds, writes nothing;
+    (3) a CONFIDENT title (`_title_leaf`) is written as `leaf_source=title` and proceeds;
+    (4) otherwise the row is held at `awaiting_kind` with the candidates and doc-tools must stop.
+    Every write is one guarded UPDATE; when it matches nothing the row is re-read and decided again.
+    Allowed stages: `received`, `extracting` (a provisional timeout counts as `received`); anything
+    else is 409 `not_extracting`. A repeat on a held row is therefore 409, which is correct."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    caller = (current_user.authz_id or "").strip()
+    if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_doc_tools",
+            "message": "POST /ingest/{ingest_id}/title_leaf is callable only by doc-tools' own "
+                       "service identity.",
+        })
+    if req.run_id is not None and not req.run_id.strip():
+        raise HTTPException(status_code=422, detail={"error": "invalid_run_id"})
+
+    async def _read() -> dict:
+        r = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+        if r is None or r.get("kind") == ingest_status.EVENT:
+            raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+        return r
+
+    def _answer(r: dict, proceed: bool) -> dict:
+        leaf, leaf_source = _row_leaf(r)
+        return {"ingest_id": ingest_id, "proceed": proceed, "stage": r["status"],
+                "content_kind": r.get("content_kind"), "leaf": leaf, "leaf_source": leaf_source,
+                "leaf_candidates": (r.get("leaf_candidates")
+                                    if r["status"] == ingest_status.AWAITING_KIND else None)}
+
+    title = _title_leaf(req.doc_type, req.doc_type_source)
+    row = await _read()
+    for _ in range(4):
+        stage = row["status"]
+        timed_out = (stage == ingest_status.FAILED
+                     and (row.get("failure") or {}).get("reason_code") == ingest_status.REASON_TIMEOUT)
+        effective = ingest_status.RECEIVED if timed_out else stage
+        if effective not in (ingest_status.RECEIVED, ingest_status.EXTRACTING):
+            raise HTTPException(status_code=409, detail={"error": "not_extracting", "stage": stage})
+        row_leaf, row_source = _row_leaf(row)
+        # 1. a declared or corrected leaf beats the title (a pre-203 leaf content_kind has no source),
+        #    and a title leaf already on the row stands when this read names none
+        if row_leaf is not None and (row_source != "title" or title is None):
+            return _answer(row, True)
+        # 2. not a notice-in-waiting: nothing to decide
+        if not _leaf_capable(row):
+            return _answer(row, True)
+        # 3. a confident title
+        if title is not None:
+            written = await run_in_threadpool(lambda: ingest_status.set_leaf(
+                ingest_id, title, "title", set_by=caller, from_statuses=[stage]))
+            if written is not None:
+                logger.info("ingest_leaf ingest_id=%s caller=%s from=%s to=%s stage=%s",
+                            ingest_id, caller, row_leaf, title, written["status"])
+                return _answer(written, True)
+            row = await _read()
+            continue
+        # 4. no confident leaf: hold for a pick
+        held = await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+            ingest_id, candidates=req.candidates or [],
+            detail=(f"the title named no leaf ({req.doc_type_source or 'no source'}); "
+                    "pick pcn or pdn"),
+            run_id=req.run_id, from_statuses=[stage]))
+        row = await _read()
+        if held:
+            logger.info("ingest_leaf ingest_id=%s caller=%s from=%s to=%s stage=%s",
+                        ingest_id, caller, row_leaf, None, row["status"])
+            return _answer(row, False)
+    raise HTTPException(status_code=409, detail={"error": "not_extracting", "stage": row["status"]})
+
+
+class IngestLeafRequest(_BaseModel):
+    """POST /ingest/{ingest_id}/leaf's body: the leaf (pcn|pdn) the dropper or steward picks."""
+    model_config = {"extra": "forbid"}
+    leaf: str
+
+
+@app.post("/ingest/{ingest_id}/leaf")
+async def ingest_leaf_route(
+    ingest_id: str, req: IngestLeafRequest, current_user: User = Depends(get_current_user),
+):
+    """POST /ingest/<id>/leaf -- the dropper's or steward's correction of a row's leaf (pcn|pdn),
+    recorded as `leaf_source=corrected` with who and when. Gate: `_ingest_review_access` (the
+    dropper, the holder of the open `document_promotion` task, or a seeding delegate service).
+    422 `unknown_leaf`; 409 `no_leaf_for_kind` for a row that is not leaf-capable.
+
+    Dispatch on the stage: `received`/`extracting` rewrite the leaf in place (the in-flight run's
+    `title_leaf` call then sees `corrected` and proceeds with it); `awaiting_kind` re-opens the row
+    at `received` with `attempt` + 1 so doc-tools' retry sensor relaunches it; `awaiting_origin`
+    files the promotion task FIRST (a refusal writes nothing) and then moves the row to `review`;
+    `review` is 409 `leaf_fixed_at_review` (the open task's payload carries the kind into the
+    decision record; re-typing an open task is not built); every other stage is 409
+    `leaf_not_changeable`. Answers the row's status body."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    route = "POST /ingest/{ingest_id}/leaf"
+    leaf = str(req.leaf or "").strip().lower()
+    if leaf not in ingest_status.LEAVES:
+        raise HTTPException(status_code=422, detail={
+            "error": "unknown_leaf", "allowed": list(ingest_status.LEAVES)})
+
+    row, _reason = await _ingest_review_access(ingest_id, current_user, route)
+    caller = (current_user.authz_id or "").strip()
+    stage = row["status"]
+
+    async def _body() -> dict:
+        fresh = await run_in_threadpool(lambda: ingest_status.get_status_unscoped(ingest_id))
+        if fresh is None:
+            raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+        return await _ingest_status_body(fresh, current_user)
+
+    def _refuse(status_code: int, detail: dict, why: str):
+        _audit_ingest_access(route, ingest_id, caller, "deny", why)
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    if not _leaf_capable(row):
+        _refuse(409, {"error": "no_leaf_for_kind", "stage": stage,
+                      "content_kind": row.get("content_kind")}, "no_leaf_for_kind")
+    current_leaf, _src = _row_leaf(row)
+    if current_leaf == leaf:
+        _audit_ingest_access(route, ingest_id, caller, "allow", "same_leaf")
+        return await _body()
+
+    def _log(to_stage: str) -> None:
+        logger.info("ingest_leaf ingest_id=%s caller=%s from=%s to=%s stage=%s",
+                    ingest_id, caller, current_leaf, leaf, to_stage)
+
+    async def _moved() -> dict:
+        # The guarded write matched nothing: the row moved under us. Say so, with where it is now.
+        now = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+        _refuse(409, {"error": "leaf_not_changeable",
+                      "stage": (now or {}).get("status")}, "row_moved")
+
+    if stage in (ingest_status.RECEIVED, ingest_status.EXTRACTING):
+        written = await run_in_threadpool(lambda: ingest_status.set_leaf(
+            ingest_id, leaf, "corrected", set_by=caller, from_statuses=[stage]))
+        if written is None:
+            await _moved()
+        _log(stage)
+        _audit_ingest_access(route, ingest_id, caller, "allow", "leaf_corrected")
+        return await _body()
+
+    if stage == ingest_status.AWAITING_KIND:
+        written = await run_in_threadpool(lambda: ingest_status.set_leaf(
+            ingest_id, leaf, "corrected", set_by=caller,
+            from_statuses=[ingest_status.AWAITING_KIND], to_status=ingest_status.RECEIVED,
+            bump_attempt=True))
+        if written is None:
+            await _moved()
+        _log(ingest_status.RECEIVED)
+        _audit_ingest_access(route, ingest_id, caller, "allow", "leaf_picked_reopened")
+        return await _body()
+
+    if stage == ingest_status.AWAITING_ORIGIN:
+        # TASK FIRST, STATUS SECOND (the stage route's discipline): a filing refusal propagates and
+        # the row is NOT written, so it stays at awaiting_origin with its old content_kind.
+        await _file_or_find_document_promotion_task(
+            ingest_id, {**row, "content_kind": leaf}, requested_by=caller,
+            extraction_ref=row.get("extraction_ref"))
+        written = await run_in_threadpool(lambda: ingest_status.set_leaf(
+            ingest_id, leaf, "corrected", set_by=caller,
+            from_statuses=[ingest_status.AWAITING_ORIGIN], to_status=ingest_status.REVIEW))
+        if written is not None:
+            _log(ingest_status.REVIEW)
+        _audit_ingest_access(route, ingest_id, caller, "allow",
+                             "leaf_corrected_filed" if written is not None else "row_moved_after_filing")
+        return await _body()
+
+    if stage == ingest_status.REVIEW:
+        _refuse(409, {"error": "leaf_fixed_at_review", "stage": stage,
+                      "message": "the review task was filed with this kind; re-typing an open task "
+                                 "is not built"}, "leaf_fixed_at_review")
+    _refuse(409, {"error": "leaf_not_changeable", "stage": stage}, "leaf_not_changeable")
 
 
 # the case runner's own transport identity (policy/users.yaml: `svc:case-runner`, restate-analyst's
