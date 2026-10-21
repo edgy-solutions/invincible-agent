@@ -160,6 +160,7 @@ def test_retry_review_row_whose_task_exists_returns_already_filed(client, monkey
     monkeypatch.setattr(ist, "get_status_unscoped", lambda ingest_id: row)
     _stub_domain(monkeypatch)
     monkeypatch.setattr(ht, "task_exists", lambda task_id: True)
+    monkeypatch.setattr(ht, "get_open_task_payload", lambda task_id: None)
     registered = []
     monkeypatch.setattr(ht, "register_task", lambda **kw: registered.append(kw))
     r = client.post("/ingest/deadbeef/retry", json=_NEW)

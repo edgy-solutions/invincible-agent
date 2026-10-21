@@ -123,10 +123,15 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS attempt INTEGER NO
 -- LLM-extracted). NULL until known. IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS notice_id TEXT;
 
--- 2026-10-21 (spec 203, the leaf on the row): where the row's leaf came from (ingest|title|corrected),
+-- 2026-10-21 (spec 203, the leaf on the row): where the row's leaf came from (declared|title|corrected),
 -- the candidates an `awaiting_kind` hold lists (JSON list text), and who/when set the leaf last.
 -- All NULLABLE, all IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_source TEXT;
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_candidates TEXT;
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_set_by TEXT;
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_set_at BIGINT;
+
+-- 2026-10-21 (spec 203b): one-time, idempotent backfill. This is a WRITE of a fact, not an inference:
+-- before spec 203 the only writers of a leaf `content_kind` (pcn|pdn) were the drop's form field and
+-- the manifest adoption of the drop's sidecar kind, so every such row was declared at the drop.
+UPDATE ingest_status_projection SET leaf_source = 'declared' WHERE leaf_source IS NULL AND kind <> 'event' AND lower(content_kind) IN ('pcn','pdn');

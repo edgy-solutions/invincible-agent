@@ -106,9 +106,10 @@ ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN, REVIEW_REJECTE
 
 # The notice leaves a drop can carry as its content_kind (single definition; the gateway imports it).
 LEAVES = ("pcn", "pdn")
-# Where a row's leaf came from: declared at the drop, adopted from doc-tools' title read, or set by
-# a dropper's / steward's correction (POST /ingest/{id}/leaf).
-LEAF_SOURCES = ("ingest", "title", "corrected")
+# Where a row's leaf came from (architect ruling 2026-10-21, "Leaf, final shape"): `declared` -- the
+# drop carried a leaf (door or delegate); `title` -- read from the document's title; `corrected` -- a
+# person changed it (with `leaf_set_by`). Written WHEN the leaf is written, never computed from kind.
+LEAF_SOURCES = ("declared", "title", "corrected")
 
 # ContentKind leaves (mesh_system.ttl's ContentKind tree, ADR-0041 §8) — deterministic,
 # declared-at-the-door, never LLM-classified (ADR-0021's precedence). XML (2026-10-07) is the
@@ -210,13 +211,18 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS attempt INTEGER NO
 -- LLM-extracted). NULL until known. IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS notice_id TEXT;
 
--- 2026-10-21 (spec 203, the leaf on the row): where the row's leaf came from (ingest|title|corrected),
+-- 2026-10-21 (spec 203, the leaf on the row): where the row's leaf came from (declared|title|corrected),
 -- the candidates an `awaiting_kind` hold lists (JSON list text), and who/when set the leaf last.
 -- All NULLABLE, all IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_source TEXT;
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_candidates TEXT;
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_set_by TEXT;
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_set_at BIGINT;
+
+-- 2026-10-21 (spec 203b): one-time, idempotent backfill. This is a WRITE of a fact, not an inference:
+-- before spec 203 the only writers of a leaf `content_kind` (pcn|pdn) were the drop's form field and
+-- the manifest adoption of the drop's sidecar kind, so every such row was declared at the drop.
+UPDATE ingest_status_projection SET leaf_source = 'declared' WHERE leaf_source IS NULL AND kind <> 'event' AND lower(content_kind) IN ('pcn','pdn');
 """
 
 
@@ -259,6 +265,14 @@ def find_primary_by_sha(sha256: str) -> Optional[dict[str, Any]]:
             )
             row = cur.fetchone()
     return dict(row) if row else None
+
+
+def _declared_leaf(content_kind, submitted_by, now) -> dict[str, Any]:
+    """The drop WRITES the leaf's source (spec 203b): a `content_kind` that is a leaf, lowercased and
+    stripped, is `declared` by the submitter at `now`; anything else leaves the three columns NULL."""
+    if str(content_kind or "").strip().lower() in LEAVES:
+        return {"leaf_source": "declared", "leaf_set_by": submitted_by, "leaf_set_at": now}
+    return {"leaf_source": None, "leaf_set_by": None, "leaf_set_at": None}
 
 
 def record_received(
@@ -309,6 +323,7 @@ def record_received(
         "status": RECEIVED, "extracted_count": None, "extracted_total": None,
         "duplicate_of": None, "detail": None, "created_at": now, "updated_at": now,
         "content_kind": content_kind,
+        **_declared_leaf(content_kind, submitted_by, now),
     }
     with _pg_connect() as conn:
         with conn.cursor() as cur:
@@ -316,11 +331,13 @@ def record_received(
                 """INSERT INTO ingest_status_projection
                    (id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                     status, extracted_count, extracted_total, duplicate_of, detail,
-                    created_at, updated_at, content_kind)
+                    created_at, updated_at, content_kind,
+                    leaf_source, leaf_set_by, leaf_set_at)
                    VALUES (%(id)s, %(sha256)s, %(kind)s, %(object_prefix)s, %(submitted_by)s,
                            %(on_behalf_of)s, %(source)s, %(status)s, %(extracted_count)s,
                            %(extracted_total)s, %(duplicate_of)s, %(detail)s,
-                           %(created_at)s, %(updated_at)s, %(content_kind)s)
+                           %(created_at)s, %(updated_at)s, %(content_kind)s,
+                           %(leaf_source)s, %(leaf_set_by)s, %(leaf_set_at)s)
                    ON CONFLICT (id) DO NOTHING""",
                 row,
             )
@@ -378,6 +395,7 @@ def record_duplicate_arrival(
         "status": DUPLICATE, "extracted_count": None, "extracted_total": None,
         "duplicate_of": original["id"], "detail": detail, "created_at": now, "updated_at": now,
         "content_kind": content_kind,
+        **_declared_leaf(content_kind, submitted_by, now),
     }
     with _pg_connect() as conn:
         with conn.cursor() as cur:
@@ -385,11 +403,13 @@ def record_duplicate_arrival(
                 """INSERT INTO ingest_status_projection
                    (id, sha256, kind, object_prefix, submitted_by, on_behalf_of, source,
                     status, extracted_count, extracted_total, duplicate_of, detail,
-                    created_at, updated_at, content_kind)
+                    created_at, updated_at, content_kind,
+                    leaf_source, leaf_set_by, leaf_set_at)
                    VALUES (%(id)s, %(sha256)s, %(kind)s, %(object_prefix)s, %(submitted_by)s,
                            %(on_behalf_of)s, %(source)s, %(status)s, %(extracted_count)s,
                            %(extracted_total)s, %(duplicate_of)s, %(detail)s,
-                           %(created_at)s, %(updated_at)s, %(content_kind)s)""",
+                           %(created_at)s, %(updated_at)s, %(content_kind)s,
+                           %(leaf_source)s, %(leaf_set_by)s, %(leaf_set_at)s)""",
                 row,
             )
         conn.commit()
@@ -493,7 +513,9 @@ def update_status(
     `content_kind` (architect ruling 2026-10-16) is the kind the review ADOPTED from the extraction
     manifest for a row the drop left NULL. It is written ONLY WHERE THE COLUMN IS NULL
     (`COALESCE(content_kind, %s)`): a kind the dropper declared is never overwritten by what the
-    extractor later says, and None leaves the column as it was."""
+    extractor later says, and None leaves the column as it was. When that COALESCE fills a NULL column
+    with a leaf (pcn|pdn) the SAME UPDATE sets `leaf_source='declared'` (only where it is NULL): the
+    sidecar kind is the drop's declaration, adopted."""
     if status not in ALL_STATUSES:
         raise ValueError(f"status must be one of {ALL_STATUSES}, got {status!r}")
     if status in _DETAIL_REQUIRED_STAGES and not (detail and detail.strip()):
@@ -515,10 +537,14 @@ def update_status(
                           extraction_ref = COALESCE(%s, extraction_ref),
                           failure = %s, run_id = COALESCE(%s, run_id),
                           notice_id = COALESCE(%s, notice_id),
-                          content_kind = COALESCE(content_kind, %s), updated_at = %s
+                          content_kind = COALESCE(content_kind, %s),
+                          leaf_source = CASE WHEN content_kind IS NULL AND leaf_source IS NULL
+                                              AND lower(trim(%s)) IN ('pcn','pdn')
+                                             THEN 'declared' ELSE leaf_source END,
+                          updated_at = %s
                     WHERE id = %s""",
                 (status, extracted_count, extracted_total, detail, case_id, extraction_ref,
-                 failure_json, run_id, notice_id, content_kind, now, ingest_id),
+                 failure_json, run_id, notice_id, content_kind, content_kind, now, ingest_id),
             )
         conn.commit()
 
@@ -533,7 +559,7 @@ def set_leaf(ingest_id: str, leaf: str, source: str, *, set_by: str, from_status
     relaunch (`attempt` + 1, `failure` and `detail` cleared). The guard is
     `status = ANY(from_statuses) AND kind <> 'event'`; a `title` source additionally requires the
     row's `leaf_source` to be NULL or already `title`, so a title never overwrites a declared
-    (`ingest`) or corrected leaf. Returns the updated row as a dict, or None if nothing matched."""
+    or corrected leaf. Returns the updated row as a dict, or None if nothing matched."""
     if leaf not in LEAVES:
         raise ValueError(f"leaf must be one of {LEAVES}, got {leaf!r}")
     if source not in LEAF_SOURCES:
@@ -572,15 +598,27 @@ def set_leaf(ingest_id: str, leaf: str, source: str, *, set_by: str, from_status
 def hold_for_kind(ingest_id: str, *, candidates, detail: str, run_id: Optional[str] = None,
                   from_statuses) -> bool:
     """Park a row at `awaiting_kind` (spec 203): the title read named no confident leaf. ONE guarded
-    UPDATE; `candidates` is filtered to LEAVES (duplicates dropped, order kept) and stored as JSON
-    list text. The guard also refuses a row that already carries a leaf (`content_kind` pcn/pdn): a
+    UPDATE; `candidates` is a list of `{leaf, score, evidence_ref}` dicts: an entry is kept only when
+    its `leaf` (lowercased) is in LEAVES, later duplicates of a leaf are dropped, the list is sorted
+    by `score` descending (stable), capped at 3 and stored as JSON list text of
+    `{"leaf", "score", "evidence_ref": {page, bbox[, note]}}` (`note` dropped when None). The guard also refuses a row that already carries a leaf (`content_kind` pcn/pdn): a
     correction that landed between the caller's read and this write must win, never be held. True
     when a row matched, False otherwise."""
-    seen: list[str] = []
+    seen: list[dict] = []
     for c in candidates or []:
-        c = str(c or "").strip().lower()
-        if c in LEAVES and c not in seen:
-            seen.append(c)
+        c = c if isinstance(c, dict) else {}
+        leaf = str(c.get("leaf") or "").strip().lower()
+        if leaf not in LEAVES or any(x["leaf"] == leaf for x in seen):
+            continue
+        ev = c.get("evidence_ref")
+        if hasattr(ev, "model_dump"):
+            ev = ev.model_dump()
+        ev = dict(ev or {})
+        if ev.get("note") is None:
+            ev.pop("note", None)
+        seen.append({"leaf": leaf, "score": c.get("score"), "evidence_ref": ev})
+    seen.sort(key=lambda x: x["score"] if x["score"] is not None else 0, reverse=True)
+    seen = seen[:3]
     now = int(time.time() * 1000)
     with _pg_connect() as conn:
         with conn.cursor() as cur:

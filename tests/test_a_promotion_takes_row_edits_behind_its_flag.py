@@ -109,6 +109,7 @@ def world(monkeypatch):
     monkeypatch.setattr(promotion, "act", spy_act)
     monkeypatch.setattr(gateway, "_promotion_stores", lambda acted_by: stores)
     monkeypatch.setattr(gateway, "_review_mpns_for_payload", lambda subject: list(w.mpns))
+    monkeypatch.setattr(ingest_status, "get_row", lambda _id: None)   # the act reads the row first (203b)
     monkeypatch.setattr(ingest_status, "update_status",
                         lambda iid, stage, *, detail=None: w.statuses.append((iid, stage, detail)))
     user = SimpleNamespace(authz_id="bob", sub="bob", email="bob@x", persona=None,

@@ -312,7 +312,8 @@ def ruleset_ref(declaration: dict) -> str:
 def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, audience: str,
                  comment: str, governing: dict, era: str,
                  row_edits: Optional[list] = None,
-                 reconciliation: Optional[dict] = None) -> dict:
+                 reconciliation: Optional[dict] = None,
+                 leaf: Optional[dict] = None) -> dict:
     """The decision record. A steward's corrections (`row_edits`, each stamped
     `obtained_via=steward-corrected`) ride on the human_review check's inputs; the record is the
     grant. With none, the inputs are exactly what they always were (no new key).
@@ -332,6 +333,12 @@ def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, aud
         inputs["row_edits"] = row_edits
     if isinstance(reconciliation, dict):
         inputs["reconciliation"] = reconciliation
+    # The leaf's source rides on the check when the act knows it (spec 203b): `leaf_source` always,
+    # `corrected_by` only for a corrected leaf. With no `leaf` the inputs are exactly as before.
+    if isinstance(leaf, dict) and leaf.get("leaf_source") is not None:
+        inputs["leaf_source"] = leaf["leaf_source"]
+        if leaf["leaf_source"] == "corrected":
+            inputs["corrected_by"] = leaf.get("corrected_by")
     check = make_check("human_review", verdict=decision, inputs=inputs)
     rec = build_decision_record(
         request_key=subject.ingest_id,
@@ -585,7 +592,8 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
         can_act: Callable[[str, str], bool],
         stores: Optional[PromotionStores],
         governing: dict, era: str, now_ms: int, row_edits: Optional[list] = None,
-        reviewed_mpns: Optional[list] = None, earlier_ingests: Optional[list] = None) -> dict:
+        reviewed_mpns: Optional[list] = None, earlier_ingests: Optional[list] = None,
+        leaf: Optional[dict] = None) -> dict:
     """Promote or reject one document. Returns what happened; raises `PromotionRefused` for
     everything that did not. `row_edits` (the steward's corrections, already validated by the
     route) is written onto the decision record, which is the grant."""
@@ -660,7 +668,7 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
 
     record = build_record(subject, decision=decision, acted_by=acted_by, audience=audience,
                           comment=comment, governing=governing, era=era, row_edits=row_edits,
-                          reconciliation=reconciliation)
+                          reconciliation=reconciliation, leaf=leaf)
     try:
         written = stores.ledger.append(record, acted_by=acted_by, acted_at=now_ms)
     except Exception as exc:  # noqa: BLE001 — a ledger that raises has not said ok

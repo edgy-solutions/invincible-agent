@@ -338,6 +338,47 @@ def get_task_open_state(task_id: str) -> Optional[dict[str, Any]]:
     return dict(row) if row else None
 
 
+def get_open_task_payload(task_id: str) -> Optional[dict[str, Any]]:
+    """The parsed `payload` of a logical task's OPEN (`pending`) rows, or None when no row of the id
+    is `pending`. Every recipient row of a task carries the same payload, so one is enough. Read-only
+    and SERVICE-SIDE: not caller-scoped, like :func:`task_exists` -- asked by a route that built the
+    task id from an artifact it can already read. Do not reuse it on a human path."""
+    if not task_id:
+        return None
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT payload FROM human_task_projection
+                    WHERE task_id = %s AND status = 'pending' LIMIT 1""",
+                (task_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    p = row["payload"]
+    if isinstance(p, (str, bytes)):
+        p = json.loads(p)
+    return dict(p) if isinstance(p, dict) else {}
+
+
+def refresh_open_task(task_id: str, *, payload: dict[str, Any], title: str, summary: str) -> int:
+    """Rewrite the `payload`, `title` and `summary` of EVERY `pending` row of a logical task in one
+    UPDATE (`updated_at` set); returns the rowcount. A resolved row is never touched. Service-side,
+    like :func:`get_open_task_payload`: the audience is not changed here (the caller checks it)."""
+    now = int(time.time() * 1000)
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE human_task_projection
+                      SET payload = %s::jsonb, title = %s, summary = %s, updated_at = %s
+                    WHERE task_id = %s AND status = 'pending'""",
+                (json.dumps(payload or {}), title, summary, now, task_id),
+            )
+            n = cur.rowcount
+        conn.commit()
+    return n
+
+
 # ── Registration (materialize rows from the Topaz decision) ──────────────────
 
 def register_task(

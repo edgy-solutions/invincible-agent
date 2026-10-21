@@ -106,6 +106,7 @@ def world(monkeypatch):
         gateway, "_review_header_for_payload",
         lambda subject: {"mfr_source": "header" if w.header.get("mfr") else None,
                          "mfr_identity": None, **w.header})
+    monkeypatch.setattr(ingest_status, "get_row", lambda _id: None)   # the act reads the row first (203b)
     monkeypatch.setattr(ingest_status, "update_status",
                         lambda iid, stage, *, detail=None: w.statuses.append((iid, stage, detail)))
     user = SimpleNamespace(authz_id="bob", sub="bob", email="bob@x", persona=None,

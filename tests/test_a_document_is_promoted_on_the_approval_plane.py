@@ -467,6 +467,7 @@ def route(monkeypatch, fresh_declarations):
 
     monkeypatch.setattr(human_tasks, "check_can_act", can_act)
     monkeypatch.setattr(gateway, "_review_mpns_for_payload", lambda subject: [])   # the reviewed set
+    monkeypatch.setattr(ingest_status, "get_row", lambda _id: None)   # the act reads the row first (203b)
     monkeypatch.setattr(human_tasks, "mark_task_resolved",
                         lambda tid, **kw: calls["resolved"].append((tid, kw)) or 1)
     user = type("U", (), {"authz_id": "bob", "sub": "bob", "email": "bob@x",

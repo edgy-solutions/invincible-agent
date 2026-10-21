@@ -69,6 +69,7 @@ def world(monkeypatch):
     monkeypatch.setattr(promotion, "act", act)
     monkeypatch.setattr(gateway, "_promotion_stores", lambda acted_by: object())
     monkeypatch.setattr(gateway.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(ingest_status, "get_row", lambda _id: None)   # the act reads the row first (203b)
     monkeypatch.setattr(ingest_status, "update_status",
                         lambda iid, stage, *, detail=None: w.statuses.append((iid, stage, detail)))
     user = SimpleNamespace(authz_id="bob", sub="bob", email="bob@x", persona=None,

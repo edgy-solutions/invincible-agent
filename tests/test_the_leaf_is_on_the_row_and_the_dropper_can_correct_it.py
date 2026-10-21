@@ -4,9 +4,10 @@ steward) can correct it (architect ruling 2026-10-21).
   * `POST /ingest/{id}/title_leaf` (svc:doc-tools only): a confident title (pcn|pdn from the TITLE)
     is written as `leaf_source=title`; a declared or corrected leaf beats it; a non-leaf-capable row
     is left alone; no confident leaf holds the row at `awaiting_kind` with the candidates.
-  * `POST /ingest/{id}/leaf` (the review gate): `corrected`, dispatched on the stage.
+  * `POST /ingest/{id}/leaf` (the review gate): `corrected`, dispatched on the stage; the leaf can
+    change until promotion (ruling 2026-10-21 "Leaf, final shape", spec 203b).
   * the status body carries `leaf` / `leaf_source` / `leaf_candidates` for a leaf-capable row ONLY.
-  * the stage route refuses a held row, and its review-transition backstop adopts a confident title.
+  * the stage route refuses a held row; a title is written by `title_leaf` alone (no backstop).
 
 THE WRITES ARE THE REAL ONES. `ingest_status.set_leaf` and `hold_for_kind` run as written against a
 small in-memory interpreter of exactly their UPDATE statements (`_FakePg`), so the arms defend the
@@ -17,7 +18,9 @@ Run: PYTHONPATH="src;." python -m pytest tests/test_the_leaf_is_on_the_row_and_t
 """
 from __future__ import annotations
 
+import asyncio
 import copy
+import json
 import re
 import types
 
@@ -42,6 +45,7 @@ ALICE = "alice@example.com"
 BOB = "bob@example.com"
 DOCTOOLS = "svc:doc-tools"
 _REAL_FILE_PROMOTION_IF_READY = gateway._file_promotion_if_ready
+_REAL_FILE_TASK = gateway._file_or_find_document_promotion_task
 
 
 # --------------------------------------------------------------------------------------------
@@ -144,6 +148,8 @@ class DB:
         self.filed: list = []
         self.file_error: HTTPException | None = None
         self.stale_first_read: dict | None = None
+        self.registered: list = []
+        self.refreshed: list = []
 
     def add(self, id=ID, **kw):
         row = {"id": id, "sha256": id.split(":")[1], "kind": "pdf", "object_prefix": PREFIX,
@@ -223,6 +229,9 @@ def db(monkeypatch):
     monkeypatch.setattr(ck, "by_kind", _by_kind)
     monkeypatch.setattr(gateway, "_file_or_find_document_promotion_task", d.file_task)
     monkeypatch.setattr(ht, "get_task_open_state", lambda task_id: None)
+    monkeypatch.setattr(ht, "register_task", lambda **kw: d.registered.append(kw) or {})
+    monkeypatch.setattr(ht, "refresh_open_task",
+                        lambda task_id, **kw: d.refreshed.append({"task_id": task_id, **kw}) or 1)
     yield d
     gateway.app.dependency_overrides.clear()
 
@@ -237,6 +246,12 @@ def _title(c, body, id=ID):
 
 
 CONFIDENT_PCN = {"doc_type": "PCN", "doc_type_source": "title"}
+EV = {"page": 1, "bbox": [10, 10, 200, 40]}
+
+
+def _cand(leaf, score, note=None, **kw):
+    return {"leaf": leaf, "score": score,
+            "evidence_ref": {**EV, **({"note": note} if note else {})}, **kw}
 
 
 # --------------------------------------------------------------------------------------------
@@ -263,11 +278,15 @@ def test_a_title_works_on_a_row_with_no_declared_content_kind(db):
 def test_a_title_that_names_no_leaf_holds_the_row_at_awaiting_kind(db):
     db.add(status="extracting")
     r = _title(_as(DOCTOOLS), {"doc_type": "PCN", "doc_type_source": "defaulted",
-                               "candidates": ["pcn", "bogus", "pcn", "pdn"], "run_id": "run-9"})
+                               "candidates": [_cand("pcn", 0.4), _cand("bogus", 0.9),
+                                              _cand("pdn", 0.6, note="n")], "run_id": "run-9"})
     assert r.status_code == 200, r.text
     b = r.json()
     assert b["proceed"] is False and b["stage"] == "awaiting_kind"
-    assert b["leaf_candidates"] == ["pcn", "pdn"]
+    # an unknown leaf is dropped, a later duplicate of a leaf is dropped, best score first, note kept
+    assert b["leaf_candidates"] == [
+        {"leaf": "pdn", "score": 0.6, "evidence_ref": {**EV, "note": "n"}},
+        {"leaf": "pcn", "score": 0.4, "evidence_ref": EV}]
     row = db.rows[ID]
     assert row["status"] == "awaiting_kind" and row["run_id"] == "run-9"
     assert row["content_kind"] == "pdf" and row["leaf_source"] is None
@@ -282,7 +301,7 @@ def test_a_confident_title_never_outvotes_a_non_title_source(db):
         db.rows[ID]["status"] = "extracting"
 
 
-@pytest.mark.parametrize("source", [None, "ingest"])
+@pytest.mark.parametrize("source", [None, "declared"])
 def test_a_declared_leaf_beats_the_title_and_the_row_is_unchanged(db, source):
     db.add(status="extracting", content_kind="pdn", leaf_source=source)
     before = db.snap()
@@ -290,7 +309,7 @@ def test_a_declared_leaf_beats_the_title_and_the_row_is_unchanged(db, source):
     assert r.status_code == 200, r.text
     b = r.json()
     assert b["proceed"] is True and b["content_kind"] == "pdn" and b["leaf"] == "pdn"
-    assert b["leaf_source"] == (source or "ingest")
+    assert b["leaf_source"] == source   # as stored: no default is invented for a NULL
     assert db.snap() == before
 
 
@@ -316,7 +335,7 @@ def test_a_correction_that_lands_between_the_read_and_the_write_beats_the_title(
 
 
 def test_set_leaf_with_a_title_source_matches_nothing_on_a_corrected_or_declared_row(db):
-    for src in ("corrected", "ingest"):
+    for src in ("corrected", "declared"):
         db.add(status="extracting", content_kind="pdn", leaf_source=src)
         assert ist.set_leaf(ID, "pcn", "title", set_by=DOCTOOLS, from_statuses=["extracting"]) is None
         assert db.rows[ID]["content_kind"] == "pdn"
@@ -328,16 +347,19 @@ def test_set_leaf_with_a_title_source_matches_nothing_on_a_corrected_or_declared
 def test_hold_for_kind_never_holds_a_row_a_correction_reached_first(db):
     # The dropper's /leaf landed between title_leaf's read and its hold: the corrected leaf wins.
     db.add(status="extracting", content_kind="pdn", leaf_source="corrected")
-    assert ist.hold_for_kind(ID, candidates=["pcn"], detail="x",
+    assert ist.hold_for_kind(ID, candidates=[_cand("pcn", 0.5)], detail="x",
                              from_statuses=["extracting"]) is False
     row = db.rows[ID]
     assert row["status"] == "extracting" and row["content_kind"] == "pdn"
-    # Control: the same call on a row with no leaf does hold, with candidates lower-cased.
+    # Control: the same call on a row with no leaf does hold, with candidates lower-cased and
+    # stored best score first.
     db.rows[ID].update(content_kind="pdf", leaf_source=None)
-    assert ist.hold_for_kind(ID, candidates=[" PDN ", "pcn"], detail="x",
+    assert ist.hold_for_kind(ID, candidates=[_cand(" PCN ", 0.2), _cand("pdn", 0.7)], detail="x",
                              from_statuses=["extracting"]) is True
     assert db.rows[ID]["status"] == "awaiting_kind"
-    assert db.rows[ID]["leaf_candidates"] in (["pdn", "pcn"], '["pdn", "pcn"]')
+    assert json.loads(db.rows[ID]["leaf_candidates"]) == [
+        {"leaf": "pdn", "score": 0.7, "evidence_ref": EV},
+        {"leaf": "pcn", "score": 0.2, "evidence_ref": EV}]
 
 
 def test_an_unconfident_repeat_keeps_a_title_leaf_already_on_the_row(db):
@@ -354,7 +376,8 @@ def test_set_leaf_validates_its_vocabulary(db):
     with pytest.raises(ValueError):
         ist.set_leaf(ID, "ecn", "title", set_by="x", from_statuses=["extracting"])
     with pytest.raises(ValueError):
-        ist.set_leaf(ID, "pcn", "extraction-title", set_by="x", from_statuses=["extracting"])
+        ist.set_leaf(ID, "pcn", "retired", set_by="x", from_statuses=["extracting"])
+    assert ist.LEAF_SOURCES == ("declared", "title", "corrected")
 
 
 @pytest.mark.parametrize("kind,ck_", [("cad", "cad"), ("xml", "s1000d-data-module"),
@@ -445,7 +468,7 @@ def test_a_correction_at_extracting_overwrites_the_kind_and_leaves_the_stage(db)
 
 
 def test_a_pick_at_awaiting_kind_reopens_the_row_and_it_is_listed_for_relaunch(db):
-    db.add(status="awaiting_kind", leaf_candidates='["pcn", "pdn"]', detail="pick",
+    db.add(status="awaiting_kind", leaf_candidates=json.dumps([_cand("pcn", 0.5)]), detail="pick",
            failure={"reason_code": "x"})
     r = _leaf(_as(ALICE), "pdn")
     assert r.status_code == 200, r.text
@@ -460,56 +483,59 @@ def test_a_pick_at_awaiting_kind_reopens_the_row_and_it_is_listed_for_relaunch(d
             for e in lst.json()["retries"]] == [(ID, 2, "pdn", f"{ID}-a2")]
 
 
-def test_a_pick_at_awaiting_origin_files_the_task_then_moves_the_row_to_review(db):
-    db.add(status="awaiting_origin", extraction_ref=REF)
-    r = _leaf(_as(ALICE), "pcn")
+def _no_task_touched(db):
+    assert db.filed == [] and db.registered == [] and db.refreshed == []
+
+
+@pytest.mark.parametrize("stage", ["awaiting_origin", "review"])
+def test_a_correction_after_parts_extraction_sends_the_row_back_to_received_and_touches_no_task(
+        db, stage):
+    db.add(status=stage, content_kind="pcn", leaf_source="title", extraction_ref=REF,
+           detail="d", extracted_count=3)
+    r = _leaf(_as(ALICE), "pdn")
     assert r.status_code == 200, r.text
-    assert r.json()["stage"] == "review" and r.json()["leaf_source"] == "corrected"
-    assert [f["content_kind"] for f in db.filed] == ["pcn"]
-    assert db.filed[0]["extraction_ref"] == REF and db.filed[0]["requested_by"] == ALICE
-    assert _by_kind(db.filed[0]["content_kind"]).domain == "SUSTAINMENT"
-    assert db.rows[ID]["status"] == "review" and db.rows[ID]["content_kind"] == "pcn"
-
-
-def test_a_filing_refusal_leaves_the_row_at_awaiting_origin_with_its_old_kind(db):
-    db.add(status="awaiting_origin", extraction_ref=REF)
-    db.file_error = HTTPException(status_code=422, detail={"error": "no_entitled_recipients"})
-    r = _leaf(_as(ALICE), "pcn")
-    assert r.status_code == 422 and r.json()["detail"]["error"] == "no_entitled_recipients"
+    b = r.json()
+    assert b["stage"] == "received" and b["attempt"] == 2 and b["leaf"] == "pdn"
+    assert b["leaf_source"] == "corrected" and b["corrected_by"] == ALICE
     row = db.rows[ID]
-    assert row["status"] == "awaiting_origin" and row["content_kind"] == "pdf"
-    assert row["leaf_source"] is None and row["leaf_set_by"] is None
+    assert row["status"] == "received" and row["attempt"] == 2 and row["content_kind"] == "pdn"
+    assert row["leaf_source"] == "corrected" and row["leaf_set_by"] == ALICE
+    _no_task_touched(db)
+    # and it is listed for the relaunch, as the new kind
+    lst = _as(DOCTOOLS).get("/ingest/retries").json()["retries"]
+    assert [(e["ingest_id"], e["attempt"], e["content_kind"]) for e in lst] == [(ID, 2, "pdn")]
 
 
-def test_a_row_that_moved_during_the_filing_answers_its_status_not_an_error(db, monkeypatch):
-    db.add(status="awaiting_origin", extraction_ref=REF)
-    real = db.file_task
-
-    async def _file_then_a_steward_files_it(ingest_id, row, **kw):
-        out = await real(ingest_id, row, **kw)
-        db.rows[ID]["status"] = "review"
-        return out
-
-    monkeypatch.setattr(gateway, "_file_or_find_document_promotion_task",
-                        _file_then_a_steward_files_it)
-    r = _leaf(_as(ALICE), "pcn")
+def test_a_correction_at_failed_is_in_place_and_the_stage_stays_failed(db):
+    db.add(status="failed", content_kind="pcn", leaf_source="title", detail="boom",
+           failure={"reason_code": "x"})
+    r = _leaf(_as(ALICE), "pdn")
     assert r.status_code == 200, r.text
-    assert r.json()["stage"] == "review"
-    assert db.rows[ID]["leaf_source"] is None  # the guarded write matched nothing
+    assert r.json()["stage"] == "failed" and r.json()["leaf"] == "pdn"
+    row = db.rows[ID]
+    assert row["status"] == "failed" and row["attempt"] == 1 and row["content_kind"] == "pdn"
+    assert row["leaf_source"] == "corrected" and row["leaf_set_by"] == ALICE
+    _no_task_touched(db)
 
 
-def test_a_correction_at_review_is_refused_and_nothing_is_written(db):
-    db.add(status="review", content_kind="pcn", leaf_source="title")
-    before = db.snap()
+@pytest.mark.parametrize("stage", ["awaiting_origin", "review", "awaiting_kind"])
+def test_a_row_that_moved_under_the_correction_is_409_with_its_current_stage(db, monkeypatch, stage):
+    db.add(status=stage, content_kind="pcn", leaf_source="title")
+    real = ist.set_leaf
+
+    def _moved_first(*a, **k):
+        db.rows[ID]["status"] = "promoted"
+        return real(*a, **k)
+
+    monkeypatch.setattr(ist, "set_leaf", _moved_first)
     r = _leaf(_as(ALICE), "pdn")
     assert r.status_code == 409, r.text
-    d = r.json()["detail"]
-    assert d["error"] == "leaf_fixed_at_review" and d["stage"] == "review"
-    assert "not built" in d["message"]
-    assert db.snap() == before
+    assert r.json()["detail"] == {"error": "leaf_not_changeable", "stage": "promoted"}
+    assert db.rows[ID]["content_kind"] == "pcn" and db.rows[ID]["leaf_source"] == "title"
+    _no_task_touched(db)
 
 
-@pytest.mark.parametrize("stage", ["promoted", "rejected", "failed", "review_rejected",
+@pytest.mark.parametrize("stage", ["promoted", "rejected", "review_rejected",
                                    "duplicate", "case_opened"])
 def test_a_correction_after_the_review_is_not_changeable(db, stage):
     db.add(status=stage, content_kind="pcn", leaf_source="title")
@@ -518,6 +544,7 @@ def test_a_correction_after_the_review_is_not_changeable(db, stage):
     assert r.status_code == 409, r.text
     assert r.json()["detail"] == {"error": "leaf_not_changeable", "stage": stage}
     assert db.snap() == before
+    _no_task_touched(db)
 
 
 def test_a_cad_row_has_no_leaf_to_correct(db):
@@ -576,13 +603,20 @@ def test_a_pdf_row_with_no_leaf_yet_carries_the_keys_as_null(db):
     db.add(status="extracting")
     b = _status(_as(ALICE)).json()
     assert b["leaf"] is None and b["leaf_source"] is None and b["leaf_candidates"] is None
-    assert {"leaf", "leaf_source", "leaf_candidates"} <= set(b)
+    assert b["corrected_by"] is None
+    assert {"leaf", "leaf_source", "leaf_candidates", "corrected_by"} <= set(b)
 
 
-def test_a_declared_leaf_reads_ingest_and_a_pre_203_leaf_row_falls_back_to_ingest(db):
-    db.add(status="extracting", content_kind="pdn")
+def test_the_status_body_reads_the_stored_source_and_never_invents_one(db):
+    db.add(status="extracting", content_kind="pdn", leaf_source="declared")
     b = _status(_as(ALICE)).json()
-    assert (b["leaf"], b["leaf_source"]) == ("pdn", "ingest")
+    assert (b["leaf"], b["leaf_source"], b["corrected_by"]) == ("pdn", "declared", None)
+    db.rows[ID]["leaf_source"] = None
+    b = _status(_as(ALICE)).json()
+    assert (b["leaf"], b["leaf_source"]) == ("pdn", None)
+    db.rows[ID].update(leaf_source="corrected", leaf_set_by=BOB)
+    b = _status(_as(ALICE)).json()
+    assert (b["leaf_source"], b["corrected_by"]) == ("corrected", BOB)
 
 
 @pytest.mark.parametrize("kind,ck_", [("cad", "cad"), ("xml", "s1000d-data-module"),
@@ -590,18 +624,19 @@ def test_a_declared_leaf_reads_ingest_and_a_pre_203_leaf_row_falls_back_to_inges
 def test_a_row_that_is_not_leaf_capable_has_no_leaf_keys_at_all(db, kind, ck_):
     db.add(status="extracting", kind=kind, content_kind=ck_)
     b = _status(_as(ALICE)).json()
-    assert not ({"leaf", "leaf_source", "leaf_candidates"} & set(b)), sorted(b)
+    assert not ({"leaf", "leaf_source", "leaf_candidates", "corrected_by"} & set(b)), sorted(b)
 
 
 def test_a_row_at_awaiting_kind_carries_the_candidates(db):
-    db.add(status="awaiting_kind", leaf_candidates='["pcn", "pdn"]')
+    cands = [{"leaf": "pcn", "score": 0.6, "evidence_ref": EV}]
+    db.add(status="awaiting_kind", leaf_candidates=json.dumps(cands))
     b = _status(_as(ALICE)).json()
-    assert b["stage"] == "awaiting_kind" and b["leaf_candidates"] == ["pcn", "pdn"]
+    assert b["stage"] == "awaiting_kind" and b["leaf_candidates"] == cands
     assert b["leaf"] is None
 
 
 def test_the_candidates_are_only_shown_at_awaiting_kind(db):
-    db.add(status="extracting", leaf_candidates='["pcn", "pdn"]')
+    db.add(status="extracting", leaf_candidates=json.dumps([_cand("pcn", 0.5)]))
     assert _status(_as(ALICE)).json()["leaf_candidates"] is None
 
 
@@ -644,21 +679,11 @@ def test_a_stage_post_on_a_held_row_is_409(db, monkeypatch, target):
     assert db.rows[ID]["status"] == "awaiting_kind"
 
 
-def test_the_backstop_adopts_a_confident_title_files_sustainment_and_lands_at_review(db, monkeypatch):
+def test_a_confident_title_at_the_review_post_writes_no_leaf_only_title_leaf_does(db, monkeypatch):
+    # 7f measured (10-21) that a pdf row runs no plugin, so the 203 review-transition backstop that
+    # read this title could never fire; it is removed. `title` is written by `title_leaf` alone.
     r = _stage(db, monkeypatch, {"stage": "review", "extraction_ref": REF},
                review=_review_json(doc_type="PDN", doc_type_source="title"), status="extracting")
-    assert r.status_code == 200, r.text
-    assert r.json()["stage"] == "review" and r.json()["task_id"] == "T-1"
-    assert [f["content_kind"] for f in db.filed] == ["pdn"]
-    assert _by_kind("pdn").domain == "SUSTAINMENT"
-    row = db.rows[ID]
-    assert row["status"] == "review" and row["content_kind"] == "pdn"
-    assert row["leaf_source"] == "title" and row["leaf_set_by"] == DOCTOOLS
-
-
-def test_the_backstop_refuses_a_defaulted_doc_type_and_the_row_parks_at_awaiting_origin(db, monkeypatch):
-    r = _stage(db, monkeypatch, {"stage": "review", "extraction_ref": REF},
-               review=_review_json(doc_type="PCN", doc_type_source="defaulted"), status="extracting")
     assert r.status_code == 200, r.text
     assert r.json()["stage"] == "awaiting_origin"
     assert db.filed == []
@@ -666,30 +691,13 @@ def test_the_backstop_refuses_a_defaulted_doc_type_and_the_row_parks_at_awaiting
     assert row["content_kind"] == "pdf" and row["leaf_source"] is None
 
 
-def test_the_backstop_never_overrides_a_declared_or_corrected_leaf(db, monkeypatch):
+def test_a_corrected_leaf_stands_at_the_review_post_and_files_its_kind(db, monkeypatch):
     r = _stage(db, monkeypatch, {"stage": "review", "extraction_ref": REF},
                review=_review_json(doc_type="PCN", doc_type_source="title"), status="extracting",
                content_kind="pdn", leaf_source="corrected")
     assert r.status_code == 200, r.text
     assert [f["content_kind"] for f in db.filed] == ["pdn"]
     assert db.rows[ID]["content_kind"] == "pdn" and db.rows[ID]["leaf_source"] == "corrected"
-
-
-def test_the_backstop_swallows_an_unreadable_review_json(db, monkeypatch):
-    def _boom(key):
-        raise RuntimeError("store down")
-
-    db.add(status="extracting")
-    monkeypatch.setattr(gateway, "_read_extraction_manifest", lambda key: {})
-    monkeypatch.setattr(gateway, "_read_review_json", _boom)
-
-    async def _no_origin(*a, **kw):
-        return None
-
-    monkeypatch.setattr(gateway, "_file_promotion_if_ready", _no_origin)
-    r = _as(DOCTOOLS).post(f"/ingest/{ID}/stage", json={"stage": "review", "extraction_ref": REF})
-    assert r.status_code == 200, r.text
-    assert r.json()["stage"] == "awaiting_origin" and db.rows[ID]["leaf_source"] is None
 
 
 # --------------------------------------------------------------------------------------------

@@ -1434,6 +1434,7 @@ def test_stage_repeat_review_opens_none(doc_tools_client, monkeypatch):
     monkeypatch.setattr(ist, "update_status", lambda *a, **kw: None)
     _stub_domain(monkeypatch)
     monkeypatch.setattr(ht, "task_exists", lambda task_id: True)
+    monkeypatch.setattr(ht, "get_open_task_payload", lambda task_id: None)
     registered = []
     monkeypatch.setattr(ht, "register_task", lambda **kw: registered.append(kw))
     r = doc_tools_client.post(f"/ingest/{row['id']}/stage", json={"stage": "review"})
