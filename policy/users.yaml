@@ -186,9 +186,15 @@ users:
   # (task_grants.yaml) and, from 2026-10-17, maint-supervisors-edge-01: the OpenDDIL dry run is
   # "atlantia chooses, liaison.coalition approves, alice releases", and approving is the
   # maint_supervisor_review step. bob stays in that group as the fallback.
+  #
+  # From 2026-10-20 (architect directive item 1) it is also in maint-approvers-edge-01, the
+  # maint_fault_approval:edge-01 audience: the dry run needs liaison to hold the fault-approval
+  # task. That is the same audience atlantia chooses from; no same-actor rule was found to keep
+  # one person from holding both steps of one case.
   - id: 33333333-3333-4333-8333-333333333333
     display_name: Liaison (OpenDDIL brokered principal liaison.coalition - MAINTENANCE supervisor and document reviewer)
     groups:
+      - maint-approvers-edge-01     # 2026-10-20: actor-only (no cell); see groups.yaml
       - maint-supervisors-edge-01   # 2026-10-17: actor-only (no cell); see groups.yaml
 
   # operator.atlantia's fixed id in OpenDDIL's realm (2026-10-16, Chris's directive item 5). It
@@ -212,6 +218,18 @@ users:
   # holds no task audience; the dry run's chain is atlantia, liaison.coalition, alice.
   - id: 22222222-2222-4222-8222-222222222222
     display_name: Operator (OpenDDIL brokered principal operator.borduria - MAINTENANCE mechanic)
+    groups:
+      - openddil-maintainers
+    default:
+      persona: MECHANIC
+      domains: [MAINTENANCE]
+
+  # operator.regioneast (2026-10-20, architect directive item 1), mapped the way borduria was: a
+  # mechanic, the one MECHANIC·MAINTENANCE cell through openddil-maintainers, no task audience.
+  # The id is the fixed one in OpenDDIL's realm-openddil.json template. OpenDDIL has not restated
+  # it, so it is UNCONFIRMED against the live realm until a brokered login lands on this cell.
+  - id: 55555555-5555-4555-8555-555555555555
+    display_name: Operator (OpenDDIL brokered principal operator.regioneast - MAINTENANCE mechanic)
     groups:
       - openddil-maintainers
     default:

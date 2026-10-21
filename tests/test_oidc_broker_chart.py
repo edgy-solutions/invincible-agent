@@ -508,6 +508,19 @@ def test_policy_binds_the_brokered_liaison_to_its_sub():
     assert p["liaison.coalition"] == _LIAISON_SUB
 
 
+def test_regioneast_is_mapped_the_way_borduria_was_and_liaison_holds_the_approval_audience():
+    # 2026-10-20 directive item 1. regioneast's sub is OpenDDIL's realm template id (unconfirmed live).
+    by_id = {u["id"]: u for u in _users_yaml()}
+    borduria = by_id["22222222-2222-4222-8222-222222222222"]
+    regioneast = by_id["55555555-5555-4555-8555-555555555555"]
+    assert regioneast["groups"] == borduria["groups"] == ["openddil-maintainers"]
+    assert regioneast["default"] == borduria["default"] == {"persona": "MECHANIC", "domains": ["MAINTENANCE"]}
+    liaison = by_id[_LIAISON_SUB]
+    # the dry run needs liaison to hold maint_fault_approval:edge-01; the supervisor group stays
+    assert set(liaison["groups"]) == {"maint-approvers-edge-01", "maint-supervisors-edge-01"}
+    assert "default" not in liaison  # still actor-only: no persona cell
+
+
 def test_the_broker_is_disabled_in_the_base_and_on_by_reference_in_the_sandbox():
     base_v = yaml.safe_load((_REPO / _CHART / "values.yaml").read_text(encoding="utf-8"))
     sb_v = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))

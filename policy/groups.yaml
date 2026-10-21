@@ -151,7 +151,8 @@ groups:
   # a cell via a group (openddil-maintainers → MAINTENANCE)"). Grants the EXISTING
   # MECHANIC·MAINTENANCE cell, the only persona with a MAINTENANCE cell, so no new cell object
   # is minted; the picker reaches it only through the group path. Members = operator.atlantia and
-  # (2026-10-17) operator.borduria. operator.regioneast joins once OpenDDIL names its sub.
+  # (2026-10-17) operator.borduria and (2026-10-20) operator.regioneast, whose sub is taken from
+  # OpenDDIL's realm template and is unconfirmed until its login lands on the cell.
   openddil-maintainers:
     grants:
       - {persona: MECHANIC, domain: MAINTENANCE}
