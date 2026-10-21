@@ -963,7 +963,13 @@ cortexUi:
     # before pinning: the FULL tag resolves to this digest; the abbreviated tag and the full sha
     # with its last hex altered both answer 404. 25f86b8 descends from 8eed1c5, and Dockerfile,
     # docker-entrypoint.sh, nginx.conf and the src's import.meta.env reads are unchanged.
-    digest: "sha256:8324b585725455e0771d5c0170d63c76285d9abb21475729dd235c38c7cec6e2"
+    # 2026-10-21, pinned for 204 (architect 10-21, crop coordinates are page fractions): cortex-ui
+    # a3cf4d1 draws the title candidate's crop in page fractions and reads both review-row forms
+    # -> c3a2acdd. Measured before pinning: the FULL tag resolves to this digest; the abbreviated
+    # tag and the full sha with its last hex altered both answer 404. a3cf4d1 descends from
+    # 25f86b8, and Dockerfile, docker-entrypoint.sh, nginx.conf, package files and the src's
+    # import.meta.env reads are unchanged.
+    digest: "sha256:c3a2acddf21d5217b7e7ee6e3dd8625b83b981b1379d442078f4211e81ae7740"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
