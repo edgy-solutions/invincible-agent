@@ -12,6 +12,12 @@ WHAT IS SEALED. The route runs the SAME verdict `read_notice_parts` runs (`notic
   * a component linked only to withheld notices is withheld; one linked to ANY visible notice, or
     to none, is visible; a candidate that is not sustainment content is untouched;
   * a lookup failure (Neo4j or the link query) answers 503, never an unfiltered list;
+  * Neo4j is asked about a NOTICE only when a candidate reaches one. That is the subject of the
+    "not asked" arms, and they assert it on the statement. Until 739b0c74 they asserted "no
+    session at all", which meant the same thing while the visibility read was Neo4j's only
+    caller. Lane 1's class-chain read (`_CLASS_CHAIN_CYPHER`, Ruling 3) runs AFTER the filter, on
+    the survivors' class URIs. It matches OntologyClass nodes only and never raises. It is not a
+    visibility read, and these arms do not count it (gov, 2026-10-21);
   * (the wire -- the caller's identity and grant reaching the fan-out -- is sealed in
     tests/routing/test_resolve_instance_hears_the_caller.py, not here).
 
@@ -73,16 +79,28 @@ class _Rec:
         return dict(self._d)
 
 
+def _labels(cypher):
+    return set(re.findall(r"\(\w*:(\w+)", cypher))
+
+
 class _Driver:
-    """Rows by notice id; an id absent from `rows` has NO Neo4j row. Records every session and run."""
+    """Rows by notice id; an id absent from `rows` has NO Neo4j row. Sorts every statement it is
+    asked into one of three kinds, decided on the statement, never on the caller:
+      * a NOTICE read (it carries `$notice_id`): `runs` gets the id, `notice_sessions` the session;
+      * a CLASS read (every node it matches is an `OntologyClass`, the TBox; Lane 1's class-chain
+        read, `_CLASS_CHAIN_CYPHER`): recorded in `class_reads` and answered with no rows;
+      * anything else goes to `unclassified`, so an arm asserting "no notice was asked about"
+        also asserts nothing it cannot name was asked.
+    Parameters arrive as Neo4j's `run(query, parameters=None, **kwparameters)` takes them."""
 
     def __init__(self, rows, raises=False):
         self.rows, self.raises = rows, raises
-        self.sessions, self.runs = 0, []
+        self.runs, self.class_reads, self.unclassified = [], [], []
+        self.notice_sessions = 0
 
     def session(self, **kw):
         drv = self
-        drv.sessions += 1
+        state = {"counted": False}
 
         class _S:
             def __enter__(self):
@@ -92,15 +110,32 @@ class _Driver:
                 return False
 
             def run(self, cypher, params=None, **kw2):
+                params = {**(params or {}), **kw2}
+                # Neo4j refuses a statement run without one of its $parameters; so does this double.
+                missing = set(re.findall(r"\$(\w+)", cypher)) - set(params)
+                assert not missing, f"statement run without ${sorted(missing)}"
+                if "notice_id" in params:
+                    drv.runs.append(params["notice_id"])
+                    if not state["counted"]:
+                        state["counted"] = True
+                        drv.notice_sessions += 1
+                elif _labels(cypher) == {"OntologyClass"}:
+                    drv.class_reads.append(cypher)
+                else:
+                    drv.unclassified.append(cypher)
                 if drv.raises:
                     raise ServiceUnavailable("neo4j down")
-                # Neo4j refuses a statement run without one of its $parameters; so does this double.
-                missing = set(re.findall(r"\$(\w+)", cypher)) - set(params or {})
-                assert not missing, f"statement run without ${sorted(missing)}"
+                if "notice_id" not in params:
+                    return []
                 nid = params["notice_id"]
-                drv.runs.append(nid)
                 return [_Rec(drv.rows[nid])] if nid in drv.rows else []
         return _S()
+
+
+def _asked_about_no_notice(drv):
+    """The visibility check never ran: no notice statement, and nothing unnamed. A class read may
+    have run; it reads OntologyClass nodes after the filter, never a notice or a row."""
+    return drv.runs == [] and drv.notice_sessions == 0 and drv.unclassified == []
 
 
 class _Jena:
@@ -252,7 +287,7 @@ def test_a_component_with_no_linked_notice_is_visible_and_neo4j_is_not_asked(cal
     jena = _Jena([_comp("5530-1")], {})
     r = call("5530-1", jena=jena, driver=drv)
     assert _ids(r) == [CB + "5530-1"]
-    assert drv.sessions == 0 and drv.runs == []
+    assert _asked_about_no_notice(drv)
     # control: the same component WITH a withheld link is gone and Neo4j was asked
     r2 = call("5530-1", jena=_Jena([_comp("5530-1")], {CB + "5530-1": [NB + "PCN-D1"]}),
               driver=drv)
@@ -261,11 +296,14 @@ def test_a_component_with_no_linked_notice_is_visible_and_neo4j_is_not_asked(cal
 
 def test_a_candidate_that_is_not_sustainment_content_is_untouched(call):
     other = {"s": "http://elsewhere/PROG-1", "type": "http://elsewhere/Program"}
-    drv = _Driver({}, raises=True)  # asking Neo4j at all would 503
+    # A visibility read would 503. The class-chain read swallows the outage, so only a visibility
+    # read can turn this red.
+    drv = _Driver({}, raises=True)
     jena = _Jena([other])
     r = call("PROG-1", jena=jena, driver=drv)
     assert _ids(r) == ["http://elsewhere/PROG-1"]
-    assert drv.sessions == 0 and not any("subjectToNotice" in q for q in jena.queries)
+    assert _asked_about_no_notice(drv)
+    assert not any("subjectToNotice" in q for q in jena.queries)
 
 
 def test_a_component_iri_that_could_break_the_link_query_is_withheld(call):
@@ -283,7 +321,26 @@ def test_one_read_session_covers_every_notice_the_candidates_reach(call):
     drv = _Driver({"PCN-D1": _drop_row("PCN-D1"), "PCN-D2": _drop_row("PCN-D2")})
     r = call("5530-1", jena=_Jena([_comp("5530-1")], links), driver=drv, user_email=OTHER)
     assert _ids(r) == []
-    assert drv.sessions == 1 and sorted(drv.runs) == ["PCN-D1", "PCN-D2"]
+    assert drv.notice_sessions == 1 and sorted(drv.runs) == ["PCN-D1", "PCN-D2"]
+
+
+def test_the_double_tells_a_class_read_from_a_notice_read(eo):
+    """The instrument's positive control. The "not asked" arms are only as good as the sort, so
+    sort the engine's REAL statements: the class-chain read is a class read, the visibility read
+    is a notice read and opens a notice session, and a statement naming neither is unclassified."""
+    from agent_fleet.ontology_service import notice_parts as np_mod
+    drv = _Driver({})
+    with drv.session() as s:
+        assert s.run(eo._CLASS_CHAIN_CYPHER, uris=["http://x#C"]) == []
+    assert drv.class_reads == [eo._CLASS_CHAIN_CYPHER] and _asked_about_no_notice(drv)
+    with drv.session(default_access_mode="READ") as s:
+        s.run(np_mod.NOTICE_PARTS_CYPHER, {"notice_id": "PCN-D1", "offset": 0, "limit": 1})
+    assert drv.runs == ["PCN-D1"] and drv.notice_sessions == 1
+    assert not _asked_about_no_notice(drv)
+    stray = _Driver({})
+    with stray.session() as s:
+        s.run("MATCH (n:Document) RETURN n LIMIT 1")
+    assert stray.unclassified and not _asked_about_no_notice(stray)
 
 
 # -- a lookup failure is a 503, never an unfiltered list ---------------------------------------
