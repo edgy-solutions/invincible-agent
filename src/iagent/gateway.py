@@ -3807,6 +3807,13 @@ def _promotion_stores(acted_by: str):
     )
 
 
+# Separation of duties (architect ruling 2026-10-21): the person who chose a case's disposition
+# cannot approve it as supervisor on the same case. Maps a task kind to the case state that the
+# chooser's decision moved the case INTO; the chooser is the `by` of the last non-system
+# transition into that state.
+_SEPARATED_REVIEW_KINDS = {"maint_supervisor_approval": "maint_supervisor_review"}
+
+
 @app.post("/human_tasks/{task_id}/act")
 async def act_on_human_task(
     task_id: str,
@@ -3873,6 +3880,27 @@ async def act_on_human_task(
     allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, actor))
     if not allowed:
         raise HTTPException(status_code=403, detail={"error": "not_authorized_to_act", "audience": audience})
+
+    # SAME-ACTOR (ruling 2026-10-21): after the audience gate, before any write, resume or
+    # delegated branch. Compared on `actor` (the principal), never the authenticated caller, so a
+    # delegate acting for the chooser is refused too. Approve only; a reject is not refused.
+    # Fail closed on an unreachable runner; no case / no chooser transition proceeds as before.
+    _review_state = _SEPARATED_REVIEW_KINDS.get(match.get("kind"))
+    if _review_state and req.decision == "approved" and match.get("case_id"):
+        _case_key = str(match["case_id"]).split(_CASE_INSTANCE_SEP)[0]
+        try:
+            _case = await _fetch_case(_case_key)
+        except Exception as exc:  # noqa: BLE001 -- connect errors, timeouts
+            raise HTTPException(status_code=503, detail={"error": "runner_unavailable"}) from exc
+        _chooser = None
+        for _t in (_case or {}).get("transitions") or []:
+            if _t.get("to") == _review_state and _t.get("by") and _t.get("by") != "system":
+                _chooser = _t["by"]
+        if _chooser is not None and _chooser == actor:
+            raise HTTPException(status_code=409, detail={
+                "error": "same_actor", "case_id": match["case_id"],
+                "message": "the person who chose this case's disposition cannot approve it "
+                           "as supervisor"})
 
     if via is not None:
         # R-089: a delegated act is supported ONLY for a workflow-backed resume whose kind is
