@@ -498,3 +498,73 @@ def test_a_failing_task_check_answers_by_class_with_one_deny_audit_line(
         lines = [r for r in caplog.records if r.name == "iagent.audit.ingest_access"]
         assert len(lines) == 1, (path, [r.getMessage() for r in lines])
         assert "decision=deny" in lines[0].getMessage() and lines[0].levelno == logging.WARNING
+
+
+# ── 205b: /source at awaiting_kind ───────────────────────────────────────────────────────────
+# Ruling: "/source serves the PDF while a row is at awaiting_kind, to the dropper and to anyone who
+# can pick the kind. No review task exists yet, so this is the same 'may vet' rule that applies once
+# one does." /source and POST /leaf share one gate (`_ingest_review_access`); the join is asserted.
+SVC = "svc:openddil"
+
+
+def _kind_row(**over):
+    base = dict(status="awaiting_kind", extraction_ref=None, content_kind=None, kind="pdf")
+    base.update(over)
+    return _row(**base)
+
+
+def _post_leaf(path_id=ID):
+    with TestClient(gateway.app, raise_server_exceptions=False) as c:
+        return c.post(f"/ingest/{path_id}/leaf", json={"leaf": "pdn"})
+
+
+# (label, caller, row overrides, expected /source status)
+_KIND_CALLERS = [
+    ("dropper", DROPPER, {}, 200),
+    ("on_behalf_of", "carol@example.com", {"on_behalf_of": "carol@example.com"}, 200),
+    ("seeding_delegate", SVC, {"submitted_by": SVC}, 200),
+    ("stranger_no_task", STRANGER, {}, 403),
+]
+
+
+@pytest.mark.parametrize("label,who,over,code", _KIND_CALLERS, ids=[c[0] for c in _KIND_CALLERS])
+def test_source_at_awaiting_kind_by_caller(monkeypatch, s3, label, who, over, code):
+    monkeypatch.setenv("DELEGATE_ON_BEHALF_OF", json.dumps({SVC: ["carol@example.com"]}))
+    _gate(monkeypatch, row=_kind_row(**over), task=None, holders=())
+    _as(monkeypatch, who)
+    r = _get(f"/ingest/{ID}/source")
+    assert r.status_code == code, (label, r.status_code, r.text[:200])
+    if code == 200:
+        assert r.content == PDF_BYTES, label
+        assert r.headers["content-type"] == "application/pdf", label
+    else:
+        _refused(r, 403, "not_entitled", label)
+
+
+@pytest.mark.parametrize("label,who,over,code", _KIND_CALLERS, ids=[c[0] for c in _KIND_CALLERS])
+def test_source_and_leaf_agree_at_awaiting_kind(monkeypatch, s3, label, who, over, code):
+    """THE JOIN: one gate, two routes. A refusal at /source is the same refusal at /leaf; an
+    admission at /source is never a gate refusal (403/404) at /leaf."""
+    monkeypatch.setenv("DELEGATE_ON_BEHALF_OF", json.dumps({SVC: ["carol@example.com"]}))
+    _gate(monkeypatch, row=_kind_row(**over), task=None, holders=())
+    _as(monkeypatch, who)
+    src = _get(f"/ingest/{ID}/source")
+    leaf = _post_leaf()
+    assert src.status_code == code, (label, src.status_code)
+    if code == 403:
+        assert leaf.status_code == src.status_code, (label, leaf.status_code, leaf.text[:200])
+        assert leaf.json()["detail"]["error"] == "not_entitled", label
+    else:
+        assert leaf.status_code not in (403, 404), (label, leaf.status_code, leaf.text[:200])
+
+
+def test_source_refusal_at_awaiting_kind_is_for_lack_of_the_task_not_the_fixture(monkeypatch, s3):
+    """Positive control for the stranger arm: the same caller, the same fixtures, at `review` with
+    an OPEN task whose audience the caller passes, is served."""
+    _gate(monkeypatch, row=_kind_row(), task=None, holders={STRANGER})
+    _as(monkeypatch, STRANGER)
+    _refused(_get(f"/ingest/{ID}/source"), 403, "not_entitled", "awaiting_kind, no task")
+    _gate(monkeypatch, row=_row(status="review"), task=OPEN, holders={STRANGER})
+    r = _get(f"/ingest/{ID}/source")
+    assert r.status_code == 200, (r.status_code, r.text[:200])
+    assert r.content == PDF_BYTES
