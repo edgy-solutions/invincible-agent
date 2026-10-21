@@ -698,10 +698,15 @@ async def get_mesh_config(current_user: User = Depends(get_current_user)):
 # — the caller is on the legacy persona-in-JWT posture."
 @app.get("/me/entitlements")
 async def get_me_entitlements(current_user: User = Depends(get_current_user)):
-    """Return the current user's (persona, domain) entitlement matrix."""
+    """Return the current user's (persona, domain) entitlement matrix.
+
+    `authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop
+    echoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it
+    as `on_behalf_of` is refused `not_a_delegate` (2026-10-21)."""
     ent = current_user.entitlements
     return {
         "user_id": current_user.id,
+        "authz_id": current_user.authz_id,
         "email": current_user.email,
         "cells": [
             {"persona": c.persona, "domain": c.domain} for c in ent.cells
