@@ -10,6 +10,7 @@ pcn#Component, assessDeferralRisk on the MaintenanceWorkOrderRecord class.
 
 THE RULING (architect, 2026-10-20): "the resolver prefers input-declared classes; seal with saf's two
 phrasings." Built to fire ONLY when the served set is non-empty and no recalled class is served.
+SUPERSEDED IN PART 2026-10-20: when the input-declared pool is empty too, the pool is now EMPTY (tests/routing/test_a_class_enters_the_pool_only_as_a_verbs_input.py).
 
 THE LIVE NUMBERS (predicate_hybrid_search, SUSTAINMENT, as bob): Q4 whatFailedOnThisPart 0.923/0.910,
 failureTrendForThisPlatformByMonth 0.834 (input Platform), rendersAs 0.523; Q3 assessDeferralRisk
@@ -184,7 +185,7 @@ def _removed(resp):
     return {e["uri"]: (e["disposal"], e["reason"]) for e in resp.excluded}
 
 
-RETAINED = {("retained", "no_verb_in_scope_but_pool_would_empty")}
+REMOVED = {("removed", "no_verb_in_scope")}
 
 
 # 1
@@ -226,11 +227,11 @@ async def test_control_a_served_recalled_class_means_no_verb_search(rig):
 
 # 5
 @pytest.mark.asyncio
-async def test_control_off_topic_keeps_the_dead_pool_the_floor_holds(rig):
+async def test_control_off_topic_the_floor_holds_and_the_pool_empties(rig):
     rig.rows = NAPOLEON_ROWS
     resp = await rig.run(NAPOLEON)
-    assert set(rig.baml.offered) == set(Q4_POOL)
-    assert set(_removed(resp).values()) == RETAINED
+    assert rig.baml.offered is None
+    assert set(_removed(resp).values()) == REMOVED
     assert resp.provenance["input_declared"]["reason"] == "no_verb_above_floor"
 
 
@@ -254,13 +255,13 @@ async def test_visibility_gate_holds_for_an_injected_class(rig, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_visibility_denying_both_inputs_keeps_todays_retained_pool(rig, monkeypatch):
+async def test_visibility_denying_both_inputs_empties_the_pool(rig, monkeypatch):
     eo = rig.eo
     monkeypatch.setattr(eo, "ENABLE_AGENTIC_AUTH", True)
     monkeypatch.setattr(eo, "_can_view_class", lambda email, uri: uri not in (SCI, COMPONENT))
     resp = await rig.run(Q4)
-    assert set(rig.baml.offered) == set(Q4_POOL)
-    assert set(_removed(resp).values()) == RETAINED
+    assert rig.baml.offered is None
+    assert set(_removed(resp).values()) == REMOVED
 
 
 # 8
@@ -277,11 +278,11 @@ async def test_served_is_asked_without_referents_and_an_unserved_input_is_not_of
 # 9
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exc", [HTTPException(status_code=503, detail="down"), RuntimeError("boom")])
-async def test_verb_recall_failure_degrades_to_todays_retained_pool(rig, exc):
+async def test_verb_recall_failure_does_not_admit_the_dead_ends(rig, exc):
     rig.verb_exc = exc
     resp = await rig.run(Q4)
-    assert set(rig.baml.offered) == set(Q4_POOL)
-    assert set(_removed(resp).values()) == RETAINED
+    assert rig.baml.offered is None
+    assert set(_removed(resp).values()) == REMOVED
     assert resp.provenance["input_declared"]["reason"] == "verb_recall_failed"
 
 

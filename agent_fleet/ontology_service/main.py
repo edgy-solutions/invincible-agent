@@ -3091,6 +3091,24 @@ async def _read_class_chains(uris) -> tuple[dict[str, list[str]], str]:
     return chains, "read"
 
 
+def _unadmitted_pool_msg(candidates: list[dict]) -> str:
+    """An abstention for a recall whose every class is a dead end for this caller.
+
+    Same voice as _unserved_subject_msg: say what WAS found, then what cannot be done
+    about it. Used when the admission rule empties the pool (Step 1.56), where the
+    recall was not empty, so "No ontology classes found" would be a wrong account.
+    """
+    names = []
+    for c in candidates[:3]:
+        uri = str(c.get("uri") or "")
+        names.append(str(c.get("label") or "") or uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1] or uri)
+    return (
+        f"I found what your question is about — {', '.join(names)} — but nothing in "
+        f"your current scope answers questions about {'it' if len(names) == 1 else 'any of them'}. "
+        f"Name what you want to know, or ask about the larger thing it belongs to."
+    )
+
+
 def _unserved_subject_msg(identifier: str, resolved_uri: str) -> str:
     """An abstention that KEEPS the resolution it just made.
 
@@ -3648,11 +3666,22 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # DEGRADES OPEN, DELIBERATELY, AND THE ORDER OF THESE TWO CHECKS IS THE SAFETY. An empty
     # `served` means the lookup failed or the graph is cold, and filtering against it would
     # empty the pool and take routing down for every caller — a far worse outcome than the
-    # dead end this gate exists to remove. Likewise a filter that would remove EVERYTHING is
-    # refused: that is the signature of a served-set computed against the wrong domains, and
-    # answering from a dead end beats answering nothing while the cause is found.
+    # dead end this gate exists to remove.
+    #
+    # SUPERSEDED 2026-10-20: the sentence that used to follow ("Likewise a filter that would
+    # remove EVERYTHING is refused ... answering from a dead end beats answering nothing")
+    # is replaced by the admission rule. Architect ruling 2026-10-20: "a class enters the
+    # candidate pool only if some verb declares it as input." Two measurements retired the
+    # old sentence. On revision 201, for caller bob / SAFETY_ENGINEER / [SUSTAINMENT], safety
+    # Q4 and Q3 each recalled 10 classes, none served; the retained dead ends cost a
+    # ClassifyDomainIntent call (measured p100 52.6 s on revision 199) and the router fell
+    # to the generalist anyway. On the work cluster, 2026-09-08, the same stand-down let the
+    # model answer IOF SellingBusinessProcess at 0.62: a real class, a plausible confidence,
+    # the wrong ontology. An empty pool reaches the generalist directly, with a reason.
     _gate_excluded: list[dict] = []
     _input_declared_trace: dict | None = None
+    _admission_trace: dict | None = None
+    _unadmitted: list[dict] = []
     if candidates:
         # include_referents=True IS THE GATE'S QUESTION AND IS PASSED EXPLICITLY, not defaulted.
         # "May the resolver OFFER this class?" — a declared mesh:ResolvableReferent is groundable
@@ -3684,10 +3713,11 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 print("[Engine O] productive-option gate would have emptied the pool "
                       f"({len(candidates)} candidate(s), 0 served) — NOT filtering. "
                       "Suspect a served-set computed against the wrong domains.")
-                # A GATE THAT DEGRADES OPEN SILENTLY IS A GUARD THAT CANNOT FIRE. The branch
-                # above records what it REMOVES; this branch removes nothing, but a reader of
-                # the artifact still needs to see that the gate stood down rather than never
-                # having run — so every candidate it declined to filter is recorded too.
+                # A GATE THAT HOLDS SILENTLY IS A GUARD THAT CANNOT FIRE. The branch above
+                # records what it REMOVES; the else-branch below used to retain every
+                # candidate and record it as "retained". What it retained is now REMOVED and
+                # recorded as such (admission rule, 2026-10-20), so the artifact shows the
+                # gate acted rather than stood down.
                 _injected, _input_declared_trace = await _input_declared_pool(
                     request, request.domains or ([request.domain] if request.domain else []))
                 if _injected:
@@ -3706,16 +3736,32 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                     ]
                     candidates = _injected
                 else:
+                    # THE POOL IS EMPTY WHEN NO CLASS IS SERVED AND NO VERB DECLARES AN INPUT.
+                    # This covers every reason _injected is empty, verb_recall_failed
+                    # included: the recalled classes are KNOWN not to be served, and a failed
+                    # verb search only blinds us to extra classes, it does not make these
+                    # admissible. Measured on revision 201: retained, they went to the
+                    # generalist anyway after a model call.
+                    _unadmitted = list(candidates)
+                    _admission_trace = {
+                        "rule": "verb_declared_input",
+                        "recalled": len(_unadmitted),
+                        "admitted": 0,
+                    }
                     _gate_excluded = [
                         {
                             "kind": "class",
                             "uri": str(c.get("uri") or ""),
                             "gate": "productive_option",
-                            "disposal": "retained",
-                            "reason": "no_verb_in_scope_but_pool_would_empty",
+                            "disposal": "removed",
+                            "reason": "no_verb_in_scope",
                         }
-                        for c in candidates
+                        for c in _unadmitted
                     ]
+                    candidates = []
+                    print(f"[Engine O] admission rule: 0 of {len(_unadmitted)} recalled class(es) "
+                          "is served and no verb in scope declares an input for this question "
+                          "— pool EMPTY")
 
     # Step 1.6: Class-recall failed (both Weaviate hybrid and SPARQL
     # fallback returned zero candidates). Before declaring UNKNOWN,
@@ -3799,8 +3845,11 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             # cannot answer, and a reader of that provenance would have been told the recall
             # was empty when it was not — a precise, confident, wrong account of why the
             # phone book was asked.
+            # AN EMPTIED POOL IS NOT AN EMPTY RECALL. When the admission rule emptied the
+            # pool, recall found classes and none was admissible; say so.
             instance_provenance["preemption_path"] = (
-                "class_recall_empty_fallback" if not candidates
+                "class_recall_empty_fallback"
+                if not candidates and _admission_trace is None
                 else "class_recall_unanswerable_fallback"
             )
             if instance_subject is not None:
@@ -3850,6 +3899,17 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         # All entity_refs returned no candidates — fall through.
 
     # Step 1.7: Ultimate Fallback (Prevents Restate infinite loops)
+    if not candidates and _admission_trace is not None:
+        # THE ADMISSION RULE EMPTIED THE POOL: abstain with the reason and the record, not
+        # the "nothing found" message of a true empty recall. no_compatible_verbs is already
+        # in the supervisor's closed set of Engine O abstention reasons.
+        return SemanticResolutionResponse(
+            resolved_uri="UNKNOWN", confidence_score=0.0,
+            reasoning=_unadmitted_pool_msg(_unadmitted),
+            provenance={"abstention_reason": "no_compatible_verbs",
+                        "admission": _admission_trace,
+                        **({"input_declared": _input_declared_trace} if _input_declared_trace is not None else {})},
+            candidates=[], excluded=_gate_excluded, mode=retrieval_mode)
     if not candidates:
         return SemanticResolutionResponse(
             resolved_uri="UNKNOWN",
