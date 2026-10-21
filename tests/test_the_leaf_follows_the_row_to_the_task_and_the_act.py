@@ -247,6 +247,7 @@ def test_a_leaf_that_moves_the_audience_is_409_and_writes_nothing(task):
     with pytest.raises(fastapi.HTTPException) as e:
         _file("pdn")
     assert e.value.status_code == 409 and e.value.detail["error"] == "leaf_moves_audience"
+    assert str(e.value.detail.get("message") or "").strip()
     assert task.refreshed == [] and task.registered == []
 
 
@@ -264,6 +265,7 @@ def test_a_task_whose_leaf_is_stale_is_refused_and_the_act_never_runs(world, mon
     monkeypatch.setattr(ist, "get_row", lambda i: _row(content_kind="pdn"))
     r = _act(world)
     assert r.status_code == 409 and r.json()["detail"]["error"] == "leaf_changed", r.text
+    assert str(r.json()["detail"].get("message") or "").strip(), r.text
     assert world.act_kwargs == [] and world.ledger.records == {} and world.resolved == []
 
 
@@ -272,6 +274,7 @@ def test_a_row_with_an_extraction_in_flight_is_refused(world, monkeypatch, st):
     monkeypatch.setattr(ist, "get_row", lambda i: _row(status=st))
     r = _act(world)
     assert r.status_code == 409 and r.json()["detail"]["error"] == "extraction_in_flight", r.text
+    assert str(r.json()["detail"].get("message") or "").strip(), r.text
     assert world.act_kwargs == [] and world.ledger.records == {}
 
 
@@ -301,6 +304,7 @@ def test_an_unreadable_row_fails_closed_with_503(world, monkeypatch):
     monkeypatch.setattr(ist, "get_row", boom)
     r = _act(world)
     assert r.status_code == 503 and r.json()["detail"]["error"] == "ingest_row_unreadable", r.text
+    assert str(r.json()["detail"].get("message") or "").strip(), r.text
     assert world.act_kwargs == []
 
 

@@ -4062,7 +4062,9 @@ async def act_on_human_task(
                 logger.warning("act %s: the ingest row could not be read (%s: %s)", task_id,
                                type(exc).__name__, exc)
                 raise HTTPException(status_code=503, detail={
-                    "error": "ingest_row_unreadable", "task_id": task_id})
+                    "error": "ingest_row_unreadable", "task_id": task_id,
+                    "message": "the document's status could not be read, so nothing was decided; "
+                               "try again"})
         if _leaf_row is not None:
             _row_ck = str(_leaf_row.get("content_kind") or "").strip().lower()
             _task_ck = str(_payload.get("content_kind") or "").strip().lower()
@@ -12926,7 +12928,8 @@ async def ingest_leaf_route(
     leaf = str(req.leaf or "").strip().lower()
     if leaf not in ingest_status.LEAVES:
         raise HTTPException(status_code=422, detail={
-            "error": "unknown_leaf", "allowed": list(ingest_status.LEAVES)})
+            "error": "unknown_leaf", "allowed": list(ingest_status.LEAVES),
+            "message": "the kind must be one of: " + ", ".join(ingest_status.LEAVES)})
 
     row, _reason = await _ingest_review_access(ingest_id, current_user, route)
     caller = (current_user.authz_id or "").strip()
@@ -12944,7 +12947,9 @@ async def ingest_leaf_route(
 
     if not _leaf_capable(row):
         _refuse(409, {"error": "no_leaf_for_kind", "stage": stage,
-                      "content_kind": row.get("content_kind")}, "no_leaf_for_kind")
+                      "content_kind": row.get("content_kind"),
+                      "message": f"a {row.get('content_kind')} document has no kind to choose"},
+                "no_leaf_for_kind")
     current_leaf, _src, _cb = _row_leaf(row)
     if current_leaf == leaf:
         _audit_ingest_access(route, ingest_id, caller, "allow", "same_leaf")
@@ -12957,8 +12962,9 @@ async def ingest_leaf_route(
     async def _moved() -> dict:
         # The guarded write matched nothing: the row moved under us. Say so, with where it is now.
         now = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
-        _refuse(409, {"error": "leaf_not_changeable",
-                      "stage": (now or {}).get("status")}, "row_moved")
+        _refuse(409, {"error": "leaf_not_changeable", "stage": (now or {}).get("status"),
+                      "message": "the document moved on while the kind was being set; "
+                                 "reload it and try again"}, "row_moved")
 
     if stage in (ingest_status.RECEIVED, ingest_status.EXTRACTING, ingest_status.FAILED):
         written = await run_in_threadpool(lambda: ingest_status.set_leaf(
@@ -12981,7 +12987,9 @@ async def ingest_leaf_route(
                              else "leaf_corrected_reextract")
         return await _body()
 
-    _refuse(409, {"error": "leaf_not_changeable", "stage": stage}, "leaf_not_changeable")
+    _refuse(409, {"error": "leaf_not_changeable", "stage": stage,
+                  "message": f"the kind can change only until promotion; this document is {stage}"},
+            "leaf_not_changeable")
 
 
 # the case runner's own transport identity (policy/users.yaml: `svc:case-runner`, restate-analyst's

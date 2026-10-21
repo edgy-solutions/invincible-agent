@@ -518,6 +518,15 @@ def test_a_correction_at_failed_is_in_place_and_the_stage_stays_failed(db):
     _no_task_touched(db)
 
 
+
+def _detail(r) -> dict:
+    """The refusal body less its `message`, which must be there and non-empty: cortex shows it
+    verbatim, so a code without one reaches the dropper as a raw code."""
+    d = dict(r.json()["detail"])
+    msg = d.pop("message", None)
+    assert isinstance(msg, str) and msg.strip(), f"refusal without a message: {r.text}"
+    return d
+
 @pytest.mark.parametrize("stage", ["awaiting_origin", "review", "awaiting_kind"])
 def test_a_row_that_moved_under_the_correction_is_409_with_its_current_stage(db, monkeypatch, stage):
     db.add(status=stage, content_kind="pcn", leaf_source="title")
@@ -530,7 +539,7 @@ def test_a_row_that_moved_under_the_correction_is_409_with_its_current_stage(db,
     monkeypatch.setattr(ist, "set_leaf", _moved_first)
     r = _leaf(_as(ALICE), "pdn")
     assert r.status_code == 409, r.text
-    assert r.json()["detail"] == {"error": "leaf_not_changeable", "stage": "promoted"}
+    assert _detail(r) == {"error": "leaf_not_changeable", "stage": "promoted"}
     assert db.rows[ID]["content_kind"] == "pcn" and db.rows[ID]["leaf_source"] == "title"
     _no_task_touched(db)
 
@@ -542,7 +551,7 @@ def test_a_correction_after_the_review_is_not_changeable(db, stage):
     before = db.snap()
     r = _leaf(_as(ALICE), "pdn")
     assert r.status_code == 409, r.text
-    assert r.json()["detail"] == {"error": "leaf_not_changeable", "stage": stage}
+    assert _detail(r) == {"error": "leaf_not_changeable", "stage": stage}
     assert db.snap() == before
     _no_task_touched(db)
 
@@ -552,8 +561,8 @@ def test_a_cad_row_has_no_leaf_to_correct(db):
     before = db.snap()
     r = _leaf(_as(ALICE), "pcn")
     assert r.status_code == 409, r.text
-    assert r.json()["detail"] == {"error": "no_leaf_for_kind", "stage": "extracting",
-                                  "content_kind": "cad"}
+    assert _detail(r) == {"error": "no_leaf_for_kind", "stage": "extracting",
+                          "content_kind": "cad"}
     assert db.snap() == before
 
 
@@ -561,7 +570,7 @@ def test_an_unknown_leaf_is_422_and_so_is_an_extra_key(db):
     db.add(status="extracting")
     r = _leaf(_as(ALICE), "ecn")
     assert r.status_code == 422
-    assert r.json()["detail"] == {"error": "unknown_leaf", "allowed": ["pcn", "pdn"]}
+    assert _detail(r) == {"error": "unknown_leaf", "allowed": ["pcn", "pdn"]}
     assert _as(ALICE).post(f"/ingest/{ID}/leaf", json={"leaf": "pcn", "x": 1}).status_code == 422
     assert db.rows[ID]["leaf_source"] is None
 
