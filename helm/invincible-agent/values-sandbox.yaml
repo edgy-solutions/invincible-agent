@@ -956,7 +956,14 @@ cortexUi:
     # the FULL tag resolves to this digest; the abbreviated tag and the full sha with its last hex
     # altered both answer 404. 8eed1c5 descends from 7a7666d, and Dockerfile, docker-entrypoint.sh,
     # nginx.conf and the src's import.meta.env reads are unchanged between them, so no env moves.
-    digest: "sha256:c58b7dfe287206bb01748b3bf4916a63e2ace17e83cf4596f2c1aa714ab075ed"
+    # 2026-10-21, pinned for 203 (architect, "Leaf, final shape": cortex "takes the names in 203"):
+    # cortex-ui 25f86b8 (reads leaf_source declared/title/corrected on both bodies, corrected_by,
+    # leaf_candidates as [{leaf, score, evidence_ref}]; the review card's kind line is the chip)
+    # -> 8324b585. It must not roll with a 202 BFF: the old names read as unknown there. Measured
+    # before pinning: the FULL tag resolves to this digest; the abbreviated tag and the full sha
+    # with its last hex altered both answer 404. 25f86b8 descends from 8eed1c5, and Dockerfile,
+    # docker-entrypoint.sh, nginx.conf and the src's import.meta.env reads are unchanged.
+    digest: "sha256:8324b585725455e0771d5c0170d63c76285d9abb21475729dd235c38c7cec6e2"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
