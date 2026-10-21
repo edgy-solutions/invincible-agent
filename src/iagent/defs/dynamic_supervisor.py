@@ -277,6 +277,17 @@ _RESOLVE_LOCK_PATH = os.getenv("RESOLVE_LOCK_PATH", "/tmp/iagent-resolve.lock")
 #: whole answer (Contract B sends an ungrounded subject to the generalist).
 _RESOLVE_LOCK_WAIT_S = float(os.getenv("RESOLVE_LOCK_WAIT_S", "150"))
 
+#: THE SUPERVISOR'S /resolve BUDGET, IN SECONDS. INTERIM, measured against the model's p100
+#: rather than guessed. MEASURED 2026-10-20 (sandbox revision 199, Engine O log 03:30-04:16Z):
+#: 55 completed `ClassifyDomainIntent` calls, max 52,553 ms; the 30 s budget missed on two runs
+#: whose calls took 33.6 s and 34.5 s. Architect ruling 2026-10-20: "Supervisor limit 60s
+#: interim, measured against the model's p100, not guessed."
+RESOLVE_SUBJECT_TIMEOUT_S = 60
+
+#: The reasoning prefix `_resolve_subject` writes when /resolve could not be reached. The
+#: generalist fallback reads it to tell "unreachable" from "Engine O answered UNKNOWN".
+_RESOLVE_UNREACHABLE_PREFIX = "/resolve unreachable: "
+
 
 @contextmanager
 def _resolve_serialized(context):
@@ -449,7 +460,11 @@ def _resolve_subject(
                 # eight seconds of real margin ONCE SERIALIZED. Unserialized at N=2 the median
                 # was 26.1s -- a 2.2s margin -- and at N=4, 9 of 12 draws exceeded it. The
                 # budget is not raised, because serializing is what makes 30s honest.
-                timeout=30,
+                #
+                # RAISED TO 60 s 2026-10-20 on the p100 measurement: 55 completed
+                # ClassifyDomainIntent calls, max 52,553 ms, and the 30 s budget missed on
+                # two runs (33.6 s, 34.5 s). Interim, per the architect ruling.
+                timeout=RESOLVE_SUBJECT_TIMEOUT_S,
             )
         resp.raise_for_status()
         data = resp.json()
@@ -464,7 +479,9 @@ def _resolve_subject(
         # is NOT a structural instance-not-found), instance_label="" (no
         # instance resolved). Keeps arity uniform with the success path —
         # the caller unpacks 7.
-        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}", "", [], None, "", [])
+        return (
+            "UNKNOWN", 0.0, f"{_RESOLVE_UNREACHABLE_PREFIX}{exc}", "", [], None, "", [],
+        )
 
     provenance = data.get("provenance") or {}
     return (
@@ -1853,9 +1870,27 @@ def _call_engine_a_fallback(
     #
     # "UNKNOWN" IS NOT A RESOLUTION AND MUST NOT TRAVEL. This fallback also fires when the
     # subject never grounded (Contract B: unknown subject, zero verbs). Sending the literal
-    # would make the guard trust a non-answer; absent is the honest value, and Engine A
-    # re-resolving from the phrase is correct in exactly that case.
+    # would make the guard trust a non-answer; absent is the honest value.
+    #
+    # THE OUTCOME TRAVELS INSTEAD (architect ruling 2026-10-20: "Engine A never re-resolves a
+    # subject the supervisor already resolved -- the resolution is passed in, not re-derived.").
+    # Engine A re-resolving from the phrase sent the same prompt again and, on the measured
+    # runs, cost 4 and 8 model calls. So whenever the supervisor ran /resolve for this subtask,
+    # `resolution_outcome` is sent -- "resolved", "unknown" or "unreachable" -- and Engine A
+    # re-derives nothing. Absent only when the supervisor never resolved.
     _resolved_subject = str((telemetry or {}).get("subject_uri") or "")
+    if "subject_uri" in (telemetry or {}):
+        if _resolved_subject and _resolved_subject != "UNKNOWN":
+            _resolution_outcome = "resolved"
+        elif _resolved_subject == "UNKNOWN" and str(
+            (telemetry or {}).get("subject_reasoning") or ""
+        ).startswith(_RESOLVE_UNREACHABLE_PREFIX):
+            _resolution_outcome = "unreachable"
+        else:
+            _resolution_outcome = "unknown"
+        payload["resolution_outcome"] = _resolution_outcome
+    else:
+        _resolution_outcome = None
     if _resolved_subject and _resolved_subject != "UNKNOWN":
         payload["resolved_subject_uri"] = _resolved_subject
         # THE THREE MOVE TOGETHER. An instance id without its subject is an identifier with
@@ -1873,14 +1908,20 @@ def _call_engine_a_fallback(
             (telemetry or {}).get("subject_instance_id") or "",
         )
     else:
-        # AUDIBLE, because this is the branch where Engine A re-resolves and the domain
-        # defaulting bites. A reader seeing a maintenance-class answer to a planning
-        # question needs to know which of the two paths produced it.
-        context.log.info(
-            "generalist fallback carries NO resolution (subject_uri=%r) — Engine A will "
-            "re-resolve from the phrase",
-            _resolved_subject or None,
-        )
+        # AUDIBLE, because a reader seeing a maintenance-class answer to a planning
+        # question needs to know which path produced it.
+        if _resolution_outcome is not None:
+            context.log.info(
+                "generalist fallback carries resolution_outcome=%s (subject_uri=%r) "
+                "— Engine A will NOT re-resolve",
+                _resolution_outcome,
+                _resolved_subject or None,
+            )
+        else:
+            context.log.info(
+                "generalist fallback carries NO resolution (the supervisor never "
+                "resolved) — Engine A will re-resolve from the phrase",
+            )
 
     # Forward the request's trace + session ids so Engine A's /analyze proxy adopts them
     # (X-Trace-Id -> the analyst trace's seed; X-Session-Id -> the Langfuse session). The

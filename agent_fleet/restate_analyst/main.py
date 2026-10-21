@@ -564,6 +564,44 @@ async def _TEMPORARY_urn_resolution_belongs_on_engine_d(
     return resolve_urn_outcome(asset_label, candidates)
 
 
+#: The outcomes the supervisor's generalist-fallback hop can send as ``resolution_outcome``.
+#: Mirrors what ``_call_engine_a_fallback`` emits; a seal reads both sides so they cannot drift.
+SUPERVISOR_RESOLUTION_OUTCOMES = frozenset({"resolved", "unknown", "unreachable"})
+
+
+def _supplied_resolution(request: dict) -> dict | None:
+    """The supervisor's resolution, as Engine A will use it -- or None when there is none and
+    the legacy re-resolve is legal.
+
+    Architect ruling 2026-10-20: "Engine A never re-resolves a subject the supervisor already
+    resolved -- the resolution is passed in, not re-derived." The supervisor's OUTCOME counts as
+    a resolution even when it is UNKNOWN or unreachable: re-deriving it re-sent the same prompt
+    (measured 2026-10-20: 4 and 8 re-resolves of one prompt). An unrecognized outcome still
+    suppresses the re-resolve (fail closed: the supervisor ran it).
+    """
+    supplied_subject_uri = str(request.get("resolved_subject_uri") or "").strip()
+    if supplied_subject_uri:
+        return {
+            "resolved_uri": supplied_subject_uri,
+            "confidence_score": 0.9,  # Trust the supervisor's resolution.
+            "instance_id": str(request.get("resolved_instance_id") or "").strip(),
+            "from_supervisor": True,
+            "resolution_outcome": "resolved",
+        }
+    outcome = str(request.get("resolution_outcome") or "").strip()
+    if outcome:
+        return {
+            "resolved_uri": "UNKNOWN",
+            "confidence_score": 0.0,
+            "instance_id": "",
+            "from_supervisor": True,
+            "resolution_outcome": (
+                outcome if outcome in SUPERVISOR_RESOLUTION_OUTCOMES else "unknown"
+            ),
+        }
+    return None
+
+
 def _resolve_ontology(
     task_description: str,
     user_email: str = "",
@@ -591,6 +629,10 @@ def _resolve_ontology(
     for the person who holds it. A blank ``user_email`` now raises a 422
     ``no_person`` TerminalError BEFORE any call to Engine O: terminal, because a
     replay cannot conjure a person the request never named.
+
+    A TIMED-OUT CALL REFUSES, IT IS NOT RETRIED. A read timeout raises a terminal 504
+    ``resolution_timeout`` (see the comment at the post): inside ``ctx.run`` an ordinary
+    exception is retried by Restate, and each retry is another full model call.
     """
     if not str(user_email or "").strip():
         raise restate.TerminalError(
@@ -627,18 +669,34 @@ def _resolve_ontology(
     if _domains:
         payload["domains"] = _domains
         payload["domain"] = _domains[0]
-    resp = requests.post(
-        ONTOLOGY_RESOLVE_URL,
-        json=payload,
-        timeout=ONTOLOGY_TIMEOUT,
-        # svc:engine-a — TRANSPORT identity, named HERE. The enforcement SUBJECT stays
-        # `user_email` in the payload above: this is the call whose dropped identity
-        # [[identity-reaches-enforcement-point]] was written for, and the credential must not
-        # be mistaken for the fix to that. Two identities, one request, on purpose.
-        headers=outbound_auth_headers(
-            client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
-        ),
-    )
+    # ── A TIMED-OUT MODEL CALL IS NEVER RETRIED AUTOMATICALLY ───────────────────────────
+    #
+    # Architect ruling 2026-10-20: "a Restate retry on a timed-out model call is never
+    # automatic -- it refuses with `resolution_timeout` and the supervisor decides." MEASURED
+    # 2026-10-20 (revision 199): this call runs inside `ctx.run("resolve_ontology")`, where an
+    # ordinary exception is retried by Restate on every read timeout; one prompt was
+    # re-resolved 4 and 8 times, each a full model call that Engine O completed. A ReadTimeout
+    # therefore becomes a TERMINAL 504. ConnectionError and HTTPError stay retryable.
+    try:
+        resp = requests.post(
+            ONTOLOGY_RESOLVE_URL,
+            json=payload,
+            timeout=ONTOLOGY_TIMEOUT,
+            # svc:engine-a — TRANSPORT identity, named HERE. The enforcement SUBJECT stays
+            # `user_email` in the payload above: this is the call whose dropped identity
+            # [[identity-reaches-enforcement-point]] was written for, and the credential must not
+            # be mistaken for the fix to that. Two identities, one request, on purpose.
+            headers=outbound_auth_headers(
+                client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
+            ),
+        )
+    except requests.exceptions.ReadTimeout as exc:
+        raise restate.TerminalError(
+            f"resolution_timeout: Engine O's /resolve did not answer inside "
+            f"{ONTOLOGY_TIMEOUT}s; a timed-out model call is not retried automatically -- "
+            f"the supervisor decides",
+            status_code=504,
+        ) from exc
     resp.raise_for_status()
     return resp.json()
 
@@ -707,20 +765,12 @@ async def analyze(ctx: Context, request: dict) -> dict:
     # below) can't fire, and the smolagent falls back to guessing
     # entity_type — which is the exact LLM-luck dependency the
     # 2026-06-26 demo investigation closed at the source.
-    supplied_subject_uri = (request.get("resolved_subject_uri") or "").strip()
-    supplied_instance_id = (request.get("resolved_instance_id") or "").strip()
     # ADR-0025: the caller's entitlement key (email), needed BEFORE the resolve
     # branch so the legacy re-resolve threads identity to O's /resolve gate.
     # (Also read again below at its Engine-D forwarding site; same value.)
     resolve_caller_email = request.get("user_email") or ""
-    if supplied_subject_uri:
-        semantic_ctx = {
-            "resolved_uri": supplied_subject_uri,
-            "confidence_score": 0.9,  # Trust the supervisor's resolution.
-            "instance_id": supplied_instance_id,
-            "from_supervisor": True,
-        }
-    else:
+    semantic_ctx = _supplied_resolution(request)
+    if semantic_ctx is None:
         # Legacy path: no supervisor-supplied context (older callers,
         # direct test probes, the generalist fallback launched via
         # /analyze_proxy with no routing). Re-resolve via Engine O —
