@@ -119,7 +119,8 @@ def _route(rig, sup, monkeypatch, query, pick):
     monkeypatch.setattr(sup.requests, "post", _post)
     _status, _pred, tele = sup._classify_route(
         _Ctx(), query, ["SUSTAINMENT"], routing_domain="SUSTAINMENT", user_email="bob@example.com")
-    return box["resp"], box["subject"], tele
+    # None when the supervisor never searched verbs (an UNKNOWN subject is never searched).
+    return box["resp"], box.get("subject"), tele
 
 
 def _pool(tele):
@@ -171,7 +172,13 @@ def test_control_the_pre_q7a_answer_leaves_the_verb_out_of_the_pool(rig, sup, mo
     monkeypatch.setattr(rig.eo, "_input_declared_pool", _off)
     rig.pool, rig.rows = pool, rows
     resp, subject, tele = _route(rig, sup, monkeypatch, q, pick)
-    assert subject == pick
+    # SINCE THE ADMISSION RULE (2026-10-20) the dead ends are no longer offered: with Q7(a) off
+    # the pool EMPTIES, so the model is never asked and Engine O abstains. 201 measured the
+    # dead-end `pick`; the verb is out of the pool either way, which is what this control is for.
+    assert rig.baml.offered is None
+    assert resp.resolved_uri == "UNKNOWN"
+    assert resp.provenance["abstention_reason"] == "no_compatible_verbs"
+    assert subject is None, "an UNKNOWN subject was searched for verbs"
     assert tele["fallback_reason"] == "no_compatible_verbs"
     assert verb not in _pool(tele)
     assert not any(e.get("reason") == "input_declared_preferred" for e in tele["eligibility_excluded"])

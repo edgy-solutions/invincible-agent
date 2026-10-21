@@ -3909,7 +3909,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             provenance={"abstention_reason": "no_compatible_verbs",
                         "admission": _admission_trace,
                         **({"input_declared": _input_declared_trace} if _input_declared_trace is not None else {})},
-            candidates=[], excluded=_gate_excluded, mode=retrieval_mode)
+            candidates=candidates, excluded=_gate_excluded, mode=retrieval_mode)
     if not candidates:
         return SemanticResolutionResponse(
             resolved_uri="UNKNOWN",
