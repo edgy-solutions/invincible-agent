@@ -19,7 +19,7 @@ from tests.test_a_promotion_takes_row_edits_behind_its_flag import (  # noqa: E4
     CORRECT, INGEST_ID, PAYLOAD, world,
 )
 
-EV = {"page": 1, "bbox": [1, 2, 3, 4]}
+EV = {"page": 1, "bbox": [0.1, 0.2, 0.3, 0.4]}
 HEX = "cd" * 32
 
 
@@ -257,14 +257,23 @@ def _row(**o):
             "leaf_set_by": "svc:doc-tools", **o}
 
 
-def _act(w):
-    return w.client.post("/human_tasks/t-1/act", json={"decision": "promoted"})
+TID = f"document_promotion:{INGEST_ID}"
+
+
+def _act(w, monkeypatch=None, tid=TID, payload=None):
+    """Act on `tid` as its recipient: the world's pending list is re-pointed at that id."""
+    pl = dict(payload or PAYLOAD)
+    if monkeypatch is not None:
+        monkeypatch.setattr(ht, "list_tasks_for", lambda caller, status="pending": [
+            {"task_id": tid, "kind": promotion.KIND, "audience": "document_promotion:SUSTAINMENT",
+             "payload": pl}])
+    return w.client.post(f"/human_tasks/{tid}/act", json={"decision": "promoted"})
 
 
 def test_a_task_whose_leaf_is_stale_is_refused_and_the_act_never_runs(world, monkeypatch):
     monkeypatch.setattr(ist, "get_row", lambda i: _row(content_kind="pdn"))
-    r = _act(world)
-    assert r.status_code == 409 and r.json()["detail"]["error"] == "leaf_changed", r.text
+    r = _act(world, monkeypatch)
+    assert r.status_code == 409 and r.json()["detail"]["error"] == "stale_extraction", r.text
     assert str(r.json()["detail"].get("message") or "").strip(), r.text
     assert world.act_kwargs == [] and world.ledger.records == {} and world.resolved == []
 
@@ -272,16 +281,17 @@ def test_a_task_whose_leaf_is_stale_is_refused_and_the_act_never_runs(world, mon
 @pytest.mark.parametrize("st", ["received", "extracting", "awaiting_kind", "awaiting_origin"])
 def test_a_row_with_an_extraction_in_flight_is_refused(world, monkeypatch, st):
     monkeypatch.setattr(ist, "get_row", lambda i: _row(status=st))
-    r = _act(world)
-    assert r.status_code == 409 and r.json()["detail"]["error"] == "extraction_in_flight", r.text
-    assert str(r.json()["detail"].get("message") or "").strip(), r.text
+    r = _act(world, monkeypatch)
+    d = r.json()["detail"]
+    assert r.status_code == 409 and d["error"] == "stale_extraction", r.text
+    assert d["new_task_id"] is None and d["stage"] == st and d["message"].strip(), r.text
     assert world.act_kwargs == [] and world.ledger.records == {}
 
 
 def test_a_promoted_row_replays_and_the_record_carries_the_source(world, monkeypatch):
     monkeypatch.setattr(ist, "get_row", lambda i: _row(status="promoted", leaf_source="corrected",
                                                        leaf_set_by="bob"))
-    r = _act(world)
+    r = _act(world, monkeypatch)
     assert r.status_code == 200, r.text
     assert world.act_kwargs[0]["leaf"] == {"leaf_source": "corrected", "corrected_by": "bob"}
     (stored,) = world.ledger.records.values()
@@ -291,7 +301,7 @@ def test_a_promoted_row_replays_and_the_record_carries_the_source(world, monkeyp
 
 def test_a_review_row_with_a_matching_leaf_proceeds(world, monkeypatch):
     monkeypatch.setattr(ist, "get_row", lambda i: _row())
-    assert _act(world).status_code == 200
+    assert _act(world, monkeypatch).status_code == 200
     (stored,) = world.ledger.records.values()
     inputs = stored["record"]["checks"][0]["inputs"]
     assert inputs["leaf_source"] == "title" and "corrected_by" not in inputs
@@ -302,7 +312,7 @@ def test_an_unreadable_row_fails_closed_with_503(world, monkeypatch):
         raise RuntimeError("pg down")
 
     monkeypatch.setattr(ist, "get_row", boom)
-    r = _act(world)
+    r = _act(world, monkeypatch)
     assert r.status_code == 503 and r.json()["detail"]["error"] == "ingest_row_unreadable", r.text
     assert str(r.json()["detail"].get("message") or "").strip(), r.text
     assert world.act_kwargs == []
@@ -310,7 +320,7 @@ def test_an_unreadable_row_fails_closed_with_503(world, monkeypatch):
 
 def test_a_missing_row_proceeds_as_before(world, monkeypatch):
     monkeypatch.setattr(ist, "get_row", lambda i: None)
-    assert _act(world).status_code == 200
+    assert _act(world, monkeypatch).status_code == 200
     assert world.act_kwargs[0].get("leaf") is None
 
 

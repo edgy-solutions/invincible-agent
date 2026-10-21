@@ -47,7 +47,7 @@ _COLS = ("id", "sha256", "kind", "object_prefix", "submitted_by", "on_behalf_of"
          "status", "extracted_count", "extracted_total", "duplicate_of", "detail", "created_at",
          "updated_at", "origin_suggestion", "content_kind", "case_id", "extraction_ref", "failure",
          "run_id", "attempt", "notice_id", "leaf_source", "leaf_candidates", "leaf_set_by",
-         "leaf_set_at")
+         "leaf_set_at", "review_generation")
 
 _NOW_MS = 10_000_000_000
 
@@ -68,6 +68,7 @@ class _Pg:
              run_id=None, failure=None):
         id_ = "sha256:" + hexchar * 64
         row = dict.fromkeys(_COLS)
+        row["review_generation"] = 0
         row.update(id=id_, sha256=id_, kind=kind,
                    object_prefix=f"ingress-user/{kind}/{hexchar * 64}/",
                    submitted_by="alice", on_behalf_of="alice", status=status,
@@ -311,6 +312,7 @@ def test_fail_stalled_refuses_a_stage_that_waits_on_a_human():
 
 
 def test_the_tick_runs_each_enabled_stage_and_a_non_positive_timeout_skips_only_its_stage(monkeypatch):
+    monkeypatch.setattr(ist, "list_leafless_extracting", lambda **kw: [])   # the backstop (spec 204) has nothing to read
     seen = []
     monkeypatch.setattr(ist, "fail_stalled",
                         lambda *, stage, older_than_seconds, now_ms=None:

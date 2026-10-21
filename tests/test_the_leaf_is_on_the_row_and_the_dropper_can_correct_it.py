@@ -73,7 +73,8 @@ class _FakeCur:
             where = rest.split(" RETURNING")[0]
             returning = " RETURNING" in rest
             sets = re.findall(
-                r"(\w+) = (COALESCE\(%s, \w+\)|%s|NULL|attempt \+ 1|'\w+')", set_part)
+                r"(\w+) = (COALESCE\(%s, \w+\)|%s|NULL|attempt \+ 1|review_generation \+ 1|'\w+')",
+                set_part)
             assigned = []
             for col, expr in sets:
                 if expr == "%s":
@@ -83,12 +84,14 @@ class _FakeCur:
                     assigned.append((col, v if v is not None else ("__keep__",)))
                 elif expr == "NULL":
                     assigned.append((col, None))
-                elif expr == "attempt + 1":
+                elif expr in ("attempt + 1", "review_generation + 1"):
                     assigned.append((col, ("__incr__",)))
                 else:
                     assigned.append((col, expr.strip("'")))
             assert where.startswith("id = %s AND status = ANY(%s) AND kind <> 'event'"), where
             row_id, statuses = params.pop(0), params.pop(0)
+            guard_gen = " AND review_generation = %s" in where
+            expect_gen = params.pop(0) if guard_gen else None
             guard_title = "leaf_source IS NULL OR leaf_source = 'title'" in where
             # hold_for_kind's guard: never hold a row that already carries a leaf.
             guard_no_leaf = "content_kind IS NULL OR NOT (content_kind = ANY(%s))" in where
@@ -96,6 +99,7 @@ class _FakeCur:
             assert not params, params
             r = self.db.rows.get(row_id)
             hit = (r is not None and r["status"] in statuses and r["kind"] != "event"
+                   and (not guard_gen or r.get("review_generation", 0) == expect_gen)
                    and (not guard_title or r.get("leaf_source") in (None, "title"))
                    and (not guard_no_leaf or r.get("content_kind") not in leaves))
             self.rowcount = 1 if hit else 0
@@ -158,7 +162,7 @@ class DB:
                "duplicate_of": None, "detail": None, "created_at": 1, "updated_at": 1,
                "content_kind": "pdf", "extraction_ref": None, "failure": None, "run_id": None,
                "attempt": 1, "notice_id": None, "leaf_source": None, "leaf_candidates": None,
-               "leaf_set_by": None, "leaf_set_at": None, "origin_suggestion": None,
+               "leaf_set_by": None, "leaf_set_at": None, "review_generation": 0, "origin_suggestion": None,
                "case_id": None}
         row.update(kw)
         self.rows[id] = row
@@ -207,8 +211,17 @@ class DB:
         return "T-1", "FILED"
 
 
-_SUSTAINMENT = types.SimpleNamespace(domain="SUSTAINMENT")
-_DOMAINLESS = types.SimpleNamespace(domain=None, model_fields_set=frozenset({"domain"}))
+_SUSTAINMENT = types.SimpleNamespace(domain="SUSTAINMENT", passes=("header", "parts"))
+_DOMAINLESS = types.SimpleNamespace(domain=None, passes=("identity",),
+                                    model_fields_set=frozenset({"domain"}))
+
+
+_PDN_OTHER_PASSES = types.SimpleNamespace(domain="SUSTAINMENT", passes=("header", "other"))
+
+
+def _by_kind_pdn_reruns(kind):
+    """A registry in which pdn declares other passes than pcn, so pcn<->pdn is a RE-RUN (spec 204)."""
+    return _PDN_OTHER_PASSES if kind == "pdn" else _by_kind(kind)
 
 
 def _by_kind(kind):
@@ -229,6 +242,8 @@ def db(monkeypatch):
     monkeypatch.setattr(ck, "by_kind", _by_kind)
     monkeypatch.setattr(gateway, "_file_or_find_document_promotion_task", d.file_task)
     monkeypatch.setattr(ht, "get_task_open_state", lambda task_id: None)
+    d.superseded = []
+    monkeypatch.setattr(ht, "supersede_open_task", lambda task_id: d.superseded.append(task_id) or 1)
     monkeypatch.setattr(ht, "register_task", lambda **kw: d.registered.append(kw) or {})
     monkeypatch.setattr(ht, "refresh_open_task",
                         lambda task_id, **kw: d.refreshed.append({"task_id": task_id, **kw}) or 1)
@@ -246,7 +261,7 @@ def _title(c, body, id=ID):
 
 
 CONFIDENT_PCN = {"doc_type": "PCN", "doc_type_source": "title"}
-EV = {"page": 1, "bbox": [10, 10, 200, 40]}
+EV = {"page": 1, "bbox": [0.05, 0.05, 0.4, 0.1]}
 
 
 def _cand(leaf, score, note=None, **kw):
@@ -408,7 +423,8 @@ def test_a_row_outside_received_and_extracting_is_409_not_extracting(db, stage):
     before = db.snap()
     r = _title(_as(DOCTOOLS), CONFIDENT_PCN)
     assert r.status_code == 409, r.text
-    assert r.json()["detail"] == {"error": "not_extracting", "stage": stage}
+    assert {k: v for k, v in r.json()["detail"].items() if k != "message"} == {"error": "not_extracting", "stage": stage}
+    assert r.json()["detail"]["message"].strip()
     assert db.snap() == before
 
 
@@ -489,7 +505,8 @@ def _no_task_touched(db):
 
 @pytest.mark.parametrize("stage", ["awaiting_origin", "review"])
 def test_a_correction_after_parts_extraction_sends_the_row_back_to_received_and_touches_no_task(
-        db, stage):
+        db, monkeypatch, stage):
+    monkeypatch.setattr(ck, "by_kind", _by_kind_pdn_reruns)   # other passes: a re-run, not a re-class
     db.add(status=stage, content_kind="pcn", leaf_source="title", extraction_ref=REF,
            detail="d", extracted_count=3)
     r = _leaf(_as(ALICE), "pdn")
@@ -529,6 +546,7 @@ def _detail(r) -> dict:
 
 @pytest.mark.parametrize("stage", ["awaiting_origin", "review", "awaiting_kind"])
 def test_a_row_that_moved_under_the_correction_is_409_with_its_current_stage(db, monkeypatch, stage):
+    monkeypatch.setattr(ck, "by_kind", _by_kind_pdn_reruns)
     db.add(status=stage, content_kind="pcn", leaf_source="title")
     real = ist.set_leaf
 
@@ -732,7 +750,8 @@ def test_the_vocabulary_and_the_migration_agree():
     from pathlib import Path
     sql = (Path(__file__).resolve().parents[1] / "sql" / "create_ingest_status_projection.sql"
            ).read_text(encoding="utf-8")
-    for col in ("leaf_source TEXT", "leaf_candidates TEXT", "leaf_set_by TEXT", "leaf_set_at BIGINT"):
+    for col in ("leaf_source TEXT", "leaf_candidates TEXT", "leaf_set_by TEXT", "leaf_set_at BIGINT",
+                "review_generation INTEGER NOT NULL DEFAULT 0"):
         stmt = f"ADD COLUMN IF NOT EXISTS {col}"
         assert stmt in sql and stmt in ist._MIGRATION_SQL, col
     with pytest.raises(ValueError):

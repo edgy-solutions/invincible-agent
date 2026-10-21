@@ -223,6 +223,11 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_set_at BIGINT
 -- before spec 203 the only writers of a leaf `content_kind` (pcn|pdn) were the drop's form field and
 -- the manifest adoption of the drop's sidecar kind, so every such row was declared at the drop.
 UPDATE ingest_status_projection SET leaf_source = 'declared' WHERE leaf_source IS NULL AND kind <> 'event' AND lower(content_kind) IN ('pcn','pdn');
+
+-- 2026-10-21 (spec 204, a leaf change at review replaces the task): the promotion task's GENERATION.
+-- 0 for every legacy row (its task id is `document_promotion:<id>`); a re-class or re-run at review
+-- bumps it, and generation g > 0 names the task `document_promotion:<id>:g<g>`. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS review_generation INTEGER NOT NULL DEFAULT 0;
 """
 
 
@@ -456,7 +461,7 @@ def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, content_kind, extraction_ref,
                           failure, run_id, attempt, notice_id,
-                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at
+                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -551,6 +556,7 @@ def update_status(
 
 def set_leaf(ingest_id: str, leaf: str, source: str, *, set_by: str, from_statuses,
              to_status: Optional[str] = None, bump_attempt: bool = False,
+             bump_generation: bool = False, expect_generation: Optional[int] = None,
              now_ms: Optional[int] = None) -> Optional[dict]:
     """Write the row's leaf (spec 203): ONE atomic guarded UPDATE ... RETURNING. `content_kind` is
     OVERWRITTEN (not COALESCEd -- a correction must beat what the drop declared), `leaf_source`,
@@ -559,7 +565,10 @@ def set_leaf(ingest_id: str, leaf: str, source: str, *, set_by: str, from_status
     relaunch (`attempt` + 1, `failure` and `detail` cleared). The guard is
     `status = ANY(from_statuses) AND kind <> 'event'`; a `title` source additionally requires the
     row's `leaf_source` to be NULL or already `title`, so a title never overwrites a declared
-    or corrected leaf. Returns the updated row as a dict, or None if nothing matched."""
+    or corrected leaf. Spec 204: `bump_generation` adds 1 to `review_generation` (the promotion
+    task's generation) in the same write; `expect_generation` adds `AND review_generation = %s` to the
+    guard, so a write that lost a race to another generation bump matches nothing. Returns the updated
+    row as a dict, or None if nothing matched."""
     if leaf not in LEAVES:
         raise ValueError(f"leaf must be one of {LEAVES}, got {leaf!r}")
     if source not in LEAF_SOURCES:
@@ -575,8 +584,13 @@ def set_leaf(ingest_id: str, leaf: str, source: str, *, set_by: str, from_status
         params.append(to_status)
     if bump_attempt:
         sets += ["attempt = attempt + 1", "failure = NULL", "detail = NULL"]
+    if bump_generation:
+        sets.append("review_generation = review_generation + 1")
     where = "id = %s AND status = ANY(%s) AND kind <> 'event'"
     params += [ingest_id, list(from_statuses)]
+    if expect_generation is not None:
+        where += " AND review_generation = %s"
+        params.append(int(expect_generation))
     if source == "title":
         where += " AND (leaf_source IS NULL OR leaf_source = 'title')"
     with _pg_connect() as conn:
@@ -593,6 +607,28 @@ def set_leaf(ingest_id: str, leaf: str, source: str, *, set_by: str, from_status
     out["failure"] = _parse_failure(out.get("failure"))
     out["leaf_candidates"] = _parse_candidates(out.get("leaf_candidates"))
     return out
+
+
+def list_leafless_extracting(*, older_than_seconds: int, limit: int = 50,
+                             now_ms: Optional[int] = None) -> list[dict]:
+    """Document rows at `extracting` whose last stage move is older than `older_than_seconds` and
+    that carry NO leaf (`content_kind` not pcn/pdn), oldest first, LIMIT `limit` (spec 204, the
+    manifest-leaf backstop). EVENT rows never appear. Read-only; the caller decides leaf-capability."""
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT id, kind, object_prefix, content_kind, leaf_source, status, updated_at,
+                          attempt, review_generation
+                     FROM ingest_status_projection
+                    WHERE status = 'extracting' AND kind <> 'event' AND updated_at < %s
+                      AND (content_kind IS NULL OR NOT (lower(content_kind) = ANY(%s)))
+                    ORDER BY updated_at ASC, id ASC
+                    LIMIT %s""",
+                (now - older_than_seconds * 1000, list(LEAVES), limit),
+            )
+            rows = cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 def hold_for_kind(ingest_id: str, *, candidates, detail: str, run_id: Optional[str] = None,
@@ -665,7 +701,7 @@ def get_status_unscoped(ingest_id: str) -> Optional[dict[str, Any]]:
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, origin_suggestion, content_kind, case_id,
                           extraction_ref, failure, run_id, attempt, notice_id,
-                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at
+                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -701,7 +737,7 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, origin_suggestion, content_kind, case_id,
                           extraction_ref, failure, run_id, attempt, notice_id,
-                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at
+                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation
                      FROM ingest_status_projection
                     WHERE id = %s AND (submitted_by = %s OR on_behalf_of = %s)""",
                 (ingest_id, caller_id, caller_id),
@@ -733,7 +769,7 @@ def list_mine(*, caller_id: str, limit: int,
                     status, extracted_count, extracted_total, duplicate_of, detail,
                     created_at, updated_at, origin_suggestion, content_kind, case_id,
                     extraction_ref, failure, run_id, attempt, notice_id,
-                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at
+                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation
                FROM ingest_status_projection
               WHERE (submitted_by = %s OR on_behalf_of = %s) AND kind <> 'event'"""
     params: list[Any] = [caller_id, caller_id]

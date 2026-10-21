@@ -361,6 +361,29 @@ def get_open_task_payload(task_id: str) -> Optional[dict[str, Any]]:
     return dict(p) if isinstance(p, dict) else {}
 
 
+#: A task REPLACED by a newer one for the same document (spec 204: a leaf change at review files a new
+#: generation and retires the old). NOT a resolution: no decision, no acted_by. Terminal, never open.
+SUPERSEDED = "superseded"
+
+
+def supersede_open_task(task_id: str) -> int:
+    """Mark every `pending` row of a logical task `superseded` (`updated_at` set); returns the
+    rowcount. Touches only `pending` rows -- a resolved row keeps its resolution. Not a resolution:
+    `decision`/`acted_by` are left as they were, and :func:`mark_task_resolved` refuses the status."""
+    now = int(time.time() * 1000)
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE human_task_projection
+                      SET status = 'superseded', updated_at = %s
+                    WHERE task_id = %s AND status = 'pending'""",
+                (now, task_id),
+            )
+            n = cur.rowcount
+        conn.commit()
+    return n
+
+
 def refresh_open_task(task_id: str, *, payload: dict[str, Any], title: str, summary: str) -> int:
     """Rewrite the `payload`, `title` and `summary` of EVERY `pending` row of a logical task in one
     UPDATE (`updated_at` set); returns the rowcount. A resolved row is never touched. Service-side,
@@ -583,7 +606,7 @@ def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, A
     with _pg_connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                """SELECT task_id, kind, status, decision, acted_by, acted_at, audience
+                """SELECT task_id, kind, status, decision, acted_by, acted_at, audience, payload
                      FROM human_task_projection
                     WHERE task_id = %s AND recipient_id = %s
                     ORDER BY updated_at DESC
@@ -1012,6 +1035,9 @@ def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
             "'pending' cannot be a resolution: it is the only status the queue reads as OPEN, "
             "and storing it would return a resolved task to every queue that skips it."
         )
+    if decision == SUPERSEDED:
+        # A supersession is the BFF retiring a task, not a person's decision: it has no acted_by.
+        raise ValueError("'superseded' cannot be a resolution: use supersede_open_task")
     status = decision
     with _pg_connect() as conn:
         with conn.cursor() as cur:

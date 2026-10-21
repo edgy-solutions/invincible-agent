@@ -333,7 +333,8 @@ def test_a_service_retry_of_a_failed_event_row_is_409_terminal(service, monkeypa
                         lambda i: (_ for _ in ()).throw(AssertionError("retried an event")))
     r = service.post(f"/ingest/{_ID}/retry", json={"pin_digest": "sha256:" + "2" * 64})
     assert r.status_code == 409, r.text
-    assert r.json()["detail"] == {"error": "terminal", "stage": "failed"}
+    assert {k: v for k, v in r.json()["detail"].items() if k != "message"} == {"error": "terminal", "stage": "failed"}
+    assert r.json()["detail"]["message"].strip()
 
 
 def test_a_retry_that_loses_the_race_is_409_not_failed(dropper, monkeypatch):
@@ -341,7 +342,7 @@ def test_a_retry_that_loses_the_race_is_409_not_failed(dropper, monkeypatch):
     monkeypatch.setattr(ist, "retry_failed", lambda i: None)
     r = dropper.post(f"/ingest/{_ID}/retry")
     assert r.status_code == 409, r.text
-    assert r.json()["detail"] == {"error": "not_failed"}
+    assert r.json()["detail"]["error"] == "not_failed" and r.json()["detail"]["message"].strip()
 
 
 # ===========================================================================
@@ -431,6 +432,7 @@ def test_the_selects_carry_failure_run_id_and_attempt_and_parse_failure_json():
 # Watchdog
 # ===========================================================================
 def test_one_watchdog_tick_calls_fail_stalled_for_received_with_the_configured_timeout(monkeypatch):
+    monkeypatch.setattr(ist, "list_leafless_extracting", lambda **kw: [])   # the backstop (spec 204) has nothing to read
     seen = []
     monkeypatch.setattr(ist, "fail_stalled",
                         lambda *, stage, older_than_seconds, now_ms=None:

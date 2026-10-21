@@ -107,7 +107,8 @@ def test_retry_terminal_stage_returns_409(client, monkeypatch, stage, kind):
     monkeypatch.setattr(ist, "get_status_unscoped", lambda ingest_id: row)
     r = client.post("/ingest/deadbeef/retry", json=_NEW)
     assert r.status_code == 409, r.text
-    assert r.json()["detail"] == {"error": "terminal", "stage": stage}
+    assert {k: v for k, v in r.json()["detail"].items() if k != "message"} == {"error": "terminal", "stage": stage}
+    assert r.json()["detail"]["message"].strip()
 
 
 def test_retry_event_row_at_received_returns_409_resend_the_event(client, monkeypatch):

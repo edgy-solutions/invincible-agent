@@ -135,3 +135,8 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_set_at BIGINT
 -- before spec 203 the only writers of a leaf `content_kind` (pcn|pdn) were the drop's form field and
 -- the manifest adoption of the drop's sidecar kind, so every such row was declared at the drop.
 UPDATE ingest_status_projection SET leaf_source = 'declared' WHERE leaf_source IS NULL AND kind <> 'event' AND lower(content_kind) IN ('pcn','pdn');
+
+-- 2026-10-21 (spec 204, a leaf change at review replaces the task): the promotion task's GENERATION.
+-- 0 for every legacy row (its task id is `document_promotion:<id>`); a re-class or re-run at review
+-- bumps it, and generation g > 0 names the task `document_promotion:<id>:g<g>`. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS review_generation INTEGER NOT NULL DEFAULT 0;
