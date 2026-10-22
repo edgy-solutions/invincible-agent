@@ -145,3 +145,8 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS review_generation 
 -- listed by GET /ingest/retries. `leaf_applied` = the BFF relaunched the row AS ITS LEAF (after rewriting
 -- the drop's sidecar to the leaf); NULL = a person's Retry of a failed row. NULLABLE, IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS retry_reason TEXT;
+
+-- 2026-10-22 (a finished run with no leaf waits for a kind): WHY a row sits at `awaiting_kind`
+-- (`kind_not_identified` = the run finished / the title read named no leaf). Served by the status
+-- route only while the stage is awaiting_kind. NULLABLE, IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS hold_reason TEXT;

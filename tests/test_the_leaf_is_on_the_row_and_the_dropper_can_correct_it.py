@@ -120,6 +120,9 @@ class _FakeCur:
             guard_attempt = " AND attempt = %s" in where
             want_attempt = params.pop(0) if guard_attempt else None
             guard_timeout = "AND (failure::jsonb ->> 'reason_code') = 'timeout'" in where
+            # hold_for_kind's run guard (2026-10-22): the run the caller saw finish is still the row's.
+            guard_run = " AND run_id = %s" in where
+            want_run = params.pop(0) if guard_run else None
             assert not params, params
             r = self.db.rows.get(row_id)
             hit = (r is not None and r["status"] in statuses and r["kind"] != "event"
@@ -128,6 +131,7 @@ class _FakeCur:
                    and (not guard_no_leaf or r.get("content_kind") not in leaves)
                    and (not guard_leaf or str(r.get("content_kind") or "").lower() == want_leaf)
                    and (not guard_attempt or r["attempt"] == want_attempt)
+                   and (not guard_run or r.get("run_id") == want_run)
                    and (not guard_timeout or (_failure_dict(r.get("failure")) or {}
                                               ).get("reason_code") == "timeout"))
             self.rowcount = 1 if hit else 0
@@ -147,6 +151,22 @@ class _FakeCur:
                  r["sha256"], r.get("run_id"), r["updated_at"], r.get("retry_reason"))
                 for r in self.db.rows.values()
                 if r["status"] == "received" and r["attempt"] > 1 and r["kind"] != "event"]
+        elif "WHERE status = 'extracting' AND kind <> 'event' AND updated_at < %s" in sql:
+            # list_leafless_extracting (a RealDictCursor read): each WHERE clause applies only if its
+            # text is present, and the dicts carry exactly the columns the SELECT names.
+            cols = [c.strip() for c in sql[len("SELECT "):sql.index(" FROM ")].split(",")]
+            cutoff = params.pop(0)
+            leaves = params.pop(0) if "lower(content_kind) = ANY(%s)" in sql else None
+            limit = params.pop(0)
+            assert not params, params
+
+            def _leafless(r):
+                return (r["status"] == "extracting" and r["kind"] != "event" and r["updated_at"] < cutoff
+                        and (leaves is None or str(r.get("content_kind") or "").lower() not in leaves))
+
+            hits = sorted((r for r in self.db.rows.values() if _leafless(r)),
+                          key=lambda r: (r["updated_at"], r["id"]))[:limit]
+            self._all = [{c: copy.deepcopy(r.get(c)) for c in cols} for r in hits]
         elif "lower(content_kind) = ANY(%s)" in sql or "run_id IS NOT NULL AND (status IN" in sql:
             # list_leafed_relaunch_candidates: each WHERE clause applies only if its text is present
             leaves = params.pop(0) if "lower(content_kind) = ANY(%s)" in sql else None
@@ -218,7 +238,7 @@ class DB:
                "content_kind": "pdf", "extraction_ref": None, "failure": None, "run_id": None,
                "attempt": 1, "notice_id": None, "leaf_source": None, "leaf_candidates": None,
                "leaf_set_by": None, "leaf_set_at": None, "review_generation": 0, "origin_suggestion": None,
-               "case_id": None, "retry_reason": None}
+               "case_id": None, "retry_reason": None, "hold_reason": None}
         row.update(kw)
         self.rows[id] = row
         return row

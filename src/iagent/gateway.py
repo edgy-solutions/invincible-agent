@@ -163,6 +163,12 @@ _INGEST_LEAF_BACKSTOP_SECONDS_DEFAULT = 300
 # already applied" -> never relaunch again (no loops).
 _INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS_DEFAULT = 60
 _DAGSTER_TERMINAL_RUN_STATUSES = ("SUCCESS", "FAILURE", "CANCELED")
+# Ruling 2026-10-22 (a finished run with no leaf waits for a kind): "a row whose run has finished and
+# that has NO leaf goes to awaiting_kind (reason: kind_not_identified). Never left at extracting."
+# A TI PDF drop's run ended SUCCESS after posting `extracting` and nothing else, and the row sat there
+# leafless until a person picked a kind. `_ingest_kind_unidentified_tick` holds it (same 60 s cadence
+# and off switch as the relaunch pass); a pick from there relaunches as built on 10-21. The status
+# route serves the reason as `hold_reason`, only at awaiting_kind.
 _leaf_relaunch_last_at = None  # time.monotonic() seconds of the last relaunch pass
 
 
@@ -230,6 +236,38 @@ def _find_leaf_manifest(row: dict) -> tuple:
     return None, None
 
 
+async def _apply_manifest_leaf_block(row: dict, key, manifest: dict) -> tuple:
+    """Act on a row's manifest `leaf` block (shared by the manifest-leaf backstop and the finished-run
+    pass). A confident block (`_title_leaf`) rewrites the drop's sidecar to the leaf FIRST, then
+    re-opens the row as that kind (`set_leaf`, reason `leaf_applied`); otherwise the row is held at
+    `awaiting_kind` with the mapped candidates. Returns `(decision, ok)`; `ok` False = the row moved
+    under us (`row_moved`). Logs nothing; S3 errors raise to the caller's per-row except."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    rid = row.get("id")
+    block = manifest["leaf"]
+    title = _title_leaf(block.get("leaf"), block.get("outcome"))
+    if title is not None:
+        # The sidecar is rewritten to the leaf BEFORE the row is re-opened, so the relaunch
+        # runs as the leaf; an S3 error lands in the per-row except (row skipped).
+        await run_in_threadpool(lambda: _apply_leaf_to_sidecar(row, title))
+        ok = await run_in_threadpool(lambda: ingest_status.set_leaf(
+            rid, title, "title", set_by=_LEAF_BACKSTOP_ACTOR,
+            from_statuses=[ingest_status.EXTRACTING],
+            to_status=ingest_status.RECEIVED, bump_attempt=True,
+            retry_reason=ingest_status.REASON_LEAF_APPLIED)) is not None
+        return (f"title:{title}" if ok else "row_moved"), ok
+    outcome = block.get("outcome")
+    ok = await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+        rid, candidates=_backstop_candidates(block.get("candidates")),
+        detail=f"the title read named no leaf ({outcome or 'no outcome'}); "
+               "pick pcn or pdn",
+        from_statuses=[ingest_status.EXTRACTING]))
+    return ("awaiting_kind" if ok else "row_moved"), ok
+
+
 async def _ingest_leaf_backstop_tick(older_than_s: int) -> list:
     """One backstop pass (spec 204, ruling "a pdf row runs no passes, so the review.json backstop
     can't fire. Use manifest[\"leaf\"] instead"): a leaf-capable row at `extracting` with NO leaf,
@@ -255,26 +293,7 @@ async def _ingest_leaf_backstop_tick(older_than_s: int) -> list:
             key, manifest = await run_in_threadpool(lambda row=row: _find_leaf_manifest(row))
             if manifest is None:
                 continue
-            block = manifest["leaf"]
-            title = _title_leaf(block.get("leaf"), block.get("outcome"))
-            if title is not None:
-                # The sidecar is rewritten to the leaf BEFORE the row is re-opened, so the relaunch
-                # runs as the leaf; an S3 error lands in the per-row except (row skipped).
-                await run_in_threadpool(lambda: _apply_leaf_to_sidecar(row, title))
-                ok = await run_in_threadpool(lambda: ingest_status.set_leaf(
-                    rid, title, "title", set_by=_LEAF_BACKSTOP_ACTOR,
-                    from_statuses=[ingest_status.EXTRACTING],
-                    to_status=ingest_status.RECEIVED, bump_attempt=True,
-                    retry_reason=ingest_status.REASON_LEAF_APPLIED)) is not None
-                decision = f"title:{title}" if ok else "row_moved"
-            else:
-                outcome = block.get("outcome")
-                ok = await run_in_threadpool(lambda: ingest_status.hold_for_kind(
-                    rid, candidates=_backstop_candidates(block.get("candidates")),
-                    detail=f"the title read named no leaf ({outcome or 'no outcome'}); "
-                           "pick pcn or pdn",
-                    from_statuses=[ingest_status.EXTRACTING]))
-                decision = "awaiting_kind" if ok else "row_moved"
+            decision, ok = await _apply_manifest_leaf_block(row, key, manifest)
             logger.info("ingest_leaf_backstop ingest_id=%s key=%s decision=%s", rid, key, decision)
             if ok:
                 done.append(rid)
@@ -294,6 +313,54 @@ async def _dagster_run_finished(run_id) -> bool:
         return False
     return (isinstance(ans, dict) and ans.get("__typename") == "Run"
             and ans.get("status") in _DAGSTER_TERMINAL_RUN_STATUSES)
+
+
+async def _ingest_kind_unidentified_tick() -> list:
+    """One pass (ruling 2026-10-22, "a row whose run has finished and that has NO leaf goes to
+    awaiting_kind (reason: kind_not_identified). Never left at extracting."): a leaf-capable row at
+    `extracting` with NO leaf and a run id whose Dagster run is terminal (SUCCESS|FAILURE|CANCELED;
+    `_dagster_run_finished` fails closed). If the run left a manifest `leaf` block the row is handled
+    exactly as the manifest backstop does (`_apply_manifest_leaf_block`: a confident title relaunches
+    it as that leaf, else it is held with the candidates); with no manifest the row is held with no
+    candidates and reason `kind_not_identified`. The hold requires `run_id` to still be the one seen
+    finish (`expect_run_id`), so a relaunch that landed meanwhile wins. No run id -> skipped (the
+    extracting watchdog owns it). Never raises. Returns the ids acted on."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    try:
+        rows = await run_in_threadpool(
+            lambda: ingest_status.list_leafless_extracting(older_than_seconds=0, limit=50))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ingest_kind_unidentified listing failed (%s: %s)", type(exc).__name__, exc)
+        return []
+    done: list = []
+    for row in rows:
+        if not _leaf_capable(row) or _row_leaf(row)[0] is not None or not row.get("run_id"):
+            continue
+        rid = row.get("id")
+        try:
+            if not await _dagster_run_finished(row["run_id"]):
+                continue
+            key, manifest = await run_in_threadpool(lambda row=row: _find_leaf_manifest(row))
+            if manifest is not None:
+                decision, ok = await _apply_manifest_leaf_block(row, key, manifest)
+            else:
+                ok = await run_in_threadpool(lambda row=row: ingest_status.hold_for_kind(
+                    row["id"], candidates=[],
+                    detail="the run finished without identifying the kind; pick pcn or pdn",
+                    reason=ingest_status.REASON_KIND_NOT_IDENTIFIED, expect_run_id=row["run_id"],
+                    from_statuses=[ingest_status.EXTRACTING]))
+                decision = "awaiting_kind" if ok else "row_moved"
+            logger.info("ingest_kind_unidentified ingest_id=%s run_id=%s decision=%s",
+                        rid, row.get("run_id"), decision)
+            if ok:
+                done.append(rid)
+        except Exception as exc:  # noqa: BLE001 -- never raise out of the tick
+            logger.warning("ingest_kind_unidentified ingest_id=%s skipped (%s: %s)", rid,
+                           type(exc).__name__, exc)
+    return done
 
 
 def _drop_sidecar_key(row) -> str:
@@ -387,7 +454,8 @@ async def _ingest_watchdog_tick(timeout_s: int, extracting_timeout_s: int = 0) -
 
     from . import ingest_status
 
-    # The leaf relaunch pass has its own 60 s cadence (not the watchdog's), and runs first.
+    # The leaf relaunch pass and the finished-run-with-no-leaf pass share one 60 s cadence (not the
+    # watchdog's), and run first.
     global _leaf_relaunch_last_at
     _relaunch_s = _env_int("INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS",
                            _INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS_DEFAULT)
@@ -395,6 +463,7 @@ async def _ingest_watchdog_tick(timeout_s: int, extracting_timeout_s: int = 0) -
                             or time.monotonic() - _leaf_relaunch_last_at >= _relaunch_s):
         _leaf_relaunch_last_at = time.monotonic()
         await _ingest_leaf_relaunch_tick()
+        await _ingest_kind_unidentified_tick()
     # The manifest-leaf backstop runs BEFORE the fail pass: it can save a row the timeout would fail.
     await _ingest_leaf_backstop_tick(
         _env_int("INGEST_LEAF_BACKSTOP_SECONDS", _INGEST_LEAF_BACKSTOP_SECONDS_DEFAULT))
@@ -11648,6 +11717,10 @@ async def _ingest_status_body(row: dict, current_user: User) -> dict:
         body["corrected_by"] = corrected_by
         body["leaf_candidates"] = (source_row.get("leaf_candidates")
                                    if stage == ingest_status.AWAITING_KIND else None)
+        # WHY the row is held (ruling 2026-10-22, e.g. `kind_not_identified`): present exactly when
+        # the other leaf keys are, a value only at awaiting_kind (the column is stale elsewhere).
+        body["hold_reason"] = (source_row.get("hold_reason")
+                               if stage == ingest_status.AWAITING_KIND else None)
     return body
 
 

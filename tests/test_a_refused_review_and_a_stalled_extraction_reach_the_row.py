@@ -47,7 +47,7 @@ _COLS = ("id", "sha256", "kind", "object_prefix", "submitted_by", "on_behalf_of"
          "status", "extracted_count", "extracted_total", "duplicate_of", "detail", "created_at",
          "updated_at", "origin_suggestion", "content_kind", "case_id", "extraction_ref", "failure",
          "run_id", "attempt", "notice_id", "leaf_source", "leaf_candidates", "leaf_set_by",
-         "leaf_set_at", "review_generation")
+         "leaf_set_at", "review_generation", "hold_reason")
 
 _NOW_MS = 10_000_000_000
 

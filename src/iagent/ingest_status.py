@@ -146,6 +146,8 @@ EVENT_INGEST_ID_RE = re.compile(r"^evt-[0-9a-f]{64}$")
 # supersedes it), so it is named once here for both sides.
 REASON_TIMEOUT = "timeout"
 REASON_LEAF_APPLIED = "leaf_applied"
+# Why a row sits at `awaiting_kind` (ruling 2026-10-22): no leaf could be identified for it.
+REASON_KIND_NOT_IDENTIFIED = "kind_not_identified"
 REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 _MIGRATION_SQL = """
@@ -234,6 +236,11 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS review_generation 
 -- listed by GET /ingest/retries. `leaf_applied` = the BFF relaunched the row AS ITS LEAF (after rewriting
 -- the drop's sidecar to the leaf); NULL = a person's Retry of a failed row. NULLABLE, IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS retry_reason TEXT;
+
+-- 2026-10-22 (a finished run with no leaf waits for a kind): WHY a row sits at `awaiting_kind`
+-- (`kind_not_identified` = the run finished / the title read named no leaf). Served by the status
+-- route only while the stage is awaiting_kind. NULLABLE, IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS hold_reason TEXT;
 """
 
 
@@ -467,7 +474,8 @@ def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, content_kind, extraction_ref,
                           failure, run_id, attempt, notice_id,
-                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation
+                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation,
+                          hold_reason
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -629,7 +637,7 @@ def list_leafless_extracting(*, older_than_seconds: int, limit: int = 50,
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """SELECT id, kind, object_prefix, content_kind, leaf_source, status, updated_at,
-                          attempt, review_generation
+                          attempt, review_generation, run_id
                      FROM ingest_status_projection
                     WHERE status = 'extracting' AND kind <> 'event' AND updated_at < %s
                       AND (content_kind IS NULL OR NOT (lower(content_kind) = ANY(%s)))
@@ -642,14 +650,21 @@ def list_leafless_extracting(*, older_than_seconds: int, limit: int = 50,
 
 
 def hold_for_kind(ingest_id: str, *, candidates, detail: str, run_id: Optional[str] = None,
-                  from_statuses) -> bool:
+                  from_statuses, reason: str = REASON_KIND_NOT_IDENTIFIED,
+                  expect_run_id: Optional[str] = None) -> bool:
     """Park a row at `awaiting_kind` (spec 203): the title read named no confident leaf. ONE guarded
     UPDATE; `candidates` is a list of `{leaf, score, evidence_ref}` dicts: an entry is kept only when
     its `leaf` (lowercased) is in LEAVES, later duplicates of a leaf are dropped, the list is sorted
     by `score` descending (stable), capped at 3 and stored as JSON list text of
     `{"leaf", "score", "evidence_ref": {page, bbox[, note]}}` (`note` dropped when None). The guard also refuses a row that already carries a leaf (`content_kind` pcn/pdn): a
-    correction that landed between the caller's read and this write must win, never be held. True
-    when a row matched, False otherwise."""
+    correction that landed between the caller's read and this write must win, never be held.
+    `reason` (a REASON_CODE_RE code, default `kind_not_identified`; ValueError otherwise) is stored as
+    `hold_reason`, WHY the row is held (ruling 2026-10-22). When `expect_run_id` is not None the write
+    also requires `run_id = expect_run_id`: the run a caller saw finish must still be the row's run, so
+    a relaunch that landed meanwhile (a new run id) wins and the row is not held. True when a row
+    matched, False otherwise."""
+    if not REASON_CODE_RE.match(str(reason or "")):
+        raise ValueError(f"invalid hold reason {reason!r}")
     seen: list[dict] = []
     for c in candidates or []:
         c = c if isinstance(c, dict) else {}
@@ -671,11 +686,12 @@ def hold_for_kind(ingest_id: str, *, candidates, detail: str, run_id: Optional[s
             cur.execute(
                 """UPDATE ingest_status_projection
                       SET status = 'awaiting_kind', leaf_candidates = %s, detail = %s,
-                          run_id = COALESCE(%s, run_id), updated_at = %s
+                          run_id = COALESCE(%s, run_id), hold_reason = %s, updated_at = %s
                     WHERE id = %s AND status = ANY(%s) AND kind <> 'event'
-                      AND (content_kind IS NULL OR NOT (content_kind = ANY(%s)))""",
-                (json.dumps(seen), detail, run_id, now, ingest_id, list(from_statuses),
-                 list(LEAVES)),
+                      AND (content_kind IS NULL OR NOT (content_kind = ANY(%s)))"""
+                + (" AND run_id = %s" if expect_run_id is not None else ""),
+                (json.dumps(seen), detail, run_id, reason, now, ingest_id, list(from_statuses),
+                 list(LEAVES)) + ((expect_run_id,) if expect_run_id is not None else ()),
             )
             n = cur.rowcount
         conn.commit()
@@ -711,7 +727,8 @@ def get_status_unscoped(ingest_id: str) -> Optional[dict[str, Any]]:
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, origin_suggestion, content_kind, case_id,
                           extraction_ref, failure, run_id, attempt, notice_id,
-                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation
+                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation,
+                          hold_reason
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -747,7 +764,8 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
                           status, extracted_count, extracted_total, duplicate_of, detail,
                           created_at, updated_at, origin_suggestion, content_kind, case_id,
                           extraction_ref, failure, run_id, attempt, notice_id,
-                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation
+                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation,
+                          hold_reason
                      FROM ingest_status_projection
                     WHERE id = %s AND (submitted_by = %s OR on_behalf_of = %s)""",
                 (ingest_id, caller_id, caller_id),
@@ -779,7 +797,8 @@ def list_mine(*, caller_id: str, limit: int,
                     status, extracted_count, extracted_total, duplicate_of, detail,
                     created_at, updated_at, origin_suggestion, content_kind, case_id,
                     extraction_ref, failure, run_id, attempt, notice_id,
-                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation
+                          leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation,
+                          hold_reason
                FROM ingest_status_projection
               WHERE (submitted_by = %s OR on_behalf_of = %s) AND kind <> 'event'"""
     params: list[Any] = [caller_id, caller_id]

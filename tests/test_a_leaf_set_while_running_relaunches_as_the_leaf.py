@@ -226,8 +226,12 @@ def _watchdog(monkeypatch, interval):
     async def _backstop(older):
         return []
 
+    async def _unidentified():
+        return []
+
     monkeypatch.setattr(gateway, "_ingest_leaf_relaunch_tick", _relaunch)
     monkeypatch.setattr(gateway, "_ingest_leaf_backstop_tick", _backstop)
+    monkeypatch.setattr(gateway, "_ingest_kind_unidentified_tick", _unidentified)
     monkeypatch.setattr(ist, "fail_stalled", lambda **kw: [])
     monkeypatch.setattr(gateway, "_leaf_relaunch_last_at", None)
     clock = _Clock()
