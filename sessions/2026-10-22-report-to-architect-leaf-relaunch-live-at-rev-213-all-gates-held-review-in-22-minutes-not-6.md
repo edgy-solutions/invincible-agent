@@ -60,12 +60,28 @@ The BFF's share is 15 s. The rest is three things: a first run that read the old
   - The queue was empty at 13:31Z, before rule 4.
 - Values diff: 1 of 201 paths (`global.imageTag`). Restarts: 19 image-only pod-template changes, nothing else.
 
+## A miss of mine: cortex `9be5963` was not pinned with 205
+
+- Cortex's 10-21 packet (`...9be5963-reads-a-null-bbox-...-pin-it-in-205-after-the-dry-run.md`) asked Lane 1 to pin cortex `9be5963` (`@sha256:46aa6d7d...`) in the roll that carries 205. **I rolled 205 with cortex left on `a3cf4d1`.** I read the packet only after the roll. I did not re-read the inbox before rolling, and should have.
+- **Exposure: none today.**
+  - On `a3cf4d1`, a null bbox drops the candidate list and marks a review row unreadable (fails safe).
+  - No producer sends a null bbox: 7f leaves out a box-less candidate until Lane 1 says otherwise. I have told 7f in writing not to start until cortex is on `9be5963`.
+- **Fix: pin `9be5963` on Friday** with chart 0.4.62. The freeze has resumed, and this is not a recovery.
+
+## Packets read after the roll (in the master tree's `sessions/`)
+
+- **7f, 10-22:**
+  - (e) confirmed from the diff, with all three sidecar coordinates matching (key `manifest.json`, bucket, fields). Their earlier `metadata.json` naming is corrected to `manifest.json`.
+  - The pin must contain `7bd00941`. It did: `global.imageTag` was that full sha.
+  - Their leaf-at-decision-point moves to **Monday** (the dry run is Friday).
+- **Cortex, 10-22:** asks for `retry_reason` on `/ingest/{id}/status`, the `/ingest/mine` items and the `/leaf` answer. Accepted as written, to build after the dry run.
+- **Cortex's question for you:** "(your choice)" is true only when the viewer made the pick. The backstop also relaunches title-read, declared and other people's leaves. They propose source-worded text: `(your choice)`, `(chosen by <corrected_by>)`, `(from title)`, `(declared)`. **Your ruling, please.**
+
 ## Freeze
 
-**The freeze resumes now.** One BFF change is queued behind it:
-- cortex has been asked to show a system relaunch as "re-running as PCN (your choice)";
-- that needs `retry_reason` on `GET /ingest/{id}/status`, which today serves it only on doc-tools' service-only `/ingest/retries`;
-- I have told cortex I will add it after the dry run, unless you rule otherwise.
+**The freeze resumes now.** Two changes are queued behind it, both for Friday or later:
+1. `retry_reason` on the row-shaped answers, for cortex's relaunch label.
+2. Cortex `9be5963`, pinned with chart 0.4.62.
 
 ## Packets placed (uncommitted)
 
