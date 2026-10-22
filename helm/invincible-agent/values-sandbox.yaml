@@ -969,7 +969,15 @@ cortexUi:
     # tag and the full sha with its last hex altered both answer 404. a3cf4d1 descends from
     # 25f86b8, and Dockerfile, docker-entrypoint.sh, nginx.conf, package files and the src's
     # import.meta.env reads are unchanged.
-    digest: "sha256:c3a2acddf21d5217b7e7ee6e3dd8625b83b981b1379d442078f4211e81ae7740"
+    # 2026-10-22, pinned for 206 (architect 10-22, "Build today": awaiting_kind needs you): cortex-ui
+    # c390a03 (amber rail row, "? · couldn't tell — pick one" with PCN/PDN on the card, the header
+    # needs-you count and the toast; it also carries 9be5963 -- a null or absent bbox reads as "no
+    # box" -- which 205 was meant to bring) -> 2359f48e, an OCI index with amd64 and arm64. Measured
+    # before pinning: the FULL tag resolves to this digest; the abbreviated tag and the full sha
+    # with its last hex altered both answer 404. c390a03 descends from a3cf4d1, and Dockerfile,
+    # docker-entrypoint.sh, nginx.conf, package files, helm/, .github/ and the src's
+    # import.meta.env reads are unchanged.
+    digest: "sha256:2359f48e70bfe44fa8f43a709bd6773d007769c81ffb2d56f7921bba96a2f9ce"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
