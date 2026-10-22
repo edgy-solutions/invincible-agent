@@ -110,7 +110,7 @@ def test_doc_tools_gets_each_entry_with_an_attempt_keyed_run_key(doc_tools_clien
     assert [e["ingest_id"] for e in out] == [_A, _B]
     assert out[0] == {"ingest_id": _A, "attempt": 2, "run_key": f"{_A}-a2", "kind": "pdf",
                       "content_kind": "pcn", "object_prefix": f"ingress-user/pdf/{_A}/",
-                      "sha256": _A, "run_id": None, "updated_at": 1002}
+                      "sha256": _A, "run_id": None, "updated_at": 1002, "reason": None}
     for e in out:
         assert e["run_key"] == f"{e['ingest_id']}-a{e['attempt']}"
 

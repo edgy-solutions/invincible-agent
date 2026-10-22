@@ -140,3 +140,8 @@ UPDATE ingest_status_projection SET leaf_source = 'declared' WHERE leaf_source I
 -- 0 for every legacy row (its task id is `document_promotion:<id>`); a re-class or re-run at review
 -- bumps it, and generation g > 0 names the task `document_promotion:<id>:g<g>`. IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS review_generation INTEGER NOT NULL DEFAULT 0;
+
+-- 2026-10-21 (a leaf set while the run is in flight): WHY a relaunched row (`received`, attempt > 1) is
+-- listed by GET /ingest/retries. `leaf_applied` = the BFF relaunched the row AS ITS LEAF (after rewriting
+-- the drop's sidecar to the leaf); NULL = a person's Retry of a failed row. NULLABLE, IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS retry_reason TEXT;

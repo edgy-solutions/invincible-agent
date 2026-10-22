@@ -20,7 +20,7 @@ from tests.test_a_promotion_takes_row_edits_behind_its_flag import (  # noqa: E4
     INGEST_ID as WORLD_ID, PAYLOAD, world,
 )
 from tests.test_the_leaf_is_on_the_row_and_the_dropper_can_correct_it import (  # noqa: E402,F401
-    ALICE, BOB, DOCTOOLS, ID, REF, _as, _by_kind_pdn_reruns, _leaf, _title, db,
+    ALICE, BOB, DOCTOOLS, ID, PREFIX, REF, _as, _by_kind_pdn_reruns, _leaf, _title, db,
 )
 
 G0 = f"document_promotion:{ID}"
@@ -255,6 +255,13 @@ def _backstop(db, monkeypatch, manifests, s3_error=None, older=300):
             return {"Contents": [{"Key": k, "LastModified": i} for i, k in enumerate(manifests)],
                     "IsTruncated": False}
 
+        # the title relaunch rewrites the drop's sidecar first: served from the fixture's fake S3
+        def get_object(self, **kw):
+            return db.s3.get_object(**kw)
+
+        def put_object(self, **kw):
+            return db.s3.put_object(**kw)
+
     monkeypatch.setattr(gateway, "_build_s3_client", lambda: S3())
     monkeypatch.setattr(gateway, "_read_extraction_manifest", lambda k: manifests[k])
     monkeypatch.setattr(ist, "list_leafless_extracting", lambda **kw: [db.get_row(ID)])
@@ -273,6 +280,11 @@ def test_a_confident_manifest_leaf_relaunches_the_stuck_pdf_row_as_that_kind(db,
     assert row["status"] == "received" and row["attempt"] == 2
     assert row["content_kind"] == "pcn" and row["leaf_source"] == "title"
     assert row["leaf_set_by"] == gateway._LEAF_BACKSTOP_ACTOR
+    # the relaunch reads the drop's sidecar, so it was rewritten to the leaf BEFORE the row re-opened
+    assert row["retry_reason"] == ist.REASON_LEAF_APPLIED
+    side = json.loads(db.s3.objects[PREFIX + "manifest.json"])
+    assert side["content_kind"] == "pcn" and side["metadata"]["content_kind"] == "pcn"
+    assert db.s3.puts == [PREFIX + "manifest.json"]
 
 
 def test_an_ambiguous_manifest_leaf_holds_the_row_with_mapped_candidates(db, monkeypatch):

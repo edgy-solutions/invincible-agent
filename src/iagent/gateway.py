@@ -151,6 +151,20 @@ def _env_int(name: str, default: int) -> int:
 _LEAF_BACKSTOP_ACTOR = "bff:manifest-leaf-backstop"
 _INGEST_LEAF_BACKSTOP_SECONDS_DEFAULT = 300
 
+# Ruling 2026-10-21 (a leaf set while the run is in flight): a PDF drop whose leaf (pcn|pdn) is set
+# while its Dagster run is in flight would strand -- doc-tools reads the kind ONLY from the drop's
+# sidecar `{object_prefix}manifest.json`, so that run ran as `pdf`, and every BFF "relaunch" re-reads
+# the SAME sidecar. So the BFF relaunches a row AS ITS LEAF: it rewrites the sidecar to the leaf FIRST,
+# then re-opens the row with reason `leaf_applied`. The relaunch pass polls every 60 s (not the
+# watchdog's hour-scale timeouts) and needs no user Retry. Env INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS;
+# <= 0 disables the pass.
+# INVARIANT: the sidecar is rewritten ONLY at a relaunch, so the sidecar's content_kind always names
+# the kind the latest launched run read. "sidecar kind == row leaf" therefore means "the leaf was
+# already applied" -> never relaunch again (no loops).
+_INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS_DEFAULT = 60
+_DAGSTER_TERMINAL_RUN_STATUSES = ("SUCCESS", "FAILURE", "CANCELED")
+_leaf_relaunch_last_at = None  # time.monotonic() seconds of the last relaunch pass
+
 
 def _backstop_candidates(raw) -> list:
     """Map a manifest `leaf.candidates` list to `hold_for_kind`'s input (spec 204 D3 + the 10-21
@@ -244,10 +258,14 @@ async def _ingest_leaf_backstop_tick(older_than_s: int) -> list:
             block = manifest["leaf"]
             title = _title_leaf(block.get("leaf"), block.get("outcome"))
             if title is not None:
+                # The sidecar is rewritten to the leaf BEFORE the row is re-opened, so the relaunch
+                # runs as the leaf; an S3 error lands in the per-row except (row skipped).
+                await run_in_threadpool(lambda: _apply_leaf_to_sidecar(row, title))
                 ok = await run_in_threadpool(lambda: ingest_status.set_leaf(
                     rid, title, "title", set_by=_LEAF_BACKSTOP_ACTOR,
                     from_statuses=[ingest_status.EXTRACTING],
-                    to_status=ingest_status.RECEIVED, bump_attempt=True)) is not None
+                    to_status=ingest_status.RECEIVED, bump_attempt=True,
+                    retry_reason=ingest_status.REASON_LEAF_APPLIED)) is not None
                 decision = f"title:{title}" if ok else "row_moved"
             else:
                 outcome = block.get("outcome")
@@ -266,6 +284,101 @@ async def _ingest_leaf_backstop_tick(older_than_s: int) -> list:
     return done
 
 
+async def _dagster_run_finished(run_id) -> bool:
+    """True iff Dagster says the run is terminal (SUCCESS|FAILURE|CANCELED). Anything else -- an error
+    (`_get_run_status` returns {}), RunNotFoundError, QUEUED, STARTED -- is False: fail closed, never
+    relaunch a run that may still be reading the sidecar."""
+    try:
+        ans = await _get_run_status(run_id)
+    except Exception:  # noqa: BLE001
+        return False
+    return (isinstance(ans, dict) and ans.get("__typename") == "Run"
+            and ans.get("status") in _DAGSTER_TERMINAL_RUN_STATUSES)
+
+
+def _drop_sidecar_key(row) -> str:
+    """The S3 key of the drop's sidecar -- exactly what `_write_ingest_object` writes."""
+    prefix = str(row.get("object_prefix") or "")
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
+    return f"{prefix}manifest.json"
+
+
+def _read_drop_sidecar(row) -> dict:
+    """SYNC. The drop's sidecar as a dict; raises on any S3/parse error."""
+    obj = _build_s3_client().get_object(Bucket=_ARTIFACT_BUCKET, Key=_drop_sidecar_key(row))
+    return json.loads(obj["Body"].read())
+
+
+def _apply_leaf_to_sidecar(row, leaf) -> bool:
+    """SYNC. Rewrite the drop's sidecar so doc-tools' next launch reads `leaf`: `content_kind`,
+    `domain_type` (the registration's domain, as the drop writes for a declared kind) and
+    `metadata.content_kind`; every other key is preserved. True if it wrote, False if the sidecar
+    already said so. Raises on S3 errors or an unregistered leaf. Called ONLY at a relaunch (see the
+    invariant at `_INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS_DEFAULT`)."""
+    import copy
+
+    from . import content_kinds
+
+    old = _read_drop_sidecar(row)
+    reg = content_kinds.by_kind(leaf)
+    if reg is None or not reg.domain:
+        raise ValueError(f"leaf {leaf!r} has no registered domain")
+    new = copy.deepcopy(old)
+    new["content_kind"] = leaf
+    new["domain_type"] = reg.domain
+    new["metadata"] = {**(old.get("metadata") or {}), "content_kind": leaf}
+    if new == old:
+        return False
+    _build_s3_client().put_object(Bucket=_ARTIFACT_BUCKET, Key=_drop_sidecar_key(row),
+                                  Body=json.dumps(new, indent=2).encode("utf-8"),
+                                  ContentType="application/json")
+    return True
+
+
+async def _ingest_leaf_relaunch_tick() -> list:
+    """One relaunch pass (ruling 2026-10-21): a leafed row (pcn|pdn) whose latest launched run read
+    another kind and has since FINISHED is rewritten into the sidecar as its leaf and re-opened at
+    `received` (reason `leaf_applied`), so doc-tools relaunches it as the leaf. Skips: not leaf-
+    capable; sidecar kind already == leaf (already applied -- the no-loop guard, and a declared drop
+    whose leaf run ended silent, which the watchdog owns); the run not finished. Never raises. Returns
+    the relaunched ids."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    done: list = []
+    try:
+        rows = await run_in_threadpool(
+            lambda: ingest_status.list_leafed_relaunch_candidates(limit=50))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ingest_leaf_relaunch listing failed (%s: %s)", type(exc).__name__, exc)
+        return done
+    for row in rows:
+        rid = row.get("id")
+        try:
+            leaf = str(row.get("content_kind") or "").strip().lower()
+            if not _leaf_capable(row):
+                continue
+            sidecar = await run_in_threadpool(lambda row=row: _read_drop_sidecar(row))
+            if str(sidecar.get("content_kind") or "").strip().lower() == leaf:
+                continue
+            if not await _dagster_run_finished(row.get("run_id")):
+                continue
+            await run_in_threadpool(lambda row=row, leaf=leaf: _apply_leaf_to_sidecar(row, leaf))
+            moved = await run_in_threadpool(lambda row=row, leaf=leaf: ingest_status.relaunch_as_leaf(
+                rid, leaf=leaf, from_status=row["status"], expect_attempt=row["attempt"]))
+            decision = "relaunched" if moved is not None else "row_moved"
+            logger.info("ingest_leaf_relaunch ingest_id=%s from=%s run_id=%s attempt=%s decision=%s",
+                        rid, row.get("status"), row.get("run_id"), row.get("attempt"), decision)
+            if moved is not None:
+                done.append(rid)
+        except Exception as exc:  # noqa: BLE001 -- never raise out of the tick
+            logger.warning("ingest_leaf_relaunch ingest_id=%s skipped (%s: %s)", rid,
+                           type(exc).__name__, exc)
+    return done
+
+
 async def _ingest_watchdog_tick(timeout_s: int, extracting_timeout_s: int = 0) -> list:
     """One watchdog pass: fail every stale `received` and `extracting` document row (each stage only
     if its timeout is > 0), log each id with its stage, return the ids. Split out of the loop so a
@@ -274,6 +387,14 @@ async def _ingest_watchdog_tick(timeout_s: int, extracting_timeout_s: int = 0) -
 
     from . import ingest_status
 
+    # The leaf relaunch pass has its own 60 s cadence (not the watchdog's), and runs first.
+    global _leaf_relaunch_last_at
+    _relaunch_s = _env_int("INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS",
+                           _INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS_DEFAULT)
+    if _relaunch_s > 0 and (_leaf_relaunch_last_at is None
+                            or time.monotonic() - _leaf_relaunch_last_at >= _relaunch_s):
+        _leaf_relaunch_last_at = time.monotonic()
+        await _ingest_leaf_relaunch_tick()
     # The manifest-leaf backstop runs BEFORE the fail pass: it can save a row the timeout would fail.
     await _ingest_leaf_backstop_tick(
         _env_int("INGEST_LEAF_BACKSTOP_SECONDS", _INGEST_LEAF_BACKSTOP_SECONDS_DEFAULT))
@@ -11945,6 +12066,8 @@ async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] 
         non-terminal stage -- POST /ingest/events moves it straight to `case_opened`, never
         through extracting/review) -- 409 `resend_the_event`: the row holds only the payload
         hash, so the fix is to resend the same event, not to retry here.
+      * a failed DOCUMENT row is re-opened at `received` (a row with a leaf has the drop's sidecar
+        rewritten to that leaf first; 503 `sidecar_unwritable` if it cannot be).
       * a DOCUMENT row at `received`/`extracting` -- 409 `in_pipeline`: extraction runs in
         doc-tools' own pipeline (ingress_user_sensor); a retry here cannot advance it.
       * a DOCUMENT row at `review` -- the one stage this CAN move: re-runs the
@@ -11985,9 +12108,23 @@ async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] 
         return (r is not None and r.get("status") == ingest_status.FAILED
                 and r.get("kind") != ingest_status.EVENT)
 
-    async def _reopen_failed() -> dict:
-        """Re-open a failed DOCUMENT row. `retry_failed` is one atomic UPDATE guarded on
+    async def _reopen_failed(r: Optional[dict] = None) -> dict:
+        """Re-open a failed DOCUMENT row (`r`: the row the caller already read). A row with a leaf
+        (pcn|pdn) has the drop's sidecar rewritten to that leaf FIRST, so the relaunch runs as the leaf
+        and the leaf-relaunch pass finds nothing left to do; a sidecar that cannot be written is 503
+        `sidecar_unwritable` and the row is unchanged. `retry_failed` is one atomic UPDATE guarded on
         `status = 'failed'`, so of two concurrent retries the second gets None -> 409."""
+        _leaf_now = str((r or {}).get("content_kind") or "").strip().lower()
+        if r and _leaf_capable(r) and _leaf_now in ingest_status.LEAVES:
+            try:
+                await run_in_threadpool(lambda: _apply_leaf_to_sidecar(r, _leaf_now))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ingest_retry ingest_id=%s sidecar not written (%s: %s)", ingest_id,
+                               type(exc).__name__, exc)
+                raise HTTPException(status_code=503, detail={
+                    "error": "sidecar_unwritable", "stage": ingest_status.FAILED,
+                    "message": "the drop's manifest could not be updated to the row's kind, so "
+                               "nothing was changed; try again"})
         attempt = await run_in_threadpool(lambda: ingest_status.retry_failed(ingest_id))
         if attempt is None:
             raise HTTPException(status_code=409, detail={
@@ -12001,7 +12138,7 @@ async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] 
         if _refiles_from_state(own):
             return await _refile_from_state(current_user.authz_id)
         if _is_failed_document(own):
-            return await _reopen_failed()
+            return await _reopen_failed(own)
         raise HTTPException(status_code=403, detail={
             "error": "retry_is_pin_driven",
             "message": "a retry is driven only by an extractor pin change, never by a person"})
@@ -12012,7 +12149,7 @@ async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] 
         return await _refile_from_state(current_user.authz_id)
     if _is_failed_document(row):
         # No pin: the input was never processed, so there is no extractor pin to have changed.
-        return await _reopen_failed()
+        return await _reopen_failed(row)
     if body is None:
         raise HTTPException(status_code=422, detail={
             "error": "pin_required",
@@ -12575,6 +12712,7 @@ async def list_ingest_retries(
     `extracting`, so the same entry is listed on every poll; the attempt-keyed run_key is what
     makes the relaunch idempotent. A row not relaunched within `INGEST_RECEIVED_TIMEOUT_SECONDS`
     is failed `timeout` by the watchdog, as before. Oldest first; event rows never appear.
+    Each entry's `reason` is `leaf_applied` (the BFF relaunched it as its leaf) or null (a Retry).
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -12592,7 +12730,8 @@ async def list_ingest_retries(
          "run_key": f"{r['id']}-a{r['attempt']}",
          "kind": r["kind"], "content_kind": r["content_kind"],
          "object_prefix": r["object_prefix"], "sha256": r["sha256"],
-         "run_id": r["run_id"], "updated_at": r["updated_at"]}
+         "run_id": r["run_id"], "updated_at": r["updated_at"],
+         "reason": r.get("retry_reason")}
         for r in rows]}
 
 
@@ -13188,11 +13327,16 @@ async def ingest_leaf_route(
     The leaf can change until promotion (ruling 2026-10-21 "Leaf, final shape"); dropper and steward
     use this one route. Dispatch on the stage:
 
-      received, extracting, failed   set_leaf(corrected) in place; the stage is unchanged (a later
-                                     retry runs as the new kind)
-      awaiting_kind                  set_leaf(corrected) and the row goes back to `received`,
-                                     `attempt` + 1: nothing was extracted, so the hold is released
-                                     and doc-tools relaunches it from GET /ingest/retries
+      received, extracting, failed   set_leaf(corrected) in place; the stage is unchanged. The
+                                     run in flight read the OLD kind from the drop's sidecar, so
+                                     `_ingest_leaf_relaunch_tick` relaunches the row AS THE LEAF
+                                     once its run has finished (within one 60 s poll)
+      awaiting_kind                  the drop's sidecar is rewritten to the leaf FIRST (a failure
+                                     is 503 `sidecar_unwritable`, nothing changed), then
+                                     set_leaf(corrected) and the row goes back to `received`,
+                                     `attempt` + 1, reason `leaf_applied`: nothing was extracted,
+                                     so the hold is released and doc-tools relaunches it from
+                                     GET /ingest/retries, running as the leaf
       awaiting_origin, review        spec 204: RE-CLASS when `_same_passes(old, new)` (the two kinds
                                      declare equal pass lists in the registry): awaiting_origin
                                      records the correction and keeps its stage; review files the
@@ -13292,10 +13436,22 @@ async def ingest_leaf_route(
                 stage == ingest_status.REVIEW and not same):
             gen = int(row.get("review_generation") or 0)
             at_review = stage == ingest_status.REVIEW
+            # The relaunch re-reads the drop's sidecar, so it is rewritten to the leaf FIRST; if it
+            # cannot be, nothing is written to the row.
+            try:
+                await run_in_threadpool(lambda: _apply_leaf_to_sidecar(row, leaf))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ingest_leaf ingest_id=%s sidecar not written (%s: %s)", ingest_id,
+                               type(exc).__name__, exc)
+                _refuse(503, {"error": "sidecar_unwritable", "stage": stage,
+                              "message": "the drop's manifest could not be updated to the new "
+                                         "kind, so nothing was changed; try again"},
+                        "sidecar_unwritable")
             written = await run_in_threadpool(lambda: ingest_status.set_leaf(
                 ingest_id, leaf, "corrected", set_by=caller,
                 from_statuses=[stage], to_status=ingest_status.RECEIVED, bump_attempt=True,
-                bump_generation=at_review, expect_generation=gen if at_review else None))
+                bump_generation=at_review, expect_generation=gen if at_review else None,
+                retry_reason=ingest_status.REASON_LEAF_APPLIED))
             if written is None:
                 if at_review:
                     continue

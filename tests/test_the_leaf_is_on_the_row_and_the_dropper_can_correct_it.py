@@ -51,6 +51,12 @@ _REAL_FILE_TASK = gateway._file_or_find_document_promotion_task
 # --------------------------------------------------------------------------------------------
 # the store: an in-memory interpreter of set_leaf / hold_for_kind / list_pending_retries SQL
 # --------------------------------------------------------------------------------------------
+def _failure_dict(raw):
+    if isinstance(raw, str):
+        return json.loads(raw)
+    return raw
+
+
 class _FakeCur:
     def __init__(self, db):
         self.db = db
@@ -67,7 +73,18 @@ class _FakeCur:
     def execute(self, sql, params=()):
         sql = " ".join(sql.split())
         params = list(params)
-        if sql.startswith("UPDATE ingest_status_projection SET "):
+        if (sql.startswith("UPDATE ingest_status_projection SET ")
+                and "WHERE id = %s AND status = 'failed' AND kind <> 'event' RETURNING attempt" in sql):
+            # retry_failed: a person's Retry re-opens a failed document row
+            r = self.db.rows.get(params[-1])
+            hit = r is not None and r["status"] == "failed" and r["kind"] != "event"
+            self._one = None
+            if hit:
+                r.update(status="received", failure=None, detail=None, retry_reason=None,
+                         updated_at=params[0])
+                r["attempt"] += 1
+                self._one = (r["attempt"],)
+        elif sql.startswith("UPDATE ingest_status_projection SET "):
             body = sql[len("UPDATE ingest_status_projection SET "):]
             set_part, rest = body.split(" WHERE ", 1)
             where = rest.split(" RETURNING")[0]
@@ -96,12 +113,23 @@ class _FakeCur:
             # hold_for_kind's guard: never hold a row that already carries a leaf.
             guard_no_leaf = "content_kind IS NULL OR NOT (content_kind = ANY(%s))" in where
             leaves = params.pop(0) if guard_no_leaf else ()
+            # relaunch_as_leaf's guards (a leaf relaunch, 2026-10-21): each applies only if its text
+            # is in the SQL, so a mutant of the SQL is caught.
+            guard_leaf = " AND lower(content_kind) = %s" in where
+            want_leaf = params.pop(0) if guard_leaf else None
+            guard_attempt = " AND attempt = %s" in where
+            want_attempt = params.pop(0) if guard_attempt else None
+            guard_timeout = "AND (failure::jsonb ->> 'reason_code') = 'timeout'" in where
             assert not params, params
             r = self.db.rows.get(row_id)
             hit = (r is not None and r["status"] in statuses and r["kind"] != "event"
                    and (not guard_gen or r.get("review_generation", 0) == expect_gen)
                    and (not guard_title or r.get("leaf_source") in (None, "title"))
-                   and (not guard_no_leaf or r.get("content_kind") not in leaves))
+                   and (not guard_no_leaf or r.get("content_kind") not in leaves)
+                   and (not guard_leaf or str(r.get("content_kind") or "").lower() == want_leaf)
+                   and (not guard_attempt or r["attempt"] == want_attempt)
+                   and (not guard_timeout or (_failure_dict(r.get("failure")) or {}
+                                              ).get("reason_code") == "timeout"))
             self.rowcount = 1 if hit else 0
             self._one = None
             if hit:
@@ -116,9 +144,36 @@ class _FakeCur:
         elif "WHERE status = 'received' AND attempt > 1" in sql:
             self._all = [
                 (r["id"], r["attempt"], r["kind"], r.get("content_kind"), r["object_prefix"],
-                 r["sha256"], r.get("run_id"), r["updated_at"])
+                 r["sha256"], r.get("run_id"), r["updated_at"], r.get("retry_reason"))
                 for r in self.db.rows.values()
                 if r["status"] == "received" and r["attempt"] > 1 and r["kind"] != "event"]
+        elif "lower(content_kind) = ANY(%s)" in sql or "run_id IS NOT NULL AND (status IN" in sql:
+            # list_leafed_relaunch_candidates: each WHERE clause applies only if its text is present
+            leaves = params.pop(0) if "lower(content_kind) = ANY(%s)" in sql else None
+            limit = params[-1]
+
+            def _ok(r):
+                if "kind <> 'event'" in sql and r["kind"] == "event":
+                    return False
+                if leaves is not None and str(r.get("content_kind") or "").lower() not in leaves:
+                    return False
+                if "run_id IS NOT NULL" in sql and r.get("run_id") is None:
+                    return False
+                if "status IN ('received', 'extracting')" in sql:
+                    timeout_ok = ("status = 'failed' AND (failure::jsonb ->> 'reason_code') = 'timeout'"
+                                  in sql and r["status"] == "failed"
+                                  and (_failure_dict(r.get("failure")) or {}
+                                       ).get("reason_code") == "timeout")
+                    if r["status"] not in ("received", "extracting") and not timeout_ok:
+                        return False
+                return True
+
+            hits = sorted((r for r in self.db.rows.values() if _ok(r)),
+                          key=lambda r: (r["updated_at"], r["id"]))[:limit]
+            self._all = [
+                (r["id"], r["kind"], r["object_prefix"], r.get("content_kind"), r.get("leaf_source"),
+                 r["status"], r.get("run_id"), r["attempt"], r.get("failure"), r["updated_at"])
+                for r in hits]
         else:  # pragma: no cover
             raise AssertionError(f"unexpected SQL: {sql}")
 
@@ -163,7 +218,7 @@ class DB:
                "content_kind": "pdf", "extraction_ref": None, "failure": None, "run_id": None,
                "attempt": 1, "notice_id": None, "leaf_source": None, "leaf_candidates": None,
                "leaf_set_by": None, "leaf_set_at": None, "review_generation": 0, "origin_suggestion": None,
-               "case_id": None}
+               "case_id": None, "retry_reason": None}
         row.update(kw)
         self.rows[id] = row
         return row
@@ -211,6 +266,47 @@ class DB:
         return "T-1", "FILED"
 
 
+class FakeS3:
+    """A dict of key -> bytes with the two calls the sidecar rewrite makes; every put is recorded."""
+
+    def __init__(self):
+        self.objects: dict = {}
+        self.puts: list = []
+        self.put_error: Exception | None = None
+
+    def get_object(self, Bucket, Key):
+        if Key not in self.objects:
+            raise KeyError(Key)
+        return {"Body": types.SimpleNamespace(read=lambda: self.objects[Key])}
+
+    def put_object(self, Bucket, Key, Body, ContentType=None):
+        if self.put_error is not None:
+            raise self.put_error
+        self.puts.append(Key)
+        self.objects[Key] = Body
+
+
+def drop_sidecar(**kw) -> dict:
+    """The drop's sidecar as `ingest_document` writes it for a drop that DECLARED NO leaf: kind pdf,
+    no domain, and `metadata.content_kind` pdf."""
+    out = {"ingest_id": ID, "object_ref": f"{PREFIX}n.pdf", "content_kind": "pdf",
+           "domain_type": None, "media_kind": "pdf", "sha256": _HEX,
+           "submitted_by": ALICE, "metadata": {"content_kind": "pdf"}}
+    out.update(kw)
+    return out
+
+
+SIDECAR_KEY = PREFIX + "manifest.json"
+
+
+def put_sidecar(s3: FakeS3, **kw) -> None:
+    s3.objects[SIDECAR_KEY] = json.dumps(drop_sidecar(**kw), indent=2).encode("utf-8")
+
+
+def read_sidecar(s3: FakeS3) -> dict:
+    return json.loads(s3.objects[SIDECAR_KEY])
+
+
 _SUSTAINMENT = types.SimpleNamespace(domain="SUSTAINMENT", passes=("header", "parts"))
 _DOMAINLESS = types.SimpleNamespace(domain=None, passes=("identity",),
                                     model_fields_set=frozenset({"domain"}))
@@ -240,6 +336,9 @@ def db(monkeypatch):
     for name in ("get_row", "get_status_unscoped", "get_status_for", "update_status"):
         monkeypatch.setattr(ist, name, getattr(d, name))
     monkeypatch.setattr(ck, "by_kind", _by_kind)
+    d.s3 = FakeS3()
+    put_sidecar(d.s3)
+    monkeypatch.setattr(gateway, "_build_s3_client", lambda: d.s3)
     monkeypatch.setattr(gateway, "_file_or_find_document_promotion_task", d.file_task)
     monkeypatch.setattr(ht, "get_task_open_state", lambda task_id: None)
     d.superseded = []

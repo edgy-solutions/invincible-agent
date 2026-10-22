@@ -145,6 +145,7 @@ EVENT_INGEST_ID_RE = re.compile(r"^evt-[0-9a-f]{64}$")
 # is the one code this repo itself mints, and the stage route treats it as PROVISIONAL (a late run
 # supersedes it), so it is named once here for both sides.
 REASON_TIMEOUT = "timeout"
+REASON_LEAF_APPLIED = "leaf_applied"
 REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 _MIGRATION_SQL = """
@@ -228,6 +229,11 @@ UPDATE ingest_status_projection SET leaf_source = 'declared' WHERE leaf_source I
 -- 0 for every legacy row (its task id is `document_promotion:<id>`); a re-class or re-run at review
 -- bumps it, and generation g > 0 names the task `document_promotion:<id>:g<g>`. IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS review_generation INTEGER NOT NULL DEFAULT 0;
+
+-- 2026-10-21 (a leaf set while the run is in flight): WHY a relaunched row (`received`, attempt > 1) is
+-- listed by GET /ingest/retries. `leaf_applied` = the BFF relaunched the row AS ITS LEAF (after rewriting
+-- the drop's sidecar to the leaf); NULL = a person's Retry of a failed row. NULLABLE, IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS retry_reason TEXT;
 """
 
 
@@ -557,6 +563,7 @@ def update_status(
 def set_leaf(ingest_id: str, leaf: str, source: str, *, set_by: str, from_statuses,
              to_status: Optional[str] = None, bump_attempt: bool = False,
              bump_generation: bool = False, expect_generation: Optional[int] = None,
+             retry_reason: Optional[str] = None,
              now_ms: Optional[int] = None) -> Optional[dict]:
     """Write the row's leaf (spec 203): ONE atomic guarded UPDATE ... RETURNING. `content_kind` is
     OVERWRITTEN (not COALESCEd -- a correction must beat what the drop declared), `leaf_source`,
@@ -567,7 +574,9 @@ def set_leaf(ingest_id: str, leaf: str, source: str, *, set_by: str, from_status
     row's `leaf_source` to be NULL or already `title`, so a title never overwrites a declared
     or corrected leaf. Spec 204: `bump_generation` adds 1 to `review_generation` (the promotion
     task's generation) in the same write; `expect_generation` adds `AND review_generation = %s` to the
-    guard, so a write that lost a race to another generation bump matches nothing. Returns the updated
+    guard, so a write that lost a race to another generation bump matches nothing. `retry_reason` is
+    written (as `retry_reason`, NULL allowed) ONLY together with `bump_attempt`: it says why the relaunched
+    row is listed by `list_pending_retries` (`leaf_applied` for a BFF relaunch as the leaf). Returns the updated
     row as a dict, or None if nothing matched."""
     if leaf not in LEAVES:
         raise ValueError(f"leaf must be one of {LEAVES}, got {leaf!r}")
@@ -583,7 +592,8 @@ def set_leaf(ingest_id: str, leaf: str, source: str, *, set_by: str, from_status
         sets.append("status = %s")
         params.append(to_status)
     if bump_attempt:
-        sets += ["attempt = attempt + 1", "failure = NULL", "detail = NULL"]
+        sets += ["attempt = attempt + 1", "failure = NULL", "detail = NULL", "retry_reason = %s"]
+        params.append(retry_reason)
     if bump_generation:
         sets.append("review_generation = review_generation + 1")
     where = "id = %s AND status = ANY(%s) AND kind <> 'event'"
@@ -847,11 +857,12 @@ def list_pending_retries(*, limit: int) -> list[dict]:
     run_key `{id}-a{attempt}`. A first attempt (`attempt` = 1) is the sensor's own and is never
     listed. EVENT rows are excluded for the same reason as in `fail_stale_received`. Read-only."""
     keys = ("id", "attempt", "kind", "content_kind", "object_prefix", "sha256", "run_id",
-            "updated_at")
+            "updated_at", "retry_reason")
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """SELECT id, attempt, kind, content_kind, object_prefix, sha256, run_id, updated_at
+                """SELECT id, attempt, kind, content_kind, object_prefix, sha256, run_id, updated_at,
+                          retry_reason
                      FROM ingest_status_projection
                     WHERE status = 'received' AND attempt > 1 AND kind <> 'event'
                     ORDER BY updated_at ASC, id ASC
@@ -874,7 +885,7 @@ def retry_failed(ingest_id: str, *, now_ms: Optional[int] = None) -> Optional[in
             cur.execute(
                 """UPDATE ingest_status_projection
                       SET status = 'received', failure = NULL, detail = NULL,
-                          attempt = attempt + 1, updated_at = %s
+                          attempt = attempt + 1, retry_reason = NULL, updated_at = %s
                     WHERE id = %s AND status = 'failed' AND kind <> 'event'
                 RETURNING attempt""",
                 (now, ingest_id),
@@ -882,6 +893,74 @@ def retry_failed(ingest_id: str, *, now_ms: Optional[int] = None) -> Optional[in
             r = cur.fetchone()
         conn.commit()
     return r[0] if r else None
+
+
+def list_leafed_relaunch_candidates(*, limit: int = 50) -> list[dict]:
+    """Rows whose leaf (pcn|pdn) is set but whose latest launched run may have read another kind: the
+    candidates for `relaunch_as_leaf`. Live document rows with a leaf `content_kind`, a `run_id` (a run
+    exists to wait for) and stage received/extracting -- or failed with `reason_code` = timeout. The
+    timeout is included because the watchdog's timeout is the BFF's own PROVISIONAL mark (the stage
+    route already lets a late run supersede it), so a row that stranded past the extracting timeout is
+    still rescued without a user Retry; any other failure is the pipeline's verdict and is left alone.
+    The caller decides whether to act (sidecar kind, run finished). Oldest first. Read-only."""
+    keys = ("id", "kind", "object_prefix", "content_kind", "leaf_source", "status", "run_id",
+            "attempt", "failure", "updated_at")
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT id, kind, object_prefix, content_kind, leaf_source, status, run_id, attempt,
+                          failure, updated_at
+                     FROM ingest_status_projection
+                    WHERE kind <> 'event' AND lower(content_kind) = ANY(%s) AND run_id IS NOT NULL
+                      AND (status IN ('received', 'extracting')
+                           OR (status = 'failed' AND (failure::jsonb ->> 'reason_code') = 'timeout'))
+                    ORDER BY updated_at ASC, id ASC
+                    LIMIT %s""",
+                (list(LEAVES), limit),
+            )
+            rows = cur.fetchall()
+    out = []
+    for r in rows:
+        d = dict(zip(keys, r))
+        d["failure"] = _parse_failure(d.get("failure"))
+        out.append(d)
+    return out
+
+
+def relaunch_as_leaf(ingest_id: str, *, leaf: str, from_status: str, expect_attempt: int,
+                     reason: str = REASON_LEAF_APPLIED, now_ms: Optional[int] = None) -> Optional[dict]:
+    """Re-open a row at `received` so doc-tools relaunches it AS ITS LEAF (the caller has already
+    rewritten the drop's sidecar to `leaf`). ONE guarded UPDATE ... RETURNING: `attempt` + 1, `failure`
+    and `detail` cleared, `retry_reason` = `reason`. The leaf columns are NOT touched. The guard is the
+    status the caller saw, a live row, the leaf still being `leaf`, and `attempt` still being what the
+    caller saw -- so a row that moved meanwhile matches nothing (None). From `failed` only a timeout
+    failure matches. Invariant: the sidecar is rewritten ONLY at a relaunch, so its content_kind names
+    the kind the latest launched run read."""
+    if leaf not in LEAVES:
+        raise ValueError(f"leaf must be one of {LEAVES}, got {leaf!r}")
+    if from_status not in (RECEIVED, EXTRACTING, FAILED):
+        raise ValueError(f"from_status must be received|extracting|failed, got {from_status!r}")
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    where = ("id = %s AND status = ANY(%s) AND kind <> 'event' AND lower(content_kind) = %s "
+             "AND attempt = %s")
+    if from_status == FAILED:
+        where += " AND (failure::jsonb ->> 'reason_code') = 'timeout'"
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "UPDATE ingest_status_projection SET status = %s, attempt = attempt + 1, "
+                "failure = NULL, detail = NULL, retry_reason = %s, updated_at = %s "
+                f"WHERE {where} RETURNING *",
+                (RECEIVED, reason, now, ingest_id, [from_status], leaf, int(expect_attempt)),
+            )
+            r = cur.fetchone()
+        conn.commit()
+    if not r:
+        return None
+    out = dict(r)
+    out["failure"] = _parse_failure(out.get("failure"))
+    out["leaf_candidates"] = _parse_candidates(out.get("leaf_candidates"))
+    return out
 
 
 def ingests_naming_notice(notice_id: str, *, exclude_ingest_id: str) -> list[str]:

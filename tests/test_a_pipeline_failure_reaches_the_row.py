@@ -74,6 +74,26 @@ def _stage_rig(monkeypatch, row):
     return calls
 
 
+@pytest.fixture(autouse=True)
+def _drop_sidecar(monkeypatch):
+    """A Retry of a row with a leaf (these rows are pcn) rewrites the drop's sidecar first: serve one
+    (the sidecar rewrite itself is defended in test_a_leaf_set_while_running_relaunches_as_the_leaf)."""
+    store = {}
+
+    class _S3:
+        def get_object(self, Bucket, Key):
+            body = store.get(Key, json.dumps({"content_kind": "pdf", "metadata": {}}).encode())
+            return {"Body": mock.MagicMock(read=lambda: body)}
+
+        def put_object(self, Bucket, Key, Body, ContentType=None):
+            store[Key] = Body
+
+    monkeypatch.setattr(gateway, "_build_s3_client", lambda: _S3())
+    from src.iagent import content_kinds
+    monkeypatch.setattr(content_kinds, "by_kind",
+                        lambda k: mock.MagicMock(domain="SUSTAINMENT") if k in ("pcn", "pdn") else None)
+
+
 def _row(status, **extra):
     return {"id": _ID, "status": status, "kind": "pdf", "submitted_by": "alice@example.com",
             "on_behalf_of": "alice@example.com", "content_kind": "pcn", "failure": None,
