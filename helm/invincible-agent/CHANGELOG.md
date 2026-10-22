@@ -1,5 +1,33 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.65 — 2026-10-22
+
+The domain broker can install from a mirror, for a deployment with no route to github.com or
+pypi.org. Before this, its start-time pip install always fetched the SDK tarball from GitHub and
+everything else from PyPI, and in a closed network it retried until the startup probe gave up.
+New `domainBroker` keys:
+
+- `meshSdkSource`: `url` (the default; the GitHub tag tarball, as before) or `index`, which
+  installs `iagent-mesh==<meshSdkVersion without the v>` from the pip index.
+- `meshSdkBaseUrl`: replaces the GitHub tags URL. The file name stays `<meshSdkVersion>.tar.gz`.
+- `pip.indexUrl` becomes `PIP_INDEX_URL`.
+- `pip.caSecretName` names a Secret holding `ca.crt`; it is mounted and passed as `PIP_CERT`.
+
+There is no skip-verify option. Defaults render as before. Sealed by
+`tests/test_domain_broker_installs_from_a_mirror.py`.
+
+## 0.4.64 — 2026-10-22
+
+The topaz-seed CronJob, in `configMap` and `git` mode, copies all eight data files that
+`validate_policy.py` requires. It copied six: `domain_consumption.yaml` and `program_members.yaml`
+were missing from the copy loop. So from 10-02 every run in those modes was refused `MISSING`.
+Sealed by `tests/test_topaz_seed_compose_copies_every_validated_file.py`.
+
+## 0.4.62, 0.4.63 — 2026-10-22
+
+No template or `values.yaml` default changed. Both carry sandbox-only changes in
+`values-sandbox.yaml`, and 0.4.62 also adds a `values.yaml` comment on the promotion row-edit flags.
+
 ## 0.4.61 — 2026-10-20
 
 Sandbox only, for roll 198. `cortexUi.image.digest` pins cortex-ui `3d2f7a3` (`sha256:7b51701c`,

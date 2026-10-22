@@ -857,6 +857,27 @@ domainBroker:
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
   meshSdkVersion: "v0.9.10"
+  # CLOSED NETWORK (no route to github.com / pypi.org): point the install at a mirror.
+  # The SDK is fetched from <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz, so the mirror holds the
+  # GitHub tag tarball under that same file name (e.g. an Artifactory generic repo holding
+  # v0.9.10.tar.gz, or a remote repo proxying the GitHub tags URL). The version stays
+  # meshSdkVersion's alone.
+  #   meshSdkSource: url    -> "iagent-mesh @ <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz" (default)
+  #   meshSdkSource: index  -> "iagent-mesh==<meshSdkVersion without the v>" from pip.indexUrl,
+  #                            for an internal PyPI that holds the SDK (upload the sdist or a
+  #                            wheel built from the tag; the package's version equals the tag's).
+  meshSdkSource: "url"
+  meshSdkBaseUrl: "https://github.com/edgy-solutions/iagent-mesh-sdk/archive/refs/tags"
+  pip:
+    # PIP_INDEX_URL for fastapi/httpx/pydantic/hypercorn and the SDK's own dependencies,
+    # e.g. an Artifactory PyPI remote's .../api/pypi/<repo>/simple. "" = pypi.org.
+    indexUrl: ""
+    # Optional Secret holding the CA bundle (key `ca.crt`) that signed the mirror's TLS cert:
+    #   kubectl create secret generic iagent-pip-ca --from-file=ca.crt=<internal-ca>.pem
+    # Mounted read-only and passed as PIP_CERT, so verification stays ON against YOUR CA
+    # (it REPLACES the image's public bundle). Deliberately NO trusted-host / skip-verify
+    # knob: this install delivers the broker's transport-auth code.
+    caSecretName: ""
   # Broker code runs inside a python:slim container — the code itself
   # is baked into a ConfigMap via .Files.Get, so any Python 3.12 slim
   # variant works. Override via image.* below or the chart-wide
