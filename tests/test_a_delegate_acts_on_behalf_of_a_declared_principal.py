@@ -396,11 +396,42 @@ def test_I_the_base_chart_renders_an_empty_delegate_map():
     assert json.loads(data[ENV_NAME]) == {}
 
 
+#: The principals a RULING put on the delegate's list -- three in 2c978e2d, operator.regioneast on
+#: 2026-10-21 (6a10a62a). A floor, not the whole set: an operator added to the sandbox values is
+#: not a red here; one of these REMOVED is, because removing one takes a ruling.
+RULED_PRINCIPALS = {PRINCIPAL_ATLANTIA, PRINCIPAL_BORDURIA, PRINCIPAL_LIAISON,
+                    "55555555-5555-4555-8555-555555555555"}  # operator.regioneast
+
+
+def _declared_principal_subs(values: dict) -> list[str]:
+    """What the sandbox VALUES declare the delegate acts for: each `onBehalfOf` user of the
+    DELEGATE client, mapped to its brokered principal's sub -- the join configmap.yaml makes.
+    A user that is not a brokered principal (a local nonInteractiveUser renders as an email-shaped
+    id instead) is not modelled here, so it fails rather than being silently dropped."""
+    kc = values["keycloak"]
+    clients = [c for c in (kc.get("serviceClients") or []) + (kc.get("extraServiceClients") or [])
+               if c.get("authzId") == DELEGATE]
+    assert len(clients) == 1, f"expected one {DELEGATE} client in the sandbox values, got {len(clients)}"
+    by_user = {p["username"]: p["sub"]
+               for b in (kc.get("brokers") or {}).values() for p in (b.get("principals") or [])}
+    users = [o["user"] for o in clients[0]["onBehalfOf"]]
+    unmodelled = [u for u in users if u not in by_user]
+    assert not unmodelled, f"onBehalfOf users that are not brokered principals: {unmodelled}"
+    return sorted(by_user[u] for u in users)
+
+
 @pytestmark_helm
-def test_I_the_sandbox_renders_openddils_three_principals():
+def test_I_the_sandbox_renders_exactly_the_principals_its_values_declare():
+    """Was `..._three_principals`, an exact literal that went red when the 10-21 ruling added
+    regioneast. The render is now checked against the values it is rendered FROM (the template's
+    join), and the ruled principals are a floor on those values."""
+    values = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
+    declared = _declared_principal_subs(values)
+    assert RULED_PRINCIPALS <= set(declared), (
+        f"a ruled principal is no longer declared: {sorted(RULED_PRINCIPALS - set(declared))}")
     data = _config_data(_render(*_SANDBOX_ARGS))
     parsed = json.loads(data[ENV_NAME])
-    assert parsed[DELEGATE] == sorted([PRINCIPAL_ATLANTIA, PRINCIPAL_BORDURIA, PRINCIPAL_LIAISON])
+    assert parsed[DELEGATE] == declared
 
 
 @pytestmark_helm
