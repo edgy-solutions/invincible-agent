@@ -99,11 +99,18 @@ def verify(manifest_path: str, chart_version: str, resolve=None) -> int:
     """
     resolve = resolve or digest_of
     manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
-    if manifest.get("chart_version") != chart_version or not manifest.get("images"):
+    missing = manifest.get("missing") or []
+    if manifest.get("chart_version") != chart_version or not (manifest.get("images") or missing):
         print(f"REFUSING: {manifest_path} is for {manifest.get('chart_version')!r} with "
               f"{len(manifest.get('images') or {})} image(s); expected {chart_version!r} and at "
               "least one", file=sys.stderr)
         return 2
+    for svc in missing:
+        print(f"  UNVERIFIED {svc}: missing from the manifest, so no tag was cut")
+    if not manifest["images"]:
+        # EXIT 3, as the retag does: the matrix is still building, and nothing was tagged to check.
+        print(f"verify {chart_version}: 0 image(s) tagged, {len(missing)} missing")
+        return 3
     probs = mismatches(manifest, resolve)
     svc, want = next(iter(manifest["images"].items()))
     repo = f"{manifest['registry']}/{svc}"
@@ -120,11 +127,9 @@ def verify(manifest_path: str, chart_version: str, resolve=None) -> int:
         probs.append("control ACCEPTED a wrong digest: the comparison cannot fail")
     for p in probs:
         print(f"  FAILED    {p}")
-    for svc in manifest.get("missing") or []:
-        print(f"  UNVERIFIED {svc}: missing from the manifest, so no tag was cut")
     print(f"verify {chart_version}: {len(manifest['images'])} image(s), "
-          f"{len(controls) + 1} control(s), {len(probs)} failure(s)")
-    return 1 if probs else 0
+          f"{len(controls) + 1} control(s), {len(probs)} failure(s), {len(missing)} missing")
+    return 1 if probs else (3 if missing else 0)
 
 
 def main() -> int:

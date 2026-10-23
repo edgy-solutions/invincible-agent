@@ -26,12 +26,12 @@ _B = "sha256:" + "b" * 64
 _COMMIT = "360fbeb6fbecae36076632b503dc5f691a58f1e3"
 
 
-def _manifest(tmp_path: pathlib.Path, version: str = "0.4.65") -> str:
+def _manifest(tmp_path: pathlib.Path, version: str = "0.4.65", images=None, missing=()) -> str:
     p = tmp_path / "image-digests.json"
     p.write_text(json.dumps({
         "chart_version": version, "commit": _COMMIT, "registry": _REG,
-        "images": {"cortex-bff": _A, "graph-host": _B}, "missing": [], "failed": [],
-        "expected": 2,
+        "images": {"cortex-bff": _A, "graph-host": _B} if images is None else images,
+        "missing": list(missing), "failed": [], "expected": 2,
     }), encoding="utf-8")
     return str(p)
 
@@ -76,6 +76,23 @@ def test_a_manifest_for_another_version_is_refused(tmp_path) -> None:
     assert retag.verify(_manifest(tmp_path, "0.4.64"), "0.4.65", _registry(_GOOD)) == 2
 
 
+def test_a_manifest_naming_nothing_at_all_is_refused(tmp_path) -> None:
+    assert retag.verify(_manifest(tmp_path, images={}), "0.4.65", _registry(_GOOD)) == 2
+
+
+def test_a_still_building_matrix_is_a_warning_not_a_failure(tmp_path) -> None:
+    """The push-triggered release runs alongside the build: every image can be missing (exit 3)."""
+    m = _manifest(tmp_path, images={}, missing=["cortex-bff", "graph-host"])
+    assert retag.verify(m, "0.4.65", _registry(_GOOD)) == 3
+
+
+def test_a_partial_manifest_still_checks_what_was_tagged(tmp_path) -> None:
+    m = _manifest(tmp_path, images={"cortex-bff": _A}, missing=["graph-host"])
+    assert retag.verify(m, "0.4.65", _registry(_GOOD)) == 3
+    moved = dict(_GOOD, **{f"{_REG}/cortex-bff:0.4.65": _B})
+    assert retag.verify(m, "0.4.65", _registry(moved)) == 1
+
+
 def _step(wf: str, header: str) -> int:
     return wf.index(f"      - name: {header}")
 
@@ -90,6 +107,8 @@ def test_the_release_job_verifies_between_the_retag_and_the_upload() -> None:
     code = "\n".join(ln for ln in block.splitlines() if not ln.lstrip().startswith("#"))
     assert "retag_images_by_digest.py --verify" in code
     assert "steps.retag.outputs.version" in code
+    # Under `bash -e` an uncaptured exit aborts the step, and the exit-3 warning below cannot run.
+    assert "|| rc=$?" in code and '"$rc" = "3"' in code
 
 
 def test_every_build_carries_the_oci_labels() -> None:
