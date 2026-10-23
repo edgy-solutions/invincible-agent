@@ -260,8 +260,10 @@ def test_duplicate_case_opened_and_awaiting_origin_stay_out_of_band():
     `case_opened` (roll #20 item 4, the event branch's own next step after `received`);
     `awaiting_origin` (architect ruling 2026-10-02, a deliberately domainless kind at review)."""
     assert ist.ALL_STATUSES == ist.STAGES + (ist.DUPLICATE, ist.CASE_OPENED, ist.AWAITING_ORIGIN,
-                                             ist.REVIEW_REJECTED, ist.AWAITING_KIND)
+                                             ist.REVIEW_REJECTED, ist.AWAITING_KIND,
+                                             ist.NO_PARTS)
     assert ist.CASE_OPENED not in ist.STAGES
+    assert ist.NO_PARTS not in ist.STAGES   # spec 208: out of band, sealed against the SDK's ladder
     assert ist.AWAITING_ORIGIN not in ist.STAGES
 
 
