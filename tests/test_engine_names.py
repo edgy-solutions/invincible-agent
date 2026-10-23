@@ -37,7 +37,7 @@ from iagent.engine_names import handler_name_from_endpoint
     # keeps "Engine F" (asserted above). Two engines rendering as one name in the HUD
     # would be worse than "Unknown" — it would be wrong and confident.
     # engine-docs / engine-cost / engine-safety: the same miss as engine-fin, found on the
-    # docs walk 2026-10-23 (the explain card's HUD read "Unknown engine"). A WORD component
+    # docs walk 2026-10-22 (the explain card's HUD read "Unknown engine"). A WORD component
     # is named by its word, so the next engine-<word> is not a fourth instance.
     ("http://invincible-agent-engine-docs.prod-ns.svc.cluster.local:8100/explain", "Engine Docs"),
     ("http://iagent-engine-docs:8100/explain", "Engine Docs"),
@@ -107,7 +107,7 @@ def test_engine_name_from_endpoint_does_NOT_claim_the_orchestration():
 
 # ── THE CENSUS — every engine a default endpoint names, not the ones somebody listed ───────
 #
-# engine-fin (09-01) and engine-docs/-cost/-safety (10-23) were each found one at a time, on a
+# engine-fin (09-01) and engine-docs/-cost/-safety (10-22) were each found one at a time, on a
 # walk, after the engine shipped. The population is every chart component the fleet's own code
 # names as a default endpoint, so a new engine reds here the day its URL is written.
 

@@ -16,7 +16,7 @@ yields nothing. A file nobody could read would otherwise be a quietly shorter po
 every verb it registers would pass this gate by being absent.
 
 WHAT IT DOES NOT DECIDE. ADR-0037 §1 says "a `concept` doc"; the dispatch says "a page". This
-gate counts any DocPage, whatever its `doc_kind`. On 2026-10-23 no covering page is a `concept`:
+gate counts any DocPage, whatever its `doc_kind`. On 2026-10-22 no covering page is a `concept`:
 all six covered verbs are covered by `how-to` runbooks. Which reading binds is the architect's call.
 
 Run: uv run --frozen --extra agent-fleet pytest tests/docs/test_every_registered_verb_has_a_page.py -q
@@ -151,7 +151,7 @@ def explained() -> dict[str, list[str]]:
 
 # ── today's exemptions ──────────────────────────────────────────────────────────────────────────
 
-# Registered verbs no page explains yet, measured 2026-10-23 on lane/01-207. Each is a page somebody
+# Registered verbs no page explains yet, measured 2026-10-22 on lane/01-207. Each is a page somebody
 # owes, written from doing the task (docs/runbooks/README.md, "Do not write a page for a task
 # nobody here has done"), never a generated stub (ADR-0037 §5).
 _ALLOWLIST = frozenset({

@@ -6258,7 +6258,7 @@ UNION ALL
 //
 // THE FLAG IS READ FROM THE NEO4J NODE PROPERTY `universal_referent`, ABSENT = FALSE (architect
 // ruling 2026-10-17, on 7f's ruling 5). doc-tools' ontology sync writes it onto the
-// `:OntologyClass` node (`doc_tools/assets/ontology_assets.py UNIVERSAL_REFERENT_PROP`, snake_case;
+// `:OntologyClass` node (`doc_tools/assets/ontology_assets.py UNIVERSAL_REFERENT_PROPERTY`, snake_case;
 // today exactly `mesh#Thing` carries it, `true`), so this leg reads the graph it already queries and
 // no longer asks Jena. The Jena read it replaces was refused for the service initiator on every call
 // and degraded to an empty list, so LEG 3 never fired. `coalesce(..., false)` is the rule for a
