@@ -11024,6 +11024,7 @@ async def ingest_document(
     kind: str = Form(...),
     on_behalf_of: str = Form(...),
     content_kind: Optional[str] = Form(None),
+    leaf: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
 ):
     """POST /ingest (ADR-0041 §8) — a non-technical user hand-carries a document in.
@@ -11085,6 +11086,33 @@ async def ingest_document(
                 status_code=422,
                 detail="content_kind must be <=128 chars and must not contain '/'",
             )
+    # KIND AT DROP (architect directive 2026-10-23, overriding the 10-21 "no picker before the
+    # drop"): the composer's [PCN] [PDN] [Not sure] row sends `leaf` for the first two and nothing
+    # for "Not sure", whose path is unchanged (title read -> awaiting_kind -> pick -> relaunch). A
+    # leaf NARROWS the drop's kind: it BECOMES `declared_content_kind`, so the sidecar's
+    # `manifest.metadata.content_kind` and the row (`leaf_source=declared`, via record_received's
+    # `_declared_leaf`) carry it exactly as a drop that named the leaf as its content_kind does, and
+    # every check below (registered, event branch, processable) runs on the leaf. Refused before any
+    # write: not one of `ingest_status.LEAVES` -> 422 `leaf_unknown`; on a file that is not a PDF ->
+    # 422 `leaf_requires_pdf` (an XML/S1000D kind is structural, the composer never asks); against a
+    # declared content_kind other than `pdf` or the leaf itself -> 422 `leaf_conflicts_with_content_kind`.
+    if leaf is not None:
+        _leaf = leaf.strip().lower()
+        if _leaf not in ingest_status.LEAVES:
+            raise HTTPException(status_code=422, detail={
+                "error": "leaf_unknown", "leaves": list(ingest_status.LEAVES),
+                "message": (f"leaf must be one of {list(ingest_status.LEAVES)} (omit it for "
+                            f"'not sure'), got {leaf!r}")})
+        if kind != ingest_status.PDF:
+            raise HTTPException(status_code=422, detail={
+                "error": "leaf_requires_pdf",
+                "message": f"a leaf is declared on a PDF drop only; this drop's file kind is {kind!r}"})
+        if declared_content_kind is not None and declared_content_kind.lower() not in (ingest_status.PDF, _leaf):
+            raise HTTPException(status_code=422, detail={
+                "error": "leaf_conflicts_with_content_kind",
+                "message": (f"leaf {_leaf!r} contradicts content_kind {declared_content_kind!r}; "
+                            f"send one, or content_kind 'pdf' with the leaf")})
+        declared_content_kind = _leaf
 
     # EVENT KINDS ARE REFUSED AT THIS DOOR (section C, ingest/origin seam). A document-branch
     # kind is bytes to extract; an event-branch kind is a JSON IngestRequest validated against
