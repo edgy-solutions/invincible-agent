@@ -416,3 +416,103 @@ def test_a_subject_containing_graph_is_still_scoped(eo):
     served = asyncio.run(eo.page_for_subject_route(eo.PageForSubjectRequest(subject=GRAPH_PAGE)))
     assert [p["iri"] for p in served["pages"]] == [GRAPH_PAGE]
     assert "GRAPH ?__mesh_g" in eo._test_posted[-1]
+
+
+# ── THE WALK, OFFLINE: the question to the card cortex draws, through every real piece ───────
+#
+# Architect 10-23 #2: "run the full route ... and report the card". Each piece above and in the
+# sibling files is sealed alone; nothing joined them. This arm hands each piece's real output to
+# the next: engine-o binds the subject, engine-docs' OWN reader calls engine-o's real
+# /page_for_subject, /explain reads the committed body and asserts its sha, the presentation
+# composer passes the card through, and the HUD names the handler from the endpoint engine-docs
+# registers. Stood in: Jena (the corpus in its named graph, above), the body store (git's
+# committed bytes for the locator's file, which is what the prime uploads), and the LLM slot
+# filler. NOT HERE: the pool leg (LEG 3's Cypher against a Neo4j carrying 7f's flag), which
+# only fake drivers have met -- see tests/routing/test_the_pool_reaches_the_universal_referent.py.
+
+class _EoAsReaderClient:
+    def __init__(self, eo):
+        self._eo, self.paths = eo, []
+
+    def post(self, path, body):
+        self.paths.append(path)
+        assert path == "/page_for_subject", path
+        return asyncio.run(self._eo.page_for_subject_route(self._eo.PageForSubjectRequest(**body)))
+
+
+class _CommittedRunbookStore:
+    def __init__(self):
+        self.read_keys = []
+
+    def read(self, locator):
+        import subprocess
+
+        self.read_keys.append(locator)
+        name = locator.rsplit("/", 1)[-1]
+        return subprocess.run(["git", "-C", str(_REPO), "show", f"HEAD:docs/runbooks/{name}"],
+                              capture_output=True, check=True).stdout
+
+
+def _walk(eo, monkeypatch, question):
+    from agent_fleet.docs_agent import main as docs
+    from agent_fleet.docs_agent.ontology_reader import OntologyDocPageReader
+
+    subject = _fill(eo, monkeypatch, question, "{}", ["DOCS"]).slots["subject"]
+    client, store = _EoAsReaderClient(eo), _CommittedRunbookStore()
+    monkeypatch.setattr(docs, "READER", OntologyDocPageReader(client=client))
+    monkeypatch.setattr(docs, "STORE", store)
+    monkeypatch.setattr(docs.entitlement_mod, "ENABLE_AGENTIC_AUTH", False)
+    out = docs.explain_endpoint(docs.ExplainRequest(fn="explain", params={"subject": subject}),
+                                caller=None)
+    return subject, out, client, store
+
+
+def test_the_engine_question_walks_to_the_engine_runbook_card(eo, monkeypatch):
+    subject, out, client, store = _walk(eo, monkeypatch, ENGINE_Q)
+    assert subject == ENGINE_PAGE
+    assert client.paths == ["/page_for_subject"], "engine-docs did not consult engine-o's route"
+    assert out["page_count"] == 1 and out["subject"] == ENGINE_PAGE
+    card = out["pages"][0]
+    committed = store.read(card["source"]).decode("utf-8")
+
+    assert card["page_iri"] == ENGINE_PAGE
+    assert card["body"] == committed, "the card is not the committed runbook"
+    assert card["audience_hint"] == "ARCHITECT"
+    assert card["doc_kind"] == "how-to"
+    assert card["cited_seals"], "the runbook cites no seal: the card would render none"
+    missing = [p for p in card["cited_seals"] if not (_REPO / p).is_file()]
+    assert not missing, f"the card cites seals that are not in the tree: {missing}"
+
+
+def test_the_walked_card_reaches_cortex_as_structure(eo, monkeypatch):
+    from tests.conftest import stub_modules
+
+    import types
+    from types import SimpleNamespace
+
+    _, out, _, _ = _walk(eo, monkeypatch, ENGINE_Q)
+    pres = str(_REPO / "agent_fleet" / "presentation_agent")
+    if pres not in sys.path:
+        sys.path.insert(0, pres)
+    stub = types.ModuleType("baml_client")
+    stub.b, stub.__path__ = SimpleNamespace(), []
+    with stub_modules({"baml_client": stub}):
+        import agent_fleet.presentation_agent.main as pf
+    wrapped = [{"persona": "ARCHITECT", "user_persona": "ARCHITECT", "answerer_persona": "ARCHITECT",
+                "predicate_verb_iri": "mesh:explain", "sub_query": ENGINE_Q, "expert_response": out}]
+    component = pf._render_document_deterministic(
+        wrapped, "ARCHITECT", subject_concept="docs:DocExplanation")["components"][0]
+    assert component.get("pages") == out["pages"] and component.get("page_count") == 1
+
+
+def test_the_HUD_names_the_engine_that_answered():
+    if str(_REPO / "src") not in sys.path:
+        sys.path.insert(0, str(_REPO / "src"))
+    from agent_fleet.docs_agent.main import VERBS
+    from iagent.engine_names import handler_name_from_endpoint
+
+    explain = next(v for v in VERBS if v["verb"] == "mesh:explain")
+    # the endpoint engine-docs registers (main.py lifespan: f"{base}/{v['fn']}"), both releases
+    for base in ("http://iagent-engine-docs:8100",
+                 "http://invincible-agent-engine-docs.prod-ns.svc.cluster.local:8100"):
+        assert handler_name_from_endpoint(f"{base}/{explain['fn']}") == "Engine Docs"
