@@ -86,6 +86,10 @@ _NON_ENGINE_HANDLERS = {
 }
 
 _ENGINE_LETTER_RE = re.compile(r"engine-([a-z]{1,2})\b")
+# A WORD component (`engine-docs`, `engine-cost`, `engine-safety`) is named by its word. Found
+# 2026-10-23 on the docs walk: all three rendered "Unknown engine", the engine-fin miss again,
+# one engine at a time. Checked after `_NAMED_COMPONENTS`, so a ruled display name still wins.
+_ENGINE_WORD_RE = re.compile(r"engine-([a-z]{3,})\b")
 
 
 def engine_name_from_endpoint(endpoint: str | None) -> str:
@@ -108,7 +112,8 @@ def engine_name_from_endpoint(endpoint: str | None) -> str:
             return name
     m = _ENGINE_LETTER_RE.search(e)
     if not m:
-        return ""
+        w = _ENGINE_WORD_RE.search(e)
+        return f"Engine {w.group(1).capitalize()}" if w else ""
     letter = m.group(1)
     return "Engine DA" if letter == "da" else f"Engine {letter.upper()}"
 
