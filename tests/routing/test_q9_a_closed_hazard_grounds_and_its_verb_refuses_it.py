@@ -193,8 +193,11 @@ async def test_p1_recall_holds_the_hazard_and_the_models_identifier_grounds_it(p
     resp = await p1.run_refs(Q9)
     assert resp.resolved_uri == HAZARD
     assert p1.baml.offered == [HAZARD]
-    assert resp.provenance["instance_identifier"] == HAZ_ID
-    assert resp.provenance["instance_id"] == HAZ_ID
+    # .get, not [...]: with Step 4's fan-out off the key is absent, and that must red HERE as
+    # an assertion naming the identifier, not as a KeyError that never reached the claim.
+    assert resp.provenance.get("instance_identifier") == HAZ_ID, (
+        "the model's instance_identifier never reached Step 4's fan-out", resp.provenance)
+    assert resp.provenance.get("instance_id") == HAZ_ID
     assert [j["identifier"] for _u, j in p1.posts][0] == HAZ_ID
 
 
