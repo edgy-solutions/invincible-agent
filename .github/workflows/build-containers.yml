@@ -168,6 +168,10 @@ jobs:
           if [[ "${{ github.ref }}" == "refs/heads/master" || "${{ github.ref }}" == "refs/heads/main" ]]; then
             TAGS="$TAGS -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest"
           fi
+          # OCI labels: the commit built, and the chart version that commit carries. The release
+          # retag copies an index by digest, so a :<version> tag carries its build's labels.
+          CHART_VERSION="$(awk '/^version:/ {print $2; exit}' helm/invincible-agent/Chart.yaml)"
+          LABELS="--label org.opencontainers.image.revision=${{ github.sha }} --label org.opencontainers.image.version=${CHART_VERSION}"
 
           if [ "${{ matrix.service }}" == "dagster-server" ]; then
             echo "Building dagster-server (thin runtime, no iagent code)..."
@@ -182,7 +186,7 @@ jobs:
             docker buildx build \
               --platform linux/amd64,linux/arm64               --build-arg GIT_SHA=${{ github.sha }} \
               -f .github/docker/Dockerfile.dagster-server \
-              $TAGS \
+              $TAGS $LABELS \
               --push .
           elif [ "${{ matrix.service }}" == "dagster-control-plane" ]; then
             echo "Building dagster-control-plane with dynamic Multi-Stage Dockerfile..."
@@ -194,7 +198,7 @@ jobs:
             docker buildx build \
               --platform linux/amd64,linux/arm64               --build-arg GIT_SHA=${{ github.sha }} \
               -f .github/docker/Dockerfile.dagster \
-              $TAGS \
+              $TAGS $LABELS \
               --push .
           
           else
@@ -227,7 +231,7 @@ jobs:
               --build-arg PORT=${{ matrix.port }} \
               --build-arg MAIN_MODULE=${{ matrix.main_module || 'main' }} \
               --build-arg PACKAGE_RUNTIME_SRC=${{ matrix.package_runtime || '.docker-empty' }} \
-              $TAGS \
+              $TAGS $LABELS \
               --push .
           fi
 
