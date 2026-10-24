@@ -11,8 +11,8 @@ This report carries no secret and no infra detail.
 | # | item | state |
 | --- | --- | --- |
 | 1 | the atlantia paragraph | below. **No fresh case id exists yet:** OpenDDIL has sent no new event |
-| 2 | classify 60 s | merged `867813be`, chart 0.4.67 released, images built. **The roll and the re-walks are held** until 7f's doc-tools roll is done (item 3) |
-| 3 | doc-tools v0.2.1 | 7f's. #159 was updated 13:48Z; doc-tools is still at rev 53. Watching for rev 54 |
+| 2 | classify 60 s | merged `867813be`, rolled as rev 216 (recorded `failed`, the fleet is correct: §2a). **Docs and Q9 both PASS: classify 7.7 s and 9.7 s** |
+| 3 | doc-tools v0.2.1 | 7f's. Rev 54 was deployed at 15:01:18Z, **inside my roll** (§3a) |
 | 4 | workbench stores | done: the Secret, a probe from `training`, the ADR note (`a4d396fe`) and a packet to wb |
 | 5 | cortex | (a) is on master at `2705c335`, and the §7 answers are placed in cortex-ui `sessions/` |
 | 6 | 7f's Neo4j read | I ran the count for 7f, and placed a packet in doc-tools `sessions/` |
@@ -45,9 +45,59 @@ The real case is 1008 / tr_module / MRAD-ARR-0417, opened 2026-10-20 04:37Z.
   - One roll at a time, and no walks during a roll. So I roll 0.4.67 after doc-tools rev 54 is deployed and 7f's fires are done.
   - The docs re-walk and the Q9 re-walk follow my roll. I will append whether they draw.
 
+## 2a. Addendum, 19:30Z: rolled, one run repaired, and both walks draw within 60 s
+
+**Correction to §2.** The roll was not held to the end. I started 0.4.67 at 14:05:44Z, after Build & Push. 7f rolled doc-tools rev 54 at 15:01:18Z, inside my roll (§3a).
+
+**Rev 216 is recorded `failed`. The fleet it left is correct.**
+- **Images:** 17 of 17 live digests match `image-digests.json`.
+  - That manifest was empty at first: the release ran in the same second as Build & Push. A `workflow_dispatch` retag (run 40100786947) refilled it with 19 images. The 2 not live, `langgraph-support` and `swarms-scraper`, are not deployed in the sandbox.
+- **Hand check:** cortex-bff `dae3024a`, ontology-service `40682cff`, weaviate-expert `feb71bed`, dagster-control-plane `d7a4fd69`.
+- **Budget:** `CLASSIFY_PREDICATE_TIMEOUT_S` and `RESOLVE_SUBJECT_TIMEOUT_S` both read 60, imported live in the user-code pod.
+- **Why it failed:** prime's `mesh_system` run (`836b27b7`) lost its worker at 15:03:04Z.
+  - It sat STARTED, with no failure event, until Dagster's monitor failed it at 16:03:05Z.
+  - Prime then exited non-zero, and helm skipped the hooks after it: ontology-seed, engine-reregister and demo-seed.
+  - 21 of the 22 ontologies had primed.
+- **Repair (Chris's OK):** I re-launched `mesh_system` alone. Run `4054ce47` succeeded in 45.6 s: 82 MESH classes, Weaviate 20 accepted and 0 rejected, retrievability seal green.
+- **No second roll.** I had told Chris that prime wiped, and so engines held zero verbs. That was an inference, and it was wrong:
+  - sandbox values set `primeSubstrate.wipe: false`;
+  - the only drops in prime's log are its ten Jena graph reloads.
+  - Measured instead: **202 verb edges, 57 distinct verbs, 147 providers** (19:23Z). The routes both walks need are registered: `engine_docs → mesh:explain`, `engine_o_sustainment → mesh:whichPartsDoesThisNoticeAffect`, and five `engine_w` `retrieveKnowledge` providers.
+  - The next roll repairs 216's record.
+
+**The walks, one at a time, with no roll in flight:**
+
+| walk | result | Engine O, this walk | started |
+| --- | --- | --- | --- |
+| `docs-how-do-i-add-an-engine` (DATA_ENGINEER) | **PASS** | ClassifyPredicate **7.7 s** | 19:24:29Z |
+| `sustainment-which-parts-does-pcn26-182-affect` (SAFETY_ENGINEER) | **PASS** | resolve **14.0 s**, then ClassifyPredicate **9.7 s** | 19:26:15Z |
+
+- **Both draw within 60 s.** Each is one sample, on a quiet fleet.
+- The 33–55 s p100 was measured under load. So this shows the walks draw; it does not show the budget covers the p100. 74's call-count cut is still the cure.
+
+## 2b. Your verb ruling (pasted 19:2xZ): the health check counts verbs and fails on zero. Built in 208
+
+- **I pick the health check.** It measures the outcome whatever the cause. Helm stops the hook chain at the first failure, so "reregister regardless of prime" would need reregister moved out of the chain. A zero verb count from any other cause would still pass silently.
+- **Where:** `scripts/version_census.py`. It already reads the prime record from the graph (`_prime_run_from_graph`) and the declared verbs (`_declared_verbs`).
+  - It will print the live verb-edge, verb and provider counts.
+  - It will fail on zero, and on any declared verb that is not registered.
+- **The count after this roll** is above: 202 / 57 / 147.
+
 ## 3. doc-tools v0.2.1
 
 Noted: it is 7f's roll. I hold mine behind it (item 2).
+
+## 3a. The overlap with 7f, and why it reached iagent
+
+- **Prime launches every ingest in the `doc-tools` code location** (`setup/prime_databases.py:1150`). So the run's worker was a doc-tools pod process.
+- **The timeline:**
+  - the new doc-tools pod was Ready at 15:02:35Z, so the old pod got SIGTERM, with a 30 s grace period;
+  - `836b27b7` launched at 15:02:44Z;
+  - its last event was at 15:03:04.96Z, about when SIGKILL lands;
+  - the next run went to the new pod and succeeded.
+- **What I did not measure:** the old pod's events have expired. "Killed by the swap" rests on timing, not on a log line.
+- **The consequence:** a doc-tools roll is not independent of an iagent roll.
+- **Packet to 7f** (doc-tools `sessions/`, placed): check `helm history iagent` before rolling, and tell me about any queued roll.
 
 ## 4. Workbench stores: done as ruled
 
@@ -119,5 +169,25 @@ A credential would have been the admin credential: Community has no read-only ro
   - 112 REPLACED_BY edges, all with `ltb_date`;
   - 3 notices have no SUBJECT_TO.
 - The packet to 7f says I will re-run the count after its re-ingest.
+
+## 7. Your second directive (pasted after 16:00Z)
+
+**1. Both rulings are carried to cortex.**
+- `extraction_defect` is built in 208.
+- The Superset publish is struck, and cortex removes the button.
+- Both are written into the cortex packet, which is placed and not committed.
+
+**2. OpenDDIL is packeted today.** The packet is in openddil `sessions/`, placed: `2026-10-24-packet-to-openddil-send-one-fresh-event-by-monday-0900-ct-…`.
+- **The ask:** one fresh `maintenance_fault_event`, with a new `event_id`, on an asset or fault with no open case. It must reach us by Mon 2026-10-26 09:00 CT (14:00Z), over the route that forwards to us.
+- **The link format:** `<cortex-host>/case/<case_id>?idp=openddil`.
+  - `<case_id>` is the `event_id` verbatim (`case_id = str(identity_value)`, gateway.py:11510; `identity_field: event_id`).
+  - `openddil` must be lowercase (cortex-ui `RequireAuth.test.tsx`).
+- **A correction to §1.** "This morning's packet asked OpenDDIL" was true of the file, not of the delivery.
+  - That packet is committed only in `288a3007`, on `lane/01-ingest-v1`, which is unmerged. It was never placed in OpenDDIL's tree.
+  - The new packet says so and supersedes it.
+- **No event has arrived:** from 14:06Z to 19:27Z the BFF logged no `POST /ingest/events`.
+- **OpenDDIL's 10-24 notice** (the exercise loop) needs no reply. Its loop and hold run only on a lab cluster with no route to us, and it leaves d1a7ee0b untouched.
+
+**3. Answered:** §2a.
 
 — invincible-agent/lane/01
