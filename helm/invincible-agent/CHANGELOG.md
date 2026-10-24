@@ -1,5 +1,12 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.66 — 2026-10-24
+
+Roll 207. No template or `values.yaml` default changed. The release carries 207's engines and one
+sandbox-only change: `values-sandbox.yaml` `cortexUi.image.digest` → `sha256:c02ee0d2…`
+(cortex-ui e0c3c6d, PR #29, kind at drop). It must roll with 207's BFF, whose `POST /ingest`
+takes the `leaf` cortex now sends.
+
 ## 0.4.65 — 2026-10-22
 
 The domain broker can install from a mirror, for a deployment with no route to github.com or
