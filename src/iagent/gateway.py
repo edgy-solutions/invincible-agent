@@ -57,6 +57,11 @@ from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
 from . import frontend_menu_store
+from .ingest_api import (
+    BINARY_200, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse, Entitlements,
+    Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing, RetriesListing,
+    RetryResponse, StatusBody, TitleLeafResponse,
+)
 from .identity_vault import (
     _ensure_the_audit_line_actually_ARRIVES,
     VAULT,
@@ -1023,7 +1028,7 @@ async def get_mesh_config(current_user: User = Depends(get_current_user)):
 # step 3 wired), `cells` is empty and `source` reflects the JWT-legacy
 # path. The picker (step 5) treats an empty cells list as "no picker
 # — the caller is on the legacy persona-in-JWT posture."
-@app.get("/me/entitlements")
+@app.get("/me/entitlements", tags=[INGEST_V1_TAG], responses={200: {"model": Entitlements}})
 async def get_me_entitlements(current_user: User = Depends(get_current_user)):
     """Return the current user's (persona, domain) entitlement matrix.
 
@@ -1470,7 +1475,7 @@ async def file_triage_task(
             "recipients": len(result.get("recipients", []))}
 
 
-@app.get("/me/human_tasks")
+@app.get("/me/human_tasks", tags=[INGEST_V1_TAG], responses={200: {"model": HumanTasksListing}})
 async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
     """The caller's pending queue (REST initial-load; the live path is the
     Electric subscription). Filtered by recipient_id=caller.authz_id — the SAME key
@@ -4248,7 +4253,7 @@ async def _stale_extraction(task_id: str, row: dict) -> "HTTPException":
         "stage": row.get("status"), "message": msg})
 
 
-@app.post("/human_tasks/{task_id}/act")
+@app.post("/human_tasks/{task_id}/act", tags=[INGEST_V1_TAG], responses={200: {"model": ActResponse}})
 async def act_on_human_task(
     task_id: str,
     req: HumanTaskActRequest,
@@ -11040,7 +11045,7 @@ def _sniff_file_kind(head: bytes) -> Optional[str]:
     return None
 
 
-@app.post("/ingest")
+@app.post("/ingest", tags=[INGEST_V1_TAG], responses={200: {"model": IngestResponse}})
 async def ingest_document(
     file: UploadFile = File(...),
     kind: str = Form(...),
@@ -11774,7 +11779,7 @@ async def _ingest_status_body(row: dict, current_user: User) -> dict:
     return body
 
 
-@app.get("/ingest/{ingest_id}/status")
+@app.get("/ingest/{ingest_id}/status", tags=[INGEST_V1_TAG], responses={200: {"model": StatusBody}})
 async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_current_user)):
     """GET /ingest/<id>/status — for the SUBMITTER or the on_behalf_of principal only.
 
@@ -11925,7 +11930,7 @@ def _evidence_ref(it: dict) -> Optional[dict]:
     return None
 
 
-@app.get("/ingest/{ingest_id}/extraction")
+@app.get("/ingest/{ingest_id}/extraction", tags=[INGEST_V1_TAG], responses={200: {"model": Extraction}})
 async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(get_current_user)):
     """GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the
     evidence reference (page, bbox, units, quality cell|region|null) the review card draws. Gate: `_ingest_review_access`
@@ -12097,7 +12102,7 @@ def _open_source_object(ingest_id: str, row: dict) -> tuple[Any, str]:
     return _get(ref_at), ref
 
 
-@app.get("/ingest/{ingest_id}/source")
+@app.get("/ingest/{ingest_id}/source", tags=[INGEST_V1_TAG], responses={200: BINARY_200})
 async def ingest_source_route(ingest_id: str, current_user: User = Depends(get_current_user)):
     """GET /ingest/<id>/source -- the dropped document's own bytes, streamed in chunks (never
     buffered whole). Same gate and audit as `/extraction`; works for the dropper before any
@@ -12143,7 +12148,7 @@ def _is_service_caller(authz_id: Optional[str]) -> bool:
     return bool(a) and (a.startswith("svc:") or a in _delegate_principals())
 
 
-@app.post("/ingest/{ingest_id}/retry")
+@app.post("/ingest/{ingest_id}/retry", tags=[INGEST_V1_TAG], responses={200: {"model": RetryResponse}})
 async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] = None,
                              current_user: User = Depends(get_current_user)):
     """POST /ingest/<id>/retry. The architect's 2026-10-12 directive, "pipeline failure must reach
@@ -13054,7 +13059,7 @@ class IngestEmptyRequest(_BaseModel):
         return self
 
 
-@app.post("/ingest/{ingest_id}/empty")
+@app.post("/ingest/{ingest_id}/empty", tags=[INGEST_V1_TAG], responses={200: {"model": EmptyDecisionResponse}}, openapi_extra=PREVIEW_EXTRA)
 async def decide_empty_route(ingest_id: str, req: IngestEmptyRequest,
                              current_user: User = Depends(get_current_user)):
     """POST /ingest/{ingest_id}/empty -- answer a document's `document_empty_confirm`. Gate:
@@ -13065,7 +13070,7 @@ async def decide_empty_route(ingest_id: str, req: IngestEmptyRequest,
     return await _decide_empty(ingest_id, req.decision, (current_user.authz_id or "").strip(), req.page)
 
 
-@app.get("/ingest/retries")
+@app.get("/ingest/retries", tags=[INGEST_V1_TAG], responses={200: {"model": RetriesListing}})
 async def list_ingest_retries(
     limit: int = _Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
@@ -13104,7 +13109,7 @@ async def list_ingest_retries(
         for r in rows]}
 
 
-@app.get("/ingest/mine")
+@app.get("/ingest/mine", tags=[INGEST_V1_TAG], responses={200: {"model": MineListing}})
 async def list_my_ingests(
     limit: int = _Query(50, ge=1, le=200),
     before: Optional[str] = _Query(None),
@@ -13594,7 +13599,7 @@ class IngestTitleLeafRequest(_BaseModel):
     run_id: Optional[str] = None
 
 
-@app.post("/ingest/{ingest_id}/title_leaf")
+@app.post("/ingest/{ingest_id}/title_leaf", tags=[INGEST_V1_TAG], responses={200: {"model": TitleLeafResponse}})
 async def ingest_title_leaf_route(
     ingest_id: str, req: IngestTitleLeafRequest, current_user: User = Depends(get_current_user),
 ):
@@ -13690,7 +13695,7 @@ class IngestLeafRequest(_BaseModel):
     leaf: str
 
 
-@app.post("/ingest/{ingest_id}/leaf")
+@app.post("/ingest/{ingest_id}/leaf", tags=[INGEST_V1_TAG], responses={200: {"model": LeafResponse}})
 async def ingest_leaf_route(
     ingest_id: str, req: IngestLeafRequest, current_user: User = Depends(get_current_user),
 ):
