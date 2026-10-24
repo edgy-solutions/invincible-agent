@@ -964,6 +964,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[ontology-service] {_notice_parts.VERB} registration failed: {e}")
 
+    # THE MAINTENANCE READ "what is the inspection interval for <the array module>"
+    # (planned_inspection.py). GATED ON JENA, the only store it reads -- the same gate, and the same
+    # empty-when-no-Jena-configured shape, as the resolveInstance provider above. The kwargs are
+    # `planned_inspection_registration()`'s, so a seal reads the one copy.
+    try:
+        def _register_planned_inspection():
+            mr.register_engine_to_mesh(
+                mint=mr.engine_mint(client_id="iagent-engine-o", secret_env="ENGINE_O_CLIENT_SECRET"),
+                **planned_inspection_registration(),
+            )
+            print(f"[ontology-service] registered {_planned_inspection.VERB}")
+
+        mr.when_stores_answer(
+            "engine_o_planned_inspection_interval:stores",
+            {"jena": _jena_answers} if _JENA_ENDPOINT else {},
+            _register_planned_inspection,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[ontology-service] {_planned_inspection.VERB} registration failed: {e}")
+
     await _check_jena_populated()
     yield
     if _WEAVIATE_CLIENT:
@@ -994,6 +1014,12 @@ try:
     import notice_parts as _notice_parts  # type: ignore[no-redef]
 except ImportError:
     from agent_fleet.ontology_service import notice_parts as _notice_parts
+
+# THE 320A READ (planned_inspection.py): same dual layout.
+try:
+    import planned_inspection as _planned_inspection  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.ontology_service import planned_inspection as _planned_inspection
 
 try:
     from utils import origin_entitlement as _origin_entitlement  # type: ignore[no-redef]
@@ -5712,6 +5738,94 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"notice parts read failed: {exc}") from exc
+
+
+PLANNED_INSPECTION_PATH = "/planned_inspection_interval"
+
+
+def planned_inspection_registration() -> dict:
+    """Every `register_engine_to_mesh` argument of `mesh:plannedInspectionInterval` but the mint.
+    Module level so the lifespan and a seal read ONE copy."""
+    return dict(
+        name="engine_o_planned_inspection_interval",
+        description=(
+            "Reads the planned inspection interval for a part or platform from the maintenance "
+            "graph: the planning data module (320A) that records the interval and cites the "
+            "procedure modules it governs. Returns the interval and evidence_ref, the planning "
+            "module's DMC, with the DMCs it cites. REFUSES a subject the manual does not list "
+            "(unknown_subject), which is a different fact from a listed subject that no planning "
+            "module records an interval for (also a refusal: no_planned_inspection). READ-ONLY. "
+            "OWNS the phrasings: what is the inspection interval, how often is it inspected, "
+            "planned inspection interval, inspection frequency, maintenance interval."
+        ),
+        verb=_planned_inspection.VERB,
+        input_uri=_planned_inspection.INPUT_URI,
+        output_uri=_planned_inspection.OUTPUT_URI,
+        verb_synonyms=[
+            "inspection interval", "what is the inspection interval",
+            "planned inspection interval", "how often is it inspected",
+            "how often should it be inspected", "inspection frequency", "maintenance interval",
+            "scheduled inspection", "when is the next inspection due",
+        ],
+        verb_anti_synonyms=[
+            "how do I", "steps to install", "removal and installation", "which tools",
+        ],
+        endpoint_url=os.getenv(
+            "ONTOLOGY_SVC_SELF_URL", "http://iagent-engine-o:8084"
+        ).rstrip("/") + PLANNED_INSPECTION_PATH,
+        owner_persona="MECHANIC",
+        domains=[_planned_inspection.DOMAIN],
+        cost_class="fast",
+        requires_human_approval=False,
+        provider="engine_o_maintenance",
+        timeout_s=5.0,
+    )
+
+
+class PlannedInspectionRequest(BaseModel):
+    """The specialist dispatch body, read for the fields this verb uses. Everything else the
+    supervisor sends is accepted and ignored."""
+    params: dict = Field(default_factory=dict)
+    resolved_instance_id: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
+    user_email: str = ""
+    user_query: str = ""
+
+
+@app.post("/planned_inspection_interval")
+async def planned_inspection_route(request: PlannedInspectionRequest) -> dict:
+    """`mesh:plannedInspectionInterval` (shaping: planned_inspection.py; the SPARQL is the declared
+    verb `planned_inspection_interval`). READ.
+
+    DOMAIN-SCOPED, deny by default: a caller whose entitled domains do not include MAINTENANCE is
+    refused before the graph is read. The declared select runs through the SAME `execute_sparql`
+    scope wrap `/declared_query` uses. A registry or declaration that fails is engine-o's own tree
+    (500); a store that raises is 503."""
+    if _planned_inspection.DOMAIN not in (request.entitled_domains or []):
+        return _planned_inspection.not_entitled()
+    text = _planned_inspection.subject_text(request.params, request.user_query)
+    if not text:
+        return _planned_inspection.no_subject()
+    try:
+        decl = load_query_verbs(verb_dirs(policy_root())).get(_planned_inspection.QUERY_VERB)
+        if decl is None:
+            raise DeclaredQueryError(
+                f"no declared-query verb named {_planned_inspection.QUERY_VERB!r}")
+        built = build_selects(decl, {_planned_inspection.PARAM: text})
+    except DeclaredQueryError as exc:
+        raise HTTPException(status_code=500, detail=f"declared-query registry: {exc}") from exc
+    rows_by_select: dict[str, list[dict]] = {}
+    try:
+        for name, q in built.items():
+            rows_by_select[name] = await execute_sparql(q, domain=decl.domain)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"planned inspection read failed: {exc}") from exc
+    try:
+        selects = shape_selects(decl, rows_by_select)
+    except DeclaredQueryError as exc:
+        raise HTTPException(status_code=500, detail=f"declared-query registry: {exc}") from exc
+    return _planned_inspection.answer_from_rows(
+        selects.get(_planned_inspection.SELECT) or [], text)
 
 
 # ---------------------------------------------------------------------------

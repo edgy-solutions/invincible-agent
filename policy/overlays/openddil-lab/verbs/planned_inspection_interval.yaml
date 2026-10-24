@@ -1,0 +1,75 @@
+# SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# "WHAT IS THE INSPECTION INTERVAL FOR THE ARRAY MODULE", DECLARED DATA. The 320A planning data
+# module records the interval (`mil:hasPlanningInterval`) and cites the procedure modules it
+# governs (`mil:refersToDataModule`); this verb reads that off the maintenance instance graph, the
+# same graph `s1000d_fault_walk.yaml` walks. It is served by engine-o's `/planned_inspection_interval`
+# route (planned_inspection.py), which runs the select below through the same `execute_sparql`
+# scope wrap and shapes the rows; no Python names a `mil:` IRI or a line of SPARQL.
+#
+# THE SUBJECT IS RESOLVED INSIDE THE SELECT, FROM THE TEXT. No instance resolver covers `mil:`
+# parts, so the one parameter is the question's own text and the select finds what it names, two
+# ways:
+#   * PART -- a catalog item whose label or part number the text contains (case-insensitive),
+#     then every planning module that cites a module carrying that part.
+#   * PLATFORM -- a model ident (the label's text before its first "-", e.g. ODMRAD) the text
+#     contains, then every planning module whose label starts with `<ident>-`.
+# The containment test sits at the OUTER group, after the UNION: the parameter is bound by a VALUES
+# row at the top of that group, so a FILTER inside a branch would not see it.
+# A subject that matches but has no planning module still returns its row, with the plan columns
+# unbound: "the manual lists it" and "the manual plans an inspection for it" are two facts.
+#
+# A DMC IS NEVER INVENTED. `plan_dmc` and `cited_dmc` are `rdfs:label`s read off the graph,
+# canonical (no `DMC-` prefix, none added), never defaulted when a branch finds nothing.
+#
+# DOMAIN: `MAINTENANCE` -- the evidence is s1000d_fault_walk.yaml's header; it is the same graph.
+verb: planned_inspection_interval
+capability: "mesh:plannedInspectionInterval"
+domain: MAINTENANCE
+params:
+  question: "{trigger.question}"
+selects:
+  interval_rows:
+    cardinality: many
+    sparql: |
+      PREFIX mil: <http://edgy-solutions.com/ontology/mil#>
+      PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+      SELECT DISTINCT ?name ?subject_key ?plan_dmc ?interval_label ?interval_value ?interval_unit ?cited_dmc WHERE {
+        {
+          ?item a mil:CatalogItem ;
+                mil:hasPartNumber ?subject_key .
+          { ?item rdfs:label ?name } UNION { ?item mil:hasPartNumber ?name }
+          OPTIONAL {
+            ?part a mil:Part ;
+                  mil:hasPartNumber ?subject_key .
+            ?partDm mil:hasPart ?part .
+            ?planDm mil:refersToDataModule ?partDm ;
+                    mil:hasPlanningInterval ?iv ;
+                    rdfs:label ?plan_dmc .
+            OPTIONAL { ?iv rdfs:label ?interval_label }
+            OPTIONAL { ?iv mil:hasIntervalValue ?interval_value }
+            OPTIONAL { ?iv mil:hasIntervalUnit ?interval_unit }
+            OPTIONAL { ?planDm mil:refersToDataModule ?citedDm . ?citedDm rdfs:label ?cited_dmc }
+          }
+        }
+        UNION
+        {
+          ?anyDm a mil:DataModule ;
+                 rdfs:label ?anyLabel .
+          BIND(STRBEFORE(?anyLabel, "-") AS ?name)
+          FILTER(?name != "")
+          BIND(?name AS ?subject_key)
+          OPTIONAL {
+            ?planDm mil:hasPlanningInterval ?iv ;
+                    rdfs:label ?plan_dmc .
+            FILTER(STRSTARTS(?plan_dmc, CONCAT(?name, "-")))
+            OPTIONAL { ?iv rdfs:label ?interval_label }
+            OPTIONAL { ?iv mil:hasIntervalValue ?interval_value }
+            OPTIONAL { ?iv mil:hasIntervalUnit ?interval_unit }
+            OPTIONAL { ?planDm mil:refersToDataModule ?citedDm . ?citedDm rdfs:label ?cited_dmc }
+          }
+        }
+        FILTER(CONTAINS(LCASE(?question), LCASE(STR(?name))))
+      } ORDER BY ?name ?plan_dmc ?cited_dmc
+returns:
+  rows: "{interval_rows}"

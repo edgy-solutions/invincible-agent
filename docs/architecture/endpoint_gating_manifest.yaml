@@ -313,6 +313,20 @@ services:
           "no parts". SECONDARY GAP, the same as /classify_predicate's: domain-scope, not per-IRI
           can_view, so within SUSTAINMENT it answers for any notice id it is handed.
       - method: POST
+        path: /planned_inspection_interval
+        identity: "entitled_domains (scope)"
+        gate: domain-scope
+        exposes: gated-content
+        consumers: [dynamic_supervisor.py]
+        class: gated
+        justification: >-
+          mesh:plannedInspectionInterval (planned_inspection.py), declared 2026-10-23 with the
+          route. READ only. Refuses before the graph is read unless MAINTENANCE is among the
+          caller's entitled_domains, so an empty scope never reads as "no interval". The select is
+          the declared verb planned_inspection_interval, run through the same execute_sparql
+          domain scope as /declared_query. SECONDARY GAP, the same as /notice_parts': domain-scope,
+          not per-IRI can_view.
+      - method: POST
         path: /policy_rules
         identity: none
         gate: none

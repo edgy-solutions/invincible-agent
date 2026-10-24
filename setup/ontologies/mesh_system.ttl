@@ -189,6 +189,13 @@ mesh:NoticePartSet a owl:Class ;
   rdfs:label "Notice Part Set" ;
   rdfs:comment "The parts one sustainment notice affects, read from the sustainment graph, one source per part, each carrying the notice's provenance as recorded: how it was obtained, the ingest id, who dropped it and who promoted it. An unknown notice is refused; a known notice naming no part is an explicit empty set. Read-only." .
 
+# Output of mesh:plannedInspectionInterval (engine-o, planned_inspection.py), declared in the same
+# commit as the verb so the registrar MATCHes it on a fresh cluster.
+mesh:PlannedInspectionInterval a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Planned Inspection Interval" ;
+  rdfs:comment "The planned inspection interval for a part or platform, read from the maintenance graph: the interval as the planning data module records it and that module's DMC as evidence_ref, with the DMCs it cites. A subject the manual does not list, or lists with no recorded interval, is refused under a different reason each. Read-only." .
+
 # DECLARED 2026-09-06 SO ENGINE B STOPS BORROWING ENGINE A'S. Engine B (LangGraph support)
 # returns BAML `AgentResponse`, whose graph class `mesh:AgentResponse` is documented as
 # "The final output of a smolagents CodeAgent run" — Engine A's loop, not Engine B's graph.
