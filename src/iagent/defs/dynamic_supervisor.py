@@ -284,6 +284,14 @@ _RESOLVE_LOCK_WAIT_S = float(os.getenv("RESOLVE_LOCK_WAIT_S", "150"))
 #: interim, measured against the model's p100, not guessed."
 RESOLVE_SUBJECT_TIMEOUT_S = 60
 
+#: THE SUPERVISOR'S /classify_predicate BUDGET, IN SECONDS. INTERIM, on the same terms as
+#: RESOLVE_SUBJECT_TIMEOUT_S. MEASURED 2026-10-24 (sandbox revision 215, Engine O log, walks
+#: 05:19-05:52Z): 5 `ClassifyPredicate` calls, max 55,196 ms. The 30 s budget missed all five,
+#: and each picked the expected verb after the supervisor had given up. Architect ruling
+#: 2026-10-24: "raise to 60s now, same interim as resolution. It's a symptom; 74's call-count
+#: cut is the cure."
+CLASSIFY_PREDICATE_TIMEOUT_S = 60
+
 #: The reasoning prefix `_resolve_subject` writes when /resolve could not be reached. The
 #: generalist fallback reads it to tell "unreachable" from "Engine O answered UNKNOWN".
 _RESOLVE_UNREACHABLE_PREFIX = "/resolve unreachable: "
@@ -1193,7 +1201,7 @@ def _classify_route(
                 # attribution loss. Threaded the same way /resolve already receives it.
                 "user_email": user_email,
             },
-            timeout=30,  # LLM call inside; longer than /search_predicates.
+            timeout=CLASSIFY_PREDICATE_TIMEOUT_S,  # LLM call inside; see the constant.
         )
         resp.raise_for_status()
         data = resp.json()
