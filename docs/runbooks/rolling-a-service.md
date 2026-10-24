@@ -237,6 +237,37 @@ cannot `set -o pipefail`, so the litany itself has no pytest seal — it is exer
 it. `tests/test_helm_timeout_guard_reads_the_resolved_value.py` carries the same limitation and
 records it in the same words.
 
+## Take the roll lock first, and release it only when the gates pass
+
+Ruled 2026-10-24 (the architect). One lane rolls the sandbox at a time, and a ConfigMap enforces it,
+not a packet:
+
+```bash
+scripts/roll-lock.sh show              # who holds sandbox/roll-lock, since when, until when
+scripts/roll-lock.sh acquire           # upgrade-sandbox.sh and roll-litany.sh do this themselves
+scripts/roll-lock.sh release           # after the gates pass, by the lane that holds it
+```
+
+- The lock is `sandbox/roll-lock` with keys `lane` (`<repo>/<branch>`, derived from git), `started` and
+  `expected_end`.
+- Every roll script refuses (exit 3) while another lane holds a lock younger than 90 minutes. A lock
+  90 minutes old or more is stale, and the next roller takes it over, loudly.
+- `upgrade-sandbox.sh` takes it after its own guards and right before helm, for the length of its helm
+  timeout. A `--dry-run` only reports it. `roll-litany.sh` takes it for 30 minutes; if the same lane
+  holds it already, that is a no-op.
+- `kubectl create` is the atomic step: two lanes acquiring at once get one winner. An unreadable lock
+  is refused (exit 4), never read as free.
+- **Release after the gates, not after helm.** The values diff, imageIDs, worker6, the walks: those are
+  part of the roll.
+
+**Why.** Prime launches every ontology ingest in the **doc-tools** code location
+(`prime_databases.py`, `repositoryLocationName: "doc-tools"`). So a doc-tools roll during an iagent
+prime replaces the pod the ingest is running in, and kills it. iagent rev 216 failed exactly so:
+doc-tools rev 54 rolled inside it, the `mesh_system` run lost its worker, the run monitor failed it at
+60 minutes, prime exited non-zero, and helm skipped every later hook (ontology-seed, reregister,
+demo-seed). A packet asking the other lane to wait had been sent, and did not hold. doc-tools and the
+workbench copy `scripts/roll-lock.sh` into their own roll scripts.
+
 ## Upgrades, not just rolls
 
 `scripts/upgrade-sandbox.sh` is the only documented path for a helm upgrade. Raw
