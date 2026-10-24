@@ -5,5 +5,5 @@
 # Bump it when a release note pairs the platform with a new doc-tools release, in the same commit
 # as the note. A pin that lags the pairing measures drift against a doc-tools nobody deploys.
 #
-# Currently doc-tools v0.2.0, as paired by docs/releases/0.4.65.md.
-133714c0652179187eb2cdca8b3c6d5881ecb3c5
+# Currently doc-tools v0.2.1, as paired by docs/releases/0.4.66.md.
+b95a550e159ee8832b32fcd53743a18bbce9842e
