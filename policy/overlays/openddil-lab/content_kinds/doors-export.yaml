@@ -7,6 +7,6 @@
 kind: doors-export
 domain: null
 passes:
-  - identity.document_identity
+  - identity.identity_from_doors_text
 outputs:
   - mesh:DoorsExportArtifact
