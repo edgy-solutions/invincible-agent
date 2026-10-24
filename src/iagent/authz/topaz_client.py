@@ -64,6 +64,16 @@ class AuthorizationUnavailable(Exception):
     """
 
 
+class AuthorizationUnconfigured(Exception):
+    """A check that must decide cannot, because the deployment declared no Topaz directory URL.
+
+    Misconfiguration: not an outage (`AuthorizationUnavailable`) and not a deny. Translated to
+    HTTP 503 (`authorization_unconfigured`) -- architect, 2026-10-17 (Q14): "unset Topaz URL is
+    503 authorization_unconfigured, not 403 -- our misconfiguration is never reported as
+    entitlement."
+    """
+
+
 class CellNotEntitled(Exception):
     """User requested a (persona, domain) cell not in their matrix.
 

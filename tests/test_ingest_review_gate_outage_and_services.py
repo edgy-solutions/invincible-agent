@@ -5,6 +5,10 @@ The architect, 2026-10-17 (gov's Q12 and Q13):
   * Q12 -- "Topaz outage is 503, same as #54 -- a holder of the task is never told not_entitled
     because a dependency is down." A Topaz failure (no connection, a non-2xx, an unreadable body)
     and a task-store failure answer 503, never 403 `not_entitled`. A real Topaz "no" is still 403.
+  * Q14 -- "unset Topaz URL is 503 authorization_unconfigured, not 403 -- our misconfiguration is
+    never reported as entitlement." (With Q15: "during an outage everyone gets 503".) A caller who
+    reaches the Topaz check on an open task while the deployment declares no directory URL gets
+    503; with no open task Topaz is not consulted and the answer stays a real 403.
   * Q13 -- "a service reads the source of drops it delegated because the delegate rule already
     grants it (it seeded them), not because it is 'the submitter'; a service holding a review task
     counts for nothing." A service caller is decided by the seeding-delegate rule alone
@@ -320,4 +324,99 @@ def test_a_service_is_not_503_on_an_outage(monkeypatch, s3):
     _as(DELEGATE)
     r = _get(f"/ingest/{ID}/source")
     assert (r.status_code, r.json()["detail"]["error"]) == (403, "not_entitled")
+    assert topaz.calls == []
+
+
+# ── Q14: an unset directory URL is 503 authorization_unconfigured ────────────────────────────
+
+@pytest.mark.parametrize("path", ["extraction", "source"])
+def test_an_unset_directory_url_is_503_never_not_entitled(monkeypatch, s3, caplog, path):
+    """Matched: the same holder, the same open task, the same route. Only the URL differs. Set
+    and yes -> in; unset -> 503 `authorization_unconfigured`, no Topaz call, no store read."""
+    caplog.set_level(logging.INFO, logger="iagent.audit.ingest_access")
+    monkeypatch.setattr(ist, "get_row", lambda i: _row())
+    _task(monkeypatch, OPEN)
+    _as(HOLDER)
+
+    topaz = _topaz(monkeypatch, holders={HOLDER})
+    r = _get(f"/ingest/{ID}/{path}")
+    assert topaz.calls, "the control never reached Topaz, so the unset arm below decides nothing"
+    if path == "source":
+        assert r.status_code == 200 and r.content == PDF_BYTES
+    else:
+        assert (r.status_code, r.json()["detail"]["error"]) == (422, "no_extraction_ref")
+
+    monkeypatch.setattr(ht, "_TOPAZ_DIRECTORY_URL", "")
+    topaz = _topaz(monkeypatch, holders={HOLDER})
+    s3.calls.clear()
+    caplog.clear()
+    r = _get(f"/ingest/{ID}/{path}")
+    assert r.status_code == 503, (r.status_code, r.text)
+    assert r.json()["detail"]["error"] == "authorization_unconfigured"
+    assert topaz.calls == []
+    assert s3.calls == []
+    lines = _audit(caplog)
+    assert len(lines) == 1 and "decision=deny" in lines[0], lines
+    assert "reason=authorization_unconfigured" in lines[0], lines
+
+
+@pytest.mark.parametrize("path", ["extraction", "source"])
+def test_an_unset_directory_url_is_503_for_a_stranger_too(monkeypatch, s3, path):
+    """Q15: during an outage everyone gets 503 -- a stranger is not told not_entitled either."""
+    monkeypatch.setattr(ist, "get_row", lambda i: _row())
+    _task(monkeypatch, OPEN)
+    monkeypatch.setattr(ht, "_TOPAZ_DIRECTORY_URL", "")
+    topaz = _topaz(monkeypatch, holders={HOLDER})
+    _as(STRANGER)
+    r = _get(f"/ingest/{ID}/{path}")
+    assert (r.status_code, r.json()["detail"]["error"]) == (503, "authorization_unconfigured")
+    assert topaz.calls == [] and s3.calls == []
+
+
+def test_an_unset_directory_url_with_no_open_task_is_still_a_real_no(monkeypatch, s3):
+    """No open task: the answer does not depend on Topaz, so it is 403 and Topaz is not asked."""
+    monkeypatch.setattr(ist, "get_row", lambda i: _row())
+    monkeypatch.setattr(ht, "_TOPAZ_DIRECTORY_URL", "")
+    _as(HOLDER)
+    for state in (None, {"audience": AUDIENCE, "open": False}, {"audience": "", "open": True}):
+        _task(monkeypatch, state)
+        topaz = _topaz(monkeypatch, holders={HOLDER})
+        r = _get(f"/ingest/{ID}/source")
+        assert (r.status_code, r.json()["detail"]["error"]) == (403, "not_entitled"), state
+        assert topaz.calls == [], state
+        assert s3.calls == []
+
+
+def test_an_unset_directory_url_does_not_touch_the_dropper_or_the_delegate(monkeypatch, s3):
+    monkeypatch.setattr(ht, "_TOPAZ_DIRECTORY_URL", "")
+
+    def _boom(t):
+        raise AssertionError("the task store was consulted")
+
+    monkeypatch.setattr(ht, "get_task_open_state", _boom)
+    topaz = _topaz(monkeypatch, holders={DROPPER, DELEGATE})
+    cases = [(DROPPER, _row()),
+             (DELEGATE, _row(submitted_by=DELEGATE, on_behalf_of=PRINCIPAL))]
+    for who, row in cases:
+        monkeypatch.setattr(ist, "get_row", lambda i, row=row: row)
+        _as(who)
+        r = _get(f"/ingest/{ID}/source")
+        assert r.status_code == 200 and r.content == PDF_BYTES, who
+    assert topaz.calls == []
+
+
+def test_check_can_act_still_reads_an_unset_url_as_false(monkeypatch):
+    """check_can_act swallows every exception, so its other callers still get False; the raise is
+    only for a caller that asks `can_act_or_unavailable`. `human_tasks` imports the exception from
+    `iagent.authz` (the bare package), so that is the one module object it is."""
+    import iagent.authz as authz
+
+    monkeypatch.setattr(ht, "_TOPAZ_DIRECTORY_URL", "")
+    topaz = _topaz(monkeypatch, holders={HOLDER})
+    assert ht.check_can_act(AUDIENCE, HOLDER) is False
+    with pytest.raises(ht.AuthorizationUnconfigured) as ei:
+        ht.can_act_or_unavailable(AUDIENCE, HOLDER)
+    assert type(ei.value) is authz.AuthorizationUnconfigured
+    assert not isinstance(ei.value, authz.AuthorizationUnavailable)
+    assert ht.can_act_or_unavailable(AUDIENCE, "") is False
     assert topaz.calls == []
