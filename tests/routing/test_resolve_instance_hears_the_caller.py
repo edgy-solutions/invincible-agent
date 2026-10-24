@@ -181,9 +181,9 @@ def test_THE_LEGACY_ROUTING_DOMAIN_IS_NEVER_A_GRANT():
 def test_THE_PROVIDER_ROUTE_RECEIVES_BOTH_FIELDS():
     eo = _eo()
     req = eo.ResolveInstanceRequest(identifier="X", user_email=PERSON, entitled_domains=GRANT)
-    assert (req.user_email, req.entitled_domains) == (PERSON, GRANT)
+    assert (req.user_email, req.entitled_domains) == (PERSON, tuple(GRANT))
     bare = eo.ResolveInstanceRequest(identifier="X")
-    assert (bare.user_email, bare.entitled_domains) == ("", [])
+    assert (bare.user_email, bare.entitled_domains) == ("", ())
 
 
 # --- hop 1: the supervisor ------------------------------------------------------------------
