@@ -174,4 +174,20 @@ if [ -n "${_tag}" ]; then
   fi
 fi
 
+# ── THE ROLL LOCK, LAST, SO NOTHING ABOVE CAN REFUSE AFTER IT IS TAKEN ─────────────────
+#
+# Ruled 2026-10-24: a doc-tools roll during this release's prime kills the prime (its ingests run
+# in the doc-tools code location; rev 216). So no upgrade starts while another lane holds
+# sandbox/roll-lock, and this one takes it for the length of its own helm timeout. A dry run
+# rolls nothing, so it only reports the lock. Release it once the gates pass, not here: `exec`
+# hands over to helm, and the gates come after helm returns.
+_dry=""
+for _arg in "$@"; do case "${_arg}" in --dry-run|--dry-run=*) _dry=1 ;; esac; done
+_lock="$(dirname "${BASH_SOURCE[0]}")/roll-lock.sh"
+if [ -n "${_dry}" ]; then
+  bash "${_lock}" show || true
+else
+  bash "${_lock}" acquire --minutes "${_mins:-90}" || exit 3
+fi
+
 exec helm upgrade "${RELEASE}" "${CHART}" -n "${NAMESPACE}" "${ARGS[@]}"      --timeout "${HELM_TIMEOUT}" "$@"
