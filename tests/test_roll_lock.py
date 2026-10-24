@@ -2,7 +2,8 @@
 
 Ruled 2026-10-24 (the architect): before any helm upgrade on the sandbox the roller creates
 ConfigMap sandbox/roll-lock {lane, started, expected_end}; every roll script refuses to start
-while it exists and is younger than 90 minutes; the roller deletes it when the gates pass. The
+while it exists and is younger than 90 minutes; the roller deletes it when the gates pass.
+Amended the same day: stale = max(90 min, the declared expected_end). The
 occasion was iagent rev 216: doc-tools rolled inside iagent's prime, and prime's ingests run in the
 doc-tools code location, so the roll killed one.
 
@@ -96,9 +97,16 @@ def _posix(p: Path) -> str:
     return f"/{m.group(1).lower()}/{m.group(2)}" if m else s
 
 
-def _hold(stub, lane: str, age_min: int):
-    created = (datetime.now(timezone.utc) - timedelta(minutes=age_min)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    (stub[1] / "cm").write_text(f"{lane}\n{created}\n{created}\n{created}\n", newline="\n")
+def _hold(stub, lane: str, age_min: int, end_in_min: int | None = None, end: str | None = None):
+    """Seed a lock created `age_min` ago. Its expected_end is `end_in_min` from now when given,
+    the literal `end` when given, and otherwise its creation time (a declared end that never
+    outlasts the 90-minute floor)."""
+    now = datetime.now(timezone.utc)
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    created = (now - timedelta(minutes=age_min)).strftime(fmt)
+    if end is None:
+        end = created if end_in_min is None else (now + timedelta(minutes=end_in_min)).strftime(fmt)
+    (stub[1] / "cm").write_text(f"{lane}\n{created}\n{end}\n{created}\n", newline="\n")
 
 
 def _holder(stub) -> str | None:
@@ -128,13 +136,56 @@ def test_another_lanes_live_lock_refuses_and_is_left_alone(stub):
 
 
 @needs_bash
-def test_a_lock_of_90_minutes_or_more_is_stale_and_taken_over_loudly(stub):
+def test_a_lock_past_90_minutes_and_its_declared_end_is_stale_and_taken_over_loudly(stub):
     _hold(stub, "doc-tools/lane/7f", age_min=91)
     assert _run(stub, "check").returncode == 0
     r = _run(stub, "acquire")
     assert r.returncode == 0, r.stderr
     assert "STALE" in r.stderr and "doc-tools/lane/7f" in r.stderr
     assert _holder(stub) == "invincible-agent/lane/01"
+
+
+# Ruled 2026-10-24: stale = max(90 min, declared expected_end). upgrade-sandbox declares its helm
+# timeout (100m by default), so a prime in its 91st-100th minute must still hold the lock.
+@needs_bash
+def test_a_declared_end_past_90_minutes_keeps_the_lock_live(stub):
+    _hold(stub, "doc-tools/lane/7f", age_min=95, end_in_min=5)
+    r = _run(stub, "acquire")
+    assert r.returncode == 3, (r.returncode, r.stderr)
+    assert "REFUSING TO ROLL" in r.stderr and "stale in 5 min" in r.stderr
+    assert _holder(stub) == "doc-tools/lane/7f"
+    assert _run(stub, "check").returncode == 3
+
+
+@needs_bash
+def test_a_lock_past_its_declared_end_beyond_90_minutes_is_stale(stub):
+    _hold(stub, "doc-tools/lane/7f", age_min=120, end_in_min=-1)
+    assert _run(stub, "check").returncode == 0
+    r = _run(stub, "acquire")
+    assert r.returncode == 0, r.stderr
+    assert "STALE" in r.stderr and _holder(stub) == "invincible-agent/lane/01"
+
+
+@needs_bash
+def test_an_early_declared_end_does_not_shorten_the_90_minute_floor(stub):
+    # roll-litany declares 30 minutes; at 60 minutes its lock is past its end and still live.
+    _hold(stub, "doc-tools/lane/7f", age_min=60, end_in_min=-30)
+    r = _run(stub, "acquire")
+    assert r.returncode == 3, (r.returncode, r.stderr)
+    assert _holder(stub) == "doc-tools/lane/7f"
+
+
+@needs_bash
+@pytest.mark.parametrize("end", ["", "not-a-time"])
+def test_an_unreadable_expected_end_leaves_the_floor_in_force_and_says_so(stub, end):
+    _hold(stub, "doc-tools/lane/7f", age_min=89, end=end)
+    r = _run(stub, "acquire")
+    assert r.returncode == 3, (r.returncode, r.stderr)
+    assert "no readable expected_end" in r.stderr
+    _hold(stub, "doc-tools/lane/7f", age_min=91, end=end)
+    r = _run(stub, "acquire")
+    assert r.returncode == 0, r.stderr
+    assert "STALE" in r.stderr and _holder(stub) == "invincible-agent/lane/01"
 
 
 @needs_bash
