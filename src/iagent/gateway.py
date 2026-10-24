@@ -14108,7 +14108,9 @@ async def get_case_action(case_id: str, current_user: User = Depends(get_current
     delegate's case and a case with no `seeded_by` answer one IDENTICAL 403 `not_your_case`, with
     no artifact-store read. An admitted delegate with no record is 404 `no_action_record` (its
     own pending case: nothing yet, not forbidden); a record whose own `seeded_by` differs is 403
-    too. No spec/definitions/`can_view_case` for a delegate. Any OTHER caller passes exactly
+    too. No spec/definitions/`can_view_case` for a delegate. Any other SERVICE
+    (`_is_service_caller`) is that same 403 before any read: ADR-0047 §5.1 admits a service only
+    as a seeding declared delegate. Any other caller, a person, passes exactly
     `GET /cases/{id}`'s gate (`_load_viewable_case`), then 404 `no_action_record` if none. A
     Neo4j failure is 503 `artifact_store_unavailable`.
     """
@@ -14138,6 +14140,12 @@ async def get_case_action(case_id: str, current_user: User = Depends(get_current
         seeded_by = case.get("seeded_by") if case else None
         if not seeded_by or seeded_by != current_user.authz_id:
             raise _not_your_case()
+    elif _is_service_caller(current_user.authz_id):
+        # ADR-0047 §5.1: a `svc:` principal is a recipient only as a seeding DECLARED delegate.
+        # An undeclared service is never asked the person gate, so dropping the case as itself,
+        # holding its labels or holding a task on it admits nothing (Q16's reading at
+        # /ingest/{id}/source). Same body as the delegate's refusal, before any read.
+        raise _not_your_case()
     else:
         case, _definitions = await _load_viewable_case(case_id, current_user)
     records = await _records()
