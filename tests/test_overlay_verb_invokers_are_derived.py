@@ -23,10 +23,7 @@ _REPO = Path(__file__).resolve().parents[1]
 
 
 #: capability -> the service invokers a ruling adds beyond the derived members. Nothing else.
-_RULED_SERVICE_INVOKERS: dict[str, set[str]] = {
-    "mesh:s1000dFaultWalk": {"svc:openddil"},
-    "mesh:plannedInspectionInterval": {"svc:openddil"},
-}
+_RULED_SERVICE_INVOKERS: dict[str, set[str]] = {"mesh:s1000dFaultWalk": {"svc:openddil"}}
 
 
 def _load(rel: str):
