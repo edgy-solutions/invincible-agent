@@ -841,6 +841,8 @@ _IRI_PREFIXES: dict[str, str] = {
     # one by copying a neighbour the likely error rather than the safe move.
     "safety:": "http://internal/sustainment/safety#",
     "pcn:": "http://internal/sustainment/pcn#",
+    # training_extension.ttl (2026-10-24): doc-tools' own namespace, NOT `internal/...`.
+    "training:": "http://edgy-solutions.com/ontology/training#",
 }
 
 
