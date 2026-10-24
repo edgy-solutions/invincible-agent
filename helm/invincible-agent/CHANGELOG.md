@@ -1,5 +1,14 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.67 — 2026-10-24
+
+The supervisor's `/classify_predicate` budget goes from a literal 30 s to `CLASSIFY_PREDICATE_TIMEOUT_S = 60`.
+This is an interim, on the architect's 10-24 ruling, on the same terms as the resolve budget.
+- No template, `values.yaml` default or `values-sandbox.yaml` key changed.
+- The only code change is `src/iagent/defs/dynamic_supervisor.py`, which is Dagster user code. Every
+  image is still re-tagged at the merge sha.
+- cortex-ui stays `e0c3c6d`.
+
 ## 0.4.66 — 2026-10-24
 
 Roll 207. No template or `values.yaml` default changed. The release carries 207's engines and one
