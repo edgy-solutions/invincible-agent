@@ -140,6 +140,21 @@ jobs:
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
+      # READ BACK, NOT REPORTED. Every :<version> tag must resolve to the digest the manifest
+      # names, and the controls (fake digest, short commit, unpushed tag, wrong digest) must fail.
+      # Exit 3 is the retag's: images still building, so a warning, and the dispatch re-run checks.
+      - name: Verify the release tags resolve to the manifest digests
+        run: |
+          rc=0
+          python scripts/retag_images_by_digest.py --verify \
+            --chart-version "${{ steps.retag.outputs.version }}" \
+            --manifest image-digests.json || rc=$?
+          if [ "$rc" = "3" ]; then
+            echo "::warning::some images were not tagged, so not verified; see image-digests.json"
+          elif [ "$rc" != "0" ]; then
+            exit "$rc"
+          fi
+
       # THE MANIFEST IS THE CHECKABLE ARTEFACT. It records service -> digest, plus what was
       # MISSING and what FAILED — a manifest listing only successes is a claim that its list is
       # everything. Anyone can verify it against the registry without trusting this run.

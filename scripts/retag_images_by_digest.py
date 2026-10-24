@@ -22,6 +22,8 @@ a release that shipped before this existed can be given its tags after the fact 
 
     uv run --frozen python scripts/retag_images_by_digest.py \\
         --chart-version 0.3.77 --sha <commit> [--dry-run]
+    uv run --frozen python scripts/retag_images_by_digest.py \\
+        --chart-version 0.3.77 --manifest image-digests.json --verify
 """
 from __future__ import annotations
 
@@ -71,13 +73,78 @@ def digest_of(image: str) -> "str | None":
     return m.group(0) if m else None
 
 
+FAKE_DIGEST = "sha256:" + "0" * 64
+
+
+def mismatches(manifest: dict, resolve) -> "list[str]":
+    """Every way the release's `:<chart_version>` tags differ from the manifest; empty when none.
+
+    `resolve` maps an image reference to its digest or None. It is a parameter so that the
+    comparison itself can be shown to say no (`verify`'s wrong-digest control, and the tests).
+    """
+    ver, probs = manifest["chart_version"], []
+    for svc, want in manifest["images"].items():
+        got = resolve(f"{manifest['registry']}/{svc}:{ver}")
+        if got != want:
+            probs.append(f"{svc}:{ver} resolves to {got}, not {want}")
+    return probs
+
+
+def verify(manifest_path: str, chart_version: str, resolve=None) -> int:
+    """Read the tags back from the registry. The retag's own report is not the evidence.
+
+    THE CONTROLS MUST FAIL. A fake digest, the commit's short form as a tag, and a tag nobody
+    pushed must not resolve, and a wrong digest must be reported as a mismatch. A resolver that
+    cannot say no would read every tag as proven.
+    """
+    resolve = resolve or digest_of
+    manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    missing = manifest.get("missing") or []
+    if manifest.get("chart_version") != chart_version or not (manifest.get("images") or missing):
+        print(f"REFUSING: {manifest_path} is for {manifest.get('chart_version')!r} with "
+              f"{len(manifest.get('images') or {})} image(s); expected {chart_version!r} and at "
+              "least one", file=sys.stderr)
+        return 2
+    for svc in missing:
+        print(f"  UNVERIFIED {svc}: missing from the manifest, so no tag was cut")
+    if not manifest["images"]:
+        # EXIT 3, as the retag does: the matrix is still building, and nothing was tagged to check.
+        print(f"verify {chart_version}: 0 image(s) tagged, {len(missing)} missing")
+        return 3
+    probs = mismatches(manifest, resolve)
+    svc, want = next(iter(manifest["images"].items()))
+    repo = f"{manifest['registry']}/{svc}"
+    controls = {
+        "a fake digest": f"{repo}@{FAKE_DIGEST}",
+        "the short commit as a tag": f"{repo}:{manifest['commit'][:8]}",
+        "a tag nobody pushed": f"{repo}:{chart_version}-control-never-pushed",
+    }
+    for what, ref in controls.items():
+        if resolve(ref) is not None:
+            probs.append(f"control RESOLVED: {what} ({ref})")
+    wrong = dict(manifest, images={svc: "sha256:" + ("1" if want[7] != "1" else "2") + want[8:]})
+    if not mismatches(wrong, resolve):
+        probs.append("control ACCEPTED a wrong digest: the comparison cannot fail")
+    for p in probs:
+        print(f"  FAILED    {p}")
+    print(f"verify {chart_version}: {len(manifest['images'])} image(s), "
+          f"{len(controls) + 1} control(s), {len(probs)} failure(s), {len(missing)} missing")
+    return 1 if probs else (3 if missing else 0)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--chart-version", required=True, help="e.g. 0.3.77 — the tag to create")
-    ap.add_argument("--sha", required=True, help="the commit whose images are being retagged")
+    ap.add_argument("--sha", help="the commit whose images are being retagged")
     ap.add_argument("--manifest", default="image-digests.json")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--verify", action="store_true",
+                    help="read --manifest back from the registry instead of retagging")
     args = ap.parse_args()
+    if args.verify:
+        return verify(args.manifest, args.chart_version)
+    if not args.sha:
+        ap.error("--sha is required unless --verify")
 
     services = services_from_matrix()
     if not services:
