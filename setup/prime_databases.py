@@ -480,6 +480,15 @@ CANONICAL_TTL_MANIFEST = [
         "s3_key": "docs/docs_corpus.ttl",
         "path": "ontologies/docs_corpus.ttl",
     },
+    # TRAINING (2026-10-24, roll 207) — declares `training:Course`, the output of doc-tools'
+    # `course` kind (ADR-0059). The class only; Slide/HAS_SLIDE/TEACHES wait for a kind that
+    # outputs them.
+    {
+        "domain": "TRAINING",
+        "name": "training_extension",
+        "s3_key": "training/training_extension.ttl",
+        "path": "ontologies/training_extension.ttl",
+    },
 ]
 
 

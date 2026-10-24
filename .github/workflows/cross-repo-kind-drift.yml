@@ -1,0 +1,119 @@
+# Cross-repo content-kind drift (architect, 2026-10-23).
+#
+# doc-tools' tests/test_overlay_kind_drift.py compares the content-kind rows this platform's
+# deployment overlay declares against doc-tools' generated registry/content_kinds/*.yaml, on
+# kinds, passes, outputs and domain. In either repo's own CI it SKIPS, because it can see only
+# one tree. So until now it ran only on a laptop with both checkouts side by side, and that is
+# how the doors-export passes drift went unseen. This job checks out doc-tools at the commit in
+# .github/doc-tools.ref, beside this tree, and runs that one test.
+#
+# THREE THINGS KEEP THIS FROM BEING A DECORATIVE GREEN:
+#   * The overlay path is given through IAGENT_CONTENT_KIND_OVERLAY_DIR. With it set, the test
+#     FAILS on a path that does not resolve; it does not skip.
+#   * The run must report at least one test and ZERO skipped, read from the JUnit report. A run
+#     that skipped every arm exits 0, and that is the false green this job exists to remove.
+#   * A broken-on-purpose control reverts the one overlay line the drift was in. It asserts the
+#     test reds on the passes arm and names doors-export, so that a red from any other cause
+#     cannot pass as the control working.
+#
+# Wired to pull_request with no base-branch filter, so a stacked lane PR gets it too, unlike
+# build-containers.yml. It is hermetic: two pip packages, YAML files, no cluster and no network
+# at test time. The validate-canvas-templates.yml argument applies; so does its pre-committed
+# fallback (one environment red moves this job to workflow_dispatch, said in a packet).
+
+name: cross-repo kind drift
+
+on:
+  pull_request:
+    paths:
+      - "policy/overlays/**/content_kinds/**"
+      - ".github/doc-tools.ref"
+      - ".github/workflows/cross-repo-kind-drift.yml"
+  push:
+    branches: [master]
+    paths:
+      - "policy/overlays/**/content_kinds/**"
+      - ".github/doc-tools.ref"
+      - ".github/workflows/cross-repo-kind-drift.yml"
+  workflow_dispatch:
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    env:
+      OVERLAY: ${{ github.workspace }}/invincible-agent/policy/overlays/openddil-lab/content_kinds
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: invincible-agent
+
+      - name: read the doc-tools pin
+        id: pin
+        run: |
+          set -eu
+          ref="$(grep -v '^#' invincible-agent/.github/doc-tools.ref | tr -d '[:space:]')"
+          if ! echo "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::.github/doc-tools.ref must hold one full 40-hex commit sha, got '$ref'"
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: edgy-solutions/doc-tools
+          ref: ${{ steps.pin.outputs.ref }}
+          path: doc-tools
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install
+        run: python -m pip install --quiet pytest pyyaml
+
+      - name: the overlay agrees with doc-tools at the pin
+        working-directory: doc-tools
+        env:
+          IAGENT_CONTENT_KIND_OVERLAY_DIR: ${{ env.OVERLAY }}
+        run: python -m pytest -q -rs -p no:cacheprovider tests/test_overlay_kind_drift.py --junitxml="$RUNNER_TEMP/drift.xml"
+
+      - name: it ran, and nothing skipped
+        run: |
+          python - "$RUNNER_TEMP/drift.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+          tests = sum(int(s.get("tests", 0)) for s in suites)
+          skipped = sum(int(s.get("skipped", 0)) for s in suites)
+          print(f"tests={tests} skipped={skipped}")
+          if tests == 0 or skipped:
+              print("::error::the drift test ran no arm or skipped one; it is unrun, not satisfied")
+              sys.exit(1)
+          PY
+
+      - name: the check can still reject
+        # The fixture changes exactly one line: doors-export's pass goes back to the generic
+        # identity pass it read before the 2026-10-23 fix. If doc-tools ever stops declaring the
+        # scoped pass, this control stops being a drift and goes red here, and that is the cue to
+        # pick a new one rather than to delete the step.
+        working-directory: doc-tools
+        run: |
+          set -u
+          broken="$RUNNER_TEMP/broken-overlay"
+          cp -r "$OVERLAY" "$broken"
+          sed -i 's/identity\.identity_from_doors_text/identity.document_identity/' "$broken/doors-export.yaml"
+          grep -q 'identity.document_identity' "$broken/doors-export.yaml" || {
+            echo "::error::the control fixture did not change; the overlay line moved"
+            exit 1
+          }
+          out="$(IAGENT_CONTENT_KIND_OVERLAY_DIR="$broken" python -m pytest -q -p no:cacheprovider tests/test_overlay_kind_drift.py 2>&1)" && rc=0 || rc=$?
+          echo "$out" | tail -20
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::the drift test ACCEPTED a diverged doors-export row; it is not checking what it claims to"
+            exit 1
+          fi
+          echo "$out" | grep -q 'test_the_shared_kinds_declare_the_same_passes' && echo "$out" | grep -q 'doors-export' || {
+            echo "::error::the drift test failed, but not on doors-export passes; the control is measuring something else"
+            exit 1
+          }

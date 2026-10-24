@@ -74,6 +74,8 @@ _IRI_PREFIXES_FOR_LOOKUP: Dict[str, str] = {
     # was dropped from the check without a word. `safety:` is in these tables because a person
     # put it here, never because anything verified it.
     "pcn:": "http://internal/sustainment/pcn#",
+    # training_extension.ttl (2026-10-24): doc-tools' own namespace, NOT `internal/...`.
+    "training:": "http://edgy-solutions.com/ontology/training#",
 }
 
 

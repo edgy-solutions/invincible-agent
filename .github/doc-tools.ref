@@ -1,0 +1,9 @@
+# The doc-tools commit this platform pairs with. It is read by
+# .github/workflows/cross-repo-kind-drift.yml, which runs doc-tools' overlay drift test at this
+# commit against this tree's policy/overlays.
+#
+# Bump it when a release note pairs the platform with a new doc-tools release, in the same commit
+# as the note. A pin that lags the pairing measures drift against a doc-tools nobody deploys.
+#
+# Currently doc-tools v0.2.0, as paired by docs/releases/0.4.65.md.
+133714c0652179187eb2cdca8b3c6d5881ecb3c5

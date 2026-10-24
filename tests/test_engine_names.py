@@ -36,6 +36,14 @@ from iagent.engine_names import handler_name_from_endpoint
     # AND THE COLLISION STAYS DISAMBIGUATED: engine-f is the PRESENTATION agent and
     # keeps "Engine F" (asserted above). Two engines rendering as one name in the HUD
     # would be worse than "Unknown" — it would be wrong and confident.
+    # engine-docs / engine-cost / engine-safety: the same miss as engine-fin, found on the
+    # docs walk 2026-10-22 (the explain card's HUD read "Unknown engine"). A WORD component
+    # is named by its word, so the next engine-<word> is not a fourth instance.
+    ("http://invincible-agent-engine-docs.prod-ns.svc.cluster.local:8100/explain", "Engine Docs"),
+    ("http://iagent-engine-docs:8100/explain", "Engine Docs"),
+    ("http://invincible-agent-engine-cost.prod-ns.svc.cluster.local:8097/x", "Engine Cost"),
+    ("http://iagent-engine-safety:8099/x", "Engine Safety"),
+    ("http://iagent-engine-lg:8098/graphs/fin_program_brief", "Engine LG"),
     # data-analyst: component name, not engine-<letter> — both releases.
     ("http://invincible-agent-data-analyst.prod-ns.svc.cluster.local:8083/x", "Engine DA"),
     ("http://iagent-data-analyst:8083/x", "Engine DA"),
@@ -95,3 +103,38 @@ def test_engine_name_from_endpoint_does_NOT_claim_the_orchestration():
     an archetype that is acted on rather than drawn.
     """
     assert engine_name_from_endpoint("http://iagent-cortex-bff:8090/canvas/seed") == ""
+
+
+# ── THE CENSUS — every engine a default endpoint names, not the ones somebody listed ───────
+#
+# engine-fin (09-01) and engine-docs/-cost/-safety (10-22) were each found one at a time, on a
+# walk, after the engine shipped. The population is every chart component the fleet's own code
+# names as a default endpoint, so a new engine reds here the day its URL is written.
+
+import re
+from pathlib import Path
+
+_FLEET = Path(__file__).resolve().parents[1] / "agent_fleet"
+_DEFAULT_ENDPOINT = re.compile(r'"http://iagent-((?:engine-[a-z0-9]+)|data-analyst):[0-9]+')
+
+
+def _engine_components() -> list[str]:
+    found = set()
+    for path in _FLEET.rglob("*.py"):
+        if "__pycache__" in path.parts or any(p.startswith(".venv") for p in path.parts):
+            continue
+        found.update(_DEFAULT_ENDPOINT.findall(path.read_text(encoding="utf-8", errors="replace")))
+    return sorted(found)
+
+
+def test_the_census_reads_the_engines_it_must():
+    # Control: a letter, a word and the named exception are all in the population.
+    assert {"engine-a", "engine-docs", "engine-fin", "data-analyst"} <= set(_engine_components())
+
+
+@pytest.mark.parametrize("component", _engine_components())
+def test_every_engine_the_fleet_names_has_a_HUD_name(component):
+    for host in (f"http://iagent-{component}:8000/x",
+                 f"http://invincible-agent-{component}.prod-ns.svc.cluster.local:8000/x"):
+        assert engine_name_from_endpoint(host), (
+            f"{component} renders as 'Unknown engine' in the HUD's Handled-by label")

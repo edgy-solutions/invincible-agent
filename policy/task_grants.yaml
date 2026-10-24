@@ -394,6 +394,14 @@ audiences:
       real reviewer role at work.
     grant_to:
       - bob@example.com
+  document_promotion:TRAINING:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0041 §5. The reviewer who promotes or rejects a contributed TRAINING document (doc-tools'
+      `course` kind, ADR-0059). Sandbox = bob, as for SUSTAINMENT, until the training domain's
+      reviewer is ruled. Bind to the domain's real reviewer role at work.
+    grant_to:
+      - bob@example.com
   document_promotion:MAINTENANCE:
     granted_by: cnogradi
     reason: >-
