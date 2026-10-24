@@ -48,9 +48,19 @@ produced has two choices: an engine route that happens to cover its need, or the
 **The stores are being read directly.** The training workbench reads Neo4j, MinIO and Weaviate,
 and writes labels into Neo4j, with its own credentials (contract v1 §1 "reads DIRECTLY", §4.4).
 Its contract calls this interim and names this ADR as the replacement. The overnight directive of
-2026-10-24 provisions that interim access: read credentials as a Secret, in a `training`
+2026-10-24 provisions that interim access as a Secret, `training/wb-store-read`, in a `training`
 namespace, "pending ADR-0060". Until this ADR is ruled and built, that Secret is a standing
 exception to the gate.
+
+What the Secret holds, as provisioned on 2026-10-24:
+- **MinIO:** a read credential scoped to `processing-artifacts/training/`.
+- **Neo4j:** the full admin credential. Neo4j Community has no read-only role, and the workbench
+  writes its own nodes anyway (`Project`, `User`, `CanonicalConcept`). The architect ruled this
+  interim on 2026-10-24.
+- **Weaviate:** nothing. The sandbox Weaviate accepts anonymous reads and writes, so there is no
+  credential to issue.
+
+The interim is store credentials, not read credentials. §4.1 says how it ends.
 
 **The platform has refused this before, case by case.**
 - ADR-0049 refuses direct substrate reads by name (Option D), for one engine reading another's
@@ -167,7 +177,8 @@ returning them. §5 asks ca to choose between these.
 
 1. **No consumer holds store credentials.** That covers the workbench's interim Secret too. Once
    §1–§3 serve the workbench's needs, the Secret is removed. Its removal is part of the build,
-   not a follow-up.
+   not a follow-up. **The workbench's store client is replaced by the manifest route**
+   (§1) and the entity verbs (§2). It is not narrowed, given a read-only credential, or wrapped.
 2. **A consumer calls on behalf of a person, not as itself.** It calls as a delegate (ADR-0041
    §8.1; ingest-v1 §3.3). A service identity would see the union of every user's grants, and
    ADR-0047 §5.1 rules that a service is never the disclosure recipient. A consumer may hold a
