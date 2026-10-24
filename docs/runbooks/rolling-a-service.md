@@ -250,8 +250,15 @@ scripts/roll-lock.sh release           # after the gates pass, by the lane that 
 
 - The lock is `sandbox/roll-lock` with keys `lane` (`<repo>/<branch>`, derived from git), `started` and
   `expected_end`.
-- Every roll script refuses (exit 3) while another lane holds a lock younger than 90 minutes. A lock
-  90 minutes old or more is stale, and the next roller takes it over, loudly.
+- Every roll script refuses (exit 3) while another lane holds a lock that is not yet stale. **Stale is
+  the later of 90 minutes after creation and the holder's `expected_end`** (architect, 2026-10-24):
+  90 minutes is the floor, and a roll that declares more keeps its lock that long, so a prime in
+  minute 91 to 100 of a 100-minute helm timeout is still protected. A stale lock is taken over,
+  loudly. A missing or unparseable `expected_end` leaves the 90-minute floor alone, and the script
+  says so.
+- **What the holder declares at acquire is all that protects it.** `expected_end` is `started` +
+  `--minutes`, and the holder cannot extend it: acquiring again is a no-op. `upgrade-sandbox.sh`
+  declares its helm timeout only, so gates run after a full-length helm wait are past the declared end.
 - `upgrade-sandbox.sh` takes it after its own guards and right before helm, for the length of its helm
   timeout. A `--dry-run` only reports it. `roll-litany.sh` takes it for 30 minutes; if the same lane
   holds it already, that is a no-op.
