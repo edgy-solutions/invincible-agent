@@ -148,6 +148,50 @@ data:
               ]
               {{- end }}
           },
+          {{- include "invincible-agent.validatePublicClients" $ }}
+          {{- range $pc := (.Values.keycloak.publicClients | default list) }}
+          {
+              "clientId": {{ $pc.clientId | quote }},
+              "enabled": true,
+              "publicClient": true,
+              "standardFlowEnabled": true,
+              "implicitFlowEnabled": false,
+              "directAccessGrantsEnabled": false,
+              "serviceAccountsEnabled": false,
+              "fullScopeAllowed": true,
+              "redirectUris": [
+                  {{- range $i, $r := $pc.redirectUris }}{{ if $i }},{{ end }}
+                  {{ $r | quote }}
+                  {{- end }}
+              ],
+              "webOrigins": [
+                  {{- range $i, $w := ($pc.webOrigins | default list) }}{{ if $i }},{{ end }}
+                  {{ $w | quote }}
+                  {{- end }}
+              ],
+              "attributes": {
+                  "pkce.code.challenge.method": "S256",
+                  "post.logout.redirect.uris": {{ join "##" $pc.redirectUris | quote }}
+              }
+              {{- if ne $claim "email" }},
+              "protocolMappers": [
+                  {
+                      "name": "authz-id-user",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-usermodel-attribute-mapper",
+                      "config": {
+                          "user.attribute": {{ $claim | quote }},
+                          "claim.name": {{ $claim | quote }},
+                          "jsonType.label": "String",
+                          "access.token.claim": "true",
+                          "id.token.claim": "true",
+                          "userinfo.token.claim": "true"
+                      }
+                  }
+              ]
+              {{- end }}
+          },
+          {{- end }}
           {{- include "invincible-agent.validateServiceClients" $ }}
           {{- $allServiceClients := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
           {{- range $i, $c := $allServiceClients }}

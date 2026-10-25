@@ -450,6 +450,11 @@ keycloak:
   # cortex-ui client emits, brokered humans through the broker's sub mapper (= upstream sub).
   # USER_ENTITLEMENT_CLAIM is rendered from this same key.
   authzClaim: "authz_id"
+  # The training workbench's login (the architect, 2026-10-24). Its UI and API share this host.
+  publicClients:
+    - clientId: training-workbench
+      redirectUris: ["https://training.edgy-solutions.com/*"]
+      webOrigins: ["https://training.edgy-solutions.com"]
   # A1, ruled 2026-09-30: the person the mesh-registrar delegate acts for. No credentials.
   nonInteractiveUsers:
     - username: platform-registrar
