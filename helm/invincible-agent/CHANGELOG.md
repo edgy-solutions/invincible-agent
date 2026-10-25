@@ -1,5 +1,46 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.69 — 2026-10-25
+
+**Finding: the `cortex-ui` client accepted any redirect.** Its realm import carried
+`redirectUris: ["*"]` and `webOrigins: ["*"]`. cortex-ui is a public client. Anyone who got a
+signed-in user to click a crafted login link could name their own redirect and collect the user's
+authorization code, and with it a token. The architect raised it on 2026-10-24 (PR #91). It is the
+shape `keycloak.publicClients` already refuses.
+
+**The fix: the redirect set is cortex-ui's literal origin.**
+- cortex-ui sends one redirect, `window.location.origin`. Its `/case/<id>` and `/ask` deep links
+  ride in OIDC state, never in the redirect. So the set is `https://<host>` and
+  `https://<host>/`, with no paths.
+- The web origin is `https://<host>`, and the post-logout redirect is `https://<host>/`, held
+  separately.
+- **New `keycloak.cortexUiClient` keys:** `redirectUris`, `webOrigins` and
+  `postLogoutRedirectUris`. When they are empty, the set derives from the TLS hosts of
+  `cortexUi.ingress`.
+- **When there is no set**, neither declared nor derivable:
+  - the import emits no redirect, so it fails closed;
+  - the reconcile job leaves the live client alone, and prints
+    `WARN cortex-ui: live redirectUris holds a wildcard` when it has one.
+- The render fails on any `*`, on a non-https URI, and on a web origin with a path.
+
+**The realm reconcile job converges a live realm.** This is the job's one declared exception to
+additive-only.
+- It reads the full client and replaces exactly those three fields. It PUTs the client back only
+  when they differ.
+- The readback fails unless all three are the rendered literals and the client is still public.
+- The success line is `ok   cortex-ui redirects <n> literal, no wildcard`.
+
+**Every deployment's realm has the same hole.**
+- A deployment whose `cortexUi.ingress` lists its TLS hosts is fixed by this roll.
+- **Work's realm needs the same fix.** If work serves cortex-ui through its own ingress, or through
+  none of the chart's, it must declare `keycloak.cortexUiClient`. Until then the job only warns,
+  and the wildcard stays.
+
+**Related, unchanged: cortex-ui keeps `directAccessGrantsEnabled: true`.** The sandbox walks and
+the e2e harness sign in with the password grant. A public client with the password grant takes a
+user's password directly. It is recorded here and is not changed by this release.
+
+
 ## 0.4.68 — 2026-10-24
 
 A declared list of public PKCE clients, `keycloak.publicClients` (PR #90, on the architect's 10-24
