@@ -398,6 +398,10 @@ spec:
               WANT_RA={{ printf "\"redirectUris\":%s" ($cui.redirectUris | toJson) | squote }}
               WANT_OA={{ printf "\"webOrigins\":%s" ($cui.webOrigins | toJson) | squote }}
               WANT_LA={{ if $cui.postLogoutRedirectUris }}{{ printf "\"post.logout.redirect.uris\":%s" (join "##" $cui.postLogoutRedirectUris | toJson) | squote }}{{ else }}''{{ end }}
+              # Keycloak holds redirectUris / webOrigins as SETS and serves them in its own order:
+              # compare the sorted members, never the array text (0.4.69 failed its readback on order)
+              setof() { printf '%s' "$1" | sed -e 's/^"[^"]*":\[//' -e 's/\]$//' \
+                -e "s/\",\"/\"$(printf '\001')\"/g" | tr '\001' '\n' | LC_ALL=C sort -u; }
               if [ -z "$CUI" ]; then
                 echo "   FAIL cortex-ui: client absent, redirect set not converged"; rc=1
               else
@@ -407,7 +411,7 @@ spec:
                 LIVE_LA=$(printf '%s' "$LIVE" | grep -o '"post.logout.redirect.uris":"[^"]*"' | head -1 || true)
                 if [ -z "$LIVE" ]; then
                   echo "   FAIL cortex-ui: could not read the live client"; rc=1
-                elif [ "$LIVE_RA" = "$WANT_RA" ] && [ "$LIVE_OA" = "$WANT_OA" ] \
+                elif [ "$(setof "$LIVE_RA")" = "$(setof "$WANT_RA")" ] && [ "$(setof "$LIVE_OA")" = "$(setof "$WANT_OA")" ] \
                      && { [ -z "$WANT_LA" ] || [ "$LIVE_LA" = "$WANT_LA" ]; }; then
                   echo "   cortex-ui redirect set: as declared"
                 else
@@ -718,10 +722,13 @@ spec:
                 GOT_RA=$(printf '%s' "$GOT" | grep -o '"redirectUris":\[[^]]*\]' | head -1 || true)
                 GOT_OA=$(printf '%s' "$GOT" | grep -o '"webOrigins":\[[^]]*\]' | head -1 || true)
                 GOT_LA=$(printf '%s' "$GOT" | grep -o '"post.logout.redirect.uris":"[^"]*"' | head -1 || true)
-                if [ "$GOT_RA" != "$WANT_RA" ]; then
+                # a set compare, as at convergence: Keycloak serves these in its own order
+                setof() { printf '%s' "$1" | sed -e 's/^"[^"]*":\[//' -e 's/\]$//' \
+                  -e "s/\",\"/\"$(printf '\001')\"/g" | tr '\001' '\n' | LC_ALL=C sort -u; }
+                if [ "$(setof "$GOT_RA")" != "$(setof "$WANT_RA")" ]; then
                   echo "   FAIL cortex-ui: live ${GOT_RA:-redirectUris absent} is not exactly $WANT_RA"; rc=1; cui_bad=1
                 fi
-                if [ "$GOT_OA" != "$WANT_OA" ]; then
+                if [ "$(setof "$GOT_OA")" != "$(setof "$WANT_OA")" ]; then
                   echo "   FAIL cortex-ui: live ${GOT_OA:-webOrigins absent} is not exactly $WANT_OA"; rc=1; cui_bad=1
                 fi
                 if [ -n "$WANT_LA" ] && [ "$GOT_LA" != "$WANT_LA" ]; then
