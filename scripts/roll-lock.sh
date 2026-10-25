@@ -2,6 +2,7 @@
 # The sandbox roll lock — ConfigMap sandbox/roll-lock {lane, started, expected_end}.
 #
 #   usage: scripts/roll-lock.sh acquire [--minutes N]   # before any helm upgrade or roll
+#          scripts/roll-lock.sh renew [--minutes N]     # holder only: run to now+N, never shorter
 #          scripts/roll-lock.sh check                   # exit 0 if this lane may roll, 3 if not
 #          scripts/roll-lock.sh release                 # once the roll's gates pass
 #          scripts/roll-lock.sh show
@@ -24,6 +25,13 @@
 #
 # CREATE IS THE ATOMIC STEP. `kubectl create` fails on AlreadyExists, so two lanes acquiring at
 # once get one winner; the loser re-reads the holder and refuses. Never `apply` (it overwrites).
+#
+# RENEW (the architect, 2026-10-24) lets the holder move its expected_end to now+N, because what
+# it declared at acquire is all that protects it -- upgrade-sandbox declares its helm timeout, and
+# the gates run after. Renew never shortens a lock, and acquiring again stays a no-op. Its write is
+# ONE server-side compare-and-set: a JSON patch whose `test` op requires `lane` to still be this
+# lane, so a takeover between the read and the write fails the patch instead of extending the
+# new holder's lock.
 #
 # THE LANE is `<repo>/<branch>` (the address rule, 2026-10-07), derived from git, never typed.
 # ROLL_LANE overrides it, for a roll run from a tree whose branch is not the roller's address.
@@ -159,8 +167,38 @@ case "${cmd}" in
     "${KUBECTL[@]}" delete configmap "${LOCK_NAME}" >/dev/null
     echo "roll lock released: lane=${me}"
     ;;
+  renew)
+    cur="$(_read)" || exit 4
+    if [ -z "${cur}" ]; then
+      echo "REFUSING TO RENEW: ${LOCK_NS}/${LOCK_NAME} is free -- nothing is held to extend; acquire it." >&2
+      exit 3
+    fi
+    if [ "$(cut -f1 <<<"${cur}")" != "${me}" ]; then
+      echo "REFUSING TO RENEW another lane's lock: $(_say "${cur}")" >&2
+      exit 3
+    fi
+    # The lane goes into JSON text below; a lane outside this alphabet is refused, not escaped.
+    if ! [[ "${me}" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+      echo "REFUSING TO RENEW: lane '${me}' has characters this script will not put in a patch." >&2
+      exit 2
+    fi
+    old="$(cut -f3 <<<"${cur}")"
+    want="$(date -u -d "+${minutes} minutes" +%Y-%m-%dT%H:%M:%SZ)"
+    if [ -n "${old}" ] && old_s="$(date -u -d "${old}" +%s 2>/dev/null)" \
+       && [ "${old_s}" -ge "$(date -u -d "${want}" +%s)" ]; then
+      echo "roll lock already runs to ${old}, past ${want}; renew never shortens it."
+      exit 0
+    fi
+    patch='[{"op":"test","path":"/data/lane","value":"'"${me}"'"},{"op":"add","path":"/data/expected_end","value":"'"${want}"'"}]'
+    if ! "${KUBECTL[@]}" patch configmap "${LOCK_NAME}" --type json -p "${patch}" >/dev/null 2>&1; then
+      cur="$(_read)" || exit 4
+      echo "REFUSING TO RENEW: the lock changed while renewing. ${cur:+$(_say "${cur}")}" >&2
+      exit 3
+    fi
+    echo "roll lock renewed: lane=${me} expected_end ${old:-<none>} -> ${want}"
+    ;;
   *)
-    echo "usage: $0 {acquire [--minutes N]|check|release|show}" >&2
+    echo "usage: $0 {acquire [--minutes N]|renew [--minutes N]|check|release|show}" >&2
     exit 2
     ;;
 esac

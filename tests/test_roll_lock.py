@@ -44,12 +44,26 @@ def _bash() -> str | None:
 BASH = _bash()
 needs_bash = pytest.mark.skipif(BASH is None, reason="no bash that can run the script")
 
-# A kubectl that understands exactly the four calls roll-lock.sh makes, and logs every call.
+# A kubectl that understands exactly the five calls roll-lock.sh makes, and logs every call.
+# `patch` honours the JSON patch `test` op on /data/lane the way the API server does: a mismatch
+# rejects the whole patch. STUB_TAKEOVER=<lane> makes another lane take the lock over between the
+# script's read and its patch -- the race renew's compare-and-set exists for.
 STUB = r"""#!/usr/bin/env bash
 d="$STUB_DIR"; echo "$*" >> "$d/calls"
 [ -n "${STUB_FAIL_GET:-}" ] && [[ " $* " == *" get "* ]] && { echo "connection refused" >&2; exit 1; }
 f="$d/cm"
 case " $* " in
+  *" patch configmap roll-lock "*)
+    [ -f "$f" ] || { echo 'Error from server (NotFound)' >&2; exit 1; }
+    [ -n "${STUB_TAKEOVER:-}" ] && sed -i "1s|.*|${STUB_TAKEOVER}|" "$f"
+    p=""; take=""; for a in "$@"; do [ -n "$take" ] && { p="$a"; take=""; }; [ "$a" = "-p" ] && take=1; done
+    tl="$(printf '%s' "$p" | sed -n 's|.*"op":"test","path":"/data/lane","value":"\([^"]*\)".*|\1|p')"
+    ne="$(printf '%s' "$p" | sed -n 's|.*"path":"/data/expected_end","value":"\([^"]*\)".*|\1|p')"
+    if [ -n "$tl" ] && [ "$tl" != "$(sed -n 1p "$f")" ]; then
+      echo 'The request is invalid: the server rejected our request due to an error in our request' >&2; exit 1
+    fi
+    [ -n "$ne" ] && sed -i "3s|.*|$ne|" "$f"
+    exit 0 ;;
   *" get configmap roll-lock "*)
     [ -f "$f" ] && printf '%s\t%s\t%s\t%s' "$(sed -n 1p "$f")" "$(sed -n 2p "$f")" "$(sed -n 3p "$f")" "$(sed -n 4p "$f")"
     exit 0 ;;
@@ -268,11 +282,82 @@ def test_upgrade_sandbox_dry_run_only_reports_the_lock():
     assert "show" in dry_arm and "acquire" not in dry_arm
 
 
-def test_roll_litany_takes_the_lock_before_its_first_rollout():
+def test_roll_litany_takes_the_lock_then_renews_it_before_its_first_rollout():
     src = LITANY.read_text()
-    acq = src.index("roll-lock.sh\" acquire")
-    assert acq < src.index("kubectl -n \"$NS\" rollout restart")
-    assert "|| exit 3" in src[acq:src.index("\n", acq)]
+    assert re.search(r'^_lock="\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)/roll-lock\.sh"$', src, re.M)
+    acq = src.index('bash "${_lock}" acquire --minutes 30')
+    ren = src.index('bash "${_lock}" renew --minutes 30')
+    assert acq < ren < src.index("kubectl -n \"$NS\" rollout restart")
+    for at in (acq, ren):
+        assert src[at:src.index("\n", at)].endswith("|| exit 3")
+
+
+def _end(stub) -> datetime:
+    return datetime.strptime((stub[1] / "cm").read_text().splitlines()[2], "%Y-%m-%dT%H:%M:%SZ")
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+# Ruled 2026-10-24: build `renew` for the lock holder.
+@needs_bash
+def test_the_holder_renews_its_expected_end_and_nothing_else(stub):
+    _hold(stub, "invincible-agent/lane/01", age_min=95, end_in_min=5)
+    lane, started, _, created = (stub[1] / "cm").read_text().splitlines()
+    r = _run(stub, "renew", "--minutes", "40")
+    assert r.returncode == 0, r.stderr
+    assert "renewed" in r.stdout
+    assert timedelta(minutes=39) <= _end(stub) - _utcnow() <= timedelta(minutes=41)
+    after = (stub[1] / "cm").read_text().splitlines()
+    assert (after[0], after[1], after[3]) == (lane, started, created)  # same lock, not a new one
+    calls = (stub[1] / "calls").read_text()
+    assert " patch configmap roll-lock --type json " in f" {calls} "
+    assert "create" not in calls and "delete" not in calls
+    # and the renewed end is what keeps it live: another lane is refused at minute 95
+    assert _run(stub, "acquire", lane="doc-tools/lane/7f").returncode == 3
+
+
+@needs_bash
+def test_renew_never_shortens_the_lock(stub):
+    _hold(stub, "invincible-agent/lane/01", age_min=5, end_in_min=95)
+    before = (stub[1] / "cm").read_text()
+    r = _run(stub, "renew", "--minutes", "30")
+    assert r.returncode == 0, r.stderr
+    assert "never shortens" in r.stdout
+    assert (stub[1] / "cm").read_text() == before
+    assert "patch" not in (stub[1] / "calls").read_text()
+
+
+@needs_bash
+def test_renew_refuses_another_lanes_lock_and_a_free_one(stub):
+    _hold(stub, "doc-tools/lane/7f", age_min=10, end_in_min=20)
+    before = (stub[1] / "cm").read_text()
+    r = _run(stub, "renew", "--minutes", "60")
+    assert r.returncode == 3 and "another lane" in r.stderr
+    assert (stub[1] / "cm").read_text() == before
+    (stub[1] / "cm").unlink()
+    r = _run(stub, "renew")
+    assert r.returncode == 3 and "free" in r.stderr
+    assert not (stub[1] / "cm").exists()
+    assert "create" not in (stub[1] / "calls").read_text()
+
+
+@needs_bash
+def test_a_takeover_between_read_and_write_fails_the_renew_and_extends_nobody(stub):
+    _hold(stub, "invincible-agent/lane/01", age_min=95, end_in_min=-1)
+    r = _run(stub, "renew", "--minutes", "60", STUB_TAKEOVER="doc-tools/lane/7f")
+    assert r.returncode == 3, (r.returncode, r.stdout, r.stderr)
+    assert "changed while renewing" in r.stderr
+    assert _holder(stub) == "doc-tools/lane/7f"
+    assert _end(stub) < _utcnow()  # the new holder's lock was not extended by us
+
+
+@needs_bash
+def test_an_unreadable_lock_is_not_renewed(stub):
+    r = _run(stub, "renew", STUB_FAIL_GET="1")
+    assert r.returncode == 4
+    assert "patch" not in (stub[1] / "calls").read_text()
 
 
 def test_the_stale_bound_is_the_ruled_90_minutes():

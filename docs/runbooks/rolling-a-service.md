@@ -245,6 +245,7 @@ not a packet:
 ```bash
 scripts/roll-lock.sh show              # who holds sandbox/roll-lock, since when, until when
 scripts/roll-lock.sh acquire           # upgrade-sandbox.sh and roll-litany.sh do this themselves
+scripts/roll-lock.sh renew --minutes N # the holder only: run to now+N, never shorter
 scripts/roll-lock.sh release           # after the gates pass, by the lane that holds it
 ```
 
@@ -256,12 +257,16 @@ scripts/roll-lock.sh release           # after the gates pass, by the lane that 
   minute 91 to 100 of a 100-minute helm timeout is still protected. A stale lock is taken over,
   loudly. A missing or unparseable `expected_end` leaves the 90-minute floor alone, and the script
   says so.
-- **What the holder declares at acquire is all that protects it.** `expected_end` is `started` +
-  `--minutes`, and the holder cannot extend it: acquiring again is a no-op. `upgrade-sandbox.sh`
-  declares its helm timeout only, so gates run after a full-length helm wait are past the declared end.
+- **What the holder declares is all that protects it, so renew before the gates.** `expected_end` is
+  `started` + `--minutes`; acquiring again is a no-op. `upgrade-sandbox.sh` declares its helm timeout
+  only, so once helm returns, run `scripts/roll-lock.sh renew --minutes N` for the gates' length
+  before starting them (ruled 2026-10-24). Renew moves `expected_end` to now+N and never shortens it.
+  It refuses (exit 3) a free lock or another lane's, and its write is one compare-and-set -- a JSON
+  patch whose `test` op requires `lane` to still be yours -- so a takeover between its read and its
+  write fails the renew instead of extending the new holder's lock.
 - `upgrade-sandbox.sh` takes it after its own guards and right before helm, for the length of its helm
-  timeout. A `--dry-run` only reports it. `roll-litany.sh` takes it for 30 minutes; if the same lane
-  holds it already, that is a no-op.
+  timeout. A `--dry-run` only reports it. `roll-litany.sh` takes it for 30 minutes and then renews it
+  for 30, so a litany run inside an upgrade's lock extends that lock to cover itself.
 - `kubectl create` is the atomic step: two lanes acquiring at once get one winner. An unreadable lock
   is refused (exit 4), never read as free.
 - **Release after the gates, not after helm.** The values diff, imageIDs, worker6, the walks: those are

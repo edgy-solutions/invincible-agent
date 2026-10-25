@@ -180,7 +180,8 @@ fi
 # in the doc-tools code location; rev 216). So no upgrade starts while another lane holds
 # sandbox/roll-lock, and this one takes it for the length of its own helm timeout. A dry run
 # rolls nothing, so it only reports the lock. Release it once the gates pass, not here: `exec`
-# hands over to helm, and the gates come after helm returns.
+# hands over to helm, and the gates come after helm returns. A full-length helm wait leaves the
+# gates past this declared end, so once helm returns:  scripts/roll-lock.sh renew --minutes N
 _dry=""
 for _arg in "$@"; do case "${_arg}" in --dry-run|--dry-run=*) _dry=1 ;; esac; done
 _lock="$(dirname "${BASH_SOURCE[0]}")/roll-lock.sh"
