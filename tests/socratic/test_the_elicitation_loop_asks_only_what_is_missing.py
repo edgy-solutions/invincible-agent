@@ -257,3 +257,81 @@ def test_control_reachability_the_same_definition_named_by_a_row_is_asked_about(
     keys = _keys(f)
     assert "approvals.orphan_stage.review.task_kind" in keys
     assert "approvals.orphan_stage.next" in keys
+
+
+# ── the aligning user: a question is understood by what it is about, not by its id ──────────────
+
+import importlib.util  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("socratic_measure_under_test", REPO / "scripts" / "socratic_measure.py")
+sm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(sm)
+
+
+def _rename(files: dict, mapping: dict) -> dict:
+    def walk(v):
+        if isinstance(v, dict):
+            return {walk(k): walk(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [walk(x) for x in v]
+        if isinstance(v, str):
+            return mapping.get(v, v)
+        return v
+    out = {}
+    for f, d in files.items():
+        folder, _, fname = f.partition("/")
+        stem = Path(fname).stem
+        out[f"{folder}/{mapping.get(stem, stem)}.yaml" if folder == "workflows" else f] = walk(d)
+    return out
+
+
+def test_the_oracle_through_the_aligning_user_gives_the_identical_table():
+    for name in NAMES:
+        exact = sm.measure(name, se.OracleExtractor())
+        aligned = sm.measure(name, se.OracleExtractor(), aligned=True)
+        drop = ("seconds", "aligned_answers", "unaligned", "unbanked")
+        assert {k: v for k, v in exact.items() if k not in drop} == {k: v for k, v in aligned.items() if k not in drop}
+        assert aligned["aligned_answers"] == [] and aligned["unaligned"] == [] and aligned["unbanked"] == []
+        assert exact["deferred_refusals"] == aligned["deferred_refusals"]
+
+
+def test_a_renamed_definition_and_step_translate_to_the_banks_names():
+    expected = _expected("pcn_review")
+    draft = _rename(expected, {"pcn_impact_review": "impact_review", "engineering_disposition": "review"})
+    assert "workflows/impact_review.yaml" in draft
+    user = sm.AligningUser(_transcript("pcn_review"), expected)
+    t = user.translate
+    assert t("approvals.impact_review.review.deadline", draft) == \
+        "approvals.pcn_impact_review.engineering_disposition.deadline"
+    assert t("approvals.impact_review.next", draft) == "approvals.pcn_impact_review.next"
+    assert t("steps.impact_review", draft) == "steps.pcn_impact_review"
+    assert t("contradiction:workflows/impact_review.yaml#steps[id=review].excludes", draft) == \
+        "contradiction:workflows/pcn_impact_review.yaml#steps[id=engineering_disposition].excludes"
+    assert t("outputs.pcn_record.next", draft) == "outputs.pcn_record.next"
+
+
+def _without_program_approval() -> dict:
+    d = _expected("pcn_review")
+    del d["workflows/pcn_program_approval.yaml"]
+    del d["decisions/pcn_program_approval_chaining.yaml"]
+    return d
+
+
+def test_a_stage_the_draft_cannot_reach_is_unaligned_not_misaligned():
+    user = sm.AligningUser(_transcript("pcn_review"), _expected("pcn_review"))
+    draft = _without_program_approval()
+    assert user.translate("outputs.pcn_record.next", draft) is None
+    assert user.translate("steps.pcn_record", draft) is None
+    assert user.translate("steps.pcn_program_approval", draft) == "steps.pcn_program_approval"
+
+
+class _FileOrderUser(sm.AligningUser):
+    """MUTANT: pair definitions by position in file order instead of by the path that reaches them."""
+
+    def _pair_definitions(self, d, e):
+        return dict(zip(sorted(d["wfs"]), sorted(e["wfs"])))
+
+
+def test_the_unaligned_test_fails_if_alignment_falls_back_to_file_order():
+    user = _FileOrderUser(_transcript("pcn_review"), _expected("pcn_review"))
+    assert user.translate("outputs.pcn_record.next", _without_program_approval()) is not None

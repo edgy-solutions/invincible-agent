@@ -184,22 +184,151 @@ bundle, and its expected deferrals. Each fixture plants one contradiction and on
 Prototype: `agent_fleet/restate_analyst/socratic_elicitation.py`. It is unregistered and has no
 route. Seals: `tests/socratic/test_the_elicitation_loop_asks_only_what_is_missing.py`.
 
-<!-- NUMBERS: filled from scripts/socratic_measure.py, oracle and model arms -->
+Instrument: `scripts/socratic_measure.py`. A scripted user answers each question from the
+transcript's bank. Two arms:
+- **Oracle:** the extractor returns each utterance's pre-written facts.
+- **Model:** the pinned fleet model (ruling of 10-09) extracts. It sees each utterance's words and
+  the context's event fields and audiences, never the facts or `expected/`.
+
+Correctness is measured two ways:
+- **exact:** the final bundle equals the expected one;
+- **semantic:** the diff after renaming definitions by the order a case reaches them (`wf0`, `wf1`,
+  ...), ignoring names and free text.
+
+`runnable()` loads the final bundle through the real `load_triggers`, `load_tables`,
+`load_all_workflows`, task-kind `compose`, `chaining_index` and `decide`. Three of its checks restate
+a rule instead of calling the runner's code:
+- every definition has a table `after:` it;
+- every task kind a step names is declared;
+- every attribute a row matches is measured or required.
+
+**Oracle arm.** All three fixtures came out exact, with no runnable errors and in about 0.1 s each:
+
+| fixture | questions / bank | repeated | unanswerable | contradictions | deferrals | gaps left |
+| --- | --- | --- | --- | --- | --- | --- |
+| PCN review | 12 / 12 | 0 | 0 | 1 / 1 | 1 / 1 | 0 |
+| maintenance case release | 9 / 9 | 0 | 0 | 1 / 1 | 1 / 1 | 0 |
+| training-course approval | 10 / 10 | 0 | 0 | 1 / 1 | 1 / 1 | 0 |
+
+The oracle's correctness is close to built-in: its facts carry ids the user never says. What it
+does measure:
+- the loop asks every banked question exactly once and nothing else;
+- it raises each planted contradiction and records each planted deferral;
+- the expected bundles pass the runner's own loaders.
+
+**Model arm, three runs.** In run 1 the user looked answers up by the exact gap key. In runs 2 and
+3 the user aligned the model's names to the expected ones by structure, never by string similarity:
+- a definition by the selection or chaining row with the same `when` that reaches it;
+- a step by its position among steps of the same kind;
+- a task kind by the step that names it.
+
+Through that aligner, the oracle gives the identical table; a test asserts this.
+
+| run | fixture | questions / bank | unanswerable | contradictions | deferrals | runnable errors | semantic diffs | deferred refusals | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | PCN | 7 / 12 | 6 | 0 / 1 | 0 / 1 | 2 | 9 | n/m | 205 |
+| 1 | maintenance | 5 / 9 | 5 | 0 / 1 | 0 / 1 | 3 | 6 | n/m | 126 |
+| 1 | training | 8 / 10 | 8 | 0 / 1 | 0 / 1 | 4 | 9 | n/m | 144 |
+| 2 | PCN | 7 / 12 | 6 | 0 / 1 | 0 / 1 | 2 | 9 | 4 | 171 |
+| 2 | maintenance | 4 / 9 | 4 | 0 / 1 | 0 / 1 | 3 | 6 | 2 | 137 |
+| 2 | training | 10 / 10 | 6 | 0 / 1 | 0 / 1 | 3 | 8 | 3 | 548 |
+| 3 | PCN | 10 / 12 | 6 | 0 / 1 | 0 / 1 | 4 | 7 | 5 | 490 |
+| 3 | maintenance | 3 / 9 | 3 | 0 / 1 | 0 / 1 | 3 | 6 | 2 | 96 |
+| 3 | training | 9 / 10 | 4 | 0 / 1 | 0 / 1 | 1 | 8 | 1 | 570 |
+
+Notes on the table:
+- "n/m" means not measured: the metric was added after run 1.
+- No run had a model or transport error, a repeated question, or an exact result.
+
+What the model runs show:
+
+1. **The loop closed on a spec that cannot run, every time.** Every model run ended with no gaps
+   left and 1 to 4 runnable errors. In runs 2 and 3, each runnable error is a runtime refusal that went unanswered
+   and was then recorded as deferred (the "deferred refusals" column), or it follows from one. §5
+   says a runtime refusal may not be deferred, and the prototype does not yet enforce that.
+
+   Example, maintenance in run 3:
+   - The trigger names a workflow where a selection table belongs.
+   - "Which table routes this trigger" was unanswerable, so it was deferred.
+   - With no selection table, no definition is reachable, so the case checks went quiet. The loop
+     stopped after 3 questions.
+
+   Enforcing §5 is the first build item: an open refusal ends the dialogue as **not runnable**,
+   never as done.
+2. **Two extraction defects repeat across runs.** In the six aligned runs:
+   - an approval step named no task kind in 5;
+   - a definition had no chaining table in 4;
+   - the model also emitted a task kind without `accepts` once.
+
+   These are errors in the rows themselves, not naming differences.
+3. **No model run reached a planted contradiction or deferral** (0 of 9 each). Both sit after
+   stages the model's draft left unrouted, or after the loop had already closed.
+4. **The PCN fixture has a defect, in the fixture rather than the model.** The opening says "a fit,
+   form or function change". The expected selection row matches `change_class: fff`, and that value
+   appears nowhere the model can see. Run 3 split it into three rows (`fit`, `form`, `function`), a
+   reasonable reading. The aligner then could not pair the impact review, so its 2 questions were
+   unaligned. The fix is for the context to carry each event field's value vocabulary (see Open
+   questions).
+5. **The scripted user is limited.** The bank holds only the questions the oracle's path raises.
+   "Unbanked" questions in the model runs are of two kinds:
+   - questions the opening already answered, which are model misses. The maintenance and training
+     openings state `requires`, yet `trigger.requires` was asked in run 2 on both fixtures and in
+     run 3 on training.
+   - questions off the oracle's path that a person could answer.
+
+   The instrument cannot tell these apart automatically, so the unanswerable count is an upper
+   bound on what a person would leave unanswered.
+
+**Seals and mutants:**
+- `tests/socratic` collects 37 tests.
+- With the three shipped decision-table seals and the ADR index: 155 passed.
+- Across the repo-wide source-walking seals: 179 passed, 6 skipped.
+
+Both runs were on the committed tree.
+
+The positive control: the shipped seed bundle validates with each sample overlay and with both. That
+required scoping case checks to definitions reachable from a selection table. The seed's
+code-opened workflows are not cases. That scoping is a reading of `chain()`'s population, made in
+this ADR. It is not a prior ruling.
+
+Mutants, run in memory:
+
+| mutant | result |
+| --- | --- |
+| a chaining table loses a declared row | 1 error, from the real `decide()` |
+| a human_await loses its audience | 10 errors, from the real `WorkflowDefinition` |
+| a chaining table removed | 1 error, from the restated check |
+| a good bundle run after a bad one | 0 errors: no stale loader state |
+| last write wins | planted contradictions asked 0 / 1. The maintenance bundle still came out exact, because the kept value was the expected one; only the question count shows the loss there |
+| completeness questions removed | 8, 8 and 9 questions. Training and maintenance still came out exact, so only the missing deferral records show the loss |
+| aligner pairs definitions by file order instead of by path | a draft missing a stage answers that stage's question as a different stage's, where the real aligner leaves it unaligned; a seal pins both |
+
+**Caveats:**
+- The seals ran with SDK v0.9.10 (master's pin) on the path, because the lane venv carries 0.9.5.
+- Three model runs of a non-deterministic model is a sample: the per-fixture numbers moved between
+  runs by up to 3 questions and 3 runnable errors.
+- The fixtures are synthetic and were written by the same lane as the prototype.
 
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a
   hand author would have written, gated by the same seals.
-- **The dialogue's questions are the runtime's refusals, asked early.** A bundle that reaches the
-  ratifier has already passed every check that would have refused it at merge.
-- **The question list cannot drift from the runtime.** Every runtime refusal is derived from the
-  runner's own models, so a new loader refusal becomes a new question with no dialogue change.
-  The five completeness questions in §3(b) are the only hand-kept list.
+- **The dialogue's questions are the runtime's refusals, asked early.** Once §5 is enforced, a
+  bundle that reaches the ratifier has already passed every check that would have refused it at
+  merge. The prototype does not enforce §5 yet, and §8 measures the cost: every model run closed on
+  a spec that cannot run.
+- **The question list mostly cannot drift from the runtime.** Most runtime refusals come from the
+  runner's own models, so a new loader refusal becomes a new question with no dialogue change. Two
+  lists are kept by hand:
+  - the five completeness questions in §3(b);
+  - the three restated checks named in §8. Each should become a call into the runner's code.
 
 Proposed units of work. This document assigns nobody:
 
 | unit | likely home |
 | --- | --- |
+| enforce §5: an open runtime refusal ends the dialogue as not runnable, never deferred | the prototype, before any verb |
+| give the extractor each event field's value vocabulary, not only the field names | the prototype, before any verb |
 | a `proposeWorkflow` verb hosting the loop | the case runner's engine |
 | the proposal rendered as a canvas: definitions, tables, deferrals | cortex-ui |
 | the workflow stewards' ratification audience and route | shared with ADR-0057's |
@@ -222,9 +351,14 @@ Proposed units of work. This document assigns nobody:
 - **Who the workflow stewards are, per deployment.** This may be the same audience as ADR-0057's.
 - **Editing a ratified workflow by dialogue.** The prototype starts from an empty bundle. Starting
   from the composed rows is the same loop with a non-empty draft; it is not measured here.
-- **Vocabulary.** The agent offers the event's declared fields and the deployment's declared
-  audiences. A workflow that needs an audience nobody has declared is a grant change (a human's
-  act), not a dialogue answer.
+- **Vocabulary.** The agent offers:
+  - the event's declared fields;
+  - the deployment's declared audiences;
+  - each field's declared values. §8 shows the values are needed: "fit, form or function" against
+    `fff`.
+
+  Where those values are declared is open. A workflow that needs an audience nobody has declared is
+  a grant change (a human's act), not a dialogue answer.
 
 ## Indicators for revisiting
 

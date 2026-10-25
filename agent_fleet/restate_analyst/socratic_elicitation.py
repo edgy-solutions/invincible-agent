@@ -1035,7 +1035,9 @@ class ModelExtractor:
 # ═════════════════════════════════════════════════════════════════════════════════════════════
 
 def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict],
-        max_turns: int = 40) -> dict:
+        max_turns: int = 40,
+        answer: Optional[Callable[[Gap, Draft], Optional[dict]]] = None) -> dict:
+    """``answer(gap, draft)`` is the scripted user; the default is the exact-key bank lookup."""
     draft = Draft()
     if hasattr(extractor, "with_context"):
         extractor.with_context(transcript.get("context") or {})  # type: ignore[attr-defined]
@@ -1046,16 +1048,29 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
     contradictions_asked: List[str] = []
     unanswerable = unresolved = turn = 0
     answers = transcript.get("answers") or {}
+    if answer is None:
+        def answer(g: Gap, d: Draft) -> Optional[dict]:  # noqa: F811
+            return answers.get(g.key)
+    # ADR-0061 section 5: a runtime refusal may not be deferred. MEASURED here, not enforced.
+    refused: set = set()
+    snap: Optional[Tuple[set, set]] = None
+
+    def note() -> None:
+        if snap is not None:
+            refused.update(k for k in draft.deferrals if k not in snap[1] and k in snap[0])
+
     while turn < max_turns:
+        note()
         pending_gaps = gaps(draft)
         if not pending_gaps:
             break
+        snap = ({x.key for x in problems(draft.files)}, set(draft.deferrals))
         g = pending_gaps[0]
         turn += 1
         questions.append({"key": g.key, "kind": g.kind, "facet": g.facet})
         if g.kind == "contradiction":
             contradictions_asked.append(g.key)
-        entry = answers.get(g.key)
+        entry = answer(g, draft)
         messages.append({"turn": turn, "agent": restate(draft) + "\n\n" + g.question,
                          "user": (entry or {}).get("says")})
         if entry is None:
@@ -1069,6 +1084,7 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
             unresolved += 1
             draft.deferrals[g.key] = "answer did not settle it"
             draft.pending = [p for p in draft.pending if p.key != g.key]
+    note()
     final = finalize(draft.files)
     return {
         "questions": questions,
@@ -1082,4 +1098,5 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
         "files": final,
         "runnable": runnable(final),
         "turns": turn,
+        "deferred_refusals": sorted(refused),
     }
