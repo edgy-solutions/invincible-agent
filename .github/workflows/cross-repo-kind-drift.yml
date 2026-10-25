@@ -20,6 +20,14 @@
 # build-containers.yml. It is hermetic: two pip packages, YAML files, no cluster and no network
 # at test time. The validate-canvas-templates.yml argument applies; so does its pre-committed
 # fallback (one environment red moves this job to workflow_dispatch, said in a packet).
+#
+# TWO LEGS, ONE SET OF STEPS (the architect, 2026-10-24). `pin` is the gate: doc-tools at
+# .github/doc-tools.ref, and a red here fails the run. `main` is the drift REPORT: the same steps
+# against doc-tools main, with continue-on-error, so its red is shown and does not fail the run. A
+# pinned check stays green while the two repos disagree -- before #87 it did, because the pin
+# predated doc-tools #100 -- so the main leg is what says the pin has fallen behind. main moves
+# without a PR here, hence the daily schedule. One matrix, not two jobs, so the legs cannot
+# drift apart in what they check. master has no branch protection: "the gate" means a red run.
 
 name: cross-repo kind drift
 
@@ -35,11 +43,19 @@ on:
       - "policy/overlays/**/content_kinds/**"
       - ".github/doc-tools.ref"
       - ".github/workflows/cross-repo-kind-drift.yml"
+  schedule:
+    - cron: "17 5 * * *"
   workflow_dispatch:
 
 jobs:
   drift:
+    name: drift (${{ matrix.at }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        at: [pin, main]
+    continue-on-error: ${{ matrix.at == 'main' }}
     env:
       OVERLAY: ${{ github.workspace }}/invincible-agent/policy/overlays/openddil-lab/content_kinds
     steps:
@@ -47,15 +63,21 @@ jobs:
         with:
           path: invincible-agent
 
-      - name: read the doc-tools pin
+      - name: read the doc-tools pin, and pick this leg's ref
         id: pin
         run: |
           set -eu
-          ref="$(grep -v '^#' invincible-agent/.github/doc-tools.ref | tr -d '[:space:]')"
-          if ! echo "$ref" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "::error::.github/doc-tools.ref must hold one full 40-hex commit sha, got '$ref'"
+          pin="$(grep -v '^#' invincible-agent/.github/doc-tools.ref | tr -d '[:space:]')"
+          if ! echo "$pin" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::.github/doc-tools.ref must hold one full 40-hex commit sha, got '$pin'"
             exit 1
           fi
+          case "${{ matrix.at }}" in
+            pin) ref="$pin" ;;
+            main) ref=main ;;
+            *) echo "::error::unknown leg '${{ matrix.at }}'"; exit 1 ;;
+          esac
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
@@ -64,6 +86,16 @@ jobs:
           ref: ${{ steps.pin.outputs.ref }}
           path: doc-tools
 
+      - name: say which doc-tools commit this leg reads
+        run: |
+          set -eu
+          head="$(git -C doc-tools rev-parse HEAD)"
+          pin="${{ steps.pin.outputs.pin }}"
+          echo "doc-tools at ${{ matrix.at }}: $head (pin $pin)" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "${{ matrix.at }}" = main ] && [ "$head" = "$pin" ]; then
+            echo "main IS the pin: this leg measures nothing the pinned leg does not." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -71,11 +103,25 @@ jobs:
       - name: install
         run: python -m pip install --quiet pytest pyyaml
 
-      - name: the overlay agrees with doc-tools at the pin
+      - name: the overlay agrees with doc-tools at the ${{ matrix.at }}
         working-directory: doc-tools
         env:
           IAGENT_CONTENT_KIND_OVERLAY_DIR: ${{ env.OVERLAY }}
-        run: python -m pytest -q -rs -p no:cacheprovider tests/test_overlay_kind_drift.py --junitxml="$RUNNER_TEMP/drift.xml"
+        run: |
+          log="$RUNNER_TEMP/drift.log"
+          python -m pytest -q -rs -rf -p no:cacheprovider tests/test_overlay_kind_drift.py --junitxml="$RUNNER_TEMP/drift.xml" 2>&1 | tee "$log" && rc=0 || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            {
+              echo "### The overlay and doc-tools at ${{ matrix.at }} disagree"
+              echo '```'
+              grep -E '^(FAILED|E  )' "$log" | head -60
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            if [ "${{ matrix.at }}" = main ]; then
+              echo "::warning title=the overlay drifts from doc-tools main::$(grep -c '^FAILED' "$log") arm(s) red against main. doc-tools owns passes: mirror its registry into the overlay and bump .github/doc-tools.ref in the same commit."
+            fi
+          fi
+          exit "$rc"
 
       - name: it ran, and nothing skipped
         run: |
