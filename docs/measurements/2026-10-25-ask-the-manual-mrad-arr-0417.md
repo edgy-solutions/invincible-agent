@@ -104,7 +104,15 @@ These were checked against `doc_tools/parsers/s1000d_rdf.py` as it stands on doc
 | E6 the planning paragraph text (320A). Only the interval value and unit are kept | `test_Q10_what_the_inspection_involves` |
 | E7 040A `levelledPara` text | not sealed; no question needed it |
 
-**The vector store does not rescue these.** doc-tools' Weaviate chunks for an XML module come from the same parser graph (`doc_tools/utils/xml_chunks.py`, `extract_chunks_from_graph`), and its `warning:N` branch reads `mil:hasWarning`. Only `mil_std_40051_rdf.py` and `iads_rdf.py` emit `mil:hasWarning`; `s1000d_rdf.py` does not. So an S1000D warning is missing from the chunks for the same reason it is missing from the triples. The fix has precedent in those two parsers, and it would feed both stores. Not measured: whether #131's step text, which sits on step nodes rather than the module root, reaches a chunk at all.
+**The vector store does not rescue these.** doc-tools' Weaviate chunks for an XML module come from the same parser graph (`doc_tools/utils/xml_chunks.py`, `extract_chunks_from_graph`), and its `warning:N` branch reads `mil:hasWarning`. Only `mil_std_40051_rdf.py` and `iads_rdf.py` emit `mil:hasWarning`; `s1000d_rdf.py` does not. So an S1000D warning is missing from the chunks for the same reason it is missing from the triples. The fix has precedent in those two parsers, and it would feed both stores.
+
+**#131's step text does not reach a chunk either.** This was read from the code, not run. `s1000d_rdf.py` puts `mil:hasStepText` on the step node. The chunker's step branch reads `mil:hasInstructionText` on the module root, and `s1000d_rdf.py` never emits that. So regenerating our fixture would fix the graph for Q4 and leave Weaviate without the steps. Packeted to 7f as the control to run: one `extract_chunks_from_graph` over 520A, counting `step:N` chunks.
+
+**Upstream since this was written: doc-tools PR #170** (`7f/mrad-extraction-gaps`, head `6f0dedf8`). It is open and mergeable, and it is not on main. 7f reports it closes E1, E3, E5 and E6 in both the graph and the chunks:
+- the warning is a root `mil:hasWarning` literal plus a citable node;
+- new chunker walks for the isolation tree and the planning sections.
+
+That is 7f's report, not a measurement here. The grep above found no procedural-step walk in #170. This note's arms measure our `mrad.ttl`, so they stay xfail until it is regenerated from merged output.
 
 **There is no E2.** The first draft of this note had a generic "no node below the data module" arm. It was wrong in two ways:
 - The fixture already has element nodes for the fault code, figure, catalog item and interval.
