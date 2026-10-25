@@ -1005,6 +1005,7 @@ from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 from iagent_mesh import Initiator
+from iagent_mesh import ResolveInstanceRequest
 _announce_transport_auth(component="engine-o")
 app = FastAPI(
     **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
@@ -5528,17 +5529,6 @@ async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubject
 # mild smell accepted because engine-o owns the Jena instances; if a dedicated
 # sustainment engine appears, move this route to it and re-point the registration.
 # ---------------------------------------------------------------------------
-class ResolveInstanceRequest(BaseModel):
-    identifier: str
-    query: str = ""
-    #: Supervisor-derived (architect Q3), never user-supplied: `_call_resolver` forwards the verified
-    #: caller identity and entitled domains; same names as `/notice_parts`. Empty = no identity, so
-    #: only seeded content is visible. GATED ON by `_filter_sustainment_candidates` below: the same
-    #: origin verdict `/notice_parts` applies (`notice_parts.notice_visible`).
-    user_email: str = ""
-    entitled_domains: list[str] = Field(default_factory=list)
-
-
 _NOTICE_IRI_PREFIX = "http://internal/sustainment/doc/"
 _COMPONENT_IRI_PREFIX = "http://internal/components/"
 _SUBJECT_TO_NOTICE = "http://internal/sustainment/pcn#subjectToNotice"

@@ -187,9 +187,9 @@ rows:
       kind: risk_acceptance_medium
       audience: risk_acceptance_medium:SUSTAINMENT
       row_in_human_tasks: NOT CHECKED BY THIS RUNNER — 74 owns it
-    # DRAWING NO CARD IS THE PASS. The sheet is explicit: "Q1 draws no card at all, and that is
-    # the PASS. The answer is a row in human_tasks, not a card." A walker expecting three cards
-    # scores two defects that are not there.
+    # A DRAFT IS A CARD AND A TASK (architect, 2026-10-18): the card is the draft, the task is the
+    # review. The sheet's old line "Q1 draws no card at all" is withdrawn. A card that reads as
+    # accepted, or a draft with no review_request, is the defect; a card alone is not.
 
   - id: safety-unattended-hazards
     sheet: docs/measurements/safety-walk-sheet.md

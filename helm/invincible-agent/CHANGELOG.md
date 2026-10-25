@@ -1,5 +1,79 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.69 — 2026-10-25
+
+**Finding: the `cortex-ui` client accepted any redirect.** Its realm import carried
+`redirectUris: ["*"]` and `webOrigins: ["*"]`. cortex-ui is a public client. Anyone who got a
+signed-in user to click a crafted login link could name their own redirect and collect the user's
+authorization code, and with it a token. The architect raised it on 2026-10-24 (PR #91). It is the
+shape `keycloak.publicClients` already refuses.
+
+**The fix: the redirect set is cortex-ui's literal origin.**
+- cortex-ui sends one redirect, `window.location.origin`. Its `/case/<id>` and `/ask` deep links
+  ride in OIDC state, never in the redirect. So the set is `https://<host>` and
+  `https://<host>/`, with no paths.
+- The web origin is `https://<host>`, and the post-logout redirect is `https://<host>/`, held
+  separately.
+- **New `keycloak.cortexUiClient` keys:** `redirectUris`, `webOrigins` and
+  `postLogoutRedirectUris`. When they are empty, the set derives from the TLS hosts of
+  `cortexUi.ingress`.
+- **When there is no set**, neither declared nor derivable:
+  - the import emits no redirect, so it fails closed;
+  - the reconcile job leaves the live client alone, and prints
+    `WARN cortex-ui: live redirectUris holds a wildcard` when it has one.
+- The render fails on any `*`, on a non-https URI, and on a web origin with a path.
+
+**The realm reconcile job converges a live realm.** This is the job's one declared exception to
+additive-only.
+- It reads the full client and replaces exactly those three fields. It PUTs the client back only
+  when they differ.
+- The readback fails unless all three are the rendered literals and the client is still public.
+- The success line is `ok   cortex-ui redirects <n> literal, no wildcard`.
+
+**Every deployment's realm has the same hole.**
+- A deployment whose `cortexUi.ingress` lists its TLS hosts is fixed by this roll.
+- **Work's realm needs the same fix.** If work serves cortex-ui through its own ingress, or through
+  none of the chart's, it must declare `keycloak.cortexUiClient`. Until then the job only warns,
+  and the wildcard stays.
+
+**Related, unchanged: cortex-ui keeps `directAccessGrantsEnabled: true`.** The sandbox walks and
+the e2e harness sign in with the password grant. A public client with the password grant takes a
+user's password directly. It is recorded here and is not changed by this release.
+
+
+## 0.4.68 — 2026-10-24
+
+A declared list of public PKCE clients, `keycloak.publicClients` (PR #90, on the architect's 10-24
+ruling). Its first member is `training-workbench`, the training workbench's login.
+- Each client is public, standard flow with PKCE S256 required, no implicit flow, no password
+  grant, no service account, `fullScopeAllowed`. When the identity claim is not `email`, it gets
+  the `authz-id-user` mapper.
+- The render fails on an empty or duplicate clientId, a clientId that collides with a client the
+  chart already defines, an empty redirect set, a redirect that is not https with a literal host,
+  and a `*` web origin.
+- The realm reconcile job creates a missing client and repairs a missing mapper. It never rewrites
+  an existing client. Its readback fails unless the live client is public, PKCE S256, has no
+  password grant, carries every declared redirect, and emits the claim.
+- The default is `[]`, which renders nothing new. `values-sandbox.yaml` declares
+  `training-workbench`.
+- The version also moves past 0.4.67, whose roll (rev 216) failed in its post-upgrade hooks.
+
+## 0.4.67 — 2026-10-24
+
+The supervisor's `/classify_predicate` budget goes from a literal 30 s to `CLASSIFY_PREDICATE_TIMEOUT_S = 60`.
+This is an interim, on the architect's 10-24 ruling, on the same terms as the resolve budget.
+- No template, `values.yaml` default or `values-sandbox.yaml` key changed.
+- The only code change is `src/iagent/defs/dynamic_supervisor.py`, which is Dagster user code. Every
+  image is still re-tagged at the merge sha.
+- cortex-ui stays `e0c3c6d`.
+
+## 0.4.66 — 2026-10-24
+
+Roll 207. No template or `values.yaml` default changed. The release carries 207's engines and one
+sandbox-only change: `values-sandbox.yaml` `cortexUi.image.digest` → `sha256:c02ee0d2…`
+(cortex-ui e0c3c6d, PR #29, kind at drop). It must roll with 207's BFF, whose `POST /ingest`
+takes the `leaf` cortex now sends.
+
 ## 0.4.65 — 2026-10-22
 
 The domain broker can install from a mirror, for a deployment with no route to github.com or

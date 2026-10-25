@@ -1955,6 +1955,29 @@ keycloak:
   # docs/reference/identity-mint-contract.md: the BFF env claim, the service token claim and the
   # human claim must all be equal.
   authzClaim: "email"
+  # PUBLIC browser clients (authorization code + PKCE S256, no secret, no password grant), ruled
+  # 2026-10-24 for the training workbench. Each gets the authz-id-user mapper when authzClaim is
+  # not email (the BFF falls back to `sub` without it), fullScopeAllowed so a user's realm and
+  # cortex-ui roles ride its tokens, and no IdP binding: a realm broker stays available, never
+  # required. redirectUris must be https and never a bare "*" (the render fails otherwise).
+  # Created in the realm import on a fresh realm, and by the reconcile job on a live one
+  # (create-if-absent; an existing client's settings are never overwritten, only a missing mapper
+  # is repaired, and the readback judges the rest).
+  publicClients: []
+  #  - clientId: training-workbench
+  #    redirectUris: ["https://training.example.com/*"]
+  #    webOrigins: ["https://training.example.com"]
+  # The cortex-ui client's redirect set (the architect, 2026-10-24: a wildcard redirect on a public
+  # client lets anyone who gets a user to click a link collect their token). cortex-ui sends ONE
+  # redirect, window.location.origin; deep links ride in OIDC state, never in the redirect, so the
+  # set is the origin and nothing under it. Empty = derived from cortexUi.ingress: for each TLS host
+  # h, redirects "https://h" and "https://h/", web origin "https://h", post-logout "https://h/".
+  # Nothing declared and nothing derivable = the import emits NO redirect (fail closed) and the
+  # reconcile job leaves the live client's set alone, with a WARN when it holds a wildcard.
+  cortexUiClient:
+    redirectUris: []
+    webOrigins: []
+    postLogoutRedirectUris: []
   # The local human users the realm IMPORT carries (keycloak-configmap.yaml). Listed here ONLY so
   # the reconcile job can give an already-imported realm the same authz attribute the import gives
   # a fresh one; consumed only when authzClaim is not `email`. A test pins this list to the import.
