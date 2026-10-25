@@ -13,7 +13,7 @@ THIS FILE IS A RATCHET over a DERIVED population. `census()` walks every tracked
             first positional; `status.HTTP_40x_*` included) -- HTTPException, TerminalError,
             StepFailAndRelease, JSONResponse alike, because the form is the status, not the class
   INBAND    `_refusal("unentitled", ...)` (ADR-0049 Ruling 4's in-band shape) and any dict, not
-            already a counted call's body, whose `status`/`outcome`/`error` is a refusal word
+            already a counted call's body, whose `status`/`outcome`/`error`/`reason` is a refusal word
   HELPER    a call to `policy_refusal(...)`, which is compliant by construction
 
 Each site is keyed `path::function::fingerprint` (fingerprint = the `error` code, else the
@@ -171,7 +171,7 @@ def find_sites(src: str, path: str) -> list[tuple[str, str]]:
                 out.append((where + "unentitled:" + fp, "compliant" if carries else "refusal"))
                 owned.update(id(d) for d in ast.walk(node) if isinstance(d, ast.Dict))
         elif isinstance(node, ast.Dict) and id(node) not in owned:
-            for key in ("status", "outcome", "error"):
+            for key in ("status", "outcome", "error", "reason"):
                 v = _dict_get(node, key)
                 if isinstance(v, ast.Constant) and isinstance(v.value, str) and _WORD.search(v.value):
                     out.append((where + v.value, "compliant" if _carries_refusal(node) else "refusal"))
@@ -215,7 +215,7 @@ def census() -> tuple[Counter, Counter]:
 
 
 # --------------------------------------------------------------------------------------
-# The partition (measured on master 7a45a3cb, 2026-10-24: 68 sites, 68 keys, 0 compliant)
+# The partition (measured on master 7a45a3cb, 2026-10-24: 69 sites, 69 keys, 0 compliant)
 # --------------------------------------------------------------------------------------
 
 GW = "src/iagent/gateway.py"
@@ -293,6 +293,7 @@ PENDING: dict[str, str] = {
     f"{GW}::canvas_seed::cell_cannot_see_verbs | seeded 0 of {{}} panels; every ask": "groups",
     f"{GW}::orchestrate::cell_not_entitled | user {{}} is not entitled to perso": "groups",
     f"{GW}::federated_image::not entitled for this domain": "groups",
+    "agent_fleet/ontology_service/main.py::notice_parts_route::not_entitled": "groups",
     f"{SPO}::verify_spo_step::verb {{}} is NOT eligible for subject {{}} under dom": "groups",
     f"{GW}::_admit_on_behalf_of::not_a_delegate": "config",
     f"{GW}::_admit_on_behalf_of::principal_not_declared_for_delegate": "config",
@@ -370,6 +371,8 @@ def g():
     return _refusal("unentitled", "inband message")
 def h():
     return {"status": "NOT_ENTITLED_TO_X", "id": 1}
+def h2():
+    return {"status": "refused", "reason": "not_entitled", "message": "m"}
 def i():
     body = {"error": "e_named"}
     raise HTTPException(status_code=403, detail=body)
@@ -395,6 +398,7 @@ def test_the_detector_finds_every_form_once():
         ("x.py::f::e_json | m", "refusal"),
         ("x.py::g::unentitled:inband message", "refusal"),
         ("x.py::h::NOT_ENTITLED_TO_X", "refusal"),
+        ("x.py::h2::not_entitled", "refusal"),
         ("x.py::i::e_named", "refusal"),
         ("x.py::j::e_helper", "compliant"),
         ("x.py::k::e_hand", "compliant"),
