@@ -1967,6 +1967,17 @@ keycloak:
   #  - clientId: training-workbench
   #    redirectUris: ["https://training.example.com/*"]
   #    webOrigins: ["https://training.example.com"]
+  # The cortex-ui client's redirect set (the architect, 2026-10-24: a wildcard redirect on a public
+  # client lets anyone who gets a user to click a link collect their token). cortex-ui sends ONE
+  # redirect, window.location.origin; deep links ride in OIDC state, never in the redirect, so the
+  # set is the origin and nothing under it. Empty = derived from cortexUi.ingress: for each TLS host
+  # h, redirects "https://h" and "https://h/", web origin "https://h", post-logout "https://h/".
+  # Nothing declared and nothing derivable = the import emits NO redirect (fail closed) and the
+  # reconcile job leaves the live client's set alone, with a WARN when it holds a wildcard.
+  cortexUiClient:
+    redirectUris: []
+    webOrigins: []
+    postLogoutRedirectUris: []
   # The local human users the realm IMPORT carries (keycloak-configmap.yaml). Listed here ONLY so
   # the reconcile job can give an already-imported realm the same authz attribute the import gives
   # a fresh one; consumed only when authzClaim is not `email`. A test pins this list to the import.

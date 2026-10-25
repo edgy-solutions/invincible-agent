@@ -21,6 +21,12 @@ human/UI clients and identities created by other means, and a pruning identity r
 credential-revoking action that must never ride a routine upgrade hook. Removal stays a
 deliberate human act, exactly like a grant removal.
 
+ONE DECLARED EXCEPTION to "additive": the cortex-ui client's redirect set (redirectUris,
+webOrigins, post.logout.redirect.uris) is CONVERGED to the declared/derived set
+(keycloak.cortexUiClient), because a wildcard there is a token-theft hole on a public client and
+leaving it is not neutral. Nothing else on any existing client is rewritten, and when no set is
+declared or derivable the live client is left alone (with a WARN if it holds a wildcard).
+
 READBACK GATES THE JOB, per the topaz-seed pattern: after converging, every declared client is
 re-read and its mapper verified. A failure exits non-zero so the Job fails LOUDLY — a
 reconciler that silently half-applies is how the original hand-seeded state got tolerated.
@@ -144,6 +150,7 @@ spec:
               rc=0
 
               {{- $claim := .Values.keycloak.authzClaim | default "email" }}
+              {{- $cui := include "invincible-agent.cortexUiRedirects" . | fromJson }}
               {{- include "invincible-agent.validateBrokers" $ }}
               {{- include "invincible-agent.validateServiceClients" $ }}
               {{- include "invincible-agent.validatePublicClients" $ }}
@@ -374,6 +381,63 @@ spec:
               fi
 
               {{- end }}
+
+              # ── cortex-ui REDIRECT SET — the one converged field set (see SCOPE above) ──
+              # A wildcard redirect on this client lets anyone who gets a user to click a link collect
+              # their token. Empty declared/derived set = the live client is left alone, with a WARN.
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+              {{- if not $cui.redirectUris }}
+              echo "-- cortex-ui redirect set: undeclared, live client unchanged"
+              if [ -n "$CUI" ] && curl -sf -H "$AUTH" "$API/clients/$CUI" \
+                   | grep -o '"redirectUris":\[[^]]*\]' | grep -q '"\*"'; then
+                echo "   WARN cortex-ui: live redirectUris holds a wildcard"
+              fi
+              {{- else }}
+              echo "-- cortex-ui redirect set"
+              WANT_RA={{ printf "\"redirectUris\":%s" ($cui.redirectUris | toJson) | squote }}
+              WANT_OA={{ printf "\"webOrigins\":%s" ($cui.webOrigins | toJson) | squote }}
+              WANT_LA={{ if $cui.postLogoutRedirectUris }}{{ printf "\"post.logout.redirect.uris\":%s" (join "##" $cui.postLogoutRedirectUris | toJson) | squote }}{{ else }}''{{ end }}
+              if [ -z "$CUI" ]; then
+                echo "   FAIL cortex-ui: client absent, redirect set not converged"; rc=1
+              else
+                LIVE=$(curl -sf -H "$AUTH" "$API/clients/$CUI" || true)
+                LIVE_RA=$(printf '%s' "$LIVE" | grep -o '"redirectUris":\[[^]]*\]' | head -1 || true)
+                LIVE_OA=$(printf '%s' "$LIVE" | grep -o '"webOrigins":\[[^]]*\]' | head -1 || true)
+                LIVE_LA=$(printf '%s' "$LIVE" | grep -o '"post.logout.redirect.uris":"[^"]*"' | head -1 || true)
+                if [ -z "$LIVE" ]; then
+                  echo "   FAIL cortex-ui: could not read the live client"; rc=1
+                elif [ "$LIVE_RA" = "$WANT_RA" ] && [ "$LIVE_OA" = "$WANT_OA" ] \
+                     && { [ -z "$WANT_LA" ] || [ "$LIVE_LA" = "$WANT_LA" ]; }; then
+                  echo "   cortex-ui redirect set: as declared"
+                else
+                  # the sed delimiter is a control character and replacements are escaped: no URI can break it
+                  D=$(printf '\001')
+                  esc() { printf '%s' "$1" | sed 's/[&\\]/\\&/g'; }
+                  NEW=$(printf '%s' "$LIVE" | sed \
+                    -e "s${D}\"redirectUris\":\[[^]]*\]${D}$(esc "$WANT_RA")${D}" \
+                    -e "s${D}\"webOrigins\":\[[^]]*\]${D}$(esc "$WANT_OA")${D}")
+                  if [ -n "$WANT_LA" ]; then
+                    case "$NEW" in
+                      *'"post.logout.redirect.uris":"'*)
+                        NEW=$(printf '%s' "$NEW" | sed "s${D}\"post.logout.redirect.uris\":\"[^\"]*\"${D}$(esc "$WANT_LA")${D}") ;;
+                      *'"attributes":{}'*)
+                        NEW=$(printf '%s' "$NEW" | sed "s${D}\"attributes\":{}${D}\"attributes\":{$(esc "$WANT_LA")}${D}") ;;
+                      *'"attributes":{'*)
+                        NEW=$(printf '%s' "$NEW" | sed "s${D}\"attributes\":{${D}\"attributes\":{$(esc "$WANT_LA"),${D}") ;;
+                      *)
+                        NEW=$(printf '%s' "$NEW" | sed "s${D}}[[:space:]]*\$${D},\"attributes\":{$(esc "$WANT_LA")}}${D}") ;;
+                    esac
+                  fi
+                  if curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" "$API/clients/$CUI" -d "$NEW"; then
+                    echo "   cortex-ui redirect set: converged (was ${LIVE_RA#*:})"
+                  else
+                    echo "   FAIL cortex-ui: redirect set PUT failed"; rc=1
+                  fi
+                fi
+              fi
+              {{- end }}
+              # ── end cortex-ui redirect set
               {{- range $pc := (.Values.keycloak.publicClients | default list) }}
               PCID={{ $pc.clientId | quote }}
               echo "-- public client $PCID"
@@ -640,6 +704,38 @@ spec:
               fi
               {{- end }}
               {{- end }}
+              {{- if $cui.redirectUris }}
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+              WANT_RA={{ printf "\"redirectUris\":%s" ($cui.redirectUris | toJson) | squote }}
+              WANT_OA={{ printf "\"webOrigins\":%s" ($cui.webOrigins | toJson) | squote }}
+              WANT_LA={{ if $cui.postLogoutRedirectUris }}{{ printf "\"post.logout.redirect.uris\":%s" (join "##" $cui.postLogoutRedirectUris | toJson) | squote }}{{ else }}''{{ end }}
+              if [ -z "$CUI" ]; then
+                echo "   FAIL cortex-ui: client absent, redirects not verifiable"; rc=1
+              else
+                GOT=$(curl -sf -H "$AUTH" "$API/clients/$CUI" || true)
+                cui_bad=0
+                GOT_RA=$(printf '%s' "$GOT" | grep -o '"redirectUris":\[[^]]*\]' | head -1 || true)
+                GOT_OA=$(printf '%s' "$GOT" | grep -o '"webOrigins":\[[^]]*\]' | head -1 || true)
+                GOT_LA=$(printf '%s' "$GOT" | grep -o '"post.logout.redirect.uris":"[^"]*"' | head -1 || true)
+                if [ "$GOT_RA" != "$WANT_RA" ]; then
+                  echo "   FAIL cortex-ui: live ${GOT_RA:-redirectUris absent} is not exactly $WANT_RA"; rc=1; cui_bad=1
+                fi
+                if [ "$GOT_OA" != "$WANT_OA" ]; then
+                  echo "   FAIL cortex-ui: live ${GOT_OA:-webOrigins absent} is not exactly $WANT_OA"; rc=1; cui_bad=1
+                fi
+                if [ -n "$WANT_LA" ] && [ "$GOT_LA" != "$WANT_LA" ]; then
+                  echo "   FAIL cortex-ui: live ${GOT_LA:-post.logout.redirect.uris absent} is not exactly $WANT_LA"; rc=1; cui_bad=1
+                fi
+                if ! printf '%s' "$GOT" | grep -q '"publicClient":true'; then
+                  echo "   FAIL cortex-ui: not a public client"; rc=1; cui_bad=1
+                fi
+                if [ "$cui_bad" = "0" ]; then
+                  echo "   ok   cortex-ui redirects {{ len $cui.redirectUris }} literal, no wildcard"
+                fi
+              fi
+              {{- end }}
+              # ── end cortex-ui redirect readback
               {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}
               {{- if include "invincible-agent.brokerActive" $b }}
               {{- $alias := $b.alias | default $bn }}
