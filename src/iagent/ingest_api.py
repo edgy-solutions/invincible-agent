@@ -17,7 +17,7 @@ from typing import Any, Literal, Union
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 INGEST_V1_TAG = "ingest-v1"
-INGEST_API_VERSION = "1.1.0"
+INGEST_API_VERSION = "1.2.0"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),

@@ -701,14 +701,14 @@
             "title": "Leaf"
           },
           "on_behalf_of": {
+            "default": "",
             "title": "On Behalf Of",
             "type": "string"
           }
         },
         "required": [
           "file",
-          "kind",
-          "on_behalf_of"
+          "kind"
         ],
         "title": "Body_ingest_document_ingest_post",
         "type": "object"

@@ -404,14 +404,14 @@
             "title": "Leaf"
           },
           "on_behalf_of": {
+            "default": "",
             "title": "On Behalf Of",
             "type": "string"
           }
         },
         "required": [
           "file",
-          "kind",
-          "on_behalf_of"
+          "kind"
         ],
         "title": "Body_ingest_document_ingest_post",
         "type": "object"
@@ -2934,7 +2934,7 @@
   },
   "info": {
     "title": "Cortex ingest API",
-    "version": "1.1.0"
+    "version": "1.2.0"
   },
   "openapi": "3.1.0",
   "paths": {

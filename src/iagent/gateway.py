@@ -11049,7 +11049,9 @@ def _sniff_file_kind(head: bytes) -> Optional[str]:
 async def ingest_document(
     file: UploadFile = File(...),
     kind: str = Form(...),
-    on_behalf_of: str = Form(...),
+    # Blank or absent means the caller (`_admit_on_behalf_of`). `Form(...)` refused a blank as
+    # `missing` before that rule could run, so the documented "send it blank" was a 422.
+    on_behalf_of: str = Form(""),
     content_kind: Optional[str] = Form(None),
     leaf: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),

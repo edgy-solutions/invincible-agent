@@ -2,6 +2,14 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.2.0 — 2026-10-25
+
+One request field is loosened. Every request that worked before still works.
+
+- `POST /ingest`: `on_behalf_of` is optional now, and blank or absent means the caller. This
+  page said "send it blank to mean myself" from 1.0.0 on, but the route declared the field
+  required and answered a blank with 422 `missing`, so the documented call failed.
+
 ## 1.1.0 — 2026-10-25
 
 Additive for a reader: new keys on the status row, and four existing keys can no longer be null.

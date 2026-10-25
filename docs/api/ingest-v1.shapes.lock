@@ -3,3 +3,4 @@
 # existing version is refused (bump INGEST_API_VERSION, add a docs/api/CHANGELOG.md entry).
 1.0.0 fdc3e03e84ddd646e2a48e649d64103194ab79bf23a8f34df46f55247bf098b5
 1.1.0 24cde4df5ec221a22647f3c49acc2b954ade8b8947c562ffa58d97d66354b6ad
+1.2.0 10919a13f7cd5cfe513aecd0e19558b49e44b3435f11f0541ea511b5f4421aa8

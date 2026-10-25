@@ -1,6 +1,6 @@
 # Cortex ingest API, v1
 
-**Version 1.1.0, 2026-10-25.** This is the contract for a team that builds its own UI on the
+**Version 1.2.0, 2026-10-25.** This is the contract for a team that builds its own UI on the
 platform's document ingest: drop a file, follow it through extraction, read what was
 extracted, and act on the review tasks it raises.
 
@@ -8,7 +8,7 @@ extracted, and act on the review tasks it raises.
 |---|---|
 | Machine-readable contract (generated, OpenAPI 3.1) | [`ingest-v1.openapi.json`](ingest-v1.openapi.json) |
 | Change log, one entry per change | [`CHANGELOG.md`](CHANGELOG.md) |
-| Sample client: run this first | [`examples/ingest_v1_sample.py`](examples/ingest_v1_sample.py) |
+| Sample client: run this first | [`samples/ingest_client.py`](../../samples/ingest_client.py) |
 
 The OpenAPI file is generated from the running code (`scripts/generate_ingest_openapi.py`). It is
 authoritative for request and response *shapes*. This page is authoritative for what the
@@ -17,8 +17,10 @@ error means.
 
 ## 1. Start here
 
-The sample client drops one file, polls its stage, and reads the extraction. It is about 40 lines
-of Python. Its only dependency is `requests`.
+The sample client (`samples/ingest_client.py`) does the whole flow in five steps: drop a file,
+follow its stage, read the extraction, then promote or reject the review. Its only dependency is
+`requests`. Every path is in one table at the top of the file, and a test checks that table
+against the OpenAPI file.
 
 ```bash
 pip install requests
@@ -26,7 +28,12 @@ export IA_BASE_URL=https://<bff-host>
 export IA_TOKEN_URL=https://<issuer-host>/realms/<realm>/protocol/openid-connect/token
 export IA_CLIENT_ID=<client>  IA_USERNAME=<user>  IA_PASSWORD=<password>   # or IA_TOKEN=<bearer>
 export SSL_CERT_FILE=<the CA bundle or pinned certificate for both hosts>
-python docs/api/examples/ingest_v1_sample.py <file.pdf> engineering-document
+
+python samples/ingest_client.py drop <file.pdf> engineering-document   # 1. drop, then follow the stage
+python samples/ingest_client.py status <ingest_id>                     # 2. read the stage again
+python samples/ingest_client.py extraction <ingest_id>                 # 3. read the extraction
+python samples/ingest_client.py promote <ingest_id>                    # 4. promote at review ...
+python samples/ingest_client.py reject <ingest_id> unreadable "scan"   # 5. ... or reject, with a code
 ```
 
 - If it works on the sandbox, the difference at the work site is configuration only: the base
@@ -108,7 +115,7 @@ a body field on the act route), never a header or a claim.
 | a principal the delegate is not declared for | 403 `principal_not_declared_for_delegate` |
 | a principal the delegate is declared for | accepted: the **actor** is the principal, the delegate is recorded as **via** |
 
-- **`on_behalf_of` is required on `POST /ingest`.** Send it blank to mean "myself".
+- **`on_behalf_of` may be blank or left out on `POST /ingest`.** Either one means "myself".
 - **The platform does not check that the named person exists.** The assertion is trusted
   because the delegate was declared. Token exchange is the planned replacement. Until it lands,
   a delegate's credentials are as sensitive as the people it names.
@@ -258,7 +265,7 @@ do not show.
 - **Request.** `multipart/form-data` with these fields:
   - `file`: required.
   - `kind`: required; `pdf`, `cad` or `xml`.
-  - `on_behalf_of`: required; blank means "myself".
+  - `on_behalf_of`: optional; blank or absent means "myself".
   - `content_kind`: required in practice.
   - `leaf`: optional.
 - **The upload limit** is 50 MiB by default (413 above it). The deployment may set it lower.
