@@ -17,7 +17,7 @@ from typing import Any, Literal, Union
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 INGEST_V1_TAG = "ingest-v1"
-INGEST_API_VERSION = "1.0.0"
+INGEST_API_VERSION = "1.1.0"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),
@@ -89,17 +89,38 @@ class ArtifactRef(_Strict):
     released_at: Any
 
 
+class EmptyAccount(_Strict):
+    """The extraction's own account of why it found no rows (from review.json `stats`); `why` is
+    "unknown" with Nones when review.json was unreadable -- no figure is invented."""
+    n_tables: int | None
+    grid_no_parts_col: int | None
+    grid_rows_emitted: int | None
+    review_reasons: list[str]
+    why: Literal["no_table", "no_parts_column", "zero_rows", "unknown"]
+
+
+class ExtractionDefectRef(_Strict):
+    """The newest extraction_defect task filed about the drop. `edits` counts rows deleted, added or
+    corrected (0 for a steward's "it has parts" on an empty extraction)."""
+    task_id: str
+    edits: int
+
+
+ReviewShape = Literal["empty", "promotion"]
+
+
 class StatusBody(_Strict):
     """GET /ingest/{id}/status, and each item of GET /ingest/mine. The four leaf keys are present
-    only on a leaf-capable row (absent, not null, for cad / xml / s1000d)."""
+    only on a leaf-capable row (absent, not null, for cad / xml / s1000d). `extraction_defect` is
+    absent when the route cannot tell (no claim), null when no defect is on record."""
     ingest_id: str
     stage: str | None
     detail: str | None
     duplicate: DuplicateRef | None
-    kind: str | None
-    sha256: str | None
-    created_at: int | None
-    updated_at: int | None
+    kind: str
+    sha256: str
+    created_at: int
+    updated_at: int
     dropped_by: DroppedBy
     origin_suggestion: dict[str, Any] | None
     case_id: str | None
@@ -109,6 +130,9 @@ class StatusBody(_Strict):
     notice_id: str | None
     artifacts: list[ArtifactRef] | None
     review_task_id: str | None
+    review_shape: ReviewShape | None
+    account: EmptyAccount | None
+    extraction_defect: ExtractionDefectRef | None = None
     leaf: Leaf | None = None
     leaf_source: LeafSource | None = None
     corrected_by: str | None = None
@@ -336,6 +360,14 @@ class ActGeneric(_Strict):
     grant_written: bool
 
 
+class RowEditCounts(_Strict):
+    """How many of each edit a steward's correction carried."""
+    corrected: int
+    added: int
+    deleted: int
+    header: int
+
+
 class ActPromotion(_Strict):
     """POST /human_tasks/{id}/act on a document_promotion; fact/origin only when promoted, swept only
     when rejected, the row_edits..extraction_defect keys only when the steward corrected."""
@@ -352,7 +384,7 @@ class ActPromotion(_Strict):
     correction: dict[str, Any] | None = None
     swept: dict[str, Any] | None = None
     reject_code: str | None = None
-    row_edits: dict[str, int] | None = None
+    row_edits: RowEditCounts | None = None
     corrections: list[Any] | None = None
     extraction_defect: str | None = None
 

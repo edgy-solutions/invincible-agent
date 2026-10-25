@@ -11737,6 +11737,51 @@ async def _ingest_status_body(row: dict, current_user: User) -> dict:
             logger.warning("ingest %s: the case's artifacts could not be listed: %s", row["id"], exc)
             artifacts = None
 
+    # The review task (208). At `review` the steward acts on ONE of two tasks: the empty-confirm task
+    # for the CURRENT attempt when the extraction found no rows (_hold_empty_for_confirmation filed
+    # it), else the current generation's promotion task. The open empty-confirm payload decides which,
+    # the same lookup _decide_empty makes. Off `review` all three are null. A failed read at review
+    # leaves all three null: "could not be determined", never a guessed task id.
+    review_task_id = review_shape = account = None
+    if source_row is not None and stage == ingest_status.REVIEW:
+        from . import human_tasks
+
+        _src_id = source_row.get("id") or ""
+        _empty_id = _empty_confirm_task_id(_src_id, source_row.get("attempt"))
+        try:
+            _empty = await run_in_threadpool(lambda: human_tasks.get_open_task_payload(_empty_id))
+        except Exception as exc:  # noqa: BLE001 — unknown, not none; the row must still answer
+            logger.warning("ingest %s: the review task could not be read: %s", row["id"], exc)
+        else:
+            if _empty is not None:
+                review_task_id, review_shape = _empty_id, "empty"
+                account = _empty.get("account")
+            else:
+                review_task_id = _promotion_task_id(
+                    _src_id, int(source_row.get("review_generation") or 0))
+                review_shape = "promotion"
+
+    # extraction_defect (packet 2026-10-11): the NEWEST extraction_defect task filed about this drop,
+    # as {task_id, edits}, or null when none is on record. `edits` counts ROWS deleted, added or
+    # corrected (a header correction is not a row; the empty has_parts defect has none, so 0). A
+    # failed read, or a duplicate whose original this caller cannot see, leaves the key ABSENT: no claim.
+    _ABSENT = object()
+    extraction_defect = _ABSENT
+    if source_row is not None:
+        from . import human_tasks
+
+        try:
+            _defect = await run_in_threadpool(lambda: human_tasks.latest_task_for_subject(
+                source_row.get("id") or "", "extraction_defect"))
+        except Exception as exc:  # noqa: BLE001 — unknown, not none; the row must still answer
+            logger.warning("ingest %s: the extraction defect could not be read: %s", row["id"], exc)
+        else:
+            extraction_defect = None if _defect is None else {
+                "task_id": _defect["task_id"],
+                "edits": sum(1 for e in (_defect["payload"].get("edits") or [])
+                             if isinstance(e, dict)
+                             and e.get("op") in ("corrected", "added", "deleted"))}
+
     body = {
         "ingest_id": row["id"],
         "stage": stage,
@@ -11756,12 +11801,15 @@ async def _ingest_status_body(row: dict, current_user: User) -> dict:
         "attempt": attempt,
         "notice_id": notice_id,
         "artifacts": artifacts,
-        # Spec 204: the id of the promotion task a steward acts on -- the CURRENT generation's --
-        # while the row is at `review`, else null. A generation change replaces it.
-        "review_task_id": (
-            _promotion_task_id(source_row.get("id") or "", int(source_row.get("review_generation") or 0))
-            if source_row is not None and stage == ingest_status.REVIEW else None),
+        # Spec 204 / 208: the task a steward acts on while the row is at `review` (see above), which
+        # of the two it is, and the extraction's own account of an empty one. A generation change
+        # replaces a promotion task.
+        "review_task_id": review_task_id,
+        "review_shape": review_shape,
+        "account": account,
     }
+    if extraction_defect is not _ABSENT:
+        body["extraction_defect"] = extraction_defect
     # The leaf (spec 203). Present ONLY for a leaf-capable row (absent, not null, for cad / xml /
     # s1000d / ...: absent tells cortex "no claim", so it draws no chip). A duplicate reads the
     # ORIGINAL's leaf; an invisible original leaves the keys absent. Never reads review.json per poll.

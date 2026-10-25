@@ -1,6 +1,6 @@
 # Cortex ingest API, v1
 
-**Version 1.0.0, 2026-10-23.** This is the contract for a team that builds its own UI on the
+**Version 1.1.0, 2026-10-25.** This is the contract for a team that builds its own UI on the
 platform's document ingest: drop a file, follow it through extraction, read what was
 extracted, and act on the review tasks it raises.
 
@@ -276,9 +276,22 @@ do not show.
 - `failure` is null unless `stage` is `failed`. Then it is `{reason_code, reason, step, run_id,
   pin_digest, failed_at}`.
 - `attempt` starts at 1 and goes up on every re-extraction.
-- `review_task_id` is always present. It is null except at `review`, where it is the task to act
-  on, as listed in the steward's `GET /me/human_tasks`. A grouped review's task id ends in
-  `:g<n>`.
+- **At `review`, three keys name the steward's task.** All three are always present and null off
+  `review`:
+  - `review_task_id` is the task to act on, as listed in the steward's `GET /me/human_tasks`.
+  - `review_shape` says which task it is. `"empty"` means the extraction found no part rows and the
+    task is a `document_empty_confirm`. `"promotion"` means it is the `document_promotion` task.
+  - `account` is set only when `review_shape` is `"empty"`. It is the extraction's own account of
+    why it found nothing: `{n_tables, grid_no_parts_col, grid_rows_emitted, review_reasons, why}`,
+    where `why` is `no_table`, `no_parts_column`, `zero_rows` or `unknown`.
+  - A promotion task id ends in `:g<n>` after a leaf change at review, which files a new task and
+    retires the old one. Always take the id from the row; never build one.
+  - If all three are null at `review`, the task could not be read just then. Poll again.
+- **`extraction_defect`** is the newest extraction-defect task filed about the drop:
+  `{task_id, edits}`, where `edits` counts the rows the steward deleted, added or corrected (0
+  when the steward said an empty extraction has parts). `null` means no defect is on record. **An
+  absent key means the route could not tell**: show nothing, and never show "complete".
+- `kind`, `sha256`, `created_at` and `updated_at` are always present and never null.
 - `artifacts` lists what promotion produced: `[]` means none yet, and null means the graph could
   not be read just then.
 - `created_at` and `updated_at` are epoch milliseconds.
@@ -322,8 +335,7 @@ do not show.
 | `document_empty_confirm` (preview) | `confirmed_no_parts`, `has_parts` | `has_parts` needs `page` (an integer ≥ 1). The second time a notice comes back empty, `has_parts` is 409 `add_missed_part_not_built`: entering the missed parts by hand is not built yet. |
 | `extraction_defect` | `acknowledged`, `dismissed` | `dismissed` needs a reason in `comment` |
 
-- **A grouped review.** Several drops can be reviewed as one `document_promotion` task, with an id
-  ending `:g<n>`. Its act answers (pending, approved, rejected) are separate members of the
+- **A grouped review.** Several drops can be reviewed as one `grouped_review` task. Its act answers (pending, approved, rejected) are separate members of the
   act route's response union in the OpenAPI file.
 
 **Rules for `document_promotion`:**

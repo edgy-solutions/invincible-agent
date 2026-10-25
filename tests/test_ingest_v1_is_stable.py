@@ -194,7 +194,7 @@ def _status_body(**over):
             "kind": "pdf", "sha256": "ab", "created_at": 1, "updated_at": 2,
             "dropped_by": {"authz_id": "alice"}, "origin_suggestion": None, "case_id": None,
             "content_kind": "pcn", "failure": None, "attempt": 1, "notice_id": None,
-            "artifacts": [], "review_task_id": None}
+            "artifacts": [], "review_task_id": None, "review_shape": None, "account": None}
     body.update(over)
     return body
 
@@ -222,6 +222,23 @@ def test_check_refuses_a_missing_required_key_naming_it():
     del body["attempt"]
     with pytest.raises(AssertionError, match="attempt"):
         _check(body)
+
+
+@pytest.mark.parametrize("field", ["kind", "sha256", "created_at", "updated_at"])
+def test_check_refuses_a_null_in_a_field_the_row_always_has(field):
+    # 208: NOT NULL columns; a null here is a producer defect, never "unknown"
+    with pytest.raises(AssertionError, match=field):
+        _check(_status_body(**{field: None}))
+
+
+def test_check_accepts_an_empty_review_with_its_account_and_a_defect():
+    acct = {"n_tables": 2, "grid_no_parts_col": 2, "grid_rows_emitted": 0,
+            "review_reasons": ["no_parts_found"], "why": "no_parts_column"}
+    assert _check(_status_body(stage="review", review_task_id="document_empty_confirm:i1:a1",
+                               review_shape="empty", account=acct,
+                               extraction_defect={"task_id": "d1", "edits": 0})) is True
+    with pytest.raises(AssertionError, match="why"):
+        _check(_status_body(review_shape="empty", account={**acct, "why": "guess"}))
 
 
 def test_check_refuses_a_value_outside_a_closed_vocabulary():

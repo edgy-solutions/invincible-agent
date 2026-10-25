@@ -259,16 +259,12 @@
           "row_edits": {
             "anyOf": [
               {
-                "additionalProperties": {
-                  "type": "integer"
-                },
-                "type": "object"
+                "$ref": "#/components/schemas/RowEditCounts"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Row Edits"
+            ]
           },
           "row_edits_applied": {
             "title": "Row Edits Applied"
@@ -562,6 +558,71 @@
           "message"
         ],
         "title": "DuplicateRef",
+        "type": "object"
+      },
+      "EmptyAccount": {
+        "additionalProperties": false,
+        "description": "The extraction's own account of why it found no rows (from review.json `stats`); `why` is\n\"unknown\" with Nones when review.json was unreadable -- no figure is invented.",
+        "properties": {
+          "grid_no_parts_col": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grid No Parts Col"
+          },
+          "grid_rows_emitted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grid Rows Emitted"
+          },
+          "n_tables": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Tables"
+          },
+          "review_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Review Reasons",
+            "type": "array"
+          },
+          "why": {
+            "enum": [
+              "no_table",
+              "no_parts_column",
+              "zero_rows",
+              "unknown"
+            ],
+            "title": "Why",
+            "type": "string"
+          }
+        },
+        "required": [
+          "n_tables",
+          "grid_no_parts_col",
+          "grid_rows_emitted",
+          "review_reasons",
+          "why"
+        ],
+        "title": "EmptyAccount",
         "type": "object"
       },
       "EmptyConfirmed": {
@@ -924,6 +985,26 @@
           "relocated_to"
         ],
         "title": "Extraction",
+        "type": "object"
+      },
+      "ExtractionDefectRef": {
+        "additionalProperties": false,
+        "description": "The newest extraction_defect task filed about the drop. `edits` counts rows deleted, added or\ncorrected (0 for a steward's \"it has parts\" on an empty extraction).",
+        "properties": {
+          "edits": {
+            "title": "Edits",
+            "type": "integer"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "edits"
+        ],
+        "title": "ExtractionDefectRef",
         "type": "object"
       },
       "ExtractionRow": {
@@ -1667,6 +1748,16 @@
         "additionalProperties": false,
         "description": "POST /ingest/{id}/leaf: the full status body; at review it adds the new task and the one superseded.",
         "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EmptyAccount"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "artifacts": {
             "anyOf": [
               {
@@ -1719,15 +1810,8 @@
             "title": "Corrected By"
           },
           "created_at": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At"
+            "title": "Created At",
+            "type": "integer"
           },
           "detail": {
             "anyOf": [
@@ -1747,6 +1831,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/DuplicateRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "extraction_defect": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExtractionDefectRef"
               },
               {
                 "type": "null"
@@ -1779,15 +1873,8 @@
             "type": "string"
           },
           "kind": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Kind"
+            "title": "Kind",
+            "type": "string"
           },
           "leaf": {
             "anyOf": [
@@ -1855,6 +1942,21 @@
             ],
             "title": "Origin Suggestion"
           },
+          "review_shape": {
+            "anyOf": [
+              {
+                "enum": [
+                  "empty",
+                  "promotion"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Shape"
+          },
           "review_task_id": {
             "anyOf": [
               {
@@ -1867,15 +1969,8 @@
             "title": "Review Task Id"
           },
           "sha256": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sha256"
+            "title": "Sha256",
+            "type": "string"
           },
           "stage": {
             "anyOf": [
@@ -1911,15 +2006,8 @@
             "title": "Task Id"
           },
           "updated_at": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
+            "title": "Updated At",
+            "type": "integer"
           }
         },
         "required": [
@@ -1939,7 +2027,9 @@
           "attempt",
           "notice_id",
           "artifacts",
-          "review_task_id"
+          "review_task_id",
+          "review_shape",
+          "account"
         ],
         "title": "LeafResponse",
         "type": "object"
@@ -2211,6 +2301,36 @@
         "title": "RetryReopened",
         "type": "object"
       },
+      "RowEditCounts": {
+        "additionalProperties": false,
+        "description": "How many of each edit a steward's correction carried.",
+        "properties": {
+          "added": {
+            "title": "Added",
+            "type": "integer"
+          },
+          "corrected": {
+            "title": "Corrected",
+            "type": "integer"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "header": {
+            "title": "Header",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "corrected",
+          "added",
+          "deleted",
+          "header"
+        ],
+        "title": "RowEditCounts",
+        "type": "object"
+      },
       "RowEdits": {
         "additionalProperties": false,
         "description": "Steward row edits on a grouped-review approval (architect ruling 2026-10-10). The workflow's\n`steward_correction.validate_row_edits` restates every rule against the server-authored batch;\nthis is the wire half, so a bad payload is a 422 before it reaches Restate. It is also the\ndocument_promotion wire (carried on a `promoted` decision, server-flagged by\nIAGENT_PROMOTION_ROW_EDITS).",
@@ -2245,8 +2365,18 @@
       },
       "StatusBody": {
         "additionalProperties": false,
-        "description": "GET /ingest/{id}/status, and each item of GET /ingest/mine. The four leaf keys are present\nonly on a leaf-capable row (absent, not null, for cad / xml / s1000d).",
+        "description": "GET /ingest/{id}/status, and each item of GET /ingest/mine. The four leaf keys are present\nonly on a leaf-capable row (absent, not null, for cad / xml / s1000d). `extraction_defect` is\nabsent when the route cannot tell (no claim), null when no defect is on record.",
         "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EmptyAccount"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "artifacts": {
             "anyOf": [
               {
@@ -2299,15 +2429,8 @@
             "title": "Corrected By"
           },
           "created_at": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At"
+            "title": "Created At",
+            "type": "integer"
           },
           "detail": {
             "anyOf": [
@@ -2327,6 +2450,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/DuplicateRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "extraction_defect": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExtractionDefectRef"
               },
               {
                 "type": "null"
@@ -2359,15 +2492,8 @@
             "type": "string"
           },
           "kind": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Kind"
+            "title": "Kind",
+            "type": "string"
           },
           "leaf": {
             "anyOf": [
@@ -2435,6 +2561,21 @@
             ],
             "title": "Origin Suggestion"
           },
+          "review_shape": {
+            "anyOf": [
+              {
+                "enum": [
+                  "empty",
+                  "promotion"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Shape"
+          },
           "review_task_id": {
             "anyOf": [
               {
@@ -2447,15 +2588,8 @@
             "title": "Review Task Id"
           },
           "sha256": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Sha256"
+            "title": "Sha256",
+            "type": "string"
           },
           "stage": {
             "anyOf": [
@@ -2469,15 +2603,8 @@
             "title": "Stage"
           },
           "updated_at": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
+            "title": "Updated At",
+            "type": "integer"
           }
         },
         "required": [
@@ -2497,7 +2624,9 @@
           "attempt",
           "notice_id",
           "artifacts",
-          "review_task_id"
+          "review_task_id",
+          "review_shape",
+          "account"
         ],
         "title": "StatusBody",
         "type": "object"
@@ -2805,7 +2934,7 @@
   },
   "info": {
     "title": "Cortex ingest API",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "openapi": "3.1.0",
   "paths": {

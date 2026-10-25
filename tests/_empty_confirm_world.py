@@ -34,6 +34,7 @@ def review_doc(*, n_tables=0, no_col=0, emitted=0, reasons=("no_parts_found",), 
 class World:
     def __init__(self, kind="pcn"):
         self.row = {"id": ID, "status": "extracting", "kind": "pdf", "content_kind": kind,
+                    "sha256": HEX, "created_at": 1, "updated_at": 1,
                     "submitted_by": DROPPER, "on_behalf_of": None, "object_prefix": PREFIX,
                     "extraction_ref": None, "attempt": 1, "force_text_fallback": False,
                     "review_generation": 0}
@@ -45,6 +46,10 @@ class World:
     # ingest_status seams
     def get_row(self, ingest_id):
         return self.row if ingest_id == ID else None
+
+    def get_status_for(self, ingest_id, *, caller_id):
+        r = self.get_row(ingest_id)
+        return r if r and caller_id in (r["submitted_by"], r["on_behalf_of"]) else None
 
     def update_status(self, ingest_id, status, **kw):
         self.writes.append((status, kw))
@@ -77,6 +82,14 @@ class World:
         t = self.tasks.get(task_id)
         return dict(t["kw"]["payload"]) if t and t["open"] else None
 
+    def latest_for_subject(self, subject_ref, kind):
+        hits = [(k, t) for k, t in self.tasks.items()
+                if t["kw"].get("subject_ref") == subject_ref and t["kw"]["kind"] == kind]
+        if not hits:
+            return None
+        k, t = hits[-1]          # registration order stands in for created_at
+        return {"task_id": k, "payload": dict(t["kw"]["payload"])}
+
     def open_state(self, task_id):
         t = self.tasks.get(task_id)
         return {"audience": t["kw"]["audience"], "open": t["open"]} if t else None
@@ -107,12 +120,14 @@ def install(monkeypatch, kind="pcn"):
     monkeypatch.setattr(ist, "relaunch_with_text_fallback", w.relaunch)
     monkeypatch.setattr(ist, "list_pending_retries", w.pending_retries)
     monkeypatch.setattr(ist, "get_status_unscoped", w.get_row)
+    monkeypatch.setattr(ist, "get_status_for", w.get_status_for)
     reg = type("Reg", (), {"domain": "SUSTAINMENT"})()
     monkeypatch.setattr(ck, "by_kind", lambda k: reg)
     monkeypatch.setattr(ht, "task_exists", w.task_exists)
     monkeypatch.setattr(ht, "register_task", w.register_task)
     monkeypatch.setattr(ht, "get_open_task_payload", w.open_payload)
     monkeypatch.setattr(ht, "get_task_open_state", w.open_state)
+    monkeypatch.setattr(ht, "latest_task_for_subject", w.latest_for_subject)
     monkeypatch.setattr(ht, "mark_task_resolved", w.resolve)
     monkeypatch.setattr(ht, "list_tasks_for", w.list_tasks_for)
     monkeypatch.setattr(ht, "check_can_act", w.can_act)

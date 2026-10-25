@@ -366,6 +366,30 @@ def get_open_task_payload(task_id: str) -> Optional[dict[str, Any]]:
     return dict(p) if isinstance(p, dict) else {}
 
 
+def latest_task_for_subject(subject_ref: str, kind: str) -> Optional[dict[str, Any]]:
+    """`{task_id, payload}` of the NEWEST logical task of `kind` filed about `subject_ref` (any
+    status), or None when none was filed. Newest by `created_at`, then `task_id` so a tie is
+    deterministic. Read-only and SERVICE-SIDE, like :func:`get_open_task_payload`: asked by a route
+    that already read the subject. Do not reuse it on a human path."""
+    if not subject_ref or not kind:
+        return None
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT task_id, payload FROM human_task_projection
+                    WHERE subject_ref = %s AND kind = %s
+                    ORDER BY created_at DESC, task_id DESC LIMIT 1""",
+                (subject_ref, kind),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    p = row["payload"]
+    if isinstance(p, (str, bytes)):
+        p = json.loads(p)
+    return {"task_id": row["task_id"], "payload": dict(p) if isinstance(p, dict) else {}}
+
+
 #: A task REPLACED by a newer one for the same document (spec 204: a leaf change at review files a new
 #: generation and retires the old). NOT a resolution: no decision, no acted_by. Terminal, never open.
 SUPERSEDED = "superseded"
