@@ -119,6 +119,7 @@ def test_the_409_asks_which_program_and_the_pick_then_seeds(harness):
         "template_id": "program_finance", "bindings": {"program": "NP-MERIDIAN"}})
     assert r2.status_code == 200, r2.text
     assert harness.seeded[-1]["bindings"] == {"program": "NP-MERIDIAN"}
+    assert r2.json()["template_id"] == "program_finance"
 
 
 def test_templates_lists_program_as_askable_and_consumed(harness):
@@ -428,3 +429,21 @@ def test_every_param_engine_fin_declares_in_a_ratified_template_is_askable():
                 checked += 1
                 assert s.bind_as in SHARED_SLOT_REFERENTS, (t.template_id, s.bind_as)
     assert checked >= 1, "the arm checked nothing: it cannot see a missing referent"
+
+
+# ── (E) the CANVAS_SEED projection carries template_id ─────────────────────────────────────
+
+def test_the_presentation_projection_carries_template_id():
+    """cortex prefers `template_id`; the projection must pass it through verbatim."""
+    from tests.planning.test_planning_archetypes_are_projected import _fns
+    ns = _fns()
+    env = [{"persona": "X", "expert_response": {"artifact_ids": ["urn:a"],
+                                                "template_id": "program_finance"}}]
+    got = ns["_project_planning_archetype"]("CANVAS_SEED", env, "X", None)
+    assert got["template_id"] == "program_finance"
+
+
+def test_the_success_return_names_its_template(harness):
+    """A full success names the template it built; a bare portfolio seed names `portfolio`."""
+    r = harness.client.post("/canvas/seed", json={})
+    assert r.json()["template_id"] == "portfolio"

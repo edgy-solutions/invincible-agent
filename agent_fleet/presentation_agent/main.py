@@ -884,19 +884,18 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # canvasSeedFromArtifact in src/lib/canvasSeedFromAnswer.ts — declares the
     # shape and is the single edit point if it ever changes:
     #
-    #     { archetype: "CANVAS_SEED", canvas_type?: string, name?: string,
-    #       artifact_ids: string[] }
+    #     { archetype: "CANVAS_SEED", template_id?: string, canvas_type?: string,
+    #       name?: string, artifact_ids: string[] }
     #
     # ORDER IS THE DECLARATION. Position 0 lands in the full-width anchor and
     # the client never sorts, so the projection must not reorder or dedupe.
     #
-    # BOTH OPTIONAL FIELDS ARE CARRIED AND NEITHER ARRIVES TODAY — a carrier, not an
-    # assertion. `name` has a real reader but no producer fact (the phrase path has no
-    # spoken name, and defaulting one here would invent it). `canvas_type` is the
-    # reverse: declared in cortex's contract but read by nothing, so emitting it would
-    # be a producer-side write with no consumer. Listing them here costs nothing and
-    # asserts nothing; passthrough carries only what a producer actually wrote.
-    "CANVAS_SEED": ("artifact_ids", ("canvas_type", "name")),
+    # THE OPTIONAL FIELDS ARE CARRIERS, passthrough of what a producer actually wrote.
+    # `template_id` now ARRIVES: cortex's canvasSeedFromArtifact prefers it and /canvas/seed
+    # states it on a full success. `canvas_type` is the legacy spelling, still carried but not
+    # sent. `name` has a real reader but no producer fact (the phrase path has no spoken name,
+    # and defaulting one here would invent it).
+    "CANVAS_SEED": ("artifact_ids", ("template_id", "canvas_type", "name")),
     # Landed by Lane 1 the same night as this build (SHORTFALL_GRID — "funding
     # gap needs three quantities, not two"). It is the binding for
     # mesh:FundingGapSet, whose absence made "where is funding short by
