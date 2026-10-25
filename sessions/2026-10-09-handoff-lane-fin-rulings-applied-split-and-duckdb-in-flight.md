@@ -19,7 +19,29 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
-## Update 2026-10-20, latest: both live export checks pass on `016473bb` (helm rev 203). Read this first
+## Update 2026-10-25, latest: finance canvas is #97 then #98 (stacked). Read this first
+
+- **The task.** From the architect via Chris: "make me a finance canvas" got no verb, and the
+  picker showed red "needs a binding: program".
+- **The report.** `sessions/2026-10-25-report-finance-canvas-cause-fix-prs-and-the-morning-sentence.md`
+  covers the cause, the fix and the morning sentence.
+- **The PRs.**
+  - #97: `fin/finance-canvas-asks-which-program`, head `473f9c40`, base master.
+  - #98: `fin/canvas-seed-answer-names-its-template`, head `df5802bb`. It is stacked, so no CI
+    gate runs on it, and it widens a pinned seal, so it needs a ruling.
+  - Both were built in worktree `ia-fin-export-refused-entries`, whose trailers name that worktree.
+- **Packets placed.** One to lane/01 (merge order and rolls), one to gov (it answers their
+  "which finance failure?" and flags that their 401/403 census misses an empty-menu 409), and one
+  to cortex-ui (picker).
+- **Open, mine.**
+  - Once gov's #96 merges and their Q2 is ruled, give the 409's `policy` a
+    `refusal {policy_id, missing_binding}`. The mapping is in the gov packet. Which family owns a
+    program grant is gov's to name.
+  - Diagnose the base-red `test_fin_package_export::test_gate_5_a_disagreeing_scope_is_409_naming_the_derived_one`.
+- **Next.** Wait for the merges and the roll, then fire the morning sentence live, 3 times. If
+  `mesh:finProgramBrief` wins, that is the classifier caveat, and it goes back to the architect.
+
+## Update 2026-10-20: both live export checks pass on `016473bb` (helm rev 203)
 
 - **What's live.** All four PRs are live. #67 and #69 went out at revision 199 (roll 194), and #71 and #72 at roll 195. I confirmed this by content in the running pods, not by image tag.
 - **Empty board.** It returns 400 `no_answers`, three ways: `answers: []`, `answers` omitted, and an empty list with no recipient.
