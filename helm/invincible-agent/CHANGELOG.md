@@ -1,5 +1,22 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.68 — 2026-10-24
+
+A declared list of public PKCE clients, `keycloak.publicClients` (PR #90, on the architect's 10-24
+ruling). Its first member is `training-workbench`, the training workbench's login.
+- Each client is public, standard flow with PKCE S256 required, no implicit flow, no password
+  grant, no service account, `fullScopeAllowed`. When the identity claim is not `email`, it gets
+  the `authz-id-user` mapper.
+- The render fails on an empty or duplicate clientId, a clientId that collides with a client the
+  chart already defines, an empty redirect set, a redirect that is not https with a literal host,
+  and a `*` web origin.
+- The realm reconcile job creates a missing client and repairs a missing mapper. It never rewrites
+  an existing client. Its readback fails unless the live client is public, PKCE S256, has no
+  password grant, carries every declared redirect, and emits the claim.
+- The default is `[]`, which renders nothing new. `values-sandbox.yaml` declares
+  `training-workbench`.
+- The version also moves past 0.4.67, whose roll (rev 216) failed in its post-upgrade hooks.
+
 ## 0.4.67 — 2026-10-24
 
 The supervisor's `/classify_predicate` budget goes from a literal 30 s to `CLASSIFY_PREDICATE_TIMEOUT_S = 60`.
