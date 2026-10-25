@@ -1,7 +1,8 @@
 # ADR-0060 — Consumers read through the mesh, never the stores
 
 **Status:** Proposed. This is a draft for the architect's ruling. **Nobody builds against it until
-it is ruled.** ca reviews the SDK types in §5 before the ruling.
+it is ruled.** ca reviewed the SDK types on 2026-10-24. §5 records the answers, and §6 items 5–8
+carry the parts that are behaviour.
 **Date:** 2026-10-24
 **Deciders:** architect (decision); Chris (review); ca (SDK types); Lane 1 (draft)
 **Related:**
@@ -139,9 +140,16 @@ declares:
 - the store that holds it;
 - its identity field;
 - the fields a reader may see (anything not listed is private to the owning engine);
-- its parent class and the field that links to it (generalising `parent_link_field`);
+- its parent class and the field that links to it;
 - its facet fields (filterable and countable);
 - the fields search ranks on (§3).
+
+The identity and parent fields here are **per output class**, and they are not the row's existing
+`identity_field` and `parent_link_field`. Those stay as they are and answer different questions:
+`identity_field` (event branch only) is the dedupe key of an *arrival*, and `parent_link_field`
+(document branch only) names the field of the *extracted output* that holds its parent for graph
+walking. The descriptor's fields say how a generated verb addresses a *persisted row*. A kind that
+has both has no reason for them to agree, and nothing should assume they do.
 
 From the descriptor, the platform generates and registers read verbs under the kind's domain
 prefix: `<domain>:get_<class>`, `<domain>:list_<class>` (by parent, by facet), and
@@ -169,9 +177,14 @@ ranked hits by class and id. The platform embeds the query, so a consumer needs 
 (workbench N8).
 
 **Every hit passes the origin rule before it is ranked into the response.** A search does not
-return a hit its caller could not fetch with §1 or §2. `MeshVectors.nominate` gains the origin
-attributes it needs to apply that, or the route applies the rule to its results before
-returning them. §5 asks ca to choose between these.
+return a hit its caller could not fetch with §1 or §2.
+
+**Proposed: `MeshVectors.nominate` applies the origin rule itself, before it truncates to
+`limit`.** It already owns the domain filter for the same reason: its docstring makes domain
+scoping a Protocol decision because merging afterwards breaks score comparability. A route that
+filtered `nominate`'s results afterwards would return fewer than `limit` whenever a top-ranked hit
+failed the origin rule, even though lower-ranked hits the caller could see existed. That silently
+narrows what `limit` means. (ca's review, §5.)
 
 ### 4. What this rules out, and the interim
 
@@ -232,25 +245,37 @@ returning them. §5 asks ca to choose between these.
 - A second origin rule. If any surface needs a rule other than `visible_by_origin`, the "one
   rule" premise has failed and this ADR with it.
 
-## 5. For ca: the SDK types to review
+## 5. The SDK types, and ca's review
 
 These are proposals. Names and fields are ca's to change. The behaviour stated in §1–§3 is the
-architect's to rule.
+architect's to rule. ca reviewed them on 2026-10-24, against this draft at `a4d396fe` and the SDK
+at `26b1238`. Nothing is built, and no SDK release is cut for this.
 
-- **`PersistenceDescriptor`**, a new optional field `persists` on `ContentKindRegistration`:
-  one `PersistedClass` per output class, with `store`, `identity_field`, `readable_fields`,
-  `parent: (class, link_field) | None`, `facets`, and `search_fields`. Should
-  `parent_link_field` and `identity_field` on the row move into it, or stay as they are?
-- **`DocumentManifest`**, `ArtifactRef` and `BlobRef`: the §1 response shapes. Does `ArtifactRef`
-  reuse what `MeshArtifacts.get` returns today?
+- **`PersistenceDescriptor`**: a new optional field `persists` on `ContentKindRegistration`, one
+  `PersistedClass` per output class, with `store`, `identity_field`, `readable_fields`,
+  `parent: (class, link_field) | None`, `facets`, and `search_fields`.
+  *Review: settled.* The row's `identity_field` and `parent_link_field` do not move into it. They
+  mean something else (§2), and `outputs` is plural where they are not.
+- **`DocumentManifest`, `ArtifactRef` and `BlobRef`**: the §1 response shapes.
+  *Review: `ArtifactRef` has nothing to reuse.* `MeshArtifacts.get` and `list_by_kind` return an
+  opaque `answered` payload, and no model backs it. `ArtifactRef` would be the first typed shape
+  those callers have had. That is a choice of behaviour, so it goes to the architect (§6, item 5).
 - **`EntityVerb`**: the descriptor a generated verb registers with, carrying class, arity (get,
-  list, by-relation) and the facet parameters. It is the first verb descriptor in the SDK. Do
-  `providers_for` and `verbs_for` return it?
-- **`SearchRequest` and `SearchHit`**: and the choice in §3, whether `MeshVectors.nominate`
-  takes origin attributes or the route filters its results.
-- **`visible_by_origin` in the SDK.** Today it lives in the platform. If generated verbs are
-  served by engines that import only the SDK, does the rule move to the SDK, with the platform
-  re-exporting it?
+  list, by-relation) and the facet parameters. It is the first verb descriptor in the SDK.
+  *Review: open, for the ruling.* `verbs_for` returns ontology predicate edges, found by walking
+  a class's ancestors (`verb_iri`, `input_uri`, `output_uri`, ...). A generated verb is keyed on a
+  descriptor and takes ids and facet values. §2 says such verbs register "the same way `mesh:`
+  verbs are today", which argues for `providers_for` seeing them. But `EntityVerb` does not fit
+  `verbs_for`'s row shape unless that row is widened again (last widened 2026-10-02). See §6,
+  item 6.
+- **`SearchRequest` and `SearchHit`**, and where the origin check runs.
+  *Review: inside `nominate`, before `limit`* (§3).
+- **`visible_by_origin` in the SDK.**
+  *Review: move it.* Both new SDK-level callers (`nominate` in §3, and a generated verb served by
+  an engine that imports only the SDK) need the rule where they live. Importing the platform from
+  inside the SDK would invert the dependency direction every other Protocol in `interfaces.py`
+  keeps. The platform re-exports the same symbol, so its two existing callers and the one-rule
+  seal are unaffected. ca places the module once the move is ruled.
 
 ## 6. For the architect: what to rule
 
@@ -264,3 +289,12 @@ architect's to rule.
    - D. a stable reference plus a short-lived URL (§1): proposed.
 4. The reviewer for generated verbs: who ratifies a descriptor's `readable_fields`? This draft
    assumes the kind row's existing review, and has not checked that this is enough.
+5. `ArtifactRef` (from ca's review, §5):
+   - (a) it becomes the documented shape of `MeshArtifacts.get`'s `answered` payload. That
+     closes the opaque-payload gap, and it changes an existing Protocol's behaviour;
+   - (b) it stays scoped to the §1 manifest, and `MeshArtifacts` stays opaque.
+6. A generated read verb is either:
+   - an ontology predicate, in the same registry and row shape as `verbs_for`, widened; or
+   - a sibling registration that `providers_for` sees and `verbs_for` does not.
+7. The origin rule runs inside `nominate`, before `limit` (§3). Proposed yes.
+8. `visible_by_origin` moves to the SDK, and the platform re-exports it (§5). Proposed yes.
