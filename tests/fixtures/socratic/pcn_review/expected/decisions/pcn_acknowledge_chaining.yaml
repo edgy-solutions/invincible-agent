@@ -1,0 +1,18 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+decision: pcn_acknowledge_chaining
+after: pcn_acknowledge
+matches:
+- outcome
+domain:
+  outcome:
+  - acknowledged
+  - escalated
+terminals:
+- pcn_acknowledged
+rows:
+- when:
+    outcome: acknowledged
+  then: pcn_acknowledged
+- when:
+    outcome: escalated
+  then: pcn_impact_review

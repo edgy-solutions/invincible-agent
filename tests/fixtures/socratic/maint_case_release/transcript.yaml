@@ -1,0 +1,288 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+workflow: maint_case_release
+synthetic: true
+context:
+  event_fields:
+  - case_id
+  - kind
+  - asset_id
+  - work_order_id
+  - mission_essential
+  - requested_by.authz_id
+  - owning_tier
+  audiences:
+  - maint_qa:MAINTENANCE
+  - maint_supervisor:MAINTENANCE
+  - maint_tier_ack:{trigger.owning_tier}
+opening:
+  says: A release request comes in for a maintenance case with its case number, the asset, the work order,
+    whether the asset is mission essential, who asked for the release and which tier owns it. Work on
+    the same asset under the same work order is the same episode. A release request goes to quality assurance
+    first. A QA inspector inspects it and may not be the person who asked for the release. Only a pass
+    counts as approval. QA has 48 hours.
+  facts:
+    set:
+    - file: triggers/maint_case_ready.yaml
+      path: ''
+      value:
+        trigger: maint_case_ready
+        selection: maint_case_ready_selection
+        key: case_id
+        episode:
+        - asset_id
+        - work_order_id
+        requires:
+        - kind
+        - case_id
+        - asset_id
+        - work_order_id
+        - mission_essential
+        - requested_by.authz_id
+        - owning_tier
+    - file: decisions/maint_case_ready_selection.yaml
+      path: ''
+      value:
+        decision: maint_case_ready_selection
+        matches:
+        - kind
+        domain:
+          kind:
+          - release_requested
+        rows:
+        - when:
+            kind: release_requested
+          then: maint_case_inspection
+    - file: workflows/maint_case_inspection.yaml
+      path: ''
+      value:
+        id: maint_case_inspection
+        name: Maintenance case inspection
+        steps:
+        - kind: human_await
+          id: inspection
+          audience: maint_qa:MAINTENANCE
+          task_kind: maint_release_inspection
+          role: qa_inspector
+          approves:
+          - passed
+          subject_ref: '{trigger.case_id}'
+          title: Case {trigger.case_id} -- release inspection
+          excludes:
+          - '{trigger.requested_by.authz_id}'
+          deadline_seconds: 172800
+    defer: []
+answers:
+  approvals.maint_case_inspection.inspection.task_kind:
+    says: The inspector can pass it or send it back for rework, and rework needs a reason.
+    facts:
+      set:
+      - file: task_kinds/maint_release_inspection.yaml
+        path: ''
+        value:
+          kind: maint_release_inspection
+          accepts:
+          - passed
+          - rework
+          reason_required:
+          - rework
+      defer: []
+  approvals.maint_case_inspection.next:
+    says: If it passes and the asset is mission essential, the supervisor releases it. If it passes and
+      the asset is not mission essential, it goes straight to the release record. If it needs rework it
+      goes back to maintenance and that is the end. Inspection has no time limit.
+    facts:
+      set:
+      - file: decisions/maint_case_inspection_chaining.yaml
+        path: ''
+        value:
+          decision: maint_case_inspection_chaining
+          after: maint_case_inspection
+          matches:
+          - outcome
+          - mission_essential
+          domain:
+            outcome:
+            - passed
+            - rework
+            mission_essential:
+            - true
+            - false
+          terminals:
+          - returned_to_maintenance
+          rows:
+          - when: &id001
+              outcome: passed
+              mission_essential: true
+            then: maint_case_supervisor_release
+          - when: &id002
+              outcome: passed
+              mission_essential: false
+            then: maint_case_release_record
+          - when: &id003
+              outcome: rework
+            then: returned_to_maintenance
+      - file: workflows/maint_case_inspection.yaml
+        path: steps[id=inspection].deadline_seconds
+        value: null
+      defer: []
+  contradiction:workflows/maint_case_inspection.yaml#steps[id=inspection].deadline_seconds:
+    says: The 48 hours stands.
+    facts:
+      set: []
+      defer: []
+  approvals.maint_case_inspection.next.timed_out:
+    says: If the 48 hours run out, the case is marked inspection overdue and that is the end.
+    facts:
+      set:
+      - file: decisions/maint_case_inspection_chaining.yaml
+        path: domain.outcome
+        value:
+        - passed
+        - rework
+        - timed_out
+      - file: decisions/maint_case_inspection_chaining.yaml
+        path: terminals
+        value:
+        - returned_to_maintenance
+        - inspection_overdue
+      - file: decisions/maint_case_inspection_chaining.yaml
+        path: rows
+        value:
+        - when: *id001
+          then: maint_case_supervisor_release
+        - when: *id002
+          then: maint_case_release_record
+        - when: *id003
+          then: returned_to_maintenance
+        - when:
+            outcome: timed_out
+          then: inspection_overdue
+      defer: []
+  steps.maint_case_supervisor_release:
+    says: The supervisor release goes to a maintenance supervisor, who may not be the person who asked
+      for the release. They can release it or hold it, and a hold needs a reason. Only a release counts
+      as approval.
+    facts:
+      set:
+      - file: workflows/maint_case_supervisor_release.yaml
+        path: ''
+        value:
+          id: maint_case_supervisor_release
+          name: Maintenance case supervisor release
+          steps:
+          - kind: human_await
+            id: supervisor
+            audience: maint_supervisor:MAINTENANCE
+            task_kind: maint_release_supervisor
+            role: maintenance_supervisor
+            approves:
+            - released
+            subject_ref: '{trigger.case_id}'
+            title: Case {trigger.case_id} -- supervisor release
+            excludes:
+            - '{trigger.requested_by.authz_id}'
+      - file: task_kinds/maint_release_supervisor.yaml
+        path: ''
+        value:
+          kind: maint_release_supervisor
+          accepts:
+          - released
+          - held
+          reason_required:
+          - held
+      defer: []
+  approvals.maint_case_supervisor_release.next:
+    says: When the supervisor releases it, it goes to the release record. If the supervisor holds it,
+      the release is held and that is the end.
+    facts:
+      set:
+      - file: decisions/maint_case_supervisor_release_chaining.yaml
+        path: ''
+        value:
+          decision: maint_case_supervisor_release_chaining
+          after: maint_case_supervisor_release
+          matches:
+          - outcome
+          domain:
+            outcome:
+            - released
+            - held
+          terminals:
+          - release_held
+          rows:
+          - when:
+              outcome: released
+            then: maint_case_release_record
+          - when:
+              outcome: held
+            then: release_held
+      defer: []
+  approvals.maint_case_supervisor_release.supervisor.deadline:
+    says: We have not decided how long the supervisor gets.
+    facts:
+      set: []
+      defer:
+      - gap: approvals.maint_case_supervisor_release.supervisor.deadline
+        reason: supervisor turnaround not decided
+  steps.maint_case_release_record:
+    says: The release record sends the release to the maintenance release channel with the case number,
+      the asset, the work order and the approval chain. Then the owning tier acknowledges it, and it can
+      acknowledge or refuse.
+    facts:
+      set:
+      - file: workflows/maint_case_release_record.yaml
+        path: ''
+        value:
+          id: maint_case_release_record
+          name: Maintenance case release record
+          steps:
+          - kind: emit
+            id: release
+            channel: maintenance_release
+            template:
+              case_id: '{trigger.case_id}'
+              asset_id: '{trigger.asset_id}'
+              work_order_id: '{trigger.work_order_id}'
+              approval_chain: '{case.approval_chain}'
+          - kind: signal_await
+            id: tier_ack
+            signal: tier_ack
+            audience: maint_tier_ack:{trigger.owning_tier}
+            accepts:
+            - acknowledged
+            - refused
+            reason_required:
+            - refused
+      defer: []
+  outputs.maint_case_release_record.next:
+    says: If the tier acknowledges, the case is released and that is the end. If the tier refuses, it
+      goes back to maintenance and that is the end.
+    facts:
+      set:
+      - file: decisions/maint_case_release_record_chaining.yaml
+        path: ''
+        value:
+          decision: maint_case_release_record_chaining
+          after: maint_case_release_record
+          matches:
+          - outcome
+          domain:
+            outcome:
+            - acknowledged
+            - refused
+          terminals:
+          - released
+          - returned_to_maintenance
+          rows:
+          - when:
+              outcome: acknowledged
+            then: released
+          - when:
+              outcome: refused
+            then: returned_to_maintenance
+      defer: []
+planted:
+  contradictions:
+  - contradiction:workflows/maint_case_inspection.yaml#steps[id=inspection].deadline_seconds
+  deferrals:
+  - approvals.maint_case_supervisor_release.supervisor.deadline

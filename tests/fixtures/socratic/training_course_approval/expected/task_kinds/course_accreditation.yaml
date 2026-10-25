@@ -1,0 +1,11 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+kind: course_accreditation
+accepts:
+- accredited
+- declined
+reason_required:
+- declined
+renders_as:
+  badge: COURSE-ACCRE
+  title: Course accreditation
+  archetype: APPROVAL_TASK

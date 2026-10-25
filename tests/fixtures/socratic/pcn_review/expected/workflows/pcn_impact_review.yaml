@@ -1,0 +1,23 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+id: pcn_impact_review
+name: PCN impact review
+steps:
+- kind: render
+  id: impact
+  template:
+    part_number: '{trigger.part_number}'
+    manufacturer: '{trigger.manufacturer}'
+    change_class: '{trigger.change_class}'
+- kind: human_await
+  id: engineering_disposition
+  audience: pcn_engineering:SUSTAINMENT
+  role: component_engineer
+  subject_ref: '{trigger.pcn_id}'
+  title: PCN {trigger.pcn_id} -- engineering disposition
+  excludes:
+  - '{trigger.submitted_by.authz_id}'
+  task_kind: pcn_engineering_disposition
+  approves:
+  - approved
+participants:
+- role: component_engineer

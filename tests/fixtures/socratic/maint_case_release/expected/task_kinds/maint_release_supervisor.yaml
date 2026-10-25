@@ -1,0 +1,11 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+kind: maint_release_supervisor
+accepts:
+- released
+- held
+reason_required:
+- held
+renders_as:
+  badge: MAINT-RELEAS
+  title: Maint release supervisor
+  archetype: APPROVAL_TASK

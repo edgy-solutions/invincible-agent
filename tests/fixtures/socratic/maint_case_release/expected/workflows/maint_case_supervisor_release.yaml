@@ -1,0 +1,17 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+id: maint_case_supervisor_release
+name: Maintenance case supervisor release
+steps:
+- kind: human_await
+  id: supervisor
+  audience: maint_supervisor:MAINTENANCE
+  task_kind: maint_release_supervisor
+  role: maintenance_supervisor
+  approves:
+  - released
+  subject_ref: '{trigger.case_id}'
+  title: Case {trigger.case_id} -- supervisor release
+  excludes:
+  - '{trigger.requested_by.authz_id}'
+participants:
+- role: maintenance_supervisor

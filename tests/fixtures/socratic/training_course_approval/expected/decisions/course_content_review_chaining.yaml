@@ -1,0 +1,31 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+decision: course_content_review_chaining
+after: course_content_review
+matches:
+- outcome
+domain:
+  outcome:
+  - approved
+  - changes_requested
+  - rejected
+  - deferred
+  - timed_out
+terminals:
+- returned_to_author
+- course_rejected
+rows:
+- when:
+    outcome: approved
+  then: course_accreditation
+- when:
+    outcome: changes_requested
+  then: returned_to_author
+- when:
+    outcome: rejected
+  then: course_rejected
+- when:
+    outcome: deferred
+  then: course_accreditation
+- when:
+    outcome: timed_out
+  then: course_accreditation

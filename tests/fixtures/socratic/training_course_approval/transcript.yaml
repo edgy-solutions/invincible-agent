@@ -1,0 +1,350 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+workflow: training_course_approval
+synthetic: true
+context:
+  event_fields:
+  - course_id
+  - kind
+  - title
+  - author.authz_id
+  - classification
+  - delivery_mode
+  audiences:
+  - training_security:TRAINING
+  - training_sme:TRAINING
+  - training_manager:TRAINING
+  - training_catalog:TRAINING
+opening:
+  says: A new course is submitted with its course number, its kind, who wrote it and its classification.
+    Each submission stands alone, with no episode. An unclassified course goes to content review and a
+    controlled course goes to security review first. Content review goes to a subject matter expert who
+    is not the author. They can approve the course, ask for changes or reject it, and asking for changes
+    or rejecting needs a reason. Only an approval counts as approval. They have 14 days.
+  facts:
+    set:
+    - file: triggers/course_submitted.yaml
+      path: ''
+      value:
+        trigger: course_submitted
+        selection: course_submitted_selection
+        key: course_id
+        episode: []
+        requires:
+        - kind
+        - course_id
+        - author.authz_id
+        - classification
+    - file: decisions/course_submitted_selection.yaml
+      path: ''
+      value:
+        decision: course_submitted_selection
+        matches:
+        - classification
+        domain:
+          classification:
+          - unclassified
+          - controlled
+        rows:
+        - when:
+            classification: unclassified
+          then: course_content_review
+        - when:
+            classification: controlled
+          then: course_security_review
+    - file: workflows/course_content_review.yaml
+      path: ''
+      value:
+        id: course_content_review
+        name: Course content review
+        steps:
+        - kind: human_await
+          id: content
+          audience: training_sme:TRAINING
+          task_kind: course_content_review
+          role: subject_matter_expert
+          approves:
+          - approved
+          subject_ref: '{trigger.course_id}'
+          title: Course {trigger.course_id} -- content
+          excludes:
+          - '{trigger.author.authz_id}'
+          deadline_seconds: 1209600
+    - file: task_kinds/course_content_review.yaml
+      path: ''
+      value:
+        kind: course_content_review
+        accepts:
+        - approved
+        - changes_requested
+        - rejected
+        reason_required:
+        - changes_requested
+        - rejected
+    defer: []
+answers:
+  steps.course_security_review:
+    says: Security review goes to a security officer who is not the author. They can clear the course
+      or say it is not releasable, and not releasable needs a reason. Only clearing counts as approval.
+      There is no time limit.
+    facts:
+      set:
+      - file: workflows/course_security_review.yaml
+        path: ''
+        value:
+          id: course_security_review
+          name: Course security review
+          steps:
+          - kind: human_await
+            id: security
+            audience: training_security:TRAINING
+            task_kind: course_security_review
+            role: security_officer
+            approves:
+            - cleared
+            subject_ref: '{trigger.course_id}'
+            title: Course {trigger.course_id} -- security
+            excludes:
+            - '{trigger.author.authz_id}'
+            deadline_seconds: null
+      - file: task_kinds/course_security_review.yaml
+        path: ''
+        value:
+          kind: course_security_review
+          accepts:
+          - cleared
+          - not_releasable
+          reason_required:
+          - not_releasable
+      defer: []
+  approvals.course_content_review.next:
+    says: When content review approves, the course goes to accreditation. If changes are requested it
+      goes back to the author and that is the end. If it is rejected the course is rejected and that is
+      the end. If the expert defers, it goes to the training manager.
+    facts:
+      set:
+      - file: decisions/course_content_review_chaining.yaml
+        path: ''
+        value:
+          decision: course_content_review_chaining
+          after: course_content_review
+          matches:
+          - outcome
+          domain:
+            outcome:
+            - approved
+            - changes_requested
+            - rejected
+            - deferred
+          terminals:
+          - returned_to_author
+          - course_rejected
+          rows:
+          - when: &id001
+              outcome: approved
+            then: course_accreditation
+          - when: &id002
+              outcome: changes_requested
+            then: returned_to_author
+          - when: &id003
+              outcome: rejected
+            then: course_rejected
+          - when: &id004
+              outcome: deferred
+            then: course_accreditation
+      defer: []
+  contradiction:chaining.course_content_review_chaining.deferred:
+    says: Yes, the expert can defer, and they must say why.
+    facts:
+      set:
+      - file: task_kinds/course_content_review.yaml
+        path: accepts
+        value:
+        - approved
+        - changes_requested
+        - rejected
+        - deferred
+      - file: task_kinds/course_content_review.yaml
+        path: reason_required
+        value:
+        - changes_requested
+        - rejected
+        - deferred
+      defer: []
+  approvals.course_content_review.next.timed_out:
+    says: If the 14 days run out, it goes to the training manager.
+    facts:
+      set:
+      - file: decisions/course_content_review_chaining.yaml
+        path: domain.outcome
+        value:
+        - approved
+        - changes_requested
+        - rejected
+        - deferred
+        - timed_out
+      - file: decisions/course_content_review_chaining.yaml
+        path: rows
+        value:
+        - when: *id001
+          then: course_accreditation
+        - when: *id002
+          then: returned_to_author
+        - when: *id003
+          then: course_rejected
+        - when: *id004
+          then: course_accreditation
+        - when:
+            outcome: timed_out
+          then: course_accreditation
+      defer: []
+  approvals.course_security_review.next:
+    says: When security clears the course it goes to content review. If it is not releasable the course
+      is withdrawn and that is the end.
+    facts:
+      set:
+      - file: decisions/course_security_review_chaining.yaml
+        path: ''
+        value:
+          decision: course_security_review_chaining
+          after: course_security_review
+          matches:
+          - outcome
+          domain:
+            outcome:
+            - cleared
+            - not_releasable
+          terminals:
+          - course_withdrawn
+          rows:
+          - when:
+              outcome: cleared
+            then: course_content_review
+          - when:
+              outcome: not_releasable
+            then: course_withdrawn
+      defer: []
+  steps.course_accreditation:
+    says: Accreditation goes to a training manager who is not the author. They can accredit the course
+      or decline it, and declining needs a reason. Only accrediting counts as approval.
+    facts:
+      set:
+      - file: workflows/course_accreditation.yaml
+        path: ''
+        value:
+          id: course_accreditation
+          name: Course accreditation
+          steps:
+          - kind: human_await
+            id: accreditation
+            audience: training_manager:TRAINING
+            task_kind: course_accreditation
+            role: training_manager
+            approves:
+            - accredited
+            subject_ref: '{trigger.course_id}'
+            title: Course {trigger.course_id} -- accreditation
+            excludes:
+            - '{trigger.author.authz_id}'
+      - file: task_kinds/course_accreditation.yaml
+        path: ''
+        value:
+          kind: course_accreditation
+          accepts:
+          - accredited
+          - declined
+          reason_required:
+          - declined
+      defer: []
+  approvals.course_accreditation.next:
+    says: When the manager accredits the course it is published. If the manager declines, the course is
+      rejected and that is the end.
+    facts:
+      set:
+      - file: decisions/course_accreditation_chaining.yaml
+        path: ''
+        value:
+          decision: course_accreditation_chaining
+          after: course_accreditation
+          matches:
+          - outcome
+          domain:
+            outcome:
+            - accredited
+            - declined
+          terminals:
+          - course_rejected
+          rows:
+          - when:
+              outcome: accredited
+            then: course_publish
+          - when:
+              outcome: declined
+            then: course_rejected
+      defer: []
+  approvals.course_accreditation.accreditation.deadline:
+    says: We have not set a time limit for accreditation yet.
+    facts:
+      set: []
+      defer:
+      - gap: approvals.course_accreditation.accreditation.deadline
+        reason: accreditation time limit not set yet
+  steps.course_publish:
+    says: Publishing sends the course number, the title and the approval chain to the course catalog channel.
+      Then the catalog confirms it, and it can say published or refused, and a refusal needs a reason.
+    facts:
+      set:
+      - file: workflows/course_publish.yaml
+        path: ''
+        value:
+          id: course_publish
+          name: Course publish
+          steps:
+          - kind: emit
+            id: catalog
+            channel: course_catalog
+            template:
+              course_id: '{trigger.course_id}'
+              title: '{trigger.title}'
+              approval_chain: '{case.approval_chain}'
+          - kind: signal_await
+            id: catalog_ack
+            signal: course_catalog_ack
+            audience: training_catalog:TRAINING
+            accepts:
+            - published
+            - refused
+            reason_required:
+            - refused
+      defer: []
+  outputs.course_publish.next:
+    says: If the catalog says published, the course is published and that is the end. If it refuses, the
+      publish is refused and that is the end.
+    facts:
+      set:
+      - file: decisions/course_publish_chaining.yaml
+        path: ''
+        value:
+          decision: course_publish_chaining
+          after: course_publish
+          matches:
+          - outcome
+          domain:
+            outcome:
+            - published
+            - refused
+          terminals:
+          - course_published
+          - course_publish_refused
+          rows:
+          - when:
+              outcome: published
+            then: course_published
+          - when:
+              outcome: refused
+            then: course_publish_refused
+      defer: []
+planted:
+  contradictions:
+  - contradiction:chaining.course_content_review_chaining.deferred
+  deferrals:
+  - approvals.course_accreditation.accreditation.deadline

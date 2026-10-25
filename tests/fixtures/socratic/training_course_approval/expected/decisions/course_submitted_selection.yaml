@@ -1,0 +1,15 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+decision: course_submitted_selection
+matches:
+- classification
+domain:
+  classification:
+  - unclassified
+  - controlled
+rows:
+- when:
+    classification: unclassified
+  then: course_content_review
+- when:
+    classification: controlled
+  then: course_security_review

@@ -1,0 +1,344 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+workflow: pcn_review
+synthetic: true
+context:
+  event_fields:
+  - pcn_id
+  - kind
+  - part_number
+  - manufacturer
+  - change_class
+  - program
+  - submitted_by.authz_id
+  - received_at
+  audiences:
+  - pcn_engineering:SUSTAINMENT
+  - pcn_program:SUSTAINMENT
+  - pcn_records:SUSTAINMENT
+opening:
+  says: When a supplier sends a product change notice, we log it under its notice number, and every notice
+    about the same part belongs to the same episode. A fit, form or function change goes to an impact
+    review, and a minor change only needs acknowledging. In the impact review an engineer in the engineering
+    group looks at the part, the maker and the change class and gives a disposition. Any component engineer
+    may take that disposition, including whoever logged the notice.
+  facts:
+    set:
+    - file: triggers/pcn_received.yaml
+      path: ''
+      value:
+        trigger: pcn_received
+        selection: pcn_received_selection
+        key: pcn_id
+        episode:
+        - part_number
+    - file: decisions/pcn_received_selection.yaml
+      path: ''
+      value:
+        decision: pcn_received_selection
+        matches:
+        - change_class
+        domain:
+          change_class:
+          - fff
+          - minor
+        rows:
+        - when:
+            change_class: fff
+          then: pcn_impact_review
+        - when:
+            change_class: minor
+          then: pcn_acknowledge
+    - file: workflows/pcn_impact_review.yaml
+      path: ''
+      value:
+        id: pcn_impact_review
+        name: PCN impact review
+        steps:
+        - kind: render
+          id: impact
+          template:
+            part_number: '{trigger.part_number}'
+            manufacturer: '{trigger.manufacturer}'
+            change_class: '{trigger.change_class}'
+        - kind: human_await
+          id: engineering_disposition
+          audience: pcn_engineering:SUSTAINMENT
+          role: component_engineer
+          subject_ref: '{trigger.pcn_id}'
+          title: PCN {trigger.pcn_id} -- engineering disposition
+          excludes: []
+    defer: []
+answers:
+  trigger.requires:
+    says: Every notice has to carry its kind, its notice number, the part number, the change class and
+      who logged it.
+    facts:
+      set:
+      - file: triggers/pcn_received.yaml
+        path: requires
+        value:
+        - kind
+        - pcn_id
+        - part_number
+        - change_class
+        - submitted_by.authz_id
+      defer: []
+  approvals.pcn_impact_review.engineering_disposition.task_kind:
+    says: The engineer can approve it, reject it, or ask for more information. Rejecting or asking for
+      more information needs a reason. Only an approval counts as an approval.
+    facts:
+      set:
+      - file: workflows/pcn_impact_review.yaml
+        path: steps[id=engineering_disposition].task_kind
+        value: pcn_engineering_disposition
+      - file: workflows/pcn_impact_review.yaml
+        path: steps[id=engineering_disposition].approves
+        value:
+        - approved
+      - file: task_kinds/pcn_engineering_disposition.yaml
+        path: ''
+        value:
+          kind: pcn_engineering_disposition
+          accepts:
+          - approved
+          - rejected
+          - needs_info
+          reason_required:
+          - rejected
+          - needs_info
+      defer: []
+  approvals.pcn_impact_review.next:
+    says: When the engineering disposition is approved the notice goes to program approval. If it is rejected
+      the notice is rejected and that is the end. If more information is needed the notice waits for information
+      and that is the end.
+    facts:
+      set:
+      - file: decisions/pcn_impact_review_chaining.yaml
+        path: ''
+        value:
+          decision: pcn_impact_review_chaining
+          after: pcn_impact_review
+          matches:
+          - outcome
+          domain:
+            outcome:
+            - approved
+            - rejected
+            - needs_info
+          terminals:
+          - pcn_rejected
+          - pcn_awaiting_info
+          rows:
+          - when:
+              outcome: approved
+            then: pcn_program_approval
+          - when:
+              outcome: rejected
+            then: pcn_rejected
+          - when:
+              outcome: needs_info
+            then: pcn_awaiting_info
+      defer: []
+  approvals.pcn_impact_review.engineering_disposition.deadline:
+    says: We have not agreed a turnaround for the engineering disposition yet.
+    facts:
+      set: []
+      defer:
+      - gap: approvals.pcn_impact_review.engineering_disposition.deadline
+        reason: turnaround not agreed yet
+  steps.pcn_acknowledge:
+    says: A minor change goes to a component engineer to acknowledge. They can acknowledge it, or escalate
+      it, and escalating needs a reason. Acknowledging counts as an approval. Nobody is barred from acknowledging,
+      and there is no time limit.
+    facts:
+      set:
+      - file: workflows/pcn_acknowledge.yaml
+        path: ''
+        value:
+          id: pcn_acknowledge
+          name: PCN acknowledgement
+          steps:
+          - kind: human_await
+            id: acknowledge
+            audience: pcn_engineering:SUSTAINMENT
+            task_kind: pcn_acknowledgement
+            role: component_engineer
+            approves:
+            - acknowledged
+            subject_ref: '{trigger.pcn_id}'
+            title: PCN {trigger.pcn_id} -- acknowledge
+            excludes: []
+            deadline_seconds: null
+      - file: task_kinds/pcn_acknowledgement.yaml
+        path: ''
+        value:
+          kind: pcn_acknowledgement
+          accepts:
+          - acknowledged
+          - escalated
+          reason_required:
+          - escalated
+      defer: []
+  approvals.pcn_acknowledge.next:
+    says: Once it is acknowledged the notice is acknowledged and that is the end. If it is escalated it
+      goes back to the impact review.
+    facts:
+      set:
+      - file: decisions/pcn_acknowledge_chaining.yaml
+        path: ''
+        value:
+          decision: pcn_acknowledge_chaining
+          after: pcn_acknowledge
+          matches:
+          - outcome
+          domain:
+            outcome:
+            - acknowledged
+            - escalated
+          terminals:
+          - pcn_acknowledged
+          rows:
+          - when:
+              outcome: acknowledged
+            then: pcn_acknowledged
+          - when:
+              outcome: escalated
+            then: pcn_impact_review
+      defer: []
+  steps.pcn_program_approval:
+    says: Program approval goes to the program manager. They can approve it or reject it, and a rejection
+      needs a reason. Only an approval counts as an approval. They have seven days to answer.
+    facts:
+      set:
+      - file: workflows/pcn_program_approval.yaml
+        path: ''
+        value:
+          id: pcn_program_approval
+          name: PCN program approval
+          steps:
+          - kind: human_await
+            id: program_approval
+            audience: pcn_program:SUSTAINMENT
+            task_kind: pcn_program_approval
+            role: program_manager
+            approves:
+            - approved
+            subject_ref: '{trigger.pcn_id}'
+            title: PCN {trigger.pcn_id} -- program approval
+            deadline_seconds: 604800
+      - file: task_kinds/pcn_program_approval.yaml
+        path: ''
+        value:
+          kind: pcn_program_approval
+          accepts:
+          - approved
+          - rejected
+          reason_required:
+          - rejected
+      defer: []
+  actors.pcn_program_approval.program_approval.excludes:
+    says: The person who logged the notice may never sign off either review.
+    facts:
+      set:
+      - file: workflows/pcn_program_approval.yaml
+        path: steps[id=program_approval].excludes
+        value:
+        - '{trigger.submitted_by.authz_id}'
+      - file: workflows/pcn_impact_review.yaml
+        path: steps[id=engineering_disposition].excludes
+        value:
+        - '{trigger.submitted_by.authz_id}'
+      defer: []
+  contradiction:workflows/pcn_impact_review.yaml#steps[id=engineering_disposition].excludes:
+    says: The submitter is barred from both reviews.
+    facts:
+      set:
+      - file: workflows/pcn_impact_review.yaml
+        path: steps[id=engineering_disposition].excludes
+        value:
+        - '{trigger.submitted_by.authz_id}'
+      defer: []
+  approvals.pcn_program_approval.next:
+    says: When program approval is approved the disposition is recorded. If it is rejected the notice
+      is rejected and that is the end. If nobody answers in time the notice is marked program overdue
+      and that is the end.
+    facts:
+      set:
+      - file: decisions/pcn_program_approval_chaining.yaml
+        path: ''
+        value:
+          decision: pcn_program_approval_chaining
+          after: pcn_program_approval
+          matches:
+          - outcome
+          domain:
+            outcome:
+            - approved
+            - rejected
+            - timed_out
+          terminals:
+          - pcn_rejected
+          - pcn_program_overdue
+          rows:
+          - when:
+              outcome: approved
+            then: pcn_record
+          - when:
+              outcome: rejected
+            then: pcn_rejected
+          - when:
+              outcome: timed_out
+            then: pcn_program_overdue
+      defer: []
+  steps.pcn_record:
+    says: Recording sends the disposition out with the notice number, the part number, the outcome approved
+      and the approval chain, to the disposition channel. Then the records group files it and says so.
+    facts:
+      set:
+      - file: workflows/pcn_record.yaml
+        path: ''
+        value:
+          id: pcn_record
+          name: PCN record
+          steps:
+          - kind: emit
+            id: disposition
+            channel: pcn_disposition
+            template:
+              pcn_id: '{trigger.pcn_id}'
+              part_number: '{trigger.part_number}'
+              outcome: approved
+              approval_chain: '{case.approval_chain}'
+          - kind: signal_await
+            id: filed
+            signal: pcn_filed
+            audience: pcn_records:SUSTAINMENT
+            accepts:
+            - filed
+      defer: []
+  outputs.pcn_record.next:
+    says: Once it is filed the notice is dispositioned and that is the end.
+    facts:
+      set:
+      - file: decisions/pcn_record_chaining.yaml
+        path: ''
+        value:
+          decision: pcn_record_chaining
+          after: pcn_record
+          matches:
+          - outcome
+          domain:
+            outcome:
+            - filed
+          terminals:
+          - pcn_dispositioned
+          rows:
+          - when:
+              outcome: filed
+            then: pcn_dispositioned
+      defer: []
+planted:
+  contradictions:
+  - contradiction:workflows/pcn_impact_review.yaml#steps[id=engineering_disposition].excludes
+  deferrals:
+  - approvals.pcn_impact_review.engineering_disposition.deadline

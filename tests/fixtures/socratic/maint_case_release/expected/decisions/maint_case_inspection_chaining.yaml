@@ -1,0 +1,32 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+decision: maint_case_inspection_chaining
+after: maint_case_inspection
+matches:
+- outcome
+- mission_essential
+domain:
+  outcome:
+  - passed
+  - rework
+  - timed_out
+  mission_essential:
+  - true
+  - false
+terminals:
+- returned_to_maintenance
+- inspection_overdue
+rows:
+- when:
+    outcome: passed
+    mission_essential: true
+  then: maint_case_supervisor_release
+- when:
+    outcome: passed
+    mission_essential: false
+  then: maint_case_release_record
+- when:
+    outcome: rework
+  then: returned_to_maintenance
+- when:
+    outcome: timed_out
+  then: inspection_overdue

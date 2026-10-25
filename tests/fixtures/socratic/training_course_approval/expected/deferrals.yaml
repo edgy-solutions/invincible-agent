@@ -1,0 +1,3 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+deferrals:
+  approvals.course_accreditation.accreditation.deadline: accreditation time limit not set yet

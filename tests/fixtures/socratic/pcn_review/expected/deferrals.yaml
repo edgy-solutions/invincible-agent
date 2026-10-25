@@ -1,0 +1,3 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+deferrals:
+  approvals.pcn_impact_review.engineering_disposition.deadline: turnaround not agreed yet

@@ -1,0 +1,17 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+id: pcn_acknowledge
+name: PCN acknowledgement
+steps:
+- kind: human_await
+  id: acknowledge
+  audience: pcn_engineering:SUSTAINMENT
+  task_kind: pcn_acknowledgement
+  role: component_engineer
+  approves:
+  - acknowledged
+  subject_ref: '{trigger.pcn_id}'
+  title: PCN {trigger.pcn_id} -- acknowledge
+  excludes: []
+  deadline_seconds: null
+participants:
+- role: component_engineer

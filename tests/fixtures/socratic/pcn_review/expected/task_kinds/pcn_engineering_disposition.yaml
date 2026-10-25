@@ -1,0 +1,13 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+kind: pcn_engineering_disposition
+accepts:
+- approved
+- rejected
+- needs_info
+reason_required:
+- rejected
+- needs_info
+renders_as:
+  badge: PCN-ENGINEER
+  title: Pcn engineering disposition
+  archetype: APPROVAL_TASK

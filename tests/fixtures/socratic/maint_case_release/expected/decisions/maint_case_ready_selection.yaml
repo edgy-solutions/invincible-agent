@@ -1,0 +1,11 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+decision: maint_case_ready_selection
+matches:
+- kind
+domain:
+  kind:
+  - release_requested
+rows:
+- when:
+    kind: release_requested
+  then: maint_case_inspection

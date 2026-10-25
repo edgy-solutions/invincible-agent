@@ -1,0 +1,21 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+id: maint_case_release_record
+name: Maintenance case release record
+steps:
+- kind: emit
+  id: release
+  channel: maintenance_release
+  template:
+    case_id: '{trigger.case_id}'
+    asset_id: '{trigger.asset_id}'
+    work_order_id: '{trigger.work_order_id}'
+    approval_chain: '{case.approval_chain}'
+- kind: signal_await
+  id: tier_ack
+  signal: tier_ack
+  audience: maint_tier_ack:{trigger.owning_tier}
+  accepts:
+  - acknowledged
+  - refused
+  reason_required:
+  - refused

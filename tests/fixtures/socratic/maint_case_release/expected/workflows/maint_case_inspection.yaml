@@ -1,0 +1,18 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+id: maint_case_inspection
+name: Maintenance case inspection
+steps:
+- kind: human_await
+  id: inspection
+  audience: maint_qa:MAINTENANCE
+  task_kind: maint_release_inspection
+  role: qa_inspector
+  approves:
+  - passed
+  subject_ref: '{trigger.case_id}'
+  title: Case {trigger.case_id} -- release inspection
+  excludes:
+  - '{trigger.requested_by.authz_id}'
+  deadline_seconds: 172800
+participants:
+- role: qa_inspector

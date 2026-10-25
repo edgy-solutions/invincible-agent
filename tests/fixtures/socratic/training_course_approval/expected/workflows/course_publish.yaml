@@ -1,0 +1,20 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+id: course_publish
+name: Course publish
+steps:
+- kind: emit
+  id: catalog
+  channel: course_catalog
+  template:
+    course_id: '{trigger.course_id}'
+    title: '{trigger.title}'
+    approval_chain: '{case.approval_chain}'
+- kind: signal_await
+  id: catalog_ack
+  signal: course_catalog_ack
+  audience: training_catalog:TRAINING
+  accepts:
+  - published
+  - refused
+  reason_required:
+  - refused
