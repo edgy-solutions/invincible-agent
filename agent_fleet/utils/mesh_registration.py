@@ -785,6 +785,8 @@ _IRI_PREFIXES = {
     # form has never matched anything; expanding it here is what puts the row on the wire in the
     # form the graph stores.
     "pcn:": "http://internal/sustainment/pcn#",
+    # training_extension.ttl (2026-10-24): doc-tools' own namespace, NOT `internal/...`.
+    "training:": "http://edgy-solutions.com/ontology/training#",
 }
 
 

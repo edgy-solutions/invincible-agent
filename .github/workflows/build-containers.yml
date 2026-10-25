@@ -168,6 +168,10 @@ jobs:
           if [[ "${{ github.ref }}" == "refs/heads/master" || "${{ github.ref }}" == "refs/heads/main" ]]; then
             TAGS="$TAGS -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest"
           fi
+          # OCI labels: the commit built, and the chart version that commit carries. The release
+          # retag copies an index by digest, so a :<version> tag carries its build's labels.
+          CHART_VERSION="$(awk '/^version:/ {print $2; exit}' helm/invincible-agent/Chart.yaml)"
+          LABELS="--label org.opencontainers.image.revision=${{ github.sha }} --label org.opencontainers.image.version=${CHART_VERSION}"
 
           if [ "${{ matrix.service }}" == "dagster-server" ]; then
             echo "Building dagster-server (thin runtime, no iagent code)..."
@@ -182,7 +186,7 @@ jobs:
             docker buildx build \
               --platform linux/amd64,linux/arm64               --build-arg GIT_SHA=${{ github.sha }} \
               -f .github/docker/Dockerfile.dagster-server \
-              $TAGS \
+              $TAGS $LABELS \
               --push .
           elif [ "${{ matrix.service }}" == "dagster-control-plane" ]; then
             echo "Building dagster-control-plane with dynamic Multi-Stage Dockerfile..."
@@ -194,7 +198,7 @@ jobs:
             docker buildx build \
               --platform linux/amd64,linux/arm64               --build-arg GIT_SHA=${{ github.sha }} \
               -f .github/docker/Dockerfile.dagster \
-              $TAGS \
+              $TAGS $LABELS \
               --push .
           
           else
@@ -227,7 +231,7 @@ jobs:
               --build-arg PORT=${{ matrix.port }} \
               --build-arg MAIN_MODULE=${{ matrix.main_module || 'main' }} \
               --build-arg PACKAGE_RUNTIME_SRC=${{ matrix.package_runtime || '.docker-empty' }} \
-              $TAGS \
+              $TAGS $LABELS \
               --push .
           fi
 
@@ -307,3 +311,61 @@ jobs:
         run: |
           pip install pytest pydantic pyyaml "provenance-telemetry @ git+https://github.com/edgy-solutions/provenance-telemetry.git"
           python -m pytest tests/test_telemetry.py -q
+
+  # ------------------------------------------------------------------
+  # Chart release — AFTER the images exist (ruling 2026-10-25)
+  # ------------------------------------------------------------------
+  # Release Helm Charts used to run on its own `push`, in parallel with `build`, and finished in
+  # ~25 s against the matrix's ~5 min: 0.4.66, 0.4.68 and 0.4.69 were each published with 0 of 19
+  # images tagged. The release is now a job of THIS workflow, so it `needs: build` for the same
+  # commit. `helm-changed` stands in for the `paths: helm/**` filter the release's own trigger had.
+  helm-changed:
+    name: "Release · did helm/** change?"
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Diff helm/ across the push
+        id: diff
+        run: |
+          before="${{ github.event.before }}"
+          # AN UNREADABLE BASE COUNTS AS CHANGED. Skipping would let a chart change go
+          # unreleased in silence; releasing an unbumped chart is refused loudly downstream.
+          if [ -z "${before}" ] || ! git cat-file -e "${before}^{commit}" 2>/dev/null; then
+            echo "::warning::push base '${before}' is not readable here; treating helm/** as changed"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "${before}" "${{ github.sha }}" -- helm/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # `always()` SO A FAILED BUILD IS A RED LINE, NOT A SKIP. Without it a chart change whose
+  # matrix failed would leave `release` skipped -- grey, and easy to read as "nothing to release".
+  release-gate:
+    name: "Release · every image built"
+    needs: [build, helm-changed]
+    if: always() && needs.helm-changed.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse to release over images that were not built
+        run: |
+          if [ "${{ needs.build.result }}" != "success" ]; then
+            echo "::error::helm/** changed, but the image build for ${{ github.sha }} ended '${{ needs.build.result }}'. No chart is published over images that do not exist."
+            exit 1
+          fi
+          echo "every matrix image built for ${{ github.sha }}; releasing"
+
+  release:
+    name: "Release · Helm chart"
+    needs: [build, release-gate]
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/release-helm-charts.yml

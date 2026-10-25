@@ -450,6 +450,11 @@ keycloak:
   # cortex-ui client emits, brokered humans through the broker's sub mapper (= upstream sub).
   # USER_ENTITLEMENT_CLAIM is rendered from this same key.
   authzClaim: "authz_id"
+  # The training workbench's login (the architect, 2026-10-24). Its UI and API share this host.
+  publicClients:
+    - clientId: training-workbench
+      redirectUris: ["https://training.edgy-solutions.com/*"]
+      webOrigins: ["https://training.edgy-solutions.com"]
   # A1, ruled 2026-09-30: the person the mesh-registrar delegate acts for. No credentials.
   nonInteractiveUsers:
     - username: platform-registrar
@@ -977,7 +982,16 @@ cortexUi:
     # with its last hex altered both answer 404. c390a03 descends from a3cf4d1, and Dockerfile,
     # docker-entrypoint.sh, nginx.conf, package files, helm/, .github/ and the src's
     # import.meta.env reads are unchanged.
-    digest: "sha256:2359f48e70bfe44fa8f43a709bd6773d007769c81ffb2d56f7921bba96a2f9ce"
+    # 2026-10-24, pinned for 207 (architect, overnight 10-24: "merge lane/01-207 + cortex #29"):
+    # cortex-ui e0c3c6d, PR #29 rebase-merged at its head bebbc3cc (kind at drop: a PDF asks
+    # [PCN] [PDN] [Not sure] before Send and sends `leaf`, which 207's door takes) -> c02ee0d2,
+    # an OCI index with amd64 and arm64. It must roll WITH 207's BFF (cortex's packet: a `leaf`
+    # sent to the 206 door is dropped). Measured before pinning: the FULL tag resolves to this
+    # digest; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # e0c3c6d descends from c390a03, and Dockerfile, docker-entrypoint.sh, nginx.conf, package
+    # files and the src's import.meta.env reads are unchanged; helm/ (chart 0.3.0) and .github/
+    # (retag-image.yml) moved, neither of them a build input.
+    digest: "sha256:c02ee0d262d64a04aa5f201224af6ac9351944c0b0f9735d5d3c4949b3a2f533"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
