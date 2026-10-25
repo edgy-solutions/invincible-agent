@@ -691,15 +691,18 @@ async def lifespan(application: FastAPI):
         #   authority : the caller's own, re-checked per ask, exactly as the portfolio verb
         #   amplifies : one request -> N sequential governed asks. Declared `slow`.
         _ratified = ratified_template_ids()
+        # ONE DESCRIPTION, TWO REGISTRATIONS: one verb keeps one meaning in whichever cell it
+        # is registered, so the second registration below reads this same variable.
+        _seed_canvas_description = (
+            "Compose a canvas from a RATIFIED TEMPLATE by asking that template's panels "
+            "through the governed interview path and returning their artifact ids in "
+            "slot order. This BUILDS A BOARD; it does not answer a question. A request "
+            "for ONE measure is that measure's verb, not this one. `template_id` names "
+            "which board: " + ", ".join(_ratified) + "."
+        )
         _register_verb(
             name="cortex_bff_orchestration",
-            description=(
-                "Compose a canvas from a RATIFIED TEMPLATE by asking that template's panels "
-                "through the governed interview path and returning their artifact ids in "
-                "slot order. This BUILDS A BOARD; it does not answer a question. A request "
-                "for ONE measure is that measure's verb, not this one. `template_id` names "
-                "which board: " + ", ".join(_ratified) + "."
-            ),
+            description=_seed_canvas_description,
             verb="mesh:seedCanvas",
             input_uri="http://invincible-agent/idp#Portfolio",
             output_uri="http://invincible-agent/mesh#CanvasSeedResult",
@@ -724,6 +727,42 @@ async def lifespan(application: FastAPI):
                 "enum": _ratified,
                 "description": "Which ratified canvas template to build.",
             }],
+        )
+        # ── THE SAME VERB IN THE PROGRAM-FINANCE CELL ──────────────────────────────────
+        #
+        # The portfolio registration above is typed `idp#Portfolio` and owned by
+        # PORTFOLIO_LEAD, so from the finance cell the chat grounded `mesh:finProgramBrief`
+        # instead and from any other cell nothing grounded. This one is typed by the class
+        # the finance board is ABOUT (`fin#Program`), so "make me a finance canvas" routes
+        # here and elicits "which program?" through the same disposition as every other verb.
+        #
+        # `name` MUST differ from the first registration's: the stale-row sweep deletes rows
+        # that share a tool_urn and verb but have a different input_uri, so a shared name
+        # would have each registration sweep the other's row away.
+        #
+        # THE SLOTS ARE DERIVED from the ratified templates and `SHARED_SLOT_REFERENTS`
+        # (`canvas_template.seed_canvas_referent_slots`), the same builder the 409's ask reads.
+        from .canvas_template import REFERENT_CELLS, seed_canvas_referent_slots
+
+        _fin_program = "http://invincible-agent/fin#Program"
+        _fin_persona, _fin_domain = REFERENT_CELLS[_fin_program]
+        _register_verb(
+            name="cortex_bff_orchestration_program_finance",
+            description=_seed_canvas_description,
+            verb="mesh:seedCanvas",
+            input_uri=_fin_program,
+            output_uri="http://invincible-agent/mesh#CanvasSeedResult",
+            endpoint_url=f"{_bff_base}/canvas/seed",
+            verb_synonyms=[
+                "make me a finance canvas",
+                "build the program finance board",
+                "set up a program finance canvas",
+                "make me a finance board for a program",
+            ],
+            owner_persona=_fin_persona,
+            domains=[_fin_domain],
+            cost_class="slow",
+            slots=seed_canvas_referent_slots(),
         )
     except Exception as _exc:  # pragma: no cover
         # Best-effort, matching the fleet's posture: a failed registration means
@@ -1550,7 +1589,7 @@ async def get_templates(current_user: User = Depends(get_current_user)):
     """
     from starlette.concurrency import run_in_threadpool
     from .canvas_template import (
-        load_template, ratified_template_ids, template_ref,
+        SHARED_SLOT_REFERENTS, load_template, ratified_template_ids, template_ref,
     )
 
     def _read():
@@ -1576,6 +1615,20 @@ async def get_templates(current_user: User = Depends(get_current_user)):
                 "template_ref": template_ref(t),
                 "panels": len(t.panels),
                 "shared_slots": [sl.name for sl in (t.shared_slots or [])],
+                # `shared_slots` (names) stays as cortex reads it; this sibling says which of
+                # them the server can ASK about, so a picker can offer the row and expect a 409
+                # carrying an ask instead of only labelling it "needs a binding". No
+                # enumeration happens here: `askable` is a fact about the declaration.
+                "shared_slot_detail": [
+                    {
+                        "name": sl.name,
+                        "param": sl.bind_as,
+                        "required": sl.required,
+                        "consumed": any(sl.name in p.consumes for p in t.panels),
+                        "askable": sl.bind_as in SHARED_SLOT_REFERENTS,
+                    }
+                    for sl in (t.shared_slots or [])
+                ],
             })
         return rows, broken
 
@@ -3627,12 +3680,96 @@ class CanvasSeedRequest(_BaseModel):
     `active_persona`/`active_domains` ride through to `/interview/stream` UNCHANGED — `None`
     lets the stream fall back to the caller's own default cell exactly as a hand-typed turn
     would, rather than this route inventing a cell on the caller's behalf.
+
+    `params`, `user_persona` AND `domain` ARE THE SUPERVISOR'S DISPATCH FIELDS. A bound verb is
+    dispatched by POSTing its bound slots under `params` plus the caller's chosen cell; this
+    model declared none of them, so pydantic DROPPED them silently and a chat-routed seedCanvas
+    lost its `template_id` and built the portfolio board. `canvas_template.fold_dispatch_params`
+    reads them now.
     """
     canvas_type: str = "portfolio_planning"
     template_id: Optional[str] = None
     bindings: Optional[dict[str, str]] = None
     active_persona: Optional[str] = None
     active_domains: Optional[list[str]] = None
+    params: Optional[dict[str, Any]] = None
+    user_persona: Optional[str] = None
+    domain: Optional[str] = None
+
+
+def _canvas_seed_enumerator(user_email: str, entitled_domains: list):
+    """A SYNC `(class_uri, bound_slots=) -> {outcome, members, ...}` against engine-o's
+    `/enumerate_instances`, with the body `dynamic_supervisor._make_enumerator` sends. Sync
+    because `decide_disposition` calls it synchronously; the caller runs the whole disposition
+    in a threadpool so this never blocks the event loop. Raises on connect/timeout, which the
+    disposition files as `no_provider` rather than as a menu."""
+    def _enumerate(class_uri: str, *, bound_slots: dict | None = None) -> dict:
+        _bound = {str(k): str(v) for k, v in (bound_slots or {}).items() if v not in (None, "")}
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.post(
+                f"{_DAGSONTOLOGY_SVC_URL}/enumerate_instances",
+                json={"class_uri": class_uri, "bound_slots": _bound,
+                      "user_email": user_email,
+                      "entitled_domains": list(entitled_domains or [])},
+            )
+        resp.raise_for_status()
+        return resp.json() or {}
+    return _enumerate
+
+
+async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user: User):
+    """The ask for a 409'd seed, or None when no unbound slot is askable.
+
+    Built by the SAME disposition the chat path uses (`decide_disposition` + `ask_card`) from
+    the SAME slot declarations the program-cell registration carries
+    (`canvas_template.referent_slots`), so the two cannot drift. `policy` is added whenever the
+    caller's enumeration came back EMPTY (an abstain on no members) -- never for `no_provider` or
+    `too_many`, where a list exists or nobody was asked, and "you cannot see any" would be false.
+    It is derived from `REFERENT_CELLS`, policy/groups.yaml and the caller's own cells.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from iagent_pure.slot_disposition import ABSTAIN, ask_card, decide_disposition
+    from .canvas_template import (
+        REFERENT_CELLS, SHARED_SLOT_REFERENTS, policy_hint, referent_slots,
+    )
+
+    clean = {k: v for k, v in (request.bindings or {}).items() if v not in (None, "")}
+    consumed = {c for p in template.panels for c in p.consumes}
+    unbound = consumed - set(clean)
+    declared = referent_slots({template.template_id: template}, only=unbound)
+    if not declared:
+        return None
+    accepted = {s.bind_as: clean[s.name] for s in template.shared_slots if s.name in clean}
+    slot_name = {s.bind_as: s.name for s in template.shared_slots}
+
+    ent = current_user.entitlements
+    if request.active_domains:
+        domains = list(request.active_domains)
+    elif request.active_persona:
+        domains = ent.domains_for(request.active_persona)
+    else:
+        domains = sorted({c.domain for c in ent.cells})
+    enum = _canvas_seed_enumerator(current_user.authz_id, domains)
+
+    def _build():
+        disp = decide_disposition(accepted=accepted, declared=declared, enumerate_class=enum)
+        return disp, ask_card(
+            disp, verb_iri="mesh:seedCanvas",
+            sub_query=f"seed canvas {template.template_id}", accepted=accepted,
+        )
+
+    disp, ask = await run_in_threadpool(_build)
+    ask["template_id"] = template.template_id
+    ask["binding_slot"] = slot_name.get(disp.slot or "", disp.slot)
+    if disp.action == ABSTAIN:
+        referent = SHARED_SLOT_REFERENTS.get(disp.slot or "")
+        if referent in REFERENT_CELLS:
+            o_persona, o_domain = REFERENT_CELLS[referent]
+            held = any(c.persona == o_persona and c.domain == o_domain for c in ent.cells)
+            ask["policy"] = policy_hint(
+                referent, held=held, asked_in_cell=o_domain in domains,
+            )
+    return ask
 
 
 @app.post("/canvas/seed")
@@ -3677,7 +3814,27 @@ async def canvas_seed(
     # — and a board that is WRONG is harder to catch than one that is absent. cortex-ui-60 hit
     # the client-side half of this same hazard tonight, where an unknown id fell through to
     # generic placement in complete silence.
-    from .canvas_template import load_template, ratified_template_ids
+    from .canvas_template import (
+        DispatchParamsRefused, fold_dispatch_params, load_template, ratified_template_ids,
+    )
+
+    # THE SUPERVISOR'S DISPATCH FIELDS, FOLDED BEFORE ANYTHING IS RESOLVED. `params` carries a
+    # chat-routed seedCanvas's bound slots and was silently dropped before this; a disagreement
+    # or an unplaceable key is a 422, and a keyed `params` never falls back to portfolio.
+    try:
+        _folded_id, _folded_bindings = fold_dispatch_params(
+            request.params, request.template_id, request.bindings
+        )
+    except DispatchParamsRefused as _perr:
+        raise HTTPException(status_code=422, detail=str(_perr))
+    request.template_id = _folded_id or request.template_id
+    request.bindings = _folded_bindings or request.bindings
+    # The caller's chosen cell rides in as `user_persona`/`domain`; it fills the picker fields
+    # ONLY when they are unset, so an explicit picker value always wins.
+    if request.active_persona is None and request.user_persona:
+        request.active_persona = request.user_persona
+    if request.active_domains is None and request.domain:
+        request.active_domains = [request.domain]
 
     _requested = (request.template_id or "").strip()
     if not _requested:
@@ -3734,8 +3891,23 @@ async def canvas_seed(
     except UnknownBinding as _terr:
         raise HTTPException(status_code=422, detail=str(_terr))
     except UnboundRequiredSlot as _terr:
-        raise HTTPException(status_code=409, detail={
-            "error": "unbound_required_slot", "message": str(_terr)})
+        _detail: dict = {"error": "unbound_required_slot", "message": str(_terr)}
+        # THE 409 CARRIES THE ASK. Built by the disposition the chat path uses, so a picker
+        # gets "which program?" with candidates (or the policy to set) instead of only a
+        # refusal. It is best-effort by construction: a failure here must never turn the
+        # refusal into a 500.
+        try:
+            _ask = await _canvas_seed_ask(_template, request, current_user)
+            if _ask is not None:
+                _detail["ask"] = _ask
+                if _ask.get("policy"):
+                    _detail["message"] = _ask["policy"]["message"]
+                elif _ask.get("options"):
+                    _detail["message"] = _ask.get("message") or _detail["message"]
+        except Exception as _aerr:  # noqa: BLE001
+            logger.warning("canvas_seed: ask builder failed (%r); 409 keeps its plain body", _aerr)
+            _detail["ask"] = {"error": "ask_unavailable", "detail": type(_aerr).__name__}
+        raise HTTPException(status_code=409, detail=_detail)
 
     if _template.template_id == "portfolio":
         inner = SeedPortfolioCanvasRequest(
