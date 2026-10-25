@@ -146,6 +146,7 @@ spec:
               {{- $claim := .Values.keycloak.authzClaim | default "email" }}
               {{- include "invincible-agent.validateBrokers" $ }}
               {{- include "invincible-agent.validateServiceClients" $ }}
+              {{- include "invincible-agent.validatePublicClients" $ }}
               {{- include "invincible-agent.validateRetiredUsers" $ }}
               {{- $allServiceClients := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
               {{- range $c := $allServiceClients }}
@@ -371,6 +372,71 @@ spec:
               else
                 echo "   present"
               fi
+
+              {{- end }}
+              {{- range $pc := (.Values.keycloak.publicClients | default list) }}
+              PCID={{ $pc.clientId | quote }}
+              echo "-- public client $PCID"
+              PCU=$(curl -sf -H "$AUTH" "$API/clients?clientId=$PCID" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -z "$PCU" ]; then
+                echo "   absent -> creating"
+                curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                  "$API/clients" -d '{
+                    "clientId": {{ $pc.clientId | quote }},
+                    "enabled": true,
+                    "publicClient": true,
+                    "standardFlowEnabled": true,
+                    "implicitFlowEnabled": false,
+                    "directAccessGrantsEnabled": false,
+                    "serviceAccountsEnabled": false,
+                    "fullScopeAllowed": true,
+                    "redirectUris": [{{ range $i, $r := $pc.redirectUris }}{{ if $i }}, {{ end }}{{ $r | quote }}{{ end }}],
+                    "webOrigins": [{{ range $i, $w := ($pc.webOrigins | default list) }}{{ if $i }}, {{ end }}{{ $w | quote }}{{ end }}],
+                    "attributes": {
+                      "pkce.code.challenge.method": "S256",
+                      "post.logout.redirect.uris": {{ join "##" $pc.redirectUris | quote }}
+                    }
+                    {{- if ne $claim "email" }},
+                    "protocolMappers": [{
+                      "name": "authz-id-user",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-usermodel-attribute-mapper",
+                      "config": {
+                        "user.attribute": {{ $claim | quote }},
+                        "claim.name": {{ $claim | quote }},
+                        "jsonType.label": "String",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "userinfo.token.claim": "true"
+                      }
+                    }]
+                    {{- end }}
+                  }' && echo "   created" || { echo "   FAIL $PCID: create failed"; rc=1; }
+              else
+                echo "   present"
+                {{- if ne $claim "email" }}
+                if [ "$(curl -sf -H "$AUTH" "$API/clients/$PCU/protocol-mappers/models" | grep -c 'authz-id-user' || true)" = "0" ]; then
+                  echo "   authz-id-user mapper absent -> adding"
+                  curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                    "$API/clients/$PCU/protocol-mappers/models" -d '{
+                      "name": "authz-id-user",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-usermodel-attribute-mapper",
+                      "config": {
+                        "user.attribute": {{ $claim | quote }},
+                        "claim.name": {{ $claim | quote }},
+                        "jsonType.label": "String",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "userinfo.token.claim": "true"
+                      }
+                    }' || { echo "   FAIL $PCID: could not add authz-id-user mapper"; rc=1; }
+                fi
+                {{- end }}
+              fi
+              {{- end }}
+              {{- if ne $claim "email" }}
 
               {{- range $u := .Values.keycloak.localHumanUsers }}
               echo "-- local human {{ $u.username }}"
@@ -648,6 +714,36 @@ spec:
               {{- end }}
               else
                 echo "   ok   $CID -> {{ $c.authzId }}"
+              fi
+              {{- end }}
+              {{- range $pc := (.Values.keycloak.publicClients | default list) }}
+              PCID={{ $pc.clientId | quote }}
+              PCU=$(curl -sf -H "$AUTH" "$API/clients?clientId=$PCID" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -z "$PCU" ]; then
+                echo "   FAIL $PCID: client absent after reconcile"; rc=1
+              else
+                PCJ=$(curl -sf -H "$AUTH" "$API/clients/$PCU" || true)
+                PCOK=1
+                # the redirect set only: post.logout.redirect.uris carries the same strings and must not satisfy the check
+                PCRU=$(printf '%s' "$PCJ" | grep -o '"redirectUris":\[[^]]*\]' || true)
+                printf '%s' "$PCJ" | grep -qF '"publicClient":true' \
+                  || { echo "   FAIL $PCID: not a public client (publicClient is not true)"; rc=1; PCOK=0; }
+                printf '%s' "$PCJ" | grep -qF '"pkce.code.challenge.method":"S256"' \
+                  || { echo "   FAIL $PCID: PKCE S256 is not required (pkce.code.challenge.method)"; rc=1; PCOK=0; }
+                printf '%s' "$PCJ" | grep -qF '"directAccessGrantsEnabled":false' \
+                  || { echo "   FAIL $PCID: password grant is enabled (directAccessGrantsEnabled is not false)"; rc=1; PCOK=0; }
+                printf '%s' "$PCJ" | grep -qF '"fullScopeAllowed":true' \
+                  || { echo "   FAIL $PCID: fullScopeAllowed is not true (a user's roles will not ride the token)"; rc=1; PCOK=0; }
+                {{- range $r := $pc.redirectUris }}
+                printf '%s' "$PCRU" | grep -qF '{{ $r | quote }}' \
+                  || { echo "   FAIL $PCID: redirectUri {{ $r }} is not on the live client"; rc=1; PCOK=0; }
+                {{- end }}
+                {{- if ne $claim "email" }}
+                curl -sf -H "$AUTH" "$API/clients/$PCU/protocol-mappers/models" | grep -qF '"claim.name":"{{ $claim }}"' \
+                  || { echo "   FAIL $PCID: no mapper emits claim {{ $claim }} (the BFF would fall back to sub)"; rc=1; PCOK=0; }
+                {{- end }}
+                if [ "$PCOK" = "1" ]; then echo "   ok   $PCID public, pkce S256, emits {{ $claim }}"; fi
               fi
               {{- end }}
 
