@@ -677,6 +677,40 @@ The directive: "Lane 1's 739b0c74 (class-chain read) turns two arms in your with
   - to Lane 1: `2026-10-21-packet-to-lane-01-option-1-the-arms-were-wrong-the-chain-read-stands-pr-82.md`;
   - to the architect, with Q18–Q20 at the top and then Q17: `2026-10-21-packet-to-architect-gov-q18-q20-open-q17-open-withholding-arms-decided-option-1.md`.
 
+## 2026-10-25: a policy refusal names its policy, the missing binding, and who can grant it (#96, `9b26613b`)
+
+The directive (10-24, overnight, from the architect via Chris): "Draft the rule that every policy refusal names (a) the policy id, (b) the binding or role missing, (c) who can grant it -- and the test that enforces it across the refusal paths. Coordinate with fin on the finance case as the first instance; own the general rule."
+
+- **"The finance failure above" was not in the paste.** It is also not in `sessions/` for 10-22 to 10-24 (master or ia-fin), and not on `lane/fin` (last commit `17ceedc6`). Fin was asked for it by packet, and Chris was asked in chat.
+- **The shape is the SDK's `iagent_mesh.refusal.Refusal`.** It sits on `lane/ca-0.9.11` (`26b1238`) only: no tag, no remote. The repo pins 0.9.10, so the body is a dict with the model's exact fields: `policy_id`, `missing_binding`, `grantable_by`, `candidates` (always empty).
+- **`grantable_by` comes from a grantor map, never a call site.**
+  - Seed: `policy/grantors/*.yaml`, one row per family (10 rows).
+  - Overlays: `GRANTOR_OVERLAY_DIRS`, composed by ADR-0036 through the SDK's `compose_rows`.
+  - An unknown family still refuses (403), with a `grantable_by` that names the missing row. It is never a 500.
+- **The existence rule.** An object-scoped family (`asset_grants`, `program_members`, `ontology_compartments`) is named without its key.
+  - `refusal()` raises on a key, and `relay_refusal` narrows one.
+  - ADR-0047 §5.1 and ADR-0049 Ruling 4 bodies stay byte-equal.
+- **Engines name two fields, and the BFF completes the refusal.** `relay_refusal` fills `grantable_by` and overwrites whatever an engine sent there.
+- **The 10-17 cost constant needs no amendment.** `reason` stays `canvas.ENTITLEMENT_REFUSAL`.
+- **The seal: `tests/security/test_every_policy_refusal_names_policy_binding_grantor.py`.**
+  - It is a ratchet over a population derived by AST from `git ls-files src agent_fleet`: every 401/403 status call, every in-band `unentitled`, and every dict whose `status`, `outcome`, `error` or `reason` carries a refusal word.
+  - On `7a45a3cb` that is 69 sites: 34 NOT_POLICY (13 authn, 9 pinned, 12 other structural) and 35 PENDING (25 own checks, 10 relays). None is compliant yet.
+  - An undecided site fails, and so does a stale or now-compliant listed site.
+- **Measured:**
+  - File alone at `9b26613b`: 14 passed (18.0s).
+  - `7a45a3cb..db7db75c` (#93) touches no `src` or `agent_fleet` file.
+  - The hand census reconciles with the detector exactly. The `reason` form, which the census found and the detector missed, was added red-first: the control went red, then the detector was widened.
+  - Seven mutants, each restored from HEAD, were each killed by a named arm (table in #96).
+- **Not run:** any other file, or the full suite (Lane 1's).
+- **Not changed:** any refusal site. Instances land one at a time, each deleting its PENDING row; finance is first.
+- **Environment defect, not fixed:** the scratch venv's langsmith pytest plugin crashes on a missing `xxhash._xxhash`. The runner passes `-p no:langsmith_plugin`.
+- **Packets placed in master's `sessions/`:**
+  - to fin, cc the architect: `2026-10-25-packet-to-fin-policy-refusal-first-instance-which-finance-failure.md`;
+  - to the architect: `2026-10-25-packet-to-architect-gov-policy-refusal-rule-drafted-six-questions-finance-text-missing.md` (Q21–Q26 below).
+- **Carried PRs, as read on 10-25:**
+  - #82 merged into `lane/01-202` (`f5b35500`); #77 (`1f638cdc`) and #78 (`0fab69a3`) merged into master on 10-24. All three are in master.
+  - #39, #45, #47 and #54 are closed. Whether their content landed by another route is not re-checked.
+
 ## Questions for a ruling
 
 1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.
@@ -721,7 +755,7 @@ The directive: "Lane 1's 739b0c74 (class-chain read) turns two arms in your with
     - This is gov's reading of "because the delegate rule already grants it": `is_entitled` grants only when the seeder is also in `DELEGATE_ON_BEHALF_OF`.
     - **It is reachable, not latent.** A `svc:` caller that sends no `on_behalf_of` takes `_admit_on_behalf_of`'s non-delegated path, `(caller, None)`, and drops as itself. Under #73 it then cannot read its own drop's source or extraction. Gov did not check whether `/ingest` refuses a service elsewhere.
     - Confirm the 403, or should a service's own non-delegated drop be readable by it? If so, under which rule? It is not the delegate rule.
-17. **OPEN (2026-10-20). #77 changes Lane 1's action route on gov's reading. Is that OK, or should it be reverted?**
+17. **OPEN (2026-10-20). #77 changes Lane 1's action route on gov's reading. Is that OK, or should it be reverted?** (#77 merged into master 2026-10-24 as `1f638cdc`. A merge is not a ruling; the question stands.)
     - An undeclared `svc:` now gets 403 `not_your_case` before any read.
     - The basis is §5.1's "Every other `svc:` recipient is still refused" and the Q16 precedent. No ruling names this route.
     - If not OK'd: revert the four lines and keep the seal with its three W1 service arms xfailed.
@@ -737,3 +771,9 @@ The directive: "Lane 1's 739b0c74 (class-chain read) turns two arms in your with
     - It refuses declared delegates (403 `delegate_reads_artifacts_only`).
     - Any other service is decided as a person: dropper, labels, or task. It then reads the whole case.
     - It is not a §5.1 instance under Q6. Refuse it the way #77 does at `/action`?
+21. **OPEN (2026-10-25). Relays through Restate.** `TerminalError` carries only a string. For the 10 relay sites, does the `refusal` ride as JSON in the message, or does the SDK grow a field? That is ca's lane.
+22. **OPEN (2026-10-25). May a refusal echo a key the caller itself sent?** As drafted: yes for a family that is not object-scoped, never for an object-scoped one. Finance's recipient scope asks the same question.
+23. **OPEN (2026-10-25). `candidates` stays empty.** An alternative is itself existence-bearing. Which alternatives, if any, may a caller be told?
+24. **OPEN (2026-10-25). Code-held bindings.** `RECIPIENT_READERS` lives in code in finance and cost, with no `granted_by`, so its honest family is `code`. Is the finance instance's real fix moving it onto the rail?
+25. **OPEN (2026-10-25). The sandbox grantor overlay.** Should it name the sandbox's actual approver, or keep the seed's deployment-neutral wording?
+26. **OPEN (2026-10-25). Joining.** The ratchet reds on any new unclassified 401/403 site. Any join must classify such a site in the same merge; gov does it on request.
