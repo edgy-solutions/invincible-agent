@@ -1,5 +1,6 @@
 {{- if .Values.keycloak.enabled }}
 {{- $claim := .Values.keycloak.authzClaim | default "email" }}
+{{- $cui := include "invincible-agent.cortexUiRedirects" . | fromJson }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -124,12 +125,13 @@ data:
               "enabled": true,
               "publicClient": true,
               "directAccessGrantsEnabled": true,
-              "redirectUris": [
-                  "*"
-              ],
-              "webOrigins": [
-                  "*"
-              ]
+              "redirectUris": {{ $cui.redirectUris | toJson }},
+              "webOrigins": {{ $cui.webOrigins | toJson }}
+              {{- if $cui.postLogoutRedirectUris }},
+              "attributes": {
+                  "post.logout.redirect.uris": {{ join "##" $cui.postLogoutRedirectUris | quote }}
+              }
+              {{- end }}
               {{- if ne $claim "email" }},
               "protocolMappers": [
                   {

@@ -19,6 +19,7 @@ Run: uv run --frozen python -m pytest tests/test_oidc_broker_chart.py -v
 """
 from __future__ import annotations
 
+import copy
 import difflib
 import json
 import os
@@ -215,6 +216,17 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     assert [by_name[u["username"]] for u in old_realm["users"]] == old_realm["users"]
     added = [u["username"] for u in new_realm["users"] if u["username"] not in {x["username"] for x in old_realm["users"]}]
     assert set(added) <= {u["username"] for u in _values_local_humans()}, added
+    # 2026-10-24 (the architect): cortex-ui's wildcard redirect is gone. With no cortexUi ingress to
+    # derive from, the default render now emits NO redirect and no origin (fail closed), and adds no
+    # attributes. That is the one allowed change to a client; both sides of it are asserted.
+    def _cui(realm: dict) -> dict:
+        (c,) = [c for c in realm["clients"] if c["clientId"] == "cortex-ui"]
+        return c
+    assert (_cui(old_realm)["redirectUris"], _cui(old_realm)["webOrigins"]) == (["*"], ["*"])
+    assert (_cui(new_realm)["redirectUris"], _cui(new_realm)["webOrigins"]) == ([], [])
+    assert "attributes" not in _cui(new_realm) and "attributes" not in _cui(old_realm)
+    old_realm = copy.deepcopy(old_realm)
+    _cui(old_realm).update(redirectUris=[], webOrigins=[])
     assert {**old_realm, "users": []} == {**new_realm, "users": []}
     assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == ['+  USER_ENTITLEMENT_CLAIM: "email"']
     # 0.4.38: the reconcile Job's present-branch for an existing authz-id-svc mapper was rewritten
