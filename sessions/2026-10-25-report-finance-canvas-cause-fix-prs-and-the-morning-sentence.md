@@ -31,7 +31,7 @@ I measured each part from the Dagster logs of three probe runs, and from `/templ
   - A second `mesh:seedCanvas` registration typed `fin#Program` in the finance cell. It asks
     "Which program did you mean? Options: Notional Program Meridian."
   - `/canvas/seed` reads the dispatch fields. Any disagreement is a 422, never portfolio.
-  - The 409 carries `ask`, plus `policy` when the caller can see no program. `policy` names one
+  - The 409 carries `ask`, plus `ask.policy` (at `detail.ask.policy`) when the caller can see no program. `policy` names one
     repair: switch cell, ask for a program grant, or join the group read from
     `policy/groups.yaml`.
   - `/templates` adds `shared_slot_detail`.
@@ -81,3 +81,13 @@ Caveats:
 - No roll; the task was PRs only.
 - No live verification of the classifier choice.
 - Fin's base-red `test_gate_5_a_disagreeing_scope_is_409_naming_the_derived_one` is not diagnosed.
+
+## Later, 2026-10-25: the architect's ruling applied
+
+- #97 and #98 are on master as `e676f58e`. #98 was merged into #97's branch, so no rebase was
+  needed. CI ran on the combined head `af49bf91`, and it was builds and lint only.
+- **Gate 5 was diagnosed.** It has been red since `d0f80092` added `message` to the 409; the
+  arm was stale. The fix is #102.
+- **The seed bodies are in the OpenAPI.** That is #103. It also fixes a master red that #97 caused
+  in `test_every_409_carries_a_message.py` (an annotated `_detail` the checker cannot resolve).
+- Packet: `invincible-agent/sessions/2026-10-25-packet-to-lane-01-102-and-103-for-208-and-97-redded-the-409-message-seal.md`.

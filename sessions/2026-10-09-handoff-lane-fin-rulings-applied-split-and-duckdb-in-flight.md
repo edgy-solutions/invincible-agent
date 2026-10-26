@@ -19,7 +19,30 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
-## Update 2026-10-25, latest: finance canvas is #97 then #98 (stacked). Read this first
+## Update 2026-10-25, later: #97+#98 on master, gate 5 is #102, seed bodies are #103. Read this first
+
+- **The ruling, from the architect via Chris.**
+  - #97 merges, and #98 rebases and rides 208.
+  - The pinned-test widening is allowed: assert the new field, keep every old assertion.
+  - Gate 5 is fin's, to diagnose before Monday noon.
+  - Add the 409 and 200 seed bodies to the BFF OpenAPI.
+- **#97 and #98 were already on master** as `e676f58e`, because #98 was merged into #97's branch.
+  No rebase was needed. CI ran on `af49bf91`, builds and lint only.
+- **#102** (`fin/gate-5-reads-the-409-message`, `2d66fd73`). Gate 5 has been red since lane/01's
+  `d0f80092` added `message` to the 409. The arm was stale and now ignores only `message`.
+- **#103** (`fin/canvas-seed-bodies-in-openapi`, `93b8894d`).
+  - The 200 and 409 models, wired through `responses=` only.
+  - The pinned seal is applied per the ruling.
+  - It fixes the master red #97 caused in `tests/test_every_409_carries_a_message.py`.
+  - The `AnnAssign` blindness is lane/01's to decide.
+- **Corrected in place.** The cortex and gov packets said `detail.policy`; it is
+  `detail.ask.policy`.
+- **Next.** Once 208 rolls, Chris runs the morning sentence. If he reports a miss, check the
+  classifier caveat first.
+- **Still open, mine.** The `refusal` envelope on `ask.policy`. Gov's #96 is merged now, so this
+  waits only on their Q2 and on the name of the program-grant family.
+
+## Update 2026-10-25: finance canvas is #97 then #98 (stacked)
 
 - **The task.** From the architect via Chris: "make me a finance canvas" got no verb, and the
   picker showed red "needs a binding: program".
