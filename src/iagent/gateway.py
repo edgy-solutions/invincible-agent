@@ -3706,6 +3706,100 @@ class CanvasSeedRequest(_BaseModel):
     domain: Optional[str] = None
 
 
+# ── The /canvas/seed response bodies, DECLARED FOR THE OPENAPI ONLY ───────────────────────
+#
+# The route wires these through `responses=`, never `response_model=`: `response_model` filters
+# and serializes the body, which would add `template_id: null` to the partial and empty returns
+# and break the ruling that those stay three fields. Keys below are derived from the producers:
+# `iagent_pure.slot_disposition.ask_card`, `_canvas_seed_ask`, and `canvas_template.policy_hint`.
+class CanvasSeedResponse(_BaseModel):
+    artifact_ids: list[str] = Field(description="Slot-ordered ids; empty on a partial or empty seed.")
+    seeded: int = Field(description="Panels seeded.")
+    total: int = Field(description="Panels the template declares.")
+    template_id: Optional[str] = Field(
+        default=None,
+        description="Present on full success only; ABSENT (not null) on a partial or empty seed.",
+    )
+
+
+class CanvasSeedPolicyCell(_BaseModel):
+    persona: str
+    domain: str
+
+
+class CanvasSeedPolicy(_BaseModel):
+    cell: CanvasSeedPolicyCell = Field(description="The cell that owns the referent.")
+    groups: list[str] = Field(description="Groups in policy/groups.yaml that grant the cell.")
+    repair: Literal["switch_cell", "grant_member", "join_group", "declare_group"]
+    message: str
+
+
+class CanvasSeedAskOption(_BaseModel):
+    value: str
+    label: str
+
+
+class CanvasSeedAskStructuredData(_BaseModel):
+    slot: Optional[str] = None
+    options: list[CanvasSeedAskOption]
+    option_source: str
+    free_text_reason: Optional[str] = None
+    total_count: int
+    scoped_by: list[str]
+    bound_slots_offered: list[str]
+    already_known: dict[str, Any]
+
+
+class CanvasSeedAsk(_BaseModel):
+    """`ask_card(...)` plus `template_id`, `binding_slot` and (abstain on no members) `policy`."""
+    status: Literal["slot_elicitation", "slot_abstain"]
+    disposition: Literal["ask", "abstain"]
+    output_uri: str
+    verb_iri: str
+    sub_query: str
+    slot: Optional[str] = None
+    reason: str
+    spoken: str
+    found: str
+    options: list[CanvasSeedAskOption]
+    option_source: str
+    free_text_reason: Optional[str] = None
+    truncated_from: int
+    total_count: int
+    scoped_by: list[str]
+    bound_slots_offered: list[str]
+    accepted_slots: dict[str, Any]
+    message: str
+    summary: str
+    structured_data: CanvasSeedAskStructuredData
+    data: str
+    sources: list[Any]
+    template_id: str = Field(description="Always set by `_canvas_seed_ask`.")
+    binding_slot: Optional[str] = Field(description="The shared-slot NAME (not the dispatch param).")
+    policy: Optional[CanvasSeedPolicy] = Field(
+        default=None,
+        description="Present only when the caller's enumeration came back empty (an abstain).",
+    )
+
+
+class CanvasSeedAskUnavailable(_BaseModel):
+    error: Literal["ask_unavailable"]
+    detail: str = Field(description="The builder's exception class name.")
+
+
+class CanvasSeedConflictDetail(_BaseModel):
+    error: Literal["unbound_required_slot"]
+    message: str
+    ask: Optional[CanvasSeedAsk | CanvasSeedAskUnavailable] = Field(
+        default=None,
+        description="Absent when no unbound slot is askable; best-effort, so it may be the unavailable form.",
+    )
+
+
+class CanvasSeedConflict(_BaseModel):
+    detail: CanvasSeedConflictDetail
+
+
 def _canvas_seed_enumerator(user_email: str, entitled_domains: list):
     """A SYNC `(class_uri, bound_slots=) -> {outcome, members, ...}` against engine-o's
     `/enumerate_instances`, with the body `dynamic_supervisor._make_enumerator` sends. Sync
@@ -3781,7 +3875,7 @@ async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user:
     return ask
 
 
-@app.post("/canvas/seed")
+@app.post("/canvas/seed", responses={200: {"model": CanvasSeedResponse}, 409: {"model": CanvasSeedConflict}})
 async def canvas_seed(
     request: CanvasSeedRequest,
     http_request: Request,
@@ -3900,7 +3994,7 @@ async def canvas_seed(
     except UnknownBinding as _terr:
         raise HTTPException(status_code=422, detail=str(_terr))
     except UnboundRequiredSlot as _terr:
-        _detail: dict = {"error": "unbound_required_slot", "message": str(_terr)}
+        _detail = {"error": "unbound_required_slot", "message": str(_terr)}
         # THE 409 CARRIES THE ASK. Built by the disposition the chat path uses, so a picker
         # gets "which program?" with candidates (or the policy to set) instead of only a
         # refusal. It is best-effort by construction: a failure here must never turn the
