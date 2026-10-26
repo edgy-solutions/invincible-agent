@@ -13213,6 +13213,8 @@ async def _decide_empty(ingest_id: str, decision: str, actor: str, page, *,
     except human_tasks.NoEntitledRecipients as exc:
         raise HTTPException(status_code=409, detail={
             "error": "extraction_defect_unroutable", "audience": defect_aud, "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
     new_attempt = await run_in_threadpool(lambda: ingest_status.relaunch_with_text_fallback(
         ingest_id, expect_attempt=int(row.get("attempt") or 1)))
     if new_attempt is None:
