@@ -15,6 +15,10 @@ context:
   - pcn_engineering:SUSTAINMENT
   - pcn_program:SUSTAINMENT
   - pcn_records:SUSTAINMENT
+  event_values:
+    change_class:
+      fff: a fit, form or function change
+      minor: a minor change
 opening:
   says: When a supplier sends a product change notice, we log it under its notice number, and every notice
     about the same part belongs to the same episode. A fit, form or function change goes to an impact
@@ -85,7 +89,8 @@ answers:
       defer: []
   approvals.pcn_impact_review.engineering_disposition.task_kind:
     says: The engineer can approve it, reject it, or ask for more information. Rejecting or asking for
-      more information needs a reason. Only an approval counts as an approval.
+      more information needs a reason. Only an approval counts as an approval. The answers are recorded
+      as approved, rejected and needs_info.
     facts:
       set:
       - file: workflows/pcn_impact_review.yaml

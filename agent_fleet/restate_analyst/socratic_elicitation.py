@@ -38,6 +38,7 @@ THREE DEPARTURES FROM THE WRITTEN SPEC, each small and each removable (see the h
 from __future__ import annotations
 
 import copy
+from collections import Counter
 import itertools
 import json
 import os
@@ -103,6 +104,8 @@ class Draft:
     set_at: Dict[Tuple[str, str], int] = field(default_factory=dict)  # (file, leaf) -> turn
     pending: List[Gap] = field(default_factory=list)          # overwrite contradictions awaiting
     kept_earlier: List[str] = field(default_factory=list)     # contradictions resolved to the earlier
+    open: Dict[str, str] = field(default_factory=dict)        # NON-deferrable gap key -> why it is open
+    asked: Counter = field(default_factory=Counter)           # gap key -> times asked
 
 
 class PatchError(ValueError):
@@ -405,7 +408,11 @@ def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] =
     for d in patch.get("defer") or []:
         if not isinstance(d, dict) or "gap" not in d:
             raise PatchError(f"a defer entry needs gap and reason; got {d!r}")
-        draft.deferrals[str(d["gap"])] = str(d.get("reason") or "deferred")
+        why = non_deferrable(draft, str(d["gap"]))
+        if why is None:
+            draft.deferrals[str(d["gap"])] = str(d.get("reason") or "deferred")
+        else:
+            draft.open[str(d["gap"])] = f"{why}; the user said: {d.get('reason') or 'deferred'}"
     if answering is not None and answering.kind == "contradiction":
         mine = [g for g in draft.pending if g.key == answering.key]
         for g in mine:
@@ -658,6 +665,56 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
 # GAPS
 # ═════════════════════════════════════════════════════════════════════════════════════════════
 
+def required_slots(files: Dict[str, dict]) -> List[Gap]:
+    """Slots asked by name for EVERY definition in the draft, reachable or not (ADR-0061 R4): the
+    task kind of each approval, and the routing table after each definition that ends in a verb."""
+    out: List[Gap] = []
+    wfs = _workflows(files)
+    kinds = _kinds(files)
+    chain_by_after = {str(t["after"]) for _, (f, t) in _decisions(files).items() if t.get("after")}
+    for wid, (f, raw) in wfs.items():
+        for s in _steps(raw):
+            if s.get("kind") != "human_await":
+                continue
+            tk = s.get("task_kind")
+            if not tk or not _kinds_for(str(tk), kinds):
+                out.append(Gap(f"approvals.{wid}.{s.get('id')}.task_kind", "approvals", "missing",
+                               f"Required: the task kind for the approval {_words(s.get('id'))} in "
+                               f"{_words(wid)}. Name it and the answers a person can give there "
+                               "(for example approve, reject)."))
+    for wid, (f, raw) in wfs.items():
+        verbs, last = _emits(raw, kinds)
+        if last is None or wid in chain_by_after:
+            continue
+        facet = "approvals" if last.get("kind") == "human_await" else "outputs"
+        tail = f": {', '.join(verbs)}" if verbs else ""
+        out.append(Gap(f"{facet}.{wid}.next", facet, "missing",
+                       f"Required: the routing table after {_words(wid)} -- for each way it can "
+                       f"end{tail}, what happens next?"))
+    return out
+
+
+_BARRED_RX = re.compile(r"actors\.[^.]+\.[^.]+\.excludes")
+
+
+def non_deferrable(draft: Draft, key: str) -> Optional[str]:
+    """Why ``key`` may not be deferred (ADR-0061 section 5), or None when it may. A runtime refusal,
+    a required slot, and who is barred from an approval are never deferred: they are left open."""
+    if any(x.key == key for x in problems(draft.files)):
+        return "a runtime refusal may not be deferred"
+    if any(x.key == key for x in required_slots(draft.files)):
+        return "a required slot may not be deferred"
+    if _BARRED_RX.fullmatch(key):
+        return "who is barred from an approval may not be deferred"
+    return None
+
+
+def _status(gaps_left: List[str], open_keys: List[str], runnable_errors: List[str]) -> str:
+    """``runnable`` only when nothing is left to settle, nothing is open, and the case runner would
+    not refuse the bundle. There is no "done"."""
+    return "runnable" if not gaps_left and not open_keys and not runnable_errors else "cannot_run"
+
+
 def _completeness(files: Dict[str, dict]) -> List[Gap]:
     out: List[Gap] = []
     for f, t in _of(files, "triggers"):
@@ -699,7 +756,12 @@ def gaps(draft: Draft) -> List[Gap]:
     """Everything still to settle, highest priority first: pending overwrite contradictions, then
     other contradictions, then missing items by facet (trigger, actors, steps, approvals, outputs).
     A gap whose key is deferred is settled."""
-    rest = problems(draft.files) + _completeness(draft.files)
+    return [g for g in _all_gaps(draft) if draft.asked[g.key] < 2]
+
+
+def _all_gaps(draft: Draft) -> List[Gap]:
+    """``gaps`` before the asked-twice cut. An open key ranks after every other gap."""
+    rest = required_slots(draft.files) + problems(draft.files) + _completeness(draft.files)
     seen: set = set()
     pend, contra, missing = [], [], []
     for g in list(draft.pending) + rest:
@@ -713,7 +775,8 @@ def gaps(draft: Draft) -> List[Gap]:
         else:
             missing.append(g)
     missing.sort(key=lambda g: _FACET_RANK[g.facet])  # stable: generation order within a facet
-    return pend + contra + missing
+    out = pend + contra + missing
+    return [g for g in out if g.key not in draft.open] + [g for g in out if g.key in draft.open]
 
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -940,6 +1003,13 @@ RULES
   "{trigger.<field>}" in a template or exclusion.
 - When the question is a contradiction ("Which holds?"), set exactly the path the question names.
 - When the user says they cannot say yet, DEFER the gap being asked, with their reason.
+- REQUIRED: every human_await step has task_kind naming a task_kinds/<kind>.yaml you also set
+  (with accepts).
+- REQUIRED: every workflow has a chaining table (decisions/<x>.yaml with after: <workflow id>).
+- A step with a deadline_seconds can also end timed_out (the runner's outcome when the deadline
+  expires), so its workflow's chaining table routes timed_out as well.
+- A row matches an event field only with one of its listed event values; map the user's words to
+  the value whose label they match.
 - A chaining or selection table is set whole: decision, after (chaining), matches, domain, rows,
   terminals (chaining), in one statement.
 """
@@ -990,7 +1060,8 @@ class ModelExtractor:
         import httpx
         user = (
             f"CONTEXT\nevent fields: {self.context.get('event_fields')}\n"
-            f"audiences: {self.context.get('audiences')}\n\n"
+            f"audiences: {self.context.get('audiences')}\n"
+            f"event values: {self.context.get('event_values')}\n\n"
             f"CURRENT DRAFT (files)\n{yaml.safe_dump(draft.files, sort_keys=False)}\n"
             f"QUESTION\n{('OPENING' if gap is None else gap.key + ': ' + gap.question)}\n\n"
             f"STATEMENT\n{utterance_entry.get('says', '')}\n")
@@ -1059,14 +1130,29 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
         if snap is not None:
             refused.update(k for k in draft.deferrals if k not in snap[1] and k in snap[0])
 
+    def prune_open() -> None:
+        live = {x.key for x in _all_gaps(draft)}
+        for k in [k for k in draft.open if k not in live]:
+            del draft.open[k]
+
+    def leave(g: Gap, reason: str) -> None:
+        """A gap nobody settled: deferred when it may be, else left open."""
+        why = non_deferrable(draft, g.key)
+        if why is None:
+            draft.deferrals[g.key] = reason
+        else:
+            draft.open[g.key] = f"{why}; {reason}"
+
     while turn < max_turns:
         note()
+        prune_open()
         pending_gaps = gaps(draft)
         if not pending_gaps:
             break
         snap = ({x.key for x in problems(draft.files)}, set(draft.deferrals))
         g = pending_gaps[0]
         turn += 1
+        draft.asked[g.key] += 1
         questions.append({"key": g.key, "kind": g.kind, "facet": g.facet})
         if g.kind == "contradiction":
             contradictions_asked.append(g.key)
@@ -1075,17 +1161,23 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
                          "user": (entry or {}).get("says")})
         if entry is None:
             unanswerable += 1
-            draft.deferrals[g.key] = "user could not answer"
+            leave(g, "user could not answer")
             if any(p.key == g.key for p in draft.pending):
                 draft.pending = [p for p in draft.pending if p.key != g.key]
             continue
         apply_patch(draft, extractor(entry, draft, g), turn, answering=g)
-        if g.key not in draft.deferrals and any(x.key == g.key for x in gaps(draft)):
+        if (g.key not in draft.deferrals and g.key not in draft.open
+                and any(x.key == g.key for x in _all_gaps(draft))):
             unresolved += 1
-            draft.deferrals[g.key] = "answer did not settle it"
+            leave(g, "answer did not settle it")
             draft.pending = [p for p in draft.pending if p.key != g.key]
     note()
+    prune_open()
     final = finalize(draft.files)
+    gaps_left = [x.key for x in gaps(draft)]
+    errors = runnable(final)
+    status = _status(gaps_left, sorted(draft.open), errors)
+    missing = sorted(set(draft.open) | set(gaps_left) | set(errors))
     return {
         "questions": questions,
         "messages": messages,
@@ -1094,9 +1186,13 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
         "kept_earlier": list(draft.kept_earlier),
         "contradictions_asked": contradictions_asked,
         "deferrals": dict(draft.deferrals),
-        "gaps_left": [x.key for x in gaps(draft)],
+        "gaps_left": gaps_left,
         "files": final,
-        "runnable": runnable(final),
+        "runnable": errors,
+        "status": status,
+        "missing": missing,
+        "summary": "runnable" if status == "runnable" else "cannot run, missing " + "; ".join(missing),
+        "open": dict(draft.open),
         "turns": turn,
         "deferred_refusals": sorted(refused),
     }

@@ -14,6 +14,12 @@ context:
   - maint_qa:MAINTENANCE
   - maint_supervisor:MAINTENANCE
   - maint_tier_ack:{trigger.owning_tier}
+  event_values:
+    kind:
+      release_requested: a release request
+    mission_essential:
+      true: mission essential
+      false: not mission essential
 opening:
   says: A release request comes in for a maintenance case with its case number, the asset, the work order,
     whether the asset is mission essential, who asked for the release and which tier owns it. Work on
@@ -73,7 +79,8 @@ opening:
     defer: []
 answers:
   approvals.maint_case_inspection.inspection.task_kind:
-    says: The inspector can pass it or send it back for rework, and rework needs a reason.
+    says: The inspector can pass it or send it back for rework, and rework needs a reason. The answers
+      are recorded as passed and rework.
     facts:
       set:
       - file: task_kinds/maint_release_inspection.yaml
@@ -227,7 +234,7 @@ answers:
   steps.maint_case_release_record:
     says: The release record sends the release to the maintenance release channel with the case number,
       the asset, the work order and the approval chain. Then the owning tier acknowledges it, and it can
-      acknowledge or refuse.
+      acknowledge or refuse. The answers are recorded as acknowledged and refused.
     facts:
       set:
       - file: workflows/maint_case_release_record.yaml

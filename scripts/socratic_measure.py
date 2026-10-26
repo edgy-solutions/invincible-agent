@@ -317,6 +317,9 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "deferrals_planted": len(pd),
         "deferrals_recorded": len(set(pd) & set(r["deferrals"])),
         "gaps_left": r["gaps_left"],
+        "status": r["status"],
+        "missing": {"count": len(r["missing"]), "first": r["missing"][:10]},
+        "open": r["open"],
         "runnable_errors": {"count": len(r["runnable"]), "first": r["runnable"][:5]},
         "exact": r["files"] == expected,
         "leaf_diffs": {"count": len(ld), "first": ld[:20]},
@@ -357,7 +360,7 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"arm": args.arm, "fixtures": rows}, indent=2, default=str), encoding="utf-8")
     hdr = f"{'fixture':26} {'q':>3} {'bank':>4} {'red':>3} {'unans':>5} {'unres':>5} {'contra':>6} {'defer':>5} " \
-          f"{'left':>4} {'rn_err':>6} {'exact':>5} {'leaf':>4} {'sem':>4} {'mdl_err':>7} {'alg':>3} {'unal':>4} {'unbk':>4} {'dref':>4} {'sec':>6}"
+          f"{'left':>4} {'rn_err':>6} {'exact':>5} {'leaf':>4} {'sem':>4} {'mdl_err':>7} {'alg':>3} {'unal':>4} {'unbk':>4} {'dref':>4} {'status':>10} {'sec':>6}"
     print(hdr)
     for r in rows:
         print(f"{r['fixture']:26} {r['questions']:>3} {r['bank']:>4} {len(r['redundant']):>3} "
@@ -366,7 +369,7 @@ def main() -> int:
               f"{r['deferrals_recorded']}/{r['deferrals_planted']:>3} {len(r['gaps_left']):>4} "
               f"{r['runnable_errors']['count']:>6} {str(r['exact']):>5} {r['leaf_diffs']['count']:>4} "
               f"{r['semantic_diffs']['count']:>4} {r['model_errors']:>7} {len(r['aligned_answers']):>3} {len(r['unaligned']):>4} "
-              f"{len(r['unbanked']):>4} {len(r['deferred_refusals']):>4} {r['seconds']:>6}")
+              f"{len(r['unbanked']):>4} {len(r['deferred_refusals']):>4} {r['status']:>10} {r['seconds']:>6}")
     return 0
 
 

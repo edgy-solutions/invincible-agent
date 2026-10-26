@@ -335,3 +335,139 @@ class _FileOrderUser(sm.AligningUser):
 def test_the_unaligned_test_fails_if_alignment_falls_back_to_file_order():
     user = _FileOrderUser(_transcript("pcn_review"), _expected("pcn_review"))
     assert user.translate("outputs.pcn_record.next", _without_program_approval()) is not None
+
+
+# ── ADR-0061 rulings: a refusal is never deferred; required slots are asked by name ─────────────
+
+def _run_without(*keys):
+    t = copy.deepcopy(_transcript("pcn_review"))
+    for k in keys:
+        del t["answers"][k]
+    return se.run(t, se.OracleExtractor())
+
+
+NEXT_KEY = "approvals.pcn_impact_review.next"
+BARRED_KEY = "actors.pcn_program_approval.program_approval.excludes"
+DEADLINE_KEY = "approvals.pcn_impact_review.engineering_disposition.deadline"
+
+
+def test_t1_an_unanswerable_refusal_is_left_open_never_deferred():
+    r = _run_without(NEXT_KEY)
+    assert NEXT_KEY in r["missing"]
+    assert NEXT_KEY not in r["deferrals"]
+    assert r["status"] == "cannot_run"
+    assert r["deferred_refusals"] == []
+    assert [q["key"] for q in r["questions"]].count(NEXT_KEY) == 2
+    assert r["summary"].startswith("cannot run, missing ")
+
+
+def test_t2_a_model_defer_of_a_refusal_goes_to_open():
+    draft = se.Draft(files=_good())
+    del draft.files["decisions/pcn_impact_review_chaining.yaml"]
+    key = next(g.key for g in se.problems(draft.files) if g.key == NEXT_KEY)
+    se.apply_patch(draft, {"defer": [{"gap": key, "reason": "later"}]}, 1)
+    assert key in draft.open and key not in draft.deferrals
+
+
+def test_t3_who_is_barred_is_left_open_never_deferred():
+    r = _run_without(BARRED_KEY)
+    assert BARRED_KEY in r["open"] and BARRED_KEY not in r["deferrals"]
+    assert r["status"] == "cannot_run"
+
+
+def test_t4_control_a_completeness_gap_is_still_deferred():
+    r = _run_without(DEADLINE_KEY)
+    assert DEADLINE_KEY in r["deferrals"] and DEADLINE_KEY not in r["open"]
+    assert r["status"] == "runnable"
+
+
+def test_t5_status_is_runnable_only_when_nothing_is_left_open_or_refused():
+    assert se._status([], [], []) == "runnable"
+    assert se._status([], [], ["x"]) == "cannot_run"
+    assert se._status([], ["k"], []) == "cannot_run"
+    assert se._status(["g"], [], []) == "cannot_run"
+
+
+def _maintenance_run3_shape() -> dict:
+    return {
+        "triggers/t.yaml": {"trigger": "t", "selection": "stage_one"},
+        "workflows/stage_one.yaml": {
+            "id": "stage_one", "name": "Stage one",
+            "steps": [{"kind": "human_await", "id": "look", "audience": "a:B", "role": "r",
+                       "subject_ref": "{trigger.x}", "title": "Look"}]},
+    }
+
+
+def test_t6_required_slots_cover_a_definition_no_table_reaches():
+    f = _maintenance_run3_shape()
+    slots = {g.key: g for g in se.required_slots(f)}
+    assert set(slots) == {"approvals.stage_one.look.task_kind", "approvals.stage_one.next"}
+    named = {g.key: g.question for g in se.gaps(se.Draft(files=f))}
+    for k in slots:
+        assert named[k].startswith("Required:")
+    # control: problems() alone does not see it, the definition being unreachable
+    assert "approvals.stage_one.look.task_kind" not in {g.key for g in se.problems(f)}
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_t7_every_fixture_is_runnable_under_the_oracle_and_the_aligner(name):
+    for aligned in (False, True):
+        row = sm.measure(name, se.OracleExtractor(), aligned=aligned)
+        assert row["status"] == "runnable" and row["missing"]["count"] == 0 and row["open"] == {}
+        assert row["exact"] is True and row["deferred_refusals"] == []
+    assert sm.measure(name, se.OracleExtractor())["questions"] == {
+        "pcn_review": 12, "maint_case_release": 9, "training_course_approval": 10}[name]
+
+
+def _event_values_unseen(name: str, transcript: dict) -> list:
+    shown = {(k, str(v)) for k, vals in (transcript["context"].get("event_values") or {}).items() for v in vals}
+    out = []
+    for p in sorted((FIXTURES / name / "expected" / "decisions").glob("*.yaml")):
+        for row in _yaml(p)["rows"]:
+            for k, v in row["when"].items():
+                if k != "outcome" and (k, str(v)) not in shown:
+                    out.append((k, str(v)))
+    return out
+
+
+def _outcomes_unspoken(name: str, transcript: dict, grammar: str = se._GRAMMAR) -> list:
+    # Visible = spoken as a whole word in some `says`, or stated in the extractor's grammar (runner
+    # vocabulary such as timed_out, which no user coins).
+    import re
+    said = " ".join([transcript["opening"]["says"]] + [a["says"] for a in transcript["answers"].values()])
+    words = {w.lower() for w in re.findall(r"[A-Za-z0-9_]+", said + " " + grammar)}
+    out = set()
+    for p in sorted((FIXTURES / name / "expected" / "decisions").glob("*.yaml")):
+        for row in _yaml(p)["rows"]:
+            v = row["when"].get("outcome")
+            if v is not None and str(v).lower() not in words:
+                out.add(str(v))
+    return sorted(out)
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_every_when_value_is_visible_to_the_model_event_values(name):
+    assert _event_values_unseen(name, _transcript(name)) == []
+
+
+def test_every_when_value_is_visible_to_the_model_control_pcn_without_event_values():
+    t = _transcript("pcn_review")
+    del t["context"]["event_values"]
+    assert ("change_class", "fff") in _event_values_unseen("pcn_review", t)
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_every_when_value_is_visible_to_the_model_outcomes(name):
+    assert _outcomes_unspoken(name, _transcript(name)) == []
+
+
+def test_every_when_value_is_visible_to_the_model_control_grammar_without_timed_out():
+    grammar = se._GRAMMAR.replace("timed_out", "")
+    assert _outcomes_unspoken("pcn_review", _transcript("pcn_review"), grammar) == ["timed_out"]
+
+
+def test_every_when_value_is_visible_to_the_model_control_pcn_without_its_answer_labels():
+    t = _transcript("pcn_review")
+    for a in t["answers"].values():
+        a["says"] = a["says"].replace("The answers are recorded as approved, rejected and needs_info.", "")
+    assert _outcomes_unspoken("pcn_review", t) == ["needs_info"]

@@ -14,12 +14,17 @@ context:
   - training_sme:TRAINING
   - training_manager:TRAINING
   - training_catalog:TRAINING
+  event_values:
+    classification:
+      controlled: a controlled course
+      unclassified: an unclassified course
 opening:
   says: A new course is submitted with its course number, its kind, who wrote it and its classification.
     Each submission stands alone, with no episode. An unclassified course goes to content review and a
     controlled course goes to security review first. Content review goes to a subject matter expert who
     is not the author. They can approve the course, ask for changes or reject it, and asking for changes
-    or rejecting needs a reason. Only an approval counts as approval. They have 14 days.
+    or rejecting needs a reason. Only an approval counts as approval. They have 14 days. The expert's
+    answers are recorded as approved, changes_requested and rejected.
   facts:
     set:
     - file: triggers/course_submitted.yaml
@@ -85,7 +90,7 @@ answers:
   steps.course_security_review:
     says: Security review goes to a security officer who is not the author. They can clear the course
       or say it is not releasable, and not releasable needs a reason. Only clearing counts as approval.
-      There is no time limit.
+      There is no time limit. The answers are recorded as cleared and not_releasable.
     facts:
       set:
       - file: workflows/course_security_review.yaml
@@ -153,7 +158,7 @@ answers:
             then: course_accreditation
       defer: []
   contradiction:chaining.course_content_review_chaining.deferred:
-    says: Yes, the expert can defer, and they must say why.
+    says: Yes, the expert can defer, and they must say why. That answer is recorded as deferred.
     facts:
       set:
       - file: task_kinds/course_content_review.yaml
@@ -225,7 +230,8 @@ answers:
       defer: []
   steps.course_accreditation:
     says: Accreditation goes to a training manager who is not the author. They can accredit the course
-      or decline it, and declining needs a reason. Only accrediting counts as approval.
+      or decline it, and declining needs a reason. Only accrediting counts as approval. The answers are
+      recorded as accredited and declined.
     facts:
       set:
       - file: workflows/course_accreditation.yaml
