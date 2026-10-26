@@ -1,7 +1,9 @@
 # ADR-0061 — A workflow is described in dialogue and compiled to the rows the case runner already runs
 
-**Status:** Proposed, draft. Written before review. A prototype of the elicitation loop and three
-synthetic fixtures are built and measured (§8). No route, no verb, no canvas.
+**Status:** Proposed, draft. A prototype of the elicitation loop and three synthetic fixtures are
+built and measured (§8). No route, no verb, no canvas. The architect ruled on the first measurement
+on 2026-10-25 (§9). By that ruling, this stays a draft until the model arm produces one runnable
+spec. None of the nine model fixture-runs after the rulings produced one (§9).
 **Date:** 2026-10-24
 **Deciders:** architect (decision); Chris (review); lane/74 (draft)
 **Related:**
@@ -108,6 +110,14 @@ default for each of these, and the default is a decision nobody made:
 - what the trigger requires;
 - whether anything is recorded.
 
+**(c) Required slots, asked by name** (ruled 2026-10-25). Two slots are asked of every definition
+in the draft, whether or not a selection table reaches it yet:
+- the task kind of each approval step;
+- the routing table after each stage that can end.
+
+The model omitted these more often than anything else (§8). A slot asked by name ("Required: the
+task kind for the approval ...") is asked before the stage is wired in, not after.
+
 The agent never asks about something the draft already states. Order:
 1. contradictions;
 2. then missing items, by facet: trigger, actors, steps, approvals, outputs.
@@ -140,6 +150,16 @@ must see that this was deferred, not decided.
   ratifiable.
 - **A gap the runtime refuses** (§3a). A deferral there leaves a bundle the runner will not load.
   It can be kept as a draft, but it cannot be filed.
+
+A required slot (§3c) may not be deferred either.
+
+**Enforced in the prototype** (ruled 2026-10-25). An unanswered non-deferrable gap is left open,
+never recorded as deferred. That holds for a model's `defer` as well. The loop asks everything
+else first, re-asks each open gap once, then stops. It ends in one of two states:
+- `runnable`: no gap left, nothing open, and the runner's loaders accept the bundle;
+- `cannot_run`, with the list of what is missing.
+
+There is no "done".
 
 ### 6. The running process never changes from a conversation
 
@@ -288,8 +308,8 @@ Both runs were on the committed tree.
 
 The positive control: the shipped seed bundle validates with each sample overlay and with both. That
 required scoping case checks to definitions reachable from a selection table. The seed's
-code-opened workflows are not cases. That scoping is a reading of `chain()`'s population, made in
-this ADR. It is not a prior ruling.
+code-opened workflows are not cases. That scoping is a reading of `chain()`'s population. The
+architect approved it on 2026-10-25 (§9, ruling 2).
 
 Mutants, run in memory:
 
@@ -309,26 +329,148 @@ Mutants, run in memory:
   runs by up to 3 questions and 3 runnable errors.
 - The fixtures are synthetic and were written by the same lane as the prototype.
 
+### 9. Rulings of 2026-10-25, and three more model runs
+
+The architect ruled on §8:
+1. **A refusal is never deferred.** The loop keeps asking, or stops with "cannot run, missing X",
+   never "done". Built: §5.
+2. **Case checks bind only definitions reachable from a selection table.** Approved.
+3. **Fix the PCN fixture's `fff`, which the model never sees.** The seal over the class found two
+   more kinds of value the model could not see, on all three fixtures:
+   - answer labels the transcript only paraphrased, such as "send it back for rework" for
+     `rework`, and `needs_info`, `passed` and `changes_requested`;
+   - `timed_out`, the runner's outcome when a deadline expires, which no user coins.
+
+   The widening to the whole class was approved after the fact. What changed:
+   - each fixture's context carries its event fields' values, and the model sees them;
+   - each answer that defines an answer list speaks its labels;
+   - the extractor's grammar states `timed_out`.
+
+   The seal is `test_every_when_value_is_visible_to_the_model`, with three positive controls:
+   - PCN without its event values;
+   - the grammar without `timed_out`;
+   - PCN without its answer-label sentence.
+4. **The approval task kind and the post-stage routing table are required slots,** asked by name.
+   Built: §3(c).
+
+By the same ruling, this ADR stays a draft until the model arm produces one runnable spec. If it
+produces none, the most common missing field becomes the next build item, not another three runs.
+
+**Oracle arm, after the rulings.** Unchanged:
+- 12, 9 and 10 questions;
+- exact on all three fixtures;
+- status `runnable`, both plain and through the aligning user.
+
+**Model arm, runs 4 to 6**, on `73759832`, with the same aligning user:
+
+| run | fixture | questions / bank | repeated | unanswerable | runnable errors | semantic diffs | deferred refusals | status | missing | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 4 | PCN | 10 / 12 | 2 | 8 | 0 | 6 | 0 | cannot_run | 2 | 149 |
+| 4 | maintenance | 5 / 9 | 1 | 5 | 1 | 6 | 0 | cannot_run | 2 | 74 |
+| 4 | training | 8 / 10 | 1 | 5 | 2 | 7 | 0 | cannot_run | 3 | 203 |
+| 5 | PCN | 8 / 12 | 2 | 6 | 0 | 6 | 0 | cannot_run | 2 | 125 |
+| 5 | maintenance | 12 / 9 | 3 | 10 | 3 | 6 | 0 | cannot_run | 6 | 137 |
+| 5 | training | 13 / 10 | 4 | 10 | 0 | 9 | 0 | cannot_run | 4 | 167 |
+| 6 | PCN | 10 / 12 | 2 | 8 | 1 | 6 | 0 | cannot_run | 3 | 124 |
+| 6 | maintenance | 5 / 9 | 2 | 3 | 5 | 6 | 0 | cannot_run | 7 | 455 |
+| 6 | training | 5 / 10 | 2 | 5 | 0 | 8 | 0 | cannot_run | 2 | 181 |
+
+Notes on the table:
+- **Runnable:** none of the nine.
+- **Exact:** 0 of 9.
+- **Planted contradictions or deferrals reached:** 0 of 9.
+- **Repeats:** every repeat is the designed re-ask of an open gap. On every row, "repeated" equals
+  the number of open gaps.
+- **Deferred refusals:** 0 on every row; §5 holds. In runs 1 to 3, refusals were deferred and the loop
+  closed with no gaps left.
+- **Timeouts:** run 6 had three model-call timeouts.
+  - Two were on maintenance.
+  - One was on training's opening. That draft stayed empty, so run 6 training measures the
+    transport, not the model.
+
+**What was missing.** The census counts everything missing from each final draft:
+- the open gaps;
+- the gaps left;
+- the `runnable()` errors, recomputed from the saved draft.
+
+Items are grouped by shape, with names replaced. The count is the number of the nine
+fixture-runs in which a class appears:
+
+| class | fixture-runs |
+| --- | --- |
+| who is barred from an approval (`actors.<wf>.<step>.excludes`), left open | 5, holding 10 keys |
+| a table matches an attribute no trigger requires and the runner does not measure | 3 |
+| a chaining table does not route `timed_out` | 3 |
+| a table's `after:` names no definition | 2 |
+| a definition has no table `after:` it | 2 |
+| two tables declare the same `after:` | 2 |
+| nine other classes | 1 each |
+
+Run 6 training's empty draft is left out of the count.
+
+In runs 4 and 5 on PCN, the two `excludes` slots were the only items missing, with no runnable
+error. Whether answering them would have opened further gaps was not measured.
+
+**The most common missing field is who is barred from an approval.** In all 10 keys, the
+transcript states the answer: "including whoever logged the notice", "nobody is barred", "who is
+not the author". Two causes, five keys each:
+- **The model was given the statement and did not set the field.** This happened on the PCN impact
+  review in all three runs, from the opening. It also happened in run 5 on training's content review
+  (from the opening) and on its training-manager stage, whose step question was answered from the
+  bank.
+- **The statement never reached the model.** The model built the stage from a passing mention in the
+  opening, so the step's own answer, which says who is barred, was never asked for. The `excludes`
+  question that followed has no bank entry, because the oracle takes that fact from the step's
+  answer. This happened on the PCN acknowledgement in all three runs, and on training's security
+  review in runs 4 and 5.
+
+  A person would answer that question. The scripted user cannot.
+
+That is the next build item, and it has the same two halves. (a) is an instrument defect; without
+it, the model half cannot be measured:
+- (a) the scripted user answers a question from the bank entry whose facts set the path asked
+  about, which is structural like the rest of the aligner;
+- (b) the extractor's grammar makes `excludes` required on every approval step, with `[]` when the
+  user says anyone or nobody.
+
+Two smaller findings:
+- The `timed_out` class persists in 3 fixture-runs despite the grammar line.
+- The class "a table matches an unrequired attribute" is new in these runs.
+
+**Seals on `73759832`**, with SDK v0.9.10 on the path:
+- `tests/socratic` collects 55 tests.
+- With the three shipped decision-table seals and the ADR index: 173 passed.
+- Across the repo-wide source-walking seals: 179 passed, 6 skipped.
+
+Mutants, applied on disk and restored with `cmp`:
+
+| mutant | named red |
+| --- | --- |
+| non-deferrable gaps deferred as before | T1 and T3 |
+| required slots restricted to reachable definitions | T6 only |
+| `_status` ignores runnable errors | T5 only |
+
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a
   hand author would have written, gated by the same seals.
-- **The dialogue's questions are the runtime's refusals, asked early.** Once §5 is enforced, a
-  bundle that reaches the ratifier has already passed every check that would have refused it at
-  merge. The prototype does not enforce §5 yet, and §8 measures the cost: every model run closed on
-  a spec that cannot run.
+- **The dialogue's questions are the runtime's refusals, asked early.** With §5 enforced, the loop
+  can end only as `runnable` or as `cannot_run` with what is missing. A bundle that reaches the
+  ratifier as `runnable` has passed the checks `runnable()` makes. Most of those are the runner's
+  own loaders; three are restated (§8).
 - **The question list mostly cannot drift from the runtime.** Most runtime refusals come from the
   runner's own models, so a new loader refusal becomes a new question with no dialogue change. Two
   lists are kept by hand:
-  - the five completeness questions in §3(b);
+  - the five completeness questions in §3(b), and the two required slots in §3(c);
   - the three restated checks named in §8. Each should become a call into the runner's code.
 
 Proposed units of work. This document assigns nobody:
 
 | unit | likely home |
 | --- | --- |
-| enforce §5: an open runtime refusal ends the dialogue as not runnable, never deferred | the prototype, before any verb |
-| give the extractor each event field's value vocabulary, not only the field names | the prototype, before any verb |
+| ~~enforce §5: an open runtime refusal ends the dialogue as not runnable, never deferred~~ done in the prototype, 2026-10-25 | the prototype, before any verb |
+| ~~give the extractor each event field's value vocabulary, not only the field names~~ done for the fixtures, 2026-10-25; where a deployment declares it is open | the prototype, before any verb |
+| the next build item (§9): who is barred from an approval. (a) The scripted user answers from the bank entry that sets the path; (b) `excludes` is required on every approval step | the prototype, before any verb |
 | a `proposeWorkflow` verb hosting the loop | the case runner's engine |
 | the proposal rendered as a canvas: definitions, tables, deferrals | cortex-ui |
 | the workflow stewards' ratification audience and route | shared with ADR-0057's |
@@ -355,9 +497,12 @@ Proposed units of work. This document assigns nobody:
   - the event's declared fields;
   - the deployment's declared audiences;
   - each field's declared values. §8 shows the values are needed: "fit, form or function" against
-    `fff`.
+    `fff`;
+  - each answer's recorded label, and the runner's own outcomes (`timed_out`). A user says "send it
+    back for rework" and never "rework".
 
-  Where those values are declared is open. A workflow that needs an audience nobody has declared is
+  The fixtures now carry the values in their context and speak the labels (§9). Where a deployment
+  declares them is open. A workflow that needs an audience nobody has declared is
   a grant change (a human's act), not a dialogue answer.
 
 ## Indicators for revisiting
