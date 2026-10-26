@@ -383,7 +383,7 @@
         "type": "object"
       },
       "CanvasSeedRequest": {
-        "description": "A canvas TYPE or a ratified `template_id`, and nothing else.\n\nIt supplies no session id and no question list, which is the point — the panels and their\nslot order are the TEMPLATE'S declaration, not the caller's.\n\n`template_id` IS THE ONE ADR-0050 SPEAKS, and `canvas_type` is kept because cortex's\n`requestPortfolioCanvasSeed()` sends it today. Removing it in the same change that adds\nthe new field would break the live client for a rename, so both are accepted and the\nresolution below is explicit rather than a silent precedence.\n\n`bindings` IS THE PICKER'S HALF OF ADR-0050 §3's CARRY: shared-slot NAME (never `param`,\nwhich is dispatch vocabulary the caller never sees) -> the value the picker chose. Keyed by\n`name` so one ask serves every panel that consumes it, the same relation `SharedSlot.bind_as`\nexists to resolve on the dispatch side.\n\n`active_persona`/`active_domains` ride through to `/interview/stream` UNCHANGED — `None`\nlets the stream fall back to the caller's own default cell exactly as a hand-typed turn\nwould, rather than this route inventing a cell on the caller's behalf.",
+        "description": "A canvas TYPE or a ratified `template_id`, and nothing else.\n\nIt supplies no session id and no question list, which is the point — the panels and their\nslot order are the TEMPLATE'S declaration, not the caller's.\n\n`template_id` IS THE ONE ADR-0050 SPEAKS, and `canvas_type` is kept because cortex's\n`requestPortfolioCanvasSeed()` sends it today. Removing it in the same change that adds\nthe new field would break the live client for a rename, so both are accepted and the\nresolution below is explicit rather than a silent precedence.\n\n`bindings` IS THE PICKER'S HALF OF ADR-0050 §3's CARRY: shared-slot NAME (never `param`,\nwhich is dispatch vocabulary the caller never sees) -> the value the picker chose. Keyed by\n`name` so one ask serves every panel that consumes it, the same relation `SharedSlot.bind_as`\nexists to resolve on the dispatch side.\n\n`active_persona`/`active_domains` ride through to `/interview/stream` UNCHANGED — `None`\nlets the stream fall back to the caller's own default cell exactly as a hand-typed turn\nwould, rather than this route inventing a cell on the caller's behalf.\n\n`params`, `user_persona` AND `domain` ARE THE SUPERVISOR'S DISPATCH FIELDS. A bound verb is\ndispatched by POSTing its bound slots under `params` plus the caller's chosen cell; this\nmodel declared none of them, so pydantic DROPPED them silently and a chat-routed seedCanvas\nlost its `template_id` and built the portfolio board. `canvas_template.fold_dispatch_params`\nreads them now.",
         "properties": {
           "active_domains": {
             "anyOf": [
@@ -429,6 +429,29 @@
             "title": "Canvas Type",
             "type": "string"
           },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Params"
+          },
           "template_id": {
             "anyOf": [
               {
@@ -439,6 +462,17 @@
               }
             ],
             "title": "Template Id"
+          },
+          "user_persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Persona"
           }
         },
         "title": "CanvasSeedRequest",
@@ -2842,7 +2876,7 @@
     },
     "/cases/{case_id}/action": {
       "get": {
-        "description": "GET /cases/{case_id}/action -- who chose, who approved, who released a maintenance case,\nwith the work order and the manual data modules it cites.\n\nBODY. The stored ActionRecord verbatim AT THE TOP LEVEL (action_id, event_id, asset_id,\nowning_tier, label, work_order, approval_chain, provenance, whatever keys it has), plus the\nadditive keys `case_id`, `artifact_id`, `acts`, `dmcs_cited`, and `action_ids` only when the\ncase has more than one record. A key the record already carries is never overwritten.\n\nWHERE EACH ACT IS READ FROM. `chose`: the LAST case transition (runner state, as\n`GET /cases/{id}`) whose outcome is the record's `work_order.option`. `approved`: one per\n`approval_chain` entry of the record whose decision is `approved`, chain order (`acted_via`\nonly if recorded). `released`: the LAST case transition whose outcome is `released`. An act\nthat was not recorded is absent -- never invented. `dmcs_cited` is the record's\n`provenance.manual_nodes_consulted`, de-duplicated, first-seen order.\n\nTHE RECORD IS WRITTEN WHEN THE CASE IS RELEASED (the release instance's outbox is read at its\ncompletion, `/internal/cases/{id}/action-record`). A case that was approved but is not yet\nreleased, or that was rejected, has no record and answers 404 `no_action_record`. With more\nthan one record the newest by `valid_as_of` is answered and `action_ids` lists them all,\noldest first.\n\nGATE, two species. A DELEGATE (a key of `_delegate_principals()`) reads the action record of\na case it seeded and no other (ruled 2026-10-17 by the architect: \"delegate reads only its\nown cases' action records, 403 on others and on /cases/{id}\"). Ownership is decided by the\nCASE: the runner's case is fetched first (503 `runner_unavailable`) and the delegate is\nadmitted iff the case exists and its `seeded_by` is the caller; a nonexistent case, another\ndelegate's case and a case with no `seeded_by` answer one IDENTICAL 403 `not_your_case`, with\nno artifact-store read. An admitted delegate with no record is 404 `no_action_record` (its\nown pending case: nothing yet, not forbidden); a record whose own `seeded_by` differs is 403\ntoo. No spec/definitions/`can_view_case` for a delegate. Any OTHER caller passes exactly\n`GET /cases/{id}`'s gate (`_load_viewable_case`), then 404 `no_action_record` if none. A\nNeo4j failure is 503 `artifact_store_unavailable`.",
+        "description": "GET /cases/{case_id}/action -- who chose, who approved, who released a maintenance case,\nwith the work order and the manual data modules it cites.\n\nBODY. The stored ActionRecord verbatim AT THE TOP LEVEL (action_id, event_id, asset_id,\nowning_tier, label, work_order, approval_chain, provenance, whatever keys it has), plus the\nadditive keys `case_id`, `artifact_id`, `acts`, `dmcs_cited`, and `action_ids` only when the\ncase has more than one record. A key the record already carries is never overwritten.\n\nWHERE EACH ACT IS READ FROM. `chose`: the LAST case transition (runner state, as\n`GET /cases/{id}`) whose outcome is the record's `work_order.option`. `approved`: one per\n`approval_chain` entry of the record whose decision is `approved`, chain order (`acted_via`\nonly if recorded). `released`: the LAST case transition whose outcome is `released`. An act\nthat was not recorded is absent -- never invented. `dmcs_cited` is the record's\n`provenance.manual_nodes_consulted`, de-duplicated, first-seen order.\n\nTHE RECORD IS WRITTEN WHEN THE CASE IS RELEASED (the release instance's outbox is read at its\ncompletion, `/internal/cases/{id}/action-record`). A case that was approved but is not yet\nreleased, or that was rejected, has no record and answers 404 `no_action_record`. With more\nthan one record the newest by `valid_as_of` is answered and `action_ids` lists them all,\noldest first.\n\nGATE, two species. A DELEGATE (a key of `_delegate_principals()`) reads the action record of\na case it seeded and no other (ruled 2026-10-17 by the architect: \"delegate reads only its\nown cases' action records, 403 on others and on /cases/{id}\"). Ownership is decided by the\nCASE: the runner's case is fetched first (503 `runner_unavailable`) and the delegate is\nadmitted iff the case exists and its `seeded_by` is the caller; a nonexistent case, another\ndelegate's case and a case with no `seeded_by` answer one IDENTICAL 403 `not_your_case`, with\nno artifact-store read. An admitted delegate with no record is 404 `no_action_record` (its\nown pending case: nothing yet, not forbidden); a record whose own `seeded_by` differs is 403\ntoo. No spec/definitions/`can_view_case` for a delegate. Any other SERVICE\n(`_is_service_caller`) is that same 403 before any read: ADR-0047 §5.1 admits a service only\nas a seeding declared delegate. Any other caller, a person, passes exactly\n`GET /cases/{id}`'s gate (`_load_viewable_case`), then 404 `no_action_record` if none. A\nNeo4j failure is 503 `artifact_store_unavailable`.",
         "operationId": "get_case_action_cases__case_id__action_get",
         "parameters": [
           {

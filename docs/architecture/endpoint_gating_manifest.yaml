@@ -2109,6 +2109,10 @@ services:
           would protect nothing and would only force the probing this endpoint exists to
           remove. A picker that cannot read the menu has to seed a board to discover it.
 
+          `shared_slot_detail` (name, param, required, consumed, askable) is declaration-only
+          too: `askable` says only that the server holds a class for that slot's param, so a
+          picker can expect an ask from /canvas/seed. Nothing is enumerated here.
+
           WHAT WOULD CHANGE THIS ROW: a template carrying anything deployment-specific in its
           title or description — a customer name, a programme name. Today both are generic
           board labels ("Portfolio planning canvas"), and the panel bodies are NOT returned.
@@ -2252,6 +2256,14 @@ services:
           /interview/stream. Its only work is shaping the response to the receiver's fixed
           contract - {artifact_ids: [...]}, slot-ordered, nothing else - and rejecting a
           canvas_type it has no template for.
+
+          It also reads the supervisor's dispatch fields (`params`, `user_persona`, `domain`),
+          which fill only unset fields and never widen the caller's cell: /interview/stream
+          still validates the cell against the caller's entitlements. When a required shared
+          slot is unbound the 409 carries an `ask`, built by enumerating the slot's class
+          through engine-o's /enumerate_instances with the CALLER's authz_id and entitled
+          domains, so the menu is exactly what that caller may see (an empty menu carries the
+          policy to set instead). A success also names its `template_id`.
 
           Same amplification note as its target: one authenticated request launches five
           sequential Dagster runs. A caller who can reach this can reach /seed/portfolio_canvas
