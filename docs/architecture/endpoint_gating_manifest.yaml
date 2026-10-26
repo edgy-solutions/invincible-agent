@@ -1748,6 +1748,20 @@ services:
           re-opens the row at received (attempt + 1) for doc-tools' retry sensor; at awaiting_origin
           it files the document_promotion task first and then moves the row to review; at review it
           is refused (the open task carries the kind), and every terminal stage is refused 409.
+      - method: POST
+        path: /ingest/{ingest_id}/empty
+        identity: keycloak-jwt
+        gate: "get_current_user + _ingest_review_access (dropper / open-task holder / seeding delegate); an absent or event row is 404, anyone else 403 not_entitled; every decision is audited on iagent.audit.ingest_access. The body is validated before the gate reads any row: a decision outside confirmed_no_parts|has_parts, or a page on confirmed_no_parts, is FastAPI's 422; has_parts without a page is 422 page_required; a row with no open document_empty_confirm task is 409 no_open_empty_task; has_parts on a second-zero task is 409 add_missed_part_not_built"
+        exposes: action
+        consumers: [cortex-ui document_empty_confirm card]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-23: a zero-row extraction on a notice (content_kind pcn|pdn)
+          files document_empty_confirm to the promotion audience, and the dropper may answer their
+          own because there is nothing to approve. confirmed_no_parts moves the row to the terminal
+          no_parts stage with "no parts (confirmed by <who>)"; has_parts files extraction_defect
+          with the page and relaunches the row with force_text_fallback set. It writes through the
+          same _decide_empty as the task act route.
       - method: GET
         path: /ingest/{ingest_id}/extraction
         identity: keycloak-jwt

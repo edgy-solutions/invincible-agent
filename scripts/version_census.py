@@ -363,6 +363,80 @@ def _live_relationship_types(namespace: str) -> "Optional[list[str]]":
         return None
 
 
+#: The live verb registry: every predicate edge between two ontology classes that carries a verb
+#: IRI. The same query that measured 202 / 57 / 147 by hand on 2026-10-24 (report §2a).
+_VERB_REGISTRY_CYPHER = (
+    "MATCH (:OntologyClass)-[r]->(:OntologyClass) WHERE r.iri IS NOT NULL "
+    "RETURN count(r) AS verb_edges, count(DISTINCT r.iri) AS verbs, "
+    "count(DISTINCT r.provider) AS providers, collect(DISTINCT r.iri) AS iris"
+)
+
+
+def _live_verb_registry(namespace: str) -> "Optional[dict]":
+    """`{verb_edges, verbs, providers, iris}` from the live graph, or None if it could not be read."""
+    pod = _pod_for(namespace, "iagent-cortex-bff")
+    if not pod:
+        return None
+    snippet = (
+        "import os,json,base64,urllib.request as u;"
+        "usr=os.environ.get('NEO4J_USER') or os.environ.get('NEO4J_USERNAME') or 'neo4j';"
+        "tok=base64.b64encode((usr+':'+os.environ.get('NEO4J_PASSWORD','')).encode()).decode();"
+        f"q={{'statements':[{{'statement':{_VERB_REGISTRY_CYPHER!r}}}]}};"
+        "r=u.Request('http://iagent-neo4j:7474/db/neo4j/tx/commit',"
+        "data=json.dumps(q).encode(),"
+        "headers={'Content-Type':'application/json','Authorization':'Basic '+tok});"
+        "d=json.load(u.urlopen(r,timeout=20));"
+        "row=d['results'][0]['data'][0]['row'];"
+        "print(json.dumps(dict(zip(['verb_edges','verbs','providers','iris'],row))))"
+    )
+    rc, out = _kubectl(["-n", namespace, "exec", pod, "--", "python", "-c", snippet], timeout=90)
+    if rc != 0:
+        return None
+    try:
+        val = json.loads(out.strip().splitlines()[-1])
+    except Exception:  # noqa: BLE001
+        return None
+    return val if isinstance(val, dict) else None
+
+
+def verb_health(live: "Optional[dict]", declared: "dict[str, str]") -> int:
+    """The verb HEALTH check (architect ruling 2026-10-24, report §2b): print the live verb-edge,
+    verb and provider counts; FAIL on zero, and FAIL on any verb an engine DECLARES that no edge
+    carries.
+
+    WHY A HEALTH CHECK AND NOT A HOOK ORDER. Rev 216's prime failed and helm skipped the hooks after
+    it, reregister among them. Whatever the cause, the outcome is the same: engines with no verbs,
+    and a fleet that answers from the cold-start fallback. This measures the outcome.
+
+    "Declared" is the engine catalogues and the registration call sites only: a verb an ENGINE says
+    it registers. The primed ontologies' structural relations are registered by nobody, so they are
+    not owed an edge. Returns 0 (healthy), 1 (zero, or a declared verb missing) or 3 (could not
+    look: UNCHECKED, never a pass).
+    """
+    if live is None:
+        print("\nVERB HEALTH: UNCHECKED - the live verb registry could not be read.")
+        return 3
+    edges, verbs, providers = (int(live.get(k) or 0) for k in ("verb_edges", "verbs", "providers"))
+    print(f"\nVERB HEALTH: {edges} verb edge(s), {verbs} distinct verb(s), {providers} provider(s).")
+    rc = 0
+    if not (edges and verbs and providers):
+        print("       FAILED: a zero count. Engines hold no verbs, so every question falls back to "
+              "the cold-start ontology. Re-run the engine-reregister step; do not ship on this.")
+        rc = 1
+    live_iris = set(live.get("iris") or [])
+    owed = {v: src for v, src in declared.items()
+            if v.startswith("mesh:") and src.startswith(("catalogue:", "registration:"))}
+    missing = sorted(v for v in owed if v not in live_iris)
+    if missing:
+        print(f"       FAILED: {len(missing)} declared verb(s) carried by no live edge:")
+        for v in missing:
+            print(f"           {v}   <- {owed[v]}")
+        rc = 1
+    elif rc == 0:
+        print(f"       every one of the {len(owed)} declared verb(s) is registered.")
+    return rc
+
+
 def report_verb_delta(namespace: str, repo: Path) -> int:
     """Name what the verb set gained or lost since the last run, and attribute each addition.
 
@@ -816,6 +890,8 @@ def main() -> int:
     # and folding this after an early `return 1` would make the report available only when
     # nothing was wrong.
     verb_rc = report_verb_delta(args.namespace, Path(__file__).resolve().parents[1])
+    health_rc = verb_health(_live_verb_registry(args.namespace),
+                            _declared_verbs(Path(__file__).resolve().parents[1]))
 
     # THE ROSTER DELTA RUNS HERE FOR THE SAME REASON, and it is the one that catches a
     # fleet that got SMALLER. `OK: all N` is true of the N that remain, so a
@@ -839,6 +915,9 @@ def main() -> int:
         print(f"\nFAILED: {len(bad)} service(s) not at {args.expect} ({_short(expected)}): "
               f"{', '.join(sorted(bad))}")
         return 1
+    if health_rc == 1:
+        print("\nFAILED: verb health (above) - the fleet's verb registry is empty or short.")
+        return 1
     if expected:
         print(f"\nOK: all {len(rows)} service(s) at {args.expect} ({_short(expected)}).")
     if roster_rc == 3:
@@ -850,6 +929,10 @@ def main() -> int:
     if verb_rc == 3:
         print("\nNOTE: exit 3 — sha checked and PASSED; a verb addition could not be "
               "attributed to any declaration this census reads.")
+        return 3
+    if health_rc == 3:
+        print("\nNOTE: exit 3 — sha checked and PASSED; verb health UNCHECKED (the live verb "
+              "registry could not be read). Not a claim that the engines hold their verbs.")
         return 3
 
     # THREE OUTCOMES, BECAUSE THERE ARE THREE. invincible-agent-91's resolution, and the

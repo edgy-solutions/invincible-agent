@@ -47,7 +47,7 @@ _COLS = ("id", "sha256", "kind", "object_prefix", "submitted_by", "on_behalf_of"
          "status", "extracted_count", "extracted_total", "duplicate_of", "detail", "created_at",
          "updated_at", "origin_suggestion", "content_kind", "case_id", "extraction_ref", "failure",
          "run_id", "attempt", "notice_id", "leaf_source", "leaf_candidates", "leaf_set_by",
-         "leaf_set_at", "review_generation", "hold_reason")
+         "leaf_set_at", "review_generation", "hold_reason", "force_text_fallback")
 
 _NOW_MS = 10_000_000_000
 
@@ -69,6 +69,7 @@ class _Pg:
         id_ = "sha256:" + hexchar * 64
         row = dict.fromkeys(_COLS)
         row["review_generation"] = 0
+        row["force_text_fallback"] = False  # NOT NULL DEFAULT FALSE in the real table
         row.update(id=id_, sha256=id_, kind=kind,
                    object_prefix=f"ingress-user/{kind}/{hexchar * 64}/",
                    submitted_by="alice", on_behalf_of="alice", status=status,
