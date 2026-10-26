@@ -95,7 +95,7 @@ def _drop_sidecar(monkeypatch):
 
 
 def _row(status, **extra):
-    return {"id": _ID, "status": status, "kind": "pdf", "submitted_by": "alice@example.com",
+    return {"id": _ID, "status": status, "kind": "pdf", "sha256": "a" * 64, "submitted_by": "alice@example.com",
             "on_behalf_of": "alice@example.com", "content_kind": "pcn", "failure": None,
             "attempt": 1, "created_at": 1, "updated_at": 2, **extra}
 

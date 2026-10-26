@@ -194,7 +194,14 @@ def test_the_alias_returns_ONLY_artifact_ids():
     # visible to the caller, not only to the log. cortex reads `artifact_ids`
     # and ignores the rest, so this costs the receiver nothing. Anything BEYOND
     # those three would be a new field a future client could start depending on.
-    assert set(("artifact_ids", "seeded", "total")) >= {
+    #
+    # `template_id` IS THE ONE ADDITION, AND ITS READER CAME FIRST. The gateway's own comment
+    # at this return named the order -- cortex reads the field, then the producer states it --
+    # and cortex-ui's canvasSeedFromArtifact (src/lib/canvasSeedFromAnswer.ts) now prefers
+    # `template_id` on a CANVAS_SEED component. A chat-seeded board reaches cortex only through
+    # this body, so without it a program_finance board is laid out as a generic one. This is
+    # still the ceiling: anything beyond these four is a new field with no reader.
+    assert set(("artifact_ids", "seeded", "total", "template_id")) >= {
         k.strip().strip('"') for k in __import__("re").findall(r'"(\w+)":', ret)
     }, f"the alias returns an unexpected field: {ret[:160]}"
 

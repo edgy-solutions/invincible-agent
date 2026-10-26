@@ -642,6 +642,8 @@ def test_a_correction_after_parts_extraction_sends_the_row_back_to_received_and_
     assert [(e["ingest_id"], e["attempt"], e["content_kind"]) for e in lst] == [(ID, 2, "pdn")]
 
 
+@pytest.mark.ingest_v1_unconformant(
+    reason="stores a hand-built partial failure ({\"reason_code\": \"x\"}); every production writer stores all six failure keys")
 def test_a_correction_at_failed_is_in_place_and_the_stage_stays_failed(db):
     db.add(status="failed", content_kind="pcn", leaf_source="title", detail="boom",
            failure={"reason_code": "x"})

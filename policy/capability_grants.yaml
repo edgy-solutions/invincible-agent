@@ -176,7 +176,9 @@ capabilities:
     reason: >-
       Docs page gate prerequisite. Owner cell PORTFOLIO_LEAD in PORTFOLIO_PLANNING (gateway's
       seed verb registration), granted by portfolio-leads; alice, erin and chris are its members (erin and chris by
-      the group path, rows derived from membership, not chosen).
+      the group path, rows derived from membership, not chosen). It has a second owner cell,
+      PROGRAM_FINANCE_ANALYST in PROGRAM_FINANCE (the gateway's program-finance registration,
+      granted by finance-analysts); the grant list below is unchanged.
     grant_to:
       - alice@example.com
       - chris@example.com

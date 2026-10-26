@@ -85,6 +85,8 @@ def _reject(w, comment):
     return w.client.post("/human_tasks/t-1/act", json={"decision": "rejected", "comment": comment})
 
 
+@pytest.mark.ingest_v1_unconformant(
+    reason="the world fake of promotion.decide returns only {ingest_id, record_id}; production also returns decision and replayed")
 @pytest.mark.parametrize("code", FOUR)
 def test_each_of_the_four_is_accepted_bare(world, code):
     r = _reject(world, code)
@@ -93,6 +95,8 @@ def test_each_of_the_four_is_accepted_bare(world, code):
     assert len(world.acts) == 1 and world.resolved != []
 
 
+@pytest.mark.ingest_v1_unconformant(
+    reason="the world fake of promotion.decide returns only {ingest_id, record_id}; production also returns decision and replayed")
 @pytest.mark.parametrize("comment", ["unreadable", "unreadable: the scan is blank"])
 def test_unreadable_with_or_without_a_note_is_accepted_and_stored_verbatim(world, comment):
     r = _reject(world, comment)

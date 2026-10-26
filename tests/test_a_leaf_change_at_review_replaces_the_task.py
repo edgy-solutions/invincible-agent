@@ -36,6 +36,9 @@ def _filer(db, monkeypatch, error=None):
         return gateway._promotion_task_id(ingest_id, kw.get("generation") or 0), "FILED"
 
     monkeypatch.setattr(gateway, "_file_or_find_document_promotion_task", file_task)
+    # 208: at review the row reads the empty-confirm task (none here) and the newest defect (none)
+    monkeypatch.setattr(ht, "get_open_task_payload", lambda task_id: None)
+    monkeypatch.setattr(ht, "latest_task_for_subject", lambda subject_ref, kind: None)
 
 
 def _review(db, **kw):
