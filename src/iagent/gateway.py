@@ -2791,9 +2791,10 @@ async def _export_package_from_template(
     Only `program_finance` is wired to an engine today (engine-fin). A second packageable
     template would need its own dispatch here — this function does not invent one.
     """
+    from .authz.refusal import policy_refusal
     from .canvas_template import (
         UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, load_template,
-        panel_dispatch, ratified_template_ids, recipient_scope_for, template_ref,
+        panel_dispatch, ratified_template_ids, recipient_scope_for, slot_refusal, template_ref,
         validate_bindings,
     )
 
@@ -2823,8 +2824,9 @@ async def _export_package_from_template(
     except UnknownBinding as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except UnboundRequiredSlot as exc:
-        raise HTTPException(status_code=409, detail={
-            "error": "unbound_required_slot", "message": str(exc)})
+        # A POLICY REFUSAL: it asks the caller to choose (`canvas_template.slot_refusal`).
+        raise policy_refusal("unbound_required_slot", status_code=409, message=str(exc),
+                             **slot_refusal(template, exc.slots))
 
     # `validate_bindings` already guarantees every slot this template's panels CONSUME is
     # bound, so `recipient_scope_for` cannot raise here in practice — this still catches it
@@ -3889,8 +3891,10 @@ async def canvas_seed(
     # `canvas_template.validate_bindings` so packageExport's own gates (below, `/export/package`)
     # read the SAME checks rather than a second copy that could drift from this one. Messages
     # and status codes are unchanged; only where they are computed moved.
+    from .authz.refusal import policy_refusal
     from .canvas_template import (
-        UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, validate_bindings,
+        UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, slot_refusal,
+        validate_bindings,
     )
 
     try:
@@ -3900,7 +3904,7 @@ async def canvas_seed(
     except UnknownBinding as _terr:
         raise HTTPException(status_code=422, detail=str(_terr))
     except UnboundRequiredSlot as _terr:
-        _detail: dict = {"error": "unbound_required_slot", "message": str(_terr)}
+        _detail: dict = {"message": str(_terr)}
         # THE 409 CARRIES THE ASK. Built by the disposition the chat path uses, so a picker
         # gets "which program?" with candidates (or the policy to set) instead of only a
         # refusal. It is best-effort by construction: a failure here must never turn the
@@ -3916,7 +3920,12 @@ async def canvas_seed(
         except Exception as _aerr:  # noqa: BLE001
             logger.warning("canvas_seed: ask builder failed (%r); 409 keeps its plain body", _aerr)
             _detail["ask"] = {"error": "ask_unavailable", "detail": type(_aerr).__name__}
-        raise HTTPException(status_code=409, detail=_detail)
+        # A POLICY REFUSAL (it asks the caller to choose): the envelope says what the ask says
+        # -- its options as candidates, its repair as the binding (`slot_refusal`).
+        raise policy_refusal(
+            "unbound_required_slot", status_code=409, message=_detail.pop("message"),
+            extra=_detail, **slot_refusal(_template, _terr.slots, _detail.get("ask")),
+        )
 
     if _template.template_id == "portfolio":
         inner = SeedPortfolioCanvasRequest(
@@ -10026,16 +10035,18 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
         # template: a caller asking for panel 0 must not be refused over panel 5's slot.
         _sp_unbound = sorted(set(_sp_panel.consumes) - set(_sp_bindings))
         if _sp_unbound:
-            raise HTTPException(
+            from .authz.refusal import policy_refusal
+            from .canvas_template import slot_refusal
+            # A POLICY REFUSAL (it asks the caller to choose) -- `canvas_template.slot_refusal`.
+            raise policy_refusal(
+                "unbound_required_slot",
                 status_code=409,
-                detail={
-                    "error": "unbound_required_slot",
-                    "message": (
-                        f"template {_sp_template_id!r} panel {_sp_panel_idx} consumes shared "
-                        f"slot(s) {_sp_unbound} that nothing binds yet. Supply it in seed_panel's "
-                        f"`bindings`."
-                    ),
-                },
+                message=(
+                    f"template {_sp_template_id!r} panel {_sp_panel_idx} consumes shared "
+                    f"slot(s) {_sp_unbound} that nothing binds yet. Supply it in seed_panel's "
+                    f"`bindings`."
+                ),
+                **slot_refusal(_sp_template, _sp_unbound),
             )
 
     return StreamingResponse(

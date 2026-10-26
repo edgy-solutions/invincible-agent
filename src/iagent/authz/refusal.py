@@ -9,6 +9,12 @@ policy rail (`policy/*.yaml`), a deployment config entry, or a table still held 
 no binding can lift (no identity at all; a route pinned to one service; separation of duties) is
 not one, and stays as it is.
 
+Its STATUS is 401, 403, or a 409 that asks the caller to CHOOSE or REQUEST something (architect,
+2026-10-25, from finance's canvas 409: the `program` binding unbound). A 409 on the target's own
+state (already resolved, terminal, immutable) asks neither and is not one. A 409 refusal with no
+candidates and no grantor is non-compliant; this helper always fills the grantor, so a 409 built
+here is compliant with `candidates` empty, and candidates are additive.
+
 Every policy refusal carries a `refusal` object in the SDK's envelope shape
 (`iagent_mesh.refusal.Refusal`, SDK 0.9.11, commit 26b1238; this repo pins 0.9.10, so the body is
 built as a dict with exactly the model's fields and validates against it unchanged on the bump):
@@ -18,8 +24,9 @@ built as a dict with exactly the model's fields and validates against it unchang
     missing_binding  the relation the caller lacks, e.g. "can_invoke(mesh:startReview)"
     grantable_by     "<who>; <how>", READ from this deployment's grantor map, never typed at the
                      call site -- who approves a grant is the deployment's fact, not the platform's
-    candidates       () for now -- an alternative is itself existence-bearing, so none is offered
-                     until a ruling says which ones a caller may be told
+    candidates       what the caller may choose instead; () by default -- an alternative is
+                     itself existence-bearing, so a site offers one only where it already tells
+                     the caller that set (Q23 open: which alternatives a caller may be told)
 
 THE EXISTENCE RULE. The fields are a function of the caller, the route and what the caller
 sent -- never of whether the target exists or what it holds. An OBJECT-SCOPED family (one whose
@@ -33,7 +40,8 @@ overlay directories in `GRANTOR_OVERLAY_DIRS` (pathsep-separated, the same form 
 `CONTENT_KIND_OVERLAY_DIRS`). An overlay row REPLACES the seed row for its family.
 
 A REFUSAL NEVER BECOMES A 500. A family the composed map does not carry (an overlay tombstoned
-it) still refuses with 403, and `grantable_by` says the map is missing the row; it is logged.
+it) still refuses with the site's status, and `grantable_by` says the map is missing the row;
+it is logged.
 A call site naming an object-scoped family WITH a key is a programming error and raises -- the
 seal walks every call site, so that cannot ship.
 """
@@ -110,7 +118,8 @@ def _grantable_by(g: Grantor) -> str:
     return f"{g.who}; {g.how}"
 
 
-def refusal(policy_id: str, missing_binding: str) -> dict[str, Any]:
+def refusal(policy_id: str, missing_binding: str,
+            candidates: "tuple | list" = ()) -> dict[str, Any]:
     """The `refusal` object for one denial. Raises ValueError only on a malformed CALL SITE."""
     family, _, key = policy_id.partition(":")
     if not family or not missing_binding.strip():
@@ -128,14 +137,18 @@ def refusal(policy_id: str, missing_binding: str) -> dict[str, Any]:
                              f"key -- a refusal must not differ by the target's existence")
         grantable_by = _grantable_by(g)
     return {"policy_id": policy_id, "missing_binding": missing_binding,
-            "grantable_by": grantable_by, "candidates": []}
+            "grantable_by": grantable_by, "candidates": list(candidates)}
 
 
 def policy_refusal(error: str, *, policy_id: str, missing_binding: str, status_code: int = 403,
-                   message: Optional[str] = None) -> HTTPException:
+                   message: Optional[str] = None, candidates: "tuple | list" = (),
+                   extra: Optional[dict[str, Any]] = None) -> HTTPException:
     """`raise policy_refusal("not_entitled_to_x", policy_id=..., missing_binding=...)` at a BFF
-    site."""
-    detail: dict[str, Any] = {"error": error, "refusal": refusal(policy_id, missing_binding)}
+    site. `extra` carries what the body already says beside the refusal (finance's `ask`); it
+    never replaces `error`, `refusal` or `message`."""
+    kept = {k: v for k, v in (extra or {}).items() if k not in ("error", "refusal", "message")}
+    detail: dict[str, Any] = {"error": error, **kept,
+                              "refusal": refusal(policy_id, missing_binding, candidates)}
     if message:
         detail["message"] = message
     return HTTPException(status_code=status_code, detail=detail)
