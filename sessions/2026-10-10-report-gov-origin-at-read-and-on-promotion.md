@@ -711,6 +711,48 @@ The directive (10-24, overnight, from the architect via Chris): "Draft the rule 
   - #82 merged into `lane/01-202` (`f5b35500`); #77 (`1f638cdc`) and #78 (`0fab69a3`) merged into master on 10-24. All three are in master.
   - #39, #45, #47 and #54 are closed. Whether their content landed by another route is not re-checked.
 
+## 2026-10-25 (later): the 409 that asks is a refusal; finance's canvas 409 is the first instance (#107)
+
+The directive (2026-10-25, from the architect via Chris):
+
+> The finance failure is fin's canvas 409 (program binding unbound), not get_artifact. Rule change from it: a refusal is any 401, 403, or 409 that asks the caller to choose or request something — a 409 with an empty candidate list and no grantor is a non-compliant refusal. [...] "platform maintainers" is an acceptable grantor text now; moving them to the policy rail is yes, as a queue item after #96. Use ca's Refusal field names as you did; switch to the import when v0.9.11 tags.
+
+- **#96 (`78315212`) and fin's #97 merged while this was in flight.** The first conversion was built on the stale base, and it named a blanket `program_members`. It was discarded and rebuilt from master in a new worktree, `lane/gov-a-409-that-asks-is-a-refusal`, as #107.
+- **Measured:** no layer filters `fin#Program` members by caller.
+  - engine-o's `_filter_sustainment_candidates` passes every non-sustainment IRI untouched.
+  - engine-fin's `EnumerateRequest` is `class_uri` and `limit`, with no caller.
+
+  So the family that bounds the choice is the owning cell's, `groups`. `program_members` is named only for fin's `grant_member` repair, which points at a grant nothing checks. Fin has the finding.
+- **The three sites** now build the envelope at 409: export, `/canvas/seed` and `seed_panel`. At `/canvas/seed`, `canvas_template.slot_refusal` maps fin's `ask` (unchanged in the body) onto the envelope:
+
+  | the ask | the envelope |
+  | --- | --- |
+  | options | candidates |
+  | `switch_cell` | `active_cell`, with the cell as the candidate |
+  | `join_group` | `groups` / `member_of` |
+  | `declare_group` | `groups` / `a_group_granting` |
+  | `grant_member` | `program_members` / `can_view_program` |
+  | none | `groups` / `bind(program)` |
+
+  `policy_refusal` gained `extra=` to carry the ask.
+- **The detector** now reads 401, 403 and 409, as `status_code=`, `status=` or the first positional argument.
+  - **Correction to #96:** `PromotionRefused(..., status=403)` was missed by both the detector and the hand census, so "reconciles exactly" was wrong.
+  - **The census on `78315212`:** 117 keys. With finance's three compliant: 114 keys over 116 sites, partitioned 73 NOT_POLICY and 41 PENDING. `SITES` counts the two keys raised from two branches each.
+  - **New reasons:** `CONFLICT`, `NAMED` and `NOT_BUILT`.
+- **Measured at `e3cd997e`**, gated, one file at a time:
+  - the ratchet: 23 passed;
+  - `test_finance_canvas_asks_which_program`: 25 passed;
+  - the four planning consumers: 4, 12, 11 and 6 passed;
+  - `test_fin_package_export`: 1 failed, which is **pre-existing on master** (`test_gate_5`; the body's `message` was added by lane/01's `d0f80092` on 10-21), and 37 passed.
+  - 13 mutants, each a named red, each restored by hash after committing first.
+- **Process defects, reported:**
+  - #96's mutant run overlapped lane/saf's suite: the gate read BUSY and was not honoured.
+  - This session's first mutant pass skipped every mutant, because Python's `bash` resolved to a different shell from Git's. It was caught from the output and rerun.
+- **Not run:** the full suite (Lane 1's), and cortex-ui.
+- **Packets placed in master's `sessions/`:**
+  - `2026-10-25-packet-to-fin-your-canvas-409-carries-the-refusal-beside-its-ask-pr-107.md`;
+  - `2026-10-25-packet-to-architect-gov-the-409-rule-is-built-finance-canvas-409-first-pr-107.md`.
+
 ## Questions for a ruling
 
 1. **ANSWERED: built at `38cebe0f`.** A program-less steward origin skips the program conjunct.
@@ -773,7 +815,7 @@ The directive (10-24, overnight, from the architect via Chris): "Draft the rule 
     - It is not a §5.1 instance under Q6. Refuse it the way #77 does at `/action`?
 21. **OPEN (2026-10-25). Relays through Restate.** `TerminalError` carries only a string. For the 10 relay sites, does the `refusal` ride as JSON in the message, or does the SDK grow a field? That is ca's lane.
 22. **OPEN (2026-10-25). May a refusal echo a key the caller itself sent?** As drafted: yes for a family that is not object-scoped, never for an object-scoped one. Finance's recipient scope asks the same question.
-23. **OPEN (2026-10-25). `candidates` stays empty.** An alternative is itself existence-bearing. Which alternatives, if any, may a caller be told?
-24. **OPEN (2026-10-25). Code-held bindings.** `RECIPIENT_READERS` lives in code in finance and cost, with no `granted_by`, so its honest family is `code`. Is the finance instance's real fix moving it onto the rail?
+23. **OPEN (2026-10-25); finance offers only what its ask already shows (#107). `candidates` stays empty elsewhere.** An alternative is itself existence-bearing. Which alternatives, if any, may a caller be told?
+24. **ANSWERED (2026-10-25): "platform maintainers" is acceptable now; moving `RECIPIENT_READERS` to the rail is a queue item after #96.** Code-held bindings. `RECIPIENT_READERS` lives in code in finance and cost, with no `granted_by`, so its honest family is `code`. Is the finance instance's real fix moving it onto the rail?
 25. **OPEN (2026-10-25). The sandbox grantor overlay.** Should it name the sandbox's actual approver, or keep the seed's deployment-neutral wording?
 26. **OPEN (2026-10-25). Joining.** The ratchet reds on any new unclassified 401/403 site. Any join must classify such a site in the same merge; gov does it on request.
