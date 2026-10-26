@@ -198,8 +198,12 @@ def test_gate_4_binding_gates_fire_before_any_post(posts):
 def test_gate_5_a_disagreeing_scope_is_409_naming_the_derived_one(posts):
     status, detail = _export({**GOOD, "recipient_scope": "program_office.NP-OTHER"})
     assert status == 409 and posts == []
-    assert detail == {"reason": "recipient_scope_disagrees_with_canvas_audience",
-                      "derived": SCOPE}
+    # `message` joined this body in d0f80092 ("every 409 carries a message", sealed fleet-wide
+    # by tests/test_every_409_carries_a_message.py). Its wording is that seal's business; this
+    # arm keeps the exact equality on every OTHER key, so a fourth field still reds it.
+    assert {k: v for k, v in detail.items() if k != "message"} == {
+        "reason": "recipient_scope_disagrees_with_canvas_audience", "derived": SCOPE}
+    assert isinstance(detail.get("message"), str) and detail["message"].strip()
 
 
 def test_gate_6_a_non_reader_is_403_before_any_post(posts):
