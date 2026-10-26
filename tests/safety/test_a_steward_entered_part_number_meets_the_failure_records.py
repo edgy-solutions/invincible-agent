@@ -16,10 +16,18 @@ enforcing it at promotion is Lane 1's. Three cases:
   (iii) that same value arriving as an explicit `added` edit: accepted (pinned green; it is the
         ruling's way in, and must survive Lane 1's build).
 
-THE NORMALISATION IS READ, NEVER RESTATED: loaded by file path from the sibling doc-tools checkout
-(`doc_tools/utils/text_layer_health.py::_mpn_key`, the only part-number normaliser in doc-tools; it
-is stdlib-only). `doc_tools` is not importable in this venv, hence the path. The tests skip when the
-sibling is absent. WHICH normaliser the ruling means is Q1 in the packet to Lane 1.
+THE NORMALISATION IS READ, NEVER RESTATED (architect, amended 2026-10-25): the rule is doc-tools'
+`notice_identity.normalize_component` (`doc_tools/utils/notice_identity.py:138`), which KEEPS dashes:
+it casefolds, drops `.` `,` `'`, collapses whitespace and strips. `_mpn_key` (text_layer_health.py:189)
+is a health heuristic, not an identity, and is NOT the rule. It is loaded here by file path (stdlib
+only); `doc_tools` is not importable in this venv and is not to be made so. The SDK will publish the
+rule as `normalize_mpn` (ca, v0.9.12); until then Lane 1 vendors the function with a drift test.
+The tests skip when the sibling checkout is absent.
+
+EACH TYPED VARIANT IS PLACED BY CALLING THE FUNCTION, not by assumption: a candidate whose
+normalised form equals the recorded part's is case (i); one that does not is case (ii), a correction
+that matches no recorded part, which is refused and may only come in as an explicit `added` edit.
+Under a dash-keeping rule `PN 8801`, `-PN-8801`, `PN8801` and `PN  -8801` are case (ii).
 
 THE SEAM is Lane 1's: the carriers drive the gate Lane 1 owns (`validate_row_edits` +
 `edit_log`) and assert only the OUTCOME. They are strict xfail (red by assertion under
@@ -40,22 +48,30 @@ from agent_fleet.safety_agent.entities import FAILURE_RECORDS
 from . import _program_filter as pf
 
 _NORMALISER = (Path(__file__).resolve().parents[3] / "doc-tools" / "doc_tools" / "utils"
-               / "text_layer_health.py")
+               / "notice_identity.py")
 if not _NORMALISER.is_file():
     pytest.skip("sibling doc-tools checkout absent: the normalisation is read from it",
                 allow_module_level=True)
-_spec = importlib.util.spec_from_file_location("_doc_tools_text_layer_health", _NORMALISER)
+_spec = importlib.util.spec_from_file_location("_doc_tools_notice_identity", _NORMALISER)
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
-key = _mod._mpn_key
+key = _mod.normalize_component
 
 RECORDED = "PN-8801"
 RECORDED_KEYS = {key(r.part_number): r.part_number for r in FAILURE_RECORDS}
-#: spellings of the recorded part the connector's normalisation folds onto it
-MATCHING_VARIANTS = ["pn-8801", "Pn-8801", "PN 8801", "-PN-8801", "PN-8801,"]
+#: spellings a steward might type for the recorded part
+CANDIDATES = ["pn-8801", "Pn-8801", "PN 8801", "-PN-8801", "PN-8801,", "PN-8801.", "  pn-8801  ",
+              "PN8801", "PN  -8801"]
+#: placed by CALLING the normaliser: those it folds onto the recorded part (i), and those it does not (ii)
+MATCHING_VARIANTS = [v for v in CANDIDATES if key(v) == key(RECORDED)]
+NON_MATCHING_VARIANTS = [v for v in CANDIDATES if key(v) != key(RECORDED)]
 #: well-formed, matches no recorded part
 UNRECORDED = "ZZ-9999"
 BATCH = ["A-1", "B-2"]
+
+
+def _text(value):
+    return sc._text(value)
 
 
 def _correct(value):
@@ -80,7 +96,10 @@ def _ask(monkeypatch, pn):
 # ── controls: shared gate and population, each differing in the one thing the arm decides on ──
 
 def test_CONTROL_the_normaliser_folds_the_variants_and_not_the_unrecorded_value():
+    assert MATCHING_VARIANTS and NON_MATCHING_VARIANTS, "a bucket is empty: the arms would be vacuous"
+    assert set(MATCHING_VARIANTS) | set(NON_MATCHING_VARIANTS) == set(CANDIDATES)
     assert {key(v) for v in MATCHING_VARIANTS} == {key(RECORDED)}
+    assert all(key(v) not in RECORDED_KEYS for v in NON_MATCHING_VARIANTS)
     assert key(UNRECORDED) not in RECORDED_KEYS
 
 
@@ -99,8 +118,9 @@ def test_CONTROL_engine_s_looks_a_part_up_by_exact_spelling(monkeypatch, value):
 
 # ── (iii) the explicit way in: pinned green ────────────────────────────────────────────────
 
-def test_iii_an_unrecorded_value_as_an_explicit_added_edit_is_accepted():
-    assert _gate(_add(UNRECORDED)) == UNRECORDED
+@pytest.mark.parametrize("value", [UNRECORDED] + NON_MATCHING_VARIANTS)
+def test_iii_an_unrecorded_value_as_an_explicit_added_edit_is_accepted(value):
+    assert _gate(_add(value)) == _text(value)
 
 
 # ── (i) and (ii): the ruling, red until Lane 1 builds ──────────────────────────────────────
@@ -117,6 +137,7 @@ def test_i_a_variant_that_matches_after_normalisation_is_written_as_the_recorded
 
 @pytest.mark.xfail(strict=True, reason="a1 (ii): a correction that matches no recorded part is "
                    "accepted today; the ruling refuses it")
-def test_ii_an_unrecorded_value_as_a_correction_is_refused():
+@pytest.mark.parametrize("value", [UNRECORDED] + NON_MATCHING_VARIANTS)
+def test_ii_an_unrecorded_value_as_a_correction_is_refused(value):
     with pytest.raises(sc.EditRefusal):
-        sc.validate_row_edits(_correct(UNRECORDED), extracted_mpns=BATCH)
+        sc.validate_row_edits(_correct(value), extracted_mpns=BATCH)
