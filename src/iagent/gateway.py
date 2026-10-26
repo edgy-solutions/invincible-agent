@@ -4029,18 +4029,16 @@ async def canvas_seed(
         )
         return {"artifact_ids": [], "seeded": seeded, "total": total}
 
-    # NEITHER OPTIONAL FIELD IS SENT, AND THAT IS THE CORRECT STATE TODAY.
+    # `template_id` IS SENT NOW BECAUSE ITS READER EXISTS; `name` STAYS UNSENT.
     #
-    # `canvas_type` was dispatched for emission on the premise that the receiver reads
-    # it. IT DOES NOT — checked, 2026-08-29: cortex's CanvasSeed.contract.ts declares
-    # it `required: false`, and canvasSeedFromArtifact's return type is literally
-    # `{ ids: string[]; name?: string }`. No reader exists anywhere in that repo.
-    # Sending it would be a PRODUCER-side write with no consumer — the exact mirror of
-    # the orphan species the dispatch set out to remove — and it would cost breaking
-    # the seal directly above, whose stated purpose is keeping fields a future client
-    # might start depending on OFF this response. The honest order is: cortex reads it
-    # first (it matters only when a second canvas_type exists), then the producer
-    # states it. The arm's passthrough already carries it the day that happens.
+    # This comment used to say neither optional field was sent, on a measured premise
+    # (2026-08-29): cortex declared `canvas_type` `required: false` and no reader existed
+    # anywhere in that repo, so sending it would have been a PRODUCER-side write with no
+    # consumer. It named the order: cortex reads it first, then the producer states it.
+    # That condition is met: cortex-ui's canvasSeedFromArtifact
+    # (src/lib/canvasSeedFromAnswer.ts) now prefers `template_id` and treats `canvas_type` as
+    # legacy. So the full-success path names its template, and the partial and empty returns
+    # above are unchanged. `canvas_type` itself is still not sent: `template_id` supersedes it.
     #
     # `name` has a real reader, and still must not be sent: the phrase path has no
     # spoken name, so any value here would be invented. The receiver already defaults
@@ -4050,6 +4048,7 @@ async def canvas_seed(
         "artifact_ids": [a for a in (result.get("artifact_ids") or []) if a],
         "seeded": seeded,
         "total": total,
+        "template_id": _template.template_id,
     }
 
 
