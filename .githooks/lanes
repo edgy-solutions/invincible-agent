@@ -1,0 +1,26 @@
+# The registered lanes: a lane id, then the branch globs that lane commits on.
+#
+# A commit's trailer is `Lane: <lane id>/<branch>`. From the commit that added this file onward,
+# the id must be a row here and the branch must match one of that row's globs (ruled 2026-10-26,
+# architect via Chris: "a trailer names a lane id, never a worktree path, and the test checks the
+# lane id against the registered lanes, not against worktrees that exist").
+#
+# WHY A FILE AND NOT `git worktree list`. A trailer is a past-tense claim and `git worktree list`
+# is a present-tense registry: a throwaway worktree that made a correct commit is gone a day
+# later, and the commit reads as an invented lane. This file is versioned with the history it
+# judges, so a row is never removed -- history cites it. Close a lane with a comment on its row,
+# never by deleting the row (test_every_commit_names_its_lane.py asserts append-only).
+#
+# A throwaway worktree commits with its LANE's id: work done in `wkc` on `lane/01-register-422`
+# is `Lane: ia-01/lane/01-register-422`. `.githooks/pre-push --expected` prints it.
+#
+# Not here, deliberately: the lanes closed 2026-09-21 (ia-32, ia-91, ia-eo) never committed under
+# this file, and the shared tree (`invincible-agent/master`) is no lane -- an unassigned session
+# on shared master does no work. A lane that opens gets a row in the same commit as its first work.
+
+ia-01   lane/01 lane/01-*
+ia-5f   lane/5f lane/5f-*
+ia-74   lane/74 lane/74-*
+ia-saf  lane/saf lane/saf-*
+ia-gov  lane/gov lane/gov-*
+ia-fin  lane/fin lane/fin-* fin/*
