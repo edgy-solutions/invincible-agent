@@ -19,7 +19,7 @@ templates, the task kinds and the stubbed walk verb are all here. The seed is un
 
 The S1000D vocabulary 7f registers lands in this same overlay.
 
-`maintenance-action-record` (branch `document`, same `maintenance-bridge` domain) is NOT
+`maintenance-action-record` (branch `document`; the contract named it `maintenance-bridge`, an undeclared domain; `maintenance-fault-event` moved to `MAINTENANCE` on 2026-10-27) is NOT
 registered here: no file in this repo gives its `passes`/`outputs` values, and the SDK validator
 requires both non-empty for a `document` branch row. See the ingest/origin seam report
 (lane/01-seam) for the gap.

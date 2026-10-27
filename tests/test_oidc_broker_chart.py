@@ -540,7 +540,9 @@ def test_regioneast_is_mapped_the_way_borduria_was_and_liaison_holds_the_approva
     assert regioneast["default"] == borduria["default"] == {"persona": "MECHANIC", "domains": ["MAINTENANCE"]}
     liaison = by_id[_LIAISON_SUB]
     # the dry run needs liaison to hold maint_fault_approval:edge-01; the supervisor group stays
-    assert set(liaison["groups"]) == {"maint-approvers-edge-01", "maint-supervisors-edge-01"}
+    # 2026-10-27: and their edge-02 mirrors (architect directive item 1)
+    assert set(liaison["groups"]) == {"maint-approvers-edge-01", "maint-supervisors-edge-01",
+                                      "maint-approvers-edge-02", "maint-supervisors-edge-02"}
     assert "default" not in liaison  # still actor-only: no persona cell
 
 
@@ -772,7 +774,7 @@ def test_users_yaml_humans_and_the_realm_import_are_the_same_population(sandbox)
 def test_the_walkers_hold_alices_groups_and_default_and_nothing_else(who):
     by_id = {u["id"]: u for u in _users_yaml()}
     alice, walker = by_id["alice@example.com"], by_id[f"{who}@example.com"]
-    assert len(alice["groups"]) == 10, alice["groups"]                   # positive control: the set is non-trivial (10: + maint-tier-ack-edge-01, ruling 2026-10-11)
+    assert len(alice["groups"]) == 11, alice["groups"]                   # positive control: the set is non-trivial (11: + maint-tier-ack-edge-01, ruling 2026-10-11; + maint-tier-ack-edge-02, 2026-10-27)
     assert set(walker["groups"]) == set(alice["groups"]) and len(walker["groups"]) == len(alice["groups"])
     assert walker["default"] == alice["default"]
     # NO DIRECT GRANT. The only rows naming a walker are the capability rows whose grant_to is DERIVED from

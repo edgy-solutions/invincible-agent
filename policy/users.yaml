@@ -60,6 +60,7 @@ users:
                             # demo path reachable, it is not a claim about who should
                             # hold production cost data.
       - maint-tier-ack-edge-01   # 2026-10-11 ruling: actor-only (no cell); see groups.yaml
+      - maint-tier-ack-edge-02   # 2026-10-27: the edge-02 mirror, actor-only (no cell)
       - finance-analysts    # FIXTURE grant, 2026-08-31: alice is the
                             # Engine F demo actor, so the persona/domain picker offers
                             # her the PROGRAM_FINANCE_ANALYST cell and a finance question
@@ -123,6 +124,9 @@ users:
       # 2026-10-11 ruling: sandbox tier edge-01 task audiences. Actor-only (no cell).
       - maint-approvers-edge-01
       - maint-supervisors-edge-01
+      # 2026-10-27: the sandbox tier edge-02 mirror of the two groups above. Actor-only (no cell).
+      - maint-approvers-edge-02
+      - maint-supervisors-edge-02
       # 2026-10-14 ruling: document_promotion:MANUFACTURING. Actor-only (no cell).
       - manufacturing-stewards
     default:
@@ -149,6 +153,7 @@ users:
       - enterprise-architects
       - cost-analysts
       - maint-tier-ack-edge-01
+      - maint-tier-ack-edge-02
       - finance-analysts
       - portfolio-leads
       - data-engineers
@@ -167,6 +172,7 @@ users:
       - enterprise-architects
       - cost-analysts
       - maint-tier-ack-edge-01
+      - maint-tier-ack-edge-02
       - finance-analysts
       - portfolio-leads
       - data-engineers
@@ -196,6 +202,8 @@ users:
     groups:
       - maint-approvers-edge-01     # 2026-10-20: actor-only (no cell); see groups.yaml
       - maint-supervisors-edge-01   # 2026-10-17: actor-only (no cell); see groups.yaml
+      - maint-approvers-edge-02     # 2026-10-27: the edge-02 mirror, actor-only (no cell)
+      - maint-supervisors-edge-02   # 2026-10-27: the edge-02 mirror, actor-only (no cell)
 
   # operator.atlantia's fixed id in OpenDDIL's realm (2026-10-16, Chris's directive item 5). It
   # holds one cell, MECHANIC·MAINTENANCE, through openddil-maintainers -- the group path, because
@@ -209,6 +217,7 @@ users:
     groups:
       - openddil-maintainers
       - maint-approvers-edge-01   # 2026-10-17: actor-only (no cell); see groups.yaml
+      - maint-approvers-edge-02   # 2026-10-27: the edge-02 mirror, actor-only (no cell)
     default:
       persona: MECHANIC
       domains: [MAINTENANCE]
