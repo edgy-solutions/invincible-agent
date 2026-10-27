@@ -10,7 +10,7 @@ This replaces `2026-10-25-handoff-lane-gov-409-rule-pr-107-finance-canvas-first.
 | branch | tip | PR | status |
 | --- | --- | --- | --- |
 | `lane/gov` | this commit | none | handoff carrier |
-| `lane/gov-a-409-that-asks-is-a-refusal` | `e3cd997e` | #107 → master | **ruled "merges" by the architect (10-27)**; still OPEN when read 10-27, with no failing check; master was at `48fab03d` |
+| `lane/gov-a-409-that-asks-is-a-refusal` | `ffee7a34` (master `48fab03d` merged in; no force-push) | #107 → master | **ruled "merges" (10-27)**; at `ffee7a34`, every CI check passed, GitHub reads CLEAN, and it merges cleanly with master `4a4cf47c`. Not merged by gov. The merge declared `refusal` in #103's `CanvasSeedConflictDetail` (as `CanvasSeedRefusal`) and regenerated the OpenAPI file. Local runs at that sha: the ratchet 23 passed, fin's canvas tests 32, fin_package_export 38 (test_gate_5 is green on master now), and 5 planning files green. |
 | `lane/gov-policy-refusals-say-what-and-who` | `9b26613b` | #96 | merged (`78315212`) |
 
 The full record is `sessions/2026-10-10-report-gov-origin-at-read-and-on-promotion.md`, in the section "2026-10-25 (later)". It is unchanged by this handoff: the ruling below decides no open Q.
@@ -29,7 +29,7 @@ The full record is `sessions/2026-10-10-report-gov-origin-at-read-and-on-promoti
 
 ## Next
 
-1. **Confirm #107 merged** (`gh pr view 107`).
+1. **Confirm #107 merged** (`gh pr view 107`). A conflicting master move is merged in, never rebased (the branch is pushed).
    - If master moved first and the ratchet reds on a new 401/403/409 site, classify it in the same merge.
    - Then remove the `pr2/` worktree (`git worktree remove`).
 2. **When fin lands the filter:**
