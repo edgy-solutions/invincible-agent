@@ -100,6 +100,10 @@ def _persisted(w):
                        "corrections": w.corrections.emitted}, default=str)
 
 
+def _ledger_text(w):
+    return json.dumps(w.ledger.records, default=str)
+
+
 def _error(r):
     try:
         d = r.json().get("detail")
@@ -169,8 +173,8 @@ def test_the_first_approval_records_pending_with_the_authz_id_and_deletes_nothin
     _as("alice")
     _promote(on, _delete(CRITICAL))
     assert _deleted(on) == [], f"deleted on the first approval: {_deleted(on)}"
-    blob = _persisted(on)
-    assert "pending_second_approval" in blob and "alice" in blob
+    ledger = _ledger_text(on)
+    assert "pending_second_approval" in ledger and "alice" in ledger, "not on the task's ledger entry"
 
 
 @pytest.mark.xfail(strict=True, reason="a4: the same approver can approve a critical-part delete "
@@ -209,7 +213,9 @@ def test_a_pending_inside_seven_days_still_completes(on):
 
 @pytest.mark.xfail(strict=True, reason="a4: the delete has already happened on the first approval, "
                    "so an expired pending is not expired, it is complete")
-def test_a_pending_older_than_seven_days_cannot_be_completed(on):
+def test_an_action_after_seven_days_is_a_fresh_first_approval_not_a_completion(on):
+    """Ruled Q3: past 7 days the next action is recorded as a FRESH first approval. The ledger shows
+    the new actor with a pending entry, nothing is deleted, the expired one is not completed."""
     _as("alice")
     _promote(on, _delete(CRITICAL))
     assert _deleted(on) == []
@@ -217,6 +223,32 @@ def test_a_pending_older_than_seven_days_cannot_be_completed(on):
     _as("bob")
     _promote(on, _delete(CRITICAL))
     assert _deleted(on) == [], "an expired pending was completed by a second approver"
+    ledger = _ledger_text(on)
+    assert "bob" in ledger and "pending_second_approval" in ledger, "no fresh first approval recorded"
+
+
+def _pending_on_a_graph_node(w):
+    """True when the pending state rides any graph write or any node property."""
+    return (_mentions(w.graph.calls, "pending_second_approval")
+            or _mentions(w.graph.props, "pending_second_approval"))
+
+
+def test_q2_CONTROL_the_detector_fires_on_a_fixture_that_puts_pending_on_a_node(on):
+    on.graph.props[CRITICAL] = {"safety_critical": True,
+                                "pending_second_approval": {"authz_id": "alice"}}
+    assert _pending_on_a_graph_node(on)
+    on.graph.props.clear()
+    on.graph.calls.append([{"op": "deleted", "mpn": CRITICAL, "pending_second_approval": "alice"}])
+    assert _pending_on_a_graph_node(on)
+
+
+@pytest.mark.xfail(strict=True, reason="a4 Q2: no pending state is recorded on the task's ledger "
+                   "entry today (and so none can be proved absent from the graph)")
+def test_q2_pending_lives_on_the_ledger_entry_and_on_no_graph_node(on):
+    _as("alice")
+    _promote(on, _delete(CRITICAL))
+    assert "pending_second_approval" in _ledger_text(on), "not recorded on the ledger entry"
+    assert not _pending_on_a_graph_node(on), "pending state rode a graph node"
 
 
 # -- (b) a steward or a notice cannot set safety_critical (pins) ------------------------------
