@@ -11,6 +11,7 @@ This replaces `2026-10-27-handoff-lane-gov-107-ruled-merges-fin-packeted-program
 | --- | --- | --- | --- |
 | `lane/gov` | this commit | none | handoff carrier |
 | `lane/gov-options-name-program-members` | `371cdfbf` (on master `235a125b`, which has #113) | #116 → master | open; not merged by gov. Local: seal 24, fin canvas 32, #113's enumeration 8, OpenAPI-current 2. Three mutants were each killed by a named arm. |
+| `lane/gov-relay-refusal-prefix` | `85578a99` (on master `235a125b`) | #119 → master | ruling 1 built: `agent_fleet/utils/terminal_refusal.py` + `refusal.from_terminal`; seal 25, refusal seal 23, 7 mutants named-red; the proposal records all six rulings. CI not yet read. Merges cleanly with #116. |
 | `lane/gov-a-409-that-asks-is-a-refusal` | `ffee7a34` | #107 | merged (`0d228204`) |
 
 #116 answers the architect's 10-27 directive: "the 'which program?' options case names `program_members` once #113 lands; that is the grant that gates. Update the docstring in the same PR." The fin packet (filter the ask's program list) was answered by #113, which is merged and adds the `NP-MERIDIAN` rail row.
@@ -26,12 +27,7 @@ This replaces `2026-10-27-handoff-lane-gov-107-ruled-merges-fin-packeted-program
 
 ## Next (in order)
 
-1. **Ruling 1, a new branch off master.**
-   - The engine-side encoder goes in `agent_fleet/utils/` (restate_analyst already imports `agent_fleet.utils`).
-   - The decoder goes beside `relay_refusal` in `src/iagent/authz/refusal.py`.
-   - The seal: one dict → encode → decode gives the same dict, and a non-prefixed message passes through.
-   - The 10 RELAY rows in the seal stay PENDING until each site uses the pair. Moving them is per-site work.
-   - Record all six rulings in the proposal's "Open questions" section in the same PR.
+1. **Ruling 1: BUILT, #119.** Read its CI. The per-site work stays: each of the 10 RELAY rows moves off PENDING when its site sends `to_terminal` and the BFF reads `from_terminal`, then `relay_refusal`. Do these one site per change, each with its own seal arm.
 2. **Ruling 5.** A sandbox grantor overlay naming alice. It needs `GRANTOR_OVERLAY_DIRS` wired in the chart; nothing in `helm/` sets it today. Keep the IPs and hosts out of it.
 3. **Ruling 4, finance first.** Move `agent_fleet/finance_agent/export.py:66` `RECIPIENT_READERS` onto `program_members`; then cost (`agent_fleet/cost_agent/seed.py:198`). The code is fin's and cost's, so gov packets the owners with the rail shape unless told to build it.
 4. **Ruling 3: audit every non-empty `candidates` source.** Today: options (from #113, compliant) and `switch_cell`'s `[cell]`. That is a cell the caller holds, not an object; say so in the proposal.
