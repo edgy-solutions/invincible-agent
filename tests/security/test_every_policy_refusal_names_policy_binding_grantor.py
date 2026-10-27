@@ -9,9 +9,14 @@ paths." The rule is `src/iagent/authz/refusal.py`'s docstring and the proposal
 THIS FILE IS A RATCHET over a DERIVED population. `census()` walks every tracked `.py` under
 `src/` and `agent_fleet/` (tests excluded) and finds each refusal site by its FORM:
 
-  STATUS    any call carrying `status_code` 401 or 403 (keyword, or HTTPException/TerminalError's
-            first positional; `status.HTTP_40x_*` included) -- HTTPException, TerminalError,
-            StepFailAndRelease, JSONResponse alike, because the form is the status, not the class
+  STATUS    any call carrying 401, 403 or 409 as `status_code=`, as `status=` (a domain exception
+            such as `PromotionRefused(..., status=403)`, which its route forwards as
+            `status_code=exc.status` -- counted where the status is WRITTEN, not where it is
+            forwarded), or as ANY call's first positional (`HTTPException`, `TerminalError`, a
+            route-local `_refuse(409, ...)`); `status.HTTP_40x_*` included -- the form is the
+            status, not the class. A 409 is a refusal only when it asks the caller to CHOOSE or
+            REQUEST something (architect, 2026-10-25); a 409 on the target's own state is
+            NOT_POLICY with reason CONFLICT or NAMED
   INBAND    `_refusal("unentitled", ...)` (ADR-0049 Ruling 4's in-band shape) and any dict, not
             already a counted call's body, whose `status`/`outcome`/`error`/`reason` is a refusal word
   HELPER    a call to `policy_refusal(...)`, which is compliant by construction
@@ -47,8 +52,7 @@ ROOT = Path(__file__).resolve().parents[2]
 ROOTS = ("src", "agent_fleet")
 
 _WORD = re.compile(r"(?i)not_entitled|unentitled|not_authorized|forbidden")
-_STATUS_ATTR = {"HTTP_401_UNAUTHORIZED": 401, "HTTP_403_FORBIDDEN": 403}
-_POSITIONAL_STATUS = ("HTTPException", "TerminalError")
+_STATUS_ATTR = {"HTTP_401_UNAUTHORIZED": 401, "HTTP_403_FORBIDDEN": 403, "HTTP_409_CONFLICT": 409}
 HELPER = "policy_refusal"
 
 
@@ -62,7 +66,7 @@ def _fname(call: ast.Call) -> str:
 
 
 def _code(v) -> int | None:
-    if isinstance(v, ast.Constant) and v.value in (401, 403):
+    if isinstance(v, ast.Constant) and v.value in (401, 403, 409):
         return v.value
     if isinstance(v, ast.Attribute) and v.attr in _STATUS_ATTR:
         return _STATUS_ATTR[v.attr]
@@ -70,10 +74,14 @@ def _code(v) -> int | None:
 
 
 def _status(call: ast.Call) -> int | None:
+    # `status=` as well as `status_code=`: a domain exception (`PromotionRefused(..., status=403)`)
+    # carries the status its route forwards as `status_code=exc.status`, which no literal reads --
+    # so the refusal is counted where its status is WRITTEN. And the first positional of ANY call,
+    # not only HTTPException's: a route-local wrapper (`_refuse(409, {...}, why)`) is the same form.
     for kw in call.keywords:
-        if kw.arg == "status_code":
+        if kw.arg in ("status_code", "status"):
             return _code(kw.value)
-    if _fname(call) in _POSITIONAL_STATUS and call.args:
+    if call.args:
         return _code(call.args[0])
     return None
 
@@ -215,7 +223,11 @@ def census() -> tuple[Counter, Counter]:
 
 
 # --------------------------------------------------------------------------------------
-# The partition (measured on master 7a45a3cb, 2026-10-24: 69 sites, 69 keys, 0 compliant)
+# The partition. Measured on master 7a45a3cb, 2026-10-24: 69 sites, 69 keys, 0 compliant.
+# Re-measured on master 78315212, 2026-10-25, with 409 and the `status=` / any-positional
+# forms: 117 keys (38 from 409, 10 from the forms #96 missed -- promotion.py's 403s among them);
+# finance's three 409s then built compliant: 3 compliant, 114 keys (116 sites; `SITES`)
+# partitioned 73 NOT_POLICY, 41 PENDING.
 # --------------------------------------------------------------------------------------
 
 GW = "src/iagent/gateway.py"
@@ -231,6 +243,11 @@ SECTION_5_1 = "ADR-0047 §5.1: a delegate reads what it seeded; no grant widens 
 DUTIES = "separation of duties declared by the definition; no grant lifts it"
 STATE = "workflow protocol state, not a caller's binding"
 NO_AUDIENCE = "integrity: no journalled audience to check against; fails closed"
+#: A 409 is a refusal only when it asks the caller to CHOOSE or REQUEST something (architect,
+#: 2026-10-25). These two are the 409s that ask neither.
+CONFLICT = "a 409 on the target's state: it asks the caller to choose nothing and request nothing"
+NAMED = "a 409 whose body names its one resolution (the value or call to send); nothing to choose"
+NOT_BUILT = "a 409 for a verb not built yet (awaiting a ruling); no grant makes it exist"
 
 #: No binding could lift these, so they keep their bodies. Value = why.
 NOT_POLICY: dict[str, str] = {
@@ -271,6 +288,46 @@ NOT_POLICY: dict[str, str] = {
         "an unknown recipient scope: the scopes are the seed's programs, not grants",
     f"{FIN}::package_export::panel {{}} ({{}}) is scoped to program {{}}, not {{}} —":
         "a recipient discloses only its own program; no grant widens it",
+    # -- 409s and the status= / wrapper forms (2026-10-25) --
+    'agent_fleet/docs_agent/main.py::explain_endpoint::<str>': CONFLICT,
+    'agent_fleet/ontology_service/main.py::write_decision_record::decision_record_immutable | a DIFFERENT record already exist': CONFLICT,
+    'agent_fleet/planning_agent/main.py::fork::<str>': CONFLICT,
+    'agent_fleet/restate_analyst/workflow_runner.py::keep_revision::case {} does not hold this episode (open: {}); a': CONFLICT,
+    'agent_fleet/restate_analyst/workflow_runner.py::keep_revision::case {} holds this episode with no revision 1 to': CONFLICT,
+    "agent_fleet/restate_analyst/workflow_runner.py::revise::case {}'s trigger declares no episode, so a revi": CONFLICT,
+    'src/iagent/gateway.py::_export_package_from_template::recipient_scope_disagrees_with_canvas_audience | the recipient_scope you sent dis': NAMED,
+    'src/iagent/gateway.py::_file_or_find_document_promotion_task::leaf_moves_audience | the new kind {} routes to {}, no': CONFLICT,
+    'src/iagent/gateway.py::_stale_extraction::stale_extraction | <msg>': NAMED,
+    'src/iagent/gateway.py::act_on_human_task::delegated_act_unsupported | a delegated act is supported onl': SECTION_5_1,
+    'src/iagent/gateway.py::act_on_human_task::grouped_review_unresumable | grouped-review task has no workf': CONFLICT,
+    "src/iagent/gateway.py::act_on_human_task::same_actor | the person who chose this case's": DUTIES,
+    'src/iagent/gateway.py::act_on_human_task::task_already_resolved | This review was already resolved': CONFLICT,
+    'src/iagent/gateway.py::act_on_human_task::task_already_resolved | This task was already resolved b': CONFLICT,
+    'src/iagent/gateway.py::act_on_human_task::task_unresumable | workflow_service {} is not a res': CONFLICT,
+    'src/iagent/gateway.py::ingest_event::revision_not_kept | <_restate_refusal_message>': CONFLICT,
+    'src/iagent/gateway.py::ingest_leaf_route._moved::leaf_not_changeable | the document moved on while the': CONFLICT,
+    'src/iagent/gateway.py::ingest_leaf_route::leaf_moves_audience | the new kind {} routes to {}, no': CONFLICT,
+    'src/iagent/gateway.py::ingest_leaf_route::leaf_not_changeable | the kind can change only until p': CONFLICT,
+    'src/iagent/gateway.py::ingest_leaf_route::no_leaf_for_kind | a {} document has no kind to cho': CONFLICT,
+    'src/iagent/gateway.py::ingest_retry_route._refile_from_state::awaiting_origin | no accepted origin is recorded f': NAMED,
+    'src/iagent/gateway.py::ingest_retry_route._reopen_failed::not_failed | only a failed document can be re': CONFLICT,
+    "src/iagent/gateway.py::ingest_retry_route::in_pipeline | extraction runs in doc-tools' pi": CONFLICT,
+    'src/iagent/gateway.py::ingest_retry_route::no_recorded_pin | this row records no extractor pi': CONFLICT,
+    'src/iagent/gateway.py::ingest_retry_route::pin_unchanged | the extractor pin is the one the': CONFLICT,
+    'src/iagent/gateway.py::ingest_retry_route::resend_the_event | the row holds only the payload h': NAMED,
+    'src/iagent/gateway.py::ingest_retry_route::terminal | this document is {}, a terminal': CONFLICT,
+    'src/iagent/gateway.py::ingest_title_leaf_route::not_extracting | a title read is accepted only wh': CONFLICT,
+    'src/iagent/gateway.py::update_ingest_stage::backwards_move | a document cannot move backwards': CONFLICT,
+    'src/iagent/gateway.py::update_ingest_stage::backwards_move | ingest {} is already terminal ({': CONFLICT,
+    'src/iagent/promotion.py::act::dropper_cannot_attest_origin': DUTIES,
+    'src/iagent/promotion.py::act::ingest_node_absent': CONFLICT,
+    'src/iagent/promotion.py::act::promotion_already_decided': CONFLICT,
+    'src/iagent/promotion.py::act::promotion_reviewed_set_unknown': CONFLICT,
+    'src/iagent/promotion.py::act::row_edits_differ_from_the_record': CONFLICT,
+    'src/iagent/gateway.py::_decide_empty::add_missed_part_not_built | <_ADD_MISSED_PART_MSG>': NOT_BUILT,
+    'src/iagent/gateway.py::_decide_empty::no_open_empty_task | no open confirmation for this do': CONFLICT,
+    'src/iagent/gateway.py::_decide_empty::no_open_empty_task | the document moved while the dec': CONFLICT,
+    'src/iagent/gateway.py::act_on_human_task::no_open_empty_task | the task names no ingest': CONFLICT,
 }
 
 RELAY = "relay"
@@ -304,6 +361,13 @@ PENDING: dict[str, str] = {
     f"{COST}::measure::unentitled:<canvas.ENTITLEMENT_REFUSAL>": "code",
     f"{COST}::measure::unentitled:<str>": "code",
     f"{FIN}::get_artifact::not entitled to {{}}'s package": "code",
+    # -- 409s that ask the caller to choose or request, and promotion's forwarded 403 (2026-10-25) --
+    'src/iagent/gateway.py::act_on_human_task::extraction_defect_unroutable | a correction files an extraction': 'task_grants',
+    'src/iagent/gateway.py::_decide_empty::extraction_defect_unroutable | <str>': 'task_grants',
+    'src/iagent/gateway.py::act_on_human_task::task_kind_set_unknown | <str>': 'config',
+    'src/iagent/gateway.py::export_package::recipient_required | name the recipient this package': 'code',
+    'src/iagent/gateway.py::ingest_retry_route::awaiting_kind | pick a leaf: POST /ingest/{id}/l': 'config',
+    'src/iagent/promotion.py::act::not_authorized_to_act': 'task_grants',
     f"{GW}::start_review::<out>": RELAY,
     f"{GW}::act_on_human_task::not_authorized_to_act | <_restate_refusal_message>": RELAY,
     f"{GW}::answer_case_signal::not_authorized_to_act | <msg>": RELAY,
@@ -331,14 +395,24 @@ def test_every_refusal_site_is_compliant_or_classified():
         f"the reason: {undecided}")
 
 
+#: A key naming ONE refusal raised from several branches of one function (same error, same
+#: message: a retry loop's two exits), with its count. Re-fingerprinting would invent a difference;
+#: the count keeps a further site from hiding under the row.
+SITES = {
+    f"{GW}::act_on_human_task::task_already_resolved | This task was already resolved b": 2,
+    f"{GW}::ingest_title_leaf_route::not_extracting | a title read is accepted only wh": 2,
+}
+
+
 def test_the_lists_name_only_live_noncompliant_sites():
     _, refusal = census()
+    assert set(SITES) <= set(NOT_POLICY) | set(PENDING), sorted(set(SITES) - set(NOT_POLICY) - set(PENDING))
     assert not set(NOT_POLICY) & set(PENDING)
     stale = sorted((set(NOT_POLICY) | set(PENDING)) - set(refusal))
     assert stale == [], (
         "listed, but no longer a non-compliant refusal site -- fixed (delete its PENDING row) "
         f"or moved (re-derive its key): {stale}")
-    doubled = {k: refusal[k] for k in (*NOT_POLICY, *PENDING) if refusal[k] != 1}
+    doubled = {k: refusal[k] for k in (*NOT_POLICY, *PENDING) if refusal[k] != SITES.get(k, 1)}
     assert doubled == {}, f"one key now names several sites; re-fingerprint them: {doubled}"
 
 
@@ -382,8 +456,16 @@ def k():
     raise HTTPException(status_code=403, detail={"error": "e_hand", "refusal": {"policy_id": "groups", "missing_binding": "m"}})
 def l():
     return _refusal("unentitled", "m", refusal={"policy_id": "code", "missing_binding": "m"})
+def m():
+    raise HTTPException(status_code=409, detail={"error": "e_conflict"})
+def n():
+    raise PromotionRefused("e_dom", "the audience did not answer", status=403)
+def o():
+    _refuse(409, {"error": "e_wrap"}, "why")
 def not_a_refusal():
     raise HTTPException(status_code=404, detail={"error": "not_found"})
+def forwarded(exc):
+    raise HTTPException(status_code=exc.status, detail={"error": "e_fwd"})
 '''
 
 
@@ -403,6 +485,11 @@ def test_the_detector_finds_every_form_once():
         ("x.py::j::e_helper", "compliant"),
         ("x.py::k::e_hand", "compliant"),
         ("x.py::l::unentitled:m", "compliant"),
+        ("x.py::m::e_conflict", "refusal"),
+        ("x.py::n::e_dom", "refusal"),
+        ("x.py::o::e_wrap", "refusal"),
+        # `forwarded` is NOT a site: its status is the origin's, and the origin (`n`'s form) is
+        # where the refusal is counted -- counting both would key one refusal twice.
     ]), got
 
 
@@ -534,3 +621,117 @@ def test_every_family_a_compliant_site_names_resolves(R):
              for fam in _named_families((ROOT / p).read_text(encoding="utf-8", errors="replace"))}
     unknown = sorted((p, f) for p, f in named if f not in R.grantors())
     assert unknown == [], unknown
+
+
+def test_candidates_are_additive_and_the_status_is_the_sites(R):
+    """A 409 that asks the caller to choose is a refusal (architect, 2026-10-25); the helper keeps
+    its status and always fills the grantor, so `candidates` may stay empty and still comply."""
+    exc = R.policy_refusal("x", policy_id="groups", missing_binding="member_of(g)", status_code=409)
+    assert exc.status_code == 409
+    assert exc.detail["refusal"]["candidates"] == []
+    assert exc.detail["refusal"]["grantable_by"]
+    offered = R.policy_refusal("x", policy_id="groups", missing_binding="member_of(g)",
+                               candidates=("a", "b"))
+    assert offered.detail["refusal"]["candidates"] == ["a", "b"]
+
+
+# -- The finance first instance: fin's canvas 409, `program` unbound (architect, 2026-10-25) --
+
+PROGRAM = "http://invincible-agent/fin#Program"
+
+
+def test_every_owned_referent_has_a_member_grant_and_every_slot_a_carried_family(R):
+    """DERIVED from `policy/canvases/` and `REFERENT_CELLS`: a slot whose referent a cell owns
+    refuses under `groups`; `policy_hint`'s `grant_member` repair needs a `MEMBER_GRANTS` row for
+    the same referent; a slot no cell owns refuses under `code`. Every family resolves."""
+    from src.iagent import canvas_template as ct
+    tmpls = [ct.load_template(t) for t in ct.ratified_template_ids()]
+    assert "program" in {s.name for t in tmpls for s in t.shared_slots}  # control
+    assert sorted(set(ct.REFERENT_CELLS) - set(ct.MEMBER_GRANTS)) == []
+    families = {ct.slot_refusal(t, [s.name])["policy_id"] for t in tmpls for s in t.shared_slots}
+    families |= {fam for fam, _ in ct.MEMBER_GRANTS.values()}
+    assert "groups" in families  # control: an owned slot is in the population
+    assert sorted(f for f in families if f not in R.grantors()) == []
+    assert ct.slot_refusal(tmpls[0], ["no_such_slot"]) == {
+        "policy_id": "code", "missing_binding": "bind(no_such_slot)", "candidates": []}
+
+
+_FIN_GROUPS = {"finance-analysts": {"grants": [
+    {"persona": "PROGRAM_FINANCE_ANALYST", "domain": "PROGRAM_FINANCE"}]}}
+_CELL = "PROGRAM_FINANCE_ANALYST · PROGRAM_FINANCE"
+
+
+def _fin_asks():
+    """(case, ask the stub returns -- or an exception to raise, expected (policy_id,
+    missing_binding, candidates)). The policies are fin's own `policy_hint`, never restated."""
+    from src.iagent.canvas_template import policy_hint as hint
+    return [
+        ("options", {"options": [{"value": "NP-MERIDIAN", "label": "Notional Program Meridian"}],
+                     "message": "Which program?"},
+         ("groups", "bind(program)", ["NP-MERIDIAN"])),
+        ("join_group", {"policy": hint(PROGRAM, _FIN_GROUPS)},
+         ("groups", "member_of(finance-analysts)", [])),
+        ("switch_cell", {"policy": hint(PROGRAM, _FIN_GROUPS, held=True)},
+         ("groups", f"active_cell({_CELL})", [_CELL])),
+        ("grant_member", {"policy": hint(PROGRAM, _FIN_GROUPS, held=True, asked_in_cell=True)},
+         ("program_members", "can_view_program(program)", [])),
+        ("declare_group", {"policy": hint(PROGRAM, {})},
+         ("groups", f"a_group_granting({_CELL})", [])),
+        ("no_ask", None, ("groups", "bind(program)", [])),
+        ("ask_raises", RuntimeError("enumerator down"), ("groups", "bind(program)", [])),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", [c[0] for c in _fin_asks()])
+async def test_the_finance_canvas_409_says_what_its_ask_says(case, monkeypatch):
+    """`/canvas/seed` for `program_finance` with `program` unbound: the 409 keeps fin's `error`,
+    `message` and `ask` and gains the refusal, which names the ask's repair as the binding, its
+    options as candidates, and the grantor READ from the map for that family. An object-scoped
+    family is named alone: the caller named no program, and none is echoed."""
+    import sys
+    from fastapi import HTTPException
+    if str(ROOT / "src") not in sys.path:
+        sys.path.insert(0, str(ROOT / "src"))
+    import iagent.gateway as gw
+    import iagent.authz.refusal as live  # what the gateway's lazy `.authz.refusal` import binds
+    assert Path(live.__file__).resolve() == ROOT / "src" / "iagent" / "authz" / "refusal.py"
+    monkeypatch.setattr(live, "_GRANTORS_CACHE", None)
+    monkeypatch.delenv("GRANTOR_OVERLAY_DIRS", raising=False)
+    _, ask, (policy_id, missing, candidates) = next(c for c in _fin_asks() if c[0] == case)
+
+    async def _ask(*_a, **_k):
+        if isinstance(ask, Exception):
+            raise ask
+        return ask
+    monkeypatch.setattr(gw, "_canvas_seed_ask", _ask)
+
+    class _NoNetwork:
+        def __init__(self, *a, **k):
+            raise AssertionError("the 409 must fire before any dispatch")
+    monkeypatch.setattr(gw.httpx, "AsyncClient", _NoNetwork)
+
+    class _User:
+        id = "a400f096-d252-49cc-9336-5f47a5b9e4cd"
+        authz_id = email = "alice@example.com"
+
+    class _Req:
+        headers = {"Authorization": "Bearer t"}
+
+    with pytest.raises(HTTPException) as caught:
+        await gw.canvas_seed(gw.CanvasSeedRequest(template_id="program_finance", bindings=None),
+                             _Req(), _User())
+    assert caught.value.status_code == 409
+    d = caught.value.detail
+    assert d["error"] == "unbound_required_slot"
+    assert sys.modules["iagent.authz.refusal"] is live
+    if isinstance(ask, dict):
+        assert d["ask"] == ask  # fin's body is kept, not rebuilt
+        assert d["message"] == (ask.get("policy") or ask)["message"]
+    elif ask is None:
+        assert "ask" not in d and "['program']" in d["message"] and "Supply it" in d["message"]
+    else:
+        assert d["ask"] == {"error": "ask_unavailable", "detail": "RuntimeError"}
+    seed = live.grantors()[policy_id]
+    assert d["refusal"] == {"policy_id": policy_id, "missing_binding": missing,
+                            "grantable_by": f"{seed.who}; {seed.how}", "candidates": candidates}

@@ -1037,11 +1037,16 @@
           "message": {
             "title": "Message",
             "type": "string"
+          },
+          "refusal": {
+            "$ref": "#/components/schemas/CanvasSeedRefusal",
+            "description": "Always present: the 409 asks the caller to choose or request something (`slot_refusal`)."
           }
         },
         "required": [
           "error",
-          "message"
+          "message",
+          "refusal"
         ],
         "title": "CanvasSeedConflictDetail",
         "type": "object"
@@ -1100,6 +1105,42 @@
           "domain"
         ],
         "title": "CanvasSeedPolicyCell",
+        "type": "object"
+      },
+      "CanvasSeedRefusal": {
+        "description": "`authz.refusal.refusal`'s envelope (ca's `iagent_mesh.refusal.Refusal` field names).",
+        "properties": {
+          "candidates": {
+            "description": "The choices that would satisfy it; empty when none is offered.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "grantable_by": {
+            "description": "Who can grant it and how, from policy/grantors/.",
+            "title": "Grantable By",
+            "type": "string"
+          },
+          "missing_binding": {
+            "description": "What the caller lacks, e.g. `can_view_program(program)`.",
+            "title": "Missing Binding",
+            "type": "string"
+          },
+          "policy_id": {
+            "description": "The policy family that refused, e.g. `groups` or `program_members`.",
+            "title": "Policy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "missing_binding",
+          "grantable_by",
+          "candidates"
+        ],
+        "title": "CanvasSeedRefusal",
         "type": "object"
       },
       "CanvasSeedRequest": {

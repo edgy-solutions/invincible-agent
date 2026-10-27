@@ -10,7 +10,8 @@ When a policy refusal happens, its `grantable_by` is read from this map
   one or more directories of rows, pathsep-separated.
   - An overlay row replaces the seed row whole (ADR-0036).
   - An overlay row of `family: <name>` and `deleted: true` removes a row. A family with no row
-    still refuses with 403, and its `grantable_by` says the row is missing.
+    still refuses with the site's status (401, 403 or 409), and its `grantable_by` says the
+    row is missing.
   - A tombstone for a family the seed does not ship is an error (the SDK's `compose_rows`).
 
 | field | meaning |
