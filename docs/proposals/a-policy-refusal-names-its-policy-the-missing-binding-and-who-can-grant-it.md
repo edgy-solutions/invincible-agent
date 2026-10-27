@@ -131,7 +131,8 @@ tells the caller nothing the ask does not already say.
 
 | fin's ask | `policy_id` | `missing_binding` | `candidates` |
 | --- | --- | --- | --- |
-| options (the caller's menu) | `groups` | `bind(program)` | the option values |
+| options (the caller's menu) | `program_members` | `bind(program)` | the option values |
+| no options and no policy (too many to offer, or nobody asked) | `groups` | `bind(program)` | `[]` |
 | `switch_cell` | `groups` | `active_cell(<persona> · <domain>)` | `[<persona> · <domain>]` |
 | `join_group` | `groups` | `member_of(<group> \| ...)` | `[]` |
 | `declare_group` | `groups` | `a_group_granting(<persona> · <domain>)` | `[]` |
@@ -144,13 +145,19 @@ Export and `seed_panel` build no ask, so they give the default row.
 chosen from what that cell sees, and a cell is granted by `groups`. A slot that no cell owns is
 named under `code`.
 
-Measured 2026-10-25: **no layer filters `fin#Program` members by caller.**
-- engine-o's enumerate gate (`_filter_sustainment_candidates`) reaches only sustainment IRIs.
-- engine-fin's `EnumerateRequest` carries no caller.
+**The menu is the member grant's** (architect, 2026-10-27). The options case names
+`program_members`, because that is the grant that gates the menu. Measured 2026-10-25: no layer
+filtered `fin#Program` members by caller. engine-o's enumerate gate reaches only sustainment
+IRIs, and engine-fin's `EnumerateRequest` carried no caller. Ruled fin's defect; #113 fixes it.
+engine-fin now lists and resolves only the members whose program the caller can view
+(`can_view_program`). It filters before its limit and answers 503 when the check cannot be made.
 
-So `program_members` does not bound the program menu. It is named only where fin's repair
-says "ask an administrator to grant you a program" (`MEMBER_GRANTS`). That repair points at a
-grant nothing checks today. This is a finding for fin.
+So the options a caller sees are exactly what `program_members` grants them. A caller in the
+owning cell who is granted none gets the `grant_member` repair. An ask with no options shows no menu the grant
+bounds, so it keeps the cell's family. A slot no cell owns keeps `code`, menu or not.
+
+**This rests on #113** (merged, `235a125b`, which also adds the `NP-MERIDIAN` row to
+`policy/program_members.yaml`). Without that filter the options row would name a grant nothing checks.
 
 **The hard-coded readers.** Ruled: "platform maintainers" is an acceptable grantor text now.
 Moving `RECIPIENT_READERS` onto the policy rail is a queue item after #96.

@@ -614,8 +614,9 @@ def policy_hint(
             "repair": repair, "message": message}
 
 
-#: Which rail grants a caller one MEMBER of a referent, for `policy_hint`'s `grant_member` repair
-#: ("ask an administrator to grant you a program"). One row per `REFERENT_CELLS` key (sealed by
+#: Which rail grants a caller one MEMBER of a referent: named by `slot_refusal` for `policy_hint`'s
+#: `grant_member` repair ("ask an administrator to grant you a program") and for an ask's options,
+#: which engine-fin filters by that grant (#113). One row per `REFERENT_CELLS` key (sealed by
 #: `tests/security/test_every_policy_refusal_names_policy_binding_grantor.py`).
 MEMBER_GRANTS: dict[str, tuple[str, str]] = {
     "http://invincible-agent/fin#Program": ("program_members", "can_view_program"),
@@ -629,15 +630,21 @@ def slot_refusal(template: CanvasTemplate, slots: "list[str] | tuple[str, ...]",
     2026-10-25), so it names who can widen the choice (`src/iagent/authz/refusal.py`).
 
     THE FAMILY IS THE OWNING CELL'S. A slot whose referent a cell owns (`REFERENT_CELLS`) is
-    chosen from what that cell sees, and a cell is granted by `groups`. Measured 2026-10-25: no
-    layer filters `fin#Program` members by caller (engine-o's enumerate gate reaches only
-    sustainment IRIs; engine-fin's `EnumerateRequest` carries no caller), so `program_members`
-    does not bound the menu. A slot no cell owns is named under `code`: mapping it is a platform
-    change. Several unbound slots name the first one's family; the message names them all.
+    chosen from what that cell sees, and a cell is granted by `groups`. A slot no cell owns is
+    named under `code`: mapping it is a platform change. Several unbound slots name the first
+    one's family; the message names them all.
+
+    THE MENU IS THE MEMBER GRANT'S (architect, 2026-10-27). engine-fin lists and resolves only
+    the members whose program the caller may view (`can_view_program`, #113), filtered before its
+    limit, so the options a caller is offered are exactly what `program_members` grants them.
+    When the ask carries options for a referent with a `MEMBER_GRANTS` row, that family is the
+    grant that gates, and it is the one named. An ask with no options (a list too long to offer,
+    or nobody asked) shows no menu the grant bounds, so it keeps the cell's family.
 
     WITH THE ASK (`gateway._canvas_seed_ask`) the refusal says what the ask says, and tells the
     caller nothing the ask does not already carry:
-      options        candidates = the option values (the caller's own menu)
+      options        candidates = the option values (the caller's own menu); policy_id =
+                     `MEMBER_GRANTS`' family where the referent has one
       switch_cell    candidates = [the owning cell]; missing_binding = active_cell(<cell>)
       join_group     missing_binding = member_of(<group> | ...)
       declare_group  missing_binding = a_group_granting(<cell>)
@@ -680,4 +687,7 @@ def slot_refusal(template: CanvasTemplate, slots: "list[str] | tuple[str, ...]",
         return out
     options = ask.get("options") or []
     out["candidates"] = [o["value"] for o in options if isinstance(o, dict) and o.get("value")]
+    grant = MEMBER_GRANTS.get(_referent(named[0]) or "")
+    if out["candidates"] and grant is not None:
+        out["policy_id"] = grant[0]
     return out
