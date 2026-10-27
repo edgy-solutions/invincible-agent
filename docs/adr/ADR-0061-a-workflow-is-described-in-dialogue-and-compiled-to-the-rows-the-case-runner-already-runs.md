@@ -3,7 +3,9 @@
 **Status:** Proposed, draft. A prototype of the elicitation loop and three synthetic fixtures are
 built and measured (§8). No route, no verb, no canvas. The architect ruled on the first measurement
 on 2026-10-25 (§9). By that ruling, this stays a draft until the model arm produces one runnable
-spec. None of the nine model fixture-runs after the rulings produced one (§9).
+spec. None of the nine model fixture-runs after the rulings produced one (§9). On 2026-10-27, one
+of three PCN runs was runnable, but it is not the workflow the transcript describes (§10). The
+architect decides whether that meets the ruling.
 **Date:** 2026-10-24
 **Deciders:** architect (decision); Chris (review); lane/74 (draft)
 **Related:**
@@ -450,6 +452,117 @@ Mutants, applied on disk and restored with `cmp`:
 | required slots restricted to reachable definitions | T6 only |
 | `_status` ignores runnable errors | T5 only |
 
+### 10. The go of 2026-10-27: `excludes` built, and three runs on PCN
+
+The order: "fix the scripted user so the statement reaches the model, then make `excludes`
+required on every approval step, then three runs on the PCN fixture only (the one where excludes
+was the sole gap). Report runnable or the next most-common field."
+
+**Built on `c61f6868`:**
+- **(a) The scripted user answers by path.** When a translated question has no bank key, it is
+  answered by the entry whose facts set the path asked about. Three key shapes have a path: who is
+  barred, a deadline, and a task kind's `reason_required`. A fact on the same file at another path
+  does not count. The opening is a candidate first, then the bank in order; a `contradiction:`
+  entry never answers a plain question. So the person repeats what they said first, and the planted
+  `excludes` contradiction stays reachable. These answers are counted apart, as `answered_by_path`.
+- **(b) `excludes` is a required slot** on every approval step, reachable or not. An explicit `[]`
+  is set. The grammar states it as REQUIRED.
+- `--fixture` runs named fixtures only.
+
+**The oracle is unchanged:** 12, 9 and 10 questions, exact, `runnable`, plain and aligned. It
+answers nothing by path.
+
+**Model, runs 7 to 9, PCN only:**
+
+| run | questions / bank | runnable errors | semantic diffs | open | answered by path | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 7 | 7/12 | 0 | 6 | 0 | 1 | **runnable** | 180 |
+| 8 | 14/12 | 6 | 6 | 5 | 0 | cannot_run | 92 |
+| 9 | 6/12 | 2 | 7 | 2 | 0 | cannot_run | 128 |
+
+There were no model-call errors and no transport errors. Run 7's status was recomputed from its
+saved bundle: `runnable()` returns no errors, and no gap is open or left.
+
+**`excludes` is gone from the census.** It is missing in none of the three runs. Before, it was
+missing in 5 of 9 fixture-runs and in every PCN run. Run 7's one answer by path is the
+acknowledgement's deadline, from `steps.pcn_acknowledge` ("there is no time limit").
+
+#### Run 7 is runnable, and it is not the workflow the transcript describes
+
+| | expected | run 7 |
+| --- | --- | --- |
+| trigger and its `requires` | `pcn_received` | the same, under another name |
+| selection table | `fff` to impact review, `minor` to acknowledgement | the same |
+| definitions | four: impact review, acknowledgement, program approval, record | two: impact review, acknowledgement |
+| impact review's answers | approved, rejected, needs_info; two need a reason | `disposition` |
+| acknowledgement's answers | acknowledged, escalated; escalating needs a reason | `acknowledged`; no reason |
+| routing after the two stages | five rows: escalation back to impact review, approval on to program approval | two rows, each to a terminal it named |
+| who is barred from the impact review | the submitter (the planted contradiction) | nobody |
+
+Three causes, each read from the saved run:
+1. **A required slot was satisfied by what the model wrote itself.** The opening says the engineer
+   "gives a disposition". The model wrote a task kind accepting `disposition`, and a routing table
+   sending it to a terminal it named. Both slots were set, so neither was asked. Those two bank
+   answers carry the three answer labels and the program-approval stage. Then the record stage, and
+   the "barred from both reviews" statement, are reached only through program approval. None of the
+   seven questions asked was a task kind or a routing table.
+2. **An unanswered contradiction was deferred, and the earlier value stood.** The acknowledgement's
+   deadline was answered by path from `steps.pcn_acknowledge`. That entry also says "acknowledge
+   it, or escalate it, and escalating needs a reason". The model's patch changed the task kind it
+   had already written. The loop asked the three contradictions that raised: the answers,
+   the reasons, and the routing table's outcome values. The scripted user had no bank key for
+   them; the path fallback covers plain questions only. For the two task-kind contradictions, the
+   entry that sets the path is the entry that raised them. Unanswered, each was deferred as "user
+   could not answer". The final bundle has neither `escalated` nor its reason, so the earlier
+   value stood and the user's later statement was dropped. (The turn log is not saved; that is
+   read from the deferrals and the final bundle.) An overwrite contradiction is not in §5's
+   non-deferrable set.
+3. **`outputs.record` was deferred unanswered.** No bank key matches it, here or in runs 4 to 6;
+   the oracle never asks it.
+
+So `runnable` is a property of the bundle against the loaders. It does not say the bundle is what
+the person said. The ruling's condition is "one runnable spec". **This ADR is left a draft**, for
+the architect to decide whether run 7 meets it; if it does, the status moves to proposed with
+these numbers.
+
+One measurement defect: run 7 recorded the planted deferral, under the model's key, which
+translates to the planted one. The report's column reads 0/1 because it compares keys without
+translating them.
+
+#### The next most common item
+
+Grouped by name, no class in runs 8 and 9 appears in more than one run. Grouped by facet, two
+appear in all three runs:
+
+| item | runs | keys |
+| --- | --- | --- |
+| a contradiction the scripted user could not answer | 3 of 3 | 6: three deferred in run 7, two open in run 8, one open in run 9 |
+| an `outputs` question with no bank key (`record`, `end`, `<stage>.ends`) | 3 of 3 | 4 |
+
+Contradictions lead by keys, and they are cause 2 of run 7. They have two halves, like `excludes`:
+- (a) the instrument: the scripted user answers a contradiction by path too. That is measured for
+  the two in run 7, and not checked for the other four;
+- (b) the subject: may an overwrite contradiction be deferred? While it may be, a later statement
+  can be dropped and the bundle still reads `runnable`.
+
+Cause 1 is not a count. A required slot set from a passing mention looks exactly like one the
+person spelled out, and no check here tells them apart.
+
+**Seals on `c61f6868`**, with SDK v0.9.10 on the path:
+- `tests/socratic`: 59 passed.
+- With the three decision-table seals and the ADR index: 177 passed.
+- Across the repo-wide source-walking seals: 179 passed, 6 skipped.
+
+Mutants, applied on disk and restored with `cmp`:
+
+| mutant | named red |
+| --- | --- |
+| the path fallback removed | the end-to-end delivery seal |
+| a path matched by file alone | the entry-that-sets-the-path seal (program approval) |
+| the bank tried before the opening | the entry-that-sets-the-path seal (impact review) |
+| the `excludes` slot removed | T6 |
+| an explicit `[]` read as unset | the explicit-empty seal |
+
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a
@@ -457,7 +570,8 @@ Mutants, applied on disk and restored with `cmp`:
 - **The dialogue's questions are the runtime's refusals, asked early.** With §5 enforced, the loop
   can end only as `runnable` or as `cannot_run` with what is missing. A bundle that reaches the
   ratifier as `runnable` has passed the checks `runnable()` makes. Most of those are the runner's
-  own loaders; three are restated (§8).
+  own loaders; three are restated (§8). It is not evidence that the bundle says what the person
+  said. Run 7 in §10 is runnable with half the workflow missing.
 - **The question list mostly cannot drift from the runtime.** Most runtime refusals come from the
   runner's own models, so a new loader refusal becomes a new question with no dialogue change. Two
   lists are kept by hand:
@@ -470,7 +584,8 @@ Proposed units of work. This document assigns nobody:
 | --- | --- |
 | ~~enforce §5: an open runtime refusal ends the dialogue as not runnable, never deferred~~ done in the prototype, 2026-10-25 | the prototype, before any verb |
 | ~~give the extractor each event field's value vocabulary, not only the field names~~ done for the fixtures, 2026-10-25; where a deployment declares it is open | the prototype, before any verb |
-| the next build item (§9): who is barred from an approval. (a) The scripted user answers from the bank entry that sets the path; (b) `excludes` is required on every approval step | the prototype, before any verb |
+| ~~the next build item (§9): who is barred from an approval. (a) The scripted user answers from the bank entry that sets the path; (b) `excludes` is required on every approval step~~ done, 2026-10-27 (§10) | the prototype, before any verb |
+| the next most common item (§10): a contradiction the scripted user could not answer. (a) It is answered by path too; (b) whether an overwrite contradiction may be deferred. Not started; it waits for the architect | the prototype, before any verb |
 | a `proposeWorkflow` verb hosting the loop | the case runner's engine |
 | the proposal rendered as a canvas: definitions, tables, deferrals | cortex-ui |
 | the workflow stewards' ratification audience and route | shared with ADR-0057's |
