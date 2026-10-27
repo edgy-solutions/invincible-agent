@@ -109,15 +109,22 @@ def test_every_FRACAS_verb_output_class_is_bound_to_an_archetype():
     unbound = sorted(c for c in _FRACAS.values() if c not in BOUND)
     assert not unbound, f"FRACAS output classes with no PRESENTATION_CAPABILITIES row: {unbound}"
     assert {BOUND[c]["archetype"] for c in _FRACAS.values()} == {
-        "CONTRIBUTION_RANKING", "MULTI_SERIES"}
+        "KNOWLEDGE_DOCUMENT", "MULTI_SERIES"}
 
 
 def test_the_declared_bindings_are_the_ones_the_order_names():
-    assert BOUND[_FRACAS["what_failed_on_this_part"]]["archetype"] == "CONTRIBUTION_RANKING"
+    # RULED 2026-10-21 (item 5): FailureRecordSet is a KNOWLEDGE_DOCUMENT, matching cortex-ui's
+    # DERIVED_BINDINGS (mesh:KnowledgeDocument). It was CONTRIBUTION_RANKING under ADR-0056 Phase 1.
+    assert BOUND[_FRACAS["what_failed_on_this_part"]]["archetype"] == "KNOWLEDGE_DOCUMENT"
     assert BOUND[_FRACAS["failure_trend_for_this_platform_by_month"]]["archetype"] == "MULTI_SERIES"
 
 
-@pytest.mark.parametrize("fn", sorted(_CALLS))
+#: the verbs whose bound archetype is a ROW archetype (has a contract the rows must meet and a
+#: projector passthrough). Derived from the binding, so a re-flip moves a verb in or out.
+_ROW_FNS = sorted(fn for fn in _CALLS if BOUND[_FRACAS[fn]]["archetype"] in _CONTRACTS)
+
+
+@pytest.mark.parametrize("fn", _ROW_FNS)
 def test_the_rows_carry_the_archetypes_required_keys(fn, monkeypatch):
     arch = BOUND[_FRACAS[fn]]["archetype"]
     rows = _payload(fn, monkeypatch)["rows"]
@@ -137,7 +144,20 @@ def test_every_expected_field_is_actually_emitted(fn, monkeypatch):
             f"{fn} advertises {field!r} and emits it nowhere")
 
 
-def test_CONTRIBUTION_RANKING_renderer_validation_holds(monkeypatch):
+def test_the_row_archetype_arms_cover_exactly_the_row_bound_verbs():
+    """The flip moved one verb off the row arms; this keeps the other one ON them, so narrowing
+    the parametrisation cannot silently empty it."""
+    assert _ROW_FNS == ["failure_trend_for_this_platform_by_month"]
+
+
+def test_a_KNOWLEDGE_DOCUMENT_binding_is_not_projected_so_its_rows_never_become_a_card():
+    """The claim the flip rests on: KNOWLEDGE_DOCUMENT has no planning passthrough, so the
+    ranking `rows` the verb still emits are not what the card draws. If it ever gains one, the
+    verb's rows must meet that archetype's contract and this arm names it."""
+    assert BOUND[_FRACAS["what_failed_on_this_part"]]["archetype"] not in _FNS["_PROJECTED_ARCHETYPES"]
+
+
+def test_CONTRIBUTION_RANKING_payload_shape_still_holds(monkeypatch):
     rows = _payload("what_failed_on_this_part", monkeypatch)["rows"]
     for r in rows:
         assert isinstance(r["entity_name"], str) and r["entity_name"]
@@ -163,7 +183,7 @@ def test_MULTI_SERIES_renderer_validation_holds(monkeypatch):
     assert all(isinstance(p, str) and p for p in periods) and periods == sorted(periods)
 
 
-@pytest.mark.parametrize("fn", sorted(_CALLS))
+@pytest.mark.parametrize("fn", _ROW_FNS)
 def test_the_REAL_projector_carries_the_rows_and_the_declared_envelope(fn, monkeypatch):
     arch = BOUND[_FRACAS[fn]]["archetype"]
     payload = _payload(fn, monkeypatch)

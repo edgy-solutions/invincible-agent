@@ -447,3 +447,102 @@ def test_the_success_return_names_its_template(harness):
     """A full success names the template it built; a bare portfolio seed names `portfolio`."""
     r = harness.client.post("/canvas/seed", json={})
     assert r.json()["template_id"] == "portfolio"
+
+
+# ── 7. the 200 and 409 bodies are DECLARED in the BFF OpenAPI (architect, 2026-10-25) ───────
+#
+# The declaration is documentation only (`responses=`, never `response_model=`), so the producers
+# and the declaration can drift apart without any runtime error. These arms pin them together.
+
+def _seed_post_op():
+    import iagent.gateway as gw
+    return gw.app.openapi()["paths"]["/canvas/seed"]["post"]
+
+
+def _schema(name):
+    import iagent.gateway as gw
+    return gw.app.openapi()["components"]["schemas"][name]
+
+
+def test_openapi_declares_the_seed_200_body():
+    """Mutants: drop `template_id` from CanvasSeedResponse (properties differ);
+    remove the `responses=` kwarg (no `$ref` on 200)."""
+    ref = _seed_post_op()["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+    assert ref.endswith("/CanvasSeedResponse")
+    s = _schema("CanvasSeedResponse")
+    assert set(s["properties"]) == {"artifact_ids", "seeded", "total", "template_id"}
+    assert set(s["required"]) == {"artifact_ids", "seeded", "total"}
+
+
+def test_openapi_declares_the_seed_409_body():
+    """Mutant: remove the `responses=` kwarg (no 409 entry)."""
+    ref = _seed_post_op()["responses"]["409"]["content"]["application/json"]["schema"]["$ref"]
+    assert ref.endswith("/CanvasSeedConflict")
+    assert "detail" in _schema("CanvasSeedConflict")["properties"]
+    assert {"error", "message", "ask"} <= set(_schema("CanvasSeedConflictDetail")["properties"])
+
+
+def test_the_success_body_keys_are_within_the_declaration(harness):
+    """Mutant: drop `template_id` from the model (it is no longer in model_fields)."""
+    from iagent.gateway import CanvasSeedResponse
+    keys = set(harness.client.post("/canvas/seed", json={"template_id": "program_finance",
+              "bindings": {"program": "NP-MERIDIAN"}}).json())
+    assert keys <= set(CanvasSeedResponse.model_fields)
+    assert "template_id" in keys
+
+
+def test_a_partial_seed_body_is_within_the_declaration_and_omits_template_id(harness, monkeypatch):
+    """Mutant: `response_model=CanvasSeedResponse` adds `template_id: null` to this body."""
+    import iagent.gateway as gw
+    from iagent.gateway import CanvasSeedResponse
+
+    async def _partial(inner, http_request, current_user):
+        return {"artifact_ids": ["p0", None], "seeded": 1, "total": 2, "results": []}
+    monkeypatch.setattr(gw, "seed_portfolio_canvas", _partial)
+    r = harness.client.post("/canvas/seed", json={})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["seeded"] == 1 and body["total"] == 2 and body["artifact_ids"] == []
+    assert set(body) <= set(CanvasSeedResponse.model_fields)
+    assert "template_id" not in body
+
+
+def _assert_409_within_declaration(d):
+    from iagent.gateway import (
+        CanvasSeedAsk, CanvasSeedConflict, CanvasSeedConflictDetail, CanvasSeedPolicy,
+        CanvasSeedPolicyCell,
+    )
+    assert set(d) <= set(CanvasSeedConflictDetail.model_fields), set(d)
+    assert set(d["ask"]) <= set(CanvasSeedAsk.model_fields), set(d["ask"])
+    if "policy" in d["ask"]:
+        p = d["ask"]["policy"]
+        assert set(p) <= set(CanvasSeedPolicy.model_fields), set(p)
+        assert set(p["cell"]) <= set(CanvasSeedPolicyCell.model_fields), set(p["cell"])
+    CanvasSeedConflict.model_validate({"detail": d})
+
+
+def test_the_409_options_body_is_within_the_declaration(harness):
+    """Mutant: add a key to `_detail` in the 409 (detail keys exceed the model)."""
+    r = harness.client.post("/canvas/seed", json={"template_id": "program_finance"})
+    assert r.status_code == 409
+    d = _detail(r)
+    assert d["ask"]["options"]
+    _assert_409_within_declaration(d)
+
+
+def test_the_409_abstain_with_policy_body_is_within_the_declaration(harness):
+    """Mutant: add a key to `_detail` in the 409. Control: this body really carries a policy."""
+    harness.members = []
+    harness.user = _outsider()
+    d = _detail(harness.client.post("/canvas/seed", json={"template_id": "program_finance"}))
+    assert d["ask"]["policy"]
+    _assert_409_within_declaration(d)
+
+
+def test_the_seed_route_declares_bodies_without_a_response_model():
+    """Mutant: add `response_model=CanvasSeedResponse` -- it would filter the partial body."""
+    import iagent.gateway as gw
+    routes = [r for r in gw.app.routes
+              if getattr(r, "path", None) == "/canvas/seed" and "POST" in getattr(r, "methods", ())]
+    assert len(routes) == 1
+    assert routes[0].response_model is None

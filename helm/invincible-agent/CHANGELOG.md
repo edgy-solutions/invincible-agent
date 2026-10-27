@@ -1,5 +1,48 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.70 — 2026-10-26
+
+Roll 208. It carries every master merge since 0.4.69 (`7a45a3cb`): #93, #100, #97, #99, #96,
+#106, #105, #104, #109, #102, #103 and #110.
+
+**Chart changes**
+
+- **A public client puts itself in its access token's `aud` (#110).** The architect ruled on
+  2026-10-26 that the `training-workbench` client emits `authz_id` and `aud`. wb's api accepts a
+  token only when `aud` names `training-workbench`.
+  - Every `keycloak.publicClients` entry gets an `audience-self` mapper: `oidc-audience-mapper`,
+    with `included.client.audience` set to the client's own id, on the access token only.
+  - It ships in the realm import, in the reconcile's create, and in the reconcile's repair of a
+    live client. The repair keys on what a mapper emits, not on its name, and never rewrites an
+    existing mapper.
+  - The readback judges the audience and its access-token flag on one mapper's config, in any
+    key order. The ok line becomes
+    `ok   training-workbench public, pkce S256, emits authz_id, aud training-workbench`.
+- **cortex-ui's redirect readback compares sets (#100).** 0.4.69's readback compared the
+  redirect lists in order. Keycloak serves them in its own order, so revision 217 failed a
+  correct realm. The readback now compares them as sets.
+
+**Release pipeline (#93).** The chart release now needs the image build, and a missing image is
+fatal. 0.4.66, 0.4.68 and 0.4.69 each published a manifest with 0 of 19 images tagged, because
+the retag ran before the build finished.
+
+**Images.** A chart bump restarts every pod, so all of these land on this roll.
+- **cortex-bff (`src/iagent`):**
+  - a seeded canvas answer names its template, and a finance canvas asks which program (#97);
+  - ingest-v1, a published contract with a shape lock, and the status row that names the task a
+    steward acts on; a zero-row notice is asked about, not failed (#99);
+  - a has-parts defect filing with no requester is a terminal 422 (#104);
+  - `/canvas/seed` declares its 200 and 409 bodies (#103);
+  - a policy refusal names its policy, the missing binding, and who can grant it (#96).
+  - **One schema change:** `ingest_status_projection` gains `force_text_fallback BOOLEAN NOT NULL
+    DEFAULT FALSE` (#99). cortex-bff adds it on startup with `ADD COLUMN IF NOT EXISTS` and logs
+    `ingest_status_projection migration applied`; a failure logs a warning and leaves the
+    ingestion seam dormant.
+- **presentation-agent:** `safety:FailureRecordSet` binds `KNOWLEDGE_DOCUMENT`, matching cortex
+  (#105).
+
+**No deploy effect:** the lane-trailer hook (#106), and the test-only #109 and #102.
+
 ## 0.4.69 — 2026-10-25
 
 **Finding: the `cortex-ui` client accepted any redirect.** Its realm import carried

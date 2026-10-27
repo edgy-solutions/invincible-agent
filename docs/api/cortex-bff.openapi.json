@@ -713,6 +713,436 @@
         "title": "Body_ingest_document_ingest_post",
         "type": "object"
       },
+      "CanvasSeedAsk": {
+        "description": "`ask_card(...)` plus `template_id`, `binding_slot` and (abstain on no members) `policy`.",
+        "properties": {
+          "accepted_slots": {
+            "additionalProperties": true,
+            "title": "Accepted Slots",
+            "type": "object"
+          },
+          "binding_slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The shared-slot NAME (not the dispatch param).",
+            "title": "Binding Slot"
+          },
+          "bound_slots_offered": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Bound Slots Offered",
+            "type": "array"
+          },
+          "data": {
+            "title": "Data",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "ask",
+              "abstain"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "found": {
+            "title": "Found",
+            "type": "string"
+          },
+          "free_text_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Text Reason"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "option_source": {
+            "title": "Option Source",
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasSeedAskOption"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "output_uri": {
+            "title": "Output Uri",
+            "type": "string"
+          },
+          "policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanvasSeedPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present only when the caller's enumeration came back empty (an abstain)."
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "scoped_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scoped By",
+            "type": "array"
+          },
+          "slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slot"
+          },
+          "sources": {
+            "items": {},
+            "title": "Sources",
+            "type": "array"
+          },
+          "spoken": {
+            "title": "Spoken",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "slot_elicitation",
+              "slot_abstain"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "structured_data": {
+            "$ref": "#/components/schemas/CanvasSeedAskStructuredData"
+          },
+          "sub_query": {
+            "title": "Sub Query",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "template_id": {
+            "description": "Always set by `_canvas_seed_ask`.",
+            "title": "Template Id",
+            "type": "string"
+          },
+          "total_count": {
+            "title": "Total Count",
+            "type": "integer"
+          },
+          "truncated_from": {
+            "title": "Truncated From",
+            "type": "integer"
+          },
+          "verb_iri": {
+            "title": "Verb Iri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "disposition",
+          "output_uri",
+          "verb_iri",
+          "sub_query",
+          "reason",
+          "spoken",
+          "found",
+          "options",
+          "option_source",
+          "truncated_from",
+          "total_count",
+          "scoped_by",
+          "bound_slots_offered",
+          "accepted_slots",
+          "message",
+          "summary",
+          "structured_data",
+          "data",
+          "sources",
+          "template_id",
+          "binding_slot"
+        ],
+        "title": "CanvasSeedAsk",
+        "type": "object"
+      },
+      "CanvasSeedAskOption": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "label"
+        ],
+        "title": "CanvasSeedAskOption",
+        "type": "object"
+      },
+      "CanvasSeedAskStructuredData": {
+        "properties": {
+          "already_known": {
+            "additionalProperties": true,
+            "title": "Already Known",
+            "type": "object"
+          },
+          "bound_slots_offered": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Bound Slots Offered",
+            "type": "array"
+          },
+          "free_text_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Text Reason"
+          },
+          "option_source": {
+            "title": "Option Source",
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasSeedAskOption"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "scoped_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scoped By",
+            "type": "array"
+          },
+          "slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slot"
+          },
+          "total_count": {
+            "title": "Total Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "options",
+          "option_source",
+          "total_count",
+          "scoped_by",
+          "bound_slots_offered",
+          "already_known"
+        ],
+        "title": "CanvasSeedAskStructuredData",
+        "type": "object"
+      },
+      "CanvasSeedAskUnavailable": {
+        "properties": {
+          "detail": {
+            "description": "The builder's exception class name.",
+            "title": "Detail",
+            "type": "string"
+          },
+          "error": {
+            "const": "ask_unavailable",
+            "title": "Error",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "detail"
+        ],
+        "title": "CanvasSeedAskUnavailable",
+        "type": "object"
+      },
+      "CanvasSeedConflict": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/CanvasSeedConflictDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "CanvasSeedConflict",
+        "type": "object"
+      },
+      "CanvasSeedConflictDetail": {
+        "properties": {
+          "ask": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanvasSeedAsk"
+              },
+              {
+                "$ref": "#/components/schemas/CanvasSeedAskUnavailable"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent when no unbound slot is askable; best-effort, so it may be the unavailable form.",
+            "title": "Ask"
+          },
+          "error": {
+            "const": "unbound_required_slot",
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "refusal": {
+            "$ref": "#/components/schemas/CanvasSeedRefusal",
+            "description": "Always present: the 409 asks the caller to choose or request something (`slot_refusal`)."
+          }
+        },
+        "required": [
+          "error",
+          "message",
+          "refusal"
+        ],
+        "title": "CanvasSeedConflictDetail",
+        "type": "object"
+      },
+      "CanvasSeedPolicy": {
+        "properties": {
+          "cell": {
+            "$ref": "#/components/schemas/CanvasSeedPolicyCell",
+            "description": "The cell that owns the referent."
+          },
+          "groups": {
+            "description": "Groups in policy/groups.yaml that grant the cell.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "repair": {
+            "enum": [
+              "switch_cell",
+              "grant_member",
+              "join_group",
+              "declare_group"
+            ],
+            "title": "Repair",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cell",
+          "groups",
+          "repair",
+          "message"
+        ],
+        "title": "CanvasSeedPolicy",
+        "type": "object"
+      },
+      "CanvasSeedPolicyCell": {
+        "properties": {
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "persona": {
+            "title": "Persona",
+            "type": "string"
+          }
+        },
+        "required": [
+          "persona",
+          "domain"
+        ],
+        "title": "CanvasSeedPolicyCell",
+        "type": "object"
+      },
+      "CanvasSeedRefusal": {
+        "description": "`authz.refusal.refusal`'s envelope (ca's `iagent_mesh.refusal.Refusal` field names).",
+        "properties": {
+          "candidates": {
+            "description": "The choices that would satisfy it; empty when none is offered.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "grantable_by": {
+            "description": "Who can grant it and how, from policy/grantors/.",
+            "title": "Grantable By",
+            "type": "string"
+          },
+          "missing_binding": {
+            "description": "What the caller lacks, e.g. `can_view_program(program)`.",
+            "title": "Missing Binding",
+            "type": "string"
+          },
+          "policy_id": {
+            "description": "The policy family that refused, e.g. `groups` or `program_members`.",
+            "title": "Policy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "missing_binding",
+          "grantable_by",
+          "candidates"
+        ],
+        "title": "CanvasSeedRefusal",
+        "type": "object"
+      },
       "CanvasSeedRequest": {
         "description": "A canvas TYPE or a ratified `template_id`, and nothing else.\n\nIt supplies no session id and no question list, which is the point — the panels and their\nslot order are the TEMPLATE'S declaration, not the caller's.\n\n`template_id` IS THE ONE ADR-0050 SPEAKS, and `canvas_type` is kept because cortex's\n`requestPortfolioCanvasSeed()` sends it today. Removing it in the same change that adds\nthe new field would break the live client for a rename, so both are accepted and the\nresolution below is explicit rather than a silent precedence.\n\n`bindings` IS THE PICKER'S HALF OF ADR-0050 §3's CARRY: shared-slot NAME (never `param`,\nwhich is dispatch vocabulary the caller never sees) -> the value the picker chose. Keyed by\n`name` so one ask serves every panel that consumes it, the same relation `SharedSlot.bind_as`\nexists to resolve on the dispatch side.\n\n`active_persona`/`active_domains` ride through to `/interview/stream` UNCHANGED — `None`\nlets the stream fall back to the caller's own default cell exactly as a hand-typed turn\nwould, rather than this route inventing a cell on the caller's behalf.\n\n`params`, `user_persona` AND `domain` ARE THE SUPERVISOR'S DISPATCH FIELDS. A bound verb is\ndispatched by POSTing its bound slots under `params` plus the caller's chosen cell; this\nmodel declared none of them, so pydantic DROPPED them silently and a chat-routed seedCanvas\nlost its `template_id` and built the portfolio board. `canvas_template.fold_dispatch_params`\nreads them now.",
         "properties": {
@@ -807,6 +1237,47 @@
           }
         },
         "title": "CanvasSeedRequest",
+        "type": "object"
+      },
+      "CanvasSeedResponse": {
+        "properties": {
+          "artifact_ids": {
+            "description": "Slot-ordered ids; empty on a partial or empty seed.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Artifact Ids",
+            "type": "array"
+          },
+          "seeded": {
+            "description": "Panels seeded.",
+            "title": "Seeded",
+            "type": "integer"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present on full success only; ABSENT (not null) on a partial or empty seed.",
+            "title": "Template Id"
+          },
+          "total": {
+            "description": "Panels the template declares.",
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "artifact_ids",
+          "seeded",
+          "total"
+        ],
+        "title": "CanvasSeedResponse",
         "type": "object"
       },
       "CanvasesBody": {
@@ -5206,10 +5677,22 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasSeedResponse"
+                }
               }
             },
             "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasSeedConflict"
+                }
+              }
+            },
+            "description": "Conflict"
           },
           "422": {
             "content": {
