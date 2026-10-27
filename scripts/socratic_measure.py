@@ -17,7 +17,7 @@ import sys
 import time
 from collections import Counter, deque
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import yaml
 
@@ -152,6 +152,31 @@ def _steps_of(wf: dict) -> list:
     return [s for s in (wf.get("steps") or []) if isinstance(s, dict)]
 
 
+def _fact_target(key: str) -> Optional[Tuple[str, str]]:
+    """(file, path) a TRANSLATED question key asks about, or None for a key with no such path."""
+    s = key.split(".")
+    if len(s) == 4 and s[0] == "actors" and s[3] == "excludes":
+        return f"workflows/{s[1]}.yaml", f"steps[id={s[2]}].excludes"
+    if len(s) == 4 and s[0] == "approvals" and s[3] == "deadline":
+        return f"workflows/{s[1]}.yaml", f"steps[id={s[2]}].deadline_seconds"
+    if len(s) == 3 and s[0] == "approvals" and s[2] == "reason_required":
+        return f"task_kinds/{s[1]}.yaml", "reason_required"
+    return None
+
+
+def _sets_path(entry: dict, file: str, path: str) -> bool:
+    """True iff one `set` fact of ``entry`` on ``file`` puts ``path`` in a scratch bundle, applied
+    by the elicitation module's own setter. Present-with-null counts."""
+    for fact in ((entry.get("facts") or {}).get("set") or []):
+        if not isinstance(fact, dict) or fact.get("file") != file:
+            continue
+        scratch = {file: {}}
+        se.apply_patch(se.Draft(files=scratch), {"set": [fact]}, 0)
+        if se._get(scratch, file, path)[0]:
+            return True
+    return False
+
+
 class AligningUser:
     """The scripted user for a model run. A person answers a question about "the impact review"
     whatever the model called it; this looks the question up by the EXPECTED bundle's names.
@@ -169,6 +194,23 @@ class AligningUser:
         self.aligned_answers: list = []
         self.unaligned: list = []
         self.unbanked: list = []
+        self.answered_by_path: list = []
+        self.opening = transcript.get("opening")
+
+    def entry_for_path(self, file: str, path: str) -> Optional[Tuple[str, dict]]:
+        """The (source key, entry) whose facts set ``path`` of ``file``; the opening first, then the
+        bank in order. The person repeats what they said FIRST; a later revision of the same fact
+        arrives only through the contradiction path, which stays reachable (PCN's planted excludes
+        contradiction is the opening's `[]` against the later "barred from both reviews"); a
+        `contradiction:` entry is never an answer to a plain question."""
+        cands = []
+        if self.opening:
+            cands.append(("opening", self.opening))
+        cands += [(k, v) for k, v in self.bank.items() if not k.startswith("contradiction:")]
+        for k, v in cands:
+            if isinstance(v, dict) and _sets_path(v, file, path):
+                return k, v
+        return None
 
     def _pair_definitions(self, d: dict, e: dict) -> dict:
         """draft stage name -> expected stage name, by lock-step walk from the selection tables."""
@@ -284,6 +326,11 @@ class AligningUser:
             return None
         entry = self.bank.get(t)
         if entry is None:
+            tgt = _fact_target(t)
+            hit = self.entry_for_path(*tgt) if tgt else None
+            if hit is not None:
+                self.answered_by_path.append((gap.key, hit[0]))
+                return hit[1]
             self.unbanked.append(gap.key)
             return None
         if t != gap.key:
@@ -326,6 +373,7 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "semantic_diffs": {"count": len(sd), "first": sd[:20]},
         "aligned_answers": list(user.aligned_answers) if user else [],
         "unaligned": list(user.unaligned) if user else [],
+        "answered_by_path": [list(p) for p in user.answered_by_path] if user else [],
         "unbanked": list(user.unbanked) if user else sorted(k for k in keys if k not in set(bank)),
         "deferred_refusals": [k for k in r["deferred_refusals"] if k in r["deferrals"]],
         "model_errors": errors_of(extractor),
@@ -342,7 +390,9 @@ def main() -> int:
     ap.add_argument("--arm", choices=("oracle", "model"), required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--aligned", action="store_true", help="oracle arm: use the aligning user (identity)")
+    ap.add_argument("--fixture", choices=NAMES, action="append")
     args = ap.parse_args()
+    names = [n for n in NAMES if n in args.fixture] if args.fixture else list(NAMES)
     if args.arm == "model":
         base, model = os.environ.get("SOCRATIC_LLM_BASE_URL"), os.environ.get("SOCRATIC_LLM_MODEL")
         if not base or not model:
@@ -350,7 +400,7 @@ def main() -> int:
                   "there is no default.")
             return 0
     rows = []
-    for name in NAMES:
+    for name in names:
         if args.arm == "oracle":
             rows.append(measure(name, se.OracleExtractor(), aligned=args.aligned))
         else:
@@ -360,7 +410,7 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"arm": args.arm, "fixtures": rows}, indent=2, default=str), encoding="utf-8")
     hdr = f"{'fixture':26} {'q':>3} {'bank':>4} {'red':>3} {'unans':>5} {'unres':>5} {'contra':>6} {'defer':>5} " \
-          f"{'left':>4} {'rn_err':>6} {'exact':>5} {'leaf':>4} {'sem':>4} {'mdl_err':>7} {'alg':>3} {'unal':>4} {'unbk':>4} {'dref':>4} {'status':>10} {'sec':>6}"
+          f"{'left':>4} {'rn_err':>6} {'exact':>5} {'leaf':>4} {'sem':>4} {'mdl_err':>7} {'alg':>3} {'unal':>4} {'unbk':>4} {'path':>4} {'dref':>4} {'status':>10} {'sec':>6}"
     print(hdr)
     for r in rows:
         print(f"{r['fixture']:26} {r['questions']:>3} {r['bank']:>4} {len(r['redundant']):>3} "
@@ -369,7 +419,7 @@ def main() -> int:
               f"{r['deferrals_recorded']}/{r['deferrals_planted']:>3} {len(r['gaps_left']):>4} "
               f"{r['runnable_errors']['count']:>6} {str(r['exact']):>5} {r['leaf_diffs']['count']:>4} "
               f"{r['semantic_diffs']['count']:>4} {r['model_errors']:>7} {len(r['aligned_answers']):>3} {len(r['unaligned']):>4} "
-              f"{len(r['unbanked']):>4} {len(r['deferred_refusals']):>4} {r['status']:>10} {r['seconds']:>6}")
+              f"{len(r['unbanked']):>4} {len(r['answered_by_path']):>4} {len(r['deferred_refusals']):>4} {r['status']:>10} {r['seconds']:>6}")
     return 0
 
 

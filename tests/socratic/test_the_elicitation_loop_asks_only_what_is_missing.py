@@ -401,7 +401,8 @@ def _maintenance_run3_shape() -> dict:
 def test_t6_required_slots_cover_a_definition_no_table_reaches():
     f = _maintenance_run3_shape()
     slots = {g.key: g for g in se.required_slots(f)}
-    assert set(slots) == {"approvals.stage_one.look.task_kind", "approvals.stage_one.next"}
+    assert set(slots) == {"approvals.stage_one.look.task_kind", "approvals.stage_one.next",
+                          "actors.stage_one.look.excludes"}
     named = {g.key: g.question for g in se.gaps(se.Draft(files=f))}
     for k in slots:
         assert named[k].startswith("Required:")
@@ -415,6 +416,8 @@ def test_t7_every_fixture_is_runnable_under_the_oracle_and_the_aligner(name):
         row = sm.measure(name, se.OracleExtractor(), aligned=aligned)
         assert row["status"] == "runnable" and row["missing"]["count"] == 0 and row["open"] == {}
         assert row["exact"] is True and row["deferred_refusals"] == []
+        if aligned:
+            assert row["answered_by_path"] == []
     assert sm.measure(name, se.OracleExtractor())["questions"] == {
         "pcn_review": 12, "maint_case_release": 9, "training_course_approval": 10}[name]
 
@@ -471,3 +474,75 @@ def test_every_when_value_is_visible_to_the_model_control_pcn_without_its_answer
     for a in t["answers"].values():
         a["says"] = a["says"].replace("The answers are recorded as approved, rejected and needs_info.", "")
     assert _outcomes_unspoken("pcn_review", t) == ["needs_info"]
+
+
+# ── ADR-0061: the scripted user answers by the path a fact sets; excludes is a required slot ────
+
+_IMPACT = ("workflows/pcn_impact_review.yaml", "steps[id=engineering_disposition].excludes")
+
+
+def _pcn_user(transcript=None):
+    return sm.AligningUser(transcript or _transcript("pcn_review"), _expected("pcn_review"))
+
+
+def test_an_unbanked_question_is_answered_by_the_entry_that_sets_its_path():
+    tr = _transcript("pcn_review")
+    bank = tr["answers"]
+    u = _pcn_user(tr)
+    assert u.entry_for_path("workflows/pcn_acknowledge.yaml", "steps[id=acknowledge].excludes")[0] == "steps.pcn_acknowledge"
+    assert u.entry_for_path(*_IMPACT)[0] == "opening"
+    prog = ("workflows/pcn_program_approval.yaml", "steps[id=program_approval].excludes")
+    assert u.entry_for_path(*prog)[0] == "actors.pcn_program_approval.program_approval.excludes"
+    # the rejected file-level rule would differ: the step entry sets that FILE, not that PATH
+    step_entry = bank["steps.pcn_program_approval"]
+    assert any(f["file"] == prog[0] for f in step_entry["facts"]["set"])
+    assert sm._sets_path(step_entry, *prog) is False
+    # the rejected precedence (bank first) would pick this entry, not the opening
+    assert sm._sets_path(bank["actors.pcn_program_approval.program_approval.excludes"], *_IMPACT) is True
+    # without the opening, the bank answers -- and never a contradiction: entry
+    tr2 = copy.deepcopy(tr)
+    del tr2["opening"]
+    got = _pcn_user(tr2).entry_for_path(*_IMPACT)[0]
+    assert got == "actors.pcn_program_approval.program_approval.excludes"
+    assert not got.startswith("contradiction:")
+    # a path no entry sets (the impact review's deadline is deferred in the bank)
+    assert u.entry_for_path("workflows/pcn_impact_review.yaml",
+                            "steps[id=engineering_disposition].deadline_seconds") is None
+    # _fact_target
+    assert sm._fact_target("actors.w.s.excludes") == ("workflows/w.yaml", "steps[id=s].excludes")
+    assert sm._fact_target("approvals.w.s.deadline") == ("workflows/w.yaml", "steps[id=s].deadline_seconds")
+    assert sm._fact_target("approvals.k.reason_required") == ("task_kinds/k.yaml", "reason_required")
+    assert sm._fact_target("approvals.x.next") is None
+
+
+def test_the_scripted_user_delivers_a_fact_the_bank_has_no_key_for():
+    tr = _transcript("pcn_review")
+    expected = _expected("pcn_review")
+    draft = copy.deepcopy(expected)
+    for s in draft["workflows/pcn_acknowledge.yaml"]["steps"]:
+        if s.get("id") == "acknowledge":
+            del s["excludes"]
+    u = sm.AligningUser(tr, expected)
+    key = "actors.pcn_acknowledge.acknowledge.excludes"
+    g = se.Gap(key, "actors", "missing", "q")
+    assert u(g, se.Draft(files=draft)) == tr["answers"]["steps.pcn_acknowledge"]
+    assert u.answered_by_path == [(key, "steps.pcn_acknowledge")]
+    assert u.unbanked == []
+    # that deadline is banked (as a deferral), so drop the key: no entry sets the path either
+    del tr["answers"]["approvals.pcn_impact_review.engineering_disposition.deadline"]
+    u = sm.AligningUser(tr, expected)
+    g2 = se.Gap("approvals.pcn_impact_review.engineering_disposition.deadline", "approvals", "missing", "q")
+    assert u(g2, se.Draft(files=copy.deepcopy(expected))) is None
+    assert u.unbanked == [g2.key]
+
+
+def test_an_explicit_empty_excludes_is_set():
+    f = _maintenance_run3_shape()
+    f["workflows/stage_one.yaml"]["steps"][0]["excludes"] = []
+    assert not [g.key for g in se.required_slots(f) if g.key.endswith(".excludes")]
+    assert not [g.key for g in se.gaps(se.Draft(files=f)) if g.key.endswith(".excludes")]
+
+
+def test_the_grammar_requires_excludes():
+    lines = [ln for ln in se._GRAMMAR.replace("\n  ", " ").splitlines() if ln.startswith("- REQUIRED:")]
+    assert any("excludes" in ln and "[]" in ln for ln in lines)

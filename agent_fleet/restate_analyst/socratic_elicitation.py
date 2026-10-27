@@ -667,7 +667,8 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
 
 def required_slots(files: Dict[str, dict]) -> List[Gap]:
     """Slots asked by name for EVERY definition in the draft, reachable or not (ADR-0061 R4): the
-    task kind of each approval, and the routing table after each definition that ends in a verb."""
+    task kind of each approval, who is barred from answering each approval (``excludes``), and the
+    routing table after each definition that ends in a verb."""
     out: List[Gap] = []
     wfs = _workflows(files)
     kinds = _kinds(files)
@@ -682,6 +683,11 @@ def required_slots(files: Dict[str, dict]) -> List[Gap]:
                                f"Required: the task kind for the approval {_words(s.get('id'))} in "
                                f"{_words(wid)}. Name it and the answers a person can give there "
                                "(for example approve, reject)."))
+            if "excludes" not in s:
+                out.append(Gap(f"actors.{wid}.{s.get('id')}.excludes", "actors", "missing",
+                               f"Required: who is barred from answering at {_words(s.get('id'))} in "
+                               f"{_words(wid)} -- for example whoever submitted it? Say nobody if no "
+                               "one is."))
     for wid, (f, raw) in wfs.items():
         verbs, last = _emits(raw, kinds)
         if last is None or wid in chain_by_after:
@@ -730,10 +736,6 @@ def _completeness(files: Dict[str, dict]) -> List[Gap]:
             if s.get("kind") != "human_await":
                 continue
             sid = s.get("id")
-            if "excludes" not in s:
-                out.append(Gap(f"actors.{wid}.{sid}.excludes", "actors", "missing",
-                               f"Is anyone barred from answering at {_words(sid)} in {_words(wid)} "
-                               "-- for example whoever submitted it?"))
             if "deadline_seconds" not in s:
                 out.append(Gap(f"approvals.{wid}.{sid}.deadline", "approvals", "missing",
                                f"How long may {_words(sid)} in {_words(wid)} wait for an answer "
@@ -1006,6 +1008,8 @@ RULES
 - REQUIRED: every human_await step has task_kind naming a task_kinds/<kind>.yaml you also set
   (with accepts).
 - REQUIRED: every workflow has a chaining table (decisions/<x>.yaml with after: <workflow id>).
+- REQUIRED: every human_await step sets excludes: the "{trigger.<field>}" of whoever may not
+  answer, or [] when the user says anyone may answer or nobody is barred.
 - A step with a deadline_seconds can also end timed_out (the runner's outcome when the deadline
   expires), so its workflow's chaining table routes timed_out as well.
 - A row matches an event field only with one of its listed event values; map the user's words to
