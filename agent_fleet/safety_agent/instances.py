@@ -34,10 +34,10 @@ import re
 from typing import Any, Dict, List, Optional
 
 try:  # flat in the image (/app), packaged in the repo — runbook §5, FLAT FIRST.
-    from entities import CRITICAL_ITEMS, HAZARDS, PLATFORM_IDS, WRITE_UPS
+    from entities import SAFETY_ITEMS, HAZARDS, PLATFORM_IDS, WRITE_UPS
 except ImportError:  # pragma: no cover
     from agent_fleet.safety_agent.entities import (  # type: ignore[no-redef]
-        CRITICAL_ITEMS,
+        SAFETY_ITEMS,
         HAZARDS,
         PLATFORM_IDS,
         WRITE_UPS,
@@ -74,11 +74,11 @@ def _part_number_hits(query: str) -> Dict[str, List[str]]:
     q = query.strip()
     if not q:
         return {"exact": [], "normalised": []}
-    exact = [c.csi_id for c in CRITICAL_ITEMS if c.part_number == q]
+    exact = [c.csi_id for c in SAFETY_ITEMS if c.part_number == q]
     if exact:
         return {"exact": exact, "normalised": []}
     nq = _normalise_part_number(query)
-    return {"exact": [], "normalised": [c.csi_id for c in CRITICAL_ITEMS
+    return {"exact": [], "normalised": [c.csi_id for c in SAFETY_ITEMS
                                          if _normalise_part_number(c.part_number) == nq]}
 
 
@@ -113,7 +113,7 @@ def _raw_members() -> Dict[str, List[Dict[str, str]]]:
         ],
         SAFETY + "SafetyCriticalItem": [
             {"identifier": c.csi_id, "label": f"{c.part_number} — {c.description}"}
-            for c in CRITICAL_ITEMS
+            for c in SAFETY_ITEMS
         ],
         SAFETY + "Platform": [{"identifier": p, "label": p} for p in PLATFORM_IDS],
         SAFETY + "WriteUp": [
@@ -219,7 +219,7 @@ def resolve(identifier: str, class_uri: Optional[str] = None) -> List[Dict[str, 
     # names the part number, so engine-o's specificity gate sees the name that matched (the
     # label "PN-8802 -- ... seal kit." ends in `kit`). lane/74, 2026-10-16.
     pn = _part_number_hits(identifier)
-    pn_of = {c.csi_id: c.part_number for c in CRITICAL_ITEMS}
+    pn_of = {c.csi_id: c.part_number for c in SAFETY_ITEMS}
     for cls, members in _members().items():
         if class_uri and class_uri != cls:
             continue

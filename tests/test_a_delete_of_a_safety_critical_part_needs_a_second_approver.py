@@ -8,7 +8,7 @@ DIFFERENT authz_id completes the delete. The same authz_id again is 409 `same_ac
 
 WHAT "SAFETY-CRITICAL" IS. The live graph property `safety_critical` on the Part. Only the safety
 pass sets it (failure records at or above critical, or the ontology class); a steward never does,
-and nor does the notice. `entities.CRITICAL_ITEMS` / `CRITICAL_PART_NUMBERS` become a seed
+and nor does the notice. `entities.CRITICAL_ITEMS` (now `SAFETY_ITEMS`, entity data only) became a seed
 migration that sets the property, and the lists are then deleted. So this file imports no list and
 restates none: the fake graph carries the property, and the arms are about the property.
 
@@ -279,7 +279,7 @@ def test_c_CONTROL_the_finder_sees_a_module_level_assignment():
     assert "FAILURE_RECORDS" in _module_level_names(_ENTITIES)
 
 
-@pytest.mark.xfail(strict=True, reason="a4(c): both lists are still defined in entities.py "
-                   "(CRITICAL_ITEMS, CRITICAL_PART_NUMBERS); the migration moves them to the graph")
 def test_c_neither_critical_list_exists_in_entities():
+    """The lists are gone: `CRITICAL_ITEMS` is renamed `SAFETY_ITEMS` (no critical meaning) and
+    `CRITICAL_PART_NUMBERS` is deleted. Names are literals here only because they are what is absent."""
     assert not ({"CRITICAL_ITEMS", "CRITICAL_PART_NUMBERS"} & _module_level_names(_ENTITIES))

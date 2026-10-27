@@ -550,6 +550,14 @@ def prime_neo4j() -> None:
                 session.run(cmd)
                 label = cmd.split("CONSTRAINT")[-1].split("IF NOT EXISTS")[0].strip().split()[0]
                 print(f"  [OK] {label}")
+            # safety_critical lives on the Component node and is set here by the bootstrap,
+            # never hand-run. MATCH-only: a part with no node yet, or spelled differently,
+            # matches 0 and is reported rather than created.
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import safety_critical_seed
+            for pn, n in safety_critical_seed.seed(session).items():
+                print(f"  [OK] safety_critical on {pn}: {n} node(s)" if n else
+                      f"  [WARN] safety_critical on {pn}: matched 0 Component nodes")
         driver.close()
         print("[SUCCESS] Neo4j primed.")
     except Exception as e:

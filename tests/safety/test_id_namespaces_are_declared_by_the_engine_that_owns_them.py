@@ -74,7 +74,7 @@ def test_no_other_row_declares_a_namespace(registrations):
 def test_the_declared_set_is_derived_from_the_ids_the_fixture_holds(registrations):
     """Hazards, critical items and mitigations each begin with exactly one declared prefix."""
     declared = set(_declared(registrations)[0]["id_namespaces"])
-    ids = ([h.hazard_id for h in entities.HAZARDS] + [c.csi_id for c in entities.CRITICAL_ITEMS]
+    ids = ([h.hazard_id for h in entities.HAZARDS] + [c.csi_id for c in entities.SAFETY_ITEMS]
            + [m.mitigation_id for h in entities.HAZARDS for m in h.mitigations])
     prefixes = {i.split("-")[0] + "-" for i in ids}
     assert prefixes == declared, (prefixes, declared)
