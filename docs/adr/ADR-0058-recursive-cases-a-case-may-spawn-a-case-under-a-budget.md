@@ -1,8 +1,8 @@
 # ADR-0058 — Recursive cases: a case may spawn a case, under its seals and a declared budget
 
-**Status:** Draft, second revision. Written for the architect on the 10-23 order. Nothing is
-built, and nothing here is ratified. The architect has not yet read the first draft; this revision
-re-measures it against master and narrows open questions 4 and 5 (§Revision of 2026-10-27).
+**Status:** Draft, third revision. Written for the architect on the 10-23 order. Nothing is built.
+The architect decided the five open questions of the second revision on 10-27. §Decisions of
+2026-10-27 records them, and the budget numbers wait on Lane 74's census.
 **Date:** 2026-10-22; revised 2026-10-27
 **Deciders:** architect (decision); Chris (review); Lane 74 (draft)
 **Related:**
@@ -24,11 +24,9 @@ re-measures it against master and narrows open questions 4 and 5 (§Revision of 
 
 ## Context
 
-The order names three primitives, taken from RAH: **the harness is the unit**, **one spawning
-primitive**, and **bounded context plus records**. I could not find the RAH source in any tree
-I can read, so this draft takes the three primitives as the order names them. It does not read
-RAH's own definitions into them. If RAH means something narrower by any of the three, this draft
-is wrong in that place, and §Open questions 1 asks for the source.
+The order names three primitives: **the harness is the unit**, **one spawning primitive**, and
+**bounded context plus records**. They have no outside source; they are this ADR's own decisions
+(architect, 10-27), §1 to §3 define them, and nothing outside this ADR defines them further.
 
 What exists today. This was read from code at 360fbeb6 and re-read at master `4a4cf47c` on 10-27;
 nothing below changed:
@@ -102,8 +100,9 @@ The parent's step can only end in one of two ways: it holds a record, or it reac
 `on_exhausted` path. **A spawn that never returns cannot be declared**, because the await is not
 authored.
 
-- **Depth is a declared constant, not a definition field.** I propose `MAX_CASE_DEPTH = 2`, which
-  means a parent and one level of children (open question 2). Spawning past it is a definition
+- **Depth is a declared constant, not a definition field.** `MAX_CASE_DEPTH = 4` (architect,
+  10-27). The constant counts levels with the root as one, so 4 means a root and three levels of
+  descendants; `depth` in the record runs 0 to 3. Spawning past it is a definition
   error at load time when the depth can be read statically. Otherwise it is a terminal `refused`
   at run time.
 - **`definition` names a ratified definition id.** An inline child definition would be a definition
@@ -146,7 +145,10 @@ summary. It is not a second account of it.
 Each row is one invariant that holds today for a single case, the seal that holds it, and what it
 must say at depth ≥ 1. **The acceptance gate is a level census:** every row's seal gains an arm that
 runs the same assertion at depth 0 and at depth 1, and the census asserts that no row is missing a
-depth-1 arm.
+depth-1 arm. With `MAX_CASE_DEPTH = 4`, a parent-to-child arm is not enough for the properties
+that hold across a tree. 3.3 (a subset of a subset), 3.4 (same_actor across the tree) and the §4
+reservation each also get an arm at depth 3, root to deepest. The depth limit gets an arm that
+spawns from depth 3 and is refused.
 
 | # | invariant | seal today | at depth ≥ 1 |
 |---|---|---|---|
@@ -176,8 +178,9 @@ depth-1 arm.
   - each agent-loop step;
   - each BAML call.
 
-  One call is not counted: a completion coalesced onto an identical call already in flight (the
-  item-1 dedupe). Whether it counts once or not at all is open question 3.
+  A completion coalesced onto an identical call already in flight (the item-1 dedupe) costs the
+  joining case once, as if it had made the call (architect, 10-27). Two cases sharing one
+  completion are each charged one call; a case is never charged zero for a completion it used.
 - **An attempt counts, and a replay does not.** A retried `ctx.run` re-executes its closure, so a
   retried attempt's model calls really are spent and are counted. A replayed `ctx.run` returns its
   journaled result without calling anything, so it must count zero. The count is therefore written
@@ -191,10 +194,29 @@ depth-1 arm.
   level ends `budget_exhausted`, and the parent's `on_exhausted` decides: `escalate` hands the case
   to a human with the record so far, and `refuse` ends the parent `refused`. Neither is a default,
   so the author has to choose one.
+- **`wall_s` is enforced by each step, and Restate's timeout is the backstop** (architect, 10-27).
+  - Each step bounds its own work and ends as an outcome (`timed_out`) before the framework could
+    abort it, as `DA_AGENT_TIMEOUT_S` already does for one engine (`data_analyst/main.py:64`).
+  - Restate's inactivity and abort timeouts are never the bound.
+  - No Restate timeout is configured in the tree today, so the server defaults are what backs the
+    bound up.
+- **A retry seal comes first** (architect, 10-27). Three steps raise *so that* Restate retries
+  (§Consequences). No budget touches them until a seal pins Restate's retry behaviour, in two
+  halves:
+  - **SDK:** what a bare `ctx.run` does when its closure raises. This can be sealed offline, against
+    the pinned restate-sdk.
+  - **Server:** whether a long `ctx.run` is aborted and re-executed from scratch. This is
+    `docs/proposals/bounding-the-answer-not-just-the-source.md` §4, still a hypothesis. It can only
+    be measured live, and until it is, the seal records it as unconfirmed rather than asserting
+    either answer.
 - **The measured unit.** Q1 cost 4 Engine O calls plus the agent loop. The loop is unbounded today
   (default 20, and 10–15 calls were observed on one question under the 199 repeat). A first
-  per-level budget is therefore about 4 plus the loop cap. The number is the architect's to set,
-  and it must come from a census over the walk sheet, not from Q1 alone (open question 4).
+  per-level budget is therefore about 4 plus the loop cap. The number is the architect's to set.
+  It comes from a census over the walk sheet, not from Q1 alone. Lane 74 runs that census, counting
+  from engine logs (architect, 10-27).
+  - A log count covers only what each engine chooses to log. So the census also records, per
+    engine, which call sites it could count and which it could not.
+  - A number from it is a floor, not a measurement of what a budget would count.
 
 ## Consequences
 
@@ -256,37 +278,38 @@ depth-1 arm.
    child could starve its siblings, and the parent could not know before spawning whether the
    spawn would be funded.
 
-## Open questions (named, not decided here)
+## Decisions of 2026-10-27 (architect)
 
-1. **The RAH source.** Point me to it, and I will check the three primitives against its own
-   definitions. Still open: on master `4a4cf47c` the word `RAH` has no hits in the tree.
-2. **`MAX_CASE_DEPTH`.** I propose 2. Is any walk-sheet case known to need 3?
-3. **Coalesced calls.** When the item-1 dedupe joins an identical call in flight, does the joining
-   case pay once, or not at all?
-4. **The budget numbers.** They come from a per-question census over the walk sheet. The freeze
-   is lifted, so the census can run now, between rolls and never during one. Until engines report
-   `model_calls` (§Consequences), it can only count from engine logs per question. That is how Q1
-   was counted, and a log count is a sample of what each engine chooses to log. I can run it on
-   your word: fires only, no store writes. Or do you want the reporting built first, so the census
-   counts what a budget would count?
-5. **`wall_s` versus Restate's own timeouts.** Narrowed by a measurement:
-   - No Restate inactivity or abort timeout is configured in `agent_fleet/`, `src/` or `helm/` on
-     master. My grep of 10-27 agrees with `docs/proposals/bounding-the-answer-not-just-the-source.md`
-     §4, so the server's defaults are in force. I did not read the server's live values.
-   - That proposal's hypothesis is still unconfirmed on master: that a long `ctx.run` is aborted and
-     re-executed from scratch.
-   - If it is true, the default wins over any `wall_s` longer than it, and a long child step is
-     re-run rather than ending `timed_out`.
-   - So I propose that `wall_s` is enforced by the executor as an outcome, inside each step, as
-     `DA_AGENT_TIMEOUT_S` already is for one engine (`data_analyst/main.py:64`). Restate's timeout
-     then becomes the backstop, never the bound.
-   - I expect a parent awaiting the child's durable promise to be suspended rather than running, so
-     the inactivity default should not abort it. That is unmeasured.
+The five open questions of the second revision, as decided, and where each landed:
 
-   The question that is left: do you want the retry hypothesis confirmed before this ADR moves on,
-   or recorded as a precondition?
+1. **RAH is this ADR's own term, and the acronym is dropped.** §Context now states the three
+   primitives as this ADR's own decisions.
+   - The ruling also said to define RAH in §2 as the per-case model-call budget. That part is
+     not applied.
+   - In this ADR, RAH only ever named the *source* of the three primitives, in §Context and in
+     the old question 1. It never named the budget.
+   - The budget is defined in §4, not §2.
+   - Defining RAH as the budget would make §Context say the primitives came from the budget.
+     With the acronym gone, there is nothing left to define.
+   - If you want a named term for the budget, say which section it goes in.
+2. **`MAX_CASE_DEPTH = 4`** (§2): a root and three levels of descendants. Because a tree is now
+   deeper than parent and child, the level census gains depth-3 arms for the properties that hold
+   across a tree, plus a depth-limit arm (§3.1–3.10).
+3. **Coalesced calls cost the case once** (§4).
+4. **Lane 74 runs the census, from engine logs** (§4). Its number is a floor, and it states which
+   call sites it could not see.
+5. **A seal pinning Restate's retry behaviour comes before any budget touches the three
+   raise-to-retry steps.** Each step enforces `wall_s` itself, with Restate's timeout as the
+   backstop. Both are in §4.
 
-## Revision of 2026-10-27
+## Still open
+
+- **The budget numbers:** from Lane 74's census.
+- **Who builds per-case `model_calls` reporting** in the five engines (§Consequences).
+- **Who builds the retry seal** (§4). It is not assigned.
+- **Who owns the nine model-calling steps** (§Consequences). They are not assigned.
+
+## Second revision (2026-10-27)
 
 No packet said what this revision should change. So it re-measures every factual claim in the
 first draft against master `4a4cf47c`, and it narrows the open questions that the tree can narrow.
@@ -308,11 +331,11 @@ The decision sections (§1 to §4) are unchanged, except for one added bullet in
   - open question 4: the freeze is lifted;
   - open question 5: no Restate timeout is configured in the tree, and a proposal for which bound
     wins.
-- **Still the architect's:** open questions 1, 2 and 3, and what is left of 4 and 5.
+- **Still the architect's:** open questions 1, 2 and 3, and what is left of 4 and 5. All five were decided the same day (§Decisions of 2026-10-27).
 
 ## Indicators for revisiting
 
-- A walk-sheet case that needs a third level.
+- A walk-sheet case that needs a fifth level, or a tree that reaches depth 3 in practice.
 - A child that must read parent state not bound as an input. That would be evidence the bounded
   context is too tight, or that the definition is wrong.
 - Model-call reporting turns out to need a process-wide counter instead of a per-case one, for
