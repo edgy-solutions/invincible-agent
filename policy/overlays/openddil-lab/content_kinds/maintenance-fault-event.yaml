@@ -7,6 +7,10 @@
 # SAME field the trigger dedupes arrivals on (`triggers/maintenance_fault.yaml`'s `key`).
 kind: maintenance-fault-event
 branch: event
-domain: maintenance-bridge
+# `domain` is the case's visibility label (case_projection.can_view_case: a caller sees the case
+# with a cell for EVERY label). It must be a domain in `policy/domains.yaml`, or no human can hold
+# the cell: `maintenance-bridge` was not one, so every case this kind seeded was visible to nobody
+# (da479c74, 2026-10-25). MAINTENANCE from 2026-10-27, architect directive item 1.
+domain: MAINTENANCE
 seeds_workflow: maintenance_fault
 identity_field: event_id

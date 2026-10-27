@@ -142,6 +142,14 @@ groups:
   # task_grants.yaml `grant_to_groups` for maint_supervisor_approval:edge-01.
   maint-supervisors-edge-01: {}
 
+  # TASK-AUDIENCE ACTOR GROUPS ONLY (2026-10-27, architect directive item 1). Grant NO
+  # persona.domain cell. The sandbox tier edge-02 mirror of the three edge-01 groups above, same
+  # members: OpenDDIL filed 1010 at edge-02, and with no edge-02 audience its `decide` task
+  # registered to nobody and the case failed on arrival (da479c74, 2026-10-25).
+  maint-approvers-edge-02: {}
+  maint-tier-ack-edge-02: {}
+  maint-supervisors-edge-02: {}
+
   # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-14 ruling). Grants NO persona.domain cell; named in
   # task_grants.yaml `grant_to_groups` for document_promotion:MANUFACTURING, the reviewers who
   # vouch for a contributed work-instruction (ADR-0041 §5). Sandbox member = bob.
