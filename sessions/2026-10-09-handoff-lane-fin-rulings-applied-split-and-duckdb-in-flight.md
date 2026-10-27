@@ -19,7 +19,37 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
-## Update 2026-10-25, later: #97+#98 on master, gate 5 is #102, seed bodies are #103. Read this first
+## Update 2026-10-27: #102 and #103 merged; the program filter is #113; #107 reviewed. Read this first
+
+- **The ruling, from the architect via Chris.** "#102/#103 merge. Then gov's program_members
+  filter." Both merged on 2026-10-26, at `e085440c` and `20858e6a`.
+- **#113** (`fin/enumeration-honours-program-members`, `7b497119`, built in
+  `ia-fin-export-refused-entries`).
+  - engine-fin's enumerate and resolve keep only members whose program the caller holds
+    `can_view_program` on, across all six classes, before the menu bound.
+  - A `svc:` caller sees nothing; an outage is a 503.
+  - It grants NP-MERIDIAN to alice in `policy/program_members.yaml`.
+  - Targeted run: 467 passed and 1 failed, the cortex-ui `MODEL_EXPLANATION` archetype, which the
+    diff does not touch.
+  - Eight of nine mutants red a named arm. The ninth showed the empty-caller check was redundant,
+    so it was deleted.
+- **The roll hazard, which is in the PR body.** The grant syncs in a `post-upgrade` hook, after
+  engine-fin rolls, so alice's menu is empty until that hook finishes. Run the morning sentence
+  before the roll, or after the hook.
+- **#107 (gov), reviewed at `ffee7a34`.**
+  - Merged with master in a throwaway: 81 passed on the seed seals and gov's ratchet.
+  - Approved, with two notes: the `slot_refusal` docstring goes stale after #113, and whether the
+    options row should name `program_members` is for the architect.
+  - Packet (placed, untracked):
+    `invincible-agent/sessions/2026-10-27-packet-to-gov-107-reviewed-and-section-3-is-now-pr-113.md`.
+- **Next.**
+  - Await the merge rulings on #113 and #107.
+  - Whether the finance verbs should check the bound program's membership is unruled and
+    unreviewed.
+- **The process slip, recorded.** One pytest run (44 tests) went ahead at 1.6 GB free, because
+  the memory check printed and did not gate. Every later run gated on it.
+
+## Update 2026-10-25, later: #97+#98 on master, gate 5 is #102, seed bodies are #103
 
 - **The ruling, from the architect via Chris.**
   - #97 merges, and #98 rebases and rides 208.
