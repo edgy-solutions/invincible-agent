@@ -1,8 +1,9 @@
 # ADR-0058 — Recursive cases: a case may spawn a case, under its seals and a declared budget
 
-**Status:** Draft, first. Written for the architect on the 10-23 order. Nothing is built, and
-nothing here is ratified.
-**Date:** 2026-10-22
+**Status:** Draft, second revision. Written for the architect on the 10-23 order. Nothing is
+built, and nothing here is ratified. The architect has not yet read the first draft; this revision
+re-measures it against master and narrows open questions 4 and 5 (§Revision of 2026-10-27).
+**Date:** 2026-10-22; revised 2026-10-27
 **Deciders:** architect (decision); Chris (review); Lane 74 (draft)
 **Related:**
   - [`ADR-0029`](ADR-0029-process-workflow-model-spo-steps-restate.md): the process model. A case
@@ -16,8 +17,10 @@ nothing here is ratified.
   - [`ADR-0035`](ADR-0035-two-planes-process-and-data-with-embedded-provenance.md): two planes.
     The spawn is a process-plane act, and the record it returns is a data-plane artifact.
 
-**Numbering.** 0058 is unallocated on master and on every pushed ref (179 refs scanned on
-2026-10-22).
+**Numbering.** 0058 is unallocated on master and on every other pushed ref. Re-scanned on
+2026-10-27: 306 refs, and 0058 appears only on this draft's branch. The highest ADR on master
+`4a4cf47c` is 0057. Two later numbers are held on unmerged branches: 0060 on `lane/01-adr-0060` and
+0061 on `lane/74-socratic-workflow`. 0059 and 0062 appear on no ref.
 
 ## Context
 
@@ -27,7 +30,8 @@ I can read, so this draft takes the three primitives as the order names them. It
 RAH's own definitions into them. If RAH means something narrower by any of the three, this draft
 is wrong in that place, and §Open questions 1 asks for the source.
 
-What exists today, read from code at 360fbeb6:
+What exists today. This was read from code at 360fbeb6 and re-read at master `4a4cf47c` on 10-27;
+nothing below changed:
 
 - **A case is one level deep.** `agent_fleet/restate_analyst/workflow_definition.py` declares
   eight step kinds: `human_await`, `spo_operation`, `direct_call`, `dispatch_fanout`, `render`,
@@ -39,7 +43,9 @@ What exists today, read from code at 360fbeb6:
   `ClassifyPredicate`. Then the specialist's agent loop ran. No caller passes `max_steps`, so the
   smolagents default of 20 applies. Under load on revision 199, a retried 30 s timeout repeated one
   prompt 4 and then 8 times, for 10–15 calls on one question. Item 1 (now on master) stopped that
-  repeat. But no declaration anywhere says how many model calls a case may make.
+  repeat. But no declaration anywhere says how many model calls a case may make. On master,
+  `model_calls`, `model_call_budget`, `budget_exhausted`, `MAX_CASE_DEPTH`, `spawn_case` and
+  `parent_case_key` have no hits in the tree.
 - **The seals are per case.** Identity, grants, admission, approval and terminal summary are each
   sealed for a single case (§3 lists the files). None of them has an arm with a parent.
 
@@ -146,7 +152,7 @@ depth-1 arm.
 |---|---|---|---|
 | 3.1 | service identity is never a grant | `tests/security/test_service_identity_is_never_a_grant.py` | the runner's identity spawning a child grants the child nothing; the caller's identity is what the child is decided on |
 | 3.2 | a delegate acts only for a declared principal | `tests/test_a_delegate_acts_on_behalf_of_a_declared_principal.py` | the principal is carried down unchanged; a child cannot widen it to another declared principal |
-| 3.3 | grants are an intersection; deny by default | `tests/routing/test_eligibility_trace.py`, `tests/test_eligibility_declarations_reach_the_edge.py`, `tests/test_asset_sync_deny_before_permit_after.py` | a child's eligible set is a subset of its parent's, never a superset; a parent cannot pass a child what the parent could not see |
+| 3.3 | grants are an intersection; deny by default | `tests/routing/test_eligibility_trace.py`, `tests/test_eligibility_declarations_reach_the_edge.py`, `tests/security/test_asset_sync_deny_before_permit_after.py` | a child's eligible set is a subset of its parent's, never a superset; a parent cannot pass a child what the parent could not see |
 | 3.4 | a supervisor cannot approve the disposition they chose (same_actor) | `tests/test_a_supervisor_cannot_approve_the_disposition_they_chose.py` | **a new arm is owed.** The chooser and approver are compared across the whole case tree: choosing in the parent and approving in a child is the same actor |
 | 3.5 | a class enters the pool only as a verb's input (admission) | `tests/routing/test_a_class_enters_the_pool_only_as_a_verbs_input.py` | a child's resolve runs the same admission rule; a parent's resolution is an input, not a pool |
 | 3.6 | the act reaches the owning workflow | `tests/safety/test_the_act_reaches_the_owning_workflow.py` | a signal addressed to a child reaches the child's key, never the parent's |
@@ -172,6 +178,12 @@ depth-1 arm.
 
   One call is not counted: a completion coalesced onto an identical call already in flight (the
   item-1 dedupe). Whether it counts once or not at all is open question 3.
+- **An attempt counts, and a replay does not.** A retried `ctx.run` re-executes its closure, so a
+  retried attempt's model calls really are spent and are counted. A replayed `ctx.run` returns its
+  journaled result without calling anything, so it must count zero. The count is therefore written
+  inside the journaled step that makes the call, never from the handler around it. That is the
+  same replay-safe boundary ADR-0038 drew for observations (`restate_analyst/main.py:1439–1446`).
+  A seal owes an arm that replays a step and asserts that the remainder is unchanged.
 - **The agent loop is bounded by the budget.** An `spo_operation` passes
   `max_steps = min(definition cap, remaining model_calls − reserve)` to the agent it runs. The
   smolagents default of 20 is never the bound.
@@ -192,9 +204,34 @@ depth-1 arm.
   `model_calls` against the case key, and to refuse a call when the remainder it was handed is
   zero. Nothing reports this today. Until it does, a budget is a declaration no seal can test.
 - **The census of timeout-retrying steps comes due.** My 10-20 report listed eight Restate steps
-  that wrap a model call and would still retry a timeout: `run-smolagent` ×3, `baml_interview`,
-  `baml_turn`, `format-baml` ×2 and `run-agent`. Under a budget, every hidden retry consumes the
-  allowance, so those steps need an owner before this ADR can be accepted.
+  that wrap a model call and would still retry a timeout. On master `4a4cf47c` there are still
+  eight, and each is a bare `await ctx.run("<name>", fn)`: no `RunOptions`, no `max_attempts`, no
+  `TerminalError`.
+
+  | step | where | model call inside |
+  |---|---|---|
+  | `run-smolagent` | `agent_fleet/neo4j_expert/service.py:951` | the smolagents loop |
+  | `format-baml` | `agent_fleet/neo4j_expert/service.py:1013` | `FormatGraphResponse` (:984) |
+  | `run-smolagent` | `agent_fleet/restate_analyst/main.py:1460` | the smolagents loop |
+  | `baml_interview` | `agent_fleet/restate_analyst/main.py:3116` | `IterateBPMNGraph` (:3107) |
+  | `baml_turn` | `agent_fleet/restate_analyst/main.py:3272` | `InterviewSPOWorkflow` (:3262) |
+  | `run-smolagent` | `agent_fleet/weaviate_expert/service.py:761` | the smolagents loop |
+  | `format-baml` | `agent_fleet/weaviate_expert/service.py:776` | `FormatKnowledgeResponse` (:773) |
+  | `run-agent` | `agent_fleet/data_analyst/main.py:832` | a smolagents `CodeAgent` (:746) |
+
+  Three of the engines say in comments that they raise `RuntimeError` *so that* Restate retries:
+  `neo4j_expert/service.py:169`, `restate_analyst/main.py:100` and `data_analyst/main.py:236`.
+  The retry is intended there, so moving these steps onto a budget is a change of intent, not
+  only a fix.
+
+  **A ninth step calls a model.** `deterministic-trace-lineage` (`restate_analyst/main.py:1420`) is
+  also a bare `ctx.run`, and inside it `ExtractPlatformScope` (:1314) is a BAML call. That call's
+  own failure is caught and degrades to "no platform filter", so it does not retry on a model
+  error. It still spends a call, and Restate retries the step if anything else in it raises. The
+  10-20 list missed it because it does not retry on a model error.
+
+  Under a budget, every hidden retry consumes the allowance, so these nine steps need an owner
+  before this ADR can be accepted.
 - **`same_actor` becomes a tree query.** Comparing the chooser and approver across levels needs the
   case tree indexed by `parent_case_key`, which does not exist yet.
 - **Cards gain a parent link.** The UI shows a child's card under its parent. That is cortex-ui
@@ -222,13 +259,56 @@ depth-1 arm.
 ## Open questions (named, not decided here)
 
 1. **The RAH source.** Point me to it, and I will check the three primitives against its own
-   definitions.
+   definitions. Still open: on master `4a4cf47c` the word `RAH` has no hits in the tree.
 2. **`MAX_CASE_DEPTH`.** I propose 2. Is any walk-sheet case known to need 3?
 3. **Coalesced calls.** When the item-1 dedupe joins an identical call in flight, does the joining
    case pay once, or not at all?
-4. **The budget numbers.** They come from a per-question census over the walk sheet, run when the
-   sandbox thaws. Who runs it?
-5. **`wall_s` versus Restate's own timeouts.** Which one wins when they disagree?
+4. **The budget numbers.** They come from a per-question census over the walk sheet. The freeze
+   is lifted, so the census can run now, between rolls and never during one. Until engines report
+   `model_calls` (§Consequences), it can only count from engine logs per question. That is how Q1
+   was counted, and a log count is a sample of what each engine chooses to log. I can run it on
+   your word: fires only, no store writes. Or do you want the reporting built first, so the census
+   counts what a budget would count?
+5. **`wall_s` versus Restate's own timeouts.** Narrowed by a measurement:
+   - No Restate inactivity or abort timeout is configured in `agent_fleet/`, `src/` or `helm/` on
+     master. My grep of 10-27 agrees with `docs/proposals/bounding-the-answer-not-just-the-source.md`
+     §4, so the server's defaults are in force. I did not read the server's live values.
+   - That proposal's hypothesis is still unconfirmed on master: that a long `ctx.run` is aborted and
+     re-executed from scratch.
+   - If it is true, the default wins over any `wall_s` longer than it, and a long child step is
+     re-run rather than ending `timed_out`.
+   - So I propose that `wall_s` is enforced by the executor as an outcome, inside each step, as
+     `DA_AGENT_TIMEOUT_S` already is for one engine (`data_analyst/main.py:64`). Restate's timeout
+     then becomes the backstop, never the bound.
+   - I expect a parent awaiting the child's durable promise to be suspended rather than running, so
+     the inactivity default should not abort it. That is unmeasured.
+
+   The question that is left: do you want the retry hypothesis confirmed before this ADR moves on,
+   or recorded as a precondition?
+
+## Revision of 2026-10-27
+
+No packet said what this revision should change. So it re-measures every factual claim in the
+first draft against master `4a4cf47c`, and it narrows the open questions that the tree can narrow.
+The decision sections (§1 to §4) are unchanged, except for one added bullet in §4.
+
+- **Unchanged on master:**
+  - the eight step kinds;
+  - `extra="forbid"`;
+  - no model-call reporting anywhere;
+  - 0058 unallocated.
+- **Corrected:** §3.3 named `tests/test_asset_sync_deny_before_permit_after.py`. The seal lives at
+  `tests/security/`, and the top-level path never existed. The other 15 seal paths in §3 exist on
+  master.
+- **Added:**
+  - the timeout census, with file and line for each step;
+  - a ninth model-calling step, `deterministic-trace-lineage`;
+  - the rule that an attempt counts and a replay does not (§4).
+- **Narrowed:**
+  - open question 4: the freeze is lifted;
+  - open question 5: no Restate timeout is configured in the tree, and a proposal for which bound
+    wins.
+- **Still the architect's:** open questions 1, 2 and 3, and what is left of 4 and 5.
 
 ## Indicators for revisiting
 
