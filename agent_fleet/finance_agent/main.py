@@ -33,6 +33,7 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
@@ -57,9 +58,11 @@ except ImportError:
 try:  # same three-shape idiom; `utils` is a sibling top-level module in the flattened image
     from utils.subject_coverage import dead_end_classes as _dead_end
     from utils.subject_coverage import unroutable_classes as _unroutable
+    from utils.program_membership import can_view_program
 except ImportError:
     from agent_fleet.utils.subject_coverage import dead_end_classes as _dead_end
     from agent_fleet.utils.subject_coverage import unroutable_classes as _unroutable
+    from agent_fleet.utils.program_membership import can_view_program
 
 FIN = "http://invincible-agent/fin#"
 MESH = "http://invincible-agent/mesh#"
@@ -999,6 +1002,10 @@ class ResolveRequest(BaseModel):
     identifier: str = ""
     query: str = ""
     class_uri: Optional[str] = None
+    # Defaulted so an old-shape caller does not 422 at the roll; an empty `user_email` sees
+    # nothing, so the default fails closed.
+    user_email: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
 
     # ⚠ A CALLER SENDING THE OLD `{"text": ...}` GETS 200 WITH AN EMPTY LIST, NOT A REFUSAL.
     # `identifier` has a default, pydantic drops the unknown field, and an empty needle scores
@@ -1164,6 +1171,56 @@ def _unroutable_classes() -> list[str]:
                        not_enumerable=_NOT_ENUMERABLE)
 
 
+#: The classes `_program_of` can place in a program. The seal in
+#: `tests/finance/test_fin_enumeration_honours_program_members.py` requires it to equal
+#: `_RESOLVABLE`'s keys, so a class added to the map cannot arrive unfiltered.
+_PROGRAM_OF_CLASSES = frozenset({
+    FIN + "Program", FIN + "OBSElement", FIN + "WBSElement", FIN + "ControlAccount",
+    FIN + "FundingLine", FIN + "WorkPackage",
+})
+
+
+def _program_of(class_uri: str, instance_id: str) -> str | None:
+    """The program one member belongs to, or None when it cannot be decided (withheld)."""
+    spec = _RESOLVABLE.get(class_uri)
+    if spec is None or class_uri not in _PROGRAM_OF_CLASSES:
+        return None
+    attr, id_field, _label = spec
+    item = next((i for i in getattr(STATE, attr) if getattr(i, id_field) == instance_id), None)
+    if item is None:
+        return None
+    if class_uri == FIN + "Program":
+        return item.program_id or None
+    if class_uri == FIN + "WorkPackage":
+        ca = next((c for c in STATE.control_accounts if c.ca_id == item.ca_id), None)
+        return (ca.program_id or None) if ca is not None else None
+    return getattr(item, "program_id", None) or None
+
+
+def _visible_to(caller: str, members: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The members whose program the caller may view. Withheld is unknown: no marker is added.
+
+    A service sees nothing (ADR-0047 5.1: a service is never a program member). An empty caller
+    sees nothing because `can_view_program` answers False for one without a lookup; a check of
+    our own here was measured redundant (its removal mutant stayed green), so there is none.
+    One check per distinct program. `httpx.HTTPError` propagates.
+    """
+    caller = (caller or "").strip()
+    if caller.startswith("svc:"):
+        return []
+    verdict: dict[str, bool] = {}
+    out: list[dict[str, Any]] = []
+    for m in members:
+        prog = _program_of(m["class_uri"], m["instance_id"])
+        if prog is None:
+            continue
+        if prog not in verdict:
+            verdict[prog] = can_view_program(prog, caller)
+        if verdict[prog]:
+            out.append(m)
+    return out
+
+
 def _candidates(text: str, class_uri: Optional[str]) -> list[dict[str, Any]]:
     """Exact, then case-insensitive, then contained phrase, then token overlap.
 
@@ -1268,6 +1325,10 @@ def resolve_instance(req: ResolveRequest) -> dict[str, Any]:
     """Resolve a spoken finance name to an identifier in this model."""
     cands = [c for c in _candidates(req.identifier, req.class_uri)
              if c["score"] >= _RESOLVE_FLOOR]
+    try:
+        cands = _visible_to(req.user_email, cands)
+    except httpx.HTTPError as e:
+        raise HTTPException(503, f"program membership check failed: {e}") from e
     return {
         "output_uri": MESH + "InstanceResolution",
         "query": req.identifier,
@@ -1283,6 +1344,10 @@ def resolve_instance(req: ResolveRequest) -> dict[str, Any]:
 class EnumerateRequest(BaseModel):
     class_uri: str
     limit: int = 8
+    # Defaulted so an old-shape caller does not 422 at the roll; an empty `user_email` sees
+    # nothing, so the default fails closed.
+    user_email: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
 
 
 @app.post("/enumerate_instances")
@@ -1313,7 +1378,10 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
             "members": [],
             "provider": "engine_fin_finance",
         }
-    members = _members_of(req.class_uri)
+    try:
+        members = _visible_to(req.user_email, _members_of(req.class_uri))
+    except httpx.HTTPError as e:
+        raise HTTPException(503, f"program membership check failed: {e}") from e
     if len(members) > req.limit:
         return {
             "output_uri": MESH + "InstanceEnumeration",
