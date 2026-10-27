@@ -1,4 +1,4 @@
-"""Every new commit carries `Lane: <worktree>/<branch>`, because git cannot say who wrote it.
+"""Every new commit carries `Lane: <lane id>/<branch>`, because git cannot say who wrote it.
 
 WHY, measured on this repo: **every commit in the last forty, across every lane, is authored
 `Chris Nogradi <cnogradi@gmail.com>`.** One human identity, many agents. So `git log --author`
@@ -15,8 +15,14 @@ messages name their authoring lane. The only reliable test was *which files has 
 touched* — a reconstruction that works solely while that lane is alive to be asked.
 
 **THE TRAILER NAMES THE DURABLE KEY, NOT THE ADDRESS.** `ia-01/lane/01`, the way the roster does:
-a session id (`invincible-agent-65`) dies with the session, and the worktree/branch pair outlives
+a session id (`invincible-agent-65`) dies with the session, and the lane id/branch pair outlives
 it and is what a later reader can actually check out.
+
+**A LANE ID, NEVER A WORKTREE PATH** (ruled 2026-10-26). The first half used to be "the worktree
+that made it", checked against `git worktree list` — so a throwaway worktree's correct commit read
+as an invented lane the day the worktree was removed. The id is now a row of `.githooks/lanes`,
+which is versioned with the history it judges and is append-only; a throwaway worktree commits as
+the lane it works for (`.githooks/pre-push --expected` prints the trailer).
 
 **MEASURER AND REVIEWER STAY DISTINCT FROM AUTHOR.** This asserts only authorship. A correction to
 a misattribution must not create a second one in the other direction — being named in a thread is
@@ -28,6 +34,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 import pytest
@@ -137,6 +144,17 @@ _EXEMPT: dict[str, str] = {
     "c9d66e6": (
         "the m3.3 cutover head on lane/ca-m33-cutover, same lane and same omission as its "
         "WIP parent above."
+    ),
+    # ── FOURTH BATCH (2026-10-26), and it is not the install failing the way the third
+    # batch's note predicted: how it got past the hook is NOT MEASURED, and the entry says so
+    # rather than supplying a cause. (#85's squash, 24e64a5e, was proposed for this batch and
+    # measured NOT red: GitHub's squash body keeps the branch commit's `Lane:` line, and this
+    # seal reads the body, not the trailer block. The retirement guard below refused it.)
+    "ed6b530b": (
+        "ca's ResolveInstanceRequest import, committed in the shared tree on "
+        "lane/ca-resolve-instance-adoption and brought in by #83's merge 6dafe3b1. The shared "
+        "tree has core.hooksPath=.githooks; whether the push bypassed it or came from elsewhere "
+        "was not measured."
     ),
 }
 
@@ -272,74 +290,138 @@ def test_A_COMMIT_MADE_AFTER_THE_RULING_NAMES_ITS_LANE(sha: str, subject: str, b
 
     assert _TRAILER.search(body or ""), (
         f"{sha[:12]} ({subject[:60]!r}) carries no `Lane:` trailer.\n"
-        f"Add `Lane: <worktree>/<branch>` — e.g. `Lane: ia-01/lane/01` — as a trailer. Git's "
+        f"Add `Lane: <lane id>/<branch>` — e.g. `Lane: ia-01/lane/01` — as a trailer. Git's "
         f"author field is one human identity for every lane, so without it this commit has no "
         f"recoverable owner once the session that made it has ended."
     )
 
 
-def test_THE_TRAILER_MATCHES_THE_WORKTREE_IT_WAS_MADE_IN():
+_LANES = _REPO / ".githooks" / "lanes"
+
+
+def _registry(text: str) -> dict[str, list[str]]:
+    """lane id -> branch globs, from the text of `.githooks/lanes`. `#` starts a comment, and a
+    row with no glob is not a row — the same reading as the hook's `awk`, so the two arms cannot
+    disagree about what is registered."""
+    rows: dict[str, list[str]] = {}
+    for ln in text.splitlines():
+        fields = ln.split("#", 1)[0].split()
+        if len(fields) > 1:
+            rows.setdefault(fields[0], []).extend(fields[1:])
+    return rows
+
+
+def _verdict(lane_id: str, branch: str, lanes: dict[str, list[str]]) -> str | None:
+    """None when `lane_id/branch` is a REGISTERED PAIR, else the reason it is not. There is no
+    third answer: an id with no row and a branch outside its row are both refusals."""
+    globs = lanes.get(lane_id)
+    if globs is None:
+        return f"lane id {lane_id!r} has no row in .githooks/lanes"
+    if not any(fnmatchcase(branch, g) for g in globs):
+        return f"branch {branch!r} is not one of {lane_id}'s ({' '.join(globs)})"
+    return None
+
+
+def _registry_commit() -> str:
+    """The commit that ADDED `.githooks/lanes` — the registry's own rule commit.
+
+    DERIVED, NOT PINNED, so the commit that creates the file is bound by it; the same reason
+    `_RULE_COMMIT` is added back in `_bound_commits`. Pinning it would need a second commit to
+    write the sha of the first, and everything between the two would be unbound.
+    """
+    shas = _git("log", "--diff-filter=A", "--format=%H", "HEAD", "--", ".githooks/lanes").split()
+    return shas[-1] if shas else ""
+
+
+def test_THE_REGISTRY_EXISTS_AND_ITS_IDS_ROUND_TRIP():
+    """A missing registry would make the join below skip as "shallow clone" — so its absence is
+    asserted here, where it reds instead. And an id containing `/` can never match: `_TRAILER`
+    splits the trailer at its FIRST slash, so `a/b` would be read as id `a`."""
+    assert _LANES.is_file(), ".githooks/lanes is gone; no trailer can name a registered lane"
+    lanes = _registry(_LANES.read_text(encoding="utf-8"))
+    assert "ia-01" in lanes, f"Lane 1 has no row, so the registry is not the one ruled: {lanes}"
+    for lane_id in lanes:
+        assert "/" not in lane_id, f"lane id {lane_id!r} contains '/' and cannot round-trip"
+
+
+@pytest.mark.parametrize("lane_id,branch,refusal", [
+    ("ia-01", "lane/01", None),
+    ("ia-01", "lane/01-register-422", None),
+    ("ia-saf", "lane/saf-seal-frs-knowledge-document", None),
+    ("ia-fin", "fin/canvas-seed-answer-names-its-template", None),
+    # THE REJECTED RULE ACCEPTED THIS ONE: `wkc` was a live worktree when its commit was made,
+    # so `git worktree list` registered it — until the worktree was removed and the same commit
+    # turned red. A case only the new rule refuses is the case that shows which rule is running.
+    ("wkc", "lane/01-register-422", "has no row"),
+    ("ia-74", "lane/01-x", "is not one of"),            # two real names, not each other's
+    ("ia-28", "lane/28", "has no row"),                 # derived from a session name (R-058.1)
+    ("invincible-agent", "master", "has no row"),       # the shared tree is no lane
+    ("ia-01", "lane/011", "is not one of"),             # `lane/01-*`, not `lane/01*`
+])
+def test_THE_PAIR_CHECK_DECIDES_EACH_CASE(lane_id: str, branch: str, refusal: str | None):
+    """Against the LIVE registry, so a row edited into accepting a refused case reds here."""
+    got = _verdict(lane_id, branch, _registry(_LANES.read_text(encoding="utf-8")))
+    if refusal is None:
+        assert got is None, f"`Lane: {lane_id}/{branch}` should be registered: {got}"
+    else:
+        assert got and refusal in got, f"`Lane: {lane_id}/{branch}` should be refused ({refusal}): {got}"
+
+
+def test_A_TRAILER_MADE_UNDER_THE_REGISTRY_NAMES_A_REGISTERED_LANE():
     """THE JOIN. A trailer naming a lane other than the one that made the commit is WORSE than
     no trailer: it is a confident wrong answer, and it sends the next dispatch further astray
     than silence would.
 
-    Checked against `git worktree list`, which is the registry of the durable keys.
+    ⛔ WHAT THIS REPLACED, AND WHY (ruled 2026-10-26). The pair used to be checked against
+    `git worktree list` and the branch against refs git knew. BOTH ARE PRESENT-TENSE REGISTRIES
+    and a trailer is a past-tense claim: a throwaway worktree's correct commit went red the day
+    the worktree was removed, and a merged branch's commits would go red the day the branch was
+    deleted. That is the stale-claim shape running backwards — correct history failing. The
+    first version had already met it once (`invincible-agent/lane/ca-m33-cutover`, red the moment
+    the shared tree was parked back on master) and patched the halves instead of the registry.
+
+    NOW: the id is a row of `.githooks/lanes` and the branch must match that row's globs. The
+    registry is versioned with the history it judges and is append-only, so a row a commit cited
+    is still there when the commit is read. THE PAIR, NOT THE HALVES: `ia-74/lane/01` is two real
+    names that are not each other's, and a mispaired trailer resolves to somebody else.
+
+    BOUND BY ANCESTRY FROM THE COMMIT THAT ADDED THE REGISTRY. Commits before it were made when
+    the hook told every throwaway worktree to write its own basename, so they could not comply;
+    they are held to the trailer's FORM only, by the arm above. Retro-fitting them would mean
+    rewriting published history (R-030).
     """
-    pairs = set()
-    for ln in _git("worktree", "list").splitlines():
-        m = re.search(r"^(\S+)\s+\S+\s+\[(\S+)\]", ln)
-        if m:
-            pairs.add((Path(m.group(1)).name, m.group(2)))
-    if not pairs:
-        pytest.skip("no worktree registry readable here")
-    # THE PAIR, NOT THE HALVES. The first version checked only that the worktree existed, so
-    # `ia-74/lane/01` - two real names that are not each other's - would have passed. A trailer
-    # can be wrong by MISPAIRING as easily as by inventing, and the mispaired one is worse: it
-    # resolves to a lane that exists and belongs to somebody else.
-    #
-    # AND THE DERIVATION IS THE THING TO FIX, NOT THE ROW. `invincible-agent-28` works in
-    # `ia-74/lane/74`. A trailer built from the SESSION ADDRESS would read `ia-28/lane/28` - a
-    # lane that does not exist. The session address and the worktree are independent and neither
-    # predicts the other; the session address also churns, which is why the roster is not keyed
-    # on it either. Read the trailer from the worktree, never from what a session calls itself.
+    reg = _registry_commit()
+    if not reg:
+        pytest.skip("the commit that added .githooks/lanes is not in this clone (shallow?)")
+    lanes = _registry(_LANES.read_text(encoding="utf-8"))
+    bound = set(_git("rev-list", "--ancestry-path", "--no-merges", f"{reg}..HEAD").split())
+    bound.add(reg)
+    bad = []
     for sha, subject, body in _bound_commits():
-        m = _TRAILER.search(body or "")
-        if not m:
-            continue                      # the assertion above owns that case
-        claimed = (m.group(1), m.group(2))
-        # ⛔ THE PAIR WAS ASSERTED AGAINST THE REGISTRY AS IT IS NOW, and a trailer records what
-        # was true WHEN THE COMMIT WAS MADE. `Lane: invincible-agent/lane/ca-m33-cutover` was
-        # exactly right — that lane works in the shared tree, which was checked out at their
-        # branch — and it became "unregistered" the moment the shared tree was parked back on
-        # master. A worktree's branch moves; the trailer does not. Comparing a past-tense claim
-        # to a present-tense registry makes correct history fail, which is the stale-claim shape
-        # running backwards.
-        #
-        # SO THE TWO HALVES ARE CHECKED AGAINST WHAT IS DURABLE ABOUT EACH. The worktree must be
-        # a registered one — that is what catches `ia-28`, a name no worktree has ever had. The
-        # branch must be a ref git knows, local or remote — that is what catches `lane/28`,
-        # which nobody has pushed. Together they still refuse an invented pair while accepting
-        # a historical one, and neither half depends on where a worktree happens to point today.
-        if claimed in pairs:
+        if sha not in bound:
             continue
-        assert claimed[0] in {w for w, _ in pairs}, (
-            f"{sha[:12]} claims `Lane: {claimed[0]}/{claimed[1]}`, which is not a registered "
-            f"registered WORKTREE. Registered: {sorted({w for w, _ in pairs})}. Read the "
-            f"trailer from the worktree that made the commit (`git rev-parse --show-toplevel`, "
-            f"`git branch --show-current`) - NEVER derive it from a session address."
-        )
-        _known_ref = subprocess.run(
-            ["git", "rev-parse", "--verify", "--quiet", claimed[1]],
-            cwd=str(_REPO), capture_output=True, encoding="utf-8", errors="replace", timeout=60,
-        ).returncode == 0 or subprocess.run(
-            ["git", "rev-parse", "--verify", "--quiet", "origin/" + claimed[1]],
-            cwd=str(_REPO), capture_output=True, encoding="utf-8", errors="replace", timeout=60,
-        ).returncode == 0
-        assert _known_ref, (
-            f"{sha[:12]} claims branch {claimed[1]!r}, which git does not know locally or on "
-            f"origin. A trailer naming a branch nobody has pushed points the next dispatch at "
-            f"nothing."
-        )
+        for lane_id, branch in _TRAILER.findall(body or ""):
+            why = _verdict(lane_id, branch, lanes)
+            if why:
+                bad.append(f"{sha[:12]} {subject[:50]!r}: `Lane: {lane_id}/{branch}` — {why}")
+    assert not bad, (
+        "trailers naming no registered lane id/branch pair:\n  " + "\n  ".join(bad) + "\n"
+        "A trailer names a LANE ID from .githooks/lanes, never a worktree path: a throwaway "
+        "worktree commits as the lane it works for. `.githooks/pre-push --expected` prints it."
+    )
+
+
+def test_THE_REGISTRY_IS_APPEND_ONLY():
+    """The join reads every bound commit against TODAY's registry, which is only sound if no row
+    a commit cited has gone. So every (id, glob) any committed version held must still be here.
+    Close a lane with a comment on its row; removing the row would turn its history red — the
+    exact failure `git worktree list` produced."""
+    now = _registry(_LANES.read_text(encoding="utf-8"))
+    lost = []
+    for sha in _git("log", "--format=%H", "HEAD", "--", ".githooks/lanes").split():
+        for lane_id, globs in _registry(_git("show", f"{sha}:.githooks/lanes")).items():
+            lost += [f"{lane_id} {g} (in {sha[:12]})" for g in globs if g not in now.get(lane_id, [])]
+    assert not lost, "rows removed from .githooks/lanes that history cites:\n  " + "\n  ".join(lost)
 
 
 def test_EVERY_EXEMPTION_NAMES_A_REASON():

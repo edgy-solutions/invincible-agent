@@ -27,17 +27,22 @@ from typing import Any, Optional
 #
 # FIFTH RUNG: `user-drop` — a document hand-carried into the system by a non-technical user
 # (ADR-0041 §2, decision recorded 2026-08-17; landed here 2026-09-30 with the ingestion seam,
-# ADR-0041 §8). It is the FARTHEST rung we have: `authoritative_source` is unchanged (the drop
+# ADR-0041 §8). It was the FARTHEST rung until the sixth: `authoritative_source` is unchanged (the drop
 # does not change who owns the truth, only how far this copy travelled from it), `as_of` will
 # often be AS_OF_UNKNOWN, and `standing` is `supervised` — born-supervised, ADR-0034's default,
 # arrived at without an exception. Appended at the END of the tuple deliberately: the order is
-# the degradation distance, and user-drop is the least-trusted path that exists today. The
+# the degradation distance, and user-drop was the least-trusted path until the sixth rung. The
 # SDK's copy (iagent_mesh.provenance, lane/ca b68926a) carried it first. Census when it landed:
 # no reader in src/ or agent_fleet/ reasons over this tuple by position; the one exhaustive
 # reader is tests/test_provenance_block.py, which iterates it.
-DIRECT, ETL, WAREHOUSE, MANUAL_EXPORT, USER_DROP = (
-    "direct", "etl", "warehouse", "manual-export", "user-drop")
-OBTAINED_VIA = (DIRECT, ETL, WAREHOUSE, MANUAL_EXPORT, USER_DROP)
+#
+# SIXTH RUNG: `steward-corrected` — a claim a steward corrected by hand after automated
+# extraction got it wrong. It ranks LAST, after user-drop (architect ruling 2026-10-10, relayed
+# 2026-10-14); mirrors iagent_mesh.provenance at v0.9.10. It carries `corrected_by` and
+# `extracted_value`, both required on this rung and refused on every other.
+DIRECT, ETL, WAREHOUSE, MANUAL_EXPORT, USER_DROP, STEWARD_CORRECTED = (
+    "direct", "etl", "warehouse", "manual-export", "user-drop", "steward-corrected")
+OBTAINED_VIA = (DIRECT, ETL, WAREHOUSE, MANUAL_EXPORT, USER_DROP, STEWARD_CORRECTED)
 
 # `as_of` when the truth-date is genuinely not knowable — e.g. an export with no recorded
 # date. A SENTINEL, NEVER A BLANK: empty would collapse "we could not know" into "we forgot to
@@ -61,7 +66,9 @@ class ProvenanceIncomplete(ValueError):
 def make_provenance(*, authoritative_source: str, obtained_via: str, as_of: Optional[str],
                     ingested_at: Any, ingest_run: str, standing: str,
                     derived_from: Optional[str] = None,
-                    ingest_id: Optional[str] = None) -> dict:
+                    ingest_id: Optional[str] = None,
+                    corrected_by: Optional[str] = None,
+                    extracted_value: Optional[str] = None) -> dict:
     """Build the block. Every field is required; there are no convenient defaults.
 
     `standing` is FROZEN AT WRITE — the source's trust rung *at the moment this claim was
@@ -80,6 +87,9 @@ def make_provenance(*, authoritative_source: str, obtained_via: str, as_of: Opti
     only a hand-carried document has one; present in the block only when given, like
     `derived_from`. A blank one is refused: a sweep keyed on "" finds nothing and reports
     success.
+
+    `corrected_by` / `extracted_value` ride only with `obtained_via='steward-corrected'`: both
+    are required on that rung (`extracted_value` may be blank) and refused on every other.
     """
     if ingest_id is not None and not (isinstance(ingest_id, str) and ingest_id.strip()):
         raise ProvenanceIncomplete(
@@ -105,6 +115,17 @@ def make_provenance(*, authoritative_source: str, obtained_via: str, as_of: Opti
             "sensor and source object that produced it, and the lineage stops at this row")
     if not standing:
         raise ProvenanceIncomplete("standing is required (the source's rung AT WRITE TIME)")
+    if obtained_via == STEWARD_CORRECTED:
+        if not corrected_by or extracted_value is None:
+            raise ProvenanceIncomplete(
+                "obtained_via='steward-corrected' requires both corrected_by and "
+                "extracted_value — a correction with no corrector or no record of what it "
+                "replaced is not an auditable correction")
+    elif corrected_by is not None or extracted_value is not None:
+        raise ProvenanceIncomplete(
+            f"obtained_via={obtained_via!r} but corrected_by/extracted_value was supplied — "
+            f"those two fields assert 'this row was corrected', which only "
+            f"obtained_via='steward-corrected' can be true of")
     block = {
         "authoritative_source": authoritative_source,
         "obtained_via": obtained_via,
@@ -117,6 +138,10 @@ def make_provenance(*, authoritative_source: str, obtained_via: str, as_of: Opti
         block["derived_from"] = derived_from      # -> prov:wasDerivedFrom on serialization
     if ingest_id is not None:
         block["ingest_id"] = ingest_id
+    if corrected_by:
+        block["corrected_by"] = corrected_by
+    if extracted_value is not None:
+        block["extracted_value"] = extracted_value
     return block
 
 
@@ -133,6 +158,19 @@ def validate_provenance(block: Any) -> None:
             f"already contains claims nobody can place")
     if block["obtained_via"] not in OBTAINED_VIA:
         raise ProvenanceIncomplete(f"bad obtained_via {block['obtained_via']!r}")
+    corrected_by = block.get("corrected_by")
+    extracted_value = block.get("extracted_value")
+    if block["obtained_via"] == STEWARD_CORRECTED:
+        if not corrected_by or extracted_value is None:
+            raise ProvenanceIncomplete(
+                "obtained_via='steward-corrected' requires both corrected_by and "
+                "extracted_value — a correction with no corrector or no record of what it "
+                "replaced is not an auditable correction")
+    elif corrected_by is not None or extracted_value is not None:
+        raise ProvenanceIncomplete(
+            f"obtained_via={block['obtained_via']!r} but corrected_by/extracted_value is "
+            f"present — those two fields assert 'this row was corrected', which only "
+            f"obtained_via='steward-corrected' can be true of")
 
 
 def require_provenance(assertion: dict, *, key: str = "provenance") -> dict:

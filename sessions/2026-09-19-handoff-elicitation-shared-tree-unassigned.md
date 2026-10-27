@@ -1,6 +1,6 @@
 # Handoff — elicitation lane (ADR-0033), 2026-09-19
 
-to: whoever picks up ADR-0033's ask disposition, and to Lane 1 for the roster
+to: invincible-agent/lane/01 — for the roster; and whoever picks up ADR-0033's ask disposition
 
 **Read this before touching anything. It states what is true, what is in flight, and the one
 next step. The short version: this session's lane has no work in flight, because it was in the

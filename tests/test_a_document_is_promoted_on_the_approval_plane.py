@@ -42,6 +42,7 @@ PAYLOAD = {
     "extraction_ref": "s3://extractions/pcn-4471/review.json",
     "notice_id": "PCN-4471",
 }
+AUDIENCE = "document_promotion:SUSTAINMENT"
 GOVERNING = {"ruleset_ref": "task_kind:document_promotion@x", "trust_table_ref": "trust@t"}
 
 #: Every field make_provenance can emit, the optional ones included, so the disjointness arm
@@ -87,11 +88,20 @@ class Graph:
             raise self.answer
         return self.answer if self.answer is not None else iid in self.nodes
 
+    def notice_mpns(self, ingest_id, *, domain):
+        return None
+
     def write_fact(self, iid, fact):
         self.log.append(("fact", iid, fact))
         if self.fail == "write":
             raise RuntimeError("graph writer down")
         self.nodes[iid].update(fact)
+
+    def attest_origin(self, iid, *, owner_domain, record_id):
+        self.log.append(("origin", iid, owner_domain, record_id))
+        if self.fail == "origin":
+            raise RuntimeError("graph writer down")
+        return "written"
 
     def delete_carrying(self, iid):
         self.log.append(("graph-delete", iid))
@@ -133,7 +143,7 @@ def _act(stores, *, decision="promoted", can_act=lambda a, c: True, payload=None
          acted_by="bob", comment="", now_ms=1_000):
     return promotion.act(
         dict(PAYLOAD) if payload is None else payload, decision=decision, acted_by=acted_by,
-        audience="aud:sustainment-approvers", comment=comment, can_act=can_act,
+        audience=AUDIENCE, comment=comment, can_act=can_act,
         stores=stores, governing=GOVERNING, era="commissioning", now_ms=now_ms)
 
 
@@ -146,7 +156,7 @@ def _kinds(log):
 def test_a_PROMOTION_checks_the_node_writes_the_record_THEN_adds_the_fact():
     log: list = []
     out = _act(_stores(log))
-    assert _kinds(log) == ["exists", "record", "fact"]
+    assert _kinds(log) == ["exists", "record", "fact", "origin"]
     record, (_, subject, fact) = log[1][1], log[2]
     assert record["request_key"] == INGEST_ID
     assert record["record_id"] == decision_record.record_id_for(INGEST_ID)
@@ -217,12 +227,15 @@ def test_NO_stores_at_all_is_503_before_any_record(decision):
 def test_a_PROMOTION_needs_no_index_and_no_object_store():
     log: list = []
     out = _act(_stores(log, indexes=None, objects=None))
-    assert out["decision"] == "promoted" and _kinds(log) == ["exists", "record", "fact"]
+    assert out["decision"] == "promoted" and _kinds(log) == ["exists", "record", "fact", "origin"]
 
 
 def test_every_store_field_is_required_by_SOME_verb():
     fields = {f.name for f in dataclasses.fields(promotion.PromotionStores)}
-    assert fields == set().union(*promotion.REQUIRES.values())
+    # `corrections` is conditional (only a promotion that changes the parts needs it), so no verb
+    # requires it outright; `act` refuses it by name when it is wanted and absent.
+    assert "corrections" not in set().union(*promotion.REQUIRES.values())
+    assert fields - {"corrections"} == set().union(*promotion.REQUIRES.values())
 
 
 @pytest.mark.parametrize("answer,status,error", [
@@ -444,7 +457,7 @@ from src.iagent import gateway  # noqa: E402
 def route(monkeypatch, fresh_declarations):
     log: list = []
     calls: dict = {"resolved": [], "can_act": [], "log": log}
-    task = {"task_id": "t-1", "kind": promotion.KIND, "audience": "aud:sustainment-approvers",
+    task = {"task_id": "t-1", "kind": promotion.KIND, "audience": AUDIENCE,
             "payload": dict(PAYLOAD)}
     monkeypatch.setattr(human_tasks, "list_tasks_for", lambda caller, status="pending": [task])
 
@@ -453,6 +466,8 @@ def route(monkeypatch, fresh_declarations):
         return calls.get("allow", True)
 
     monkeypatch.setattr(human_tasks, "check_can_act", can_act)
+    monkeypatch.setattr(gateway, "_review_mpns_for_payload", lambda subject: [])   # the reviewed set
+    monkeypatch.setattr(ingest_status, "get_row", lambda _id: None)   # the act reads the row first (203b)
     monkeypatch.setattr(human_tasks, "mark_task_resolved",
                         lambda tid, **kw: calls["resolved"].append((tid, kw)) or 1)
     user = type("U", (), {"authz_id": "bob", "sub": "bob", "email": "bob@x",
@@ -500,7 +515,7 @@ def test_ROUTE_with_TODAYS_stores_and_NO_LEDGER_is_503_naming_ONLY_the_ledger_an
 
     c, calls, mp = route
     mp.setattr(promotion_stores, "_PG_DSN", "")
-    r = _post(c, decision, comment="why")
+    r = _post(c, decision, comment="unreadable: why")
     assert r.status_code == 503, r.text
     assert r.json()["detail"]["error"] == "promotion_store_unconfigured"
     message = r.json()["detail"]["message"]
@@ -530,7 +545,7 @@ def test_ROUTE_promotes_then_resolves_the_projection(route):
     assert body["fact"]["promoted_by"] == "human:bob"
     record = next(e[1] for e in calls["log"] if e[0] == "record")
     assert record["governing"]["ruleset_ref"].startswith("task_kind:document_promotion@")
-    assert _kinds(calls["log"]) == ["exists", "record", "fact"]
+    assert _kinds(calls["log"]) == ["exists", "record", "fact", "origin"]
     assert calls["resolved"] == [("t-1", {"caller_id": "bob", "decision": "promoted",
                                           "comment": ""})]
     # the effect re-asked can_act itself, beyond the route's own check
@@ -540,7 +555,7 @@ def test_ROUTE_promotes_then_resolves_the_projection(route):
 def test_ROUTE_a_record_write_failure_leaves_the_task_PENDING(route):
     c, calls, _, stores = _wired(route)
     stores.ledger.result = {"ok": False, "reason": "unreachable"}
-    r = _post(c, "rejected", comment="superseded")
+    r = _post(c, "rejected", comment="duplicate: superseded")
     assert r.status_code == 503, r.text
     assert _kinds(calls["log"]) == ["record"] and calls["resolved"] == []
 
@@ -548,7 +563,7 @@ def test_ROUTE_a_record_write_failure_leaves_the_task_PENDING(route):
 def test_ROUTE_an_effect_failure_leaves_the_task_PENDING(route):
     c, calls, _, stores = _wired(route)
     stores.objects.fail = True
-    r = _post(c, "rejected", comment="superseded")
+    r = _post(c, "rejected", comment="duplicate: superseded")
     assert r.status_code == 503, r.text
     assert r.json()["detail"]["error"] == "promotion_effect_incomplete"
     assert calls["resolved"] == []
@@ -584,9 +599,9 @@ def test_ROUTE_rejection_updates_the_ingest_status_projection_with_the_comment(r
     updates: list = []
     mp.setattr(ingest_status, "update_status",
               lambda ingest_id, stage, *, detail=None: updates.append((ingest_id, stage, detail)))
-    r = _post(c, "rejected", comment="superseded revision")
+    r = _post(c, "rejected", comment="duplicate: superseded revision")
     assert r.status_code == 200, r.text
-    assert updates == [(INGEST_ID, "rejected", "superseded revision")]
+    assert updates == [(INGEST_ID, "rejected", "duplicate: superseded revision")]
 
 
 @pytest.mark.parametrize("comment", ["", "   "])

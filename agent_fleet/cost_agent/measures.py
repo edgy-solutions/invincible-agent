@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
+from datetime import date, datetime, timezone
 from contextlib import contextmanager
 import pathlib
 from decimal import Decimal
@@ -1047,9 +1049,14 @@ def _a_builder_exit_is_named():
         raise SourceUnavailable(f"the package builder refused: {exc}") from None
 
 
+def _request_date() -> str:
+    """TODAY (UTC), AS THE DATE A REQUEST CLAIMS. One place, so a test can pin it."""
+    return datetime.now(timezone.utc).date().isoformat()
+
+
 def package_export(
     state: CostState, *, recipient_scope: str, include_dataset: Optional[bool] = None,
-    canvas: Optional[dict] = None,
+    canvas: Optional[dict] = None, as_of: Optional[str] = None,
 ) -> dict[str, Any]:
     """Produce a customer-validation package for one recipient. A GOVERNED EMIT (ADR-0047).
 
@@ -1077,6 +1084,19 @@ def package_export(
     different artifact than the one a recipient opens. The JavaScript gate and the manifest
     hashing are load-bearing here, and they are load-bearing because they are the same code.
     """
+    # AS_OF IS AN INPUT, RESOLVED ONCE. Absent, it is the request date, taken here and handed to
+    # every builder below so the page, the package and the response cannot disagree.
+    if as_of is None:
+        as_of = _request_date()
+    else:
+        try:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(as_of)):
+                raise ValueError
+            date.fromisoformat(as_of)
+        except ValueError:
+            raise NotInModel(
+                f"as_of {as_of!r} is not a date; expected YYYY-MM-DD, e.g. 2026-01-02",
+                slot="as_of") from None
     scopes = sorted(RECIPIENT_SCOPES)
     if not recipient_scope or not str(recipient_scope).strip():
         raise NotInModel(
@@ -1092,8 +1112,9 @@ def package_export(
     entitled = lots_for_recipient(scope)
     composed = None
     if canvas is not None:
-        # REFUSED BEFORE ANYTHING IS BUILT, and by name: an out-of-scope lot is Unentitled,
-        # an answer this engine cannot export is NotInModel. Nothing is dropped.
+        # REFUSED BEFORE ANYTHING IS BUILT, and by name: an out-of-scope lot is Unentitled
+        # (whole canvas); a canvas with no exportable answer is NotInModel. An answer this
+        # engine cannot export is named in composed["refused"], not fatal (RULED 10-16 Q1).
         composed = canvas_reader.resolve(canvas, recipient_scope=scope, entitled_lots=entitled)
         if include_dataset is False:
             raise NotInModel(
@@ -1206,7 +1227,7 @@ def package_export(
                     canvas_answers=composed["answers"]) if composed else {}
     with _a_builder_exit_is_named():
         html = builder.build_html(scope, runtime, duckdb_path=dataset_path, state=state,
-                                  sha=sha, **narrowed)
+                                  sha=sha, as_of=as_of, **narrowed)
     problems = builder.check_javascript(html)
     if problems:
         # THE SAME GATE THE SCRIPT USES. A verb that skipped it could emit a package that is
@@ -1218,9 +1239,9 @@ def package_export(
     package = build_dataset_package(
         state, recipient_scope=scope, algorithm_sha=sha,
         duckdb_path=str(dataset_path), duckdb_hash=dataset_builder.file_hash(dataset_path),
-        **narrowed,
+        as_of=as_of, **narrowed,
     ) if dataset_path else build_package(
-        state, recipient_scope=scope, algorithm_sha=sha)
+        state, recipient_scope=scope, algorithm_sha=sha, as_of=as_of)
 
     dest = _dist_dir(root) / artifact_filenames(scope)[0]
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1295,6 +1316,8 @@ def package_export(
         "sections": package["sections"],
         # WHICH ANSWERS COMPOSED THIS DISCLOSURE, or None for the whole-program export.
         "canvas_answers": package.get("canvas_answers"),
+        # THE CANVAS ANSWERS REFUSED BY NAME (id, reason_code, reason); None without a canvas.
+        "refused_answers": composed["refused"] if composed else None,
     }
 
 

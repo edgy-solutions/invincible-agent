@@ -64,6 +64,11 @@ domains:
   # A DOMAIN IN NO GROUP GRANTS NOBODY ANYTHING -- scoping is per CELL. This line alone changes
   # nothing observable; the grant is the safety-engineers group in groups.yaml.
   - SUSTAINMENT
+  # TRAINING (added 2026-10-24, roll 207): the domain of doc-tools' `course` kind (ADR-0059,
+  # doc-tools lane tr), per Chris's ruling 2026-10-23 "a kind names the document, not the
+  # domain". In NO group yet, so it grants nobody anything; who reads training material is a
+  # groups.yaml decision that has not been made.
+  - TRAINING
 
 # ── THE HEADER'S "UPDATE ADR-0009 FIRST" IS STALE, AND IT IS RECORDED HERE BECAUSE IT IS A
 #    PRECONDITION THAT CANNOT BE SATISFIED. Added 2026-09-14 while adding SUSTAINMENT.

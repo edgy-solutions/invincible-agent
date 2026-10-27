@@ -14,6 +14,7 @@
 set -u
 
 FLOOR_MB=2048
+MEMINFO=/proc/meminfo
 
 LOCK="$HOME/.iagent-suite-gate.lock"
 cd "$(dirname "$0")/.." || exit 3
@@ -43,9 +44,20 @@ trap 'exit 143' TERM
 
 # 2. Other pytest processes
 if [ "$WIN" = 1 ]; then
-  procs=$(powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { (\$_.Name -like 'python*' -or \$_.Name -like 'pytest*') -and \$_.CommandLine -match 'pytest' } | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }" | tr -d '\r' | grep -v '^[[:space:]]*$')
+  raw=$(powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { (\$_.Name -like 'python*' -or \$_.Name -like 'pytest*') -and \$_.CommandLine -match 'pytest' } | ForEach-Object { \"\$(\$_.ProcessId) \$(\$_.CommandLine)\" }")
+  prc=$?
+  [ "$prc" = 0 ] && ok=1 || ok=0
+  procs=$(printf '%s\n' "$raw" | tr -d '\r' | grep -v '^[[:space:]]*$')
 else
-  procs=$(pgrep -af pytest | grep -v "^$$ " | grep -v '^[[:space:]]*$')
+  raw=$(pgrep -af pytest)
+  prc=$?
+  # pgrep: 0 = matches, 1 = no match (legitimate); anything else is a probe failure
+  { [ "$prc" = 0 ] || [ "$prc" = 1 ]; } && ok=1 || ok=0
+  procs=$(printf '%s\n' "$raw" | grep -v "^$$ " | grep -v '^[[:space:]]*$')
+fi
+if [ "$ok" != 1 ]; then
+  echo "GATE REFUSED: the pytest-process probe failed (exit $prc) -- cannot tell whether another suite is running"
+  exit 3
 fi
 if [ -n "$procs" ]; then
   n=$(printf '%s\n' "$procs" | wc -l | tr -d ' ')
@@ -64,7 +76,7 @@ fi
 if [ "$WIN" = 1 ]; then
   m=$(powershell.exe -NoProfile -Command '[int]((Get-CimInstance Win32_OperatingSystem).FreeVirtualMemory/1KB)' | tr -d '\r[:space:]')
 else
-  m=$(awk '/^CommitLimit:/{l=$2} /^Committed_AS:/{c=$2} END{ if (l!="" && c!="") print int((l-c)/1024) }' /proc/meminfo 2>/dev/null)
+  m=$(awk '/^CommitLimit:/{l=$2} /^Committed_AS:/{c=$2} END{ if (l!="" && c!="") print int((l-c)/1024) }' "$MEMINFO" 2>/dev/null)
 fi
 case "$m" in
   ''|*[!0-9]*)

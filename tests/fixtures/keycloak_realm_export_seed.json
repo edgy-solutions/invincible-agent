@@ -1,0 +1,109 @@
+{
+  "_comment": "Shaped like a Keycloak realm export (top-level identityProviders, identityProviderMappers, authenticationFlows, users, clients). Execution field names follow Keycloak's export (authenticator, authenticatorFlow, requirement, priority, flowAlias, authenticatorConfig). VERIFIED against memory of a stock export: the flow/sub-flow tree of 'first broker login' (review-profile, User creation or linking, Handle Existing Account, Account verification options, Verify Existing Account by Re-authentication, Conditional OTP) and the requirement values. ASSUMED, not verified against a live Keycloak: (a) the position of idp-auto-link (placed in 'User creation or linking' as a stock-copy hazard, the canned list in test_oidc_broker_chart.py does the same); (b) idp-detect-existing-broker-user inside 'Handle Existing Account' (present in some Keycloak versions only); (c) priority numbers; (d) authenticatorConfig names.",
+  "realm": "invincible-agent",
+  "identityProviders": [
+    {
+      "alias": "corp-oidc",
+      "displayName": "Unrelated corporate IdP (decoy: the broker segment must not touch it)",
+      "providerId": "oidc",
+      "enabled": true,
+      "trustEmail": true,
+      "storeToken": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {"clientId": "corp", "syncMode": "IMPORT"}
+    }
+  ],
+  "identityProviderMappers": [
+    {
+      "name": "corp-email",
+      "identityProviderAlias": "corp-oidc",
+      "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+      "config": {"syncMode": "IMPORT", "claim": "email", "user.attribute": "email"}
+    }
+  ],
+  "authenticationFlows": [
+    {
+      "alias": "first broker login",
+      "description": "Actions taken after first broker login with identity provider account, which is not yet linked to any Keycloak account",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": true,
+      "authenticationExecutions": [
+        {"authenticator": "idp-review-profile", "authenticatorConfig": "review profile config", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 10, "userSetupAllowed": false},
+        {"authenticatorFlow": true, "requirement": "REQUIRED", "priority": 20, "flowAlias": "User creation or linking", "userSetupAllowed": false}
+      ]
+    },
+    {
+      "alias": "User creation or linking",
+      "description": "Flow for the existing/non-existing user alternatives",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": true,
+      "authenticationExecutions": [
+        {"authenticator": "idp-create-user-if-unique", "authenticatorConfig": "create unique user config", "authenticatorFlow": false, "requirement": "ALTERNATIVE", "priority": 10, "userSetupAllowed": false},
+        {"authenticator": "idp-auto-link", "authenticatorFlow": false, "requirement": "ALTERNATIVE", "priority": 15, "userSetupAllowed": false},
+        {"authenticatorFlow": true, "requirement": "ALTERNATIVE", "priority": 20, "flowAlias": "Handle Existing Account", "userSetupAllowed": false}
+      ]
+    },
+    {
+      "alias": "Handle Existing Account",
+      "description": "Handle what to do if there is existing account with same email/username like authenticated identity provider",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": true,
+      "authenticationExecutions": [
+        {"authenticator": "idp-confirm-link", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 10, "userSetupAllowed": false},
+        {"authenticator": "idp-detect-existing-broker-user", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 15, "userSetupAllowed": false},
+        {"authenticatorFlow": true, "requirement": "REQUIRED", "priority": 20, "flowAlias": "Account verification options", "userSetupAllowed": false}
+      ]
+    },
+    {
+      "alias": "Account verification options",
+      "description": "Method with which to verify the existing account",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": true,
+      "authenticationExecutions": [
+        {"authenticator": "idp-email-verification", "authenticatorFlow": false, "requirement": "ALTERNATIVE", "priority": 10, "userSetupAllowed": false},
+        {"authenticatorFlow": true, "requirement": "ALTERNATIVE", "priority": 20, "flowAlias": "Verify Existing Account by Re-authentication", "userSetupAllowed": false}
+      ]
+    },
+    {
+      "alias": "Verify Existing Account by Re-authentication",
+      "description": "Reauthentication of existing account",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": true,
+      "authenticationExecutions": [
+        {"authenticator": "idp-username-password-form", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 10, "userSetupAllowed": false},
+        {"authenticatorFlow": true, "requirement": "CONDITIONAL", "priority": 20, "flowAlias": "First broker login - Conditional OTP", "userSetupAllowed": false}
+      ]
+    },
+    {
+      "alias": "First broker login - Conditional OTP",
+      "description": "Flow to determine if the OTP is required for the authentication",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": true,
+      "authenticationExecutions": [
+        {"authenticator": "conditional-user-configured", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 10, "userSetupAllowed": false},
+        {"authenticator": "auth-otp-form", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 20, "userSetupAllowed": false}
+      ]
+    },
+    {
+      "alias": "browser",
+      "description": "Unrelated top-level flow (decoy: a copy of another flow must not edit it)",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": true,
+      "authenticationExecutions": [
+        {"authenticator": "auth-username-password-form", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 10, "userSetupAllowed": false}
+      ]
+    }
+  ],
+  "users": [
+    {"username": "agent-user", "email": "agent@example.com", "enabled": true, "attributes": {"authz_id": ["agent@example.com"]}},
+    {"username": "local.xy", "email": "x@y", "enabled": true, "attributes": {"authz_id": ["x@y"]}}
+  ],
+  "clients": []
+}

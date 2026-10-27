@@ -12,10 +12,15 @@ Per ADR-0026:
       the FastAPI layer per ADR-0026 "deny honestly, distinct from
       denial" — the failing party can tell "auth is down" from
       "you're denied."
+    * `AuthorizationUnconfigured` — raised when a check that must decide
+      cannot because the deployment declared no Topaz directory URL.
+      Misconfiguration, not an outage and not a deny; 503
+      `authorization_unconfigured` (Q14).
 """
 
 from iagent.authz.topaz_client import (
     AuthorizationUnavailable,
+    AuthorizationUnconfigured,
     CellNotEntitled,
     EntitlementCache,
     Entitlements,
@@ -25,6 +30,7 @@ from iagent.authz.topaz_client import (
 
 __all__ = [
     "AuthorizationUnavailable",
+    "AuthorizationUnconfigured",
     "CellNotEntitled",
     "EntitlementCache",
     "Entitlements",

@@ -1,0 +1,189 @@
+@prefix mil:  <http://edgy-solutions.com/ontology/mil#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix iof:  <https://spec.industrialontologies.org/ontology/core/Core/> .
+# ===========================================================================
+# S1000D CONTENT STRUCTURE (doc-tools parsers; added 2026-10-17)
+# Domain/range below are MEASURED off the emitted graph, not inferred from the
+# property names. Where the emitted subject classes are disjoint, rdfs:domain
+# is deliberately OMITTED rather than narrowed to a false one.
+# ===========================================================================
+
+mil:Figure a owl:Class ;
+    rdfs:subClassOf iof:InformationContentEntity ;
+    rdfs:label "Technical Illustration" ;
+    skos:definition "An illustration carried by a data module, identified by its Illustration Control Number (ICN) where one is authored. Carries the resolved artwork URL and, for an illustrated parts module, the catalog items its hotspots index." .
+
+mil:CatalogItem a owl:Class ;
+    rdfs:label "Illustrated Parts Catalog Item" ;
+    skos:definition "One line of an illustrated parts data module: a catalog sequence number resolving to a part, with the quantity required and the manufacturer code. The unit a parts-list question resolves to." .
+
+mil:FaultCode a owl:Class ;
+    rdfs:label "Fault Code" ;
+    skos:definition "A diagnostic fault code declared by a fault isolation data module, carrying its code value and the fault text. The subject a fault-isolation question resolves to." .
+
+mil:PlanningInterval a owl:Class ;
+    rdfs:label "Maintenance Planning Interval" ;
+    skos:definition "A scheduled-maintenance threshold: the value and unit at which a task becomes due, as authored in a maintenance planning data module." .
+
+mil:ProceduralStep a owl:Class ;
+    rdfs:subClassOf iof:InformationContentEntity ;
+    rdfs:label "Procedural Step" ;
+    skos:definition "One step of a procedure, carrying its instruction text. Position in the procedure is held by the rdf:List that mil:hasProcedureSteps points at, never by a property of the step itself." .
+
+mil:WorkPackage a owl:Class ;
+    rdfs:subClassOf mil:DataModule ;
+    rdfs:label "MIL-STD-40051 Work Package" ;
+    skos:definition "A unit of technical information authored to MIL-STD-40051 as a work package. Co-typed with mil:DataModule so a cross-standard query reaches both." .
+
+# ----- the rdf:List-valued procedures property (ruling 3) -----
+# The list CELLS are deliberately untyped in the emitted data: a walk reaches
+# them by rdf:rest*/rdf:first, which needs no type. So this range is a
+# declaration about the structure, and an instance-type validator will NOT
+# confirm it. Cells are URIs, never blank nodes, because the instance-graph
+# write ships the graph as SPARQL INSERT DATA, which mints a fresh blank node
+# per execution and would duplicate the whole list on every re-ingest.
+mil:hasProcedureSteps a owl:ObjectProperty ;
+    rdfs:domain mil:ProcedureDataModule ;
+    rdfs:range rdf:List ;
+    rdfs:label "Has Procedure Steps" ;
+    skos:definition "Relates a procedure data module to the ordered list of its steps, as an rdf:List. Order is the list, read with rdf:rest*/rdf:first. There is no step-index property: none was ever declared in this vocabulary, which is why order is modelled as a list." .
+
+mil:hasStepText a owl:DatatypeProperty ;
+    rdfs:domain mil:ProceduralStep ;
+    rdfs:range xsd:string ;
+    rdfs:label "Step Instruction Text" ;
+    skos:definition "The instruction text of one procedural step, with authoring line wraps collapsed. Text of a nested step is folded into its enclosing step." .
+
+# ----- fault isolation -----
+mil:hasFaultCode a owl:ObjectProperty ;
+    rdfs:domain mil:FaultIsolationDataModule ;
+    rdfs:range mil:FaultCode ;
+    rdfs:label "Has Fault Code" ;
+    skos:definition "Relates a fault isolation data module to a fault code it declares." .
+
+mil:hasFaultCodeValue a owl:DatatypeProperty ;
+    rdfs:domain mil:FaultCode ;
+    rdfs:range xsd:string ;
+    rdfs:label "Fault Code Value" ;
+    skos:definition "The code value itself, kept as a literal so cross-document identity stays recoverable by joining on it: fault-code subjects are document-scoped." .
+
+mil:hasFaultCodeText a owl:DatatypeProperty ;
+    rdfs:domain mil:FaultCode ;
+    rdfs:range xsd:string ;
+    rdfs:label "Fault Code Text" ;
+    skos:definition "The authored description of what the fault code means." .
+
+# ----- maintenance planning -----
+mil:hasPlanningInterval a owl:ObjectProperty ;
+    rdfs:domain mil:DataModule ;
+    rdfs:range mil:PlanningInterval ;
+    rdfs:label "Has Planning Interval" ;
+    skos:definition "Relates a data module to a scheduled-maintenance interval it authorises." .
+
+mil:hasIntervalValue a owl:DatatypeProperty ;
+    rdfs:domain mil:PlanningInterval ;
+    rdfs:range xsd:string ;
+    rdfs:label "Interval Value" ;
+    skos:definition "The threshold value at which the task becomes due. A literal, not a number: the authored form is kept verbatim." .
+
+mil:hasIntervalUnit a owl:DatatypeProperty ;
+    rdfs:domain mil:PlanningInterval ;
+    rdfs:range xsd:string ;
+    rdfs:label "Interval Unit" ;
+    skos:definition "The unit of measure the interval value is expressed in, as authored." .
+
+# ----- illustrated parts -----
+# NO rdfs:domain: emitted with BOTH a mil:DataModule and a mil:Figure subject
+# (always the module, so a walk need not hop the figure; also the figure when
+# there is one). A single domain here would be a false statement.
+mil:hasCatalogItem a owl:ObjectProperty ;
+    rdfs:range mil:CatalogItem ;
+    rdfs:label "Has Catalog Item" ;
+    skos:definition "Relates an illustrated parts data module, and the figure it appears on, to one catalog line." .
+
+mil:hasItemNumber a owl:DatatypeProperty ;
+    rdfs:domain mil:CatalogItem ;
+    rdfs:range xsd:string ;
+    rdfs:label "Catalog Item Number" ;
+    skos:definition "The catalog sequence or item number identifying this line within its figure." .
+
+mil:hasQuantity a owl:DatatypeProperty ;
+    rdfs:domain mil:CatalogItem ;
+    rdfs:label "Required Quantity" ;
+    skos:definition "How many of the part this catalog line requires. Typed xsd:integer when the authored value parses as one and kept as the authored literal when it does not, so an unparseable quantity is visible rather than coerced." .
+
+mil:hasManufacturerCode a owl:DatatypeProperty ;
+    rdfs:domain mil:CatalogItem ;
+    rdfs:range xsd:string ;
+    rdfs:label "Manufacturer Code" ;
+    skos:definition "The manufacturer or CAGE code authored against this catalog line." .
+
+# NO rdfs:domain: emitted against mil:CatalogItem, mil:Part AND mil:Tool, and
+# mil:Tool is deliberately not a subclass of mil:Part, so there is no common
+# superclass to key on.
+mil:hasPartNumber a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "Part Number" ;
+    skos:definition "The part number as authored, kept as a literal so cross-document identity stays recoverable by joining on it: part and tool subjects are document-scoped to stop two documents fusing into one node." .
+
+# ----- figures and artwork -----
+mil:hasFigure a owl:ObjectProperty ;
+    rdfs:domain mil:DataModule ;
+    rdfs:range mil:Figure ;
+    rdfs:label "Has Figure" ;
+    skos:definition "Relates a data module to an illustration it carries." .
+
+mil:hasICN a owl:DatatypeProperty ;
+    rdfs:domain mil:Figure ;
+    rdfs:range xsd:string ;
+    rdfs:label "Illustration Control Number" ;
+    skos:definition "The authored ICN of the illustration. Absent when the graphic carries only a board number, which is NOT an ICN and is never substituted for one." .
+
+mil:hasURL a owl:DatatypeProperty ;
+    rdfs:domain mil:Figure ;
+    rdfs:range xsd:string ;
+    rdfs:label "Artwork URL" ;
+    skos:definition "The resolved location of the artwork. Emitted only when it resolves: an ICN is never dressed up as a URL." .
+
+mil:hasHotspotId a owl:DatatypeProperty ;
+    rdfs:domain mil:CatalogItem ;
+    rdfs:range xsd:string ;
+    rdfs:label "Hotspot Identifier" ;
+    skos:definition "The identifier joining a catalog line to the clickable region of the artwork that indexes it. Every id emitted is present in the sibling SVG; the converse does not hold, since a graphic may carry hotspots no catalog line references." .
+
+mil:renderingOrigin a owl:DatatypeProperty ;
+    rdfs:domain mil:Figure ;
+    rdfs:range xsd:string ;
+    rdfs:label "Rendering Origin" ;
+    skos:definition "Where the artwork reference came from, including the explicit value unresolved when it could not be resolved at all. An unresolved figure says so rather than defaulting to something that looks resolved." .
+
+# ----- cross-references -----
+mil:refersToDataModule a owl:ObjectProperty ;
+    rdfs:domain mil:DataModule ;
+    rdfs:range mil:DataModule ;
+    rdfs:label "Refers To Data Module" ;
+    skos:definition "A cross-reference from one data module to another, assembled with the same canonicalizer on both sides so the target connects to the subject of the referenced module. BREX self-references in the ident and status section are excluded: unfiltered they inflate this edge count from 5 to 11 over the six MRAD modules." .
+
+# ===========================================================================
+# NOT NEW TERMS -- TWO DEFINITIONS FOR TERMS ALREADY IN mil_extension.ttl
+#
+# mil:hasInstructionText and mil:hasWarning each carry an rdfs:label and no
+# definition of ANY kind -- neither skos:definition nor rdfs:comment. The
+# doc-tools vocabulary extractor reads
+#     { ?uri skos:definition ?d } UNION { ?uri rdfs:comment ?d }
+# so a term with neither has NO embedding text at all and cannot be reached
+# semantically. That is silent, not visible, which is why it is flagged here.
+#
+# These two triples are ADDITIVE: the subjects, their rdf:type, rdfs:domain,
+# rdfs:range and rdfs:label are already declared above in mil_extension.ttl
+# and are not restated. 74 owns the wording -- if either reading is wrong,
+# change it in your tree.
+# ===========================================================================
+
+mil:hasInstructionText skos:definition "The authored text of one instruction a maintainer performs - the body of a procedural step. Position in the procedure is not carried here; it is held by the rdf:List the step hangs from." .
+
+mil:hasWarning skos:definition "A safety warning, caution or note authored against a data module or one of its steps, carried verbatim as the source prints it. A warning is never summarised or merged across steps." .

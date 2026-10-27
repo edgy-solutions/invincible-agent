@@ -1,0 +1,6 @@
+# SEED -- a binding held in this deployment's configuration (chart values), not on the rail.
+family: config
+object_scoped: false
+who: this deployment's operator (the owner of its chart values)
+how: >-
+  a values change naming the caller in the entry the policy id names, rolled to the service

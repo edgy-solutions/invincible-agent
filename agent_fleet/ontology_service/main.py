@@ -30,6 +30,7 @@ import rdflib
 import weaviate
 import weaviate.classes as wvc
 from neo4j import GraphDatabase
+from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -76,6 +77,18 @@ except ImportError:
         b = init_baml_client(b)
     except ImportError:
         pass
+
+# ENGINE O JOINS AN IDENTICAL MODEL CALL THAT IS STILL RUNNING. Architect ruling 2026-10-20:
+# "Engine O dedupes identical in-flight calls (prompt hash; a retry joins the running call
+# instead of starting another)". MEASURED 2026-10-20 (revision 199): Engine A re-posted the same
+# prompt 4 and 8 times while the first ClassifyDomainIntent call (max 52,553 ms) was still
+# running, and every abandoned call completed as a full model call. A cache would have caught
+# none of them; this does not cache -- see inflight.py.
+try:
+    from inflight import CoalescingClient  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.ontology_service.inflight import CoalescingClient
+b = CoalescingClient(b, log=logging.getLogger(__name__))
 
 # Shared embedding helper (agent_fleet/utils/embed.py). Container flat-layout
 # and source-layout both supported. embed_query is for READ paths — it
@@ -356,9 +369,10 @@ _JENA = _jena_posture(os.environ)
 _JENA_ENDPOINT = _JENA.endpoint
 _JENA_UPDATE_ENDPOINT = _JENA.update_endpoint
 
-# `JenaMeshOntology` — the SDK's `MeshOntology` Protocol over this same Jena, for LEG 3 of
-# `_FIND_COMPAT_VERBS_CYPHER` (the universal-referent leg). Flatten-aware import, same shape as
-# `substrate_posture` above.
+# `JenaMeshOntology` — the SDK's `MeshOntology` Protocol over this same Jena. LEG 3 of
+# `_FIND_COMPAT_VERBS_CYPHER` no longer reads it (ruling 2026-10-17: it reads the Neo4j node
+# property); the instance is kept, unconsumed here, for the seal that proves LEG 3 never calls it.
+# Flatten-aware import, same shape as `substrate_posture` above.
 try:
     from mesh_ontology import JenaMeshOntology as _JenaMeshOntology  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
@@ -571,10 +585,10 @@ ORDER BY ?label
 # import), and where the package IS importable it guarantees one canonical class.
 try:
     from agent_fleet.ontology_service.read_outcome import (
-        MeshResult, StoreAttempt, outcome, rows_or_refuse)
+        MeshResult, StoreAttempt, SubstrateUnavailable, outcome, rows_or_refuse)
 except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
     from read_outcome import (  # type: ignore[no-redef]
-        MeshResult, StoreAttempt, outcome, rows_or_refuse)
+        MeshResult, StoreAttempt, SubstrateUnavailable, outcome, rows_or_refuse)
 
 
 def _get_local_graph() -> rdflib.Graph:
@@ -914,8 +928,10 @@ async def lifespan(app: FastAPI):
                     "sustainment graph's SUBJECT_TO edges, one source per part. Every source carries "
                     "the notice's provenance as the graph records it: how it was obtained, the ingest "
                     "id, who dropped it and who promoted it; a seeded notice carries none. REFUSES an "
-                    "unknown notice id, which is a different fact from a known notice naming no part "
-                    "(an explicit empty list). READ-ONLY: proposes no disposition and opens no review. "
+                    "unknown notice id (unknown_notice), which is a different fact from a known "
+                    "notice naming no part (also a refusal: no_affected_parts). More than 100 parts "
+                    "are paged (params.offset; the answer says total_available, completeness and "
+                    "next_offset). READ-ONLY: proposes no disposition and opens no review. "
                     "OWNS the phrasings: which parts does this notice affect, affected parts, parts "
                     "subject to this notice."
                 ),
@@ -980,10 +996,16 @@ try:
 except ImportError:
     from agent_fleet.ontology_service import notice_parts as _notice_parts
 
+try:
+    from utils import origin_entitlement as _origin_entitlement  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.utils import origin_entitlement as _origin_entitlement
+
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 from iagent_mesh import Initiator
+from iagent_mesh import ResolveInstanceRequest
 _announce_transport_auth(component="engine-o")
 app = FastAPI(
     **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
@@ -2160,21 +2182,27 @@ try:
     from agent_fleet.ontology_service.instance_resolution import (  # noqa: E402
         InstanceCandidate as _IRCandidate,
         decide as _ir_decide,
+        narrow_to_most_specific as _ir_narrow_to_most_specific,
         identifier_name_and_qualifiers as _ir_split_identifier,
         decide_instance_abstention as _ir_abstention,
         instance_not_found_message as _ir_not_found_msg,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
+        declared_id_namespaces as _ir_declared_namespaces,
+        refuse_cross_namespace as _ir_refuse_cross_namespace,
     )
 except ImportError:
     from instance_resolution import (  # noqa: E402
         InstanceCandidate as _IRCandidate,
         decide as _ir_decide,
+        narrow_to_most_specific as _ir_narrow_to_most_specific,
         identifier_name_and_qualifiers as _ir_split_identifier,
         decide_instance_abstention as _ir_abstention,
         instance_not_found_message as _ir_not_found_msg,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
+        declared_id_namespaces as _ir_declared_namespaces,
+        refuse_cross_namespace as _ir_refuse_cross_namespace,
     )
 
 # Canonical full-IRI form for the InstanceIdentifier subject. Session 2's
@@ -2196,7 +2224,8 @@ RETURN DISTINCT
   r.endpoint_url   AS endpoint_url,
   coalesce(r.provider, type(r)) AS provider,
   r.timeout_s      AS timeout_s,
-  r.domains        AS domains
+  r.domains        AS domains,
+  r.id_namespaces  AS id_namespaces
 """
 
 #: WHO CAN LIST THE MEMBERS OF A CLASS. Mirrors the resolver discovery above, because the
@@ -2393,6 +2422,9 @@ def _discover_instance_resolvers(refresh: bool = False) -> MeshResult:
             "provider": r.get("provider") or "unknown",
             "timeout_s": timeout_s,
             "domains": r.get("domains") or [],
+            # The identifier namespaces this provider claims (ruled 2026-10-12). Read through
+            # the decoder, never `list(...)`: a string here would split into one-letter prefixes.
+            "id_namespaces": _ir_declared_namespaces(r.get("id_namespaces")),
         })
     _INSTANCE_RESOLVERS_CACHE = discovered
     _INSTANCE_RESOLVERS_CACHE_TS = now
@@ -2425,7 +2457,8 @@ def _discover_instance_resolvers(refresh: bool = False) -> MeshResult:
 
 
 async def _call_resolver(
-    resolver: dict, identifier: str, query: str
+    resolver: dict, identifier: str, query: str, *,
+    user_email: str = "", entitled_domains: list | tuple = (),
 ) -> _ResolverOutcome:
     """Call one mesh:resolveInstance provider with the provider's own
     declared timeout budget (falling back to the router floor).
@@ -2435,6 +2468,13 @@ async def _call_resolver(
     2s-strangle bug. Candidates are always returned (possibly empty);
     the caller decides whether the empty list represents abstention
     or a kill upstream.
+
+    THE CALLER TRAVELS WITH THE TERM (2026-10-10). A provider whose instances carry an origin
+    (engine-o's SUSTAINMENT store holds drop-derived notices) cannot gate what it returns on a
+    caller it was never told. Both fields go on EVERY call, empty when the asker named nobody,
+    so a provider reads "no caller" as an explicit empty value, never as a field it was not
+    sent. The names match `/notice_parts` (`user_email`, `entitled_domains`). The gate is the
+    provider's, not this router's.
     """
     import time
     provider = resolver.get("provider") or ""
@@ -2447,7 +2487,9 @@ async def _call_resolver(
         async with httpx.AsyncClient(timeout=budget_s) as client:
             resp = await client.post(
                 endpoint_url,
-                json={"identifier": identifier, "query": query},
+                json={"identifier": identifier, "query": query,
+                      "user_email": user_email or "",
+                      "entitled_domains": list(entitled_domains or [])},
             )
             resp.raise_for_status()
             data = resp.json() or {}
@@ -2484,6 +2526,7 @@ async def _call_resolver(
                     label=str(c.get("label") or ""),
                     score=float(c.get("score") or 0.0),
                     provider=provider,
+                    matched_on=str(c.get("matched_on") or ""),
                 )
             )
         except Exception:  # noqa: BLE001 — skip malformed candidate
@@ -2495,9 +2538,14 @@ async def _call_resolver(
 
 
 async def _resolve_instance(
-    identifier: str, query: str, asked_domains: list | None = None
+    identifier: str, query: str, asked_domains: list | None = None, *,
+    user_email: str = "", entitled_domains: list | None = None,
 ) -> tuple[str | None, dict]:
     """Run the instance-resolution pre-step.
+
+    ``asked_domains`` RANKS (demotes out-of-domain hits); ``entitled_domains`` is the caller's
+    grant and is only forwarded, with ``user_email``, to every provider. They are separate
+    parameters because a routing domain is not an entitlement.
 
     Returns ``(subject_uri or None, provenance)``. ``None`` means
     abstain → the caller keeps the LLM's class guess. Provenance
@@ -2563,7 +2611,9 @@ async def _resolve_instance(
         else:
             _lookup_terms.append(_name)
 
-    tasks = [_call_resolver(r, term, query)
+    _entitled = list(entitled_domains or [])
+    tasks = [_call_resolver(r, term, query,
+                            user_email=user_email, entitled_domains=_entitled)
              for r in resolvers for term in _lookup_terms]
     outcomes: list[_ResolverOutcome] = await asyncio.gather(
         *tasks, return_exceptions=False
@@ -2609,6 +2659,40 @@ async def _resolve_instance(
             continue
         candidates.extend(o.candidates)
 
+    # SAY WHICH NAMES MATCHED, not just how many. RULED 2026-10-12 after HAZ-1004: this line
+    # said `candidates=3` and nothing else, so "which component did engine-o match?" could only
+    # be answered by re-asking the provider by hand. Bounded, because a bare fragment once drew
+    # twenty part numbers.
+    _matched = [(c.provider, c.label, round(float(c.score), 3)) for c in candidates]
+
+    # ONE IDENTIFIER NAMESPACE, ONE CLAIMANT. RULED 2026-10-12 -- the measurement and the rule
+    # are in instance_resolution.refuse_cross_namespace. Applied AFTER domain scoping and BEFORE
+    # the claimant set is taken, because the defect is a second claimant: two part numbers
+    # matched 'HAZ-1004' on a difflib ratio and made `ambiguous_in_domain` refuse a hazard
+    # Engine S resolves exactly. The namespaces come from the providers' own registrations; a
+    # provider that declared none claims nothing and loses nothing.
+    candidates, _ns_refused, _ns_claimed = _ir_refuse_cross_namespace(
+        candidates, terms=_lookup_terms, resolvers=resolvers)
+    _ns_contested = sorted(p for p, o in _ns_claimed.items() if len(o) > 1)
+    if _ns_contested:
+        # The ruling is ONE engine per namespace. Two declarers is a registration defect; both
+        # are kept as owners rather than one chosen by registry order, and the conflict is named.
+        print(f"mesh:resolveInstance: CONTESTED id namespace(s) {_ns_contested}: "
+              f"{ {p: sorted(_ns_claimed[p]) for p in _ns_contested} }", flush=True)
+
+    # RULED 2026-10-15 (Chris): ONE `rdfs:subClassOf` CHAIN -> THE MOST SPECIFIC CLASS WINS.
+    # PN-8802 is safety#SafetyCriticalItem (engine_safety_sustainment) and pcn#Component
+    # (engine_o_sustainment); the first is a subclass of the second, so it is one part seen
+    # twice, not two readings. The chain is read from the ontology (same reach as
+    # `_CLASS_CHAIN_CYPHER`) ONLY when more than one class is present. A graph failure leaves
+    # `_chains` empty: nothing narrows and today's `ambiguous_in_domain` stands, with the
+    # axis status on it saying the read was unavailable.
+    _classes = sorted({c.class_uri for c in candidates if c.class_uri})
+    _chains, _axis_status, _axis = {}, "not_needed", None
+    if len(_classes) > 1:
+        _chains, _axis_status = await _read_class_chains(_classes)
+        candidates, _axis = _ir_narrow_to_most_specific(candidates, _chains, identifier)
+
     # TWO IN-DOMAIN CLAIMS ON ONE NOUN IS AN ASK, NOT A PICK. RULED 2026-09-11.
     #
     # The scoping above removes the CROSS-domain override. It cannot help when both
@@ -2650,7 +2734,11 @@ async def _resolve_instance(
         f"mesh:resolveInstance fan-out for {identifier!r}: terms={_lookup_terms} "
         f"candidates={len(candidates)} claimants={sorted(_claimants)} "
         f"subjects={sorted(_subjects)} asked_domains={sorted(_asked)} "
-        f"demoted={[d.get('provider') for d in demoted]}",
+        f"demoted={[d.get('provider') for d in demoted]} "
+        f"matched={_matched[:12]}{f' (+{len(_matched) - 12} more)' if len(_matched) > 12 else ''} "
+        f"namespace_refused={[(c.provider, c.label) for c in _ns_refused]} "
+        f"namespaces={ {p: sorted(o) for p, o in _ns_claimed.items()} } "
+        f"axis={_axis_status}:{(_axis or {}).get('kept_class')}",
         flush=True,
     )
     if len(_claimants) > 1 and len(_subjects) > 1:
@@ -2659,6 +2747,7 @@ async def _resolve_instance(
             "instance_match": "ambiguous_in_domain",
             "instance_n": len(_above),
             "instance_asked_domains": sorted(_asked),
+            "instance_class_axis_status": _axis_status,
             # Named so the caller can FORM the question. A refusal that withholds the
             # competing readings is a dead end wearing a refusal's clothes — the same
             # defect as a slot refusal that will not say what a valid value looks like.
@@ -2666,6 +2755,18 @@ async def _resolve_instance(
                 {(c.provider, c.class_uri, c.label) for c in _above},
                 key=lambda t: (t[0], t[1]),
             ),
+            # AND THE CANDIDATES THEMSELVES, in the shape `decide()` emits on its asks. MEASURED
+            # on 195 (safety sheet Q6): "what failed on this part PN-8801" drew CSI-5001 from saf
+            # and notice fuzzies from engine-o, this branch refused, and `/fill_slots` -- which
+            # builds its candidates from this field or `instance_id` -- had none, so the slot's
+            # referent (pcn#Component, which CSI-5001's chain holds) never got to choose. Still a
+            # refusal of the INSTANCE; only a slot's declared class can make it a bind, and a tie
+            # inside that class still asks. Unbounded: the referent's candidate may rank last.
+            "instance_top_candidates": [
+                {"instance_id": c.instance_id, "class_uri": c.class_uri, "label": c.label,
+                 "score": c.score, **({"matched_on": c.matched_on} if c.matched_on else {})}
+                for c in sorted(_above, key=lambda c: (-float(c.score), c.instance_id))
+            ],
             "instance_provider_outcomes": [
                 {"provider": o.provider, "status": o.status,
                  "n_candidates": len(o.candidates), "elapsed_s": round(o.elapsed_s, 3)}
@@ -2682,8 +2783,11 @@ async def _resolve_instance(
         # token NAMES any of them, which is what let `cage` win. See the segment
         # specificity gate in instance_resolution.py.
         identifier=identifier,
+        class_chains=_chains,
     )
     provenance = dict(decision.provenance)
+    if _axis is not None:
+        provenance.setdefault("instance_class_axis", _axis)
     if demoted:
         # Recorded rather than silent: "nobody knew this name" and "somebody knew it, in
         # another domain" are different answers and the trace must distinguish them.
@@ -2725,6 +2829,67 @@ try:
     from recall_guard import recall_override_guard as _recall_override_guard  # type: ignore[no-redef]
 except ImportError:
     from agent_fleet.ontology_service.recall_guard import recall_override_guard as _recall_override_guard
+
+# Input-declared grounding (ruled 2026-10-20): when every recalled class is a dead end, ground on the
+# class the question's top verb declares as its input. Pure logic in a dep-free sibling.
+try:
+    from input_declared import input_declared_classes as _input_declared_classes, DEFAULT_MIN_SCORE as _INPUT_DECLARED_DEFAULT  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.ontology_service.input_declared import input_declared_classes as _input_declared_classes, DEFAULT_MIN_SCORE as _INPUT_DECLARED_DEFAULT
+
+_INPUT_DECLARED_MIN_SCORE = float(os.getenv("INPUT_DECLARED_MIN_SCORE", str(_INPUT_DECLARED_DEFAULT)))
+
+
+def _local_name(uri: str) -> str:
+    return uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1]
+
+
+async def _input_declared_pool(request, domains) -> tuple[list[dict], dict]:
+    """Classes the question's top verb declares as input, or ([], trace). NEVER raises.
+
+    Degrades to today's behaviour on any failure: a failure here must not fail /resolve.
+    """
+    try:
+        rows = await predicate_hybrid_search(
+            request.query, list(domains), limit=10, user_email=request.user_email)
+    except Exception as exc:
+        print(f"[Engine O] input-declared verb recall failed ({type(exc).__name__}) - "
+              "keeping the recalled pool")
+        return [], {"reason": "verb_recall_failed", "error": type(exc).__name__}
+    # include_referents=False IS THIS QUESTION'S FORM, passed explicitly: "can this class be
+    # ANSWERED", the post-preemption check's question, not the gate's "may it be offered".
+    try:
+        served = await _served_class_uris(list(domains), include_referents=False)
+    except Exception as exc:
+        print(f"[Engine O] input-declared served lookup failed ({type(exc).__name__})")
+        return [], {"reason": "served_lookup_failed", "error": type(exc).__name__}
+    if not served:
+        return [], {"reason": "served_lookup_empty"}
+    if ENABLE_AGENTIC_AUTH:
+        def visible(uri):
+            return _can_view_class(request.user_email, uri)
+    else:
+        def visible(uri):
+            return True
+    classes, trace = _input_declared_classes(
+        rows, served=served, visible=visible, floor=_INPUT_DECLARED_MIN_SCORE)
+    if not classes:
+        return [], trace
+    labels: dict = {}
+    if _NEO4J_DRIVER is not None:
+        def _read():
+            with _NEO4J_DRIVER.session() as session:
+                return [(r["uri"], r["label"]) for r in session.run(
+                    "MATCH (c:OntologyClass) WHERE c.uri IN $uris RETURN c.uri AS uri, c.label AS label",
+                    uris=[c["uri"] for c in classes])]
+        try:
+            labels = {u: l for u, l in await asyncio.to_thread(_read) if l}
+        except Exception as exc:
+            print(f"[Engine O] input-declared label read failed ({type(exc).__name__})")
+    for c in classes:
+        c["label"] = labels.get(c["uri"]) or _local_name(c["uri"])
+        c["description"] = f"Declared input of {c['via_verb']}. {c['verb_description']}".strip()
+    return classes, trace
 
 try:
     from sustainment_instance_provider import resolve_sustainment_candidates as _resolve_sustainment_candidates, SUSTAINMENT_INSTANCES_QUERY as _SUSTAINMENT_INSTANCES_QUERY  # type: ignore[no-redef]
@@ -2878,6 +3043,86 @@ async def _served_class_uris(domains: list, include_referents: bool = False) -> 
     return served
 
 
+#: One batched walk for a whole response: each distinct class URI -> itself + its ancestors, the
+#: same `*0..5` reach as `_SERVED_CLASSES_CYPHER` and `/find_compatible_verbs`. A different
+#: reach would let a slot admit a subclass the router then cannot route.
+_CLASS_CHAIN_CYPHER = """
+MATCH (c:OntologyClass)
+WHERE c.uri IN $uris
+OPTIONAL MATCH (c)-[:subClassOf*0..5]->(a:OntologyClass)
+RETURN c.uri AS uri, collect(DISTINCT a.uri) AS chain
+"""
+
+
+async def _attach_class_chains(candidates: list) -> list:
+    """Return copies of `candidates` carrying `class_chain` (own class, then ancestors).
+
+    Ruling 3: a slot accepts a subclass of its referent, and `slot_disposition` is pure, so the
+    hierarchy rides on the candidate. ONE query per response, not per candidate. NEVER RAISES
+    and never invents: a graph failure, or a class with no node, leaves that candidate without
+    `class_chain`, and the consumer falls back to exact match.
+    """
+    out = [dict(c) if isinstance(c, dict) else c for c in candidates]
+    uris = sorted({str(c.get("class_uri")) for c in out if isinstance(c, dict) and c.get("class_uri")})
+    if not uris or not _NEO4J_DRIVER:
+        return out
+    chains, _status = await _read_class_chains(uris)
+    for c in out:
+        if not isinstance(c, dict) or not c.get("class_uri"):
+            continue
+        chain = chains.get(str(c["class_uri"]))
+        if chain:
+            c["class_chain"] = list(chain)
+    return out
+
+
+async def _read_class_chains(uris) -> tuple[dict[str, list[str]], str]:
+    """One batched `_CLASS_CHAIN_CYPHER` read: class -> [itself, then its ancestors].
+
+    Returns `(chains, "read")`, or `({}, "unavailable")` when there is no driver or the query
+    raises (one line naming the exception type). NEVER RAISES. A class with no node is simply
+    absent from `chains`; nothing is invented.
+    """
+    uris = sorted({str(u) for u in uris if u})
+    if not uris or not _NEO4J_DRIVER:
+        return {}, "unavailable"
+
+    def _run() -> dict:
+        with _NEO4J_DRIVER.session() as session:
+            rows = session.run(_CLASS_CHAIN_CYPHER, uris=uris)
+            return {str(r["uri"]): [str(u) for u in (r["chain"] or []) if u] for r in rows}
+
+    try:
+        raw = await asyncio.to_thread(_run)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Engine O] class-chain lookup failed ({type(exc).__name__}) — "
+              f"candidates go out without class_chain")
+        return {}, "unavailable"
+    chains: dict[str, list[str]] = {}
+    for own, chain in raw.items():
+        if chain:
+            chains[own] = [own] + [u for u in chain if u != own]
+    return chains, "read"
+
+
+def _unadmitted_pool_msg(candidates: list[dict]) -> str:
+    """An abstention for a recall whose every class is a dead end for this caller.
+
+    Same voice as _unserved_subject_msg: say what WAS found, then what cannot be done
+    about it. Used when the admission rule empties the pool (Step 1.56), where the
+    recall was not empty, so "No ontology classes found" would be a wrong account.
+    """
+    names = []
+    for c in candidates[:3]:
+        uri = str(c.get("uri") or "")
+        names.append(str(c.get("label") or "") or uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1] or uri)
+    return (
+        f"I found what your question is about — {', '.join(names)} — but nothing in "
+        f"your current scope answers questions about {'it' if len(names) == 1 else 'any of them'}. "
+        f"Name what you want to know, or ask about the larger thing it belongs to."
+    )
+
+
 def _unserved_subject_msg(identifier: str, resolved_uri: str) -> str:
     """An abstention that KEEPS the resolution it just made.
 
@@ -2964,10 +3209,35 @@ class EnumerateInstancesRequest(BaseModel):
             "A provider that ignores them answers class-wide and says so via scoped_by."
         ),
     )
+    # WHO ASKED, under the names and shape the resolveInstance fan-out sends (`_call_resolver`),
+    # so a provider gates both verbs on one pair of fields. Forwarded to every provider AND gated
+    # on here, after the fan-out, by `_filter_sustainment_candidates` -- the same origin verdict
+    # `/resolve_instance` and `/notice_parts` apply (ruled 2026-10-10, (d)). Defaulted for the same
+    # reason `bound_slots` is — a caller on the old shape must not 422 at the roll.
+    user_email: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
+
+
+async def _gate_enumerated_members(request: "EnumerateInstancesRequest",
+                                   body: dict) -> tuple[list[dict], int]:
+    """THE SAME GATE `/resolve_instance` RUNS, applied after the enumerate fan-out to a provider's
+    `members` body. Returns (kept, count). The count is the provider's own minus what was
+    withheld, floored at len(kept), so it never reveals how many were withheld. A lookup failure
+    is the 503 that route answers, never an unfiltered list."""
+    members = body["members"]
+    try:
+        kept = await _filter_sustainment_candidates(
+            members, user_email=request.user_email or "",
+            entitled_domains=list(request.entitled_domains or []))
+    except _VISIBILITY_OUTAGE as exc:  # NARROWED ON PURPOSE: a defect answers 500, see _VISIBILITY_OUTAGE
+        raise HTTPException(
+            status_code=503, detail=f"pcn instance visibility check failed: {exc}") from exc
+    provider_count = int(body.get("count") or len(members))
+    return kept, max(len(kept), provider_count - (len(members) - len(kept)))
 
 
 @app.post("/enumerate_instances")
-async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
+async def enumerate_instances(request: EnumerateInstancesRequest):
     """Fan a class out to every registered `mesh:enumerateInstances` provider.
 
     THE DEFECT THIS REPLACES. The supervisor held ONE hard-wired
@@ -2994,6 +3264,21 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
     nothing of that kind exists, and an unreachable provider has not made a claim. That is why
     the two are counted apart below.
     """
+    # THIS VERB ANSWERS FOR A PERSON. Two rulings: Chris, 2026-10-10 (b) -- "scripts and
+    # restate_analyst send a real test persona or get refused -- a domains list is never an
+    # entitlement"; architect, 2026-10-14 -- "a svc: literal counts as absent in every arm, same
+    # as blank; a service identity is never a person." Until now this route ANSWERED a caller with
+    # no person (the gate showed it seeded content only, gov #39); the refusal waited for its
+    # callers to carry a person. They do: census rows 3 (supervisor, TOKEN) and 7 (in-process
+    # `_bind_from_scope`, FORWARD) in tests/security/test_every_engine_o_caller_is_classified.py.
+    # REFUSED: blank, whitespace, absent and a `svc:` head. Nothing is sent -- neither the registry
+    # nor any provider is asked. The body copies safety's `no_person`
+    # (safety_agent/main.py, `except measures.NoPerson`) so the fleet has one shape.
+    if not _origin_entitlement.is_person(request.user_email):
+        return JSONResponse(status_code=422, content={
+            "error": "no_person",
+            "message": "this verb answers for a person; the caller carries none",
+            "fn": "enumerate_instances"})
     discovery = _discover_enumerate_providers()
     if discovery.outcome in ("failed", "unreachable"):
         # **AN OUTAGE IS NOT AN EMPTY REGISTRY**, and this function already knows the difference —
@@ -3035,8 +3320,12 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
                     # menu from this". Sent unconditionally — an empty dict is the same request
                     # this endpoint made before the field existed, so a provider still on the
                     # old shape sees no change in behaviour, only an extra key.
+                    # THE CALLER TRAVELS ON EVERY POST, empty rather than absent when nobody
+                    # was named, so "no caller" reaches a gate as a value it can refuse on.
                     json={"class_uri": request.class_uri,
-                          "bound_slots": dict(request.bound_slots or {})},
+                          "bound_slots": dict(request.bound_slots or {}),
+                          "user_email": request.user_email or "",
+                          "entitled_domains": list(request.entitled_domains or [])},
                 )
                 body = resp.json() if resp.status_code == 200 else {}
         except (httpx.HTTPError, asyncio.TimeoutError, ValueError) as exc:
@@ -3056,11 +3345,13 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
         # shape therefore behaves correctly here without being changed.
         _scoped_by = [str(s) for s in (body.get("scoped_by") or []) if str(s).strip()]
         if outcome == "members" and (body.get("members") or []):
-            print(f"[Engine O] enumerate {request.class_uri} -> members "
-                  f"({len(body['members'])}) from {prov['provider']} "
-                  f"scoped_by={_scoped_by or '[] (class-wide)'}")
-            return {"outcome": "members", "members": body["members"],
-                    "count": int(body.get("count") or len(body["members"])),
+            kept, count = await _gate_enumerated_members(request, body)
+            if not kept:  # WITHHELD IS UNKNOWN: as `empty`
+                answered_empty += 1
+                continue
+            print(f"[Engine O] enumerate {request.class_uri} -> members ({len(kept)}) "
+                  f"from {prov['provider']} scoped_by={_scoped_by or '[] (class-wide)'}")
+            return {"outcome": "members", "members": kept, "count": count,
                     "provider": prov["provider"],
                     # WHICH slots, not whether. A provider handed `{lot, category}` that
                     # honours only `lot` produced a list scoped by one of two, and a boolean
@@ -3152,11 +3443,8 @@ def _docs_pool_applies(domains, subject_uri) -> bool:
 def _docs_pool_accepts(referent) -> bool:
     """May a slot declaring `referent` hold a DocPage? Yes for DocPage and for a universal referent.
 
-    THE PYTHON LITERAL, NOT `_universal_referent_iris()`, and deliberately. That read is refused
-    on every call today (`_POOL_READ_INITIATOR` is a service identity and `require_person` refuses
-    it), so it returns [] and this would never fire. The question here is a TYPE fact about the
-    declaration — `mesh:Thing` accepts anything — not the pool membership LEG 3 needs Jena to
-    confirm.
+    THE PYTHON LITERAL, deliberately. The question here is a TYPE fact about the declaration —
+    `mesh:Thing` accepts anything — not the pool membership LEG 3 reads off the node property.
     """
     return bool(referent) and (
         referent == _DOCPAGE_CLASS or referent in _CANDIDATE_UNIVERSAL_REFERENTS
@@ -3164,17 +3452,29 @@ def _docs_pool_accepts(referent) -> bool:
 
 
 async def _bind_from_scope(referent: str, spoken: str, bound: dict[str, str],
-                           narrowed_by: list[str]) -> dict | None:
-    """Bind `spoken` from the referent's SCOPED enumeration, or None to fall through.
+                           narrowed_by: list[str], *, user_email: str = "",
+                           entitled_domains: list[str] | None = None) -> dict | None:
+    """Bind `spoken` from the referent's enumeration (asked WITH the bound slots and the caller), or None.
 
-    BINDS ONLY ON A PROVIDER THAT HONOURED EVERY NARROWING SLOT. A list scoped by fewer than
-    `narrowed_by` is not the set of values the verb accepts, and a bind from it is the
-    class-wide-menu defect in a new place. Exact match only (id, or label case-folded), and
-    exactly one member: this replaces no scoring — a near-miss still reaches the fan-out and
-    the ask, which is where the menu for a near-miss already lives.
+    `scoped_by` IS METADATA, NEVER A PRECONDITION (Q4, ruled 2026-10-12; this relaxes the
+    2026-09-16 "never a class-wide list wearing a scoped menu" for the bind as for the menu).
+    Any member list binds an exact hit, and `scoped_by` travels on the record verbatim so a
+    consumer can see the list was not narrowed by `narrowed_by`. A value the lot does not accept
+    is the verb's `not_in_model` to refuse; refusing here instead only reached the fan-out, which
+    cannot match a bare member (the vintage regression) and so asked for what was already said.
+    Exact match only (id, or label case-folded), and exactly one member: this replaces no
+    scoring — a near-miss still reaches the fan-out and the ask, where its menu lives.
     """
-    enum = await enumerate_instances(EnumerateInstancesRequest(class_uri=referent, bound_slots=bound))
-    if enum.get("outcome") != "members" or not set(narrowed_by) <= set(enum.get("scoped_by") or []):
+    enum = await enumerate_instances(EnumerateInstancesRequest(
+        class_uri=referent, bound_slots=bound,
+        user_email=user_email, entitled_domains=list(entitled_domains or []),
+    ))
+    if not isinstance(enum, dict):
+        # A refusal (422 `no_person`) is not a member list. A `/fill_slots` caller with no person
+        # is census rows 15/16 (NO_PERSON), left to be refused at `/fill_slots`, not here; the slot
+        # goes on to the gated fan-out below, which shows a non-person seeded content only.
+        return None
+    if enum.get("outcome") != "members":
         return None
     members = [m for m in (enum.get("members") or []) if m.get("instance_id")]
     said = spoken.strip()
@@ -3377,10 +3677,22 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # DEGRADES OPEN, DELIBERATELY, AND THE ORDER OF THESE TWO CHECKS IS THE SAFETY. An empty
     # `served` means the lookup failed or the graph is cold, and filtering against it would
     # empty the pool and take routing down for every caller — a far worse outcome than the
-    # dead end this gate exists to remove. Likewise a filter that would remove EVERYTHING is
-    # refused: that is the signature of a served-set computed against the wrong domains, and
-    # answering from a dead end beats answering nothing while the cause is found.
+    # dead end this gate exists to remove.
+    #
+    # SUPERSEDED 2026-10-20: the sentence that used to follow ("Likewise a filter that would
+    # remove EVERYTHING is refused ... answering from a dead end beats answering nothing")
+    # is replaced by the admission rule. Architect ruling 2026-10-20: "a class enters the
+    # candidate pool only if some verb declares it as input." Two measurements retired the
+    # old sentence. On revision 201, for caller bob / SAFETY_ENGINEER / [SUSTAINMENT], safety
+    # Q4 and Q3 each recalled 10 classes, none served; the retained dead ends cost a
+    # ClassifyDomainIntent call (measured p100 52.6 s on revision 199) and the router fell
+    # to the generalist anyway. On the work cluster, 2026-09-08, the same stand-down let the
+    # model answer IOF SellingBusinessProcess at 0.62: a real class, a plausible confidence,
+    # the wrong ontology. An empty pool reaches the generalist directly, with a reason.
     _gate_excluded: list[dict] = []
+    _input_declared_trace: dict | None = None
+    _admission_trace: dict | None = None
+    _unadmitted: list[dict] = []
     if candidates:
         # include_referents=True IS THE GATE'S QUESTION AND IS PASSED EXPLICITLY, not defaulted.
         # "May the resolver OFFER this class?" — a declared mesh:ResolvableReferent is groundable
@@ -3412,20 +3724,55 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 print("[Engine O] productive-option gate would have emptied the pool "
                       f"({len(candidates)} candidate(s), 0 served) — NOT filtering. "
                       "Suspect a served-set computed against the wrong domains.")
-                # A GATE THAT DEGRADES OPEN SILENTLY IS A GUARD THAT CANNOT FIRE. The branch
-                # above records what it REMOVES; this branch removes nothing, but a reader of
-                # the artifact still needs to see that the gate stood down rather than never
-                # having run — so every candidate it declined to filter is recorded too.
-                _gate_excluded = [
-                    {
-                        "kind": "class",
-                        "uri": str(c.get("uri") or ""),
-                        "gate": "productive_option",
-                        "disposal": "retained",
-                        "reason": "no_verb_in_scope_but_pool_would_empty",
+                # A GATE THAT HOLDS SILENTLY IS A GUARD THAT CANNOT FIRE. The branch above
+                # records what it REMOVES; the else-branch below used to retain every
+                # candidate and record it as "retained". What it retained is now REMOVED and
+                # recorded as such (admission rule, 2026-10-20), so the artifact shows the
+                # gate acted rather than stood down.
+                _injected, _input_declared_trace = await _input_declared_pool(
+                    request, request.domains or ([request.domain] if request.domain else []))
+                if _injected:
+                    print("[Engine O] input-declared grounding: every recalled class is a dead end; "
+                          f"offering the declared input(s) of {_input_declared_trace.get('verb_iri')}: "
+                          f"{[c['uri'] for c in _injected]}")
+                    _gate_excluded = [
+                        {
+                            "kind": "class",
+                            "uri": str(c.get("uri") or ""),
+                            "gate": "productive_option",
+                            "disposal": "removed",
+                            "reason": "input_declared_preferred",
+                        }
+                        for c in candidates
+                    ]
+                    candidates = _injected
+                else:
+                    # THE POOL IS EMPTY WHEN NO CLASS IS SERVED AND NO VERB DECLARES AN INPUT.
+                    # This covers every reason _injected is empty, verb_recall_failed
+                    # included: the recalled classes are KNOWN not to be served, and a failed
+                    # verb search only blinds us to extra classes, it does not make these
+                    # admissible. Measured on revision 201: retained, they went to the
+                    # generalist anyway after a model call.
+                    _unadmitted = list(candidates)
+                    _admission_trace = {
+                        "rule": "verb_declared_input",
+                        "recalled": len(_unadmitted),
+                        "admitted": 0,
                     }
-                    for c in candidates
-                ]
+                    _gate_excluded = [
+                        {
+                            "kind": "class",
+                            "uri": str(c.get("uri") or ""),
+                            "gate": "productive_option",
+                            "disposal": "removed",
+                            "reason": "no_verb_in_scope",
+                        }
+                        for c in _unadmitted
+                    ]
+                    candidates = []
+                    print(f"[Engine O] admission rule: 0 of {len(_unadmitted)} recalled class(es) "
+                          "is served and no verb in scope declares an input for this question "
+                          "— pool EMPTY")
 
     # Step 1.6: Class-recall failed (both Weaviate hybrid and SPARQL
     # fallback returned zero candidates). Before declaring UNKNOWN,
@@ -3499,6 +3846,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             instance_subject, instance_provenance = await _resolve_instance(
                 identifier=entity_ref, query=request.query,
                 asked_domains=request.domains or ([request.domain] if request.domain else []),
+                user_email=request.user_email, entitled_domains=list(request.domains or []),
             )
             instance_provenance["instance_identifier"] = entity_ref
             instance_provenance["llm_guess"] = None
@@ -3508,8 +3856,11 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             # cannot answer, and a reader of that provenance would have been told the recall
             # was empty when it was not — a precise, confident, wrong account of why the
             # phone book was asked.
+            # AN EMPTIED POOL IS NOT AN EMPTY RECALL. When the admission rule emptied the
+            # pool, recall found classes and none was admissible; say so.
             instance_provenance["preemption_path"] = (
-                "class_recall_empty_fallback" if not candidates
+                "class_recall_empty_fallback"
+                if not candidates and _admission_trace is None
                 else "class_recall_unanswerable_fallback"
             )
             if instance_subject is not None:
@@ -3559,6 +3910,17 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         # All entity_refs returned no candidates — fall through.
 
     # Step 1.7: Ultimate Fallback (Prevents Restate infinite loops)
+    if not candidates and _admission_trace is not None:
+        # THE ADMISSION RULE EMPTIED THE POOL: abstain with the reason and the record, not
+        # the "nothing found" message of a true empty recall. no_compatible_verbs is already
+        # in the supervisor's closed set of Engine O abstention reasons.
+        return SemanticResolutionResponse(
+            resolved_uri="UNKNOWN", confidence_score=0.0,
+            reasoning=_unadmitted_pool_msg(_unadmitted),
+            provenance={"abstention_reason": "no_compatible_verbs",
+                        "admission": _admission_trace,
+                        **({"input_declared": _input_declared_trace} if _input_declared_trace is not None else {})},
+            candidates=candidates, excluded=_gate_excluded, mode=retrieval_mode)
     if not candidates:
         return SemanticResolutionResponse(
             resolved_uri="UNKNOWN",
@@ -3597,9 +3959,14 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             identifier=identifier,
             query=request.query,
             asked_domains=request.domains or ([request.domain] if request.domain else []),
+            # The grant is `domains` ONLY. The legacy single `domain` defaults to MAINTENANCE
+            # and ranks; forwarding it as an entitlement would grant what nobody granted.
+            user_email=request.user_email, entitled_domains=list(request.domains or []),
         )
         instance_provenance["instance_identifier"] = identifier
         instance_provenance["llm_guess"] = str(result.resolved_uri)
+        if _input_declared_trace is not None:
+            instance_provenance["input_declared"] = _input_declared_trace
         if instance_subject is not None:
             # POST-PREEMPTION PRODUCTIVITY CHECK — site 2 of 2. This is the path the
             # engine-cost lane measured: 10 of 18 draws overridden onto fin:WBSElement.
@@ -3709,6 +4076,8 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         str(result.resolved_uri), result.confidence_score,
         candidates, result.reasoning, None,
     )
+    if _input_declared_trace is not None:
+        _prov["input_declared"] = _input_declared_trace
     return SemanticResolutionResponse(
         resolved_uri=str(result.resolved_uri),
         confidence_score=_conf,
@@ -4361,6 +4730,11 @@ class FillSlotsRequest(BaseModel):
     #: comment on `declarations` above. Empty is today's behaviour: the DOCS pool gate below
     #: falls back to `_acts_in_docs` alone.
     subject_uri: str = ""
+    #: THE PERSON ASKING, forwarded with `acting_domains` to every `mesh:resolveInstance`
+    #: provider so a provider holding origin-scoped instances can gate on who asked (2026-10-10,
+    #: gov's origin-at-read report). `/resolve` has carried it since ADR-0025; `/fill_slots`
+    #: never did. Empty is an explicit "no caller", which a gating provider must refuse on.
+    user_email: str = ""
 
 
 class FillSlotsResponse(BaseModel):
@@ -4435,6 +4809,18 @@ def _is_empty_slot_value(value: Any) -> bool:
     return False
 
 
+def _bound_value(decl: dict, cand: dict) -> str:
+    """What a slot receives for a resolved candidate. Mirror of iagent_pure.slot_disposition.bound_value.
+
+    A slot declaring `binds: identifier` wants the bare identifier the caller's words matched
+    (`matched_on`), falling back to `instance_id` when the provider set none. Every other slot
+    gets the `instance_id`, as before. The IRI stays in `resolution` for provenance.
+    """
+    if (decl or {}).get("binds") == "identifier":
+        return str(cand.get("matched_on") or cand.get("instance_id") or "")
+    return str(cand.get("instance_id") or "")
+
+
 def _anchor_period(declarations: list[dict], today: str = "") -> str:
     """Which fiscal period contains today — the ANCHOR that makes "this quarter" answerable.
 
@@ -4498,7 +4884,7 @@ def _slot_spec(declarations: list[dict]) -> tuple[str, dict[str, dict]]:
 
 
 @app.post("/fill_slots", response_model=FillSlotsResponse)
-async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
+async def fill_slots(request: FillSlotsRequest):
     """Extract the parameters the speaker named, for an already-routed verb.
 
     HONEST-EMPTY ON EVERY FAILURE. No declarations, an unparseable model reply, or a
@@ -4506,6 +4892,22 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
     on its defaults). This endpoint must never be able to make routing worse than it was
     before it existed, so it degrades to the old behaviour rather than to an exception.
     """
+    # THIS VERB ANSWERS FOR A PERSON. Two rulings: Chris, 2026-10-10 (b) -- "scripts and
+    # restate_analyst send a real test persona or get refused -- a domains list is never an
+    # entitlement"; architect, 2026-10-14 -- "a svc: literal counts as absent in every arm, same
+    # as blank; a service identity is never a person." Chris, 2026-10-16: "Battery scripts:
+    # /fill_slots refuses no-person callers in 190 -- your PR, same shape as #59." The census
+    # (tests/security/test_every_engine_o_caller_is_classified.py) names the callers now refused:
+    # rows 15/16 (scripts/elicitation_battery.py, scripts/slot_fill_battery.py, NO_PERSON); row 2
+    # (the supervisor, TOKEN) carries a person. REFUSED: blank, whitespace, absent and a `svc:`
+    # head. Nothing is resolved, enumerated or sent. The body copies safety's `no_person`
+    # (safety_agent/main.py, `except measures.NoPerson`) so the fleet has one shape. A refusal is
+    # NOT the honest-empty `{}` below: the caller is told why it got nothing.
+    if not _origin_entitlement.is_person(request.user_email):
+        return JSONResponse(status_code=422, content={
+            "error": "no_person",
+            "message": "this verb answers for a person; the caller carries none",
+            "fn": "fill_slots"})
     declarations = _decode_declarations(request.declarations)
     spec, by_name = _slot_spec(declarations)
     if not by_name:
@@ -4592,7 +4994,7 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
                 continue
             bound = await _bind_docs_slot("", request.query)
             if bound is not None:
-                accepted[name] = bound["instance_id"]
+                accepted[name] = _bound_value(decl, bound)
                 resolution[name] = bound
 
     # A NARROWED SLOT RESOLVES LAST. Its scoped bind below reads the narrowing slots' RESOLVED
@@ -4615,7 +5017,7 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         if _docs_pool_applies(request.acting_domains, request.subject_uri) and _docs_pool_accepts(referent):
             bound = await _bind_docs_slot(spoken_value, request.query)
             if bound is not None:
-                accepted[name] = bound["instance_id"]
+                accepted[name] = _bound_value(decl, bound)
                 resolution[name] = bound
                 continue
 
@@ -4631,9 +5033,10 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         if narrowed_by and all(accepted.get(n) not in (None, "") for n in narrowed_by):
             scoped = await _bind_from_scope(
                 referent, spoken_value, {n: str(accepted[n]) for n in narrowed_by}, narrowed_by,
+                user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
             )
             if scoped is not None:
-                accepted[name] = scoped["instance_id"]
+                accepted[name] = _bound_value(decl, scoped)
                 resolution[name] = scoped
                 continue
 
@@ -4642,7 +5045,8 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         # slot's referent class for the same reason. Scoping here would hide the very
         # cross-domain match a person needs to see when disambiguating.
         _subject, prov = await _resolve_instance(
-            spoken_value, request.query, asked_domains=list(request.acting_domains or [])
+            spoken_value, request.query, asked_domains=list(request.acting_domains or []),
+            user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
         )
         outcome = str(prov.get("instance_match") or "empty")
         # ALL candidates, UNFILTERED, and deliberately so. The first draft filtered them
@@ -4666,7 +5070,20 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
                 "class_uri": _subject or "",
                 "label": prov.get("instance_label", ""),
                 "score": prov.get("instance_score", 0.0),
+                **({"matched_on": prov["instance_matched_on"]} if prov.get("instance_matched_on") else {}),
             }]
+
+        # Ruling 3: the chain rides on each candidate so the pure consumer can admit a subclass.
+        # Attached HERE (once), before the referent compares below, which read it.
+        cands = await _attach_class_chains(cands)
+
+        def _in_referent(c: dict) -> bool:
+            # RULED 2026-10-15: a candidate of a SUBCLASS of the referent is the referent's
+            # kind. `class_chain` is [own class, ancestors]; absent, only the exact compare.
+            return bool(referent) and (
+                str(c.get("class_uri") or "") == referent
+                or referent in (c.get("class_chain") or [])
+            )
 
         # TYPE-CHECKED AGAINST THE SLOT'S DECLARED CLASS. A name can resolve perfectly and
         # still be the wrong KIND of thing: "the ERP Modernization project" resolves to
@@ -4697,12 +5114,34 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         # empty it for the case that most needs one; this filters only the ANSWER. Show
         # everything by that name; bind the kind that was asked for.
         _referent_bound = False
+        # The winner is already the referent's kind when its class IS the referent or its chain
+        # holds it (a SafetyCriticalItem for a Component slot). Computed ONCE: a winner in the
+        # referent must never be re-picked by the referent pass below (a silent swap of decide()'s
+        # choice for another instance).
+        _resolved_in_referent = bool(resolved_id and referent) and (
+            resolved_class == referent
+            or any(c.get("instance_id") == resolved_id and referent in (c.get("class_chain") or [])
+                   for c in cands if isinstance(c, dict))
+        )
         if referent and cands:
             _same_class = [
                 c for c in cands
-                if str(c.get("class_uri") or "") == referent and c.get("instance_id")
+                if _in_referent(c) and c.get("instance_id")
             ]
-            if _same_class and (not resolved_id or resolved_class != referent):
+            if _same_class and (not resolved_id or not _resolved_in_referent):
+                _top_score = max(float(c.get("score") or 0.0) for c in _same_class)
+                _tied_ids = {
+                    c.get("instance_id") for c in _same_class
+                    if abs(float(c.get("score") or 0.0) - _top_score) <= 1e-9
+                }
+                if len(_tied_ids) > 1:
+                    # RULED 2026-10-15: THE REFERENT BIND MUST NOT BREAK A TIE. Two distinct
+                    # instances sharing the top score is an ask; `max` would pick the first
+                    # by list order. Nothing binds, `cands` stays the menu.
+                    resolved_id = None
+                    outcome = "ambiguous_in_class"
+                    _same_class = []
+            if _same_class and (not resolved_id or not _resolved_in_referent):
                 _pick = max(_same_class, key=lambda c: float(c.get("score") or 0.0))
                 _slots_logger.info(
                     "fill_slots: %s.%s bound %s from the slot's referent %s "
@@ -4726,7 +5165,12 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
                 # The fact still travels, as its own field, where a reader can act on it
                 # without any partition having to recognise it.
 
-        if resolved_id and referent and resolved_class and resolved_class != referent:
+        # `_resolved_in_referent` (above) admits a winner whose class_chain contains the referent;
+        # with no chain, the exact compare as before. A referent pick that bound a candidate sets
+        # resolved_class = referent, so recompute for the guard.
+        _resolved_in_referent = _resolved_in_referent or resolved_class == referent
+        if (resolved_id and referent and resolved_class and resolved_class != referent
+                and not _resolved_in_referent):
             _slots_logger.warning(
                 "fill_slots: %s.%s resolved %r to %s, which is a %s and not a %s",
                 request.verb_iri, name, spoken_value, resolved_id, resolved_class, referent,
@@ -4741,7 +5185,12 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
             outcome = "wrong_class"
 
         if resolved_id:
-            accepted[name] = resolved_id
+            _chosen = next((c for c in cands if c.get("instance_id") == resolved_id), None) or {}
+            accepted[name] = _bound_value(decl, {
+                "instance_id": resolved_id,
+                "matched_on": _chosen.get("matched_on")
+                or (prov.get("instance_matched_on") if prov.get("instance_id") == resolved_id else ""),
+            })
             resolution[name] = {"outcome": outcome, "spoken": spoken_value,
                                 "instance_id": resolved_id,
                                 "instance_label": prov.get("instance_label", ""),
@@ -5099,9 +5548,85 @@ async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubject
 # mild smell accepted because engine-o owns the Jena instances; if a dedicated
 # sustainment engine appears, move this route to it and re-point the registration.
 # ---------------------------------------------------------------------------
-class ResolveInstanceRequest(BaseModel):
-    identifier: str
-    query: str = ""
+_NOTICE_IRI_PREFIX = "http://internal/sustainment/doc/"
+_COMPONENT_IRI_PREFIX = "http://internal/components/"
+_SUBJECT_TO_NOTICE = "http://internal/sustainment/pcn#subjectToNotice"
+
+
+def _iri_is_safe(iri: str) -> bool:
+    return not any(ch in iri for ch in ('>', '"')) and not any(ch.isspace() for ch in iri)
+
+
+# WHAT THE VISIBILITY CHECK'S STORES RAISE WHEN THEY ARE DOWN, and nothing else. The two routes
+# that run `_filter_sustainment_candidates` answer 503 for exactly these; every other exception
+# (TypeError, KeyError, AttributeError, a ValueError from a garbled Topaz body, ...) is a DEFECT
+# and answers 500. A defect filed as "the lookup failed" is a defect nobody looks for in the code
+# (same reasoning as the NARROWED ON PURPOSE catch in enumerate_instances). Each 500 still fails
+# closed: no candidate list is returned. Sealed in
+# tests/security/test_the_visibility_check_answers_503_only_for_an_outage.py.
+_VISIBILITY_OUTAGE: tuple[type[BaseException], ...] = (
+    SubstrateUnavailable,  # execute_sparql's link query; also raised below for a missing driver
+    ServiceUnavailable, SessionExpired, TransientError,  # neo4j, via notice_parts.visible_notice_ids
+    httpx.HTTPError,  # utils.program_membership -> the Topaz directory
+)
+
+
+async def _filter_sustainment_candidates(candidates: list[dict], *, user_email: str,
+                                         entitled_domains: list[str]) -> list[dict]:
+    """Withhold the candidates the SAME origin rule `/notice_parts` applies would withhold
+    (`notice_parts.notice_visible`): a drop-derived notice no caller may yet see, and a component
+    reachable only through such notices. A withheld candidate is simply absent, so the answer is
+    the one a Jena without that row would give. Raises one of `_VISIBILITY_OUTAGE` on a lookup
+    failure (the route answers 503); any other exception is a defect and answers 500.
+    Components with no linked notice and every non-sustainment IRI pass untouched."""
+    notice_ids: dict[str, str] = {}
+    comp_iris: list[str] = []
+    unsafe: set[str] = set()
+    for c in candidates:
+        iri = str(c.get("instance_id") or "")
+        if iri.startswith(_NOTICE_IRI_PREFIX):
+            notice_ids[iri] = _notice_parts.notice_id_of({}, iri)
+        elif iri.startswith(_COMPONENT_IRI_PREFIX):
+            if _iri_is_safe(iri):
+                comp_iris.append(iri)
+            else:
+                unsafe.add(iri)
+    links: dict[str, set[str]] = {}
+    if comp_iris:
+        values = " ".join(f"<{i}>" for i in comp_iris)
+        link_rows = await execute_sparql(
+            f"SELECT ?c ?n WHERE {{ VALUES ?c {{ {values} }} ?c <{_SUBJECT_TO_NOTICE}> ?n }}",
+            domain="SUSTAINMENT",
+        )
+        for r in link_rows or []:
+            links.setdefault(str(r.get("c") or ""), set()).add(str(r.get("n") or ""))
+    linked_ids = {n: _notice_parts.notice_id_of({}, n)
+                  for ns in links.values() for n in ns if n.startswith(_NOTICE_IRI_PREFIX)}
+    all_ids = {i for i in [*notice_ids.values(), *linked_ids.values()] if i}
+    visible: set[str] = set()
+    if all_ids:
+        if _NEO4J_DRIVER is None:
+            raise SubstrateUnavailable("the sustainment graph is not connected")
+        visible = await asyncio.to_thread(
+            _notice_parts.visible_notice_ids, _NEO4J_DRIVER, all_ids,
+            caller_id=user_email, viewer_domains=entitled_domains,
+            table=_load_domain_consumption_for_notice_parts(),
+            can_view_program=_notice_parts_can_view_program,
+        )
+    out: list[dict] = []
+    for c in candidates:
+        iri = str(c.get("instance_id") or "")
+        if iri in unsafe:
+            continue
+        if iri in notice_ids:
+            if notice_ids[iri] and notice_ids[iri] not in visible:
+                continue
+        elif iri in links:
+            tied = [linked_ids[n] for n in links[iri] if linked_ids.get(n)]
+            if tied and not any(t in visible for t in tied):
+                continue
+        out.append(c)
+    return out
 
 
 @app.post("/resolve_instance")
@@ -5112,10 +5637,18 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
     ABSTAIN. The async Jena fetch lives here; the matching is the pure, unit-tested core."""
     try:
         rows = await execute_sparql(_SUSTAINMENT_INSTANCES_QUERY, domain="SUSTAINMENT")
-    except Exception as exc:
+    except SubstrateUnavailable as exc:  # execute_sparql's only outage; a defect answers 500
         raise HTTPException(status_code=502, detail=f"pcn instance query failed: {exc}") from exc
     candidates = _resolve_sustainment_candidates(request.identifier, rows=rows)
-    return {"candidates": candidates}
+    try:
+        candidates = await _filter_sustainment_candidates(
+            candidates, user_email=request.user_email,
+            entitled_domains=request.entitled_domains,
+        )
+    except _VISIBILITY_OUTAGE as exc:  # NARROWED ON PURPOSE: a defect answers 500, see _VISIBILITY_OUTAGE
+        raise HTTPException(
+            status_code=503, detail=f"pcn instance visibility check failed: {exc}") from exc
+    return {"candidates": await _attach_class_chains(candidates)}
 
 
 class NoticePartsRequest(BaseModel):
@@ -5124,6 +5657,36 @@ class NoticePartsRequest(BaseModel):
     params: dict = Field(default_factory=dict)
     resolved_instance_id: str = ""
     entitled_domains: list[str] = Field(default_factory=list)
+    #: The caller's authz_id. The supervisor's dispatch body carries it here (dynamic_supervisor
+    #: dispatch body; the gateway sets `user_email=current_user.authz_id`). It is body-asserted at
+    #: the same trust level as `entitled_domains` -- specialists receive no user token.
+    user_email: str = ""
+
+
+def _load_domain_consumption_for_notice_parts() -> dict:
+    """The consumption table, read per request (no cache). FAIL CLOSED: an unreadable file is
+    `{}` (nobody consumes any origin) plus one WARNING, the posture of gateway.py's loader."""
+    path = os.getenv("DOMAIN_CONSUMPTION_FILE", "/app/policy/domain_consumption.yaml")
+    try:
+        import yaml  # noqa: PLC0415
+        with open(path) as f:
+            raw = yaml.safe_load(f) or {}
+    except Exception as exc:  # noqa: BLE001 -- fail closed, never 500
+        logging.getLogger("iagent.notice_parts").warning(
+            "domain_consumption.yaml unreadable at %s (%s) -- notice_parts sources of a "
+            "drop-derived notice are withheld from everyone but its dropper until this is fixed",
+            path, exc,
+        )
+        return {}
+    return _origin_entitlement.load_domain_consumption(raw)
+
+
+def _notice_parts_can_view_program(program: str, caller_id: str) -> bool:
+    try:
+        from utils.program_membership import can_view_program  # noqa: PLC0415
+    except ImportError:
+        from agent_fleet.utils.program_membership import can_view_program  # type: ignore[no-redef]
+    return can_view_program(program, caller_id)
 
 
 @app.post("/notice_parts")
@@ -5135,6 +5698,8 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
     if _notice_parts.DOMAIN not in (request.entitled_domains or []):
         return {
             "status": "refused",
+            "refused": True,
+            "outcome": "refused",
             "reason": "not_entitled",
             "verb": _notice_parts.VERB,
             "message": "This read needs the SUSTAINMENT domain, which the caller is not entitled to.",
@@ -5145,7 +5710,13 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
         raise HTTPException(status_code=503, detail="the sustainment graph is not connected")
     notice_id = _notice_parts.notice_id_of(request.params, request.resolved_instance_id)
     try:
-        return await asyncio.to_thread(_notice_parts.read_notice_parts, _NEO4J_DRIVER, notice_id)
+        return await asyncio.to_thread(
+            _notice_parts.read_notice_parts, _NEO4J_DRIVER, notice_id,
+            (request.params or {}).get("offset"),
+            caller_id=request.user_email, viewer_domains=request.entitled_domains,
+            table=_load_domain_consumption_for_notice_parts(),
+            can_view_program=_notice_parts_can_view_program,
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"notice parts read failed: {exc}") from exc
 
@@ -5180,6 +5751,15 @@ class WriteItemStateRequest(BaseModel):
     # str = "" not Optional[str]: this module uses `from __future__ import annotations`, and Pydantic
     # v2 can't resolve `Optional` as a forward-ref (same reason list[str] is used over List[str], §657).
     proposed_by_ruleset: str = ""
+    # Steward-correction provenance, STORED beside the item's identity (never a re-key). All
+    # optional; absent means unchanged, so existing callers are untouched. `extracted_value` is
+    # null for a steward-ADDED row. (`str = ""`-style note above: the module uses
+    # `from __future__ import annotations`; `str | None` resolves, `Optional` does not.)
+    obtained_via: str | None = None
+    corrected_by: str | None = None
+    extracted_value: str | None = None
+    corrected_value: str | None = None
+    evidence: str | None = None
 
 
 @app.post("/write_item_state")
@@ -5195,7 +5775,11 @@ async def write_item_state(
     s = request.subject_iri
     if not s.startswith("http://internal/"):
         raise HTTPException(status_code=400, detail="subject_iri must be an internal component/notice IRI")
-    update = _build_state_update(s, request.disposition_state, request.disposition_ref, request.proposed_by_ruleset)
+    # Only the provenance fields the caller actually SENT are stamped (absent = unchanged).
+    _prov = {k: getattr(request, k) for k in request.model_fields_set
+             if k in ("obtained_via", "corrected_by", "extracted_value", "corrected_value", "evidence")}
+    update = _build_state_update(s, request.disposition_state, request.disposition_ref,
+                                 request.proposed_by_ruleset, _prov or None)
     await _execute_sparql_update(update)
     return {"ok": True, "subject_iri": s, "disposition_state": request.disposition_state}
 
@@ -5556,112 +6140,17 @@ class FindCompatibleVerbsResponse(BaseModel):
 # never returned.
 UNREACHABLE = 10**6
 
-# THE CANDIDATE UNIVERSAL REFERENTS LEG 3 ASKS JENA TO CONFIRM. `MeshOntology.ask`/`.construct`
-# are IRI-keyed — the Protocol declares NAMED OPERATIONS ONLY, deliberately, so there is no "list
-# every class where P" query to discover this set with. The pool can only CONFIRM a candidate,
-# never discover one, so a second universal referent needs its IRI added here the same way it
-# needs adding to `agent_fleet/docs_agent/slots.py`'s `REFERENTS`. `mesh:Thing` is the one
+# THE CANDIDATE UNIVERSAL REFERENTS, AS A TYPE FACT. LEG 3 no longer uses this set (it reads the
+# node property `universal_referent`, see the comment in `_FIND_COMPAT_VERBS_CYPHER`); it survives
+# for `_docs_pool_accepts`, which asks whether a slot's DECLARED referent is universal. A second
+# universal referent needs its IRI added here the same way it needs adding to
+# `agent_fleet/docs_agent/slots.py`'s `REFERENTS`. `mesh:Thing` is the one
 # declared today (`setup/ontologies/mesh_system.ttl:736`) — engines are independently deployed
 # with no shared import path between them, so this is not a second copy of a Python constant, it
 # is the SAME IRI read out of the SAME ttl by two engines that cannot import one another.
 _CANDIDATE_UNIVERSAL_REFERENTS: tuple[str, ...] = (
     "http://invincible-agent/mesh#Thing",
 )
-
-_RDF_TYPE_IRI = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
-_OWL_CLASS_IRI = "http://www.w3.org/2002/07/owl#Class"
-_UNIVERSAL_REFERENT_PROP_IRI = "http://invincible-agent/mesh#universalReferent"
-
-# WHO THIS READ IS ATTRIBUTED TO, AND A GAP FLAGGED RATHER THAN PAPERED OVER. `Initiator` is a
-# required argument on every `MeshOntology` operation, and `require_person` refuses a "service"
-# identity at the boundary — by design, so a read is never attributed to nobody a person can be
-# asked about. `find_compatible_verbs` carries no caller identity today: its request is exactly
-# `{subject_uri, max_hops, entitled_domains}`, and this endpoint has no real person to attribute
-# a Jena read to. Declaring `kind="person"` here to get past the refusal would be fabricating an
-# identity, which is precisely what the boundary check exists to prevent — so this is declared
-# `kind="service"` HONESTLY, which means `.construct()` below is refused EVERY TIME by
-# `require_person` until this route carries a real caller identity to attribute the read to (the
-# same undeliverable-today gap `agent_fleet/docs_agent/reads.py` documents for `audience_hint`).
-# That refusal is exactly the branch `_universal_referent_iris` must survive without raising, so
-# it is exercised here rather than worked around — threading a real identity through this route
-# is a design decision for a person, not a substitute this pool should invent.
-#
-# THE GAP CLOSES BEHIND `COMPATIBLE_VERBS_VIA_MESH`. With the flag on, the request carries
-# `on_behalf_of` and the route hands `_universal_referent_iris` that person instead; this service
-# initiator remains what the flag-off route reads with, and it is still refused.
-_POOL_READ_INITIATOR = Initiator(subject="engine-o-find-compatible-verbs", kind="service")
-
-
-def _confirms_universal_referent(rows, subject: str) -> bool:
-    """Does this CONSTRUCT result say `subject` is BOTH an `owl:Class` AND flagged universal?
-
-    Pure and offline-checkable on purpose: `rows` is whatever `MeshResult.rows` holds, and the
-    two facts are read off the SAME subgraph rather than assumed from the candidate list — the
-    pool trusts what Jena answered, not the Python literal that named the candidate.
-
-    `rows` IS TURTLE TEXT, ONE DOCUMENT PER ROW. `JenaMeshOntology.construct` returns the store's
-    own Turtle rather than rdflib triples, because triples lose every term type once a
-    `MeshResult` is serialized (see its docstring). This function was written against the
-    triples and iterated each row as `(s, p, o)`; on the Turtle contract that raised for every
-    candidate and folded into "not confirmed", so LEG 3 contributed nothing. Each document is
-    parsed here, which is the consumer's half of that contract.
-    """
-    from rdflib import Graph  # local, as in mesh_ontology.py: rdflib stays off the import path
-
-    triples = []
-    for document in rows:
-        graph = Graph()
-        graph.parse(data=document, format="turtle")
-        triples.extend(graph)
-    is_class = False
-    carries_flag = False
-    for s, p, o in triples:
-        if str(s) != subject:
-            continue
-        if str(p) == _RDF_TYPE_IRI and str(o) == _OWL_CLASS_IRI:
-            is_class = True
-        elif str(p) == _UNIVERSAL_REFERENT_PROP_IRI and str(o).strip().lower() == "true":
-            carries_flag = True
-    return is_class and carries_flag
-
-
-def _universal_referent_iris(initiator: Initiator | None = None) -> list[str]:
-    """The candidate IRIs Jena CONFIRMS as classes carrying `mesh:universalReferent true`.
-
-    Read as `initiator` when one is given (the person, with `COMPATIBLE_VERBS_VIA_MESH` on), else
-    as `_POOL_READ_INITIATOR`, looked up at call time.
-
-    NEVER RAISES. An unreachable store, a refused read (including the service-identity refusal
-    documented on `_POOL_READ_INITIATOR` above), or a candidate Jena does not confirm all fold
-    into "not confirmed" — the caller gets an empty list, LEG 3 contributes zero rows, and the
-    pool degrades to LEGs 1+2. Logged AT MOST ONCE per call, not once per candidate, so an empty
-    result reads as one line rather than a burst.
-    """
-    confirmed: list[str] = []
-    refusal_detail: str | None = None
-    for candidate in _CANDIDATE_UNIVERSAL_REFERENTS:
-        try:
-            result = _JENA_ONTOLOGY.construct(initiator or _POOL_READ_INITIATOR, subject=candidate)
-        except Exception as exc:  # noqa: BLE001 - any refusal here must degrade, never raise
-            refusal_detail = f"{type(exc).__name__}: {exc}"
-            continue
-        if not result.answered_ok:
-            refusal_detail = f"{result.outcome}: {result.detail}"
-            continue
-        try:
-            confirms = _confirms_universal_referent(result.rows, candidate)
-        except Exception as exc:  # noqa: BLE001 - an unreadable answer is "not confirmed"
-            refusal_detail = f"unreadable CONSTRUCT rows, {type(exc).__name__}: {exc}"
-            continue
-        if confirms:
-            confirmed.append(candidate)
-    if not confirmed and refusal_detail:
-        logging.info(
-            "LEG 3 universal-referent read produced nothing (%s) — pool degrades to LEGs 1+2",
-            refusal_detail,
-        )
-    return confirmed
-
 
 # NB on the shape of this query: the `*0..N` form is the trick that
 # unifies "the subject's own class" with "any registered ancestor"
@@ -5776,21 +6265,22 @@ UNION ALL
 // position in the class tree, and this leg admits on the flag rather than on coverage - which is
 // exactly why LEG 2's `subClassOf*` walk can never reach `mesh:Thing` and why that is correct.
 //
-// THE FLAG IS READ FROM JENA, NOT FROM A NEO4J PROPERTY, AND NOT BY PARSING `r.slots` HERE - the
-// same reason LEG 2 reads an edge instead of parsing a declaration: two readers of one fact go
-// out of agreement at the first edit nobody mirrored. `mesh:universalReferent` is primed into
-// Jena, not Neo4j, so `find_compatible_verbs` asks Jena which candidate classes carry it and
-// hands the CONFIRMED set in as `$universal_referents` - a plain IRI list, never a class name
-// baked into this query. An empty list (Jena unreachable, the read refused, or a candidate Jena
-// does not confirm) makes this leg contribute zero rows; degrading to LEGs 1+2 is the point, not
-// a bug to route around.
+// THE FLAG IS READ FROM THE NEO4J NODE PROPERTY `universal_referent`, ABSENT = FALSE (architect
+// ruling 2026-10-17, on 7f's ruling 5). doc-tools' ontology sync writes it onto the
+// `:OntologyClass` node (`doc_tools/assets/ontology_assets.py UNIVERSAL_REFERENT_PROPERTY`, snake_case;
+// today exactly `mesh#Thing` carries it, `true`), so this leg reads the graph it already queries and
+// no longer asks Jena. The Jena read it replaces was refused for the service initiator on every call
+// and degraded to an empty list, so LEG 3 never fired. `coalesce(..., false)` is the rule for a
+// class that was never flagged AND for one whose flag was withdrawn: a Cypher `SET c.prop = null`
+// REMOVES the property, so "absent" is the only shape an un-flagged class can take, and it must
+// read as false. The IRI is still never baked into this query - the flag is the data.
 //
 // SCOPED TO CLASSES ON BOTH ENDS. `start` must already be a registered `:OntologyClass` - never
 // a bare string that happens to match `$subject_uri` - and the referent match requires
 // `ref:OntologyClass`, so a universal-referent IRI that is not a graph class admits nothing.
 MATCH (start:OntologyClass {uri: $subject_uri})
 MATCH (ref:OntologyClass)
-WHERE ref.uri IN $universal_referents
+WHERE coalesce(ref.universal_referent, false) = true
 MATCH (vsubj:OntologyClass)-[p:PARAMETERISED_BY]->(ref)
 WHERE coalesce(p.required, false) = true
   AND p.verb_iri IS NOT NULL AND p._tool_urn IS NOT NULL
@@ -5831,13 +6321,16 @@ RETURN DISTINCT
 _COMPAT_LEGS = _FIND_COMPAT_VERBS_CYPHER.split("\nUNION ALL\n")
 _COMPAT_LEGS_AFTER_COVERAGE = "\nUNION ALL\n".join(_COMPAT_LEGS[1:])
 
-#: `/find_compatible_verbs` through the mesh interfaces: LEG 1 via `MeshGraph.verbs_for` and LEG
-#: 3's Jena read, both as the person the request names in `on_behalf_of`. OFF by default. With it
-#: on, LEG 3 is live for the first time (the flag-off read is a service and is refused), so the
-#: pool gains `mesh:explain` on every class subject; LEGs 1 and 2 answer what they answer off.
+#: `/find_compatible_verbs` through the mesh interfaces: LEG 1 via `MeshGraph.verbs_for` as the
+#: person the request names in `on_behalf_of`. ON by default: every
+#: caller of the route now hands the person down (the seal derives the callers and holds each to
+#: it), so the 400 for a request with no person is reached only by a caller that is itself wrong.
+#: LEG 3 reads the node flag on both paths (ruling 2026-10-17), so the pool gains `mesh:explain`
+#: on every class subject either way; LEGs 1 and 2 answer what they answer off. Turn it off with
+#: `COMPATIBLE_VERBS_VIA_MESH=false` (one statement, no identity, no 400s).
 #: `tests/routing/test_find_compatible_verbs_via_mesh_graph.py` is the flag on/off seal.
 COMPATIBLE_VERBS_VIA_MESH = os.getenv(
-    "COMPATIBLE_VERBS_VIA_MESH", "false"
+    "COMPATIBLE_VERBS_VIA_MESH", "true"
 ).lower() in ("true", "1", "yes")
 
 
@@ -5884,7 +6377,6 @@ def _compat_rows_via_mesh_sync(
             status_code=503,
             detail=f"MeshGraph.verbs_for did not answer ({coverage.outcome}): {coverage.detail}",
         )
-    universal_referents = _universal_referent_iris(initiator)
     cypher = (
         _COMPAT_LEGS_AFTER_COVERAGE
         .replace("$MAXHOPS$", str(max_hops))
@@ -5895,7 +6387,7 @@ def _compat_rows_via_mesh_sync(
             rest = [
                 dict(r)
                 for r in session.run(
-                    cypher, subject_uri=subject_uri, universal_referents=universal_referents
+                    cypher, subject_uri=subject_uri
                 )
             ]
     except Exception as exc:  # noqa: BLE001 - the substrate's failure, whatever shape it takes
@@ -5941,20 +6433,11 @@ async def find_compatible_verbs(
             .replace("$MAXHOPS$", str(max_hops))
             .replace("$UNREACHABLE$", str(UNREACHABLE))
         )
-        # LEG 3's confirmed set. `_universal_referent_iris` never raises — an unreachable Jena, a
-        # refused read, or zero confirmed candidates all come back as `[]`, which makes LEG 3
-        # contribute zero rows and the pool degrade to LEGs 1+2 exactly as if the leg were absent.
-        universal_referents = await asyncio.to_thread(_universal_referent_iris)
-
         def _run() -> list[dict]:
             with _NEO4J_DRIVER.session() as session:
                 return [
                     dict(r)
-                    for r in session.run(
-                        cypher,
-                        subject_uri=request.subject_uri,
-                        universal_referents=universal_referents,
-                    )
+                    for r in session.run(cypher, subject_uri=request.subject_uri)
                 ]
 
         try:

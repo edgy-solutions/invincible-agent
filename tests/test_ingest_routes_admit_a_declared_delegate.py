@@ -45,11 +45,22 @@ def client(monkeypatch):
     gateway.app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def _notice_is_a_registered_document_kind(monkeypatch):
+    """POST /ingest refuses a drop with no registered content kind (2026-10-12, the door 400);
+    this file is about the on_behalf_of gate, so `notice` resolves as a registered document kind.
+    A test that patches `by_kind` itself wins over this."""
+    _real = _ck.by_kind
+    monkeypatch.setattr(_ck, "by_kind", lambda kind: types.SimpleNamespace(
+        kind=kind, branch="document", domain=None, seeds_workflow=None, identity_field=None)
+        if kind == "notice" else _real(kind))
+
+
 # -- POST /ingest ------------------------------------------------------------------------------
 
 def _drop(client, on_behalf_of):
-    return client.post("/ingest", files={"file": ("n.pdf", b"same bytes", "application/pdf")},
-                       data={"kind": "pdf", "on_behalf_of": on_behalf_of})
+    return client.post("/ingest", files={"file": ("n.pdf", b"%PDF-1.4 same bytes", "application/pdf")},
+                       data={"kind": "pdf", "on_behalf_of": on_behalf_of, "content_kind": "notice"})
 
 
 def _stub_dedupe_hit(monkeypatch):

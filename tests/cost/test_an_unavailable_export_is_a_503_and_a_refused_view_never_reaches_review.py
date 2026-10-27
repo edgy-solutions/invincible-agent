@@ -67,8 +67,21 @@ def _gateway_reaches(monkeypatch, answer):
     monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
 
 
+@pytest.fixture(autouse=True)
+def _one_named_cost_answer(monkeypatch):
+    """RULED 2026-10-17: an export naming no answers is a 400, so these name ONE cost answer."""
+    monkeypatch.setattr(
+        gateway, "_resolve_export_answers",
+        lambda ids, user_id: [
+            {"id": i, "verb_iri": "mesh:costUnitPriceTrend", "subject_instance_id": None}
+            for i in ids
+        ],
+    )
+
+
 def _export(bff):
-    return bff.post("/export/package", json={"recipient_scope": _SCOPE, "answers": []})
+    return bff.post("/export/package",
+                    json={"recipient_scope": _SCOPE, "answers": [{"artifact_id": "c1"}]})
 
 
 # -- 1. the gateway --------------------------------------------------------------------------

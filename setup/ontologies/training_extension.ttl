@@ -1,0 +1,14 @@
+@prefix rdf:      <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:     <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:      <http://www.w3.org/2002/07/owl#> .
+@prefix prov:     <http://www.w3.org/ns/prov#> .
+@prefix training: <http://edgy-solutions.com/ontology/training#> .
+
+<http://edgy-solutions.com/ontology/training> a owl:Ontology ;
+    rdfs:label "Training vocabulary (TRAINING domain)" ;
+    rdfs:comment "The class vocabulary for training material. The IRI here is EXACTLY the one doc-tools' `course` kind writes as its output (registry/content_kinds/course.yaml, outputs `training:Course`, target http://edgy-solutions.com/ontology/training#Course; ADR-0059, doc-tools lane tr). This file DECLARES that class so the output is not a phantom; the producer writes the instances. Only Course is declared: the training-workbench contract also names Slide, HAS_SLIDE and TEACHES, but no kind outputs them yet, and a class declared ahead of its producer is a dead-end menu entry. Per the ingest convention the user-facing definition goes in rdfs:comment ONLY." .
+
+training:Course a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Course" ;
+    rdfs:comment "A training course deck: the slides of one course, dropped as a document and read for its outline and the concepts it teaches. Queries about a training course, its outline, or what a course teaches target this class." .

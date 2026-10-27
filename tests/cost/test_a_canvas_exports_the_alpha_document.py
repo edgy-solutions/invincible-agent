@@ -46,17 +46,11 @@ def _a(aid, verb, subject=None):
 
 
 #: The alpha customer's cost questions, one answer per exportable verb, spread over their lots.
-#: The shape is the bff's ArtifactResponse fields for an answer on a board.
-ALPHA_CANVAS = {"answers": [
-    _a("ans-labor-1", "costLaborComposition", 1),
-    _a("ans-trend", "costUnitPriceTrend"),
-    _a("ans-price-2", "costPriceComposition", 2),
-    _a("ans-breakdown-3", "costLotBreakdown", "3"),
-    _a("ans-category-4", "costCategoryBreakdown", 4),
-    _a("ans-rates-5", "costRateComparison", 5),
-    _a("ans-suppliers-3", "costSupplierConcentration", 3),
-    _a("ans-assumptions", "costRateAssumptions"),
-]}
+#: The shape is the bff's ArtifactResponse fields for an answer on a board. LOADED from the one
+#: checked-in file the scripted build (`scripts/build_alpha_document.py`) reads as well, so the
+#: canvas this test exports and the canvas the build exports cannot drift apart.
+ALPHA_CANVAS = json.loads(
+    (ROOT / "tests" / "fixtures" / "cost_alpha_canvas.json").read_text("utf-8"))
 
 
 @pytest.fixture(scope="module")
@@ -112,7 +106,7 @@ def test_the_alpha_canvas_package_IS_the_09_06_document(state):
 def test_the_VERB_exports_the_alpha_canvas_as_the_09_06_document(state, isolated_dist):
     """THE ACCEPTANCE, end to end: the verb, the real builder, DuckDB and the Pyodide page,
     read back off the disk it wrote."""
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the canvas export reproducing the 09-06 alpha document is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
         pytest.skip("the pinned Pyodide runtime is not fetched here")
     out = M.package_export(state, recipient_scope=ALPHA, canvas=ALPHA_CANVAS)
@@ -130,7 +124,7 @@ def test_the_VERB_exports_the_alpha_canvas_as_the_09_06_document(state, isolated
 
 def test_the_VERB_narrows_the_page_it_writes_not_only_its_response(state, isolated_dist):
     """The response and the file are built by two calls; both must take the canvas."""
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the canvas export reproducing the 09-06 alpha document is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
         pytest.skip("the pinned Pyodide runtime is not fetched here")
     import duckdb
@@ -153,7 +147,8 @@ def test_the_VERB_narrows_the_page_it_writes_not_only_its_response(state, isolat
 
 def test_one_labor_answer_discloses_one_lot_and_shows_its_two_sections(state):
     composed = _resolve({"answers": [_a("only", "costLaborComposition", 3)]})
-    assert composed == {"lots": (3,), "sections": ("labor", "sepm"), "answers": ["only"]}
+    assert composed == {"lots": (3,), "sections": ("labor", "sepm"), "answers": ["only"],
+                        "refused": []}
     pkg = _dataset_package(state, composed)
     assert pkg["lots"] == [3]
     assert [c["lot"] for c in pkg["manifest"]["checks"]] == [3]
@@ -190,7 +185,7 @@ def test_the_subject_may_be_a_digit_string_or_a_full_mesh_IRI():
 
 
 def test_the_page_carries_only_the_canvas_sections(state, tmp_path):
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the canvas export reproducing the 09-06 alpha document is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
         pytest.skip("the pinned Pyodide runtime is not fetched here")
     import build_cost_dataset as D
@@ -218,6 +213,9 @@ def test_the_page_carries_only_the_canvas_sections(state, tmp_path):
 
 
 def test_a_lot_outside_the_recipients_scope_is_UNENTITLED_and_named():
+    # Seals the LOG detail: the exception keeps the answer id and the lot. The ROUTE's prose is
+    # constant (RULED 2026-10-17: canvas.ENTITLEMENT_REFUSAL, sealed in
+    # test_an_entitlement_refusal_names_no_lot.py); this detail only reaches the engine's log.
     canvas = {"answers": [_a("mine", "costLaborComposition", 2),
                           _a("theirs", "costLaborComposition", 7)]}
     with pytest.raises(C.Unentitled, match=r"theirs \(lot 7\)"):
@@ -319,3 +317,75 @@ def test_the_canvas_is_a_HANDLE_slot_and_recipient_stays_the_only_mandatory_one(
     assert decl["kind"] == "handle" and decl["type"] == "object"
     assert decl["required"] is False and "referent" not in decl
     assert mandatory_slots("package_export") == ["recipient_scope"]
+
+
+# ── AS_OF IS AN INPUT: IDENTICAL INPUT, IDENTICAL BYTES ─────────────────────────────────
+
+_ONE_ANSWER = {"answers": [_a("only", "costLaborComposition", 3)]}
+
+
+def _needs_the_runtime():
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the as_of export arms are NOT verified (uv sync --extra agent-fleet)")
+    if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
+        pytest.skip("the pinned Pyodide runtime is not fetched here")
+
+
+def test_AS_OF_identical_input_gives_identical_page_bytes(state, isolated_dist):
+    """HEADLINE: same canvas and same explicit as_of, twice -> same sha and same bytes on disk,
+    for the page and for the .duckdb it embeds the sha of."""
+    _needs_the_runtime()
+    runs = []
+    for _ in range(2):
+        out = M.package_export(state, recipient_scope=ALPHA, canvas=_ONE_ANSWER,
+                               as_of="2026-01-02")
+        runs.append((out["artifact_sha256"],
+                     (isolated_dist / out["artifact_filename"]).read_bytes(),
+                     (isolated_dist / out["dataset_filename"]).read_bytes()))
+    assert runs[0][0] == runs[1][0]
+    assert runs[0][1] == runs[1][1] and runs[0][2] == runs[1][2]
+
+
+def test_AS_OF_explicit_reaches_the_page_the_package_data_and_the_response(state, isolated_dist):
+    _needs_the_runtime()
+    out = M.package_export(state, recipient_scope=ALPHA, canvas=_ONE_ANSWER, as_of="2026-01-02")
+    html = (isolated_dist / out["artifact_filename"]).read_text(encoding="utf-8")
+    assert "as of 2026-01-02" in html
+    assert I.package_from_html(html)["as_of"] == "2026-01-02"
+    assert out["as_of"] == "2026-01-02"
+
+
+def test_AS_OF_absent_is_the_request_date_resolved_ONCE(state, isolated_dist, monkeypatch):
+    _needs_the_runtime()
+    days = iter(["2031-03-04", "2031-03-05", "2031-03-06"])
+    calls = []
+
+    def _fake():
+        calls.append(1)
+        return next(days)
+
+    monkeypatch.setattr(M, "_request_date", _fake)
+    out = M.package_export(state, recipient_scope=ALPHA, canvas=_ONE_ANSWER)
+    html = (isolated_dist / out["artifact_filename"]).read_text(encoding="utf-8")
+    assert len(calls) == 1, f"the request date was resolved {len(calls)} times"
+    assert "as of 2031-03-04" in html
+    assert I.package_from_html(html)["as_of"] == "2031-03-04"
+    assert out["as_of"] == "2031-03-04"
+
+
+@pytest.mark.parametrize("bad", ["2026-13-01", "yesterday", "2026-1-2", "20260102", ""])
+def test_AS_OF_malformed_is_a_NAMED_refusal_on_the_route_and_writes_nothing(
+        state, isolated_dist, bad):
+    from fastapi.testclient import TestClient
+    from agent_fleet.cost_agent import main as cost_main
+
+    before = sorted(p.name for p in isolated_dist.iterdir())
+    with TestClient(cost_main.app) as c:
+        r = c.post("/measure/package_export", json={"params": {
+            "recipient_scope": ALPHA, "canvas": _ONE_ANSWER, "as_of": bad}})
+    assert r.status_code < 500, (r.status_code, r.text[:300])
+    body = r.json()
+    assert body.get("refused") is True and body.get("outcome") == "not_in_model", body
+    assert "YYYY-MM-DD" in body["reason"] and repr(bad) in body["reason"], body
+    # The refusal names the slot at fault, or elicitation asks for the wrong one.
+    assert body.get("slot") == "as_of" and "available" not in body, body
+    assert sorted(p.name for p in isolated_dist.iterdir()) == before

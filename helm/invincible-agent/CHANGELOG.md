@@ -1,5 +1,516 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.70 — 2026-10-26
+
+Roll 208. It carries every master merge since 0.4.69 (`7a45a3cb`): #93, #100, #97, #99, #96,
+#106, #105, #104, #109, #102, #103 and #110.
+
+**Chart changes**
+
+- **A public client puts itself in its access token's `aud` (#110).** The architect ruled on
+  2026-10-26 that the `training-workbench` client emits `authz_id` and `aud`. wb's api accepts a
+  token only when `aud` names `training-workbench`.
+  - Every `keycloak.publicClients` entry gets an `audience-self` mapper: `oidc-audience-mapper`,
+    with `included.client.audience` set to the client's own id, on the access token only.
+  - It ships in the realm import, in the reconcile's create, and in the reconcile's repair of a
+    live client. The repair keys on what a mapper emits, not on its name, and never rewrites an
+    existing mapper.
+  - The readback judges the audience and its access-token flag on one mapper's config, in any
+    key order. The ok line becomes
+    `ok   training-workbench public, pkce S256, emits authz_id, aud training-workbench`.
+- **cortex-ui's redirect readback compares sets (#100).** 0.4.69's readback compared the
+  redirect lists in order. Keycloak serves them in its own order, so revision 217 failed a
+  correct realm. The readback now compares them as sets.
+
+**Release pipeline (#93).** The chart release now needs the image build, and a missing image is
+fatal. 0.4.66, 0.4.68 and 0.4.69 each published a manifest with 0 of 19 images tagged, because
+the retag ran before the build finished.
+
+**Images.** A chart bump restarts every pod, so all of these land on this roll.
+- **cortex-bff (`src/iagent`):**
+  - a seeded canvas answer names its template, and a finance canvas asks which program (#97);
+  - ingest-v1, a published contract with a shape lock, and the status row that names the task a
+    steward acts on; a zero-row notice is asked about, not failed (#99);
+  - a has-parts defect filing with no requester is a terminal 422 (#104);
+  - `/canvas/seed` declares its 200 and 409 bodies (#103);
+  - a policy refusal names its policy, the missing binding, and who can grant it (#96).
+  - **One schema change:** `ingest_status_projection` gains `force_text_fallback BOOLEAN NOT NULL
+    DEFAULT FALSE` (#99). cortex-bff adds it on startup with `ADD COLUMN IF NOT EXISTS` and logs
+    `ingest_status_projection migration applied`; a failure logs a warning and leaves the
+    ingestion seam dormant.
+- **presentation-agent:** `safety:FailureRecordSet` binds `KNOWLEDGE_DOCUMENT`, matching cortex
+  (#105).
+
+**No deploy effect:** the lane-trailer hook (#106), and the test-only #109 and #102.
+
+## 0.4.69 — 2026-10-25
+
+**Finding: the `cortex-ui` client accepted any redirect.** Its realm import carried
+`redirectUris: ["*"]` and `webOrigins: ["*"]`. cortex-ui is a public client. Anyone who got a
+signed-in user to click a crafted login link could name their own redirect and collect the user's
+authorization code, and with it a token. The architect raised it on 2026-10-24 (PR #91). It is the
+shape `keycloak.publicClients` already refuses.
+
+**The fix: the redirect set is cortex-ui's literal origin.**
+- cortex-ui sends one redirect, `window.location.origin`. Its `/case/<id>` and `/ask` deep links
+  ride in OIDC state, never in the redirect. So the set is `https://<host>` and
+  `https://<host>/`, with no paths.
+- The web origin is `https://<host>`, and the post-logout redirect is `https://<host>/`, held
+  separately.
+- **New `keycloak.cortexUiClient` keys:** `redirectUris`, `webOrigins` and
+  `postLogoutRedirectUris`. When they are empty, the set derives from the TLS hosts of
+  `cortexUi.ingress`.
+- **When there is no set**, neither declared nor derivable:
+  - the import emits no redirect, so it fails closed;
+  - the reconcile job leaves the live client alone, and prints
+    `WARN cortex-ui: live redirectUris holds a wildcard` when it has one.
+- The render fails on any `*`, on a non-https URI, and on a web origin with a path.
+
+**The realm reconcile job converges a live realm.** This is the job's one declared exception to
+additive-only.
+- It reads the full client and replaces exactly those three fields. It PUTs the client back only
+  when they differ.
+- The readback fails unless all three are the rendered literals and the client is still public.
+- The success line is `ok   cortex-ui redirects <n> literal, no wildcard`.
+
+**Every deployment's realm has the same hole.**
+- A deployment whose `cortexUi.ingress` lists its TLS hosts is fixed by this roll.
+- **Work's realm needs the same fix.** If work serves cortex-ui through its own ingress, or through
+  none of the chart's, it must declare `keycloak.cortexUiClient`. Until then the job only warns,
+  and the wildcard stays.
+
+**Related, unchanged: cortex-ui keeps `directAccessGrantsEnabled: true`.** The sandbox walks and
+the e2e harness sign in with the password grant. A public client with the password grant takes a
+user's password directly. It is recorded here and is not changed by this release.
+
+
+## 0.4.68 — 2026-10-24
+
+A declared list of public PKCE clients, `keycloak.publicClients` (PR #90, on the architect's 10-24
+ruling). Its first member is `training-workbench`, the training workbench's login.
+- Each client is public, standard flow with PKCE S256 required, no implicit flow, no password
+  grant, no service account, `fullScopeAllowed`. When the identity claim is not `email`, it gets
+  the `authz-id-user` mapper.
+- The render fails on an empty or duplicate clientId, a clientId that collides with a client the
+  chart already defines, an empty redirect set, a redirect that is not https with a literal host,
+  and a `*` web origin.
+- The realm reconcile job creates a missing client and repairs a missing mapper. It never rewrites
+  an existing client. Its readback fails unless the live client is public, PKCE S256, has no
+  password grant, carries every declared redirect, and emits the claim.
+- The default is `[]`, which renders nothing new. `values-sandbox.yaml` declares
+  `training-workbench`.
+- The version also moves past 0.4.67, whose roll (rev 216) failed in its post-upgrade hooks.
+
+## 0.4.67 — 2026-10-24
+
+The supervisor's `/classify_predicate` budget goes from a literal 30 s to `CLASSIFY_PREDICATE_TIMEOUT_S = 60`.
+This is an interim, on the architect's 10-24 ruling, on the same terms as the resolve budget.
+- No template, `values.yaml` default or `values-sandbox.yaml` key changed.
+- The only code change is `src/iagent/defs/dynamic_supervisor.py`, which is Dagster user code. Every
+  image is still re-tagged at the merge sha.
+- cortex-ui stays `e0c3c6d`.
+
+## 0.4.66 — 2026-10-24
+
+Roll 207. No template or `values.yaml` default changed. The release carries 207's engines and one
+sandbox-only change: `values-sandbox.yaml` `cortexUi.image.digest` → `sha256:c02ee0d2…`
+(cortex-ui e0c3c6d, PR #29, kind at drop). It must roll with 207's BFF, whose `POST /ingest`
+takes the `leaf` cortex now sends.
+
+## 0.4.65 — 2026-10-22
+
+The domain broker can install from a mirror, for a deployment with no route to github.com or
+pypi.org. Before this, its start-time pip install always fetched the SDK tarball from GitHub and
+everything else from PyPI, and in a closed network it retried until the startup probe gave up.
+New `domainBroker` keys:
+
+- `meshSdkSource`: `url` (the default; the GitHub tag tarball, as before) or `index`, which
+  installs `iagent-mesh==<meshSdkVersion without the v>` from the pip index.
+- `meshSdkBaseUrl`: replaces the GitHub tags URL. The file name stays `<meshSdkVersion>.tar.gz`.
+- `pip.indexUrl` becomes `PIP_INDEX_URL`.
+- `pip.caSecretName` names a Secret holding `ca.crt`; it is mounted and passed as `PIP_CERT`.
+
+There is no skip-verify option. Defaults render as before. Sealed by
+`tests/test_domain_broker_installs_from_a_mirror.py`.
+
+## 0.4.64 — 2026-10-22
+
+The topaz-seed CronJob, in `configMap` and `git` mode, copies all eight data files that
+`validate_policy.py` requires. It copied six: `domain_consumption.yaml` and `program_members.yaml`
+were missing from the copy loop. So from 10-02 every run in those modes was refused `MISSING`.
+Sealed by `tests/test_topaz_seed_compose_copies_every_validated_file.py`.
+
+## 0.4.62, 0.4.63 — 2026-10-22
+
+No template or `values.yaml` default changed. Both carry sandbox-only changes in
+`values-sandbox.yaml`, and 0.4.62 also adds a `values.yaml` comment on the promotion row-edit flags.
+
+## 0.4.61 — 2026-10-20
+
+Sandbox only, for roll 198. `cortexUi.image.digest` pins cortex-ui `3d2f7a3` (`sha256:7b51701c`,
+refusal reasons in the toast), and `cortexBff.env.IAGENT_PROMOTION_ROW_EDITS` is `"true"`. cortex's
+`VITE_REVIEW_ROW_EDITS` stays `"false"`, so the server takes row_edits on a promotion and no UI sends
+them yet.
+
+## 0.4.60 — 2026-10-19
+
+`primeSubstrate.reregisterEngines.deployments` gains `cortex-bff`. The BFF now persists each
+frontend's render menu in Postgres (`frontend_menu`) and replays it into the graph at startup
+(architect ruling Q9), so the post-prime restart is what puts cortex's menu back after a wipe.
+The list entry is the only chart change; the BFF's login-time post becomes a no-op when the
+stored menu matches and the graph still holds it.
+
+## 0.4.59 — 2026-10-19
+
+`cortexBff.env.IAGENT_PROMOTION_ROW_EDITS: "false"` in `values-sandbox.yaml`. The BFF can now take
+steward corrections (`row_edits`) on a `document_promotion`, behind this flag. It ships off and goes
+on together with `cortexUi.env.VITE_REVIEW_ROW_EDITS` once one live correction is proven. Values
+only; no template changed.
+
+## 0.4.58 — 2026-10-19
+
+cortex-ui pinned to 3bd3e80 (`sha256:2b61d76f…`), from 1f5482f (`1f3ae4ed`). The pdf.js worker
+`.mjs` is served as JavaScript, so the source pane draws; the pane names the real failure.
+Frontend image only; no template changed.
+
+## 0.4.57 — 2026-10-18
+
+cortex-ui pinned to 1f5482f (`sha256:1f3ae4ed…`), from b3bdab7 (`94599a96…`). Promote is
+held when there are no rows or no drawn source page; Reject offers the four ruled codes; a
+`?idp=openddil` deep link starts the brokered login. Build stage, entrypoint and nginx
+config unchanged. Frontend image only; no template changed.
+
+## 0.4.56 — 2026-10-18
+
+cortex-ui pinned to b3bdab7 (`sha256:94599a96…`), from 9b23135 (`5c411756…`). Carries the
+`/case/{id}` and `/ask?q=` deep links. Only the build stage moved (node 22); the runtime
+entrypoint and nginx config are unchanged. Frontend image only; no template changed.
+
+## 0.4.55 — 2026-10-17
+
+cortex-ui pinned to 9b23135 (`sha256:5c411756…`), from 68f56bb (`5d5b5dbb…`). Adds the
+MODEL_EXPLANATION card behind the `modelCanvas` feature flag. The image's entrypoint reads
+`VITE_FEATURES` at runtime (default empty) and the chart sets none, so the card stays off. Frontend image only; no template changed.
+
+## 0.4.54 — 2026-10-17
+
+cortex-ui pinned to 68f56bb (`sha256:5d5b5dbb…`), from 8fe23fc (`cc2ad9cc…`). Carries the review
+card to the 10-17 standard, xml drops accepted, and /ingest/mine paging past 50. Frontend image
+only; no template changed.
+
+## 0.4.53 — 2026-10-17
+
+cortex-ui pinned to 8fe23fc (`sha256:cc2ad9cc…`), from e1b94e2 (`8d0234ab`). The rail reads
+GET /ingest/mine on load, and a retried drop sits at its latest activity. Frontend image only;
+no template changed.
+
+## 0.4.52 — 2026-10-16
+
+Renumbered again, to 0.4.52: roll 190 took 0.4.51. Before that it was 0.4.51 (rev 189 rolled as
+0.4.49 and #41 merged as 0.4.50), and before that 0.4.49, renumbered from 0.4.41 when master was
+at 0.4.46, lane/01-broker-flip (#41) held 0.4.47 and lane/01-rev189 held 0.4.48. On 2026-10-10 it
+was renumbered from 0.4.40, when rev 186 took 0.4.39 and lane/01-oidc-roundtrip moved to 0.4.40.
+Content is unchanged by any renumber.
+
+NetworkPolicy gate: the cuts a dry-run evaluator found in cortex-bff and engine-o. The gate stays
+OFF in the sandbox; nothing rolled.
+
+### Added
+
+- **`invincible-agent.networkPolicyEgressOnlyTargets`** (`_helpers.tpl`): components an engine may name
+  in `directCallers` that are neither stores nor engines (`dagster-webserver`, 3000). Renders the
+  engine's egress rule and no ingress policy. Needed for `DAGSTER_WEBSERVER_URL`, a flow no other
+  table could express.
+
+### Changed
+
+- Sandbox `networkPolicy.directCallers`: engine-o gains postgresql, keycloak, central-gateway,
+  dagster-webserver; cortex-bff gains weaviate, fuseki, topaz. Each carries its `via` key and the
+  2026-12-14 expiry. See docs/measurements/2026-10-10-the-gate-keeps-cortex-bff-and-engine-o.md.
+
+## 0.4.51 — 2026-10-16
+
+A finished case's Restate workflow is kept 30 days, not Restate's default 1.
+
+### Added
+
+- **`restate.caseWorkflowRetentionDays`** (default `30`). `templates/engines.yaml` renders it into the
+  engine-a Deployment as `CASE_WORKFLOW_RETENTION_DAYS`; the runner puts it on its `run` handler as
+  `workflowCompletionRetention` in discovery. The runner refuses to import below 1 day. Retention is
+  fixed when the handler registers: restate-init re-registers engine-a with `force`, so a roll applies it.
+
+## 0.4.50 — 2026-10-16
+
+(Written as 0.4.44 on 2026-10-12; renumbered to 0.4.46 when master reached 0.4.45, to 0.4.47 when
+rev 188b took 0.4.46, and to 0.4.50 when rev 189 merged first as 0.4.49.)
+
+The OpenDDIL broker flip, now ON in `values-sandbox.yaml`. The client secret is the only secret, by
+reference: Secret `openddil-broker-client`, key `client-secret`. Keycloak trusts OpenDDIL's issuer
+through their lab CA ("OpenDDIL Lab Internal CA", CA:TRUE, pathlen:0), whose PEM is in Secret
+`keycloak-openddil-trust` key `ca.pem`. Both Secrets are created out of band. Sits on PR #29
+(lane/01-oidc-roundtrip).
+
+Correction: the 0.4.47 text of this entry said "pinning exactly its self-signed leaf. There is no lab
+CA." That was wrong. OpenDDIL's issuer chains to a lab CA, and the CA is what is trusted.
+
+### Added
+
+- **`keycloak.brokers.<name>.clientSecret`** (default `""`; set ONLY in a gitignored `*.secret.yaml`).
+  `templates/secrets.yaml` renders it into `<release>-secrets` key `broker-<name>-client-secret`, and
+  the reconcile job reads it by `secretKeyRef`. `brokerActive` is now enabled AND (existingSecret OR
+  clientSecret). Never in a ConfigMap, the job script or an env literal.
+- **`keycloak.truststore`** (`enabled`, `existingSecret`, `existingConfigMap`, `key`, `mountPath`): extra
+  PEM trust for Keycloak's JVM (`KC_TRUSTSTORE_PATHS`) from a Secret (or, alternatively, a ConfigMap)
+  created out of band, mounted read-only. Exactly one source must be set; zero or both fails the render.
+  The chart cannot see the content of an existing Secret: the `checksum/truststore` annotation hashes
+  source kind + name + key, so a rotation means replacing the Secret AND restarting Keycloak.
+  The `caPem` value was removed (setting it fails the render): the cert is not a secret and does not go
+  in the secret values file.
+- **Guard:** an enabled broker with an `https:` issuer fails the render unless `keycloak.truststore` is
+  enabled or `brokers.<name>.publicCA: true`, so a self-signed issuer cannot flip on silently untrusted.
+- `values-sandbox.yaml`: OpenDDIL's real issuer and `iagent-broker`; both switches `true`;
+  `brokers.openddil.existingSecret: openddil-broker-client`;
+  `truststore.existingSecret: keycloak-openddil-trust`, `key: ca.pem`. The lab CA's PEM is in that
+  Secret, created out of band (`kubectl create secret generic keycloak-openddil-trust
+  --from-file=ca.pem=<lab-ca.pem>`). No secret value is in any values file.
+
+### Tests
+
+- `tests/test_oidc_broker_flip_dry_run.py`: six arms (flip is the switches, secret by reference only,
+  CA reaches Keycloak, untrusted issuer refused, reconcile against the fake Keycloak, committed values
+  enable the broker by reference only).
+- `tests/test_oidc_broker_chart.py`: truststore arms for existingSecret, neither/both sources, caPem
+  removal, disabled, and the committed sandbox values.
+- Existing broker tests now set `publicCA` where they enable the broker.
+
+### Also in this release: written as 0.4.40 on 2026-10-10, a number master then released as rev 186b (tag invincible-agent-0.4.40) without this content
+
+Renumbered from 0.4.39: rev 186 takes 0.4.39 (architect directive 2026-10-10).
+
+Retired users leave the live realm; the OpenDDIL broker segment is tested by round trip.
+
+#### Added
+
+- **`keycloak.retiredUsers`** (base `[]`; sandbox: `operator.atlantia`, `operator.borduria`,
+  `liaison`). Chart 0.4.36 removed these mirrored email users from `nonInteractiveUsers`, but the
+  reconcile job is additive, so they survive in any Keycloak first booted earlier. Per name: exact
+  username lookup; DELETE only when `federated-identity` is `[]` (a linked user is a brokered
+  shadow, kept and logged); the readback FAILS if the name still exists without a link. The render
+  fails for a name also in `nonInteractiveUsers`/`localHumanUsers` or not a plain username.
+
+#### Tests
+
+- `tests/test_oidc_broker_realm_roundtrip.py`: round trip against a stateful Keycloak admin-API
+  double seeded from a realm export, assertions on the exported JSON, retired-user behaviour, and
+  join seals binding policy grants to the brokered sub.
+
+## 0.4.49 — 2026-10-16
+
+Rev 189, the label it rolls under. The door-read flag below is chart content added after 0.4.48's
+bump, so the version moves (`tests/test_chart_version_tracks_chart_content.py`). 0.4.48 was never
+published or deployed. 189 merges before #41 (`lane/01-broker-flip`, 0.4.47), so #41 renumbers
+above this (0.4.50), and #28 after it.
+
+### Added
+
+- **`cortexBff.env` `INGEST_DOOR_READS_PROCESSABLE_KINDS: "false"`.** `POST /ingest` can refuse a
+  registered kind that doc-tools does not process, using the list doc-tools publishes to the new
+  service-only `PUT /ingest/processable-kinds` (persisted in Postgres, cached per pod). The flag
+  ships OFF, so registry behaviour is unchanged; it is flipped ON in 190 after doc-tools
+  publishes. ON is deny-by-default: 503 `processable_kinds_unknown` before the first publish,
+  400 `kind_unprocessable` after.
+
+## 0.4.48 — 2026-10-16
+
+Rev 189's first label, never published: the iagent-mesh `v0.9.10` pin. Rolled as 0.4.49, above.
+
+### Changed
+
+- **`domainBroker.meshSdkVersion` `v0.9.8` → `v0.9.10`.** The broker takes the same inbound
+  transport-auth dependency as the fleet, and `tests/test_lock_coherence.py` asserts the two are
+  equal. The fleet's 0.9.10 pin left it at 0.9.8.
+
+## 0.4.46 — 2026-10-15
+
+Rev 188b. The fleet image carries #46 (saf), #47 (gov's caller census at bb0b5190, with #52's
+test persona), #51 (one identifier namespace, one claimant) and the walk's capability check asked
+as the run's acting identity rather than the case runner. The fleet imageTag is set at roll time,
+not here. #41 (lane/01-broker-flip) renumbers to 0.4.47 when it merges.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:8d0234ab…` (cortex-ui e1b94e2).**
+  cad and xml are drawn "not yet accepted" and only pdf sends, a door 4xx draws as a refusal,
+  every walk row names its persona, and `npm audit` is at zero. The tag-to-digest binding was
+  measured before pinning; the values comment records how.
+- **`values-sandbox.yaml` `cortexUi.env.VITE_REVIEW_ROW_EDITS: "false"`.** Steward row edits are
+  off on the sandbox. The architect's condition for keeping them on was one confirmed live
+  correction, and none exists: no grouped review has been acted on since 2026-10-10. Removing the
+  key turns them back on.
+
+## 0.4.45 — 2026-10-13
+
+Rev 188. The 188 image carries the structured `failure` field, `GET /ingest/retries` (the
+service-only listing doc-tools polls to relaunch retried drops) and the door 400 on `POST /ingest`
+(a drop with no registered content kind is refused before anything is written). The fleet
+imageTag is set at roll time, not here. #41 (lane/01-broker-flip) renumbers to 0.4.46 when it
+merges.
+
+### Added
+
+- **`cortexBff.env` `INGEST_RECEIVED_TIMEOUT_SECONDS: "600"` and
+  `INGEST_WATCHDOG_INTERVAL_SECONDS: "30"`.** The ingest watchdog's two knobs, now tunable from the
+  chart. 600 s is the architect's 2026-10-12 bound, deliberately longer than doc-tools' 30 s
+  sensor tick, because a run queued behind max_concurrent_runs sits at `received` legitimately; a
+  timeout failure is provisional until a run starts. A value <= 0 disables the watchdog.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:7b2b6129…` (cortex-ui 88a65d4).**
+  The upload now sends `content_kind`, a failed drop draws its `failure` and offers Retry,
+  `row_edits` is on by default, and the walk fixes (#19–#22) are in. The tag-to-digest binding was
+  measured before pinning; the values comment records how.
+
+## 0.4.44 — 2026-10-12
+
+Rev 187c, a frontend-only pin, rolled ahead of 188 on the architect's direction. The fleet image
+is unchanged (49aa5e28). #41 (lane/01-broker-flip) also claims 0.4.44 on its branch and
+renumbers when it merges.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:facdc367…` (cortex-ui f3617a9).**
+  A drop is now an ingest entry on the answers rail, and "My drops" is gone. The build also
+  carries the walk login fix and `WALK_SPKI_PIN` (#17). The tag-to-digest binding was measured
+  before pinning; the values comment records how.
+
+## 0.4.43 — 2026-10-12
+
+Rev 187b, a frontend-only pin. #41 (lane/01-oidc-broker) also claims 0.4.43 on its branch and
+renumbers when it merges.
+
+### Changed
+
+- **`values-sandbox.yaml` `cortexUi.image.digest` → `sha256:2556cf5b…` (cortex-ui b566192).**
+  This build includes cortex #10 (3fa6fcb, the answers perf merge), and pinning it was
+  conditional on that. It also carries #4, the composer: rev 187 rolled on 865c080, which lacks
+  it. The tag-to-digest binding was measured before pinning; the values comment records how.
+
+## 0.4.42 — 2026-10-11
+
+Rev 187, second chart change: answers at scale (#42, lane/01-answers-at-scale, numbered 0.4.44 on
+its branch) and the group-audience exit code (#35, lane/01-group-audiences). Renumbered at merge;
+0.4.41 below is the rev's first.
+
+### Added
+
+- **`answer_artifact_projection` gains `archived_at`, `archived_by`, `archive_reason`** and two
+  indexes (`files/sql/create_answer_artifact_projection.sql`): `idx_aap_user_created`
+  (newest-first paging per user) and `idx_aap_search_tsv`, an EXPRESSION GIN index over
+  question_text + summary. Not a generated column, because Electric refuses to replicate one.
+  Every statement is idempotent (`IF NOT EXISTS`), so the existing schema job applies it to a
+  live table.
+
+### Changed
+
+- **`task-grant-sync-job.yaml` documents exit code 5:** a `grant_to_groups` entry names a group
+  object absent from live Topaz (REFUSED, nothing applied). `set -e` already fails the Job on it;
+  the change is to the header comment only.
+
+## 0.4.41 — 2026-10-11
+
+Rev 187. Two walkers, and the reconcile creates a local human the live realm lacks (6c93b1c2).
+Numbered here because the release guard refused 0.4.40 for 6c93b1c2's helm change. Open
+branches that also claimed 0.4.41-0.4.44 (netpol, prep-next, #41, #42) renumber at merge.
+
+### Added
+
+- **`erin` and `chris`** in `keycloak-configmap.yaml` and `values.yaml` `localHumanUsers`.
+- **`realm-reconcile-job.yaml` creates any `localHumanUsers` entry the live realm lacks.** The realm
+  import applies only to a fresh realm, so a user added later otherwise never exists. The loop is
+  create-if-absent and never touches an existing user.
+
+## 0.4.39 — 2026-10-10
+
+Rev 186. The Dagster instance config is in the chart, and it bounds how long a run may stay
+STARTED (lane/74-dagster-max-runtime, PR #23; numbered 0.4.37 on its branch, renumbered here).
+
+### Fixed
+
+- **A STARTED run whose code-location pod died is failed after `maxRuntimeSeconds`**
+  (`templates/dagster-instance.yaml`, `values.yaml` `dagster.runMonitoring`). Under
+  `DefaultRunLauncher` the run monitor cannot check a worker's health. It still applies the
+  runtime bound, but the instance config set none, so a zombie held one of the two
+  `max_concurrent_runs` slots for ever, and two of them hung every question. The bound is 3600s,
+  about 1.9x the longest finished run measured on the sandbox (1930s, from 2742 runs, 2026-10-09).
+- **The instance config is chart-owned.** Before this it was a ConfigMap made by hand and
+  patched by hand into the webserver, daemon and user-code Deployments, so no install from the
+  chart could reproduce it. The new ConfigMap is `<release>-dagster-home`, a name helm can own.
+  The volume keeps the live name `dagster-instance` and the same mountPath, so the upgrade
+  re-points the hand-patched volume rather than adding a second one. A `checksum/dagster-instance`
+  annotation rolls the three pods when the config changes. The hand-made ConfigMap is left
+  orphaned, and deleting it is a human's call after the roll.
+- The "production would use K8sRunLauncher" comment is corrected. A dead worker under
+  `DefaultRunLauncher` IS caught, by the runtime bound.
+
+## 0.4.38 — 2026-10-10
+
+Rev 185 (rev 184 was the rollback to 182). Realm-reconcile repairs its own stale mappers.
+
+### Fixed
+
+- **`realm-reconcile` no longer fails the release on chart-written `authz-id-svc` mappers.** Rev 183
+  (0.4.36 flipped sandbox `keycloak.authzClaim` `email` -> `authz_id`) failed at realm-reconcile:
+  all 17 service clients still carried the mapper the chart itself wrote at 0.4.35 (`claim.name`
+  `email`), the Job only ever created a MISSING mapper, and the readback then refused every one.
+  Ownership rule: a mapper whose `claim.value` is the chart's declared `authzId` is the chart's, and
+  its stale `claim.name` is now migrated in place (PUT on the same mapper id, value unchanged); a
+  mapper with any other value is the operator's, is never touched, and still fails the readback
+  (now worded "operator-owned mapper, not migrated"). The `cortex-ui` `authz-id-user` mapper is not
+  migrated (it passed readback live).
+
+## 0.4.37 — 2026-10-10
+
+Rev 183.
+
+### Added
+
+- **`engineSafety.failureSourceConnectors`** (default `""`) renders `FAILURE_SOURCE_CONNECTORS` into
+  the shared `-config` ConfigMap only when non-empty; an explicit `agentFleet.env` entry wins. The
+  sandbox leaves it empty (the FRACAS fixture): no connector module ships in any image yet.
+
+### Changed
+
+- Sandbox `cortexUi.image.digest` -> `1985ce7f` (cortex-ui 9bf8063: the `refusal` reader, the
+  stale-tab guard, the FRACAS bindings). Replaces the 182a hand-set image (`e06fbeb2`, 415e5e6).
+
+## 0.4.36 — 2026-10-08
+
+OIDC brokering to the OpenDDIL realm, and one identity claim for every species. Not rolled.
+
+### Added
+
+- **`keycloak.brokers.openddil`** (default disabled; the sandbox keeps it off, with a placeholder
+  issuer, until OpenDDIL supplies issuer + client + secret). The realm-reconcile job upserts the `oidc` IdP (discovery, syncMode FORCE, trustEmail
+  false, storeToken false, PKCE), a sub -> `authz_id` mapper, a username mapper, and the
+  `openddil-first-login` flow: a copy of "first broker login" with review-profile and every
+  link-existing-account execution DISABLED. Every step is read back. The client secret reaches the
+  job only through `existingSecret`/`secretKey` (secretKeyRef); the broker renders only when enabled AND existingSecret is set.
+- **`USER_ENTITLEMENT_CLAIM`** is rendered in the shared `-config` ConfigMap from
+  `keycloak.authzClaim` (base default `email`; the base render differs from 0.4.35 by this one
+  line). `keycloak.localHumanUsers` lists the local humans that get the claim as a user attribute.
+
+### Changed
+
+- The sandbox sets `authzClaim: authz_id`. Local humans carry the attribute (realm import and
+  reconcile); the `cortex-ui` client gets an attribute mapper; the reconcile job sets the realm
+  user-profile `unmanagedAttributePolicy` to ADMIN_EDIT. A service client created before the flip
+  keeps its old `authz-id-svc` claim name: the reconcile readback FAILS it (exit 4); the repair is
+  to delete the stale mapper and re-run.
+- `operator.atlantia`, `operator.borduria` and `liaison` leave the sandbox `nonInteractiveUsers`;
+  `iagent-openddil` acts on behalf of the brokered principals. The onBehalfOf check accepts a
+  principal of an enabled broker, and `DELEGATE_ON_BEHALF_OF` carries the principal's `sub`.
+
 ## 0.4.30 — 2026-10-04
 
 engine-o is restarted by the re-register hook like every other engine that registers on boot.

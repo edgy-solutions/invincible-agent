@@ -56,9 +56,9 @@ ENV_NAME = _env_match.group(1)
 # JOIN checks the chart render actually contains these, rather than this file re-asserting a
 # number it alone invented.
 DELEGATE = "svc:openddil"
-PRINCIPAL_ATLANTIA = "operator.atlantia@example.com"
-PRINCIPAL_BORDURIA = "operator.borduria@example.com"
-PRINCIPAL_LIAISON = "liaison@example.com"
+PRINCIPAL_ATLANTIA = "11111111-1111-4111-8111-111111111111"  # brokered sub (keycloak.brokers.openddil.principals)
+PRINCIPAL_BORDURIA = "22222222-2222-4222-8222-222222222222"
+PRINCIPAL_LIAISON = "33333333-3333-4333-8333-333333333333"
 
 
 # =============================================================================================
@@ -624,7 +624,7 @@ class _ChainCtx:
     async def get(self, k, **_kw):
         return self.state.get(k)
 
-    async def run(self, name, fn):
+    async def run(self, name, fn, **_opts):
         assert name not in self.runs, f"{self._key} journalled {name!r} twice"
         self.runs.append(name)
         return fn()
@@ -728,7 +728,7 @@ def n_policy(tmp_path, monkeypatch):
                        str(_n_dump(tmp_path / "workflows", _N_DEFINITIONS)))
     monkeypatch.setattr(wd, "load_stub_verbs", lambda: {})
     monkeypatch.setattr(main, "_register_human_task",
-                        lambda wf, task, kind="workflow_ack": {})
+                        lambda wf, task, kind="workflow_ack", case_id=None: {})
     return tmp_path
 
 

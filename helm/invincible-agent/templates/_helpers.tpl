@@ -248,11 +248,156 @@ Emits nothing on success; `fail`s the render on the first violation.
 {{- range $u := $.Values.keycloak.nonInteractiveUsers }}
 {{- if eq $u.username $o.user }}{{- $found = true }}{{- end }}
 {{- end }}
+{{- /* A principal is a DECLARATION: it is named whether or not the broker is rendered. */}}
+{{- range $bn, $b := ($.Values.keycloak.brokers | default dict) }}
+{{- range $p := $b.principals }}
+{{- if eq $p.username $o.user }}{{- $found = true }}{{- end }}
+{{- end }}
+{{- end }}
 {{- if not $found }}
-{{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q onBehalfOf user %q is not a keycloak.nonInteractiveUsers entry" $c.clientId $o.user) }}
+{{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q onBehalfOf user %q is neither a keycloak.nonInteractiveUsers entry nor a principal of a declared keycloak.brokers entry" $c.clientId $o.user) }}
 {{- end }}
 {{- if not (or (eq $o.role "operator") (eq $o.role "supervisor")) }}
 {{- fail (printf "keycloak.serviceClients/extraServiceClients: client %q onBehalfOf user %q has role %q; must be \"operator\" or \"supervisor\"" $c.clientId $o.user $o.role) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Validates keycloak.publicClients (PKCE browser clients; see values.yaml). A public client has no
+secret, so its redirect URIs are its only protection: the render `fail`s on
+  - an empty or repeated clientId;
+  - a clientId that is cortex-ui or any serviceClients/extraServiceClients clientId;
+  - empty redirectUris, a redirectUri that is "*" or does not start with https://;
+  - a webOrigin that is "*".
+Emits nothing on success.
+*/}}
+{{- define "invincible-agent.validatePublicClients" -}}
+{{- $seen := dict }}
+{{- $svc := dict }}
+{{- range $s := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
+{{- $_ := set $svc $s.clientId true }}
+{{- end }}
+{{- range $c := (.Values.keycloak.publicClients | default list) }}
+{{- if not $c.clientId }}
+{{- fail "keycloak.publicClients: an entry has an empty clientId" }}
+{{- end }}
+{{- if hasKey $seen $c.clientId }}
+{{- fail (printf "keycloak.publicClients: clientId %q is declared more than once" $c.clientId) }}
+{{- end }}
+{{- $_ := set $seen $c.clientId true }}
+{{- if or (eq $c.clientId "cortex-ui") (hasKey $svc $c.clientId) }}
+{{- fail (printf "keycloak.publicClients: clientId %q collides with cortex-ui or a serviceClients/extraServiceClients client" $c.clientId) }}
+{{- end }}
+{{- if not $c.redirectUris }}
+{{- fail (printf "keycloak.publicClients: client %q has no redirectUris" $c.clientId) }}
+{{- end }}
+{{- range $r := $c.redirectUris }}
+{{- /* https, and a literal host: "https://*" passes a prefix test and is still a wildcard */}}
+{{- if not (regexMatch "^https://[^/*]+(/.*)?$" (toString $r)) }}
+{{- fail (printf "keycloak.publicClients: client %q redirectUri %q must be https:// with a literal host (no \"*\" before the path)" $c.clientId (toString $r)) }}
+{{- end }}
+{{- end }}
+{{- range $w := ($c.webOrigins | default list) }}
+{{- if eq (toString $w) "*" }}
+{{- fail (printf "keycloak.publicClients: client %q webOrigin %q may not be \"*\"" $c.clientId (toString $w)) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+The cortex-ui client's redirect set (see keycloak.cortexUiClient in values.yaml). Renders a JSON
+object with keys redirectUris, webOrigins, postLogoutRedirectUris; call sites use `fromJson`.
+Each key is the declared list when non-empty, else derived from cortexUi.ingress (only when the
+ingress is enabled): for each TLS host h, "https://h" then "https://h/" (origin: "https://h";
+post-logout: "https://h/"), else []. The RESULT is validated: a redirect or post-logout URI must be
+https with a literal host and carry no "*" anywhere; a web origin must be https://host with no path.
+Call: include "invincible-agent.cortexUiRedirects" . | fromJson
+*/}}
+{{- define "invincible-agent.cortexUiRedirects" -}}
+{{- $d := (.Values.keycloak.cortexUiClient | default dict) }}
+{{- $ing := (.Values.cortexUi.ingress | default dict) }}
+{{- $hosts := list }}
+{{- if $ing.enabled }}
+{{- range $t := ($ing.tls | default list) }}
+{{- range $h := ($t.hosts | default list) }}
+{{- if not (has $h $hosts) }}{{- $hosts = append $hosts $h }}{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $redir := list }}
+{{- $orig := list }}
+{{- $logout := list }}
+{{- range $h := $hosts }}
+{{- $redir = concat $redir (list (printf "https://%s" $h) (printf "https://%s/" $h)) }}
+{{- $orig = append $orig (printf "https://%s" $h) }}
+{{- $logout = append $logout (printf "https://%s/" $h) }}
+{{- end }}
+{{- if $d.redirectUris }}{{- $redir = $d.redirectUris }}{{- end }}
+{{- if $d.webOrigins }}{{- $orig = $d.webOrigins }}{{- end }}
+{{- if $d.postLogoutRedirectUris }}{{- $logout = $d.postLogoutRedirectUris }}{{- end }}
+{{- range $r := $redir }}
+{{- if or (not (regexMatch "^https://[^/*]+(/.*)?$" (toString $r))) (contains "*" (toString $r)) }}
+{{- fail (printf "keycloak.cortexUiClient.redirectUris: cortex-ui redirect %q must be https:// with a literal host and no \"*\" anywhere" (toString $r)) }}
+{{- end }}
+{{- end }}
+{{- range $r := $logout }}
+{{- if or (not (regexMatch "^https://[^/*]+(/.*)?$" (toString $r))) (contains "*" (toString $r)) }}
+{{- fail (printf "keycloak.cortexUiClient.postLogoutRedirectUris: cortex-ui post-logout redirect %q must be https:// with a literal host and no \"*\" anywhere" (toString $r)) }}
+{{- end }}
+{{- end }}
+{{- range $w := $orig }}
+{{- if not (regexMatch "^https://[^/*]+$" (toString $w)) }}
+{{- fail (printf "keycloak.cortexUiClient.webOrigins: cortex-ui web origin %q must be https://host with a literal host and no path or \"*\"" (toString $w)) }}
+{{- end }}
+{{- end }}
+{{- dict "redirectUris" $redir "webOrigins" $orig "postLogoutRedirectUris" $logout | toJson }}
+{{- end }}
+
+{{/*
+A broker is RENDERED only when enabled AND its client secret has a source: an existingSecret, or a
+clientSecret value (set only in a gitignored *.secret.yaml; secrets.yaml puts it in the release
+Secret). Enabled with neither renders nothing (the reconcile job carries a NOTE) and never fails.
+Call: include "invincible-agent.brokerActive" $b  -> "true" or "".
+*/}}
+{{- define "invincible-agent.brokerActive" -}}
+{{- if and .enabled (or .existingSecret .clientSecret) }}true{{- end }}
+{{- end }}
+
+{{/*
+The authz_id a LOCAL user gets: the user's email unless the values give an explicit authzId.
+Only meaningful when keycloak.authzClaim is not "email" (then the email IS the claim).
+Call: include "invincible-agent.localAuthzId" (dict "root" $ "username" u "email" e)
+*/}}
+{{- define "invincible-agent.localAuthzId" -}}
+{{- $id := .email -}}
+{{- if ne (.root.Values.keycloak.authzClaim | default "email") "email" -}}
+{{- range $u := concat (.root.Values.keycloak.localHumanUsers | default list) (.root.Values.keycloak.nonInteractiveUsers | default list) -}}
+{{- if and (eq $u.username $.username) $u.authzId -}}{{- $id = $u.authzId -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $id -}}
+{{- end }}
+
+{{/*
+Fail the render on a broker that cannot work. Called wherever the broker is consumed.
+*/}}
+{{- define "invincible-agent.validateBrokers" -}}
+{{- range $bn, $b := ($.Values.keycloak.brokers | default dict) }}
+{{- if $b.enabled }}
+{{- if not $b.issuer }}
+{{- fail (printf "keycloak.brokers.%s is enabled but issuer is empty; set the upstream realm issuer URL" $bn) }}
+{{- end }}
+{{- if eq ($.Values.keycloak.authzClaim | default "email") "email" }}
+{{- fail (printf "keycloak.brokers.%s is enabled but keycloak.authzClaim is \"email\"; a brokered principal's authz identity is its upstream sub and cannot ride the email claim" $bn) }}
+{{- end }}
+{{- if not $.Values.keycloak.reconcileClients.enabled }}
+{{- fail (printf "keycloak.brokers.%s is enabled but keycloak.reconcileClients.enabled is false; the broker is created only by the realm-reconcile job" $bn) }}
+{{- end }}
+{{- if and (hasPrefix "https:" $b.issuer) (not $b.publicCA) (not (($.Values.keycloak.truststore | default dict).enabled)) }}
+{{- fail (printf "keycloak.brokers.%s is enabled with an https issuer but keycloak.truststore.enabled is false: Keycloak would not trust a private-CA issuer. Enable keycloak.truststore (caPem or existingConfigMap), or set keycloak.brokers.%s.publicCA: true if the issuer's certificate is publicly trusted" $bn $bn) }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -501,5 +646,52 @@ http://{{ .Release.Name }}-dagster.{{ .Release.Namespace }}.svc.cluster.local:{{
   (dict "component" "restate" "ports" (list 8080 9070))
   (dict "component" "fuseki" "ports" (list 3030))
   (dict "component" "topaz" "ports" (list 9393))
+| toJson -}}
+{{- end }}{{- /*
+keycloak.retiredUsers guard: every entry is a plain username (letters, digits, . _ -), and none is
+still declared as a local user the chart creates (nonInteractiveUsers / localHumanUsers) -- a name
+both created and deleted on every run is a contradiction, so the render fails.
+*/}}
+{{- define "invincible-agent.validateRetiredUsers" -}}
+{{- range $r := (.Values.keycloak.retiredUsers | default list) }}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]*$" (toString $r)) }}
+{{- fail (printf "keycloak.retiredUsers: %q is not a plain username" (toString $r)) }}
+{{- end }}
+{{- range $u := concat ($.Values.keycloak.nonInteractiveUsers | default list) ($.Values.keycloak.localHumanUsers | default list) }}
+{{- if eq $u.username $r }}
+{{- fail (printf "keycloak.retiredUsers: %q is also declared in keycloak.nonInteractiveUsers/localHumanUsers" $r) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+
+
+{{/*
+Keycloak's extra-CA truststore (a pinned self-signed leaf; there is no lab CA). Enabled needs EXACTLY ONE
+of existingSecret / existingConfigMap; caPem was removed. Called from keycloak.yaml.
+*/}}
+{{- define "invincible-agent.validateTruststore" -}}
+{{- $t := $.Values.keycloak.truststore | default dict -}}
+{{- if hasKey $t "caPem" }}
+{{- fail "caPem was removed: the cert is not a secret and does not go in the secret values file; create a Secret and set keycloak.truststore.existingSecret" }}
+{{- end }}
+{{- if and $t.enabled (eq (not $t.existingSecret) (not $t.existingConfigMap)) }}
+{{- fail "keycloak.truststore.enabled is true but not exactly one of existingSecret / existingConfigMap is set (zero or both); set one of them" }}
+{{- end }}
+{{- end }}
+
+{{/*
+  invincible-agent.networkPolicyEgressOnlyTargets -- components an engine may be a direct caller
+  of that are NOT stores (no ingress policy is rendered for them, so nothing else is cut) and
+  NOT engines (no `.port` value to read). Only networkpolicy-engines.yaml reads this: it makes the
+  component nameable as a `directCallers` store, rendering the engine's egress rule and no ingress
+  policy. Added because DAGSTER_WEBSERVER_URL (iagent-config, every engine) is a flow no other
+  table could express; a store table entry would have fenced dagster-webserver's ingress for
+  every other caller. Port 3000 is the container port the Service's `http` targetPort resolves to.
+*/}}
+{{- define "invincible-agent.networkPolicyEgressOnlyTargets" -}}
+{{- list
+  (dict "component" "dagster-webserver" "ports" (list 3000))
 | toJson -}}
 {{- end }}

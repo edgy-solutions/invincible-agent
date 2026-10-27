@@ -74,6 +74,8 @@ _IRI_PREFIXES_FOR_LOOKUP: Dict[str, str] = {
     # was dropped from the check without a word. `safety:` is in these tables because a person
     # put it here, never because anything verified it.
     "pcn:": "http://internal/sustainment/pcn#",
+    # training_extension.ttl (2026-10-24): doc-tools' own namespace, NOT `internal/...`.
+    "training:": "http://edgy-solutions.com/ontology/training#",
 }
 
 
@@ -548,6 +550,32 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
         "expected_fields": ["rank", "entity_id", "entity_name", "contribution",
                             "share_of_total", "value_label", "value_unit", "scope_label"],
         "description": "Renders safety:OrphanedHazardSet as a CONTRIBUTION_RANKING - live hazards with no owned, field-verified mitigation. ORDER AND MAGNITUDE ARE DIFFERENT QUANTITIES and the legend is what keeps that honest: rows are ranked severity-first then age, which is the verb's claim about what matters, while the BAR is days open, because a ranking draws a magnitude and severity is an ordinal with no length. The bars are therefore not monotonic with rank. `favourable` is deliberately absent - an unattended hazard has no favourable direction, so the card shows 'no direction stated' rather than colouring rows against a claim nobody made",
+    },
+    # ── THE TWO FRACAS OUTPUT CLASSES (ADR-0056 Phase 1), DECLARED 2026-10-08 ───────────────
+    #
+    # `safety:FailureRecordSet` and `safety:FailureTrend` were declared in the ontology and
+    # produced by engine-safety with NO row here, so their success path drew as the universal
+    # KNOWLEDGE_DOCUMENT treatment - the same registered-and-routable-and-drawable-by-nothing
+    # gap the OrphanedHazardSet note above records. The producers shape their payloads to these
+    # archetypes (`rows` + the envelope fields) in agent_fleet/safety_agent/measures.py.
+    # FLIPPED 2026-10-21 (202) to match cortex-ui's DERIVED_BINDINGS (cortex 26bce42 packet section 4):
+    # the CONTRIBUTION_RANKING projection kept no part, no count and no records, which is the
+    # whole of what was asked ("part, count, records by date with source refs"). The flat
+    # measure reply is fenced whole by the document path, so these fields arrive one level up.
+    {
+        "subject_uri": "safety:FailureRecordSet",
+        "object_uri": "mesh:KnowledgeDocument",
+        "archetype": "KNOWLEDGE_DOCUMENT",
+        "expected_fields": ["part_number", "failure_count", "failures", "platforms",
+                            "systems_of_record_cited"],
+        "description": "Renders safety:FailureRecordSet as a KNOWLEDGE_DOCUMENT - the failures recorded for one safety-critical part across every program and system of record the caller may view: the part, the count, and each record by observed date with its connector:record_id citation. Cortex draws it with the record-set render keyed by output_uri; the ranking it replaced dropped all three",
+    },
+    {
+        "subject_uri": "safety:FailureTrend",
+        "object_uri": "mesh:MultiSeries",
+        "archetype": "MULTI_SERIES",
+        "expected_fields": ["rows", "series", "value_label", "scope_label"],
+        "description": "Renders safety:FailureTrend as a MULTI_SERIES - failures recorded on one platform per calendar month (observed_on, no timezone), one declared series in the unit 'failures', empty months zero-filled so a gap reads as none rather than missing; the PERIOD is the month and each row carries the citations behind its count",
     },
     # ── THE TWO BELOW ARE KNOWLEDGE_DOCUMENT BY RULING, NOT BY FIT ────────────────────────
     #

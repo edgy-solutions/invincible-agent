@@ -205,6 +205,9 @@ restate:
     size: 5Gi
   ingressPort: 8080
   adminPort: 9070
+  # Days Restate keeps a finished case workflow (engine-a reads it as CASE_WORKFLOW_RETENTION_DAYS).
+  # Restate's own default is 1 day. The durable record is the Postgres case summary; this is the belt.
+  caseWorkflowRetentionDays: 30
 
 # Use this when restate.enabled=false (bring your own Restate)
 externalRestate:
@@ -217,6 +220,21 @@ externalRestate:
 # already run Dagster and only want the user code deployment.
 # ==========================================================================
 dagster:
+  # Instance config, rendered into the `<release>-dagster-home` ConfigMap (templates/
+  # dagster-instance.yaml) and mounted as dagster.yaml.
+  maxConcurrentRuns: 2
+  runMonitoring:
+    enabled: true
+    startTimeoutSeconds: 600
+    cancelTimeoutSeconds: 180
+    pollIntervalSeconds: 60
+    # The bound that ends a STARTED run whose code-location pod died (DefaultRunLauncher
+    # cannot health-check a worker, so nothing else does; such a run holds one of the
+    # maxConcurrentRuns slots for ever). MEASURED 2026-10-09 on the sandbox run storage,
+    # 2742 finished runs: longest finished run 1930s (process_document_artifact_job; p50 685s);
+    # supervisor_query_job max 1396s; ingest_ontology_job max 341s. 3600 is ~1.9x the longest
+    # legitimate run. 0 disables the bound (the pre-chart hand-made config had none).
+    maxRuntimeSeconds: 3600
   webserver:
     enabled: true
     replicas: 1
@@ -272,7 +290,8 @@ dagster:
       tag: ""  # defaults to .Chart.AppVersion
     port: 4000
     # SIZED FROM THE LOAD, NOT BY DOUBLING. `DefaultRunLauncher` starts runs INSIDE this pod
-    # (see dagster.yaml — "production would use K8sRunLauncher"), so one pod holds the gRPC
+    # (instance config: templates/dagster-instance.yaml; runs that outlive
+    # dagster.runMonitoring.maxRuntimeSeconds are failed by the daemon), so one pod holds the gRPC
     # server, the run, and up to `max_concurrent: 5` step subprocesses at once. Dagster SPAWNS
     # rather than forks, so every step re-imports the module graph from cold, and that import
     # measures 17.5s single-threaded in this image (dagster 6.2s, of which dagster.components
@@ -649,6 +668,14 @@ engineSafety:
     tag: ""
   port: 8099
   env: {}
+  # FAILURE_SOURCE_CONNECTORS (agent_fleet/safety_agent/failure_source.py; saf B2): the FRACAS
+  # source seam's real connectors, comma-separated `name=module:callable`. EMPTY = the sandbox
+  # fixture; SET = ONLY the named connectors, and the fixture never mixes in. Rendered into the
+  # shared ConfigMap only when non-empty (an explicit agentFleet.env entry wins). No connector
+  # module ships in any image yet (saf B1), so a value here on a cluster without the overlay
+  # image refuses EVERY FRACAS question with `source_unavailable`. Leave it empty until a
+  # deployment's overlay image carries the classes it names.
+  failureSourceConnectors: ""
   resources:
     requests:
       cpu: 100m
@@ -829,7 +856,28 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.9.8"
+  meshSdkVersion: "v0.9.10"
+  # CLOSED NETWORK (no route to github.com / pypi.org): point the install at a mirror.
+  # The SDK is fetched from <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz, so the mirror holds the
+  # GitHub tag tarball under that same file name (e.g. an Artifactory generic repo holding
+  # v0.9.10.tar.gz, or a remote repo proxying the GitHub tags URL). The version stays
+  # meshSdkVersion's alone.
+  #   meshSdkSource: url    -> "iagent-mesh @ <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz" (default)
+  #   meshSdkSource: index  -> "iagent-mesh==<meshSdkVersion without the v>" from pip.indexUrl,
+  #                            for an internal PyPI that holds the SDK (upload the sdist or a
+  #                            wheel built from the tag; the package's version equals the tag's).
+  meshSdkSource: "url"
+  meshSdkBaseUrl: "https://github.com/edgy-solutions/iagent-mesh-sdk/archive/refs/tags"
+  pip:
+    # PIP_INDEX_URL for fastapi/httpx/pydantic/hypercorn and the SDK's own dependencies,
+    # e.g. an Artifactory PyPI remote's .../api/pypi/<repo>/simple. "" = pypi.org.
+    indexUrl: ""
+    # Optional Secret holding the CA bundle (key `ca.crt`) that signed the mirror's TLS cert:
+    #   kubectl create secret generic iagent-pip-ca --from-file=ca.crt=<internal-ca>.pem
+    # Mounted read-only and passed as PIP_CERT, so verification stays ON against YOUR CA
+    # (it REPLACES the image's public bundle). Deliberately NO trusted-host / skip-verify
+    # knob: this install delivers the broker's transport-auth code.
+    caSecretName: ""
   # Broker code runs inside a python:slim container — the code itself
   # is baked into a ConfigMap via .Files.Get, so any Python 3.12 slim
   # variant works. Override via image.* below or the chart-wide
@@ -1187,7 +1235,7 @@ primeSubstrate:
   # work it waited on, so a prime timed out on a queue that had not failed.
   #
   #   ingests launched per prime      15   (prime_databases.py partition set)
-  #   dagster max_concurrent_runs      2   (dagster instance config)
+  #   dagster max_concurrent_runs      2   (.Values.dagster.maxConcurrentRuns)
   #   => serialised batches            8
   #   observed throughput   10 runs / 1800s  ~= 6 min per run-slot   (measured, this cluster)
   #   => all 15                     ~45 min = 2700s
@@ -1412,6 +1460,13 @@ primeSubstrate:
       # derives this list from who calls register_engine_to_mesh, so an omission fails CI
       # rather than a demo. Renders as <release>-engine-cost.
       - engine-cost
+      # cortex-bff is not an engine: it replays the frontend render menus it stored (Postgres
+      # `frontend_menu`) into the graph on startup (architect ruling Q9, 2026-10-19: a render
+      # menu is a registration like an engine's, and registrations survive prime). Prime wipes
+      # the graph, cortex posts its menu once at login, and nothing else puts it back -- so the
+      # post-prime restart is what restores cortex's menu after the wipe. Renders as
+      # <release>-cortex-bff (frontend.yaml); a disabled BFF is a harmless skip.
+      - cortex-bff
     # The Neo4j node whose presence signals "the ontology ingest populated
     # the class graph" — restart is deferred until it exists so the
     # re-registering engines don't Contract-D-reject against an empty graph.
@@ -1579,6 +1634,13 @@ cortexUi:
     VITE_API_URL: "http://localhost:8000"
     VITE_KEYCLOAK_REALM_URL: "http://localhost:8080/realms/invincible-agent"
     VITE_KEYCLOAK_CLIENT_ID: "cortex-ui"
+    # The steward promotion row/header editors (architect 2026-10-20: "Work cluster and any other
+    # environment stay off until that proof is in a report"). From cortex 7a7666d (pinned for 200)
+    # they sit behind VITE_PROMOTION_ROW_EDITS, OFF in the image unless exactly "true", so no key
+    # is set here: only values-sandbox.yaml turns them on. VITE_REVIEW_ROW_EDITS now gates grouped
+    # review only (live everywhere since 10-12), so the base "false" set for 199 is deleted rather
+    # than kept, since it would hide grouped review's Reject. The server half, cortexBff
+    # IAGENT_PROMOTION_ROW_EDITS, is off unless set "true".
   ingress:
     enabled: false
     className: ""
@@ -1621,7 +1683,20 @@ cortexBff:
     limits:
       cpu: 500m
       memory: 512Mi
-  env: {}
+  # Extra env for the pod; maps MERGE with an overlay's own `env:` (values-sandbox adds MinIO).
+  #   INGEST_RECEIVED_TIMEOUT_SECONDS: a document row that sits at `received` this long is failed
+  #     `timeout` by the watchdog. The 600 s bound is the architect's 2026-10-12 ruling. It is
+  #     deliberately longer than doc-tools' 30 s sensor tick, because a run queued behind
+  #     max_concurrent_runs sits at `received` legitimately; a timeout failure is provisional
+  #     until a run starts. <= 0 disables the watchdog.
+  #   INGEST_WATCHDOG_INTERVAL_SECONDS: how often each replica ticks.
+  #   INGEST_DOOR_READS_PROCESSABLE_KINDS: POST /ingest refuses a kind absent from the list doc-tools
+  #     publishes to PUT /ingest/processable-kinds. OFF in 0.4.49 (registry behaviour unchanged); flipped
+  #     ON after doc-tools publishes. ON is deny-by-default: 503 before the first publish, then 400.
+  env:
+    INGEST_RECEIVED_TIMEOUT_SECONDS: "600"
+    INGEST_WATCHDOG_INTERVAL_SECONDS: "30"
+    INGEST_DOOR_READS_PROCESSABLE_KINDS: "false"
   # Optional cluster-specific TLS trust override.
   #
   # When the cortex-bff pod needs to talk to an external HTTPS endpoint
@@ -1871,7 +1946,99 @@ keycloak:
   # The claim the hardcoded-claim mapper writes = USER_ENTITLEMENT_CLAIM. `email` in
   # sandbox; set to the employee-id claim at work so service authz_ids land in the same
   # slot human ones do.
+  #
+  # ONE VALUE, EVERY SPECIES. This key is rendered as the env USER_ENTITLEMENT_CLAIM in the shared
+  # `-config` ConfigMap (every workload that loads it, cortex-bff included) AND as the claim name
+  # of the service-client authz-id-svc mapper. When it is anything other than `email`, local human
+  # users also carry a user attribute of the same name (= their email) and the cortex-ui client
+  # emits it as that claim; a brokered human gets it from the broker's sub mapper.
+  # docs/reference/identity-mint-contract.md: the BFF env claim, the service token claim and the
+  # human claim must all be equal.
   authzClaim: "email"
+  # PUBLIC browser clients (authorization code + PKCE S256, no secret, no password grant), ruled
+  # 2026-10-24 for the training workbench. Each gets the authz-id-user mapper when authzClaim is
+  # not email (the BFF falls back to `sub` without it), the audience-self mapper putting its own
+  # clientId in the access token's `aud` (ruled b5: the workbench api refuses any other audience;
+  # a public client's stock token carries at most `account`), fullScopeAllowed so a user's realm and
+  # cortex-ui roles ride its tokens, and no IdP binding: a realm broker stays available, never
+  # required. redirectUris must be https and never a bare "*" (the render fails otherwise).
+  # Created in the realm import on a fresh realm, and by the reconcile job on a live one
+  # (create-if-absent; an existing client's settings are never overwritten, only a missing mapper
+  # is repaired, and the readback judges the rest).
+  publicClients: []
+  #  - clientId: training-workbench
+  #    redirectUris: ["https://training.example.com/*"]
+  #    webOrigins: ["https://training.example.com"]
+  # The cortex-ui client's redirect set (the architect, 2026-10-24: a wildcard redirect on a public
+  # client lets anyone who gets a user to click a link collect their token). cortex-ui sends ONE
+  # redirect, window.location.origin; deep links ride in OIDC state, never in the redirect, so the
+  # set is the origin and nothing under it. Empty = derived from cortexUi.ingress: for each TLS host
+  # h, redirects "https://h" and "https://h/", web origin "https://h", post-logout "https://h/".
+  # Nothing declared and nothing derivable = the import emits NO redirect (fail closed) and the
+  # reconcile job leaves the live client's set alone, with a WARN when it holds a wildcard.
+  cortexUiClient:
+    redirectUris: []
+    webOrigins: []
+    postLogoutRedirectUris: []
+  # The local human users the realm IMPORT carries (keycloak-configmap.yaml). Listed here ONLY so
+  # the reconcile job can give an already-imported realm the same authz attribute the import gives
+  # a fresh one; consumed only when authzClaim is not `email`. A test pins this list to the import.
+  localHumanUsers:
+    - {username: agent-user, email: agent@example.com}
+    - {username: alice, email: alice@example.com}
+    - {username: bob, email: bob@example.com}
+    - {username: carol, email: carol@example.com}
+    - {username: erin, email: erin@example.com}
+    - {username: chris, email: chris@example.com}
+  # ── IDENTITY BROKERS ────────────────────────────────────────────────────────────────
+  # OIDC brokering from this realm to another party's realm, so THEIR principals sign in
+  # through us and their grants bind to THEIR `sub`. The IdP lives in the realm-reconcile job
+  # ONLY: the realm import is a ConfigMap and cannot carry the client secret. Disabled by default.
+  # Requires authzClaim != "email" (a brokered human's authz identity is the upstream sub, which
+  # cannot ride the email claim) and keycloak.reconcileClients.enabled (the render fails otherwise).
+  brokers:
+    openddil:
+      enabled: false
+      alias: openddil
+      displayName: "OpenDDIL"
+      # REQUIRED when enabled (the render fails on empty): the upstream realm issuer URL,
+      # discovery is read from <issuer>/.well-known/openid-configuration.
+      issuer: ""
+      # The client the upstream registers for us.
+      clientId: iagent-broker
+      # Where the client's secret comes from, read only via secretKeyRef in the reconcile job. Two
+      # sources: (1) existingSecret/secretKey, a Secret made out of band; or (2) clientSecret, a value
+      # set ONLY in a gitignored `*.secret.yaml` values file, which templates/secrets.yaml renders into
+      # the release Secret `<release>-secrets` under key `broker-<name>-client-secret`. The value is
+      # NEVER put in a ConfigMap, the job script, an env literal, or a committed values file. The broker
+      # is RENDERED only when `enabled` AND (existingSecret OR clientSecret) is non-empty; enabled with
+      # neither renders no broker objects and a one-line NOTE in the job script (no render failure).
+      existingSecret: ""
+      secretKey: "client-secret"
+      clientSecret: ""
+      # An https issuer needs Keycloak to trust its certificate. The render FAILS when this broker is
+      # enabled, the issuer is https, and keycloak.truststore is not enabled, unless publicCA: true
+      # states that the issuer's certificate is publicly trusted.
+      publicCA: false
+      # The upstream principals a delegate may name in onBehalfOf: [{sub, username, label}].
+      # `sub` is the upstream's raw subject = the brokered user's authz identity.
+      principals: []
+  # Extra trust for Keycloak's JVM (Keycloak 26 `truststore-paths`, env KC_TRUSTSTORE_PATHS). Needed
+  # when a broker's issuer is a self-signed leaf (there is no lab CA): Keycloak itself fetches
+  # discovery, token and JWKS, so it must trust exactly that leaf. The PEM lives in a Secret created
+  # OUT OF BAND (the cert is public, but it does not go in the secret values file), e.g.
+  #   kubectl create secret generic keycloak-openddil-trust --from-file=ca.pem=openddil-leaf.pem
+  # and is named by existingSecret (mounted as a `secret` volume; `key` is the PEM's key in it).
+  # existingConfigMap is the only alternative source. Enabled needs EXACTLY ONE of the two; zero or
+  # both fails the render, and so does setting the removed `caPem`. The chart cannot see an existing
+  # Secret's content: the checksum annotation covers kind + name + key, so a rotation means replacing
+  # the Secret AND restarting Keycloak.
+  truststore:
+    enabled: false
+    existingSecret: ""
+    existingConfigMap: ""
+    key: "ca.crt"
+    mountPath: "/opt/keycloak/conf/truststores"
   # NON-INTERACTIVE USERS (A1, ruled 2026-09-30) -- persons a DELEGATE may name as its
   # `on_behalf_of`. Created by realm-reconcile with NO credentials, so nobody can sign in as
   # one; it exists so the name a delegate's writes carry is an identity the realm can be asked
@@ -1880,6 +2047,13 @@ keycloak:
   #   - username: platform-registrar
   #     email: platform-registrar@example.com
   nonInteractiveUsers: []
+  # Local users the reconcile job REMOVES from the live realm. The job is additive, so a user a
+  # chart once declared stays in every Keycloak first booted before the declaration was dropped.
+  # For each name: exact-username lookup; DELETE only if it exists AND has no federated identity
+  # link (a user with a link is a brokered shadow and is never touched); readback FAILS if the
+  # name still exists without a link. A name also in nonInteractiveUsers / localHumanUsers, or
+  # not a plain username, fails the render.
+  retiredUsers: []
   # Realm reconcile (realm-reconcile-job.yaml) — converges the serviceClients list below
   # into the LIVE realm on every install/upgrade, because a realm import only applies at
   # first boot. ADDITIVE ONLY: creates missing clients, repairs a missing authz-id mapper,

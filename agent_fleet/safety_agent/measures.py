@@ -12,6 +12,8 @@ hazard cannot be resolved instead of returning a clean "no hazard".
 """
 from __future__ import annotations
 
+import re
+
 import os as _os
 from datetime import date as _date
 from pathlib import Path as _Path
@@ -258,12 +260,16 @@ def assess_deferral_risk(state: Any = None, *, work_order_id: str) -> Dict[str, 
         # The critical item names a hazard the plane does not hold. NAMED, not
         # swallowed: an unresolvable reference is a data defect somebody must fix,
         # and returning a clean "no hazard" would hide it.
-        out["assessment"] = "not_assessed"
-        out["note"] = (
-            f"Critical item {csi.csi_id} names hazard {csi.opens_hazard_id}, "
-            "which is not present in the graph."
-        )
-        return out
+        # A decided, NAMED refusal in the hazard_closed shape: no `assessment`, no task.
+        return {
+            "refused": True,
+            "outcome": "unknown_hazard",
+            "hazard_id": csi.opens_hazard_id,
+            "reason": (
+                f"Critical item {csi.csi_id} names hazard {csi.opens_hazard_id}, "
+                "which is not held by this engine; no assessment is drafted."
+            ),
+        }
 
     out["reopens_hazard_id"] = hazard.hazard_id
     out["reopens_hazard"] = hazard.description
@@ -280,6 +286,40 @@ def assess_deferral_risk(state: Any = None, *, work_order_id: str) -> Dict[str, 
             "acceptance authority are resolved from the ratified matrix, and neither is set here."
         )
     return out
+
+
+def _mitigations_clause(h) -> str:
+    """The mitigations this hazard holds, as held (id, owner, verified_in_field), or the plain
+    statement that none are recorded. Never a default owner, never an inferred verification."""
+    if not h.mitigations:
+        return "no mitigations recorded"
+    parts = [f"{m.mitigation_id} (owner {m.owner if m.owner is not None else 'none recorded'}, "
+             f"verified_in_field {m.verified_in_field})" for m in h.mitigations]
+    return "mitigations " + ", ".join(parts)
+
+
+def _hazard_evidence(h) -> Dict[str, Any]:
+    """The record pointers behind a decided refusal: ids and held values, nothing else."""
+    return {
+        "hazard_id": h.hazard_id,
+        "status": h.status,
+        "severity": h.severity,
+        "probability": h.probability,
+        "opened_on": h.opened_on,
+        "mitigations": [{"mitigation_id": m.mitigation_id, "owner": m.owner,
+                         "verified_in_field": m.verified_in_field} for m in h.mitigations],
+        "closure_record": "not held",
+    }
+
+
+def _case_id(hazard_id: str, level_slug: str) -> str:
+    """The acceptance case key. MIRROR of `iagent_pure.acceptance_request.acceptance_workflow_id`.
+
+    This engine does not ship `iagent_pure` (the agent image omits it), so the format is mirrored
+    here and sealed equal to the real function by
+    tests/safety/test_the_card_case_id_equals_the_minted_case_key.py.
+    """
+    return f"risk-acceptance-{hazard_id}-{level_slug}"
 
 
 def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any]:
@@ -311,6 +351,30 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
         # because it renders as a completed assessment.
         return {"refused": True, "reason": f"unknown hazard '{hazard_id}'"}
 
+    if h.status == "closed":
+        # A CLOSED HAZARD HAS NOTHING LEFT TO ACCEPT (ruled 2026-10-09). Drafting would hand the
+        # gateway a review_request, and the gateway would open a risk-acceptance task against a
+        # condition the programme has already closed. Named so a caller can tell this decided
+        # refusal from an unknown id; carries no review_request, so no task is created.
+        # THE REFUSAL CITES WHAT THIS ENGINE HOLDS, AND SAYS WHAT IT DOES NOT (ruled 2026-10-17):
+        # status, severity/probability and each mitigation (id, owner, verified_in_field) as
+        # held. The hazard model has NO closure record (date, closer), so the prose says so
+        # rather than imply one. Ids and held values only; nothing here widens visibility.
+        evidence = _hazard_evidence(h)
+        held = "; ".join([
+            f"status {h.status}",
+            f"severity {h.severity or 'not recorded'}, probability {h.probability or 'not recorded'}",
+            _mitigations_clause(h),
+        ])
+        return {
+            "refused": True,
+            "outcome": "hazard_closed",
+            "hazard_id": h.hazard_id,
+            "evidence": evidence,
+            "reason": (f"hazard '{h.hazard_id}' is closed; there is no open risk to accept. "
+                       f"Held: {held}. No closure record (date, closer) is held."),
+        }
+
     # DERIVED_FROM: every source object this draft actually read. Seal 10 asserts each one
     # resolves; a fabricated entry must go red, which is why they are collected as they are used
     # rather than declared up front from a list someone remembered.
@@ -328,17 +392,36 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
     }
 
     if h.severity is None or h.probability is None:
-        # NOT ASSESSED, AND SAID SO. The matrix is not consulted, no level is invented, and the
-        # gap names which half is missing so the reader knows what to go and get.
-        out["assessment"] = "not_assessed"
-        out["severity"] = h.severity
-        out["probability"] = h.probability
-        out["gap"] = (
-            "severity" if h.severity is None else "probability"
-        ) + " is not assessed on this hazard; no risk level is resolved and no authority is implied"
-        out["derived_from"] = derived_from
-        out["citations"] = citations
-        return out
+        # NOT ASSESSED IS REFUSED, NOT DRAFTED (ruled 2026-10-09). Nobody can draft an acceptance
+        # for a hazard nobody has assessed. The matrix is not consulted, no level is invented,
+        # and the gap names which half is missing so the reader knows what to go and get. This
+        # used to return a draft carrying `assessment: not_assessed`; it carries no
+        # review_request either way, so no task is created. Named, so a caller can tell this
+        # decided refusal from an unknown id (which has no `outcome`).
+        both = h.severity is None and h.probability is None
+        gap = (
+            "severity and probability are" if both
+            else ("severity" if h.severity is None else "probability") + " is"
+        ) + " not assessed on this hazard; no risk level is resolved and no authority is implied"
+        missing = "severity" if h.severity is None else "probability"
+        held_other = (
+            f"probability {h.probability}" if h.severity is None and h.probability is not None
+            else f"severity {h.severity}" if h.probability is None and h.severity is not None
+            else "neither severity nor probability"
+        )
+        if h.severity is None and h.probability is None:
+            missing = "severity and probability"
+        evidence = _hazard_evidence(h)
+        return {
+            "refused": True,
+            "outcome": "not_assessed",
+            "hazard_id": h.hazard_id,
+            "gap": gap,
+            "evidence": evidence,
+            "reason": (f"hazard '{h.hazard_id}' has not been assessed: {gap}. "
+                       f"Held: status {h.status}; {held_other} held; opened {h.opened_on}. "
+                       f"To proceed, obtain a {missing} assessment for {h.hazard_id}."),
+        }
 
     out["severity"] = h.severity
     out["probability"] = h.probability
@@ -416,7 +499,15 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
     # REMOVED ONLY AFTER `policy/decisions/` COMPOSED, per the rule in that amendment. Removing
     # it first would have turned every Serious/High acceptance into a direct one, silently.
 
+    # THE CASE KEY, carried on the card so a frontend can open the case before any task exists.
+    # MIRROR of `iagent_pure.acceptance_request.acceptance_workflow_id` (this engine does not ship
+    # `iagent_pure`; same pattern as presentation_agent's STATUS_BY_DISPOSITION mirror). The slug is
+    # derived as the minter's caller derives it: payload `risk_level_slug`, which is `level.lower()`
+    # (acceptance_request.py:118 falls back to the same expression). Sealed by
+    # tests/safety/test_the_card_case_id_equals_the_minted_case_key.py, which calls the real function.
+    level_slug = level.lower()
     out["review_request"] = {
+        "case_id": _case_id(h.hazard_id, level_slug),
         "kind": f"risk_acceptance_{level.lower()}",
         "task_id": f"risk-acceptance-{h.hazard_id}",
         "audience": audience,
@@ -433,7 +524,7 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
             "severity": h.severity,
             "probability": h.probability,
             "risk_level": level,
-            "risk_level_slug": level.lower(),
+            "risk_level_slug": level_slug,
             "citations": citations,
             "derived_from": derived_from,
             # STATED IN THE PAYLOAD, not only in this ADR: the disposer must see that a
@@ -530,6 +621,10 @@ def _visible_records(records: List[Any]) -> List[Any]:
     return kept
 
 
+#: A part number: one token of letters, digits and the separators real part numbers carry.
+_PART_NUMBER_SHAPE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._#/\-]*")
+
+
 def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str, Any]:
     """What failed on this part, across every program and every system of record FRACAS cites.
 
@@ -539,18 +634,12 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
     it, from EVERY platform (FRACAS's "program") and EVERY system of record, not just the one the
     caller happened to ask from.
 
-    THE INPUT IS A SAFETY-CRITICAL ITEM, NOT A BARE STRING. `part_number` is checked against
-    `CRITICAL_PART_NUMBERS`, the same derived set `assessDeferralRisk` checks, because the verb's
-    declared input class is `safety:SafetyCriticalItem` — an already-declared, engine-owned class,
-    not a new "Part" class invented or mis-cited against a standard that does not define one
-    (ADR-0007). A part number outside that set is UNKNOWN to this verb, the same way an unknown
-    work order is unknown to `assessDeferralRisk`, and refuses for the same reason: answering
-    "no failures" for a part this verb cannot even identify would be indistinguishable from a
-    part it correctly identified and found clean.
-
-    "NO FAILURES" IS A NAMED, NON-REFUSED ANSWER, never conflated with "unknown part". A critical
-    item that has never failed returns an explicit empty `failures` list — the check ran and found
-    nothing, which is a different fact from the check never running at all.
+    THE INPUT IS ANY COMPONENT (RULED 2026-10-15/16). The verb is registered on pcn:Component and
+    on safety:SafetyCriticalItem; the critical list is not a gate. A part with visible records
+    gets them. A well-formed part with none REFUSES `no_failures_recorded` (listed or not), and a
+    string that is not shaped like a part number refuses `unknown_part` (a SHAPE check: whether a
+    well-formed string is a known component is engine-o's resolver's fact, not this engine's).
+    Neither refusal is a clean bill, and neither opens a task.
 
     CITATIONS, NOT NARRATIVE (ADR-0051 §5's CLEARANCE-BOUNDED discipline, carried over from
     `draft_risk_assessment`). Every record names the system of record it came from and a citation
@@ -571,10 +660,32 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
     if not part_number:
         return {"refused": True, "reason": "which part?"}
 
-    if part_number not in CRITICAL_PART_NUMBERS:
-        # NOT the same as "no failures found", and reported differently on purpose — see
-        # assess_deferral_risk's identical distinction for an unknown work order.
-        return {"refused": True, "reason": f"unknown part '{part_number}'"}
+    # RULED 2026-10-15: THE LISTING IS NOT A GATE. Any component with failure records gets them;
+    # being on the critical list decides which class is most specific, not whether failures exist.
+    # Two NAMED refusals, each chosen by its own check, in the hazard_closed / unknown_hazard shape
+    # (`refused`, `outcome`, the id field, `reason`, no task). The census reader reads a refusal
+    # ONLY as `refused: true` plus a string `outcome`.
+    #
+    #   unknown_part         the string is not shaped like a part number. THIS IS A SHAPE CHECK, not
+    #                        "resolves to nothing": whether a well-formed string is a known component
+    #                        is engine-o's resolver's fact, not this engine's (only listed critical
+    #                        items and parts a failure source holds are known here).
+    #   no_failures_recorded the part is well-formed and no source holds a visible failure for it,
+    #                        whether it is a listed critical item or a plain component.
+    part_number = part_number.strip()
+    # MEASURED LIVE 2026-10-16 (rev 193): when the router binds this verb through pcn:Component it
+    # hands over the component's INSTANCE IRI ('http://internal/components/5530-184'), not the bare
+    # part number, and the shape check below refused it as unknown_part. The part number is the
+    # IRI's last segment; a bare number is unchanged.
+    if "://" in part_number:
+        part_number = re.split(r"[/#]", part_number.rstrip("/#"))[-1]
+    if not _PART_NUMBER_SHAPE.fullmatch(part_number):
+        return {
+            "refused": True,
+            "outcome": "unknown_part",
+            "part_number": part_number,
+            "reason": f"unknown part '{part_number}': not a part number this engine can look up",
+        }
 
     records = _visible_records(
         sorted(failure_source.gather(failure_source.BY_PART, part_number),
@@ -582,8 +693,59 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
     platforms = sorted({r.platform for r in records})
     systems = sorted({r.system_of_record for r in records})
 
+    # ── THE CONTRIBUTION_RANKING ROWS: ONE ROW PER FAILURE MODE, THE BAR IS HOW MANY TIMES ───
+    #
+    # The archetype ranks CONTRIBUTORS to a total, so the contributor here is the failure MODE
+    # and the magnitude is its occurrence count across everything the caller may view. One row
+    # per RECORD would make every contribution 1 and the "ranking" a list; one row per platform
+    # would answer a different question than the verb's name. Order and magnitude are the SAME
+    # quantity this time (count, descending), unlike `find_orphaned_hazards`, so the bars ARE
+    # monotonic with rank. Ties break on the mode's name so the order is deterministic.
+    #
+    # ROW FIELDS PASS THROUGH THE PROJECTOR VERBATIM, so the provenance rides inside each row:
+    # `record_ids` and `citations` are what keep the card CITATIONS-NOT-NARRATIVE (ADR-0051 §5).
+    # No `favourable` key, for the reason `find_orphaned_hazards` gives: a failure has no good
+    # direction. A part with no VISIBLE failure yields `rows: []` and the card says "no
+    # contributors recorded" - the same truth the `note` states, drawn by the renderer's own
+    # refusal vocabulary rather than a fabricated zero-row.
+    by_mode: Dict[str, List[Any]] = {}
+    for r in records:
+        by_mode.setdefault(r.failure_mode or "unrecorded failure mode", []).append(r)
+    total = len(records) or 1
+    ordered = sorted(by_mode.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    rows = [
+        {
+            "rank": i,
+            "entity_id": mode,
+            "entity_name": mode,
+            "contribution": len(rs),
+            "share_of_total": round(len(rs) / total, 4),
+            "platforms": sorted({r.platform for r in rs}),
+            "record_ids": [r.record_id for r in rs],
+            "citations": [r.citation for r in rs],
+        }
+        for i, (mode, rs) in enumerate(ordered, start=1)
+    ]
+
+    if not records:
+        return {
+            "refused": True,
+            "outcome": "no_failures_recorded",
+            "part_number": part_number,
+            "reason": (
+                f"no failures recorded for part '{part_number}': no source this engine reads "
+                "holds a failure for it"
+            ),
+        }
+
     out: Dict[str, Any] = {
         "refused": False,
+        # THE ARCHETYPE'S KEY AND ENVELOPE. `failures` stays beside `rows` because the seals and
+        # the one-record-per-failure reading consumers use read it by name.
+        "rows": rows,
+        "value_label": "failures",
+        "value_unit": "failures",
+        "scope_label": part_number,
         "part_number": part_number,
         "critical_items_checked": len(CRITICAL_ITEMS),
         "failure_count": len(records),
@@ -680,8 +842,29 @@ def failure_trend_for_this_platform_by_month(state: Any = None, *, platform_id: 
                 "citations": [r.citation for r in rs],
             })
     systems = sorted({r.system_of_record for r in records})
+    # ── THE MULTI_SERIES AXIS KEYS: `rows` KEYED BY `period`, `series` DECLARING THE NUMBER ──
+    #
+    # Same convention as cost_unit_price_trend: the domain list (`months`) keeps its name and the
+    # archetype gets its own keys beside it, because one word meaning two things in one payload is
+    # how a renderer draws the wrong half. `failure_count` is the single declared series; zero-
+    # filled months stay as real zeros (a gap is a fact), which the renderer's "a declared series
+    # appears in no row" test treats as present because 0 is a number. The unit is the noun
+    # "failures" - a count, not a currency - and the renderer prints an unknown unit bare.
+    rows = [
+        {
+            "period": m["month"],
+            "failure_count": m["failure_count"],
+            "failure_record_ids": m["failure_record_ids"],
+            "citations": m["citations"],
+        }
+        for m in months
+    ]
     return {
         "refused": False,
+        "rows": rows,
+        "series": [{"key": "failure_count", "label": "Failures", "unit": "failures"}],
+        "value_label": "Failures per month",
+        "scope_label": platform_id,
         "platform_id": platform_id,
         "bucket": "observed_on, calendar month (YYYY-MM), no timezone; empty months included",
         "failure_count": len(records),

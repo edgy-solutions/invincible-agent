@@ -159,7 +159,7 @@ def test_THE_REGISTER_BODY_CARRIES_THE_EXCLUSION_ONLY_WHEN_DECLARED(monkeypatch,
 def routed(monkeypatch):
     tasks: list = []
     monkeypatch.setattr(main, "_register_human_task",
-                        lambda wf, task, kind="workflow_ack": tasks.append(dict(task)) or {})
+                        lambda wf, task, kind="workflow_ack", case_id=None: tasks.append(dict(task)) or {})
     return tasks
 
 

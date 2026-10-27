@@ -2404,6 +2404,16 @@ inside a possessive pronoun.** "Your X" asserts ownership in a word that reads a
 (`invincible-agent-65`) dies with the session; the worktree/branch pair outlives it and is what a
 later reader can actually check out. `git worktree list` is the registry.
 
+> **AMENDED 2026-10-26 (architect, via Chris): a trailer names a LANE ID, never a worktree path,
+> and the check is against the registered lanes, not against worktrees that exist.**
+> `git worktree list` is no longer the registry: it is present-tense and a trailer is
+> past-tense, so a throwaway worktree's correct commit went red the day the worktree was removed.
+> The registry is `.githooks/lanes` (lane id, then the branch globs it owns), append-only and
+> bound by ancestry from the commit that added it; commits before it are held to the form only.
+> A throwaway worktree commits with its lane's id (`Lane: ia-saf/<branch>`), and
+> `.githooks/pre-push --expected` prints it. The "registered worktree" bullet below describes
+> the superseded check.
+
 Enforced by `tests/test_every_commit_names_its_lane.py`, which:
 
   * binds **forward only, by date** — retro-fitting means rewriting published history, which is

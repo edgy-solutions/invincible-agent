@@ -156,7 +156,7 @@ class _EdgeStore:
         return MeshResult.answered(list(keyed.values()))
 ```
 
-`docs/interfaces.md` §4a has the full write-up under "MeshGraphWriter —
+`iagent-mesh-sdk/docs/interfaces.md` §4a has the full write-up under "MeshGraphWriter —
 identity separate from payload, ruled 2026-09-29" if you want the doc form
 instead of code.
 

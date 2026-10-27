@@ -64,7 +64,8 @@ def test_CONTROL_the_fixture_alone_no_longer_serves_the_verb(monkeypatch):
     assert [r for r in entities.FAILURE_RECORDS if r.part_number == PART], "fixture assumption"
     _serve(monkeypatch, dbl=Double([]))
     out = measures.what_failed_on_this_part(part_number=PART)
-    assert out["failures"] == [] and out["failure_count"] == 0 and out["refused"] is False
+    assert out["refused"] is True and out["outcome"] == "no_failures_recorded"
+    assert "failures" not in out
 
 
 def test_the_measures_module_no_longer_holds_the_failure_fixture():
@@ -95,8 +96,11 @@ def test_a_connector_that_cannot_reach_its_source_is_never_an_empty_answer(monke
 
     pf.install(monkeypatch, caller=pf.ALICE, members=pf.ALL_PROGRAMS)
     _serve(monkeypatch, dbl=Double([_row("X-1")]), down=Down())
-    with pytest.raises(ConnectionError):
+    # The engine now NAMES the fault (SourceUnavailable, cause kept) so the route can refuse
+    # with the connector's name; what stays true is that it is never an empty answer.
+    with pytest.raises(failure_source.SourceUnavailable) as ei:
         measures.what_failed_on_this_part(part_number=PART)
+    assert ei.value.connector == "down" and isinstance(ei.value.__cause__, ConnectionError)
 
 
 def test_the_program_filter_applies_to_what_a_connector_returns(monkeypatch):

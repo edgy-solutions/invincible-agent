@@ -40,6 +40,20 @@ _NON_PROPAGATING = ("mesh_registration",)
 
 
 @pytest.fixture(autouse=True)
+def _no_case_summary_wire(monkeypatch):
+    """A case that reaches a terminal POSTs its summary to the BFF (`workflow_runner.
+    _write_case_summary`, ruled 2026-10-16). No runner test is about that wire, and none may reach
+    for a token or the network, so the write is a no-op by default. A test of the wire or of the
+    summary's content overrides THIS fixture by name with its own."""
+    for name in ("workflow_runner", "agent_fleet.restate_analyst.workflow_runner"):
+        mod = sys.modules.get(name)
+        if mod is not None and hasattr(mod, "_write_case_summary"):
+            monkeypatch.setattr(mod, "_write_case_summary",
+                                lambda case_id, summary: {"written": True})
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _caplog_sees_non_propagating_loggers(caplog):
     """Let caplog observe loggers that deliberately do not propagate.
 
@@ -314,6 +328,10 @@ def _tree_state() -> "dict[str, str] | None":
 def pytest_configure(config):  # noqa: D103
     global _TREE_BASELINE
     _TREE_BASELINE = _tree_state()
+    config.addinivalue_line(
+        "markers",
+        "ingest_v1_unconformant(reason): skip the ingest-v1 response-conformance hook for a test that "
+        "stubs a body builder with a deliberately non-production shape; a non-blank reason is required")
 
 
 def _content_differs(path: str) -> bool:
@@ -371,3 +389,109 @@ def pytest_sessionfinish(session, exitstatus):  # noqa: D103
             "Restore these (`git checkout --`) or make the test that writes them use tmp_path.",
             red=True)
     session.exitstatus = 1 if exitstatus == 0 else exitstatus
+
+
+def _duckdb_skips(stats):
+    """The distinct (file, reason) of every skip whose reason names duckdb, sorted.
+
+    Pure, so the seal can feed it a fake stats dict. A skip's `longrepr` is a tuple
+    `(path, lineno, "Skipped: <reason>")`; anything else is not a skip we can read, and is left out.
+    """
+    seen = set()
+    for rep in stats.get("skipped", []):
+        lr = getattr(rep, "longrepr", None)
+        if isinstance(lr, tuple) and len(lr) == 3 and "duckdb" in str(lr[2]):
+            seen.add((str(lr[0]), str(lr[2])))
+    return sorted(seen)
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):  # noqa: D103
+    # A skipped duckdb arm is not a green: the package page carries the .duckdb file's sha256 and
+    # these arms are what verify it. Name them in the summary so a venv without duckdb cannot
+    # pass for one with it. Prints nothing when none skipped; never changes pass/fail.
+    skips = _duckdb_skips(terminalreporter.stats)
+    if not skips:
+        return
+    terminalreporter.section("duckdb-gated skips", sep="-", yellow=True)
+    terminalreporter.write_line(f"duckdb-gated skips: {len(skips)}", yellow=True)
+    for path, reason in skips:
+        terminalreporter.write_line(f"    {path}: {reason}", yellow=True)
+
+
+# INGEST-V1 CONFORMANCE (2026-10-23)
+# ----------------------------------
+# What this seals: every real 200 JSON body that ANY test drives through a route tagged
+# `ingest-v1` (src/iagent/ingest_api.py V1_ROUTES) validates against that route's response model
+# (RESPONSE_MODELS, extra="forbid"). The published OpenAPI declares those models; this is what keeps
+# them true: a builder that adds, renames or drops a key reds the test that drives it, with the
+# route, the model and the pydantic errors in the message. It wraps starlette's TestClient.request
+# (get/post/put all go through it) and does nothing when starlette.testclient was never imported.
+# Non-200, non-JSON and the binary /source route are out of scope. The check itself is
+# `ingest_api.check_v1_response`, a pure function the seal tests call directly.
+# OPT-OUT: @pytest.mark.ingest_v1_unconformant(reason="...") skips the hook for a test whose
+# stubbed body builder returns a deliberately non-production shape. A blank reason is refused. Never
+# use it to silence a real production shape: fix the model instead.
+_INGEST_API_MOD = None
+
+
+def _ingest_api():
+    """The ingest_api module, loaded by file path so it never competes with `src.iagent` / `iagent`
+    for a module identity (it is pure constants and pydantic models, no gateway import)."""
+    global _INGEST_API_MOD
+    if _INGEST_API_MOD is None:
+        import importlib.util  # noqa: PLC0415
+        path = Path(__file__).resolve().parents[1] / "src" / "iagent" / "ingest_api.py"
+        spec = importlib.util.spec_from_file_location("_ingest_api_for_conftest", path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        _INGEST_API_MOD = mod
+    return _INGEST_API_MOD
+
+
+def _conform_response(client, response) -> None:
+    from starlette.routing import Match  # noqa: PLC0415
+    api = _ingest_api()
+    scope = {"type": "http", "method": response.request.method, "path": response.request.url.path,
+             "root_path": ""}
+    for route in getattr(getattr(client, "app", None), "routes", None) or []:
+        try:
+            match, _ = route.matches(scope)
+        except Exception:  # noqa: BLE001 — a Mount or a route the scope does not fit
+            continue
+        if match != Match.FULL:
+            continue
+        tags = getattr(route, "tags", None)
+        path = getattr(route, "path", None)
+        if not tags or path is None or api.INGEST_V1_TAG not in tags:
+            return
+        ctype = response.headers.get("content-type", "")
+        body = response.json() if response.status_code == 200 and "json" in ctype.lower() else None
+        api.check_v1_response(response.request.method, path, response.status_code, ctype, body,
+                              tags=tags)
+        return
+
+
+@pytest.fixture(autouse=True)
+def _ingest_v1_200s_conform(request, monkeypatch):
+    marker = request.node.get_closest_marker("ingest_v1_unconformant")
+    if marker is not None:
+        try:
+            _ingest_api().unconformant_reason(marker.kwargs.get("reason"))
+        except ValueError as exc:
+            pytest.fail(str(exc), pytrace=False)
+        yield
+        return
+    tc = sys.modules.get("starlette.testclient")
+    if tc is None:
+        yield
+        return
+    original = tc.TestClient.request
+
+    def request_and_check(self, method, url, *args, **kwargs):
+        response = original(self, method, url, *args, **kwargs)
+        _conform_response(self, response)
+        return response
+
+    monkeypatch.setattr(tc.TestClient, "request", request_and_check)
+    yield

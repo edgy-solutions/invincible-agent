@@ -72,7 +72,8 @@ def test_exact_match_uses_top_score_candidate():
 def test_fuzzy_unanimous_class_overrides():
     # R2 — typo / fuzzy unanimous: five near-matches all Tables.
     candidates = [
-        _c(0.85, "idp:Table", instance_id=f"urn:t{i}", label=f"t{i}")
+        # distinct scores: five EQUAL scores of one class are a tie and ask (ruled 2026-10-15)
+        _c(0.85 - i * 0.01, "idp:Table", instance_id=f"urn:t{i}", label=f"t{i}")
         for i in range(5)
     ]
     d = decide(candidates)
@@ -177,7 +178,7 @@ def test_tight_exact_threshold_can_demote_to_fuzzy():
 
 
 def test_relaxed_min_score_admits_more_candidates():
-    candidates = [_c(0.6, "idp:Table"), _c(0.5, "idp:Table")]
+    candidates = [_c(0.6, "idp:Table", instance_id="urn:a"), _c(0.5, "idp:Table", instance_id="urn:b")]
     d_strict  = decide(candidates, min_score=0.7)
     d_relaxed = decide(candidates, min_score=0.4)
     assert d_strict.subject_uri is None

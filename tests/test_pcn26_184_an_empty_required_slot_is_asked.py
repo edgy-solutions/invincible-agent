@@ -28,6 +28,8 @@ from agent_fleet.utils.slot_declarations import derive_slots
 
 NOTICE = "PCN26-184"
 QUESTION = "which parts does PCN26-184 affect"
+# A person: `/fill_slots` refuses a call with no person before it fills anything (#59's shape).
+CALLER = "alice@example.com"
 
 
 def _which_parts(notice_id: str):
@@ -77,7 +79,8 @@ def _fill(monkeypatch, slots_json):
     monkeypatch.setattr(eo.b, "FillVerbSlots", _fake_fill)
     monkeypatch.setattr(eo, "_resolve_instance", _fake_resolve)
     out = asyncio.run(eo.fill_slots(eo.FillSlotsRequest(
-        query=QUESTION, verb_iri=np_mod.VERB, declarations=json.dumps(_decls()))))
+        query=QUESTION, verb_iri=np_mod.VERB, declarations=json.dumps(_decls()),
+        user_email=CALLER)))
     return out, resolved
 
 
@@ -151,7 +154,7 @@ def test_CONTROL_AN_EMPTY_OPTIONAL_SLOT_PASSES_FILL_SLOTS_AS_BEFORE(monkeypatch)
 
     monkeypatch.setattr(eo.b, "FillVerbSlots", _fake_fill)
     out = asyncio.run(eo.fill_slots(eo.FillSlotsRequest(
-        query=QUESTION, verb_iri=np_mod.VERB, declarations=json.dumps([opt]))))
+        query=QUESTION, verb_iri=np_mod.VERB, declarations=json.dumps([opt]), user_email=CALLER)))
     assert out.slots == {"notice_id": ""} and out.refused == [], (out.slots, out.refused)
 
 

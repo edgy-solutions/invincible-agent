@@ -11,11 +11,19 @@
 # the commits were unusual. A check that can only report is a check whose remedy is always
 # "record it and move on".
 #
-# THE VALUE IS PRODUCED BY THE ACT, NEVER TYPED. `--show-toplevel` and `--show-current` are read
-# from the worktree the push is running in, so the trailer cannot name a lane that is not this
-# one. That is the whole of R-058.1: a session address predicts neither half, and a hand-typed
-# pair is how `ia-28/lane/28` was written for a lane that works in `ia-74`. Same construction as
-# the roll script deriving its image tag rather than accepting one.
+# THE VALUE IS PRODUCED BY THE ACT, NEVER TYPED. The branch is read with `--show-current` in the
+# worktree the push runs from, and the lane id is looked up for that branch in `.githooks/lanes`.
+# That is the whole of R-058.1: a session address predicts neither half, and a hand-typed pair is
+# how `ia-28/lane/28` was written for a lane that works in `ia-74`. Same construction as the roll
+# script deriving its image tag rather than accepting one.
+#
+# A TRAILER NAMES A LANE ID, NEVER A WORKTREE PATH (ruled 2026-10-26). This used to print the
+# basename of `--show-toplevel`, which is right only in a lane's own worktree: a throwaway
+# worktree got told to write `Lane: wkc/lane/01-...`, a name that resolves to nobody once the
+# worktree is removed. The basename is still read, but only to prefer the worktree's own row when
+# it matches the branch; otherwise the registry row whose globs match the branch names the lane.
+#
+#     .githooks/pre-push --expected     prints the trailer for this worktree and branch
 #
 # Install per worktree (hooks are NOT shared between worktrees by default):
 #     git config core.hooksPath .githooks
@@ -23,11 +31,50 @@ set -euo pipefail
 
 RULE_COMMIT="b466612"          # the commit that ratified the trailer; see R-058.1
 TRAILER_RE='^Lane:[[:space:]]*[^[:space:]/]+/[^[:space:]]+[[:space:]]*$'
+TOP="$(git rev-parse --show-toplevel)"
+LANES_FILE="${TOP}/.githooks/lanes"
 
-# The lane THIS worktree is, derived rather than declared.
-WT="$(basename "$(git rev-parse --show-toplevel)")"
-BR="$(git rev-parse --abbrev-ref HEAD)"
-EXPECTED="Lane: ${WT}/${BR}"
+# The globs registered for lane id $1, one per line; nothing when the id has no row.
+lane_globs() {
+    [ -f "$LANES_FILE" ] || return 0
+    awk -v id="$1" '{ sub(/#.*/, "") } NF > 1 && $1 == id { for (i = 2; i <= NF; i++) print $i }' "$LANES_FILE"
+}
+
+# 0 when branch $2 matches one of lane id $1's globs. Read line by line so a glob is never
+# pathname-expanded against the working tree before `case` sees it.
+lane_owns() {
+    local g
+    while read -r g; do
+        # shellcheck disable=SC2254
+        case "$2" in $g) return 0 ;; esac
+    done < <(lane_globs "$1")
+    return 1
+}
+
+# The lane THIS worktree is, derived rather than declared: its own row if that row owns the
+# branch, else the first row that does.
+WT="$(basename "$TOP")"
+BR="$(git branch --show-current)"
+LANE_ID=""
+if lane_owns "$WT" "$BR"; then
+    LANE_ID="$WT"
+elif [ -f "$LANES_FILE" ]; then
+    while read -r id; do
+        if lane_owns "$id" "$BR"; then LANE_ID="$id"; break; fi
+    done < <(awk '{ sub(/#.*/, "") } NF > 1 { print $1 }' "$LANES_FILE")
+fi
+if [ -n "$LANE_ID" ]; then
+    EXPECTED="Lane: ${LANE_ID}/${BR}"
+else
+    EXPECTED="(none: no row in .githooks/lanes owns branch '${BR}' -- commit on a lane's branch, or register the lane)"
+fi
+
+if [ "${1:-}" = "--expected" ]; then
+    # git passes the remote name and url as $1 and $2, never a word starting with `--`.
+    if [ -n "$LANE_ID" ]; then echo "$EXPECTED"; exit 0; fi
+    echo "pre-push: $EXPECTED" >&2
+    exit 1
+fi
 
 # `git rev-parse` on the rule commit can fail in a shallow clone or a fresh fetch that has not
 # seen it. REFUSING THERE WOULD BLOCK EVERY PUSH, so an unresolvable rule commit means "cannot
@@ -48,15 +95,23 @@ if ! git rev-parse --verify --quiet "${RULE_COMMIT}^{commit}" >/dev/null; then
     exit 0
 fi
 
-# PRESENCE ONLY — NOT THE PAIR, and that is deliberate rather than a gap.
-#
-# A commit cherry-picked or rebased from another lane legitimately carries THAT lane's trailer:
-# it is the author, and rewriting the trailer to this worktree would be a false attribution of
-# exactly the kind R-058.2 is about. So the hook asks "does this commit name a lane" — the
-# question whose answer is always yes-or-no here — and `test_every_commit_names_its_lane.py`
-# asks the one that needs the registry: is the named worktree/branch a REGISTERED PAIR. The
-# hook is the fast local refusal; the seal is the authority on validity.
-bad=0
+# The registry binds by ancestry from the commit that ADDED it, the same way the rule binds from
+# RULE_COMMIT: a commit that could not have seen the file is checked for the trailer's form only.
+# Derived, not pinned, so the commit that creates the file is bound by it. No file, or no adding
+# commit in a shallow clone, means "cannot know" and the registry half stands aside.
+REG_COMMIT=""
+if [ -f "$LANES_FILE" ]; then
+    REG_COMMIT="$(git log --diff-filter=A --format=%H -- .githooks/lanes 2>/dev/null | tail -1 || true)"
+fi
+
+# THE PAIR AGAINST THE REGISTRY, NEVER AGAINST THIS WORKTREE — and the second half is the
+# deliberate one. A commit cherry-picked or rebased from another lane legitimately carries THAT
+# lane's trailer: it is the author, and rewriting the trailer to this worktree would be a false
+# attribution of exactly the kind R-058.2 is about. So the hook asks two questions whose answers
+# do not depend on where the push runs: does this commit name a lane, and (once the registry is
+# in its ancestry) is the named id/branch a REGISTERED pair. The seal asks the same two in CI.
+missing=0
+unregistered=0
 while read -r _local_ref local_sha _remote_ref remote_sha; do
     # A deletion pushes the all-zero local sha; there are no commits to check.
     case "$local_sha" in *[!0]*) ;; *) continue ;; esac
@@ -95,31 +150,42 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
     while read -r sha; do
         [ -n "$sha" ] || continue
         git merge-base --is-ancestor "$RULE_COMMIT" "$sha" 2>/dev/null || continue
-        if ! git log -1 --format='%B' "$sha" | grep -Eq "$TRAILER_RE"; then
-            if [ "$bad" -eq 0 ]; then
-                echo "" >&2
-                echo "PUSH REFUSED: commit(s) with no 'Lane:' trailer." >&2
-                echo "" >&2
-            fi
+        trailers="$(git log -1 --format='%B' "$sha" | grep -E "$TRAILER_RE" || true)"
+        if [ -z "$trailers" ]; then
+            [ "$missing" -eq 0 ] && { echo "" >&2; echo "PUSH REFUSED: commit(s) with no 'Lane:' trailer." >&2; }
             echo "  $(git log -1 --format='%h %s' "$sha")" >&2
-            bad=1
+            missing=1
+            continue
         fi
+        [ -n "$REG_COMMIT" ] || continue
+        git merge-base --is-ancestor "$REG_COMMIT" "$sha" 2>/dev/null || continue
+        while read -r t; do
+            v="$(echo "$t" | sed -E 's/^Lane:[[:space:]]*//; s/[[:space:]]*$//')"
+            if ! lane_owns "${v%%/*}" "${v#*/}"; then
+                [ "$unregistered" -eq 0 ] && { echo "" >&2; echo "PUSH REFUSED: commit(s) whose 'Lane:' trailer is not a registered lane id/branch pair." >&2; }
+                echo "  $(git log -1 --format='%h %s' "$sha")   [names ${v}]" >&2
+                unregistered=1
+            fi
+        done <<< "$trailers"
     done < <(git rev-list --ancestry-path --no-merges "$range" --not --remotes 2>/dev/null || true)
 done
 
-if [ "$bad" -ne 0 ]; then
+if [ "$missing" -ne 0 ] || [ "$unregistered" -ne 0 ]; then
     cat >&2 <<EOF
 
 Every commit that descends from ${RULE_COMMIT} carries a trailer naming the LANE that
 made it — git's author field is one human identity across every worktree, so without
-it a commit has no recoverable owner once its session ends (R-058, R-058.1).
+it a commit has no recoverable owner once its session ends (R-058, R-058.1). The trailer
+names a LANE ID from .githooks/lanes, never a worktree path: a throwaway worktree
+commits as the lane it works for.
 
-For this worktree that is exactly:
+For this branch that is exactly:
 
     ${EXPECTED}
 
-Derived from \`git rev-parse --show-toplevel\` and \`--show-current\` here, not typed.
-Do NOT copy it from a session name: a session address predicts neither half.
+Derived from \`git branch --show-current\` and .githooks/lanes here, not typed
+(\`.githooks/pre-push --expected\` prints it). Do NOT copy it from a session name or a
+worktree directory: neither predicts the lane.
 
 Amend the trailer in (these commits are not pushed, so amending is not a rewrite of
 published history), then push again.

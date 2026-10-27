@@ -70,6 +70,9 @@ _NOT_IN_SCOPE = {
         "in the arithmetic sense — a count of orphans is not a computed contribution — so its "
         "method block is a design question rather than a transcription"
     ),
+    # safety:FailureRecordSet LEFT this population on 2026-10-21 (202): it now renders as
+    # KNOWLEDGE_DOCUMENT, matching cortex-ui's binding. Rechecked as the arm asks: the document
+    # path is not in _PROJECTED_ARCHETYPES, so no allowlist exists to lift a `method` into.
 }
 
 #: One representative call per verb in the basis. Arguments only; the payload is the engine's.

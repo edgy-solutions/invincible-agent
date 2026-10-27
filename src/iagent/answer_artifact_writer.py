@@ -141,9 +141,12 @@ class AnswerArtifactBundle:
     kind: str = "answer"
     #: The case that produced this artifact, when a workflow did (ADR-0041 §8.1). The runner's
     #: `released` stamp finds the artifacts of a case by this property. OPTIONAL and written
-    #: ONLY when given. NO CALLER PASSES IT YET: no workflow produces a case-linked artifact
-    #: (tests/test_a_delegate_reads_what_it_seeded.py seals that state).
+    #: ONLY when given. CORRECTED 2026-10-09: the maintenance case's ActionRecord is the first
+    #: producer -- `POST /internal/cases/{case_id}/action-record` passes it (and `seeded_by`).
     case_id: Optional[str] = None
+    #: The seeding delegate, when the writer is told it (ADR-0041 §8.1). Written ONLY when given,
+    #: beside `case_id`; the runner's `released` stamp sets the same property on a case's artifacts.
+    seeded_by: Optional[str] = None
     # Factual S·P headline composed at write time from the captured
     # routing facts (subject label · verb label; fallback → the
     # structured fallback_reason). Per ADR-0028 Decision 4 and the
@@ -560,6 +563,12 @@ class AnswerArtifactWriter:
                 id=bundle.id, case_id=bundle.case_id,
             )
 
+        if bundle.seeded_by:
+            tx.run(
+                "MATCH (a:AnswerArtifact {id: $id}) SET a.seeded_by = $seeded_by",
+                id=bundle.id, seeded_by=bundle.seeded_by,
+            )
+
         # PRODUCED_BY edge → Actor node. MERGE on (actor_type, actor_id)
         # so two artifacts produced by the same agent share an Actor
         # node (per ADR-0023's open question, we pick the
@@ -772,3 +781,66 @@ def get_writer() -> Optional[AnswerArtifactWriter]:
                 exc,
             )
             return None
+
+
+# ── Archive (rev 187): hides, never deletes ──
+#
+# The record lives on the Neo4j AnswerArtifact node and is PROJECTED to Postgres, which is
+# rebuilt from Neo4j -- Postgres alone is never the record. This path SETs properties only: no
+# DELETE, no DETACH. `archive_history` (a list of JSON strings) stays on the node.
+#
+# CHANGE DETECTION: the projector polls `a.watermark > last_applied` (apply_loop._poll_neo4j),
+# so an archive bumps the global WatermarkSequence and sets `a.watermark` (and `a.updated_at`),
+# exactly as _tx_merge does; without that the row would never re-project.
+_ARCHIVE_STATE_CYPHER = """
+MATCH (a:AnswerArtifact {id: $id})
+RETURN a.archived_at AS archived_at
+"""
+
+_ARCHIVE_SET_CYPHER = """
+MERGE (s:WatermarkSequence {key: 'answer_artifact'})
+ON CREATE SET s.value = 0
+SET s.value = s.value + 1
+WITH s
+MATCH (a:AnswerArtifact {id: $id})
+SET a.archived_at = $archived_at,
+    a.archived_by = $archived_by,
+    a.archive_reason = $archive_reason,
+    a.archive_history = coalesce(a.archive_history, []) + [$entry],
+    a.updated_at = $now_ms,
+    a.watermark = s.value
+RETURN a.watermark AS watermark
+"""
+
+
+def set_archive_state(
+    driver: Any, artifact_id: str, *, archive: bool, by: str, reason: Optional[str]
+) -> bool:
+    """Archive (`archive=True`) or unarchive. Returns True when state changed, False for an
+    idempotent repeat (nothing written, no history appended) or an absent id."""
+    import json
+
+    now_ms = int(time.time() * 1000)
+    entry = json.dumps(
+        {"action": "archive" if archive else "unarchive", "by": by, "at": now_ms, "reason": reason}
+    )
+
+    def _tx(tx: Any) -> bool:
+        rec = tx.run(_ARCHIVE_STATE_CYPHER, id=artifact_id).single()
+        if rec is None:
+            return False
+        if (rec["archived_at"] is not None) == archive:
+            return False
+        tx.run(
+            _ARCHIVE_SET_CYPHER,
+            id=artifact_id,
+            archived_at=now_ms if archive else None,
+            archived_by=by if archive else None,
+            archive_reason=reason if archive else None,
+            entry=entry,
+            now_ms=now_ms,
+        )
+        return True
+
+    with driver.session() as session:
+        return session.execute_write(_tx)

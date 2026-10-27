@@ -36,25 +36,55 @@ def _fns():
 
     main.py pulls fastapi, baml and the mesh client at import time. A guard that
     skips whenever its dependencies are absent is a guard that never runs in CI.
+
+    THE PROJECTOR'S DEPENDENCIES ARE FOLLOWED, NOT LISTED. This used to slice three named
+    definitions out as text. The refusal ruling (#13) made the projector call
+    `_refusal_envelope`, which reads `REFUSAL_FIELD` and `REFUSAL_ENVELOPE_OPTIONAL`. None of those
+    were in the list, so every refused body raised NameError here, in the loader, and the failure
+    accused the test (lane 74's #20, 2026-10-10). Now every module-level definition the three
+    roots reach is loaded, in source order. The next helper the projector calls is loaded with it.
     """
+    import ast
     src = _SRC.read_text(encoding="utf-8")
     ns: dict = {
         "json": json, "Dict": dict, "Any": object, "Optional": object,
         "logger": types.SimpleNamespace(warning=lambda *a, **k: None),
     }
-    import re as _re
-    for marker in ("def _extract_agent_response(", "_PROJECTED_ARCHETYPES: Dict[str, tuple] = {",
-                   "def _project_planning_archetype("):
-        start = src.index(marker)
-        # End at the next TOP-LEVEL definition OF ANY KIND. Searching for a bare
-        # newline-def walked straight past `async def _render_archetype_hardened`
-        # and swallowed half the module, which surfaced as a SyntaxError in the
-        # loader rather than a failure in the thing under test.
-        tail = src[start + len(marker):]
-        m = _re.search("[\n](?:async def |def |class |@)", tail)
-        end = start + len(marker) + (m.start() if m else len(tail))
-        exec(compile(src[start:end], str(_SRC), "exec"), ns)  # noqa: S102
+    defs: dict = {}
+    for node in ast.parse(src, str(_SRC)).body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defs[node.name] = node
+        elif isinstance(node, ast.Assign):
+            defs.update({t.id: node for t in node.targets if isinstance(t, ast.Name)})
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            defs[node.target.id] = node
+    reached: set = set()
+    todo = ["_extract_agent_response", "_PROJECTED_ARCHETYPES", "_project_planning_archetype"]
+    while todo:
+        name = todo.pop()
+        if name in reached or name not in defs:
+            continue
+        reached.add(name)
+        todo += [x.id for x in ast.walk(defs[name]) if isinstance(x, ast.Name) and x.id in defs]
+    body = sorted({id(defs[k]): defs[k] for k in reached}.values(), key=lambda n: n.lineno)
+    exec(compile(ast.Module(body=body, type_ignores=[]), str(_SRC), "exec"), ns)  # noqa: S102
     return ns
+
+
+def test_the_loader_projects_a_REFUSED_body():
+    """A refused body through `_fns` is a refusal card, not a NameError in the loader.
+
+    This is the arm the text-slice loader could not run. A refused rowless body keeps the card with
+    an EMPTY ARRAY and the envelope from the ONE producer. The control is the same body unrefused,
+    which degrades to None, so the card exists BECAUSE it refused."""
+    ns = _fns()
+    body = {"outcome": "no_rows", "reason": "nothing in scope"}
+    got = ns["_project_planning_archetype"](
+        "INTERVAL_TIMELINE", _envelope([], refused=True, **body), "PORTFOLIO_LEAD", None)
+    assert got is not None and got["rows"] == []
+    assert got[ns["REFUSAL_FIELD"]] == {"refused": True, **body}
+    assert ns["_project_planning_archetype"](
+        "INTERVAL_TIMELINE", _envelope([], **body), "PORTFOLIO_LEAD", None) is None
 
 
 def _envelope(rows, **extra):

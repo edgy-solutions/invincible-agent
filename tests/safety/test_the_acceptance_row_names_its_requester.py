@@ -251,10 +251,14 @@ def test_both_consumers_read_the_turns_own_envelope():
 
 @pytest.fixture
 def rows(monkeypatch):
-    from tests.safety.test_safety_acceptance_runs_as_a_case import main
+    from tests.safety.test_safety_acceptance_runs_as_a_case import main, wr
+    # conftest's `_no_case_summary_wire` stubs the summary write only on a runner module that is
+    # already imported, and this import is the first in the file: without the stub here the first
+    # case to reach a terminal reaches for a real token.
+    monkeypatch.setattr(wr, "_write_case_summary", lambda case_id, summary: {"written": True})
     got: list = []
     monkeypatch.setattr(main, "_register_human_task",
-                        lambda wf, task, kind="workflow_ack": got.append(
+                        lambda wf, task, kind="workflow_ack", case_id=None: got.append(
                             (kind, task["requested_by"])) or {})
     for k in ("CASE_TRIGGER_DIR", "DECISION_TABLE_DIR", "WORKFLOW_DEFINITIONS_DIR"):
         monkeypatch.delenv(k, raising=False)

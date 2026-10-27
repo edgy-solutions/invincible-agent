@@ -108,3 +108,50 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS origin_suggestion 
 -- promotion task's payload from it. NULL for every row that reached review before this column
 -- existed. IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS extraction_ref TEXT;
+
+-- 2026-10-12 (pipeline failure must reach the row, architect directive): three columns.
+-- `failure` is JSON text (plain TEXT like `detail` -- Electric rejects typed columns here), NULL
+-- unless the row is `failed`: {reason_code, reason, step, run_id, pin_digest, failed_at}. `run_id`
+-- is the last Dagster run id a stage POST reported. `attempt` counts re-opens of a failed row
+-- (POST /ingest/{id}/retry), starting at 1. All IDEMPOTENT (IF NOT EXISTS).
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS failure TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS run_id TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS attempt INTEGER NOT NULL DEFAULT 1;
+
+-- 2026-10-13: `notice_id` is the notice's OWN id (e.g. PCN26-184) as the extraction manifest's
+-- `doc_id` names it, written when the row moves to review. DISPLAY ONLY, never an identity (it is
+-- LLM-extracted). NULL until known. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS notice_id TEXT;
+
+-- 2026-10-21 (spec 203, the leaf on the row): where the row's leaf came from (declared|title|corrected),
+-- the candidates an `awaiting_kind` hold lists (JSON list text), and who/when set the leaf last.
+-- All NULLABLE, all IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_source TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_candidates TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_set_by TEXT;
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS leaf_set_at BIGINT;
+
+-- 2026-10-21 (spec 203b): one-time, idempotent backfill. This is a WRITE of a fact, not an inference:
+-- before spec 203 the only writers of a leaf `content_kind` (pcn|pdn) were the drop's form field and
+-- the manifest adoption of the drop's sidecar kind, so every such row was declared at the drop.
+UPDATE ingest_status_projection SET leaf_source = 'declared' WHERE leaf_source IS NULL AND kind <> 'event' AND lower(content_kind) IN ('pcn','pdn');
+
+-- 2026-10-21 (spec 204, a leaf change at review replaces the task): the promotion task's GENERATION.
+-- 0 for every legacy row (its task id is `document_promotion:<id>`); a re-class or re-run at review
+-- bumps it, and generation g > 0 names the task `document_promotion:<id>:g<g>`. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS review_generation INTEGER NOT NULL DEFAULT 0;
+
+-- 2026-10-21 (a leaf set while the run is in flight): WHY a relaunched row (`received`, attempt > 1) is
+-- listed by GET /ingest/retries. `leaf_applied` = the BFF relaunched the row AS ITS LEAF (after rewriting
+-- the drop's sidecar to the leaf); NULL = a person's Retry of a failed row. NULLABLE, IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS retry_reason TEXT;
+
+-- 2026-10-22 (a finished run with no leaf waits for a kind): WHY a row sits at `awaiting_kind`
+-- (`kind_not_identified` = the run finished / the title read named no leaf). Served by the status
+-- route only while the stage is awaiting_kind. NULLABLE, IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS hold_reason TEXT;
+
+-- 2026-10-23 (spec 208, an empty extraction a steward says has parts): the relaunch must force the text
+-- fallback. TRUE once a steward answered `has_parts` on a `document_empty_confirm`; doc-tools reads it
+-- from GET /ingest/retries. NOT NULL DEFAULT FALSE, IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS force_text_fallback BOOLEAN NOT NULL DEFAULT FALSE;

@@ -95,3 +95,6 @@ ALTER TABLE human_task_projection
     ADD COLUMN IF NOT EXISTS workflow_service TEXT;
 ALTER TABLE human_task_projection
     ADD COLUMN IF NOT EXISTS promise_name TEXT;
+-- case_id: the case a task belongs to (architect ruling 2026-10-17); a holder may read that case.
+ALTER TABLE human_task_projection
+    ADD COLUMN IF NOT EXISTS case_id TEXT;

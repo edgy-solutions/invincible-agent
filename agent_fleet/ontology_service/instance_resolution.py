@@ -40,12 +40,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Mapping, Optional, Sequence
 
 
 #: THE `instance_match` VOCABULARY, enumerated here because consumers match on it.
 #:
-#:     exact | fuzzy | mixed | not_specific | empty | no_providers | timeout
+#:     exact | fuzzy | mixed | not_specific | empty | no_providers | timeout | ambiguous_in_class
 #:
 #: ONE VALUE IS PRODUCED OUTSIDE THIS MODULE. `/fill_slots` adds `wrong_class` when a name
 #: resolves cleanly and the winner's class disagrees with the slot's declared `referent` —
@@ -69,6 +69,9 @@ class InstanceCandidate:
     label: str
     score: float
     provider: str = ""
+    #: The string the provider actually matched on, when it is not the id or the label
+    #: (a CSI found by its part number). Optional; the specificity gate also reads it.
+    matched_on: str = ""
 
 
 @dataclass(frozen=True)
@@ -278,6 +281,7 @@ def decide(
     exact_threshold: float = DEFAULT_EXACT_THRESHOLD,
     min_score: float = DEFAULT_MIN_SCORE,
     identifier: str = "",
+    class_chains: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> InstanceResolutionDecision:
     """Apply the decision table to a candidate list."""
     above_floor = [c for c in candidates if c.score >= min_score]
@@ -304,9 +308,13 @@ def decide(
         )
 
     if identifier:
-        specific = [c for c in above_floor
-                    if passes_segment_specificity(identifier, c.instance_id)
-                    or passes_segment_specificity(identifier, c.label)]
+        # RULED 2026-10-16: the gate also sees the name that actually matched. The 2026-08-30
+        # rule is unchanged (a WHOLE segment, never a substring); only the set of strings it
+        # is applied to grows. `matched_on` is trusted exactly as `label` is: both are the
+        # provider's word. The case: CSI-5002 matched by part number "PN-8802" while its label
+        # ends "seal kit." -- the label's terminal name is "kit", so the gate refused a
+        # candidate the identifier named exactly.
+        specific = [c for c in above_floor if passes_candidate_specificity(identifier, c)]
         if not specific:
             return InstanceResolutionDecision(
                 subject_uri=None,
@@ -335,8 +343,149 @@ def decide(
             },
         )
 
+    # RULED 2026-10-15 (Chris): CROSS-CLASS ON ONE rdfs:subClassOf CHAIN -> THE MOST SPECIFIC
+    # CLASS WINS. PN-8802 is safety#SafetyCriticalItem (CSI-5002) AND pcn#Component, and
+    # SafetyCriticalItem rdfs:subClassOf pcn:Component: the same part, seen twice. The
+    # ruling's "when both carry the verb asked" needs no verb parameter: the subclass
+    # inherits every verb of its ancestor through subClassOf* (find_compatible_verbs walks
+    # upward), so the narrower class always carries what the broader one does. Classes NOT
+    # on one chain (or whose chain could not be read: `class_chains` empty) are untouched
+    # and fall through to today's `mixed` / `ambiguous_in_domain`.
+    axis = None
+    if class_chains:
+        above_floor, axis = narrow_to_most_specific(above_floor, class_chains, identifier)
+
+    decision = _rank_and_decide(above_floor, exact_threshold)
+    if axis is not None:
+        decision.provenance["instance_class_axis"] = axis
+    return decision
+
+
+def most_specific_class(
+    classes,
+    chains: Mapping[str, Sequence[str]],
+) -> Optional[str]:
+    """The ONE class C such that every OTHER class in `classes` is in `chains[C]`.
+
+    `chains` maps a class to itself plus its ancestors. None when there are fewer than two
+    distinct classes, when any class lacks a chain, when none qualifies, or when more than
+    one does (a cycle). `""` never qualifies and is never in a chain, so a classless
+    candidate blocks narrowing: the conservative direction.
+    """
+    distinct = set(classes)
+    if len(distinct) < 2:
+        return None
+    if any((not c) or c not in chains for c in distinct):
+        return None
+    winners = [
+        c for c in distinct
+        if all(o == c or o in chains[c] for o in distinct)
+    ]
+    return winners[0] if len(winners) == 1 else None
+
+
+# RULED 2026-10-16 (Chris): `PN_9001`, `PN-9001` and `pn 9001` are ONE identifier -- case-fold,
+# collapse runs of `-`, `_` and whitespace -- "same as saf's provider already does, so the two layers
+# agree" (`_PN_SEPARATORS` in safety_agent/instances.py, the same class). Before it, the provider
+# offered the normalised hit and this gate refused it: `PN_9001` is ONE segment, so it named no whole
+# segment of `PN-9001`. APPLIED TO `matched_on` ONLY, the field that says what the provider matched;
+# ids and labels keep the 2026-08-30 segment rule unchanged.
+_IDENTIFIER_SEPARATORS = re.compile(r"[\s_\-]+")
+
+
+def normalise_identifier(text: str) -> str:
+    return _IDENTIFIER_SEPARATORS.sub("-", (text or "").strip().casefold())
+
+
+def passes_candidate_specificity(identifier: str, c: InstanceCandidate) -> bool:
+    """The specificity gate for ONE candidate: the identifier names a whole segment of its id,
+    its label, or the string its provider says it matched on -- or equals that string once both
+    are normalised (`normalise_identifier`)."""
+    return (passes_segment_specificity(identifier, c.instance_id)
+            or passes_segment_specificity(identifier, c.label)
+            or bool(c.matched_on and (
+                passes_segment_specificity(identifier, c.matched_on)
+                or normalise_identifier(identifier) == normalise_identifier(c.matched_on))))
+
+
+def narrow_to_most_specific(
+    candidates: list[InstanceCandidate],
+    chains: Mapping[str, Sequence[str]],
+    identifier: str = "",
+) -> tuple[list[InstanceCandidate], Optional[dict]]:
+    """Keep only the most specific class's candidates when the classes share one chain."""
+    classes = {c.class_uri for c in candidates}
+    if len(classes) < 2:
+        return candidates, None
+    kept = most_specific_class(classes, chains)
+    if kept is None:
+        return candidates, None
+    # THE AXIS NEVER NARROWS TO A CLASS THE GATE WILL EMPTY. Measured 2026-10-16: with the
+    # narrowing first, a SafetyCriticalItem whose names the identifier does not segment-match
+    # displaced the Component that does, and the gate then refused the survivor (`not_specific`
+    # where the base answered `ambiguous_in_domain`). The subclass wins only when it has a
+    # candidate the gate keeps; otherwise nothing narrows and the base answer stands.
+    if identifier and not any(
+            c.class_uri == kept and passes_candidate_specificity(identifier, c) for c in candidates):
+        return candidates, None
+    narrowed = [c for c in candidates if c.class_uri == kept]
+    return narrowed, {
+        "kept_class": kept,
+        "dropped_classes": sorted(classes - {kept}),
+        "dropped_n": len(candidates) - len(narrowed),
+    }
+
+
+def _matched_on_of(c: InstanceCandidate) -> dict:
+    """`matched_on` rides on a menu candidate only when the provider set it, so a candidate from
+    a provider that never sets it keeps the exact dict it had before a slot could bind on it."""
+    return {"matched_on": c.matched_on} if c.matched_on else {}
+
+
+def _rank_and_decide(
+    above_floor: list[InstanceCandidate], exact_threshold: float
+) -> InstanceResolutionDecision:
+    # The fan-out asks two terms, so one instance can arrive twice: dedupe by
+    # (class, instance) keeping the best score. That is not a tie.
+    best: dict[tuple[str, str], InstanceCandidate] = {}
+    for c in above_floor:
+        k = (c.class_uri, c.instance_id)
+        if k not in best or c.score > best[k].score:
+            best[k] = c
+    above_floor = list(best.values())
     above_floor = sorted(above_floor, key=lambda c: c.score, reverse=True)
     top = above_floor[0]
+
+    # RULED 2026-10-15 (Chris): A SAME-CLASS TIE ASKS. Two or more DISTINCT instance_ids of
+    # ONE class sharing the top score used to take the first silently (exact and single-class
+    # fuzzy branches). Checked BEFORE the exact branch. `subject_uri` is the CLASS on
+    # purpose: the class is decided and /resolve routes on it; only the instance is not.
+    # /fill_slots binds only when `instance_resolved` is true and builds its menu from
+    # `instance_top_candidates`. Cross-class ties of UNRELATED classes are unchanged
+    # (`mixed` / `ambiguous_in_domain`).
+    tied = [c for c in above_floor if abs(c.score - top.score) <= 1e-9]
+    if len({c.instance_id for c in tied}) > 1 and len({c.class_uri for c in tied}) == 1:
+        return InstanceResolutionDecision(
+            subject_uri=top.class_uri,
+            confidence=0.0,
+            provenance={
+                "instance_resolved": False,
+                "instance_match": "ambiguous_in_class",
+                "instance_n": len(above_floor),
+                "instance_class_uri": top.class_uri,
+                "instance_score": top.score,
+                "instance_top_candidates": [
+                    {
+                        "instance_id": c.instance_id,
+                        "class_uri": c.class_uri,
+                        "label": c.label,
+                        "score": c.score,
+                        **_matched_on_of(c),
+                    }
+                    for c in sorted(tied, key=lambda c: c.instance_id)
+                ],
+            },
+        )
 
     if top.score >= exact_threshold:
         return InstanceResolutionDecision(
@@ -350,6 +499,7 @@ def decide(
                 "instance_id": top.instance_id,
                 "instance_label": top.label,
                 "instance_score": top.score,
+                **({"instance_matched_on": top.matched_on} if top.matched_on else {}),
             },
         )
 
@@ -366,6 +516,7 @@ def decide(
                 "instance_id": top.instance_id,
                 "instance_label": top.label,
                 "instance_score": top.score,
+                **({"instance_matched_on": top.matched_on} if top.matched_on else {}),
             },
         )
 
@@ -383,6 +534,7 @@ def decide(
                     "class_uri": c.class_uri,
                     "label": c.label,
                     "score": c.score,
+                    **_matched_on_of(c),
                 }
                 for c in above_floor[:3]
             ],
@@ -519,3 +671,86 @@ def instance_not_found_message(identifier: str) -> str:
         f"returned no match. Check that the identifier is exact, or ask "
         f"about its general category instead of the specific instance."
     )
+
+
+# ── ONE IDENTIFIER NAMESPACE, ONE CLAIMANT. RULED 2026-10-12 (architect, lane/saf's Q3). ──
+#
+# "An identifier namespace (a prefix pattern) is claimed by exactly one engine, declared in that
+# engine's registration. A resolver refuses a fuzzy match across namespaces."
+#
+# MEASURED on sandbox, rev e977c32b, engine-o's own `/resolve_instance` (the pcn provider):
+#
+#     'HAZ-1004' -> HX3120004Q    0.556   matching blocks 'h', '1', '004'
+#                   AZV5001RA4-7  0.5     matching blocks 'az', '00', '4'
+#     'HAZ-1003' -> (nothing)             0.444 and 0.4: the trailing '3' matches neither
+#
+# Two part numbers sharing three characters with a hazard id cleared the pcn floor on a difflib
+# ratio, put `pcn#Component` beside `safety#Hazard` in SUSTAINMENT, and `ambiguous_in_domain`
+# refused a hazard that Engine S resolves exactly. HAZ-1003 bound and HAZ-1004 did not because of
+# ONE DIGIT. Neither scorer is wrong about its own vocabulary, and no floor inside engine-o's
+# scorer separates 0.556 from its genuine fuzzy hits -- so, as with domain scoping, the rule
+# lives here, where every provider's claim is seen at once.
+#
+# THE OWNER'S DECLARATION IS THE ONLY SOURCE. Nothing here names a prefix or an engine: the
+# namespaces come from the `id_namespaces` each provider declared at registration. A provider
+# that declares none claims no namespace and loses nothing.
+#
+# FUZZY IS REFUSED, EXACT IS NOT. A non-owner's candidate whose name IS the term (label or IRI
+# local name, case-insensitive) is kept: that is a real second claim on the same string, and the
+# ask that follows is the right answer. What is refused is a near-miss in someone else's namespace.
+
+_NS_TOKEN_SPLIT = re.compile(r"[\s,;:()\[\]{}<>'\"?!]+")
+
+
+def declared_id_namespaces(value) -> list[str]:
+    """A provider's declared namespaces, read off its registry row.
+
+    Only a LIST of strings is a declaration. A bare string is refused rather than iterated:
+    ``list("HAZ-")`` is ``['H', 'A', 'Z', '-']``, four one-character prefixes that would claim
+    every identifier beginning with H or A -- the container-traded-for-elements defect. Blank and
+    whitespace-bearing entries are dropped: an empty prefix would claim every identifier.
+    """
+    if not isinstance(value, (list, tuple)):
+        return []
+    out = []
+    for p in value:
+        if isinstance(p, str):
+            p = p.strip()
+            if p and not any(ch.isspace() for ch in p):
+                out.append(p)
+    return out
+
+
+def claimed_namespaces(terms, resolvers) -> dict[str, frozenset[str]]:
+    """``{prefix: providers that declared it}`` for each declared prefix that some token of some
+    lookup term begins with (case-insensitive). More than one provider under one prefix is a
+    CONTESTED namespace; every declarer is treated as an owner, and the caller names it."""
+    owners: dict[str, set[str]] = {}
+    for r in resolvers or []:
+        for p in declared_id_namespaces(r.get("id_namespaces")):
+            owners.setdefault(p.upper(), set()).add(r.get("provider") or "unknown")
+    if not owners:
+        return {}
+    tokens = {tok.upper() for t in terms or [] for tok in _NS_TOKEN_SPLIT.split(str(t or "")) if tok}
+    return {p: frozenset(o) for p, o in owners.items() if any(tok.startswith(p) for tok in tokens)}
+
+
+def _name_is_term(c: "InstanceCandidate", names: set[str]) -> bool:
+    local = str(c.instance_id or "").rsplit("/", 1)[-1].rsplit("#", 1)[-1]
+    return str(c.label or "").strip().lower() in names or local.strip().lower() in names
+
+
+def refuse_cross_namespace(candidates, *, terms, resolvers):
+    """Drop every candidate a NON-OWNER offered fuzzily for a term in a declared namespace.
+
+    Returns ``(kept, refused, claimed)``. ``claimed`` is :func:`claimed_namespaces`'s answer, so
+    the caller can log what decided it; when it is empty nothing is refused."""
+    claimed = claimed_namespaces(terms, resolvers)
+    if not claimed:
+        return list(candidates), [], {}
+    owners = set().union(*claimed.values())
+    names = {str(t).strip().lower() for t in terms or [] if str(t or "").strip()}
+    kept, refused = [], []
+    for c in candidates:
+        (kept if c.provider in owners or _name_is_term(c, names) else refused).append(c)
+    return kept, refused, claimed

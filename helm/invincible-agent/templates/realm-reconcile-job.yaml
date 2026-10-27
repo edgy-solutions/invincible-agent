@@ -21,6 +21,12 @@ human/UI clients and identities created by other means, and a pruning identity r
 credential-revoking action that must never ride a routine upgrade hook. Removal stays a
 deliberate human act, exactly like a grant removal.
 
+ONE DECLARED EXCEPTION to "additive": the cortex-ui client's redirect set (redirectUris,
+webOrigins, post.logout.redirect.uris) is CONVERGED to the declared/derived set
+(keycloak.cortexUiClient), because a wildcard there is a token-theft hole on a public client and
+leaving it is not neutral. Nothing else on any existing client is rewritten, and when no set is
+declared or derivable the live client is left alone (with a WARN if it holds a wildcard).
+
 READBACK GATES THE JOB, per the topaz-seed pattern: after converging, every declared client is
 re-read and its mapper verified. A failure exits non-zero so the Job fails LOUDLY — a
 reconciler that silently half-applies is how the original hand-seeded state got tolerated.
@@ -60,6 +66,21 @@ spec:
               value: {{ .Values.keycloak.auth.adminUser | quote }}
             - name: KC_ADMIN_PASSWORD
               value: {{ .Values.keycloak.auth.adminPassword | quote }}
+            {{- /* Broker client secrets: ONLY via secretKeyRef, never a value or a ConfigMap. */}}
+            {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}
+            {{- if include "invincible-agent.brokerActive" $b }}
+            - name: BROKER_{{ $bn | upper }}_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- if $b.existingSecret }}
+                  name: {{ $b.existingSecret | quote }}
+                  key: {{ $b.secretKey | default "client-secret" | quote }}
+                  {{- else }}
+                  name: {{ $.Release.Name }}-secrets
+                  key: {{ printf "broker-%s-client-secret" $bn | quote }}
+                  {{- end }}
+            {{- end }}
+            {{- end }}
           command: ["sh", "-c"]
           args:
             - |
@@ -129,7 +150,11 @@ spec:
               rc=0
 
               {{- $claim := .Values.keycloak.authzClaim | default "email" }}
+              {{- $cui := include "invincible-agent.cortexUiRedirects" . | fromJson }}
+              {{- include "invincible-agent.validateBrokers" $ }}
               {{- include "invincible-agent.validateServiceClients" $ }}
+              {{- include "invincible-agent.validatePublicClients" $ }}
+              {{- include "invincible-agent.validateRetiredUsers" $ }}
               {{- $allServiceClients := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
               {{- range $c := $allServiceClients }}
               {{- $kind := $c.kind | default "service" }}
@@ -189,11 +214,16 @@ spec:
               else
                 # Present. Repair a MISSING mapper — the exact defect found in sandbox, where a
                 # hand-made client carried none and its token's authz_id fell back to the opaque
-                # Keycloak `sub` UUID. Does not overwrite an existing mapper: an operator who
-                # deliberately changed one should not have it silently reverted by an upgrade.
-                HAS=$(curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \
-                      | grep -c 'authz-id-svc' || true)
-                if [ "$HAS" = "0" ]; then
+                # Keycloak `sub` UUID. Ownership rule for an EXISTING mapper: a mapper whose
+                # claim.value is the chart's own declared authzId is the chart's, so a claim.name
+                # left over from before a flip is migrated in place (PUT, same id); one with any
+                # other value is the operator's and is never touched (the readback still refuses it).
+                # No jq in this image, and key order inside an object is not guaranteed: split the
+                # one-line array into one object per line at "},{" (only array elements meet there;
+                # a config object is never followed by "{"), then pick fields by key, not position.
+                MAPS=$(curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" || true)
+                MAP=$(printf '%s' "$MAPS" | sed 's/},{/}\n{/g' | grep '"name":"authz-id-svc"' | head -1 || true)
+                if [ -z "$MAP" ]; then
                   echo "   present, mapper MISSING -> adding"
                   curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
                     "$API/clients/$UUID/protocol-mappers/models" -d '{
@@ -210,7 +240,29 @@ spec:
                       }
                     }'
                 else
-                  echo "   present, mapper ok"
+                  MID=$(printf '%s' "$MAP" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+                  OLDNAME=$(printf '%s' "$MAP" | sed -n 's/.*"claim\.name":"\([^"]*\)".*/\1/p')
+                  OLDVAL=$(printf '%s' "$MAP" | sed -n 's/.*"claim\.value":"\([^"]*\)".*/\1/p')
+                  if [ -n "$MID" ] && [ "$OLDVAL" = {{ $c.authzId | quote }} ] && [ "$OLDNAME" != {{ $claim | quote }} ]; then
+                    curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" \
+                      "$API/clients/$UUID/protocol-mappers/models/$MID" -d '{
+                        "id": "'"$MID"'",
+                        "name": "authz-id-svc",
+                        "protocol": "openid-connect",
+                        "protocolMapper": "oidc-hardcoded-claim-mapper",
+                        "config": {
+                          "claim.name": {{ $claim | quote }},
+                          "claim.value": {{ $c.authzId | quote }},
+                          "jsonType.label": "String",
+                          "access.token.claim": "true",
+                          "id.token.claim": "true",
+                          "userinfo.token.claim": "true"
+                        }
+                      }'
+                    echo "   present, mapper claim migrated $OLDNAME -> {{ $claim }}"
+                  else
+                    echo "   present, mapper ok"
+                  fi
                 fi
                 {{- if eq $kind "delegate" }}
                 # Delegate clients also carry initiator_kind — same repair discipline: create
@@ -240,7 +292,251 @@ spec:
               fi
               {{- end }}
 
+              # ── LOCAL HUMAN USERS — create-if-absent, under ANY authzClaim ──
+              # The realm import never re-runs on a live realm, so a local human added to
+              # keycloak.localHumanUsers after the first install would otherwise never exist.
+              # Same convention as the import (keycloak-configmap.yaml): password = username,
+              # non-temporary. The attribute (ensure_attr) stays in the claim branch above.
+              {{- range $u := .Values.keycloak.localHumanUsers }}
+              HU={{ $u.username | quote }}
+              echo "-- local human $HU: exists?"
+              if curl -sf -H "$AUTH" "$API/users?username=$HU&exact=true" | grep -q '"id"'; then
+                echo "   present"
+              else
+                echo "   absent -> creating (demo password = username, non-temporary)"
+                curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" "$API/users" \
+                  -d {{ dict "username" $u.username "email" $u.email "emailVerified" true "enabled" true "credentials" (list (dict "type" "password" "value" $u.username "temporary" false)) | toJson | squote }} \
+                  || { echo "   FAIL: could not create $HU"; rc=1; }
+                echo "   created"
+              fi
+              {{- end }}
+
               # ── NON-INTERACTIVE USERS (A1) — additive, created WITHOUT credentials ──
+              {{- if ne $claim "email" }}
+              # ── AUTHZ ATTRIBUTE — every species carries the SAME claim ({{ $claim }}) ──
+              # A local human has no hardcoded-claim mapper, so its authz identity is a USER
+              # ATTRIBUTE named after the claim (= its email), emitted by the cortex-ui client
+              # mapper below. A user attribute outside the declarative user profile is DROPPED by
+              # Keycloak unless the realm's unmanagedAttributePolicy allows it, and ENABLED would
+              # let a user edit their own authz identity from the account console: ADMIN_EDIT only.
+              echo "-- user profile: unmanaged attribute policy"
+              PROF=$(curl -sf -H "$AUTH" "$API/users/profile")
+              case "$PROF" in
+                *'"unmanagedAttributePolicy":"ADMIN_EDIT"'*) echo "   ok (ADMIN_EDIT)" ;;
+                *'"unmanagedAttributePolicy"'*)
+                  echo "   FAIL: policy is set to something other than ADMIN_EDIT; not overwritten."
+                  echo "         ENABLED would let a user edit their own authz identity; ADMIN_VIEW or"
+                  echo "         unset would drop the attribute. Set it to ADMIN_EDIT, then re-run."
+                  rc=1 ;;
+                *)
+                  echo "   absent -> setting ADMIN_EDIT"
+                  curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" "$API/users/profile" \
+                    -d "$(printf '%s' "$PROF" | sed 's/^{/{"unmanagedAttributePolicy":"ADMIN_EDIT",/')" ;;
+              esac
+
+              # ensure_attr USERNAME VALUE -- idempotent, additive: sets the attribute when it is
+              # absent, never overwrites a different value (the readback then fails on it).
+              ensure_attr() {
+                _uid=$(curl -sf -H "$AUTH" "$API/users?username=$1&exact=true" \
+                       | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+                if [ -z "$_uid" ]; then echo "   user $1 absent: attribute not set"; return 0; fi
+                _rep=$(curl -sf -H "$AUTH" "$API/users/$_uid")
+                case "$_rep" in
+                  *'"{{ $claim }}":["'"$2"'"]'*) echo "   attribute ok on $1"; return 0 ;;
+                  *'"{{ $claim }}":['*) echo "   attribute on $1 holds a DIFFERENT value; not overwritten"; return 0 ;;
+                  *'"attributes":{}'*)
+                    _new=$(printf '%s' "$_rep" | sed 's|"attributes":{}|"attributes":{"{{ $claim }}":["'"$2"'"]}|') ;;
+                  *'"attributes":{'*)
+                    _new=$(printf '%s' "$_rep" | sed 's|"attributes":{|"attributes":{"{{ $claim }}":["'"$2"'"],|') ;;
+                  *)
+                    _new=$(printf '%s' "$_rep" | sed 's|^{|{"attributes":{"{{ $claim }}":["'"$2"'"]},|') ;;
+                esac
+                curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" "$API/users/$_uid" -d "$_new"
+                echo "   attribute set on $1"
+              }
+
+              echo "-- cortex-ui authz attribute mapper"
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -z "$CUI" ]; then
+                echo "   FAIL: client cortex-ui absent"; rc=1
+              elif [ "$(curl -sf -H "$AUTH" "$API/clients/$CUI/protocol-mappers/models" | grep -c 'authz-id-user' || true)" = "0" ]; then
+                echo "   absent -> adding"
+                curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                  "$API/clients/$CUI/protocol-mappers/models" -d '{
+                    "name": "authz-id-user",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-usermodel-attribute-mapper",
+                    "config": {
+                      "user.attribute": {{ $claim | quote }},
+                      "claim.name": {{ $claim | quote }},
+                      "jsonType.label": "String",
+                      "access.token.claim": "true",
+                      "id.token.claim": "true",
+                      "userinfo.token.claim": "true"
+                    }
+                  }'
+              else
+                echo "   present"
+              fi
+
+              {{- end }}
+
+              # ── cortex-ui REDIRECT SET — the one converged field set (see SCOPE above) ──
+              # A wildcard redirect on this client lets anyone who gets a user to click a link collect
+              # their token. Empty declared/derived set = the live client is left alone, with a WARN.
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+              {{- if not $cui.redirectUris }}
+              echo "-- cortex-ui redirect set: undeclared, live client unchanged"
+              if [ -n "$CUI" ] && curl -sf -H "$AUTH" "$API/clients/$CUI" \
+                   | grep -o '"redirectUris":\[[^]]*\]' | grep -q '"\*"'; then
+                echo "   WARN cortex-ui: live redirectUris holds a wildcard"
+              fi
+              {{- else }}
+              echo "-- cortex-ui redirect set"
+              WANT_RA={{ printf "\"redirectUris\":%s" ($cui.redirectUris | toJson) | squote }}
+              WANT_OA={{ printf "\"webOrigins\":%s" ($cui.webOrigins | toJson) | squote }}
+              WANT_LA={{ if $cui.postLogoutRedirectUris }}{{ printf "\"post.logout.redirect.uris\":%s" (join "##" $cui.postLogoutRedirectUris | toJson) | squote }}{{ else }}''{{ end }}
+              # Keycloak holds redirectUris / webOrigins as SETS and serves them in its own order:
+              # compare the sorted members, never the array text (0.4.69 failed its readback on order)
+              setof() { printf '%s' "$1" | sed -e 's/^"[^"]*":\[//' -e 's/\]$//' \
+                -e "s/\",\"/\"$(printf '\001')\"/g" | tr '\001' '\n' | LC_ALL=C sort -u; }
+              if [ -z "$CUI" ]; then
+                echo "   FAIL cortex-ui: client absent, redirect set not converged"; rc=1
+              else
+                LIVE=$(curl -sf -H "$AUTH" "$API/clients/$CUI" || true)
+                LIVE_RA=$(printf '%s' "$LIVE" | grep -o '"redirectUris":\[[^]]*\]' | head -1 || true)
+                LIVE_OA=$(printf '%s' "$LIVE" | grep -o '"webOrigins":\[[^]]*\]' | head -1 || true)
+                LIVE_LA=$(printf '%s' "$LIVE" | grep -o '"post.logout.redirect.uris":"[^"]*"' | head -1 || true)
+                if [ -z "$LIVE" ]; then
+                  echo "   FAIL cortex-ui: could not read the live client"; rc=1
+                elif [ "$(setof "$LIVE_RA")" = "$(setof "$WANT_RA")" ] && [ "$(setof "$LIVE_OA")" = "$(setof "$WANT_OA")" ] \
+                     && { [ -z "$WANT_LA" ] || [ "$LIVE_LA" = "$WANT_LA" ]; }; then
+                  echo "   cortex-ui redirect set: as declared"
+                else
+                  # the sed delimiter is a control character and replacements are escaped: no URI can break it
+                  D=$(printf '\001')
+                  esc() { printf '%s' "$1" | sed 's/[&\\]/\\&/g'; }
+                  NEW=$(printf '%s' "$LIVE" | sed \
+                    -e "s${D}\"redirectUris\":\[[^]]*\]${D}$(esc "$WANT_RA")${D}" \
+                    -e "s${D}\"webOrigins\":\[[^]]*\]${D}$(esc "$WANT_OA")${D}")
+                  if [ -n "$WANT_LA" ]; then
+                    case "$NEW" in
+                      *'"post.logout.redirect.uris":"'*)
+                        NEW=$(printf '%s' "$NEW" | sed "s${D}\"post.logout.redirect.uris\":\"[^\"]*\"${D}$(esc "$WANT_LA")${D}") ;;
+                      *'"attributes":{}'*)
+                        NEW=$(printf '%s' "$NEW" | sed "s${D}\"attributes\":{}${D}\"attributes\":{$(esc "$WANT_LA")}${D}") ;;
+                      *'"attributes":{'*)
+                        NEW=$(printf '%s' "$NEW" | sed "s${D}\"attributes\":{${D}\"attributes\":{$(esc "$WANT_LA"),${D}") ;;
+                      *)
+                        NEW=$(printf '%s' "$NEW" | sed "s${D}}[[:space:]]*\$${D},\"attributes\":{$(esc "$WANT_LA")}}${D}") ;;
+                    esac
+                  fi
+                  if curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" "$API/clients/$CUI" -d "$NEW"; then
+                    echo "   cortex-ui redirect set: converged (was ${LIVE_RA#*:})"
+                  else
+                    echo "   FAIL cortex-ui: redirect set PUT failed"; rc=1
+                  fi
+                fi
+              fi
+              {{- end }}
+              # ── end cortex-ui redirect set
+              {{- range $pc := (.Values.keycloak.publicClients | default list) }}
+              PCID={{ $pc.clientId | quote }}
+              echo "-- public client $PCID"
+              PCU=$(curl -sf -H "$AUTH" "$API/clients?clientId=$PCID" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -z "$PCU" ]; then
+                echo "   absent -> creating"
+                curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                  "$API/clients" -d '{
+                    "clientId": {{ $pc.clientId | quote }},
+                    "enabled": true,
+                    "publicClient": true,
+                    "standardFlowEnabled": true,
+                    "implicitFlowEnabled": false,
+                    "directAccessGrantsEnabled": false,
+                    "serviceAccountsEnabled": false,
+                    "fullScopeAllowed": true,
+                    "redirectUris": [{{ range $i, $r := $pc.redirectUris }}{{ if $i }}, {{ end }}{{ $r | quote }}{{ end }}],
+                    "webOrigins": [{{ range $i, $w := ($pc.webOrigins | default list) }}{{ if $i }}, {{ end }}{{ $w | quote }}{{ end }}],
+                    "attributes": {
+                      "pkce.code.challenge.method": "S256",
+                      "post.logout.redirect.uris": {{ join "##" $pc.redirectUris | quote }}
+                    },
+                    "protocolMappers": [
+                    {{- if ne $claim "email" }}{
+                      "name": "authz-id-user",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-usermodel-attribute-mapper",
+                      "config": {
+                        "user.attribute": {{ $claim | quote }},
+                        "claim.name": {{ $claim | quote }},
+                        "jsonType.label": "String",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "userinfo.token.claim": "true"
+                      }
+                    }, {{ end }}{
+                      "name": "audience-self",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-audience-mapper",
+                      "config": {
+                        "included.client.audience": {{ $pc.clientId | quote }},
+                        "access.token.claim": "true",
+                        "id.token.claim": "false"
+                      }
+                    }]
+                  }' && echo "   created" || { echo "   FAIL $PCID: create failed"; rc=1; }
+              else
+                echo "   present"
+                # AUDIENCE: the workbench api accepts a token only when aud names its own client (ruled b5).
+                # Keyed on what the mapper EMITS, not its name: any mapper already putting this client in
+                # aud satisfies it, and a wrong-but-same-named one is left for the readback to refuse.
+                if [ "$(curl -sf -H "$AUTH" "$API/clients/$PCU/protocol-mappers/models" | grep -cF '"included.client.audience":"{{ $pc.clientId }}"' || true)" = "0" ]; then
+                  echo "   audience mapper absent -> adding"
+                  curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                    "$API/clients/$PCU/protocol-mappers/models" -d '{
+                      "name": "audience-self",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-audience-mapper",
+                      "config": {
+                        "included.client.audience": {{ $pc.clientId | quote }},
+                        "access.token.claim": "true",
+                        "id.token.claim": "false"
+                      }
+                    }' || { echo "   FAIL $PCID: could not add audience-self mapper"; rc=1; }
+                fi
+                {{- if ne $claim "email" }}
+                if [ "$(curl -sf -H "$AUTH" "$API/clients/$PCU/protocol-mappers/models" | grep -c 'authz-id-user' || true)" = "0" ]; then
+                  echo "   authz-id-user mapper absent -> adding"
+                  curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                    "$API/clients/$PCU/protocol-mappers/models" -d '{
+                      "name": "authz-id-user",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-usermodel-attribute-mapper",
+                      "config": {
+                        "user.attribute": {{ $claim | quote }},
+                        "claim.name": {{ $claim | quote }},
+                        "jsonType.label": "String",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "userinfo.token.claim": "true"
+                      }
+                    }' || { echo "   FAIL $PCID: could not add authz-id-user mapper"; rc=1; }
+                fi
+                {{- end }}
+              fi
+              {{- end }}
+              {{- if ne $claim "email" }}
+
+              {{- range $u := .Values.keycloak.localHumanUsers }}
+              echo "-- local human {{ $u.username }}"
+              ensure_attr {{ $u.username | quote }} {{ include "invincible-agent.localAuthzId" (dict "root" $ "username" $u.username "email" $u.email) | quote }}
+              {{- end }}
+              {{- end }}
+
               {{- range $u := .Values.keycloak.nonInteractiveUsers }}
               UN={{ $u.username | quote }}
               echo "-- user $UN"
@@ -252,10 +548,260 @@ spec:
                   -d {{ dict "username" $u.username "email" $u.email "emailVerified" true "enabled" true "firstName" "Non-interactive" "lastName" $u.username | toJson | squote }}
                 echo "   created"
               fi
+              {{- if ne $claim "email" }}
+              ensure_attr $UN {{ include "invincible-agent.localAuthzId" (dict "root" $ "username" $u.username "email" $u.email) | quote }}
+              {{- end }}
+              {{- end }}
+
+              {{- range $r := (.Values.keycloak.retiredUsers | default list) }}
+              # RETIRED USER: removed only if present by EXACT username and carrying no federated link.
+              RU={{ $r | quote }}
+              echo "-- retired user $RU"
+              RID=$(curl -sf -H "$AUTH" "$API/users?username=$RU&exact=true" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+              if [ -z "$RID" ]; then
+                echo "   absent"
+              else
+                FED=$(curl -sf -H "$AUTH" "$API/users/$RID/federated-identity" | tr -d '[:space:]' || true)
+                if [ "$FED" = "[]" ]; then
+                  if curl -sf -X DELETE -H "$AUTH" "$API/users/$RID" >/dev/null; then
+                    echo "   deleted (no federated link)"
+                  else
+                    echo "   DELETE refused"
+                  fi
+                else
+                  echo "   KEPT: has a federated identity link (or its state is unknown): a brokered shadow is never touched"
+                fi
+              fi
+              {{- end }}
+
+              {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}
+              {{- if and $b.enabled (not $b.existingSecret) (not $b.clientSecret) }}
+              echo "-- NOTE: broker {{ $b.alias | default $bn }} enabled but no existingSecret or clientSecret: skipped"
+              {{- end }}
+              {{- if include "invincible-agent.brokerActive" $b }}
+              {{- $alias := $b.alias | default $bn }}
+              {{- $flow := printf "%s-first-login" $alias }}
+              {{- $secretEnv := printf "BROKER_%s_CLIENT_SECRET" ($bn | upper) }}
+              {{- $issuer := $b.issuer | trimSuffix "/" }}
+
+              # ── IDENTITY BROKER {{ $alias }} — upstream principals sign in through this realm ──
+              # Lives HERE and not in the realm import: the import is a ConfigMap and cannot carry
+              # the client secret. The brokered user's {{ $claim }} attribute is the upstream's RAW
+              # `sub`, and that is what grants key on.
+              echo "== broker {{ $alias }} =="
+              BALIAS={{ $alias | quote }}
+              BFLOW={{ $flow | quote }}
+              BSECRET="${{"{"}}{{ $secretEnv }}:-}"
+              if [ -z "$BSECRET" ]; then
+                echo "   FAIL: {{ $secretEnv }} is empty (Secret {{ $b.existingSecret | default (printf "%s-secrets" $.Release.Name) }} key {{ if $b.existingSecret }}{{ $b.secretKey | default "client-secret" }}{{ else }}broker-{{ $bn }}-client-secret{{ end }})"
+                exit 1
+              fi
+
+              # First-login flow: a copy of the built-in with review-profile and EVERY
+              # link-existing-account path disabled, so a brokered login can never attach to a
+              # local account by email (account-takeover guard).
+              is_guarded() {
+                case "$1" in
+                  *'"providerId":"idp-review-profile"'*|*'"providerId":"idp-auto-link"'*|*'"providerId":"idp-confirm-link"'*|*'"providerId":"idp-email-verification"'*|*'"providerId":"idp-username-password-form"'*|*'"providerId":"idp-detect-existing-broker-user"'*|*'"displayName":"Handle Existing Account"'*|*'"displayName":"Account verification options"'*|*'"displayName":"Verify Existing Account by Re-authentication"'*) return 0 ;;
+                esac
+                return 1
+              }
+              echo "-- first-login flow $BFLOW"
+              if curl -sf -H "$AUTH" "$API/authentication/flows" | grep -q "\"alias\":\"$BFLOW\""; then
+                echo "   present"
+              else
+                echo "   absent -> copying 'first broker login'"
+                curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                  "$API/authentication/flows/first%20broker%20login/copy" -d "{\"newName\":\"$BFLOW\"}"
+              fi
+              EXF=/tmp/broker-exec.$$
+              curl -sf -H "$AUTH" "$API/authentication/flows/$BFLOW/executions" \
+                | sed 's/^\[//; s/\]$//; s/},{/}\n{/g' > "$EXF"
+              while IFS= read -r line || [ -n "$line" ]; do
+                if is_guarded "$line"; then
+                  case "$line" in
+                    *'"requirement":"DISABLED"'*) ;;
+                    *)
+                      curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" \
+                        "$API/authentication/flows/$BFLOW/executions" \
+                        -d "$(printf '%s' "$line" | sed 's/"requirement":"[A-Z]*"/"requirement":"DISABLED"/')" >/dev/null
+                      echo "   disabled: $(printf '%s' "$line" | grep -o '"\(providerId\|displayName\)":"[^"]*"' | head -1)" ;;
+                  esac
+                fi
+              done < "$EXF"
+              rm -f "$EXF"
+
+              # The IdP itself: discovery from the issuer, upsert (PUT when present, POST when absent).
+              echo "-- identity provider $BALIAS"
+              DISC=$(curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                "$API/identity-provider/import-config" \
+                -d '{"providerId":"oidc","fromUrl":"{{ $issuer }}/.well-known/openid-configuration"}') \
+                || { echo "   FAIL: discovery from the issuer failed"; exit 1; }
+              CFG=$(printf '%s' "$DISC" | sed 's/}[[:space:]]*$//')
+              case "$CFG" in *'"issuer"'*) ISSKV="" ;; *) ISSKV=',"issuer":"{{ $issuer }}"' ;; esac
+              BODY='{"alias":"'"$BALIAS"'","displayName":{{ $b.displayName | default $alias | quote }},"providerId":"oidc","enabled":true,"trustEmail":false,"storeToken":false,"addReadTokenRoleOnCreate":false,"firstBrokerLoginFlowAlias":"'"$BFLOW"'","config":'"$CFG"',"clientId":{{ $b.clientId | quote }},"clientSecret":"'"$BSECRET"'","clientAuthMethod":"client_secret_basic","pkceEnabled":"true","pkceMethod":"S256","syncMode":"FORCE","defaultScope":"openid"'"$ISSKV"'}}'
+              CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$API/identity-provider/instances/$BALIAS")
+              if [ "$CODE" = "200" ]; then
+                curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" "$API/identity-provider/instances/$BALIAS" -d "$BODY"
+                echo "   present -> updated"
+              else
+                curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" "$API/identity-provider/instances" -d "$BODY"
+                echo "   absent -> created"
+              fi
+
+              # Mappers (additive; an existing mapper is never overwritten, the readback judges it).
+              MAPS=$(curl -sf -H "$AUTH" "$API/identity-provider/instances/$BALIAS/mappers")
+              echo "-- mapper {{ $alias }}-sub-to-authz-id (sub -> {{ $claim }})"
+              case "$MAPS" in
+                *'{{ $alias }}-sub-to-authz-id'*) echo "   present" ;;
+                *)
+                  curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                    "$API/identity-provider/instances/$BALIAS/mappers" -d '{
+                      "name": "{{ $alias }}-sub-to-authz-id",
+                      "identityProviderAlias": "{{ $alias }}",
+                      "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+                      "config": {
+                        "syncMode": "FORCE",
+                        "claim": "sub",
+                        "user.attribute": {{ $claim | quote }}
+                      }
+                    }'
+                  echo "   created" ;;
+              esac
+              echo "-- mapper {{ $alias }}-username"
+              case "$MAPS" in
+                *'{{ $alias }}-username'*) echo "   present" ;;
+                *)
+                  curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                    "$API/identity-provider/instances/$BALIAS/mappers" -d '{
+                      "name": "{{ $alias }}-username",
+                      "identityProviderAlias": "{{ $alias }}",
+                      "identityProviderMapper": "oidc-username-idp-mapper",
+                      "config": {
+                        "syncMode": "IMPORT",
+                        "template": "{{ $alias }}.${CLAIM.preferred_username}",
+                        "target": "LOCAL"
+                      }
+                    }'
+                  echo "   created" ;;
+              esac
+              {{- end }}
               {{- end }}
 
               # ── READBACK GATE — the claim is not "we applied it", it is "it is there" ──
               echo "== readback =="
+              {{- if ne $claim "email" }}
+              # Every species carries the SAME claim name. The chart's own authz-id-svc mapper (value =
+              # the declared authzId) is migrated above; an operator's mapper (any other value) is not,
+              # so it still emits the old name: that is a FAILURE here, not a silent split of the
+              # identity contract. Repair is a deliberate human act (fix or delete that mapper, re-run).
+              {{- range $c := $allServiceClients }}
+              SVCID={{ $c.clientId | quote }}
+              UUID=$(curl -sf -H "$AUTH" "$API/clients?clientId=$SVCID" \
+                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -n "$UUID" ] && ! curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \
+                     | grep -q '"claim.name":"{{ $claim }}"'; then
+                if curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \
+                     | grep -q '"claim.value":"{{ $c.authzId }}"'; then
+                  echo "   FAIL $SVCID: authz-id-svc does not emit claim {{ $claim }} (stale mapper from before the flip)"; rc=1
+                else
+                  echo "   FAIL $SVCID: authz-id-svc does not emit claim {{ $claim }} (operator-owned mapper, not migrated)"; rc=1
+                fi
+              fi
+              {{- end }}
+              if [ "$(curl -sf -H "$AUTH" "$API/users/profile" | grep -c '"unmanagedAttributePolicy":"ADMIN_EDIT"' || true)" = "0" ]; then
+                echo "   FAIL user profile: unmanagedAttributePolicy is not ADMIN_EDIT"; rc=1
+              fi
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -z "$CUI" ] || ! curl -sf -H "$AUTH" "$API/clients/$CUI/protocol-mappers/models" \
+                   | grep -q '"claim.name":"{{ $claim }}"'; then
+                echo "   FAIL cortex-ui: no mapper emits claim {{ $claim }}"; rc=1
+              else
+                echo "   ok   cortex-ui emits {{ $claim }}"
+              fi
+              {{- range $u := (concat .Values.keycloak.localHumanUsers .Values.keycloak.nonInteractiveUsers) }}
+              {{- $want := include "invincible-agent.localAuthzId" (dict "root" $ "username" $u.username "email" $u.email) }}
+              UID_=$(curl -sf -H "$AUTH" "$API/users?username={{ $u.username }}&exact=true" \
+                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -z "$UID_" ]; then
+                echo "   skip attribute {{ $u.username }}: absent"
+              elif curl -sf -H "$AUTH" "$API/users/$UID_" | grep -q '"{{ $claim }}":\["{{ $want }}"\]'; then
+                echo "   ok   {{ $u.username }} {{ $claim }}"
+              else
+                echo "   FAIL {{ $u.username }}: attribute {{ $claim }} is not {{ $want }}"; rc=1
+              fi
+              {{- end }}
+              {{- end }}
+              {{- if $cui.redirectUris }}
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+              WANT_RA={{ printf "\"redirectUris\":%s" ($cui.redirectUris | toJson) | squote }}
+              WANT_OA={{ printf "\"webOrigins\":%s" ($cui.webOrigins | toJson) | squote }}
+              WANT_LA={{ if $cui.postLogoutRedirectUris }}{{ printf "\"post.logout.redirect.uris\":%s" (join "##" $cui.postLogoutRedirectUris | toJson) | squote }}{{ else }}''{{ end }}
+              if [ -z "$CUI" ]; then
+                echo "   FAIL cortex-ui: client absent, redirects not verifiable"; rc=1
+              else
+                GOT=$(curl -sf -H "$AUTH" "$API/clients/$CUI" || true)
+                cui_bad=0
+                GOT_RA=$(printf '%s' "$GOT" | grep -o '"redirectUris":\[[^]]*\]' | head -1 || true)
+                GOT_OA=$(printf '%s' "$GOT" | grep -o '"webOrigins":\[[^]]*\]' | head -1 || true)
+                GOT_LA=$(printf '%s' "$GOT" | grep -o '"post.logout.redirect.uris":"[^"]*"' | head -1 || true)
+                # a set compare, as at convergence: Keycloak serves these in its own order
+                setof() { printf '%s' "$1" | sed -e 's/^"[^"]*":\[//' -e 's/\]$//' \
+                  -e "s/\",\"/\"$(printf '\001')\"/g" | tr '\001' '\n' | LC_ALL=C sort -u; }
+                if [ "$(setof "$GOT_RA")" != "$(setof "$WANT_RA")" ]; then
+                  echo "   FAIL cortex-ui: live ${GOT_RA:-redirectUris absent} is not exactly $WANT_RA"; rc=1; cui_bad=1
+                fi
+                if [ "$(setof "$GOT_OA")" != "$(setof "$WANT_OA")" ]; then
+                  echo "   FAIL cortex-ui: live ${GOT_OA:-webOrigins absent} is not exactly $WANT_OA"; rc=1; cui_bad=1
+                fi
+                if [ -n "$WANT_LA" ] && [ "$GOT_LA" != "$WANT_LA" ]; then
+                  echo "   FAIL cortex-ui: live ${GOT_LA:-post.logout.redirect.uris absent} is not exactly $WANT_LA"; rc=1; cui_bad=1
+                fi
+                if ! printf '%s' "$GOT" | grep -q '"publicClient":true'; then
+                  echo "   FAIL cortex-ui: not a public client"; rc=1; cui_bad=1
+                fi
+                if [ "$cui_bad" = "0" ]; then
+                  echo "   ok   cortex-ui redirects {{ len $cui.redirectUris }} literal, no wildcard"
+                fi
+              fi
+              {{- end }}
+              # ── end cortex-ui redirect readback
+              {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}
+              {{- if include "invincible-agent.brokerActive" $b }}
+              {{- $alias := $b.alias | default $bn }}
+              {{- $flow := printf "%s-first-login" $alias }}
+              IDP=$(curl -sf -H "$AUTH" "$API/identity-provider/instances/{{ $alias }}" || true)
+              for want in '"providerId":"oidc"' '"trustEmail":false' '"storeToken":false' \
+                          '"firstBrokerLoginFlowAlias":"{{ $flow }}"' '"syncMode":"FORCE"' '"pkceEnabled":"true"'; do
+                case "$IDP" in *"$want"*) ;; *) echo "   FAIL broker {{ $alias }}: $want not in the live IdP"; rc=1 ;; esac
+              done
+              case "$IDP" in *'{{ $b.issuer | trimSuffix "/" }}'*) ;; *) echo "   FAIL broker {{ $alias }}: issuer is not {{ $b.issuer | trimSuffix "/" }}"; rc=1 ;; esac
+              BM=$(curl -sf -H "$AUTH" "$API/identity-provider/instances/{{ $alias }}/mappers" || true)
+              for want in '"identityProviderMapper":"oidc-user-attribute-idp-mapper"' '"claim":"sub"' \
+                          '"user.attribute":"{{ $claim }}"' '"identityProviderMapper":"oidc-username-idp-mapper"'; do
+                case "$BM" in *"$want"*) ;; *) echo "   FAIL broker {{ $alias }}: mapper $want missing"; rc=1 ;; esac
+              done
+              # The takeover guard, read back from the LIVE flow: every guarded execution DISABLED,
+              # and at least one found (a flow of unexpected shape must not pass vacuously).
+              curl -sf -H "$AUTH" "$API/authentication/flows/{{ $flow }}/executions" \
+                | sed 's/^\[//; s/\]$//; s/},{/}\n{/g' > /tmp/broker-rb.$$
+              NG=0
+              while IFS= read -r line || [ -n "$line" ]; do
+                if is_guarded "$line"; then
+                  NG=$((NG+1))
+                  case "$line" in
+                    *'"requirement":"DISABLED"'*) ;;
+                    *) echo "   FAIL broker {{ $alias }}: a link/review execution is still enabled: $(printf '%s' "$line" | grep -o '"\(providerId\|displayName\)":"[^"]*"' | head -1)"; rc=1 ;;
+                  esac
+                fi
+              done < /tmp/broker-rb.$$
+              rm -f /tmp/broker-rb.$$
+              if [ "$NG" = "0" ]; then echo "   FAIL broker {{ $alias }}: no guarded execution found in {{ $flow }}"; rc=1
+              else echo "   ok   broker {{ $alias }} ($NG guarded executions disabled)"; fi
+              {{- end }}
+              {{- end }}
               {{- range $u := .Values.keycloak.nonInteractiveUsers }}
               UN={{ $u.username | quote }}
               UID_=$(curl -sf -H "$AUTH" "$API/users?username=$UN&exact=true" \
@@ -266,6 +812,17 @@ spec:
                 echo "   FAIL user $UN: carries a credential -- it must not be able to sign in"; rc=1
               else
                 echo "   ok   user $UN (no credentials)"
+              fi
+              {{- end }}
+              {{- range $r := (.Values.keycloak.retiredUsers | default list) }}
+              RU={{ $r | quote }}
+              RID=$(curl -sf -H "$AUTH" "$API/users?username=$RU&exact=true" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+              if [ -z "$RID" ]; then
+                echo "   ok   retired user $RU absent"
+              elif [ "$(curl -sf -H "$AUTH" "$API/users/$RID/federated-identity" | tr -d '[:space:]' || true)" != "[]" ]; then
+                echo "   ok   retired name $RU is a linked (brokered) user: kept"
+              else
+                echo "   FAIL retired user $RU: still exists without a federated link"; rc=1
               fi
               {{- end }}
               {{- range $c := $allServiceClients }}
@@ -285,6 +842,42 @@ spec:
               {{- end }}
               else
                 echo "   ok   $CID -> {{ $c.authzId }}"
+              fi
+              {{- end }}
+              {{- range $pc := (.Values.keycloak.publicClients | default list) }}
+              PCID={{ $pc.clientId | quote }}
+              PCU=$(curl -sf -H "$AUTH" "$API/clients?clientId=$PCID" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -z "$PCU" ]; then
+                echo "   FAIL $PCID: client absent after reconcile"; rc=1
+              else
+                PCJ=$(curl -sf -H "$AUTH" "$API/clients/$PCU" || true)
+                PCOK=1
+                # the redirect set only: post.logout.redirect.uris carries the same strings and must not satisfy the check
+                PCRU=$(printf '%s' "$PCJ" | grep -o '"redirectUris":\[[^]]*\]' || true)
+                printf '%s' "$PCJ" | grep -qF '"publicClient":true' \
+                  || { echo "   FAIL $PCID: not a public client (publicClient is not true)"; rc=1; PCOK=0; }
+                printf '%s' "$PCJ" | grep -qF '"pkce.code.challenge.method":"S256"' \
+                  || { echo "   FAIL $PCID: PKCE S256 is not required (pkce.code.challenge.method)"; rc=1; PCOK=0; }
+                printf '%s' "$PCJ" | grep -qF '"directAccessGrantsEnabled":false' \
+                  || { echo "   FAIL $PCID: password grant is enabled (directAccessGrantsEnabled is not false)"; rc=1; PCOK=0; }
+                printf '%s' "$PCJ" | grep -qF '"fullScopeAllowed":true' \
+                  || { echo "   FAIL $PCID: fullScopeAllowed is not true (a user's roles will not ride the token)"; rc=1; PCOK=0; }
+                {{- range $r := $pc.redirectUris }}
+                printf '%s' "$PCRU" | grep -qF '{{ $r | quote }}' \
+                  || { echo "   FAIL $PCID: redirectUri {{ $r }} is not on the live client"; rc=1; PCOK=0; }
+                {{- end }}
+                {{- if ne $claim "email" }}
+                curl -sf -H "$AUTH" "$API/clients/$PCU/protocol-mappers/models" | grep -qF '"claim.name":"{{ $claim }}"' \
+                  || { echo "   FAIL $PCID: no mapper emits claim {{ $claim }} (the BFF would fall back to sub)"; rc=1; PCOK=0; }
+                {{- end }}
+                # One config object per line (a mapper's config holds only strings), so the audience and its
+                # access-token flag are judged on the SAME mapper, in whatever key order Keycloak serves them.
+                PCAUD=$(curl -sf -H "$AUTH" "$API/clients/$PCU/protocol-mappers/models" | grep -o '"config":{[^}]*}' \
+                        | grep -F '"included.client.audience":"{{ $pc.clientId }}"' || true)
+                printf '%s' "$PCAUD" | grep -qF '"access.token.claim":"true"' \
+                  || { echo "   FAIL $PCID: no mapper puts {{ $pc.clientId }} in the access token's aud (its api would refuse every login)"; rc=1; PCOK=0; }
+                if [ "$PCOK" = "1" ]; then echo "   ok   $PCID public, pkce S256, emits {{ $claim }}, aud {{ $pc.clientId }}"; fi
               fi
               {{- end }}
 

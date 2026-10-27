@@ -86,7 +86,12 @@ def _ok_rules():
 
 def _wire(monkeypatch, rules=None, resolve=None, can_invoke=lambda who: True):
     monkeypatch.setattr(starter, "load_policy_rules", lambda: rules if rules is not None else _ok_rules())
-    monkeypatch.setattr(starter, "resolve_subject_via_engine_o", resolve or (lambda mpn: _KNOWN_IRIS.get(mpn)))
+    _resolve = resolve or (lambda mpn: _KNOWN_IRIS.get(mpn))
+    # The adapter is called with the person the lookup runs for (ruling (a)); these tests resolve
+    # by mpn alone, so the stub accepts it and the seal in test_a_review_resolves_as_its_dropper.py
+    # asserts it.
+    monkeypatch.setattr(starter, "resolve_subject_via_engine_o",
+                        lambda mpn, *, on_behalf_of="": _resolve(mpn))
     # The initiator gate (capability can_invoke mesh:startReview). WHO may review is a separate,
     # downstream gate (task_audience) — not exercised here.
     monkeypatch.setattr(starter, "can_invoke_start_review", can_invoke)

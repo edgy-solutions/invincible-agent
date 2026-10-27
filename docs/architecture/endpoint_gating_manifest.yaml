@@ -1627,6 +1627,42 @@ services:
           An identity-less caller is refused rather than read broadly; an unreachable graph
           is 503 rather than 404, because "we could not look" is not "there is no such
           thing".
+      - method: GET
+        path: /answers
+        identity: keycloak-jwt
+        gate: "get_current_user + produced_for_user_id = caller (bound parameter, the Electric proxy's key)"
+        exposes: gated-content
+        consumers: [cortex-ui answers list, headless readers]
+        class: gated
+        justification: >-
+          The caller's OWN answers as summaries only (id, ts, title, summary, type, status, subject, archived). Never a body: the SELECT names a fixed narrow column list and only the about.* sub-paths of routing. Archived hidden unless include_archived. Search is a parameterized to_tsquery built from word tokens only.
+      - method: GET
+        path: /answers/{answer_id}/body
+        identity: keycloak-jwt
+        gate: "get_current_user + the SAME helper as /artifacts/{artifact_id} (PRODUCED_FOR ownership, seeding delegate, recorded origin)"
+        exposes: gated-content
+        consumers: [cortex-ui answers list, headless readers]
+        class: gated
+        justification: >-
+          ONE body (rendered_output, routing, resolved_intent) by id. Shares _entitled_artifact_rec with /artifacts/{artifact_id}, so a caller refused there is refused here with the same status (404, not 403: no existence oracle). Archived answers stay readable: archive hides, never revokes.
+      - method: POST
+        path: /answers/{answer_id}/archive
+        identity: keycloak-jwt
+        gate: "get_current_user + _entitled_artifact_rec + OWNER ONLY (PRODUCED_FOR is the caller)"
+        exposes: gated-content
+        consumers: [cortex-ui answers list, headless readers]
+        class: gated
+        justification: >-
+          Sets archived_at/by/reason on the Neo4j AnswerArtifact (projected to Postgres) and appends archive_history. Hides from the default view; never deletes or detaches. A non-owner gets the same 404 as an unentitled /artifacts read. Steward cross-user tidy is a FOLLOW-UP needing a Topaz permission. Idempotent.
+      - method: POST
+        path: /answers/{answer_id}/unarchive
+        identity: keycloak-jwt
+        gate: "get_current_user + _entitled_artifact_rec + OWNER ONLY (PRODUCED_FOR is the caller)"
+        exposes: gated-content
+        consumers: [cortex-ui answers list, headless readers]
+        class: gated
+        justification: >-
+          Clears the archive properties on the node and appends an unarchive entry to archive_history. Same owner-only gate and 404 as archive; idempotent.
       - method: POST
         path: /ingest
         identity: keycloak-jwt
@@ -1670,27 +1706,143 @@ services:
       - method: POST
         path: /ingest/{ingest_id}/retry
         identity: keycloak-jwt
-        gate: "get_current_user + the status route's own scoping (submitted_by OR on_behalf_of = caller); a stranger and a missing row get the identical 404"
+        gate: "get_current_user + a person may retry their OWN failed or awaiting_origin DOCUMENT row (scoped lookup ingest_status.get_status_for; anything else, including a row they cannot see, is the same 403 retry_is_pin_driven); a service may retry a failed DOCUMENT row without a pin; every other service retry is pin-driven: body {pin_digest} must differ from the row's recorded pin (equal 409 pin_unchanged, none recorded 409 no_recorded_pin)"
         exposes: action
-        consumers: [ingestion seam UI (ADR-0041 §8), the dropper un-stranding their own row]
+        consumers: [cortex-ui dropper (own failed or awaiting_origin row), extractor pin-change driver (service identity)]
         class: gated
         justification: >-
-          The dropper's own retry (roll #20). The visibility rule and the 404 are the status
-          route's, so this adds no new existence oracle. The only effect is re-running the
-          find-or-file of the document_promotion task, and only for a row already at review.
-          Terminal rows, event rows at received and documents still in doc-tools' pipeline are
-          refused 409 and nothing is written.
+          Architect directive 2026-10-12 ("pipeline failure must reach the row") supersedes the
+          2026-10-10 pin-driven-only ruling FOR FAILED ROWS: the input was never processed, so a
+          person may re-open their own failed document row (failed -> received, attempt + 1; it
+          does not relaunch the pipeline). A person's lookup is SCOPED to rows they submitted or
+          are on_behalf_of, so a failed row they cannot see is the same 403 as any other refusal
+          and no existence oracle. A person may also re-file their own awaiting_origin row (Q2c,
+          idempotent). Every other extraction retry stays pin-driven and service-only, and its only
+          effect is re-running the find-or-file of the document_promotion task for a row already at
+          review. Terminal rows, failed event rows, event rows at received and documents still in
+          doc-tools' pipeline are refused 409 and nothing is written.
+      - method: POST
+        path: /ingest/{ingest_id}/title_leaf
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal DOC_TOOLS_SERVICE_IDENTITY (default svc:doc-tools); every other caller 403 not_doc_tools; svc:doc-tools only. An absent or event row is 404 ingest_not_found; a row not at received/extracting is 409 not_extracting"
+        exposes: action
+        consumers: [doc-tools title-read dispatch (lane 7f)]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-21: the drop is accepted and extraction starts, the header/title
+          read is the first step, and a title with no confident leaf stops the row at awaiting_kind
+          before parts extraction runs. doc-tools reports what the title read found; a confident
+          pcn/pdn title is written as leaf_source=title and the answer says which kind's passes to
+          run, otherwise the row is held with the candidates. A declared or corrected leaf is never
+          overwritten by a title. Service-only, same single-identity gate as the stage route.
+      - method: POST
+        path: /ingest/{ingest_id}/leaf
+        identity: keycloak-jwt
+        gate: "get_current_user + _ingest_review_access (dropper / open-task holder / seeding delegate); an absent or event row is 404, anyone else 403 not_entitled; every decision is audited on iagent.audit.ingest_access. A leaf outside pcn|pdn is 422 unknown_leaf; a row that is not leaf-capable is 409 no_leaf_for_kind"
+        exposes: action
+        consumers: [cortex-ui leaf chip]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-21: a dropper's or steward's change to the row's leaf re-routes
+          the drop and is recorded as leaf_source=corrected with who and when. At awaiting_kind it
+          re-opens the row at received (attempt + 1) for doc-tools' retry sensor; at awaiting_origin
+          it files the document_promotion task first and then moves the row to review; at review it
+          is refused (the open task carries the kind), and every terminal stage is refused 409.
+      - method: POST
+        path: /ingest/{ingest_id}/empty
+        identity: keycloak-jwt
+        gate: "get_current_user + _ingest_review_access (dropper / open-task holder / seeding delegate); an absent or event row is 404, anyone else 403 not_entitled; every decision is audited on iagent.audit.ingest_access. The body is validated before the gate reads any row: a decision outside confirmed_no_parts|has_parts, or a page on confirmed_no_parts, is FastAPI's 422; has_parts without a page is 422 page_required; a row with no open document_empty_confirm task is 409 no_open_empty_task; has_parts on a second-zero task is 409 add_missed_part_not_built"
+        exposes: action
+        consumers: [cortex-ui document_empty_confirm card]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-23: a zero-row extraction on a notice (content_kind pcn|pdn)
+          files document_empty_confirm to the promotion audience, and the dropper may answer their
+          own because there is nothing to approve. confirmed_no_parts moves the row to the terminal
+          no_parts stage with "no parts (confirmed by <who>)"; has_parts files extraction_defect
+          with the page and relaunches the row with force_text_fallback set. It writes through the
+          same _decide_empty as the task act route.
+      - method: GET
+        path: /ingest/{ingest_id}/extraction
+        identity: keycloak-jwt
+        gate: "get_current_user + _ingest_review_access: the row's submitted_by or on_behalf_of, or a caller who passes human_tasks.check_can_act on the audience of the OPEN document_promotion:<id> task; an absent or event row is 404 ingest_not_found, anyone else 403 not_entitled, decided before any artifact-store read; every decision is audited on iagent.audit.ingest_access"
+        exposes: gated-content
+        consumers: [cortex-ui document_promotion review card (part rows and evidence refs)]
+        class: gated
+        justification: >-
+          The review card draws the extracted part rows and their page/bbox evidence. The rows
+          are the document's own content, so they are readable only by whoever dropped it or by
+          a steward who can still act on its open promotion task; a resolved task closes the
+          steward's access. The review.json key is checked against the row's object_prefix
+          before the read.
+      - method: GET
+        path: /ingest/{ingest_id}/source
+        identity: keycloak-jwt
+        gate: "get_current_user + _ingest_review_access (same gate and audit as GET /ingest/{ingest_id}/extraction); the source key comes from the drop manifest and must be a seam key under the row's object_prefix (422 source_unbound)"
+        exposes: gated-content
+        consumers: [cortex-ui document_promotion review card (source PDF beside the evidence)]
+        class: gated
+        justification: >-
+          The reviewer must see the dropped bytes the rows were read from. Same gate as the
+          extraction rows (the dropper, or a holder of the open promotion task), decided before
+          the store is touched; streamed in chunks, never buffered, and no-store (the
+          app-wide middleware's Cache-Control). Works for the dropper before any extraction exists.
+      - method: GET
+        path: /ingest/mine
+        identity: keycloak-jwt
+        gate: "get_current_user + ingest_status.list_mine scopes to submitted_by OR on_behalf_of = caller; event rows are never listed"
+        exposes: gated-content
+        consumers: [cortex-ui ingest rail (load + merge)]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-16: the caller's own drops, paged newest first, in the status
+          route's summary shape, so the rail can read the record on load and merge it with live
+          entries (browser storage is a cache, never the record). The scoping is
+          ingest_status.get_status_for's, IN THE QUERY, so the listing reveals only rows the
+          caller submitted or is the on_behalf_of principal for, and an empty result is a plain
+          200 with no items, not a 404. Each item is built by the same body as the status route,
+          so an artifact is listed only if the caller may open it.
       - method: GET
         path: /cases/{case_id}
         identity: keycloak-jwt
-        gate: "get_current_user + case_projection.can_view_case: the caller is the case's submitter, OR the case has labels and the caller holds an entitlement cell for EVERY label; otherwise the identical 404"
+        gate: "get_current_user + case_projection.can_view_case: the caller is the case's submitter, OR the case has labels and the caller holds an entitlement cell for EVERY label; OR the caller is the recipient of a human_task_projection row whose case_id is this case (any status); otherwise the identical 404"
         exposes: gated-content
         consumers: [cortex-ui case view (WorkflowCasePayload)]
         class: gated
         justification: >-
           Projects WorkflowRunner state (ADR-0039) read only. Existence-oracle safe: a missing
           case and one the caller may not read answer the same 404. A runner that cannot be
-          reached is a different fact and answers 503 runner_unavailable, not 404.
+          reached is a different fact and answers 503 runner_unavailable, not 404. Architect ruling
+          2026-10-17: a holder of a task filed on the case (recipient of a human_task_projection row
+          with this case_id, any status) may read it, so the person asked to decide sees what they
+          decide; an unreadable task store admits nobody (same 404).
+      - method: GET
+        path: /cases/{case_id}/action
+        identity: keycloak-jwt
+        gate: "get_current_user; a delegate caller is admitted only if the runner's case exists and its seeded_by is the caller (else one identical 403 not_your_case, with no artifact-store read); any other caller passes GET /cases/{case_id}'s gate (can_view_case, or holds a task on the case), else the identical 404"
+        exposes: gated-content
+        consumers: [cortex-ui case view (who chose, approved and released a maintenance action)]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-17: a delegate reads only its own cases' action records, 403
+          on others and on /cases/{id}. The record is written at release, so a viewable case
+          before release answers 404 no_action_record (a delegate's own pending case included). A
+          delegate's refusal is the same 403 for a missing case, another delegate's case and a
+          case with no seeded_by, so there is no existence oracle. A Neo4j failure is 503
+          artifact_store_unavailable, an unreachable runner 503 runner_unavailable.
+      - method: POST
+        path: /cases/{case_id}/signals/{signal}
+        identity: keycloak-jwt
+        gate: "get_current_user (authz_id required, else 401); the actor is the token's authz_id, never the body; engine-a's WorkflowRunner.signal is the authority (accepts, reason_required, excluded, journalled audience, Topaz can_act)"
+        exposes: gated-content
+        consumers: [cortex-ui case view (a person answers a human-audience signal, e.g. tier_ack)]
+        class: gated
+        justification: >-
+          Architect ruling 2026-10-10: a human acknowledgment is a cortex action. Generic over the
+          signal name, gated by the audience the runner journalled when it awaited the signal. The
+          BFF does not re-check can_act itself (the case projection does not expose the audience);
+          a runner refusal (401/403) is 403, a bad status or missing reason 400, an unknown case
+          404, an unreachable or failing runner 502. A refusal is never a 200.
       - method: POST
         path: /ingest/events
         identity: keycloak-jwt
@@ -1711,6 +1863,33 @@ services:
           seeded trigger requires is 422, naming the field; 503 when that trigger cannot be
           loaded (`trigger_unconfigured`). An unreadable kind registry is not caught here: it
           raises (500) rather than falling back to an empty set, and no case opens.
+      - method: GET
+        path: /ingest/retries
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal DOC_TOOLS_SERVICE_IDENTITY (default svc:doc-tools); every other caller 403"
+        exposes: gated-content
+        consumers: [doc-tools relaunch poller (retried drops)]
+        class: gated
+        justification: >-
+          Lists the retried document drops awaiting relaunch (architect ruling 2026-10-12, Shape
+          1): rows re-opened at `received` by the retry route, attempt above 1, oldest first.
+          doc-tools' sensor cannot see a retried object again, so it polls this route and launches
+          each entry with run_key `{ingest_id}-a{attempt}`. A single SERVICE identity is accepted,
+          checked before the database is touched, so no end user can enumerate other people's
+          drops and a non-doc-tools caller learns nothing. Event rows never appear.
+      - method: PUT
+        path: /ingest/processable-kinds
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal DOC_TOOLS_SERVICE_IDENTITY (default svc:doc-tools); every other caller 403"
+        exposes: mutation
+        consumers: [doc-tools processable-kinds publisher]
+        class: gated
+        justification: >-
+          doc-tools publishes the content kinds it can process (owner ruling: the BFF persists
+          and caches the list, the ingest door reads the cache behind
+          INGEST_DOOR_READS_PROCESSABLE_KINDS, default OFF). A single SERVICE identity is accepted,
+          checked before the store is touched. The route returns only what the caller sent plus
+          which of those the registry does not know; it exposes no gated content.
       - method: POST
         path: /ingest/{ingest_id}/stage
         identity: keycloak-jwt
@@ -1725,6 +1904,9 @@ services:
           learns nothing about which ingest ids exist (403 before the 404 lookup). Stages move
           forward only; a lateral or backwards move, or any move out of a terminal stage, is
           409. Reaching `review` opens the document_promotion task, idempotently.
+          A 4xx refusal of `review` moves the row to `failed` (reason_code = the refusal's error)
+          so the dropper can retry it, and a NULL row content_kind is filled from the extraction
+          manifest's registered declared kind; a 5xx writes nothing.
           The 404 for an unknown id is visible only to doc-tools, which created the ids it
           reports on.
       - method: POST
@@ -1754,7 +1936,39 @@ services:
           GET /artifacts/{id} can admit that delegate as a reader. One SERVICE identity is
           accepted, checked before the body is used. A seeded_by that is not a declared delegate
           (DELEGATE_ON_BEHALF_OF) is 422. A case with no case-linked artifact stamps zero and
-          answers 200: no workflow produces one yet.
+          answers 200. CORRECTED 2026-10-09: the maintenance case's ActionRecord, written by
+          POST /internal/cases/{case_id}/action-record before this stamp, is such an artifact.
+      - method: POST
+        path: /internal/cases/{case_id}/action-record
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal CASE_RUNNER_SERVICE_IDENTITY (default svc:case-runner); every other caller 403"
+        exposes: gated-content
+        consumers: [restate_analyst WorkflowRunner (writes the maintenance case's ActionRecord at the `released` outcome)]
+        class: gated
+        justification: >-
+          The maintenance case's ActionRecord (R-114, an iagent-side output artifact), written at
+          `released` as one AnswerArtifact carrying the case_id and, when given, the seeding
+          delegate. One SERVICE identity is accepted, checked before the body is used, so no end
+          user can write a case's record. The artifact's owner is the on_behalf_of the runner
+          names (the seeding delegate's person, else the last approver), never the caller. The
+          record's provenance.case_id must equal the path's case_id (422 before any write); a
+          seeded_by that is not a declared delegate (DELEGATE_ON_BEHALF_OF) is 422. The artifact
+          id is derived from case_id and action_id, so a retry writes nothing twice.
+      - method: POST
+        path: /internal/cases/{case_id}/summary
+        identity: keycloak-jwt
+        gate: "get_current_user + caller authz_id must equal CASE_RUNNER_SERVICE_IDENTITY (default svc:case-runner); every other caller 403"
+        exposes: gated-content
+        consumers: [restate_analyst WorkflowRunner (writes the case summary at every terminal transition)]
+        class: gated
+        justification: >-
+          Ruled 2026-10-16: every terminal transition of a case (released / failed / rejected)
+          writes the case summary (state, final reason, transitions, seeded_by, artifact ids) to
+          the Postgres case_summary row, so the record outlives Restate. One SERVICE identity is
+          accepted, checked before the body is used, so no end user can write a case's record.
+          The artifact ids are read from the graph by the server, never taken from the caller;
+          at `released` the same call stamps released_at (first release wins) on the case's
+          artifacts. The upsert is idempotent, so a re-delivery overwrites the row.
       - method: GET
         path: /export/package/recipients
         identity: keycloak-jwt
@@ -1909,6 +2123,10 @@ services:
           would protect nothing and would only force the probing this endpoint exists to
           remove. A picker that cannot read the menu has to seed a board to discover it.
 
+          `shared_slot_detail` (name, param, required, consumed, askable) is declaration-only
+          too: `askable` says only that the server holds a class for that slot's param, so a
+          picker can expect an ask from /canvas/seed. Nothing is enumerated here.
+
           WHAT WOULD CHANGE THIS ROW: a template carrying anything deployment-specific in its
           title or description — a customer name, a programme name. Today both are generic
           board labels ("Portfolio planning canvas"), and the panel bodies are NOT returned.
@@ -2053,6 +2271,14 @@ services:
           contract - {artifact_ids: [...]}, slot-ordered, nothing else - and rejecting a
           canvas_type it has no template for.
 
+          It also reads the supervisor's dispatch fields (`params`, `user_persona`, `domain`),
+          which fill only unset fields and never widen the caller's cell: /interview/stream
+          still validates the cell against the caller's entitlements. When a required shared
+          slot is unbound the 409 carries an `ask`, built by enumerating the slot's class
+          through engine-o's /enumerate_instances with the CALLER's authz_id and entitled
+          domains, so the menu is exactly what that caller may see (an empty menu carries the
+          policy to set instead). A success also names its `template_id`.
+
           Same amplification note as its target: one authenticated request launches five
           sequential Dagster runs. A caller who can reach this can reach /seed/portfolio_canvas
           directly, so the alias widens no surface.
@@ -2143,7 +2369,7 @@ services:
         exposes: action
         consumers: [cortex-ui]
         class: gated
-        justification: "high-privilege: approve/reject -> resumes a Restate workflow / writes a grant; deny-by-default Topaz can_act"
+        justification: "high-privilege: approve/reject -> resumes a Restate workflow / writes a grant; deny-by-default Topaz can_act. Refuses 422 reject_code_unknown (a document_promotion reject names one of not_a_notice, unreadable, parts_unusable, duplicate; architect ruling 2026-10-17) and 422 row_edits_not_for_kind (row_edits is read only on grouped_review), both before any write"
       - method: POST
         path: /orchestrate
         identity: "get_current_user -> user_email + entitled_domains + persona"

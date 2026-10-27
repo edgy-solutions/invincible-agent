@@ -59,6 +59,7 @@ users:
                             # fixture status as the finance grant below -- it makes the
                             # demo path reachable, it is not a claim about who should
                             # hold production cost data.
+      - maint-tier-ack-edge-01   # 2026-10-11 ruling: actor-only (no cell); see groups.yaml
       - finance-analysts    # FIXTURE grant, 2026-08-31: alice is the
                             # Engine F demo actor, so the persona/domain picker offers
                             # her the PROGRAM_FINANCE_ANALYST cell and a finance question
@@ -117,6 +118,13 @@ users:
       # He does hold `risk_redraft:SUSTAINMENT` and `hazard_link_review:SUSTAINMENT` in
       # task_grants.yaml — the author's queue, which is the other half of the same role.
       - safety-engineers
+      # 2026-10-10 ruling: group audiences. Actor-only (no cell); see groups.yaml.
+      - maintenance-tier-org
+      # 2026-10-11 ruling: sandbox tier edge-01 task audiences. Actor-only (no cell).
+      - maint-approvers-edge-01
+      - maint-supervisors-edge-01
+      # 2026-10-14 ruling: document_promotion:MANUFACTURING. Actor-only (no cell).
+      - manufacturing-stewards
     default:
       persona: DATA_STEWARD
       domains: [AVIATION]
@@ -131,15 +139,102 @@ users:
       persona: MECHANIC
       domains: [AVIATION]
 
-  # ── OpenDDIL principals (no credentials) ────────────────────────────
-  # Mirrored as a non-interactive Keycloak user (values-sandbox.yaml keycloak.nonInteractiveUsers)
-  # when OpenDDIL's client registration landed, 2026-10-02. Seeded here only so a task audience
-  # can name it: validate_policy refuses a grant_to that is not in this file. It never signs in,
-  # never opens the picker, and so carries no `groups` and no `default` persona/domain cell;
-  # its only entitlement is the document_promotion:MAINTENANCE audience in task_grants.yaml.
-  - id: liaison@example.com
-    display_name: Liaison (OpenDDIL principal - MAINTENANCE document reviewer)
-    groups: []
+  - id: erin@example.com
+    display_name: Erin (demo - clean walker)
+    # The clean walker: holds alice's groups and NONE of her direct per-user grants
+    # (alice stays the slow-inbox fixture, carol stays the denied human).
+    groups:
+      - aviation-engineers
+      - defense-engineers
+      - enterprise-architects
+      - cost-analysts
+      - maint-tier-ack-edge-01
+      - finance-analysts
+      - portfolio-leads
+      - data-engineers
+      - maintenance-mechanics
+      - safety-engineers
+    default:
+      persona: DATA_ENGINEER
+      domains: [AVIATION]
+
+  - id: chris@example.com
+    display_name: Chris (demo - Chris's own sign-in)
+    # Chris's own sign-in, with the same groups as alice (group path only).
+    groups:
+      - aviation-engineers
+      - defense-engineers
+      - enterprise-architects
+      - cost-analysts
+      - maint-tier-ack-edge-01
+      - finance-analysts
+      - portfolio-leads
+      - data-engineers
+      - maintenance-mechanics
+      - safety-engineers
+    default:
+      persona: DATA_ENGINEER
+      domains: [AVIATION]
+
+  # ── OpenDDIL principals (brokered) ──────────────────────────────────
+  # OpenDDIL's own principals sign in through the OIDC broker (values keycloak.brokers.openddil),
+  # and their authz_id is OpenDDIL's raw `sub`, so the id here is that sub, NOT an email. This is
+  # liaison.coalition's fixed id in OpenDDIL's realm. Seeded here so a task audience can name it:
+  # validate_policy refuses a grant_to that is not in this file. It carries no `default`
+  # persona/domain cell -- no persona is a supervisor's, and the architect ruled "the supervisor
+  # grant, not a mechanic one" (2026-10-17). It holds the document_promotion:MAINTENANCE audience
+  # (task_grants.yaml) and, from 2026-10-17, maint-supervisors-edge-01: the OpenDDIL dry run is
+  # "atlantia chooses, liaison.coalition approves, alice releases", and approving is the
+  # maint_supervisor_review step. bob stays in that group as the fallback.
+  #
+  # From 2026-10-20 (architect directive item 1) it is also in maint-approvers-edge-01, the
+  # maint_fault_approval:edge-01 audience: the dry run needs liaison to hold the fault-approval
+  # task. That is the same audience atlantia chooses from; no same-actor rule was found to keep
+  # one person from holding both steps of one case.
+  - id: 33333333-3333-4333-8333-333333333333
+    display_name: Liaison (OpenDDIL brokered principal liaison.coalition - MAINTENANCE supervisor and document reviewer)
+    groups:
+      - maint-approvers-edge-01     # 2026-10-20: actor-only (no cell); see groups.yaml
+      - maint-supervisors-edge-01   # 2026-10-17: actor-only (no cell); see groups.yaml
+
+  # operator.atlantia's fixed id in OpenDDIL's realm (2026-10-16, Chris's directive item 5). It
+  # holds one cell, MECHANIC·MAINTENANCE, through openddil-maintainers -- the group path, because
+  # a direct user grant is invisible to the picker -- so the first brokered login is offered a cell.
+  #
+  # From 2026-10-17 it is also in maint-approvers-edge-01: in the dry run atlantia CHOOSES, and
+  # choosing a disposition is maint_fault_propose's `decide` step (role: maintainer, audience
+  # maint_fault_approval:{tier}). bob stays in that group as the fallback.
+  - id: 11111111-1111-4111-8111-111111111111
+    display_name: Operator (OpenDDIL brokered principal operator.atlantia - MAINTENANCE mechanic)
+    groups:
+      - openddil-maintainers
+      - maint-approvers-edge-01   # 2026-10-17: actor-only (no cell); see groups.yaml
+    default:
+      persona: MECHANIC
+      domains: [MAINTENANCE]
+
+  # operator.borduria's fixed id in OpenDDIL's realm (2026-10-17 addendum: map all four brokered
+  # users the way atlantia was). A mechanic, so the same one cell through openddil-maintainers. It
+  # holds no task audience; the dry run's chain is atlantia, liaison.coalition, alice.
+  - id: 22222222-2222-4222-8222-222222222222
+    display_name: Operator (OpenDDIL brokered principal operator.borduria - MAINTENANCE mechanic)
+    groups:
+      - openddil-maintainers
+    default:
+      persona: MECHANIC
+      domains: [MAINTENANCE]
+
+  # operator.regioneast (2026-10-20, architect directive item 1), mapped the way borduria was: a
+  # mechanic, the one MECHANIC·MAINTENANCE cell through openddil-maintainers, no task audience.
+  # The id is the fixed one in OpenDDIL's realm-openddil.json template. OpenDDIL has not restated
+  # it, so it is UNCONFIRMED against the live realm until a brokered login lands on this cell.
+  - id: 55555555-5555-4555-8555-555555555555
+    display_name: Operator (OpenDDIL brokered principal operator.regioneast - MAINTENANCE mechanic)
+    groups:
+      - openddil-maintainers
+    default:
+      persona: MECHANIC
+      domains: [MAINTENANCE]
 
   # ── Service identities (non-human subjects) ─────────────────────────
   # A service identity is a SUBJECT in the entitlement model exactly like
@@ -246,4 +341,11 @@ users:
   # stanza precedes the code change rather than trailing it.
   - id: svc:case-runner
     display_name: case-runner (service - restate-analyst direct_call delegate identity)
+    groups: []
+
+  # The iagent-openddil delegate client's authz id (helm values-sandbox.yaml extraServiceClients).
+  # The fault walk's step 1 runs on_behalf_of the event's dropped_by, which for OpenDDIL events is
+  # this delegate; its verb grant is in capability_grants.yaml (ruling 2026-10-11). NO groups.
+  - id: svc:openddil
+    display_name: openddil (service - iagent-openddil delegate client authz id)
     groups: []

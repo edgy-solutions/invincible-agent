@@ -51,12 +51,16 @@ from __future__ import annotations
 import inspect
 import types
 import typing
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 #: The four-kind vocabulary, established by Lane 1 and reproduced here as the single copy.
 #: Order is part of it: a consumer reading declarations from any engine sees one vocabulary
 #: rather than several that happen to agree.
 SLOT_KINDS = ("spoken-mandatory", "spoken-optional", "handle", "ceremony")
+
+#: What a slot may declare it wants bound (`binds`). `identifier`: the bare identifier the
+#: caller's words matched (`5530-184`), not the resolved instance's IRI. Absent = the instance id.
+BINDS = ("identifier",)
 
 #: The measure's own state handle. Never a parameter in any sense a caller would recognise.
 #: Overridable per engine, because "what is not a slot" is an engine's fact, but every engine
@@ -149,6 +153,7 @@ def derive_slots(
     referents: Optional[Dict[str, str]] = None,
     not_a_slot: Iterable[str] = NOT_A_SLOT,
     decorate: Optional[Callable[..., List[str] | None]] = None,
+    binds: Optional[Mapping[str, str]] = None,
 ) -> List[dict]:
     """One verb's slot declarations, derived from its signature.
 
@@ -162,10 +167,20 @@ def derive_slots(
     are set and before `values` and `default` are written. It may add keys to `rec`, and it RETURNS
     the enum values — unchanged, or replaced with a data-dependent vocabulary the signature cannot
     carry. Returning `None` leaves the slot with no `values` key.
+
+    `binds` maps a SPOKEN, REFERENT-bearing slot to what it wants bound (`BINDS`: only
+    `"identifier"` today, the bare identifier the words matched rather than the instance IRI).
+    A slot not named gets no `binds` key at all, so every other engine's record is unchanged.
+    A name that IS a parameter but not such a slot, or an unknown value, raises here, at derive
+    time. A name that is no parameter of this verb is skipped, as `referents` does, so one engine
+    map serves every verb.
     """
     handles = frozenset(handles)
     not_a_slot = frozenset(not_a_slot)
     out: List[dict] = []
+    for name, want in (binds or {}).items():
+        if want not in BINDS:
+            raise ValueError(f"binds[{name!r}]={want!r}: not one of {sorted(BINDS)}")
     for name, prm in signature_of(fn).parameters.items():
         if name in not_a_slot:
             continue
@@ -183,6 +198,11 @@ def derive_slots(
         # which is the hand-maintained shape this module exists to remove.
         if kind.startswith("spoken") and referents and name in referents:
             rec["referent"] = referents[name]
+        if binds and name in binds:
+            if "referent" not in rec:
+                raise ValueError(
+                    f"binds[{name!r}]: {kind} slot without a referent has nothing to bind")
+            rec["binds"] = binds[name]
         if decorate is not None:
             values = decorate(rec, name=name, prm=prm, kind=kind, values=values)
         if values is not None:

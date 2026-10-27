@@ -42,6 +42,7 @@ class GraphStateWrite:
     ``{predicate_local: value}``; ``to_sparql`` renders the scoped INSERT the driver runs."""
     subject_iri: str
     triples: dict = field(default_factory=dict)
+    provenance: Optional[dict] = None   # steward-correction facts; None on every unedited row
 
     def to_sparql(self) -> str:
         lines = "\n".join(
@@ -97,7 +98,8 @@ def plan_dispatch(resolution: ItemResolution, *, notice_fingerprint: str, notice
         }
         if resolution.proposed_by_ruleset:
             triples["proposedByRuleset"] = resolution.proposed_by_ruleset
-        graph_write = GraphStateWrite(subject_iri=subject, triples=triples)
+        graph_write = GraphStateWrite(subject_iri=subject, triples=triples,
+                                      provenance=resolution.provenance)
 
     queue = _DISPOSITION_QUEUE.get(disp)
     human_task: Optional[HumanTaskSpec] = None

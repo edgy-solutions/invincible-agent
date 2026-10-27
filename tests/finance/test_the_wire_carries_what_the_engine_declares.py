@@ -1656,6 +1656,11 @@ _MIRROR_GAPS_AT_RATIFICATION = {
     # this register is ours, and the two live in different repos.
     #
     # Fifteen entries remain, all `mesh:` subjects the frontend binds alone.
+    #
+    # The two FRACAS entries lane/saf staged on 2026-10-08 (safety:FailureRecordSet ->
+    # ContributionRanking, safety:FailureTrend -> MultiSeries) were deleted on the join to master
+    # 2026-10-09: cortex-ui master binds both (cortex PR #1, `assembleCapabilities.ts`), and the
+    # ratchet below reddened exactly as the staging note said it would.
 }
 
 
