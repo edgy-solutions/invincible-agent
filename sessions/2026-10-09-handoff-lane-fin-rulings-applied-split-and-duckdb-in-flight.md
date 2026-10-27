@@ -19,7 +19,34 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
-## Update 2026-10-27: #102 and #103 merged; the program filter is #113; #107 reviewed. Read this first
+## Update 2026-10-27, later: the verbs check is PR #117, stacked on #113. Read this first
+
+- **The ruling.** "#113 merges. Next: the finance verbs (/measure, /package_export) check program
+  visibility by the same filter, deny by default, 403 with the refusal envelope; PR today. Morning
+  sentence after the post-upgrade hook."
+- **#113** was still OPEN at `7b497119` (CI pass) when #117 was opened. Gov's #107 merged at
+  `0d228204`.
+- **#117** (`fin/verbs-honour-program-members`, `bdc1a94f`, base #113's branch, so NO CI gate until
+  it retargets).
+  - `_can_view` is now the one predicate for all four routes.
+  - `_verb_caller` is bearer first: a user bearer is the caller; a `svc:` bearer or none delegates
+    to the body's `user_email`.
+  - The 403 envelope has no `grantable_by`. The BFF fills it with `relay_refusal`.
+  - 12 mutants, each a named red. Targeted run: 473 passed, 1 failed (`MODEL_EXPLANATION`, the
+    same failure as on #113).
+- **My census missed a caller.** graph_host's `graphs/fin_program_brief.py` calls `/measure` with
+  only the bearer. I had grepped the wrong path, and the implementer's run caught it. That is why
+  the identity is bearer first.
+- **The trailer hazard.** The pre-push hook wants the LANE id (`Lane: ia-fin/<branch>`), not the
+  throwaway worktree's dir. Derive it with `.githooks/pre-push --expected`.
+- **Packet** (placed, untracked):
+  `invincible-agent/sessions/2026-10-27-packet-to-architect-fin-verbs-refuse-ungranted-programs-pr-117.md`.
+  It asks for two rulings:
+  - the identity source;
+  - who relays the refusal in the supervisor (today it shows as an `engine_unreachable` card).
+- **Next.** Await the rulings and the #113 merge, then re-read #117's checks on `master`.
+
+## Update 2026-10-27: #102 and #103 merged; the program filter is #113; #107 reviewed
 
 - **The ruling, from the architect via Chris.** "#102/#103 merge. Then gov's program_members
   filter." Both merged on 2026-10-26, at `e085440c` and `20858e6a`.
