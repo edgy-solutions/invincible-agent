@@ -26,7 +26,9 @@ built as a dict with exactly the model's fields and validates against it unchang
                      call site -- who approves a grant is the deployment's fact, not the platform's
     candidates       what the caller may choose instead; () by default -- an alternative is
                      itself existence-bearing, so a site offers one only where it already tells
-                     the caller that set (Q23 open: which alternatives a caller may be told)
+                     the caller that set. Ruled 2026-10-27 (ruling 3): only objects the caller
+                     already holds a view grant on, never "others exist"; with no grants the list
+                     is empty and `grantable_by` is the whole answer
 
 THE EXISTENCE RULE. The fields are a function of the caller, the route and what the caller
 sent -- never of whether the target exists or what it holds. An OBJECT-SCOPED family (one whose
@@ -47,6 +49,7 @@ seal walks every call site, so that cannot ship.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -173,3 +176,27 @@ def relay_refusal(upstream: Any) -> Any:
             filled = refusal(str(r["policy_id"]).partition(":")[0], r["missing_binding"])
         return {**upstream, "refusal": filled}
     return upstream
+
+
+#: The message prefix that marks a Restate TerminalError as a carried refusal (architect,
+#: 2026-10-27, ruling 1: a TerminalError carries only a string, so the refusal rides as
+#: `refusal:` + its JSON and is parsed here). The engines' half is
+#: `agent_fleet.utils.terminal_refusal`; two copies because an engine image carries no `src/`,
+#: held to the same dict on every message by
+#: `tests/security/test_a_relayed_refusal_parses_the_same_on_both_sides.py`. Both give way to the
+#: SDK's `Refusal.to_terminal()` / `from_terminal()` when v0.9.12 tags.
+TERMINAL_PREFIX = "refusal:"
+
+
+def from_terminal(message: Any) -> Optional[dict]:
+    """The refusal dict an engine's TerminalError message carries, or None when it carries none:
+    not a string, no prefix, or a body that is not a JSON object. Never raises -- this is the
+    deny path. The dict is the engine's, unfilled: pass it through `relay_refusal` as
+    `{"refusal": ...}` so the grantor comes from this deployment's map."""
+    if not isinstance(message, str) or not message.startswith(TERMINAL_PREFIX):
+        return None
+    try:
+        body = json.loads(message[len(TERMINAL_PREFIX):])
+    except (ValueError, RecursionError):  # RecursionError: a deeply nested body
+        return None
+    return body if isinstance(body, dict) else None

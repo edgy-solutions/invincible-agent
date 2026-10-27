@@ -155,23 +155,31 @@ grant nothing checks today. This is a finding for fin.
 **The hard-coded readers.** Ruled: "platform maintainers" is an acceptable grantor text now.
 Moving `RECIPIENT_READERS` onto the policy rail is a queue item after #96.
 
-## Open questions for the architect
+## The architect's rulings on the open questions (2026-10-27)
 
-1. **Restate `TerminalError` carries only a string.** For the 10 relay sites, does the
-   `refusal` ride as JSON in the message, or does the SDK grow a field?
-2. **May a refusal echo a key the caller itself sent?** For example a capability id from the
-   request. The rule as drafted allows it for families that are not object-scoped. It forbids
-   it for object-scoped ones even when the caller sent the key, because the key's presence in
-   the refusal must not vary by existence.
-3. **Which `candidates` may a caller be told?** An alternative is itself existence-bearing.
-   Finance offers only what its ask already shows the caller (the enumerated menu, or the cell
-   they hold). Every other site keeps `[]`.
-4. **Code-held bindings: RULED 2026-10-25.** "Platform maintainers" is acceptable grantor text
-   now. Moving `RECIPIENT_READERS` onto the rail is a queue item after #96.
-5. **The sandbox overlay.** Should it name the sandbox's actual approver, or stay on the seed
-   wording?
-6. **Joining.** The ratchet reds on any new 401/403 site. If Lane 1's open heads (`01-207`,
-   `01-208`) add one, the join needs that site classified in the same merge.
+1. **Restate relays.** The refusal rides as JSON in the `TerminalError` message under a fixed
+   prefix, `refusal:` + the Refusal dict, and is parsed at the BFF. The SDK adds a typed
+   `Refusal.to_terminal()` / `from_terminal()` pair in v0.9.12. **Built in the meantime:**
+   `agent_fleet/utils/terminal_refusal.py` (the engines' half) and `TERMINAL_PREFIX` /
+   `from_terminal` in `src/iagent/authz/refusal.py` (the BFF's).
+   `tests/security/test_a_relayed_refusal_parses_the_same_on_both_sides.py` holds the two to the
+   same dict on every message. The 10 relay rows stay pending until each site sends and reads the
+   pair.
+2. **Echoing a key the caller sent:** as drafted. An object-scoped family never echoes its key,
+   even when the caller sent it, because a wrong guess and a withheld object must look identical.
+   The finance recipient scope is object-scoped.
+3. **`candidates`:** only objects the caller already holds a view grant on, never "others
+   exist". For a caller with no grants the list is empty, and `grantable_by` is the whole answer.
+   - Finance's options come from engine-fin's filtered list (#113).
+   - `switch_cell`'s single candidate is a cell the caller already holds.
+   - `relay_refusal` does not carry an engine's candidates through, so a relay offers none.
+4. **`RECIPIENT_READERS` moves onto the rail.** Its family is `program_members`, with
+   `granted_by` per program; finance first, cost second. "The platform maintainers" is the honest
+   grantor until that lands.
+5. **The sandbox overlay** names the sandbox's actual approver; the seed stays neutral. Overlays
+   are what deployments are for.
+6. **Joining.** Any merge that adds a 401/403/409-ask site classifies it in the same merge. The
+   ratchet enforces this.
 
 ## What this does not do
 
