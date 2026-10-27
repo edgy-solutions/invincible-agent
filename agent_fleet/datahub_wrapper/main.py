@@ -503,11 +503,6 @@ async def _domain_view_gate(
 # Engine D registers (mesh:InstanceIdentifier)-[mesh:resolveInstance]->(mesh:InstanceResolution)
 # at startup; the router fans an identifier here and reads the class
 # from the candidate list. An EMPTY list is a first-class answer.
-class ResolveInstanceRequest(BaseModel):
-    identifier: str
-    query: Optional[str] = None  # full user query, advisory only
-
-
 class InstanceCandidate(BaseModel):
     instance_id: str    # DataHub URN
     class_uri: str      # idp:* class — what the resolver consumes
@@ -710,6 +705,7 @@ from fastapi import Depends
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
+from iagent_mesh import ResolveInstanceRequest
 _announce_transport_auth(component="engine-d")
 app = FastAPI(
     **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)

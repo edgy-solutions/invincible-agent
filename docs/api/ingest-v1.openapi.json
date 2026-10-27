@@ -1,0 +1,3651 @@
+{
+  "components": {
+    "schemas": {
+      "ActGeneric": {
+        "additionalProperties": false,
+        "description": "POST /human_tasks/{id}/act, the generic kinds (access_request, extraction_defect, ...).",
+        "properties": {
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "grant_written": {
+            "title": "Grant Written",
+            "type": "boolean"
+          },
+          "rows_resolved": {
+            "title": "Rows Resolved",
+            "type": "integer"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "workflow_resumed": {
+            "title": "Workflow Resumed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "decision",
+          "rows_resolved",
+          "workflow_resumed",
+          "grant_written"
+        ],
+        "title": "ActGeneric",
+        "type": "object"
+      },
+      "ActGroupedApproved": {
+        "additionalProperties": false,
+        "description": "A grouped_review approval: the workflow resumed and fanned out.",
+        "properties": {
+          "accepted": {
+            "const": true,
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "resolved_count": {
+            "title": "Resolved Count"
+          },
+          "review_dispatched": {
+            "const": true,
+            "title": "Review Dispatched",
+            "type": "boolean"
+          },
+          "rows_resolved": {
+            "title": "Rows Resolved",
+            "type": "integer"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "decision",
+          "accepted",
+          "rows_resolved",
+          "review_dispatched",
+          "resolved_count"
+        ],
+        "title": "ActGroupedApproved",
+        "type": "object"
+      },
+      "ActGroupedPending": {
+        "additionalProperties": false,
+        "description": "A grouped_review act the workflow refused by policy: the task stays pending.",
+        "properties": {
+          "accepted": {
+            "const": false,
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "decision",
+          "accepted",
+          "status",
+          "reason"
+        ],
+        "title": "ActGroupedPending",
+        "type": "object"
+      },
+      "ActGroupedRejected": {
+        "additionalProperties": false,
+        "description": "A grouped_review narrow reject: the task is closed, the ingest row ends review_rejected.",
+        "properties": {
+          "accepted": {
+            "const": true,
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "ingest_row": {
+            "title": "Ingest Row",
+            "type": "string"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "review_dispatched": {
+            "const": false,
+            "title": "Review Dispatched",
+            "type": "boolean"
+          },
+          "rows_resolved": {
+            "title": "Rows Resolved",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "decision",
+          "accepted",
+          "rows_resolved",
+          "review_dispatched",
+          "reason_code",
+          "status",
+          "ingest_row"
+        ],
+        "title": "ActGroupedRejected",
+        "type": "object"
+      },
+      "ActPromotion": {
+        "additionalProperties": false,
+        "description": "POST /human_tasks/{id}/act on a document_promotion; fact/origin only when promoted, swept only\nwhen rejected, the row_edits..extraction_defect keys only when the steward corrected.",
+        "properties": {
+          "correction": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction"
+          },
+          "corrections": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrections"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "extraction_defect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Defect"
+          },
+          "fact": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "origin": {
+            "title": "Origin"
+          },
+          "reconciled": {
+            "title": "Reconciled"
+          },
+          "record_id": {
+            "title": "Record Id",
+            "type": "string"
+          },
+          "reject_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reject Code"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "row_edits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RowEditCounts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "row_edits_applied": {
+            "title": "Row Edits Applied"
+          },
+          "rows_resolved": {
+            "title": "Rows Resolved",
+            "type": "integer"
+          },
+          "swept": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Swept"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "decision",
+          "rows_resolved",
+          "ingest_id",
+          "record_id",
+          "replayed"
+        ],
+        "title": "ActPromotion",
+        "type": "object"
+      },
+      "AddedRow": {
+        "additionalProperties": false,
+        "properties": {
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "evidence": {
+            "title": "Evidence",
+            "type": "string"
+          },
+          "evidence_ref": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Ref"
+          },
+          "mpn": {
+            "title": "Mpn",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mpn",
+          "disposition",
+          "reason",
+          "evidence"
+        ],
+        "title": "AddedRow",
+        "type": "object"
+      },
+      "ArtifactRef": {
+        "additionalProperties": false,
+        "description": "One released artifact of the row's case.",
+        "properties": {
+          "artifact_id": {
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "released_at": {
+            "title": "Released At"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "kind",
+          "released_at"
+        ],
+        "title": "ArtifactRef",
+        "type": "object"
+      },
+      "Body_ingest_document_ingest_post": {
+        "properties": {
+          "content_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Kind"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "leaf": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf"
+          },
+          "on_behalf_of": {
+            "default": "",
+            "title": "On Behalf Of",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "kind"
+        ],
+        "title": "Body_ingest_document_ingest_post",
+        "type": "object"
+      },
+      "Cell": {
+        "additionalProperties": false,
+        "description": "A (persona, domain) entitlement cell.",
+        "properties": {
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persona"
+          }
+        },
+        "required": [
+          "persona",
+          "domain"
+        ],
+        "title": "Cell",
+        "type": "object"
+      },
+      "CorrectedRow": {
+        "additionalProperties": false,
+        "properties": {
+          "corrected_mpn": {
+            "title": "Corrected Mpn",
+            "type": "string"
+          },
+          "evidence": {
+            "title": "Evidence",
+            "type": "string"
+          },
+          "evidence_ref": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Ref"
+          },
+          "mpn": {
+            "title": "Mpn",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mpn",
+          "corrected_mpn",
+          "evidence"
+        ],
+        "title": "CorrectedRow",
+        "type": "object"
+      },
+      "DeletedRow": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ref": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Ref"
+          },
+          "mpn": {
+            "title": "Mpn",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mpn",
+          "reason"
+        ],
+        "title": "DeletedRow",
+        "type": "object"
+      },
+      "DroppedBy": {
+        "additionalProperties": false,
+        "description": "Who submitted the row (the delegate for a delegated drop).",
+        "properties": {
+          "authz_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authz Id"
+          }
+        },
+        "required": [
+          "authz_id"
+        ],
+        "title": "DroppedBy",
+        "type": "object"
+      },
+      "DuplicateRef": {
+        "additionalProperties": false,
+        "description": "Points a duplicate-arrival row at the original drop it repeats.",
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "of_ingest_id": {
+            "title": "Of Ingest Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "of_ingest_id",
+          "message"
+        ],
+        "title": "DuplicateRef",
+        "type": "object"
+      },
+      "EmptyAccount": {
+        "additionalProperties": false,
+        "description": "The extraction's own account of why it found no rows (from review.json `stats`); `why` is\n\"unknown\" with Nones when review.json was unreadable -- no figure is invented.",
+        "properties": {
+          "grid_no_parts_col": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grid No Parts Col"
+          },
+          "grid_rows_emitted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grid Rows Emitted"
+          },
+          "n_tables": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Tables"
+          },
+          "review_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Review Reasons",
+            "type": "array"
+          },
+          "why": {
+            "enum": [
+              "no_table",
+              "no_parts_column",
+              "zero_rows",
+              "unknown"
+            ],
+            "title": "Why",
+            "type": "string"
+          }
+        },
+        "required": [
+          "n_tables",
+          "grid_no_parts_col",
+          "grid_rows_emitted",
+          "review_reasons",
+          "why"
+        ],
+        "title": "EmptyAccount",
+        "type": "object"
+      },
+      "EmptyConfirmed": {
+        "additionalProperties": false,
+        "description": "POST /ingest/{id}/empty, decision confirmed_no_parts: the row ends no_parts.",
+        "properties": {
+          "decision": {
+            "const": "confirmed_no_parts",
+            "title": "Decision",
+            "type": "string"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "rows_resolved": {
+            "title": "Rows Resolved",
+            "type": "integer"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "task_id",
+          "decision",
+          "stage",
+          "rows_resolved"
+        ],
+        "title": "EmptyConfirmed",
+        "type": "object"
+      },
+      "EmptyHasParts": {
+        "additionalProperties": false,
+        "description": "POST /ingest/{id}/empty, decision has_parts: relaunched with the text-layer fallback.",
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "decision": {
+            "const": "has_parts",
+            "title": "Decision",
+            "type": "string"
+          },
+          "extraction_defect": {
+            "title": "Extraction Defect",
+            "type": "string"
+          },
+          "force_text_fallback": {
+            "title": "Force Text Fallback",
+            "type": "boolean"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "rows_resolved": {
+            "title": "Rows Resolved",
+            "type": "integer"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "task_id",
+          "decision",
+          "stage",
+          "attempt",
+          "extraction_defect",
+          "force_text_fallback",
+          "rows_resolved"
+        ],
+        "title": "EmptyHasParts",
+        "type": "object"
+      },
+      "Entitlements": {
+        "additionalProperties": false,
+        "description": "GET /me/entitlements; cells is empty when the directory is not wired.",
+        "properties": {
+          "authz_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authz Id"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/Cell"
+            },
+            "title": "Cells",
+            "type": "array"
+          },
+          "default": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Cell"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "user_id",
+          "authz_id",
+          "email",
+          "cells",
+          "default",
+          "source"
+        ],
+        "title": "Entitlements",
+        "type": "object"
+      },
+      "EvidenceRef": {
+        "additionalProperties": false,
+        "description": "Where on the page an extracted value was read (units pt for a cell match, else px).",
+        "properties": {
+          "bbox": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Bbox",
+            "type": "array"
+          },
+          "bboxes": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Bboxes",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_dims": {
+            "title": "Page Dims"
+          },
+          "quality": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cell",
+                  "region"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality"
+          },
+          "units": {
+            "enum": [
+              "pt",
+              "px"
+            ],
+            "title": "Units",
+            "type": "string"
+          }
+        },
+        "required": [
+          "page",
+          "bbox",
+          "bboxes",
+          "page_dims",
+          "units",
+          "quality"
+        ],
+        "title": "EvidenceRef",
+        "type": "object"
+      },
+      "Extraction": {
+        "additionalProperties": false,
+        "description": "GET /ingest/{id}/extraction.",
+        "properties": {
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "content_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Kind"
+          },
+          "corrected_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected By"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "leaf": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pcn",
+                  "pdn"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf"
+          },
+          "leaf_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "declared",
+                  "title",
+                  "corrected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf Source"
+          },
+          "notice": {
+            "$ref": "#/components/schemas/Notice"
+          },
+          "notice_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notice Id"
+          },
+          "part_count": {
+            "title": "Part Count",
+            "type": "integer"
+          },
+          "relocated_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relocated To"
+          },
+          "review_ref": {
+            "title": "Review Ref",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractionRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "rows_without_evidence": {
+            "title": "Rows Without Evidence",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "notice_id",
+          "content_kind",
+          "attempt",
+          "leaf",
+          "leaf_source",
+          "corrected_by",
+          "notice",
+          "part_count",
+          "rows",
+          "rows_without_evidence",
+          "review_ref",
+          "relocated_to"
+        ],
+        "title": "Extraction",
+        "type": "object"
+      },
+      "ExtractionDefectRef": {
+        "additionalProperties": false,
+        "description": "The newest extraction_defect task filed about the drop. `edits` counts rows deleted, added or\ncorrected (0 for a steward's \"it has parts\" on an empty extraction).",
+        "properties": {
+          "edits": {
+            "title": "Edits",
+            "type": "integer"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "edits"
+        ],
+        "title": "ExtractionDefectRef",
+        "type": "object"
+      },
+      "ExtractionRow": {
+        "additionalProperties": false,
+        "description": "One extracted part field, in file order.",
+        "properties": {
+          "evidence_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "extracted_value": {
+            "title": "Extracted Value"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "match_confidence": {
+            "title": "Match Confidence"
+          },
+          "mpn": {
+            "title": "Mpn"
+          },
+          "needs_review": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs Review"
+          },
+          "obtained_via": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Obtained Via"
+          },
+          "part_index": {
+            "title": "Part Index",
+            "type": "integer"
+          },
+          "review_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Reason"
+          },
+          "row_index": {
+            "title": "Row Index",
+            "type": "integer"
+          },
+          "source_snippet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Snippet"
+          }
+        },
+        "required": [
+          "row_index",
+          "part_index",
+          "mpn",
+          "field",
+          "extracted_value",
+          "obtained_via",
+          "match_confidence",
+          "needs_review",
+          "review_reason",
+          "source_snippet",
+          "evidence_ref"
+        ],
+        "title": "ExtractionRow",
+        "type": "object"
+      },
+      "Failure": {
+        "additionalProperties": false,
+        "description": "Why a row is failed; reason_code None means the producer did not classify it.",
+        "properties": {
+          "failed_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed At"
+          },
+          "pin_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pin Digest"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          }
+        },
+        "required": [
+          "reason_code",
+          "reason",
+          "step",
+          "run_id",
+          "pin_digest",
+          "failed_at"
+        ],
+        "title": "Failure",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HeaderEdit": {
+        "additionalProperties": false,
+        "description": "A steward correction of one header field of a promotion (ruling 10-20, Q8 amended), on the\nsame wire and flag as row_edits.",
+        "properties": {
+          "evidence_ref": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Ref"
+          },
+          "field": {
+            "enum": [
+              "mfr",
+              "notice_id",
+              "notice_date"
+            ],
+            "title": "Field",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "value",
+          "evidence_ref",
+          "reason"
+        ],
+        "title": "HeaderEdit",
+        "type": "object"
+      },
+      "HumanTask": {
+        "additionalProperties": false,
+        "description": "One pending task row of the caller's queue, with its kind's declaration.",
+        "properties": {
+          "audience": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audience"
+          },
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "created_at": {
+            "title": "Created At"
+          },
+          "declaration": {
+            "$ref": "#/components/schemas/TaskDeclaration"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "payload": {
+            "title": "Payload"
+          },
+          "promise_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promise Name"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Ref"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          },
+          "workflow_service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Service"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "task_id",
+          "workflow_id",
+          "audience",
+          "status",
+          "title",
+          "summary",
+          "requested_by",
+          "subject_ref",
+          "payload",
+          "created_at",
+          "workflow_service",
+          "promise_name",
+          "case_id",
+          "declaration"
+        ],
+        "title": "HumanTask",
+        "type": "object"
+      },
+      "HumanTaskActRequest": {
+        "properties": {
+          "comment": {
+            "default": "",
+            "title": "Comment",
+            "type": "string"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "header_edits": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/HeaderEdit"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Header Edits"
+          },
+          "on_behalf_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Behalf Of"
+          },
+          "overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrides"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "not_a_notice",
+                  "unreadable",
+                  "parts_unusable",
+                  "duplicate"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "row_edits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RowEdits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "HumanTaskActRequest",
+        "type": "object"
+      },
+      "HumanTasksListing": {
+        "additionalProperties": false,
+        "description": "GET /me/human_tasks: pending tasks addressed to the caller, newest first.",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/HumanTask"
+            },
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "email",
+          "tasks"
+        ],
+        "title": "HumanTasksListing",
+        "type": "object"
+      },
+      "IngestAccepted": {
+        "additionalProperties": false,
+        "description": "POST /ingest, a new drop.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "null"
+          },
+          "duplicate": {
+            "title": "Duplicate",
+            "type": "null"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "object_prefix": {
+            "title": "Object Prefix",
+            "type": "string"
+          },
+          "origin_suggestion": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Suggestion"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "workflow": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "stage",
+          "detail",
+          "object_prefix",
+          "duplicate",
+          "workflow",
+          "origin_suggestion"
+        ],
+        "title": "IngestAccepted",
+        "type": "object"
+      },
+      "IngestDuplicate": {
+        "additionalProperties": false,
+        "description": "POST /ingest, bytes already dropped: a new row for the repeat, carrying the original's stage.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "duplicate": {
+            "$ref": "#/components/schemas/DuplicateRef"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "stage",
+          "detail",
+          "duplicate"
+        ],
+        "title": "IngestDuplicate",
+        "type": "object"
+      },
+      "IngestEmptyRequest": {
+        "additionalProperties": false,
+        "description": "POST /ingest/{ingest_id}/empty's body: the dropper's or steward's answer on an empty extraction.",
+        "properties": {
+          "decision": {
+            "enum": [
+              "confirmed_no_parts",
+              "has_parts"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "IngestEmptyRequest",
+        "type": "object"
+      },
+      "IngestLeafRequest": {
+        "additionalProperties": false,
+        "description": "POST /ingest/{ingest_id}/leaf's body: the leaf (pcn|pdn) the dropper or steward picks.",
+        "properties": {
+          "leaf": {
+            "title": "Leaf",
+            "type": "string"
+          }
+        },
+        "required": [
+          "leaf"
+        ],
+        "title": "IngestLeafRequest",
+        "type": "object"
+      },
+      "IngestRetryRequest": {
+        "description": "POST /ingest/{id}/retry's body: the extractor pin the caller observed NOW.",
+        "properties": {
+          "pin_digest": {
+            "minLength": 1,
+            "title": "Pin Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pin_digest"
+        ],
+        "title": "IngestRetryRequest",
+        "type": "object"
+      },
+      "IngestTitleLeafRequest": {
+        "additionalProperties": false,
+        "description": "POST /ingest/{ingest_id}/title_leaf's body: what doc-tools' header/title read found.",
+        "properties": {
+          "candidates": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TitleCandidate"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidates"
+          },
+          "doc_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc Type"
+          },
+          "doc_type_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc Type Source"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          }
+        },
+        "title": "IngestTitleLeafRequest",
+        "type": "object"
+      },
+      "LeafResponse": {
+        "additionalProperties": false,
+        "description": "POST /ingest/{id}/leaf: the full status body; at review it adds the new task and the one superseded.",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EmptyAccount"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "artifacts": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ArtifactRef"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifacts"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "content_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Kind"
+          },
+          "corrected_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected By"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "integer"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "dropped_by": {
+            "$ref": "#/components/schemas/DroppedBy"
+          },
+          "duplicate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DuplicateRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "extraction_defect": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExtractionDefectRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Failure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hold_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Reason"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "leaf": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pcn",
+                  "pdn"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf"
+          },
+          "leaf_candidates": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf Candidates"
+          },
+          "leaf_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "declared",
+                  "title",
+                  "corrected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf Source"
+          },
+          "notice_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notice Id"
+          },
+          "origin_suggestion": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Suggestion"
+          },
+          "review_shape": {
+            "anyOf": [
+              {
+                "enum": [
+                  "empty",
+                  "promotion"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Shape"
+          },
+          "review_task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Task Id"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "superseded_task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded Task Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "stage",
+          "detail",
+          "duplicate",
+          "kind",
+          "sha256",
+          "created_at",
+          "updated_at",
+          "dropped_by",
+          "origin_suggestion",
+          "case_id",
+          "content_kind",
+          "failure",
+          "attempt",
+          "notice_id",
+          "artifacts",
+          "review_task_id",
+          "review_shape",
+          "account"
+        ],
+        "title": "LeafResponse",
+        "type": "object"
+      },
+      "MineListing": {
+        "additionalProperties": false,
+        "description": "GET /ingest/mine: the caller's drops, newest first; next is the cursor `{created_at}|{id}` or null.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StatusBody"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next"
+          }
+        },
+        "required": [
+          "items",
+          "next"
+        ],
+        "title": "MineListing",
+        "type": "object"
+      },
+      "Notice": {
+        "additionalProperties": false,
+        "description": "The notice header read from review.json; the values are LLM-extracted, so unconstrained.",
+        "properties": {
+          "mfr": {
+            "title": "Mfr"
+          },
+          "mfr_parent": {
+            "title": "Mfr Parent"
+          },
+          "mfr_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "header",
+                  "identity"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mfr Source"
+          },
+          "notice_date": {
+            "title": "Notice Date"
+          }
+        },
+        "required": [
+          "mfr",
+          "mfr_source",
+          "mfr_parent",
+          "notice_date"
+        ],
+        "title": "Notice",
+        "type": "object"
+      },
+      "RetriesListing": {
+        "additionalProperties": false,
+        "description": "GET /ingest/retries (doc-tools' own poll).",
+        "properties": {
+          "retries": {
+            "items": {
+              "$ref": "#/components/schemas/RetryEntry"
+            },
+            "title": "Retries",
+            "type": "array"
+          }
+        },
+        "required": [
+          "retries"
+        ],
+        "title": "RetriesListing",
+        "type": "object"
+      },
+      "RetryEntry": {
+        "additionalProperties": false,
+        "description": "One received row doc-tools should relaunch; run_key is the idempotency key.",
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "content_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Kind"
+          },
+          "force_text_fallback": {
+            "title": "Force Text Fallback",
+            "type": "boolean"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "object_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Object Prefix"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "run_key": {
+            "title": "Run Key",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "attempt",
+          "run_key",
+          "kind",
+          "content_kind",
+          "object_prefix",
+          "sha256",
+          "run_id",
+          "updated_at",
+          "reason",
+          "force_text_fallback"
+        ],
+        "title": "RetryEntry",
+        "type": "object"
+      },
+      "RetryFiled": {
+        "additionalProperties": false,
+        "description": "POST /ingest/{id}/retry, the review task re-filed or found (task_id None when the kind skips promotion).",
+        "properties": {
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "task_status": {
+            "enum": [
+              "FILED",
+              "ALREADY_FILED",
+              "NO_TASK_KIND_SKIPS_PROMOTION"
+            ],
+            "title": "Task Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "stage",
+          "task_id",
+          "task_status"
+        ],
+        "title": "RetryFiled",
+        "type": "object"
+      },
+      "RetryReopened": {
+        "additionalProperties": false,
+        "description": "POST /ingest/{id}/retry, a failed document re-opened (doc-tools relaunches on its poll).",
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "stage",
+          "attempt"
+        ],
+        "title": "RetryReopened",
+        "type": "object"
+      },
+      "RowEditCounts": {
+        "additionalProperties": false,
+        "description": "How many of each edit a steward's correction carried.",
+        "properties": {
+          "added": {
+            "title": "Added",
+            "type": "integer"
+          },
+          "corrected": {
+            "title": "Corrected",
+            "type": "integer"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "header": {
+            "title": "Header",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "corrected",
+          "added",
+          "deleted",
+          "header"
+        ],
+        "title": "RowEditCounts",
+        "type": "object"
+      },
+      "RowEdits": {
+        "additionalProperties": false,
+        "description": "Steward row edits on a grouped-review approval (architect ruling 2026-10-10). The workflow's\n`steward_correction.validate_row_edits` restates every rule against the server-authored batch;\nthis is the wire half, so a bad payload is a 422 before it reaches Restate. It is also the\ndocument_promotion wire (carried on a `promoted` decision, server-flagged by\nIAGENT_PROMOTION_ROW_EDITS).",
+        "properties": {
+          "added": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AddedRow"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "corrected": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CorrectedRow"
+            },
+            "title": "Corrected",
+            "type": "array"
+          },
+          "deleted": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DeletedRow"
+            },
+            "title": "Deleted",
+            "type": "array"
+          }
+        },
+        "title": "RowEdits",
+        "type": "object"
+      },
+      "StatusBody": {
+        "additionalProperties": false,
+        "description": "GET /ingest/{id}/status, and each item of GET /ingest/mine. The four leaf keys are present\nonly on a leaf-capable row (absent, not null, for cad / xml / s1000d). `extraction_defect` is\nabsent when the route cannot tell (no claim), null when no defect is on record.",
+        "properties": {
+          "account": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EmptyAccount"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "artifacts": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ArtifactRef"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifacts"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "content_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Kind"
+          },
+          "corrected_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected By"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "integer"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "dropped_by": {
+            "$ref": "#/components/schemas/DroppedBy"
+          },
+          "duplicate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DuplicateRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "extraction_defect": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExtractionDefectRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Failure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hold_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hold Reason"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "leaf": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pcn",
+                  "pdn"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf"
+          },
+          "leaf_candidates": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf Candidates"
+          },
+          "leaf_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "declared",
+                  "title",
+                  "corrected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf Source"
+          },
+          "notice_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notice Id"
+          },
+          "origin_suggestion": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Suggestion"
+          },
+          "review_shape": {
+            "anyOf": [
+              {
+                "enum": [
+                  "empty",
+                  "promotion"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Shape"
+          },
+          "review_task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Task Id"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "stage",
+          "detail",
+          "duplicate",
+          "kind",
+          "sha256",
+          "created_at",
+          "updated_at",
+          "dropped_by",
+          "origin_suggestion",
+          "case_id",
+          "content_kind",
+          "failure",
+          "attempt",
+          "notice_id",
+          "artifacts",
+          "review_task_id",
+          "review_shape",
+          "account"
+        ],
+        "title": "StatusBody",
+        "type": "object"
+      },
+      "TaskDeclaration": {
+        "additionalProperties": false,
+        "description": "What the task's kind accepts: accepts is ordered, reason_required is a sorted subset of it.",
+        "properties": {
+          "accepts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Accepts",
+            "type": "array"
+          },
+          "archetype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archetype"
+          },
+          "badge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Badge"
+          },
+          "declared": {
+            "title": "Declared",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason_required": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reason Required",
+            "type": "array"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "kind",
+          "declared",
+          "archetype",
+          "badge",
+          "title",
+          "accepts",
+          "reason_required"
+        ],
+        "title": "TaskDeclaration",
+        "type": "object"
+      },
+      "TitleCandidate": {
+        "additionalProperties": false,
+        "description": "One leaf the title read considered: `{leaf, score, evidence_ref}`. `evidence_ref` is the title\ncrop the read used (the struct `EvidenceRef`, required; not the legacy string).",
+        "properties": {
+          "evidence_ref": {
+            "$ref": "#/components/schemas/TitleEvidenceRef"
+          },
+          "leaf": {
+            "title": "Leaf",
+            "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Score"
+          }
+        },
+        "required": [
+          "leaf",
+          "score",
+          "evidence_ref"
+        ],
+        "title": "TitleCandidate",
+        "type": "object"
+      },
+      "TitleEvidenceRef": {
+        "additionalProperties": false,
+        "description": "A title candidate's crop: `EvidenceRef` plus the page-fraction bounds. A SUBCLASS so the\nsteward row_edits / header_edits evidence_ref (not yet converted) keeps `EvidenceRef` as it was.\nCortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422).",
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "page"
+        ],
+        "title": "TitleEvidenceRef",
+        "type": "object"
+      },
+      "TitleLeafResponse": {
+        "additionalProperties": false,
+        "description": "POST /ingest/{id}/title_leaf (doc-tools): proceed false holds the row at awaiting_kind.",
+        "properties": {
+          "content_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Kind"
+          },
+          "corrected_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected By"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "leaf": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pcn",
+                  "pdn"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf"
+          },
+          "leaf_candidates": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf Candidates"
+          },
+          "leaf_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "declared",
+                  "title",
+                  "corrected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf Source"
+          },
+          "proceed": {
+            "title": "Proceed",
+            "type": "boolean"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "proceed",
+          "stage",
+          "content_kind",
+          "leaf",
+          "leaf_source",
+          "corrected_by",
+          "leaf_candidates"
+        ],
+        "title": "TitleLeafResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "OAuth2PasswordBearer": {
+        "flows": {
+          "password": {
+            "scopes": {},
+            "tokenUrl": "http://localhost:8080/realms/invincible-agent/protocol/openid-connect/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "title": "Cortex ingest API",
+    "version": "1.2.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/human_tasks/{task_id}/act": {
+      "post": {
+        "description": "Approve/reject a task. Application-layer gate: RE-CHECK Topaz `can_act` for\nthis caller on the task's audience (deny-by-default) BEFORE acting. Slice 1b\nadds the Restate `approve` call that resumes the suspended workflow; the\nfoundation validates the gate + resolution bookkeeping.",
+        "operationId": "act_on_human_task_human_tasks__task_id__act_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanTaskActRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ActGeneric"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ActPromotion"
+                    },
+                    {
+                      "$ref": "#/components/schemas/EmptyConfirmed"
+                    },
+                    {
+                      "$ref": "#/components/schemas/EmptyHasParts"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ActGroupedPending"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ActGroupedRejected"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ActGroupedApproved"
+                    }
+                  ],
+                  "title": "Response 200 Act On Human Task Human Tasks  Task Id  Act Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Act On Human Task",
+        "tags": [
+          "ingest-v1"
+        ]
+      }
+    },
+    "/ingest": {
+      "post": {
+        "description": "POST /ingest (ADR-0041 §8) — a non-technical user hand-carries a document in.\n\nDeny-by-default: requires an authenticated caller (Depends(get_current_user) — no\nanonymous upload), and `on_behalf_of` must equal the caller's own authz_id (see the\nmodule-level note above this route for why v1 does not accept delegation).\n\nsha256 is computed AT THE DOOR (ADR-0041 §8's own phrase) — before any write, before\nany classification. Level-1 dedupe keys on it alone (same bytes = same document,\nfull stop); it says nothing about document-IDENTITY dedupe across different bytes of\nthe same logical document (ADR-0041 §6's R3, `(issuer, document_number, revision)`) —\nthat is a classifier-time concern, downstream of this seam, and is NOT implemented\nhere.\n\nFORMAT IS NOT KIND. `kind` (pdf|cad|xml) is the FILE FORMAT — the `ingress-user/{kind}/`\npath segment and the projection's `kind` column — never a registered content kind.\n`content_kind` is the SEPARATE channel for the picker's confirmed registered kind\n(ADR-0041 §4), and it is REQUIRED (architect ruling 2026-10-12: the door refuses a kindless\ndrop where the uploader can still fix it, instead of accepting it and letting it die inside\na Dagster op on the ADR-0041 guard). Refusals, in this order and all BEFORE the bounded read\nso nothing is written: blank-after-strip or malformed -> 422; absent -> 400\n`content_kind_required`; declared but not in the registry (`content_kinds.by_kind` is None)\n-> 400 `kind_unregistered`; an event-branch kind -> 422 `event_kind_requires_json`. Both 400s\ncarry `registered`, the sorted document-branch kind names, so the picker can offer them. Any\nregistered document-branch kind passes, including a deliberately domainless one like `pdf`\n(it lands at `awaiting_origin` later, unchanged). When INGEST_DOOR_READS_PROCESSABLE_KINDS is on\n(default OFF), one more check follows, still before the bounded read: no published list yet ->\n503 `processable_kinds_unknown`; a kind absent from doc-tools' published list -> 400\n`kind_unprocessable` (carrying `processable`). Writing a bare file format into\n`manifest.metadata.content_kind` (the old behaviour) made every user drop HALT as\nContentKindUnregistered(\"pdf\") -- ADR-0021 rule 1 / ADR-0041 §4 reserve that key for a\nREGISTERED kind; ADR-0021's 2026-09-30 amendment disables rule 2 under `ingress-user/`\n(that path segment is a format), so a kindless drop could never be resolved downstream.",
+        "operationId": "ingest_document_ingest_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_ingest_document_ingest_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/IngestAccepted"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IngestDuplicate"
+                    }
+                  ],
+                  "title": "Response 200 Ingest Document Ingest Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Document",
+        "tags": [
+          "ingest-v1"
+        ]
+      }
+    },
+    "/ingest/mine": {
+      "get": {
+        "description": "GET /ingest/mine -- the caller's own drops (dropper or on_behalf_of), paged, newest first,\neach in the same summary shape as GET /ingest/<id>/status. Architect ruling 2026-10-16: the\nrail reads it on load and merges with live entries; browser storage is a cache, never the\nrecord.\n\nEXISTENCE-ORACLE SAFE BY SCOPING: `ingest_status.list_mine` carries `get_status_for`'s own\nscoping (`submitted_by = caller OR on_behalf_of = caller`), so the route reveals only the\ncaller's own rows and nothing about anyone else's. Event rows are never listed; drops are\ndocuments. A caller with no drops gets 200 `{\"items\": [], \"next\": null}`, never a 404.\n\nPAGING is a keyset cursor, not OFFSET: `before` is the opaque string `{created_at}|{id}` that\na previous page returned as `next` (None on the last page). A malformed cursor is 422\n`invalid_cursor`.",
+        "operationId": "list_my_ingests_ingest_mine_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MineListing"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List My Ingests",
+        "tags": [
+          "ingest-v1"
+        ]
+      }
+    },
+    "/ingest/retries": {
+      "get": {
+        "description": "GET /ingest/retries -- retried drops awaiting relaunch. SERVICE-ONLY: only `svc:doc-tools`\n(see `_DOC_TOOLS_SERVICE_AUTHZ_ID`) may call this; every other caller gets 403.\n\nThe architect's 2026-10-12 ruling (Shape 1). `POST /ingest/{id}/retry` re-opens a failed row\nat `received` with `attempt` + 1, but doc-tools' sensor cannot see the object again (its S3\ncursor has passed it), so doc-tools polls THIS route and launches each entry with the Dagster\nrun_key `{ingest_id}-a{attempt}`. The row stays at `received` until the relaunched run posts\n`extracting`, so the same entry is listed on every poll; the attempt-keyed run_key is what\nmakes the relaunch idempotent. A row not relaunched within `INGEST_RECEIVED_TIMEOUT_SECONDS`\nis failed `timeout` by the watchdog, as before. Oldest first; event rows never appear.\nEach entry's `reason` is `leaf_applied` (the BFF relaunched it as its leaf) or null (a Retry).",
+        "operationId": "list_ingest_retries_ingest_retries_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetriesListing"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "List Ingest Retries",
+        "tags": [
+          "ingest-v1"
+        ]
+      }
+    },
+    "/ingest/{ingest_id}/empty": {
+      "post": {
+        "description": "POST /ingest/{ingest_id}/empty -- answer a document's `document_empty_confirm`. Gate:\n`_ingest_review_access` (the dropper, or a holder of the open promotion task: the same gate as\n`/ingest/{id}/leaf`). The dropper may confirm their own: there is nothing to approve. The same\nwriter as the task act (`_decide_empty`).",
+        "operationId": "decide_empty_route_ingest__ingest_id__empty_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ingest_id",
+            "required": true,
+            "schema": {
+              "title": "Ingest Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestEmptyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/EmptyConfirmed"
+                    },
+                    {
+                      "$ref": "#/components/schemas/EmptyHasParts"
+                    }
+                  ],
+                  "title": "Response 200 Decide Empty Route Ingest  Ingest Id  Empty Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Decide Empty Route",
+        "tags": [
+          "ingest-v1"
+        ],
+        "x-stability": "preview"
+      }
+    },
+    "/ingest/{ingest_id}/extraction": {
+      "get": {
+        "description": "GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the\nevidence reference (page, bbox, units, quality cell|region|null) the review card draws. Gate: `_ingest_review_access`\n(the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of\nreview.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and\nis counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /\n`extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`.\n`leaf` / `leaf_source` / `corrected_by` are the notice's pcn|pdn and where it came from, read from\nthe ROW only (`_row_leaf`); a row with no leaf shows `leaf: null` whatever review.json says.\nA REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the\nrejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404\n`rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`.",
+        "operationId": "ingest_extraction_route_ingest__ingest_id__extraction_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ingest_id",
+            "required": true,
+            "schema": {
+              "title": "Ingest Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Extraction"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Extraction Route",
+        "tags": [
+          "ingest-v1"
+        ]
+      }
+    },
+    "/ingest/{ingest_id}/leaf": {
+      "post": {
+        "description": "POST /ingest/<id>/leaf -- the dropper's or steward's correction of a row's leaf (pcn|pdn),\nrecorded as `leaf_source=corrected` with who and when. Gate: `_ingest_review_access` (the\ndropper, the holder of the open `document_promotion` task, or a seeding delegate service).\n422 `unknown_leaf`; 409 `no_leaf_for_kind` for a row that is not leaf-capable.\n\nThe leaf can change until promotion (ruling 2026-10-21 \"Leaf, final shape\"); dropper and steward\nuse this one route. Dispatch on the stage:\n\n  received, extracting, failed   set_leaf(corrected) in place; the stage is unchanged. The\n                                 run in flight read the OLD kind from the drop's sidecar, so\n                                 `_ingest_leaf_relaunch_tick` relaunches the row AS THE LEAF\n                                 once its run has finished (within one 60 s poll)\n  awaiting_kind                  the drop's sidecar is rewritten to the leaf FIRST (a failure\n                                 is 503 `sidecar_unwritable`, nothing changed), then\n                                 set_leaf(corrected) and the row goes back to `received`,\n                                 `attempt` + 1, reason `leaf_applied`: nothing was extracted,\n                                 so the hold is released and doc-tools relaunches it from\n                                 GET /ingest/retries, running as the leaf\n  awaiting_origin, review        spec 204: RE-CLASS when `_same_passes(old, new)` (the two kinds\n                                 declare equal pass lists in the registry): awaiting_origin\n                                 records the correction and keeps its stage; review files the\n                                 next generation's task (`document_promotion:<id>:g<n>`) FIRST,\n                                 then records the correction, then supersedes the old task. The\n                                 answer adds `task_id` and `superseded_task_id`. RE-RUN when the\n                                 pass lists differ: back to `received`, `attempt` + 1 (and, at\n                                 review, the generation bumps and the old task is superseded;\n                                 the re-extraction's return to review files the new one)\n  promoted, rejected,            409 `leaf_not_changeable` (with the stage)\n  review_rejected\n\nA write that matches nothing (the row moved under us) is 409 `leaf_not_changeable` with the\ncurrent stage. Answers the row's status body.",
+        "operationId": "ingest_leaf_route_ingest__ingest_id__leaf_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ingest_id",
+            "required": true,
+            "schema": {
+              "title": "Ingest Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestLeafRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeafResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Leaf Route",
+        "tags": [
+          "ingest-v1"
+        ]
+      }
+    },
+    "/ingest/{ingest_id}/retry": {
+      "post": {
+        "description": "POST /ingest/<id>/retry. The architect's 2026-10-12 directive, \"pipeline failure must reach\nthe row\", supersedes the 2026-10-10 \"pin-driven only, never the UI\" ruling FOR FAILED ROWS: a\nperson may retry their OWN `failed` document row, and a service may retry one without a pin.\nThis is the one legitimate human retry, because the input was never processed. Every other\nextraction retry stays pin-driven and service-only (supersedes the dropper's own retry of\nroll #20 item 3).\n\nTHE RETRY ONLY RE-OPENS THE ROW (`ingest_status.retry_failed`: failed -> received, `failure`\ncleared, `attempt` + 1). doc-tools' `ingress_user_sensor` does not relaunch an unchanged object:\nits LastModified cursor has already passed it, and its run_key is `{ETag}-{key}`. So until\ndoc-tools adds a relaunch path, a retried row sits at `received` and the watchdog fails it again\nwith `timeout`. That outcome is visible and honest, not silent.\n\nTWO ACTS SHARE THIS ROUTE, and the two 2026-10-10 rulings govern one each (rev 187 merge of #32\nand #43; the architect is asked to confirm, packet 2026-10-11 \"two rulings collide\"):\n  * RE-FILING a promotion from recorded state (`awaiting_origin`, Q2c) re-extracts nothing and\n    is idempotent -- the dropper may do it, exactly as the accept and stage routes may.\n  * RE-EXTRACTION (every other stage) is pin-driven and service-only, as steward item 4 rules.\n\nGate, in order:\n  * A PERSON is looked up SCOPED (`get_status_for`: rows they submitted or are on_behalf_of).\n    Their own `failed` DOCUMENT row is re-opened (200 `received` with the new `attempt`; 409\n    `not_failed` if it stopped being failed under them). Their own `awaiting_origin` DOCUMENT\n    row goes to Q2c. Anything else -- another stage, a row\n    that is not theirs, no row at all -- is the SAME 403 `retry_is_pin_driven`, so the answer\n    tells a person nothing about rows they cannot already see. A person never reaches the\n    unscoped lookup or any extraction-retry action.\n  * A SERVICE is looked up unscoped. An `awaiting_origin` DOCUMENT row goes to Q2c (re-filing\n    is not pin-driven); a `failed` DOCUMENT row is re-opened with no pin. Otherwise it must send `{pin_digest}` (422 `pin_required`); a row with\n    no recorded pin is 409 `no_recorded_pin`; an equal pin is 409 `pin_unchanged`; only a\n    DIFFERENT pin proceeds to the dispatch below.\n\nDispatch on the row:\n  * already terminal (promoted/rejected/duplicate/case_opened, or a failed EVENT row) -- 409\n    `terminal`; nothing to retry.\n  * a DOCUMENT row at `awaiting_origin` (Q2c, 2026-10-10) -- NOT terminal: runs the state\n    function `_file_promotion_if_ready` with THIS caller as `requested_by`. Filed -> 200\n    `review` with the task; no accepted origin yet -> 409 `awaiting_origin`; origin\n    unreadable or filing refused -> 503 `promotion_not_filed` (row stays put).\n  * an EVENT row, which by this point can only be sitting at `received` (its own only\n    non-terminal stage -- POST /ingest/events moves it straight to `case_opened`, never\n    through extracting/review) -- 409 `resend_the_event`: the row holds only the payload\n    hash, so the fix is to resend the same event, not to retry here.\n  * a failed DOCUMENT row is re-opened at `received` (a row with a leaf has the drop's sidecar\n    rewritten to that leaf first; 503 `sidecar_unwritable` if it cannot be).\n  * a DOCUMENT row at `received`/`extracting` -- 409 `in_pipeline`: extraction runs in\n    doc-tools' own pipeline (ingress_user_sensor); a retry here cannot advance it.\n  * a DOCUMENT row at `review` -- the one stage this CAN move: re-runs the\n    `document_promotion` find-or-file via the SAME helper `update_ingest_stage` uses\n    (`_file_or_find_document_promotion_task`) so the two routes share one implementation.\n    `requested_by` is THIS caller (the retrying party), never doc-tools' service identity.\n    The row itself is NOT moved -- it is already at `review`.",
+        "operationId": "ingest_retry_route_ingest__ingest_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ingest_id",
+            "required": true,
+            "schema": {
+              "title": "Ingest Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/IngestRetryRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RetryReopened"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RetryFiled"
+                    }
+                  ],
+                  "title": "Response 200 Ingest Retry Route Ingest  Ingest Id  Retry Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Retry Route",
+        "tags": [
+          "ingest-v1"
+        ]
+      }
+    },
+    "/ingest/{ingest_id}/source": {
+      "get": {
+        "description": "GET /ingest/<id>/source -- the dropped document's own bytes, streamed in chunks (never\nbuffered whole). Same gate and audit as `/extraction`; works for the dropper before any\nextraction exists. 422 `source_unbound`, 404 `source_absent`, 503 `artifact_store_unreachable`;\na rejected row is read from `rejected/<id>/` through its record: 404 `rejected_evidence_unlocated`,\n503 `decision_ledger_unreachable`.\nThe app-wide middleware sets `Cache-Control: no-store` on the response.",
+        "operationId": "ingest_source_route_ingest__ingest_id__source_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ingest_id",
+            "required": true,
+            "schema": {
+              "title": "Ingest Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/octet-stream": {},
+              "application/pdf": {},
+              "application/xml": {}
+            },
+            "description": "the dropped file"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Source Route",
+        "tags": [
+          "ingest-v1"
+        ]
+      }
+    },
+    "/ingest/{ingest_id}/status": {
+      "get": {
+        "description": "GET /ingest/<id>/status — for the SUBMITTER or the on_behalf_of principal only.\n\nEXISTENCE-ORACLE SAFE: ingest_status.get_status_for scopes the query to\n`submitted_by = caller OR on_behalf_of = caller`; a caller who is neither gets a plain\n404, indistinguishable from \"no such ingest\" — same discipline as the human-task\nresolution lookup (human_tasks.get_task_resolution).\n\nONE NAME PER FIELD: the DB column is still `status` (`ingest_status.get_status_for`'s row\ndict, and Electric subscribers on `/electric/shape` still read the column `status` — only\nthis route's own JSON key is renamed), and the row's own `id` is never echoed back — both\nare replaced here by `stage`/`ingest_id`, matching ca's wire shapes.\n\n`failure` (2026-10-12, pipeline failure must reach the row) is None unless `stage` is `failed`;\nthen it is {reason_code, reason, step, run_id, pin_digest, failed_at} (a legacy failed row with\nnone stored gets one synthesised from `detail`, reason_code None). `attempt` is how many times\nthe row has been opened (1 on arrival; POST /ingest/{id}/retry bumps it).\n\n`artifacts` (ruled 2026-10-16) lists `{artifact_id, kind, released_at}` for the case the event\nopened (`case_id`), so a delegate learns its artifact ids from the row it already may read.\nONLY what the caller may open: each artifact is filtered through `artifact_reads.is_entitled`,\nthe gate GET /artifacts/{id} applies, so an id the caller could not read is never listed. The\nkey is always present: `[]` means none (no case yet, or none the caller may open); `None` means\nUNKNOWN (the graph could not be read; logged) -- the row itself still answers.",
+        "operationId": "ingest_status_route_ingest__ingest_id__status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ingest_id",
+            "required": true,
+            "schema": {
+              "title": "Ingest Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusBody"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Status Route",
+        "tags": [
+          "ingest-v1"
+        ]
+      }
+    },
+    "/ingest/{ingest_id}/title_leaf": {
+      "post": {
+        "description": "POST /ingest/<id>/title_leaf -- SERVICE-ONLY (`svc:doc-tools`, same caller gate as the stage\nroute). doc-tools calls it after the header/title read and BEFORE parts extraction; the answer\nsays which kind's passes to run, or to stop (architect ruling 2026-10-21: a drop is never blocked\nup front; if the title yields no leaf the row stops at `awaiting_kind` there).\n\nDispatch, in order: (1) a row that already carries a declared or corrected leaf\nproceeds with it, writes nothing; (2) a row that is not leaf-capable proceeds, writes nothing;\n(3) a CONFIDENT title (`_title_leaf`) is written as `leaf_source=title` and proceeds;\n(4) otherwise the row is held at `awaiting_kind` with the candidates and doc-tools must stop.\nEvery write is one guarded UPDATE; when it matches nothing the row is re-read and decided again.\nAllowed stages: `received`, `extracting` (a provisional timeout counts as `received`); anything\nelse is 409 `not_extracting`. A repeat on a held row is therefore 409, which is correct.",
+        "operationId": "ingest_title_leaf_route_ingest__ingest_id__title_leaf_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ingest_id",
+            "required": true,
+            "schema": {
+              "title": "Ingest Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestTitleLeafRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TitleLeafResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Title Leaf Route",
+        "tags": [
+          "ingest-v1"
+        ]
+      }
+    },
+    "/me/entitlements": {
+      "get": {
+        "description": "Return the current user's (persona, domain) entitlement matrix.\n\n`authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop\nechoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it\nas `on_behalf_of` is refused `not_a_delegate` (2026-10-21).",
+        "operationId": "get_me_entitlements_me_entitlements_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Entitlements"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Me Entitlements",
+        "tags": [
+          "ingest-v1"
+        ]
+      }
+    },
+    "/me/human_tasks": {
+      "get": {
+        "description": "The caller's pending queue (REST initial-load; the live path is the\nElectric subscription). Filtered by recipient_id=caller.authz_id — the SAME key\nthe Electric proxy injects, so REST and streaming agree by construction.",
+        "operationId": "get_my_human_tasks_me_human_tasks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanTasksListing"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get My Human Tasks",
+        "tags": [
+          "ingest-v1"
+        ]
+      }
+    }
+  }
+}

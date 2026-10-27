@@ -1,0 +1,14 @@
+# OVERLAY layer (ADR-0036). The deployment overlay is the authoritative registry for a content
+# kind's domain (architect ruling 2026-10-06). `passes`/`outputs` MIRROR doc-tools' generated
+# `registry/content_kinds/xml.yaml`. A FORMAT-LEVEL kind: `domain` is null ON PURPOSE
+# (architect ruling 2026-10-02, "origin resolved by evidence, not kind"), like `pdf`. It is
+# written explicitly, because an omitted key is a defect and an explicit null is the ruling
+# (doc-tools #86's domainless split).
+# Added 2026-10-13: the door 400s (`kind_unregistered`) a content_kind the registry does not
+# know, so without this file a registered xml drop would be refused.
+kind: xml
+domain: null
+passes:
+  - xml.xml_document_identity
+outputs:
+  - mesh:XMLArtifact

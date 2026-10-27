@@ -118,6 +118,8 @@ class SupervisorQueryConfig(Config):
     # resolve THIS caller's menu at decision time. Empty -> Engine F falls back to its
     # global capability table (the pre-seam behaviour), never to a silently smaller menu.
     frontend_id: str = ""
+    # Menus are per (frontend_id, frontend_version); empty -> the newest registered version.
+    frontend_version: str = ""
     entitled_domains: List[str] = []
     entity_refs: List[str] = []
     # THE SPOKEN SLOTS, argument name -> value, forwarded from /route_intent.
@@ -274,6 +276,25 @@ _RESOLVE_LOCK_PATH = os.getenv("RESOLVE_LOCK_PATH", "/tmp/iagent-resolve.lock")
 #: because waiting is cheap and a timeout is not: the wait costs seconds, the timeout costs the
 #: whole answer (Contract B sends an ungrounded subject to the generalist).
 _RESOLVE_LOCK_WAIT_S = float(os.getenv("RESOLVE_LOCK_WAIT_S", "150"))
+
+#: THE SUPERVISOR'S /resolve BUDGET, IN SECONDS. INTERIM, measured against the model's p100
+#: rather than guessed. MEASURED 2026-10-20 (sandbox revision 199, Engine O log 03:30-04:16Z):
+#: 55 completed `ClassifyDomainIntent` calls, max 52,553 ms; the 30 s budget missed on two runs
+#: whose calls took 33.6 s and 34.5 s. Architect ruling 2026-10-20: "Supervisor limit 60s
+#: interim, measured against the model's p100, not guessed."
+RESOLVE_SUBJECT_TIMEOUT_S = 60
+
+#: THE SUPERVISOR'S /classify_predicate BUDGET, IN SECONDS. INTERIM, on the same terms as
+#: RESOLVE_SUBJECT_TIMEOUT_S. MEASURED 2026-10-24 (sandbox revision 215, Engine O log, walks
+#: 05:19-05:52Z): 5 `ClassifyPredicate` calls, max 55,196 ms. The 30 s budget missed all five,
+#: and each picked the expected verb after the supervisor had given up. Architect ruling
+#: 2026-10-24: "raise to 60s now, same interim as resolution. It's a symptom; 74's call-count
+#: cut is the cure."
+CLASSIFY_PREDICATE_TIMEOUT_S = 60
+
+#: The reasoning prefix `_resolve_subject` writes when /resolve could not be reached. The
+#: generalist fallback reads it to tell "unreachable" from "Engine O answered UNKNOWN".
+_RESOLVE_UNREACHABLE_PREFIX = "/resolve unreachable: "
 
 
 @contextmanager
@@ -447,7 +468,11 @@ def _resolve_subject(
                 # eight seconds of real margin ONCE SERIALIZED. Unserialized at N=2 the median
                 # was 26.1s -- a 2.2s margin -- and at N=4, 9 of 12 draws exceeded it. The
                 # budget is not raised, because serializing is what makes 30s honest.
-                timeout=30,
+                #
+                # RAISED TO 60 s 2026-10-20 on the p100 measurement: 55 completed
+                # ClassifyDomainIntent calls, max 52,553 ms, and the 30 s budget missed on
+                # two runs (33.6 s, 34.5 s). Interim, per the architect ruling.
+                timeout=RESOLVE_SUBJECT_TIMEOUT_S,
             )
         resp.raise_for_status()
         data = resp.json()
@@ -462,7 +487,9 @@ def _resolve_subject(
         # is NOT a structural instance-not-found), instance_label="" (no
         # instance resolved). Keeps arity uniform with the success path —
         # the caller unpacks 7.
-        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}", "", [], None, "", [])
+        return (
+            "UNKNOWN", 0.0, f"{_RESOLVE_UNREACHABLE_PREFIX}{exc}", "", [], None, "", [],
+        )
 
     provenance = data.get("provenance") or {}
     return (
@@ -1174,7 +1201,7 @@ def _classify_route(
                 # attribution loss. Threaded the same way /resolve already receives it.
                 "user_email": user_email,
             },
-            timeout=30,  # LLM call inside; longer than /search_predicates.
+            timeout=CLASSIFY_PREDICATE_TIMEOUT_S,  # LLM call inside; see the constant.
         )
         resp.raise_for_status()
         data = resp.json()
@@ -1587,7 +1614,18 @@ _CORTEX_BFF_URL = _cortex_bff_base_url()
 # is the service, so the gate would decide about the wrong subject: it would grant or deny
 # for everyone at once. It is listed before that gate turns on (ENABLE_AGENTIC_AUTH), because
 # the identity has to be right on the day the gate starts to read it.
-_CALLER_IDENTITY_VERBS = frozenset({"seedPortfolioCanvas", "seedCanvas", "explain"})
+#
+# `whatFailedOnThisPart` and `failureTrendForThisPlatformByMonth` (Engine S) join because
+# Engine S's program filter (ADR-0056 Q2) decides on the ASKER, read only from the bearer: a
+# service identity is never a member of a program, so dispatched as svc:supervisor the answer
+# is a 422 `no_person` (lane saf's 192 walk, FRACAS 5530-184). These are the measures that reach
+# `_visible_records` (derived, and sealed by tests/identity/
+# test_the_per_person_verb_call_carries_the_caller.py). Architect ruling 2026-10-17: the verb
+# CALL carries the acting identity, through this set, not by flipping every dispatch.
+_CALLER_IDENTITY_VERBS = frozenset({
+    "seedPortfolioCanvas", "seedCanvas", "explain",
+    "whatFailedOnThisPart", "failureTrendForThisPlatformByMonth",
+})
 
 
 class CallerIdentityUnavailable(Exception):
@@ -1840,9 +1878,27 @@ def _call_engine_a_fallback(
     #
     # "UNKNOWN" IS NOT A RESOLUTION AND MUST NOT TRAVEL. This fallback also fires when the
     # subject never grounded (Contract B: unknown subject, zero verbs). Sending the literal
-    # would make the guard trust a non-answer; absent is the honest value, and Engine A
-    # re-resolving from the phrase is correct in exactly that case.
+    # would make the guard trust a non-answer; absent is the honest value.
+    #
+    # THE OUTCOME TRAVELS INSTEAD (architect ruling 2026-10-20: "Engine A never re-resolves a
+    # subject the supervisor already resolved -- the resolution is passed in, not re-derived.").
+    # Engine A re-resolving from the phrase sent the same prompt again and, on the measured
+    # runs, cost 4 and 8 model calls. So whenever the supervisor ran /resolve for this subtask,
+    # `resolution_outcome` is sent -- "resolved", "unknown" or "unreachable" -- and Engine A
+    # re-derives nothing. Absent only when the supervisor never resolved.
     _resolved_subject = str((telemetry or {}).get("subject_uri") or "")
+    if "subject_uri" in (telemetry or {}):
+        if _resolved_subject and _resolved_subject != "UNKNOWN":
+            _resolution_outcome = "resolved"
+        elif _resolved_subject == "UNKNOWN" and str(
+            (telemetry or {}).get("subject_reasoning") or ""
+        ).startswith(_RESOLVE_UNREACHABLE_PREFIX):
+            _resolution_outcome = "unreachable"
+        else:
+            _resolution_outcome = "unknown"
+        payload["resolution_outcome"] = _resolution_outcome
+    else:
+        _resolution_outcome = None
     if _resolved_subject and _resolved_subject != "UNKNOWN":
         payload["resolved_subject_uri"] = _resolved_subject
         # THE THREE MOVE TOGETHER. An instance id without its subject is an identifier with
@@ -1860,14 +1916,20 @@ def _call_engine_a_fallback(
             (telemetry or {}).get("subject_instance_id") or "",
         )
     else:
-        # AUDIBLE, because this is the branch where Engine A re-resolves and the domain
-        # defaulting bites. A reader seeing a maintenance-class answer to a planning
-        # question needs to know which of the two paths produced it.
-        context.log.info(
-            "generalist fallback carries NO resolution (subject_uri=%r) — Engine A will "
-            "re-resolve from the phrase",
-            _resolved_subject or None,
-        )
+        # AUDIBLE, because a reader seeing a maintenance-class answer to a planning
+        # question needs to know which path produced it.
+        if _resolution_outcome is not None:
+            context.log.info(
+                "generalist fallback carries resolution_outcome=%s (subject_uri=%r) "
+                "— Engine A will NOT re-resolve",
+                _resolution_outcome,
+                _resolved_subject or None,
+            )
+        else:
+            context.log.info(
+                "generalist fallback carries NO resolution (the supervisor never "
+                "resolved) — Engine A will re-resolve from the phrase",
+            )
 
     # Forward the request's trace + session ids so Engine A's /analyze proxy adopts them
     # (X-Trace-Id -> the analyst trace's seed; X-Session-Id -> the Langfuse session). The
@@ -2156,7 +2218,16 @@ _ENUMERATE_URL = os.getenv("ENUMERATE_INSTANCES_URL", "")
 _ENUMERATE_TIMEOUT_S = float(os.getenv("ENUMERATE_TIMEOUT_S", "5"))
 
 
-def _make_enumerator(context):
+class NoPersonRefused(RuntimeError):
+    """engine-o refused `/enumerate_instances` with 422 `no_person`: the caller carried no person.
+
+    Distinct from `HTTPError` so `slot_disposition` files the ask's `detail` as
+    `NoPersonRefused` -- a refused person is not "nobody could list this". The supervisor sends
+    the token's person, so this is a DEFENCE, not a live case."""
+
+
+def _make_enumerator(context, *, user_email: str = "",
+                     entitled_domains: Optional[List[str]] = None):
     """`(class_uri, bound_slots) -> {outcome, members, count, scoped_by}`, or None when no
     provider is reachable.
 
@@ -2175,17 +2246,31 @@ def _make_enumerator(context):
     every test double written against the one-argument shape — keeps working unchanged. A
     caller that passes nothing offers no context, which is the honest description of what it
     knows, and gets today's class-wide behaviour.
+
+    THE CALLER IS BOUND WHEN THE ENUMERATOR IS MADE, not passed per call, because the two
+    consumers (`validate_bound_slots`, `decide_disposition`) call it with a class and nothing
+    else. Sent on every POST, empty when nobody was named — the same fields the resolveInstance
+    fan-out sends, so one gate reads both verbs.
     """
     if not _ENUMERATE_URL:
         return None
+    _caller = {"user_email": user_email,
+               "entitled_domains": list(entitled_domains or [])}
 
     def _enumerate(class_uri: str, *, bound_slots: Dict[str, Any] | None = None) -> Dict[str, Any]:
         _bound = {str(k): str(v) for k, v in (bound_slots or {}).items() if v not in (None, "")}
         resp = requests.post(
             _ENUMERATE_URL,
-            json={"class_uri": class_uri, "bound_slots": _bound},
+            json={"class_uri": class_uri, "bound_slots": _bound, **_caller},
             timeout=_ENUMERATE_TIMEOUT_S,
         )
+        if resp.status_code == 422:
+            try:
+                _refusal = resp.json()
+            except ValueError:
+                _refusal = None
+            if isinstance(_refusal, dict) and _refusal.get("error") == "no_person":
+                raise NoPersonRefused(str(_refusal.get("message") or "no_person"))
         resp.raise_for_status()
         body = resp.json() or {}
         context.log.info(
@@ -2204,6 +2289,15 @@ class _FillResult(NamedTuple):
     that names a referent is missing from it."""
     slots: Dict[str, Any]
     resolution: Dict[str, Any]
+    # WHY THE FILL WAS EMPTY, when the reason is one a census must count. "" is every other
+    # outcome (filled, defaulted, unavailable); `FILL_SLOTS_REFUSED` is engine-o's 422
+    # `no_person`. Defaulted so the honest-empty `_FillResult({}, {})` keeps its shape.
+    fill_slots: str = ""
+
+
+# RULED 2026-10-16 (Chris): keep "never raise" -- routing must not break on a slot extractor;
+# log it and mark the run's provenance `fill_slots: refused` so a census row can see it.
+FILL_SLOTS_REFUSED = "refused"
 
 
 def _fill_slots_from_query(
@@ -2214,6 +2308,7 @@ def _fill_slots_from_query(
     declarations,
     acting_domains: "List[str] | None" = None,
     subject_uri: str = "",
+    user_email: str = "",
 ) -> "_FillResult":
     """Ask Engine O which parameters the speaker named, for the verb already routed.
 
@@ -2260,9 +2355,31 @@ def _fill_slots_from_query(
                 # /resolve already chose mesh:DocPage even though the caller's domain picker
                 # sent something else (MESH hides DOCS). See _docs_pool_applies in engine-o.
                 "subject_uri": subject_uri,
+                # THE PERSON ASKING, so engine-o can hand it, with `acting_domains`, to every
+                # resolveInstance provider: a provider holding origin-scoped instances cannot
+                # gate on a caller it was never told (gov's origin-at-read report, 2026-10-10).
+                # The same body-asserted identity `/resolve` already receives.
+                "user_email": user_email,
             },
             timeout=_fill_slots_budget(declarations),
         )
+        if resp.status_code == 422:
+            # A REFUSED PERSON IS NAMED, THEN DEGRADED. engine-o refuses `/fill_slots` with 422
+            # `no_person` when the caller carries none (190, lane/74 2026-10-16). It is NOT
+            # raised -- RULED 2026-10-16, see `FILL_SLOTS_REFUSED`; tests/planning/
+            # test_fill_slots_seam.py seals it. The log names the refusal rather than the
+            # generic non-200 below, and the result carries `FILL_SLOTS_REFUSED` to the run's
+            # `subtask_slots_decision`. A DEFENCE, not a live case: this function sends the
+            # token's person (`user_email`).
+            try:
+                _refusal = resp.json()
+            except ValueError:
+                _refusal = None
+            if isinstance(_refusal, dict) and _refusal.get("error") == "no_person":
+                context.log.warning(
+                    "fill_slots refused no_person verb_iri=%s — running on defaults", verb_iri,
+                )
+                return _FillResult({}, {}, FILL_SLOTS_REFUSED)
         if resp.status_code != 200:
             context.log.warning(
                 "fill_slots non-200 verb_iri=%s status=%s — running on defaults",
@@ -2760,7 +2877,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         picked, refusals, bound_resolution = validate_bound_slots(
             config.bound_slots,
             declared=declared,
-            enumerate_class=_make_enumerator(context),
+            enumerate_class=_make_enumerator(
+                context, user_email=config.user_email,
+                entitled_domains=list(config.entitled_domains or []),
+            ),
         )
         for refusal in refusals:
             # LOUD. A refused pick is the menu-integrity guard doing its job, and it is the
@@ -2783,6 +2903,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # filler at all; that is what made the row missing rather than wrong.
             resolution = {**resolution, **bound_resolution}
 
+    _fill_slots_outcome = ""
     if not spoken and declared:
         filled = _fill_slots_from_query(
             context,
@@ -2794,8 +2915,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # above as `predicate_routing_score ... subject_uri=%s`; "" when /resolve found
             # nothing (subject_uri == "UNKNOWN" reads as absent to engine-o's gate too).
             subject_uri=str(telemetry.get("subject_uri") or ""),
+            user_email=config.user_email,
         )
         spoken, resolution = filled.slots, filled.resolution
+        _fill_slots_outcome = filled.fill_slots
         # Extracted from the question by the slot filler, which resolves against the graph.
         _slot_sources.update({k: SLOT_SOURCE_FILLED for k in (spoken or {})})
 
@@ -2833,7 +2956,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         accepted=accepted.params,
         declared=declared,
         resolution=resolution,
-        enumerate_class=_make_enumerator(context),
+        enumerate_class=_make_enumerator(
+            context, user_email=config.user_email,
+            entitled_domains=list(config.entitled_domains or []),
+        ),
     )
 
     # ── A FLAGGED VERB MAY NOT DISPATCH WITHOUT ITS INSTANCE ────────────────────────────
@@ -2969,6 +3095,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                     "slot_resolution": MetadataValue.text(
                         json.dumps(resolution, default=str)
                     ),
+                    # `refused` when engine-o refused the fill for want of a person (see
+                    # `FILL_SLOTS_REFUSED`), "" otherwise. Carried to `resolved_intent`.
+                    "fill_slots": MetadataValue.text(_fill_slots_outcome),
                 },
             )
         )
@@ -3587,6 +3716,7 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
             # from a global table that answers on behalf of clients which never advertised
             # those capabilities.
             "frontend_id": config.frontend_id or None,
+            "frontend_version": config.frontend_version or None,
         },
         timeout=300,
     )

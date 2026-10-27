@@ -237,6 +237,49 @@ cannot `set -o pipefail`, so the litany itself has no pytest seal — it is exer
 it. `tests/test_helm_timeout_guard_reads_the_resolved_value.py` carries the same limitation and
 records it in the same words.
 
+## Take the roll lock first, and release it only when the gates pass
+
+Ruled 2026-10-24 (the architect). One lane rolls the sandbox at a time, and a ConfigMap enforces it,
+not a packet:
+
+```bash
+scripts/roll-lock.sh show              # who holds sandbox/roll-lock, since when, until when
+scripts/roll-lock.sh acquire           # upgrade-sandbox.sh and roll-litany.sh do this themselves
+scripts/roll-lock.sh renew --minutes N # the holder only: run to now+N, never shorter
+scripts/roll-lock.sh release           # after the gates pass, by the lane that holds it
+```
+
+- The lock is `sandbox/roll-lock` with keys `lane` (`<repo>/<branch>`, derived from git), `started` and
+  `expected_end`.
+- Every roll script refuses (exit 3) while another lane holds a lock that is not yet stale. **Stale is
+  the later of 90 minutes after creation and the holder's `expected_end`** (architect, 2026-10-24):
+  90 minutes is the floor, and a roll that declares more keeps its lock that long, so a prime in
+  minute 91 to 100 of a 100-minute helm timeout is still protected. A stale lock is taken over,
+  loudly. A missing or unparseable `expected_end` leaves the 90-minute floor alone, and the script
+  says so.
+- **What the holder declares is all that protects it, so renew before the gates.** `expected_end` is
+  `started` + `--minutes`; acquiring again is a no-op. `upgrade-sandbox.sh` declares its helm timeout
+  only, so once helm returns, run `scripts/roll-lock.sh renew --minutes N` for the gates' length
+  before starting them (ruled 2026-10-24). Renew moves `expected_end` to now+N and never shortens it.
+  It refuses (exit 3) a free lock or another lane's, and its write is one compare-and-set -- a JSON
+  patch whose `test` op requires `lane` to still be yours -- so a takeover between its read and its
+  write fails the renew instead of extending the new holder's lock.
+- `upgrade-sandbox.sh` takes it after its own guards and right before helm, for the length of its helm
+  timeout. A `--dry-run` only reports it. `roll-litany.sh` takes it for 30 minutes and then renews it
+  for 30, so a litany run inside an upgrade's lock extends that lock to cover itself.
+- `kubectl create` is the atomic step: two lanes acquiring at once get one winner. An unreadable lock
+  is refused (exit 4), never read as free.
+- **Release after the gates, not after helm.** The values diff, imageIDs, worker6, the walks: those are
+  part of the roll.
+
+**Why.** Prime launches every ontology ingest in the **doc-tools** code location
+(`prime_databases.py`, `repositoryLocationName: "doc-tools"`). So a doc-tools roll during an iagent
+prime replaces the pod the ingest is running in, and kills it. iagent rev 216 failed exactly so:
+doc-tools rev 54 rolled inside it, the `mesh_system` run lost its worker, the run monitor failed it at
+60 minutes, prime exited non-zero, and helm skipped every later hook (ontology-seed, reregister,
+demo-seed). A packet asking the other lane to wait had been sent, and did not hold. doc-tools and the
+workbench copy `scripts/roll-lock.sh` into their own roll scripts.
+
 ## Upgrades, not just rolls
 
 `scripts/upgrade-sandbox.sh` is the only documented path for a helm upgrade. Raw
@@ -253,3 +296,35 @@ that changes a key must be followed by a roll of everything that reads it — an
 be rolled *before* anything is repointed at it. Repointing `ENUMERATE_INSTANCES_URL` at an
 engine-o endpoint that had not been rolled yet broke enumeration for both domains for several
 minutes: the config moved before its target existed.
+
+## The sandbox TLS leaf is pinned, never trusted blindly
+
+The sandbox has no lab CA. Every ingress (the UI, the BFF, Keycloak, electric) serves one
+self-signed wildcard leaf from the `edgy-wildcard-tls` secret. A post-roll walk **pins that leaf**.
+It never disables verification (ruled 2026-10-12).
+
+| field | value (measured 2026-10-12) |
+| --- | --- |
+| subject = issuer | `CN=*.<sandbox domain>` (one wildcard leaf for every ingress; the domain is in the out-of-repo log) |
+| SHA-256 fingerprint | `99:F1:45:2F:08:86:1D:31:35:E3:7C:A1:2B:27:C4:C8:68:B7:E3:00:FB:A7:D4:A8:4C:4F:17:02:66:AB:CB:A6` |
+| SPKI sha256 (base64) | `4PSaAg7X2o8kQl7b/kRMD+Dp7piSCZwog2fajFf7v1s=` |
+| notAfter | 2027-06-05 |
+
+**Capture the leaf before every walk and compare.**
+
+```bash
+openssl s_client -connect <host>:443 -servername <host> </dev/null 2>/dev/null \
+  | openssl x509 -outform PEM > sandbox-leaf.pem
+openssl x509 -in sandbox-leaf.pem -noout -fingerprint -sha256
+```
+
+A fingerprint that differs from the table is a **rotation**. Update this table in the same commit
+that walks against the new leaf, so a rotation is seen and never silently trusted.
+
+**Python clients** (`requests`, httpx) take the PEM: `REQUESTS_CA_BUNDLE=sandbox-leaf.pem`.
+
+**Chromium (Playwright)** reads only the OS store, so a PEM cannot reach it. Pin the key with
+`--ignore-certificate-errors-spki-list=<SPKI sha256>` in `launchOptions.args`. Chromium then
+accepts only a chain whose key hashes to that value.
+- Control, 2026-10-12: a wrong pin still fails `ERR_CERT_AUTHORITY_INVALID`.
+- With the right pin, 0 cert errors.

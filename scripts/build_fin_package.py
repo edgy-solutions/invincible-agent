@@ -31,6 +31,7 @@ import json
 import pathlib
 import sys
 import typing
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -171,7 +172,9 @@ def build_duckdb(path: pathlib.Path, state_dict: dict[str, Any],
         path.unlink()
 
     row_types = state_codec._row_types()
-    conn = duckdb.connect(str(path))
+    # UNCOMPRESSED, SO THE BYTES ARE A FUNCTION OF THE ROWS (the manifest and page embed this
+    # file's sha); the file STEM is in the bytes too, so rebuild under the same name.
+    conn = duckdb.connect(str(path), config={"force_compression": "uncompressed"})
     try:
         for table_name, row_type in row_types.items():
             ddl, cols = _table_ddl(table_name, row_type)
@@ -430,9 +433,12 @@ def build_html(recipient_scope: str, program_id: str, runtime_dir: pathlib.Path,
 def build(*, recipient_scope: str, program_id: str, state: FinanceState,
          template_id: str, template_hash: str, panels: list[dict[str, Any]],
          runtime_dir: pathlib.Path, sha: str, html_path: pathlib.Path,
-         duckdb_path: pathlib.Path) -> dict[str, Any]:
+         duckdb_path: pathlib.Path, as_of: str | None = None) -> dict[str, Any]:
     """Produce one recipient's package. Three named refusals, each before anything after it
-    is built — see the module docstring."""
+    is built — see the module docstring. `as_of` is resolved ONCE (UTC today when absent) and
+    reaches both the manifest and the page."""
+    if as_of is None:
+        as_of = datetime.now(timezone.utc).date().isoformat()
     narrowed = state_codec.narrow(state, program_id)
     state_dict = state_codec.state_to_dict(narrowed)
 
@@ -463,7 +469,7 @@ def build(*, recipient_scope: str, program_id: str, state: FinanceState,
     manifest = fin_export.build_manifest(
         narrowed, recipient_scope=recipient_scope, program_id=program_id,
         algorithm_sha=sha, template_id=template_id, template_hash=template_hash,
-        panels=panels, duckdb_sha256=duckdb_sha256,
+        panels=panels, duckdb_sha256=duckdb_sha256, as_of=as_of,
     )
 
     html = build_html(

@@ -65,6 +65,7 @@ __all__ = [
     "check_can_invoke",
     "execute_direct_call",
     "execute_declared_query",
+    "INTERNAL_WRITE_CAPABILITIES",
 ]
 
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
@@ -72,10 +73,18 @@ TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "")
 STEP_HTTP_TIMEOUT = float(os.getenv("STEP_HTTP_TIMEOUT", "1800"))
 
 # A direct_call step with no human `user_jwt` attached is machine-initiated by construction
-# (item B, 2026-10-03): it acts under the case runner's OWN delegate identity rather than being
-# sent unauthenticated. `on_behalf_of` is carried separately, by whoever constructs the
-# Initiator at the write boundary — this identity only says WHICH SERVICE is calling.
+# (item B, 2026-10-03). Its credential on the wire is the case runner's OWN minted token
+# (TRANSPORT only). Who the GATE asks about depends on the CAPABILITY (ruling 2026-10-16):
+# a mesh verb gates on the run's acting identity (person, else the event's `dropped_by`), as a
+# declared query does; the runner identity below is the gate subject ONLY for the internal
+# writes named in INTERNAL_WRITE_CAPABILITIES. `on_behalf_of` is carried separately, by whoever
+# constructs the Initiator at the write boundary.
 CASE_RUNNER_AUTHZ_ID = "svc:case-runner"
+
+# The item-B exception, and nothing wider: capabilities that are the case runner's own internal
+# writes. Every other capability (every `mesh:*` verb, any undeclared one) is NOT in this set and
+# gates on the acting identity. Decided on the capability string only, never on the endpoint.
+INTERNAL_WRITE_CAPABILITIES = frozenset({"origin.write"})
 
 
 class StepFailAndRelease(Exception):
@@ -108,6 +117,7 @@ def verify_spo_step(
     *,
     query_is_set: bool = False,
     engine_o_url: str = ENGINE_O_URL,
+    on_behalf_of: str = "",
 ) -> dict:
     """STAGE-2 STRUCTURAL VERIFIER (the enforcement point). Confirms the DECLARED
     ``verb_iri`` is in the caller's eligible set for ``subject`` (domain ∩ arity),
@@ -116,14 +126,21 @@ def verify_spo_step(
     workflow cannot execute a verb outside the caller's eligibility set.
 
     NOT NL: ``subject``/``verb_iri`` are resolved identifiers; this is the structural
-    half only. Permission composes downstream at dispatch (the engine's gate)."""
+    half only. Permission composes downstream at dispatch (the engine's gate).
+
+    ``on_behalf_of`` is the run's authz subject, the person the read is attributed to (engine O
+    refuses an unattributed read with ``COMPATIBLE_VERBS_VIA_MESH`` on); sent only when non-blank.
+    A 4xx from engine O is about THIS request, so it is terminal; a 5xx is retried."""
     if not subject or subject == "UNKNOWN":
         raise StepFailAndRelease(
             f"spo_operation step has no resolved subject ({subject!r})", status_code=400
         )
+    body: dict = {"subject_uri": subject, "max_hops": 5, "entitled_domains": entitled_domains}
+    if (on_behalf_of or "").strip():
+        body["on_behalf_of"] = on_behalf_of.strip()
     resp = requests.post(
         f"{engine_o_url}/find_compatible_verbs",
-        json={"subject_uri": subject, "max_hops": 5, "entitled_domains": entitled_domains},
+        json=body,
         timeout=30,
         # svc:engine-a — this process's own identity, named HERE. Transport only: the
         # ELIGIBILITY subject stays `entitled_domains` in the body, and permission is enforced
@@ -133,6 +150,14 @@ def verify_spo_step(
             client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
         ),
     )
+    if 400 <= resp.status_code < 500:
+        # A 4xx is about THIS REQUEST (e.g. no on_behalf_of with the flag on): retrying re-sends
+        # the identical request, so it is terminal rather than retried for ever.
+        raise StepFailAndRelease(
+            f"engine-o refused the eligibility read for {subject!r} ({resp.status_code}): "
+            f"{resp.text[:300]}. A 4xx is about the REQUEST; retrying sends the same one again.",
+            status_code=resp.status_code,
+        )
     resp.raise_for_status()  # a 5xx is transient infra -> retry (NOT a denial)
     verbs = list(resp.json().get("verbs") or [])
     verbs = _filter_verbs_by_arity(verbs, query_is_set)
@@ -281,10 +306,27 @@ def execute_direct_call(
     """TRANSITIONAL direct_call. GATE FIRST: Topaz ``can_invoke(caller, capability)``
     BEFORE the POST — ungranted → fail-and-release (never dispatch an unauthorized
     capability). Then POST the declared ``endpoint`` (behavior-identical to today's
-    service_task; a 401/403 there also fails-and-releases)."""
+    service_task; a 401/403 there also fails-and-releases).
+
+    GATE SUBJECT (ruling 2026-10-16), decided on the capability string alone: with a
+    ``user_jwt``, or for any capability outside ``INTERNAL_WRITE_CAPABILITIES`` (every mesh
+    verb), it is the run's acting identity, and a blank one is denied, never replaced by the
+    runner's; only an internal write with no ``user_jwt`` runs as ``svc:case-runner``.
+    The minted case-runner bearer is TRANSPORT only, never the gate subject."""
     capability = step.get("capability") or ""
     user_jwt = identity.get("user_jwt")
-    caller = identity.get("authz_id", "") if user_jwt else CASE_RUNNER_AUTHZ_ID
+    if not user_jwt and capability in INTERNAL_WRITE_CAPABILITIES:
+        caller = CASE_RUNNER_AUTHZ_ID  # the 10-03 B exception: internal writes only
+    else:
+        # A mesh VERB gates on the acting identity (person, or the event's `dropped_by`), with
+        # or without a user_jwt; a blank one is denied, never replaced by the runner's.
+        caller = (identity.get("authz_id", "") or "").strip()
+        if not caller:
+            raise StepFailAndRelease(
+                f"direct_call {step.get('id')!r}: no acting identity for capability "
+                f"{capability!r} — failing and releasing.",
+                status_code=403,
+            )
     if not check_can_invoke(capability, caller, topaz_url=topaz_url):
         raise StepFailAndRelease(
             f"caller {caller!r} is not authorized (can_invoke) for capability "
@@ -381,7 +423,11 @@ def execute_declared_query(
     ``/declared_query`` seam rather than a caller-declared endpoint. The query text never
     reaches this module; only the verb's name and its parameter values do."""
     user_jwt = identity.get("user_jwt")
-    caller = identity.get("authz_id", "") if user_jwt else CASE_RUNNER_AUTHZ_ID
+    # A declared query is a mesh VERB, and svc:case-runner is never a verb grantee (ruling
+    # 2026-10-11): the CHECK asks for the run's acting identity -- the person, or the event's
+    # `dropped_by` -- with or without a user_jwt, and a blank one is denied, never replaced by
+    # the runner's. The case-runner credential below is TRANSPORT only, never the gate subject.
+    caller = identity.get("authz_id", "")
     if not check_can_invoke(decl.capability, caller, topaz_url=topaz_url):
         raise StepFailAndRelease(
             f"caller {caller!r} is not authorized (can_invoke) for capability "

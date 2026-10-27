@@ -1,16 +1,34 @@
 # Safety walk sheet — Engine S, sustainment safety assessment (ADR-0051, ADR-0056)
 
-**Five questions, three different answer SHAPES — Q4 and Q5 reuse Q3's.** One draws a card, one
-creates a TASK and draws nothing, and three REFUSE by asking for a slot. A walker who expects five
-cards will score four defects that are not there.
+**Twelve questions, four different answer SHAPES -- Q4 and Q5 reuse Q3's, Q6 and Q7 are their
+populated twins, Q8, Q10 and Q12 are Q1's twins at three other matrix cells, Q9 and Q11 are drafts
+that must be REFUSED and make no task.** Three draw a card (Q2, Q6, Q7), four DRAFT: a card AND a
+task (Q1, Q8, Q10, Q12 -- the card is the draft, the task is the review; architect, 2026-10-18),
+three REFUSE by asking for a slot (Q3, Q4, Q5), and two end in a NAMED refusal with no card and no
+task (Q9, Q11). A walker who expects twelve cards will score nine defects that are not there.
+
+**Whose list a task lands in (architect via Chris, 2026-10-20).** Bob holds Medium and Low, so Q1 and
+Q12 expect a row in bob's `GET /me/human_tasks`. Serious (Q8, and HAZ-1004) goes to carol's
+concurrence and High (Q10) to the CAE, so for those rows **no row in bob's list is the PASS**, not a
+gap. Do not read carol's or the CAE's list unless ordered.
+
+**Interim state on Q2, Q6 and Q7.** The expected archetypes below stand. Until Lane 1's replay is
+live, a walk observes: observed until the replay is live: menu not registered on this build (`presentation_source=refused`) -- a named interim state, not a pass.
 
 | Q | question | verb | what a PASS looks like |
 |---|---|---|---|
-| 1 | draft a risk assessment for HAZ-1003 | `draft_risk_assessment` | **a task in bob's queue**, not a card |
-| 2 | what hazards are unattended | `find_orphaned_hazards` | a `CONTRIBUTION_RANKING` card, 3 rows |
+| 1 | draft a risk assessment for HAZ-1003 | `draft_risk_assessment` | **a draft card AND a task in bob's `/me/human_tasks`** (Medium) |
+| 2 | what hazards are unattended | `find_orphaned_hazards` | a `CONTRIBUTION_RANKING` card, 3 rows (interim, see below: menu not registered) |
 | 3 | risk of deferring this work order | `assess_deferral_risk` | **a refusal** asking for `work_order_id` |
 | 4 | what failed on this part | `what_failed_on_this_part` | **a refusal** asking for `part_number` |
 | 5 | failure trend for this platform by month | `failure_trend_for_this_platform_by_month` | **a refusal** asking for `platform_id` |
+| 6 | what failed on this part PN-8801 | `what_failed_on_this_part` | a `CONTRIBUTION_RANKING` card, 1 row (bob sees one program) (interim: menu not registered) |
+| 7 | failures per month on this platform PLT-ALPHA | `failure_trend_for_this_platform_by_month` | a `MULTI_SERIES` card, 1 period (bob sees one program) (interim: menu not registered) |
+| 8 | draft a risk assessment for HAZ-1001 | `draft_risk_assessment` | **a draft card; NO row for bob** (the task is carol's concurrence) |
+| 9 | draft a risk assessment for HAZ-1005 | `draft_risk_assessment` | **a refusal**, `hazard_closed`, no task |
+| 10 | draft a risk assessment for HAZ-1007 | `draft_risk_assessment` | **a draft card; NO row for bob** (the task is the CAE's) |
+| 11 | draft a risk assessment for HAZ-1006 | `draft_risk_assessment` | **a refusal**, `not_assessed`, naming the gap, no task |
+| 12 | draft a risk assessment for HAZ-1008 | `draft_risk_assessment` | **a draft card AND a task in bob's `/me/human_tasks`** (Low) |
 
 **Every question is one of the engine's own declared `synonyms`**, copied from the verb catalogue
 in `agent_fleet/safety_agent/main.py` rather than invented here. The phrasing is the routing
@@ -36,9 +54,10 @@ and the ORDER does not.** Check the order and the shape; do not check the intege
 
 ## READ THIS BEFORE THE FIRST QUESTION — five ways a CORRECT result looks broken
 
-1. **Q1 draws no card at all, and that is the PASS.** The answer is a row in `human_tasks`, not a
-   200 with a payload. An engine that rendered a risk assessment as a finished card would be
-   asserting the acceptance had happened. *If you see a card for Q1, that is the defect.*
+1. **Q1 draws a card AND requests a task, and both are the PASS (architect, 2026-10-18).** The card
+   (a `KNOWLEDGE_DOCUMENT`) is the DRAFT, `acceptance_status: drafted`; the task is the REVIEW, a row
+   in `human_tasks`. *The defect is a card that reads as accepted, or a draft with no
+   `review_request`; a card by itself is not.*
 
 2. **Q3 refuses, and the refusal is the PASS.** `work_order_id` is spoken-mandatory; the engine
    asks rather than guessing a work order. A verb that answered "the risk of deferring this work
@@ -55,14 +74,14 @@ and the ORDER does not.** Check the order and the shape; do not check the intege
    every unattended hazard is bad, and the ordering is severity, not sentiment. A card that
    colours rows green/red has invented a direction nobody declared.
 
-5. **Three orphans, not six.** The fixture holds six hazards; three are orphaned, one is
-   `not_assessed` and reported SEPARATELY, and two are properly mitigated. *A count of 6 is a
+5. **Three orphans, not six.** The fixture holds eight hazards; three are orphaned, one is
+   `not_assessed` and reported SEPARATELY, and four are properly mitigated or closed. *A count of 6 or 8 is a
    defect — it means not-assessed hazards were folded into the orphan list, which is the exact
    conflation `find_orphaned_hazards` refuses.*
 
 ---
 
-## Q1 — Draft a risk assessment  ⚠ **the answer is a TASK, not a card**
+## Q1 — Draft a risk assessment  ⚠ **a draft card AND a TASK**
 
 > **"draft a risk assessment for HAZ-1003"**
 
@@ -122,13 +141,17 @@ holds no hazards). Captured from the provider:
   level came from the ratified table, not from the engine's opinion. *Severity II × probability D
   is Medium in MIL-STD-882E Table III; if this reads Low, the matrix in the image is not the
   ratified one.*
-- A row appears in `human_tasks` with `kind: risk_acceptance_medium`, **assignee bob**.
+- A row appears in bob's `GET /me/human_tasks` with `kind: risk_acceptance_medium`, **assignee bob**. Match it to
+  the card by `kind` + `subject_ref` + `audience`: the card's `review_request.task_id` is the short
+  `risk-acceptance-HAZ-1003` and the row's is `risk-acceptance-HAZ-1003-medium~1:acceptance` (open
+  question, 2026-10-20: which side moves).
 - The task's audience is `risk_acceptance_medium:SUSTAINMENT`.
 
 ### What a correct result looks like BROKEN
 
-- **A card rendering the assessment** — correct data, wrong outcome. The acceptance is a human
-  act; drawing it as a finished artifact is what §7 exists to prevent.
+- **A card that reads as an accepted risk** (`acceptance_status` other than `drafted`, or no
+  `review_request`) — correct data, wrong outcome. The acceptance is a human act; a card is the
+  DRAFT, and drawing it as a finished artifact is what §7 exists to prevent.
 - **A task assigned to alice.** alice holds High and Serious; this is a Medium. A Medium landing
   with the High authority means the matrix resolved the wrong level — read `risk_level` before
   blaming the grant.
@@ -145,6 +168,7 @@ holds no hazards). Captured from the provider:
 **As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT`
 **Verb:** `mesh:findOrphanedHazards` → `engine-safety:/measure/find_orphaned_hazards`
 **Expected archetype:** `CONTRIBUTION_RANKING` · **3 rows**
+**Interim:** observed until the replay is live: menu not registered on this build (`presentation_source=refused`) -- a named interim state, not a pass.
 
 ### The captured payload, trimmed to the fields a walker compares
 
@@ -270,16 +294,9 @@ nothing.
 **Verb:** `mesh:whatFailedOnThisPart` → `engine-safety:/measure/what_failed_on_this_part`
 **Expected disposition:** `slot_required` — **this is a PASS**
 
-ADR-0056 Phase 1's own verb. The walk census only captures the refusal branch below, for the
-same reason Q3's census row stops at its refusal and never adds the "if the slot IS supplied"
-follow-on as a row of its own: a populated answer is a flat JSON object (`failures`, `platforms`,
-`systems_of_record_cited`), not a card, and no `rendersAs` binding or `ROW_KEY` archetype exists
-for `safety:FailureRecordSet` yet (confirmed: `src/iagent_pure/walk_census.py`'s `ROW_KEY` has no
-entry for it, and the ADR mints the class without ever proposing one). Capturing a `drawn`
-disposition for an archetype that is not wired would assert cortex-ui behaviour this engine has
-no part in yet — exactly the trap Q3's "KNOWN RESIDUALS" section below warns about from the other
-side. **If Phase 2 or a presentation increment wires a card for this verb, add the populated-path
-row here and to the census then — not before.**
+ADR-0056 Phase 1's own verb. THIS SECTION IS THE REFUSAL BRANCH; the populated branch is **Q6**,
+which is a census row of its own now that `safety:FailureRecordSet` is a declared `CONTRIBUTION_RANKING`
+binding (it was refusal-only until 2026-10-08, when no `rendersAs`/`ROW_KEY` archetype existed for it).
 
 ### The captured refusal
 
@@ -303,10 +320,12 @@ row here and to the census then — not before.**
   or as "No content available", is the same defect named in Q3 — *nothing drew* is what both a
   missing refusal and a missing card look like from the wire.
 
-### If the slot IS supplied — the follow-on, deliberately NOT a census row (see above)
+### If the slot IS supplied — the follow-on, which Q6 walks as a census row
 
-Post `{"part_number": "PN-8801"}` and the captured answer correlates across two programs and two
-systems of record (ADR-0056's whole reason to exist):
+Post `{"part_number": "PN-8801"}` AS A MEMBER OF BOTH PROGRAMS (alice) and the captured answer
+correlates across two programs and two systems of record (ADR-0056's whole reason to exist). The
+`rows`/`value_*`/`scope_label` keys that make it a card are shown under Q6; this block is the
+flat record list that sits beside them:
 
 ```json
 {"refused": false, "part_number": "PN-8801", "critical_items_checked": 2, "failure_count": 2,
@@ -337,12 +356,8 @@ as the same answer.
 **Verb:** `mesh:failureTrendForThisPlatformByMonth` → `engine-safety:/measure/failure_trend_for_this_platform_by_month`
 **Expected disposition:** `slot_required` — **this is a PASS**
 
-ADR-0056 Phase 1's second verb. THE CENSUS CAPTURES ONLY THE REFUSAL, by the same rule as Q4: the
-populated answer is a flat JSON object (`months`, `undated`, `systems_of_record_cited`), and no
-`rendersAs` binding or `ROW_KEY` archetype exists for `safety:FailureTrend` (it would want a
-time-series archetype, and none is wired). Capturing a `drawn` disposition for an archetype that
-is not wired would assert cortex-ui behaviour this engine has no part in. **When a presentation
-increment wires a card for this verb, add the populated-path row here and to the census then.**
+ADR-0056 Phase 1's second verb. THIS SECTION IS THE REFUSAL BRANCH; the populated branch is **Q7**,
+a census row of its own now that `safety:FailureTrend` is a declared `MULTI_SERIES` binding.
 
 ### The captured refusal
 
@@ -365,7 +380,7 @@ increment wires a card for this verb, add the populated-path row here and to the
 - **The surface ASKS the walker for a platform.** Prose or "No content available" is the same
   defect named in Q3.
 
-### If the slot IS supplied — the follow-on, deliberately NOT a census row
+### If the slot IS supplied — the follow-on, which Q7 walks as a census row
 
 The caller must be a PERSON. A `svc:` principal or no caller is refused **HTTP 422**
 `{"error": "no_person", ...}`; Topaz down is **503** `authorization_unavailable`; a person with no
@@ -385,6 +400,344 @@ Months are counted on `observed_on` as written (no timezone); empty months betwe
 last visible month appear with `failure_count: 0`.
 
 ---
+
+## Q6 — What failed on this part, WITH the part named  ⚠ **expect a CARD, one row**
+
+> **"what failed on this part PN-8801"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT` (a member of `SANDBOX_PROGRAM_ALPHA` only)
+**Verb:** `mesh:whatFailedOnThisPart` → `engine-safety:/measure/what_failed_on_this_part`
+**Expected disposition:** `drawn` — a `CONTRIBUTION_RANKING` card
+**Interim:** observed until the replay is live: menu not registered on this build (`presentation_source=refused`) -- a named interim state, not a pass.
+
+The populated twin of Q4. The card ranks **failure modes** by how many times each was recorded across
+what the caller may view; the bar is that count, so order and magnitude are the SAME quantity (unlike
+Q2). **Bob sees one row, not two:** PN-8801 failed on `PLT-ALPHA` (his program) and on `PLT-BRAVO`
+(not his), and the per-record program filter drops the second *before* counting. Two rows, or a
+`failure_count` of 2, is the filter not running and is a **finding**.
+
+### The captured payload, as bob (`{"part_number": "PN-8801"}`), trimmed to what a walker compares
+
+```json
+{"refused": false,
+ "rows": [{"rank": 1, "entity_id": "Chafed wiring loom shorted the primary bus.",
+           "entity_name": "Chafed wiring loom shorted the primary bus.",
+           "contribution": 1, "share_of_total": 1.0, "platforms": ["PLT-ALPHA"],
+           "record_ids": ["FR-6001"], "citations": ["sor-events-a:EVT-55101"]}],
+ "value_label": "failures", "value_unit": "failures", "scope_label": "PN-8801",
+ "failure_count": 1, "systems_of_record_cited": ["sor-events-a"]}
+```
+
+### Checks that distinguish
+
+- **The card is a ranking, not "No content available".** That fallback is what the success path
+  drew before the binding existed. If it returns, the `PRESENTATION_CAPABILITIES` row for
+  `safety:FailureRecordSet` is not primed, or cortex-ui has not bound the class (see below).
+- **One row, one citation:** `sor-events-a:EVT-55101`. No `relyence:` citation — that record is on
+  `PLT-BRAVO`.
+- **The legend reads "failures".** There is no colour on the row and no direction stated.
+- **A single row draws a single full bar (share 1.0).** That is correct for one failure mode.
+
+### ⚠ What this row does NOT establish — read before scoring
+
+- **cortex-ui does not bind `safety:FailureRecordSet` yet.** Until it does, the backend advertises a
+  row the frontend has never heard of (the mirror seal carries it as a *staged* gap). The walk can
+  still score `drawn` only if the payload-only path chooses the archetype; a `knowledge-document`
+  card here is the missing frontend binding, not an engine defect. Owner: cortex-ts.
+- **Whether the utterance's `PN-8801` fills `part_number` is a ROUTING question this engine cannot
+  answer.** Q1 does the same with `HAZ-1003` and works; the part referent resolves against
+  `safety:SafetyCriticalItem`. If the walk answers `slot_required` instead, that is the instance
+  resolver not consulting the class, and is Lane 1's, not this verb's. Not walked live by this lane.
+
+---
+
+## Q7 — Failures per month on this platform, WITH the platform named  ⚠ **expect a CARD, one period**
+
+> **"failures per month on this platform PLT-ALPHA"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT` (a member of `SANDBOX_PROGRAM_ALPHA` only)
+**Verb:** `mesh:failureTrendForThisPlatformByMonth` → `engine-safety:/measure/failure_trend_for_this_platform_by_month`
+**Expected disposition:** `drawn` — a `MULTI_SERIES` card
+**Interim:** observed until the replay is live: menu not registered on this build (`presentation_source=refused`) -- a named interim state, not a pass.
+
+The populated twin of Q5: failures counted by calendar month of `observed_on`, one declared series
+(`failure_count`, unit "failures"), empty months zero-filled between the first and last visible
+month. The fixture holds one visible record for PLT-ALPHA, so the card is **one period**; a line
+with one point is correct here, not a rendering fault.
+
+### The captured payload, as bob (`{"platform_id": "PLT-ALPHA"}`), trimmed
+
+```json
+{"refused": false,
+ "rows": [{"period": "2026-03", "failure_count": 1, "failure_record_ids": ["FR-6001"],
+           "citations": ["sor-events-a:EVT-55101"]}],
+ "series": [{"key": "failure_count", "label": "Failures", "unit": "failures"}],
+ "value_label": "Failures per month", "scope_label": "PLT-ALPHA", "failure_count": 1}
+```
+
+### Checks that distinguish
+
+- **A series card, not "No content available".** Same reading as Q6.
+- **Exactly one declared series, one period `2026-03`, value 1.**
+- **No `reference`, no `verdict`.** The trend states no target; a card showing one has invented it.
+- The unit is the noun **"failures"** — a count, not a currency. A `$` anywhere is a finding.
+
+### ⚠ What this row does NOT establish
+
+Same two caveats as Q6: cortex-ui does not bind `safety:FailureTrend` yet (a `knowledge-document`
+card is the missing binding), and whether the utterance's `PLT-ALPHA` fills `platform_id` is the
+instance resolver's question (`safety:Platform` members: `PLT-ALPHA`, `PLT-BRAVO`, `PLT-CHARLIE`).
+
+---
+
+## Q8 — Draft a risk assessment at the worst severity row  ⚠ **a draft card AND a TASK, and Severity I is NOT High**
+
+> **"draft a risk assessment for HAZ-1001"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT`
+**Verb:** `mesh:draftRiskAssessment` → `engine-safety:/measure/draft_risk_assessment`
+**Expected disposition:** `task_requested` — **NOT YET WALKED LIVE** (waits on a Lane 1 roll; the
+captured payload below is the engine's own, from `TestClient`, not a cluster).
+
+**Why this hazard.** Q1 is Medium (II x D, bob's audience). HAZ-1001 is severity I (Catastrophic),
+probability D, and the ratified matrix resolves that cell to **Serious**, not High
+(`setup/ontologies/safety_risk_matrix.ttl`, the `I`/`D` cell). It is the cell a walker will
+"correct" to High on instinct, and it is the one where the audience flips from bob's tier to the
+senior authority's: `risk_acceptance_serious:SUSTAINMENT`, granted to alice and deliberately not
+to bob (`policy/task_grants.yaml`). It also has NO mitigation at all, so the assessment carries
+`orphan_reason: "no mitigation recorded"` and an empty `mitigations` list.
+
+```json
+{
+  "refused": false, "hazard_id": "HAZ-1001", "acceptance_status": "drafted",
+  "severity": "I", "probability": "D", "risk_level": "Serious",
+  "acceptance_audience": "risk_acceptance_serious:SUSTAINMENT",
+  "mitigations": [], "orphan_reason": "no mitigation recorded",
+  "derived_from": ["HAZ-1001", "safety_risk_matrix.ttl"],
+  "citations": {"risk_level": "safety_risk_matrix.ttl", "acceptance_audience": "safety_risk_matrix.ttl"},
+  "review_request": {"kind": "risk_acceptance_serious", "task_id": "risk-acceptance-HAZ-1001",
+                     "audience": "risk_acceptance_serious:SUSTAINMENT",
+                     "title": "Accept Serious risk — HAZ-1001"}
+}
+```
+
+### Checks that distinguish
+
+- `risk_level` is **`Serious`**. If it reads High, the matrix in the image is not the ratified one.
+- **No row for HAZ-1001 in bob's `GET /me/human_tasks`, and that is the PASS** (architect, 2026-10-20):
+  bob drafts and cannot accept a Serious risk; the task is carol's concurrence. The audience on the
+  card is `risk_acceptance_serious:SUSTAINMENT`. Same for HAZ-1004 (Serious).
+- `acceptance_status` is `drafted`, never `accepted`.
+
+### What a correct result looks like BROKEN
+
+- **A card.** Same as Q1: the acceptance is a human act.
+- **A task in bob's queue as the acceptor.** That is the audience of Medium and Low.
+
+---
+
+## Q9 — Draft a risk assessment on a CLOSED hazard  ⚠ **expect a REFUSAL, `hazard_closed`, and NO task**
+
+> **"draft a risk assessment for HAZ-1005"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT`
+**Verb:** `mesh:draftRiskAssessment` → `engine-safety:/measure/draft_risk_assessment`
+**Expected disposition:** `refused` (the verb's named refusal; no card, no task) — **NOT YET
+WALKED LIVE** (waits on a Lane 1 roll; the payload below is the engine's own, from `TestClient`).
+
+**Why this hazard.** HAZ-1005 is `closed` (IV x E, Low, owned and field-verified mitigation).
+RULED 2026-10-09 (architect): a closed hazard is refused, never drafted. Until then this row
+expected a Low-tier task; that behaviour was the open question it was written to record, and the
+ruling reverses it. The Low-cell task is walked by Q12 (HAZ-1008, open), because the Low
+audience is reachable only through a hazard that is not closed.
+
+```json
+{
+ "refused": true,
+ "outcome": "hazard_closed",
+ "hazard_id": "HAZ-1005",
+ "evidence": {
+  "hazard_id": "HAZ-1005",
+  "status": "closed",
+  "severity": "IV",
+  "probability": "E",
+  "opened_on": "2025-11-05",
+  "mitigations": [
+   {
+    "mitigation_id": "MIT-2105",
+    "owner": "tech.pubs@example.invalid",
+    "verified_in_field": "true"
+   }
+  ],
+  "closure_record": "not held"
+ },
+ "reason": "hazard 'HAZ-1005' is closed; there is no open risk to accept. Held: status closed; severity IV, probability E; mitigations MIT-2105 (owner tech.pubs@example.invalid, verified_in_field true). No closure record (date, closer) is held."
+}
+```
+
+### Checks that distinguish
+
+- `refused` is **true** and `outcome` is **`hazard_closed`** (not `unknown hazard`, not `engine_fault`).
+- There is **no `review_request`** and **no row in `human_tasks`** for HAZ-1005.
+
+### What a correct result looks like BROKEN
+
+- **A task for `risk_acceptance_low`.** The closed check is gone.
+- **A card.** As Q1.
+
+---
+
+## Q10 — Draft a risk assessment in the High cell  ⚠ **a draft card AND a TASK, for the senior authority**
+
+> **"draft a risk assessment for HAZ-1007"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT`
+**Verb:** `mesh:draftRiskAssessment` → `engine-safety:/measure/draft_risk_assessment`
+**Expected disposition:** `task_requested` — **NOT YET WALKED LIVE** (waits on a Lane 1 roll).
+
+**Why this hazard.** It is the only fixture hazard whose cell the ratified matrix resolves to
+**High** (severity I x probability B), so the only one that reaches
+`risk_acceptance_high:SUSTAINMENT`, the audience Q1, Q8 and Q9 do not. It is mitigated, owned and
+field-verified, so it is not an orphan and does not move Q2's count of three. High goes through the
+concurrence chain (`safety_concurrence`) before an acceptance task, so the task a walker finds is
+the chain's, not a direct one.
+
+```json
+{
+  "refused": false, "hazard_id": "HAZ-1007", "acceptance_status": "drafted",
+  "severity": "I", "probability": "B", "risk_level": "High",
+  "acceptance_audience": "risk_acceptance_high:SUSTAINMENT",
+  "orphan_reason": null,
+  "derived_from": ["HAZ-1007", "safety_risk_matrix.ttl", "MIT-2107"],
+  "review_request": {"kind": "risk_acceptance_high", "task_id": "risk-acceptance-HAZ-1007",
+                     "audience": "risk_acceptance_high:SUSTAINMENT",
+                     "title": "Accept High risk — HAZ-1007"}
+}
+```
+
+### Checks that distinguish
+
+- `risk_level` is **`High`**, `orphan_reason` is **null**.
+- The request is `risk_acceptance_high`, audience `risk_acceptance_high:SUSTAINMENT`, not bob's tier.
+- **No row for HAZ-1007 in bob's `GET /me/human_tasks`, and that is the PASS** (architect, 2026-10-20): the task is the CAE's.
+
+### What a correct result looks like BROKEN
+
+- **Serious or Medium for I x B.** The image's matrix is not the ratified one.
+- **A card.** As Q1.
+
+---
+
+## Q11 — Draft a risk assessment on a hazard nobody has assessed  ⚠ **NO task, and no level invented**
+
+> **"draft a risk assessment for HAZ-1006"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT`
+**Verb:** `mesh:draftRiskAssessment` → `engine-safety:/measure/draft_risk_assessment`
+**Expected disposition:** `refused` (the verb's named refusal; no card, no task) -- **NOT YET
+WALKED LIVE** (waits on a roll).
+
+**Why this hazard.** HAZ-1006 is `not_assessed`: no severity, no probability. RULED 2026-10-09
+(architect): nobody can draft an acceptance for a hazard nobody has assessed, so the verb REFUSES
+with `outcome: "not_assessed"`. The matrix is not consulted, no level is invented and no authority
+is implied; the refusal names the missing half. Until then this row recorded a `not_assessed`
+DRAFT (`refused: false`) that carried no `review_request`; the ruling replaces that shape.
+
+```json
+{
+ "refused": true,
+ "outcome": "not_assessed",
+ "hazard_id": "HAZ-1006",
+ "gap": "severity and probability are not assessed on this hazard; no risk level is resolved and no authority is implied",
+ "evidence": {
+  "hazard_id": "HAZ-1006",
+  "status": "not_assessed",
+  "severity": null,
+  "probability": null,
+  "opened_on": "2026-08-30",
+  "mitigations": [],
+  "closure_record": "not held"
+ },
+ "reason": "hazard 'HAZ-1006' has not been assessed: severity and probability are not assessed on this hazard; no risk level is resolved and no authority is implied. Held: status not_assessed; neither severity nor probability held; opened 2026-08-30. To proceed, obtain a severity and probability assessment for HAZ-1006."
+}
+```
+
+### Checks that distinguish
+
+- `refused` is **true** and `outcome` is **`not_assessed`** (not `unknown hazard`, not `hazard_closed`).
+- `gap` names **severity**. There is **no `risk_level`, no `acceptance_audience` and no
+  `review_request`**; nothing in `human_tasks`.
+
+### What a correct result looks like BROKEN
+
+- **Any risk level.** A default at the bottom of the matrix reads as assessed-and-negligible.
+- **A task, or a draft with `refused: false`.** There is nothing yet to accept.
+
+---
+
+## Q12 — Draft a risk assessment in the Low cell  ⚠ **a draft card AND a TASK, for the program manager's tier**
+
+> **"draft a risk assessment for HAZ-1008"**
+
+**As:** bob · `SAFETY_ENGINEER` · `SUSTAINMENT`
+**Verb:** `mesh:draftRiskAssessment` → `engine-safety:/measure/draft_risk_assessment`
+**Expected disposition:** `task_requested` — **NOT YET WALKED LIVE** (waits on a Lane 1 roll).
+
+**Why this hazard.** It is the only OPEN fixture hazard whose cell the ratified matrix resolves to
+**Low** (severity IV x probability E), so the only one that reaches
+`risk_acceptance_low:SUSTAINMENT`. HAZ-1005 sits in the same cell but is closed and now refuses
+(Q9). Every risk level the matrix defines (High, Serious, Medium, Low) has a walk row: Q10, Q8,
+Q1, Q12. It is open with an owned, field-verified mitigation, so it is not an orphan and does not
+move Q2's count of three.
+
+```json
+{
+  "refused": false, "hazard_id": "HAZ-1008", "acceptance_status": "drafted",
+  "severity": "IV", "probability": "E", "risk_level": "Low",
+  "acceptance_audience": "risk_acceptance_low:SUSTAINMENT",
+  "orphan_reason": null,
+  "derived_from": ["HAZ-1008", "safety_risk_matrix.ttl", "MIT-2108"],
+  "review_request": {"kind": "risk_acceptance_low", "task_id": "risk-acceptance-HAZ-1008",
+                     "audience": "risk_acceptance_low:SUSTAINMENT",
+                     "title": "Accept Low risk — HAZ-1008"}
+}
+```
+
+### Checks that distinguish
+
+- `risk_level` is **`Low`**, `orphan_reason` is **null**.
+- The request is `risk_acceptance_low`, audience `risk_acceptance_low:SUSTAINMENT`, bob's tier.
+- A row for HAZ-1008 appears in bob's `GET /me/human_tasks` (`risk-acceptance-HAZ-1008-low~1:acceptance` on 938d7639); match by `kind` + `subject_ref` + `audience`, as Q1.
+
+### What a correct result looks like BROKEN
+
+- **A refusal.** The closed check is firing on an open hazard.
+- **A card.** As Q1.
+
+---
+
+## Rulings recorded here (architect, 2026-10-09)
+
+- **A source fault and an outage are different shapes.** A system-of-record fault (Q4/Q5 with
+  `FAILURE_SOURCE_CONNECTORS` set) is HTTP **200** `refused` / `outcome: source_unavailable`
+  naming the connector. A Topaz outage is **503** `authorization_unavailable`. The split is kept.
+- **Connector code is lane 74's.** Lane 1 sets `FAILURE_SOURCE_CONNECTORS` in the chart. This
+  engine reads the value and ships no connector.
+- **An unassessed hazard is refused, not drafted.** `outcome: not_assessed`, no `review_request`
+  (Q11). Nobody can draft an acceptance for a hazard nobody has assessed.
+- **The census has a `refused` disposition**: the verb returned a named refusal. `abstained`
+  keeps its own meaning (no page explains the subject). Q9 and Q11 use `refused`.
+- **An open Low hazard, HAZ-1008, exists** so the Low audience stays walked (Q12).
+- **A walk row expects exactly one disposition; Q6/Q7 keep expecting elicitation** while the
+  sandbox fixture is the failure source. When Lane 1 sets `FAILURE_SOURCE_CONNECTORS` to real
+  connectors, Q6/Q7 are updated in the same roll (architect, 2026-10-10). No rows change now.
+- **Q1: the task existing is the pass (architect, 2026-10-12).** The wire shows it as a
+  `KNOWLEDGE_DOCUMENT` carrying `review_request` (`risk_acceptance_medium:SUSTAINMENT`), not as a
+  task card. Lane 1 reads the `human_tasks` row for `risk-acceptance-HAZ-1003-medium` and confirms
+  exactly one task. This runner reads the artifact, so it sees the request and not the row.
+- **A critical item naming a hazard the plane does not hold is refused**: `assess_deferral_risk`
+  returns `refused` / `outcome: unknown_hazard` (with `hazard_id` and `reason`), no `assessment`
+  key and no task, in the `hazard_closed` shape. It replaces the old `assessment: not_assessed`.
 
 ## What each failure shape MEANS — so a red is attributable
 

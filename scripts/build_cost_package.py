@@ -21,11 +21,17 @@ about the package rather than a property of it.
 
   usage: .venv/Scripts/python.exe scripts/build_cost_package.py \
              --recipient notional-customer-alpha --out dist/
+
+  pinning (so a shipped page can be rebuilt byte for byte):
+    --as-of YYYY-MM-DD   the date the package claims (default: today)
+    --sha SHA            the 40-hex algorithm commit the page claims, used as-is
+    --like PAGE          take the sha and the date from an existing page; exclusive with the two
 """
 from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import pathlib
 import re
@@ -254,7 +260,8 @@ def embedded_runtime(runtime_dir: pathlib.Path) -> tuple[dict, str]:
 def build_html(recipient: str, runtime_dir: pathlib.Path,
                duckdb_path: pathlib.Path | None = None, *, state=None,
                lots: tuple[int, ...] | None = None, sections: tuple[str, ...] | None = None,
-               canvas_answers: list[str] | None = None, sha: str | None = None) -> str:
+               canvas_answers: list[str] | None = None, sha: str | None = None,
+               as_of: str | None = None) -> str:
     """Build the page. `state` is the engine's SERVED state when `package_export` calls this.
 
     It used to call `build_state()` here unconditionally, so the verb's own state never
@@ -269,6 +276,12 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
     its dirty-tree refusal exactly as before. The parameter is named `sha`, not
     `algorithm_sha`, so it does not shadow the module function of that name — this function
     still needs to call it below when nothing is supplied.
+
+    `as_of`, WHEN GIVEN, PINS THE DATE THE PACKAGE CLAIMS. Unset, the package takes today's
+    date, which is what every existing caller gets and still does. A rebuild that must
+    reproduce an earlier document passes the earlier date, or the file differs from itself
+    by the day it was built on. It applies to the slice-2 page only: the slice-1 package is
+    built through `build_package`, whose callers have not asked for it.
     """
     if state is None:
         state = build_state()
@@ -281,7 +294,10 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
             raise SystemExit(
                 "REFUSING TO BUILD: lots and sections narrow the slice-2 page only; the "
                 "slice-1 page carries neither")
-        package = X.build_package(state, recipient_scope=recipient, algorithm_sha=sha)
+        # `as_of` MUST TRAVEL HERE TOO: this call once dropped it, so `--as-of D` without a
+        # dataset silently embedded today's date and the page could not be rebuilt.
+        package = X.build_package(state, recipient_scope=recipient, algorithm_sha=sha,
+                                  as_of=as_of)
     else:
         # SLICE 2. The .duckdb ships BESIDE this file; the page embeds the same rows and the
         # manifest carries both hashes, so a recipient holding only the HTML still gets a
@@ -291,7 +307,7 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
         package = X.build_dataset_package(
             state, recipient_scope=recipient, algorithm_sha=sha,
             duckdb_path=str(duckdb_path), duckdb_hash=file_hash(duckdb_path),
-            lots=lots, sections=sections, canvas_answers=canvas_answers)
+            lots=lots, sections=sections, canvas_answers=canvas_answers, as_of=as_of)
         # FROM THE ENGINE, NOT A LITERAL. This read `"0.92"` and meant "the field's default",
         # while the page treated it as "the scenario's identity point" — two meanings for one
         # number, and the untouched scenario came out $732k below the baseline it sat next to.
@@ -523,7 +539,7 @@ function render(pkg) {{
 """
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     # NOT `required=True`, because `--fetch-runtime` is a standalone mode and a recipient has
     # nothing to do with downloading a runtime. Validated below instead, where the two modes
@@ -539,9 +555,25 @@ def main() -> int:
                           "cannot be mistaken for a real package."))
     ap.add_argument("--with-dataset", action="store_true",
                     help="slice 2: also build the .duckdb and embed its rows")
+    ap.add_argument("--duckdb", metavar="PATH",
+                    help=("use this EXISTING dataset file and never rebuild it. The .duckdb's "
+                          "bytes differ between builds over identical rows and its sha256 is "
+                          "embedded in the page, so a rebuild moves the page; reusing one "
+                          "file does not. Incompatible with --with-dataset."))
+    ap.add_argument("--canvas", metavar="PATH",
+                    help=("JSON {\"answers\": [{id, verb_iri, subject_instance_id}, ...]}: "
+                          "resolved exactly as the package_export verb resolves it, and it "
+                          "selects the lots and sections. Needs a dataset."))
+    ap.add_argument("--as-of", metavar="YYYY-MM-DD",
+                    help="the date the package claims; default is today (the build date)")
+    ap.add_argument("--sha", metavar="SHA",
+                    help=("the algorithm commit the page claims (40 hex), used as-is; default "
+                          "is HEAD, refused on a dirty tree"))
+    ap.add_argument("--like", metavar="PAGE",
+                    help="rebuild what we shipped: take the sha and date from PAGE")
     ap.add_argument("--fetch-runtime", action="store_true",
                     help="download the pinned Pyodide runtime into --runtime-dir (needs network)")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     rt = pathlib.Path(a.runtime_dir)
     if a.fetch_runtime:
@@ -574,11 +606,71 @@ def main() -> int:
         ap.error("--recipient is required when building a package "
                  "(it is not required for --fetch-runtime alone)")
 
+    # --like SUPPLIES BOTH PINS, so combining it with either would leave two answers to one
+    # question. Refused by name, and before anything is read or built.
+    sha = a.sha
+    as_of_arg = a.as_of
+    if a.like is not None:
+        if a.sha is not None or a.as_of is not None:
+            raise SystemExit("--like supplies --sha and --as-of; pass one or the other")
+        like = pathlib.Path(a.like)
+        if not like.is_file():
+            raise SystemExit(f"--like {like}: no such file")
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import cost_package_identities as _ids
+        try:
+            shipped = _ids.package_from_html(like.read_text(encoding="utf-8"))
+        except ValueError:
+            raise SystemExit(f"--like {like}: no package-data block") from None
+        # NOTHING ELSE is taken from the page: the sha and the date are the two inputs a
+        # rebuild cannot recover from the tree, and everything else is derived again.
+        try:
+            sha, as_of_arg = shipped["algorithm_sha"], shipped["as_of"]
+        except KeyError as e:
+            raise SystemExit(f"--like {like}: package-data lacks {e.args[0]!r}") from None
+
+    if sha is not None and not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha)):
+        raise SystemExit(f"--sha must be a 40-hex commit, got {sha!r}")
+    as_of = None
+    if as_of_arg is not None:
+        import datetime as _dt
+        try:
+            if not (isinstance(as_of_arg, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", as_of_arg)):
+                raise ValueError(as_of_arg)
+            _dt.date.fromisoformat(as_of_arg)
+        except ValueError:
+            raise SystemExit(f"--as-of must be YYYY-MM-DD, got {as_of_arg!r}") from None
+        as_of = as_of_arg
+
+    # THE DATASET: reused from --duckdb, rebuilt by --with-dataset, or absent. The first two are
+    # exclusive, because "never rebuild it" and "rebuild it" cannot both be obeyed.
     db = None
+    if a.duckdb is not None:
+        if a.with_dataset:
+            raise SystemExit("--duckdb and --with-dataset are exclusive: --duckdb reuses an "
+                             "existing dataset file and never rebuilds it")
+        db = pathlib.Path(a.duckdb)
+        if not db.is_file():
+            raise SystemExit(f"--duckdb {db}: no such file; it is reused, never built here")
+    narrowed: dict = {}
+    if a.canvas is not None:
+        # THE SAME RULE THE ENGINE APPLIES: a canvas selects the slice-2 page's sections, so it
+        # forces the dataset page and is refused without one.
+        if db is None and not a.with_dataset:
+            raise SystemExit("--canvas needs a dataset (--duckdb PATH or --with-dataset): a "
+                             "canvas selects the dataset page's sections")
+        from agent_fleet.cost_agent import canvas as canvas_reader
+        from agent_fleet.cost_agent.seed import lots_for_recipient
+        composed = canvas_reader.resolve(
+            json.loads(pathlib.Path(a.canvas).read_text(encoding="utf-8")),
+            recipient_scope=a.recipient, entitled_lots=lots_for_recipient(a.recipient))
+        # The mapping package_export passes to build_html, unchanged.
+        narrowed = dict(lots=composed["lots"], sections=composed["sections"],
+                        canvas_answers=composed["answers"])
     if a.with_dataset:
         db = pathlib.Path(a.out_dir) / f"cost-{a.recipient}.duckdb"
         build_dataset(a.recipient, db)
-    html = build_html(a.recipient, rt, db)
+    html = build_html(a.recipient, rt, db, sha=sha, as_of=as_of, **narrowed)
     suffix = ""
     if a.corrupt_intermediate:
         # Alter ONE intermediate in the embedded manifest, leaving everything else — the
@@ -602,9 +694,17 @@ def main() -> int:
         raise SystemExit(
             "REFUSING TO WRITE: the page's JavaScript does not parse."
             + chr(10) + "  " + (chr(10) + "  ").join(js_problems))
-    dest.write_text(html, encoding="utf-8")
-    mb = dest.stat().st_size / 1_048_576
-    print(f"wrote {dest}  ({mb:.1f} MB)")
+    # BYTES, NOT TEXT: text mode writes CRLF on Windows, so the file on disk was never the
+    # string that was built and its sha256 depended on the platform (see the same fix in
+    # measures.package_export). An identical file already in place is left alone, so a repeat
+    # run changes nothing, not even the mtime.
+    data = html.encode("utf-8")
+    digest = hashlib.sha256(data).hexdigest()
+    if dest.is_file() and dest.read_bytes() == data:
+        print(f"unchanged {digest}")
+    else:
+        dest.write_bytes(data)
+        print(f"wrote {dest} {digest}")
     return 0
 
 

@@ -6,7 +6,7 @@ re: the architect's overnight order, item 1 — "MethodBlock.inputs becomes list
 bound float|None. Additive is preserved because nothing consumed the list[str] form. Reconcile with
 the worker."
 cites: `iagent_mesh/models.py` on `lane/ca` (**UNRELEASED — v0.9.4 is not cut, no tag**),
-`docs/interfaces.md` §8
+`iagent-mesh-sdk/docs/interfaces.md` §8
 
 ## What changed
 

@@ -40,9 +40,9 @@ def test_a_member_of_one_program_sees_only_that_programs_record(monkeypatch):
 def test_a_caller_with_no_program_membership_gets_the_empty_answer_not_a_refusal(monkeypatch):
     pf.install(monkeypatch, caller=pf.CAROL, members={})
     out = measures.what_failed_on_this_part(part_number=PART)
-    assert out["refused"] is False, out
-    assert out["failures"] == [] and out["failure_count"] == 0 and out["platforms"] == []
-    assert out["systems_of_record_cited"] == []
+    # RULED 2026-10-16: nothing visible = a resolved part with no failures -> the named refusal.
+    assert out["refused"] is True and out["outcome"] == "no_failures_recorded", out
+    assert "failures" not in out
 
 
 def test_CONTROL_the_same_request_by_a_member_of_both_gets_both(monkeypatch):
@@ -91,8 +91,10 @@ def test_the_empty_answer_cannot_be_told_from_a_clean_part_by_its_counts(monkeyp
              if not any(r.part_number == c.part_number for r in entities.FAILURE_RECORDS)]
     assert clean, "fixture assumption: some critical part has no failure"
     ref = measures.what_failed_on_this_part(part_number=clean[0])
-    for k in ("failure_count", "platforms", "systems_of_record_cited", "failures"):
-        assert denied[k] == ref[k], (k, denied[k], ref[k])
+    # a clean part and a denied caller get the same refusal, apart from the part named in it
+    assert denied["refused"] == ref["refused"] and denied["outcome"] == ref["outcome"]
+    assert set(denied) == set(ref)
+    assert denied["reason"].replace(PART, "<pn>") == ref["reason"].replace(clean[0], "<pn>")
 
 
 # -- 3. an unmapped platform is denied, even for a member of every mapped program ------------
@@ -116,7 +118,8 @@ def test_CONTROL_the_same_record_with_a_mapping_row_is_returned(monkeypatch, tmp
 
 def test_no_overlay_dirs_at_all_denies_every_record(monkeypatch):
     pf.install(monkeypatch, caller=pf.ALICE, members=pf.ALL_PROGRAMS, overlay_dirs="")
-    assert measures.what_failed_on_this_part(part_number=PART)["failures"] == []
+    out = measures.what_failed_on_this_part(part_number=PART)
+    assert out["refused"] is True and out["outcome"] == "no_failures_recorded"
 
 
 def test_every_platform_the_fixture_uses_is_mapped_or_named_unmapped_on_purpose(monkeypatch):
@@ -239,3 +242,20 @@ def test_the_gateway_asks_through_the_engines_asker(monkeypatch):
               if isinstance(n, ast.FunctionDef) and n.name == "check_can_view_program")
     assert not any(isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
                    and n.value.id == "httpx" for n in ast.walk(fn))
+
+
+# -- no_person outranks an empty result (Day 2, ruled 2026-10-17) ------------------------------
+
+@pytest.mark.parametrize("caller", [None, "svc:supervisor"])
+def test_a_personless_caller_on_a_part_with_no_records_is_no_person_not_no_failures(monkeypatch, caller):
+    """The subject: a part with ZERO records, so a personal caller would get no_failures_recorded.
+    The control (below) differs in the caller kind ONLY."""
+    clean = [c.part_number for c in entities.CRITICAL_ITEMS
+             if not any(r.part_number == c.part_number for r in entities.FAILURE_RECORDS)][0]
+    pf.install(monkeypatch, caller=pf.ALICE, members=pf.ALL_PROGRAMS)
+    ctl = measures.what_failed_on_this_part(part_number=clean)
+    assert ctl["refused"] is True and ctl["outcome"] == "no_failures_recorded", ctl
+    asked = pf.install(monkeypatch, caller=caller, members=pf.ALL_PROGRAMS)
+    with pytest.raises(measures.NoPerson):
+        measures.what_failed_on_this_part(part_number=clean)
+    assert asked == []

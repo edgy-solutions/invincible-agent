@@ -79,11 +79,39 @@ spec:
               the engines' pyproject pin by tests/test_lock_coherence.py — otherwise the broker
               silently runs a different SDK build than the fleet it authenticates against, which
               is the drift the one-implementation rule exists to prevent.
+
+              A CLOSED network points both halves at a mirror (chart 0.4.65):
+              `meshSdkBaseUrl` replaces the GitHub tags URL, and the file name is still
+              `<meshSdkVersion>.tar.gz`, so a mirror cannot change the version; `pip.indexUrl`
+              replaces PyPI for everything else. `pip.caSecretName` trusts an internal CA. There is
+              deliberately no --trusted-host: this install delivers the transport-auth code.
+
+              `meshSdkSource: index` instead installs `iagent-mesh==<meshSdkVersion minus the v>` from
+              that index (the SDK uploaded to an internal PyPI); the version is still the one pin.
               */}}
+              {{- $sdkVersion := .Values.domainBroker.meshSdkVersion | default "v0.2.1" }}
+              {{- $sdkSource := .Values.domainBroker.meshSdkSource | default "url" }}
+              {{- $sdkBase := .Values.domainBroker.meshSdkBaseUrl | default "https://github.com/edgy-solutions/iagent-mesh-sdk/archive/refs/tags" | trimSuffix "/" }}
               pip install --no-cache-dir --quiet fastapi httpx pydantic hypercorn \
-                "iagent-mesh @ https://github.com/edgy-solutions/iagent-mesh-sdk/archive/refs/tags/{{ .Values.domainBroker.meshSdkVersion | default "v0.2.1" }}.tar.gz"
+              {{- if eq $sdkSource "index" }}
+                "iagent-mesh=={{ trimPrefix "v" $sdkVersion }}"
+              {{- else if eq $sdkSource "url" }}
+                "iagent-mesh @ {{ $sdkBase }}/{{ $sdkVersion }}.tar.gz"
+              {{- else }}
+              {{- fail (printf "domainBroker.meshSdkSource must be url or index, not %q" $sdkSource) }}
+              {{- end }}
               exec hypercorn /code/broker.py:app --bind 0.0.0.0:8000
           env:
+            {{- with (.Values.domainBroker.pip | default dict) }}
+            {{- if .indexUrl }}
+            - name: PIP_INDEX_URL
+              value: {{ .indexUrl | quote }}
+            {{- end }}
+            {{- if .caSecretName }}
+            - name: PIP_CERT
+              value: "/etc/pip-ca/ca.crt"
+            {{- end }}
+            {{- end }}
             - name: CENTRAL_GATEWAY_URL
               value: {{ .Values.domainBroker.centralGatewayUrl | default (printf "http://%s-central-gateway:8090" .Release.Name) | quote }}
             - name: BROKER_URL
@@ -125,6 +153,11 @@ spec:
           volumeMounts:
             - name: code
               mountPath: /code
+            {{- if (.Values.domainBroker.pip | default dict).caSecretName }}
+            - name: pip-ca
+              mountPath: /etc/pip-ca
+              readOnly: true
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /health
@@ -179,6 +212,11 @@ spec:
         - name: code
           configMap:
             name: {{ .Release.Name }}-domain-broker-code
+        {{- with (.Values.domainBroker.pip | default dict).caSecretName }}
+        - name: pip-ca
+          secret:
+            secretName: {{ . | quote }}
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service

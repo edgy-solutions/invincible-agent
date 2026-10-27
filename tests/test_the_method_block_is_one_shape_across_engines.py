@@ -72,6 +72,9 @@ NO_BLOCK_YET = {
         "magnitude are different quantities here. Whether this producer should carry a block is a "
         "design question nobody has ruled on, which is a different state from not-done-yet"
     ),
+    # safety:FailureRecordSet LEFT this population on 2026-10-21 (202): it now renders as
+    # KNOWLEDGE_DOCUMENT, matching cortex-ui's binding. Rechecked as the arm asks: the document
+    # path is not in _PROJECTED_ARCHETYPES, so no allowlist exists to lift a `method` into.
 }
 
 
@@ -116,7 +119,9 @@ def _safety_producers() -> dict[str, tuple]:
     # link is a sample of a population, and the partition arm below is what keeps this one honest.
     from agent_fleet.safety_agent import measures as safety
 
-    return {"safety:OrphanedHazardSet": (safety.find_orphaned_hazards, None, {})}
+    return {
+        "safety:OrphanedHazardSet": (safety.find_orphaned_hazards, None, {}),
+    }
 
 
 def _producers() -> dict[str, tuple]:

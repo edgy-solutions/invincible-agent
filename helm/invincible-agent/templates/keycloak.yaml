@@ -1,4 +1,5 @@
 {{- if .Values.keycloak.enabled }}
+{{- include "invincible-agent.validateTruststore" . }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -14,6 +15,13 @@ spec:
       {{- include "invincible-agent.selectorLabels" (dict "component" "keycloak" "root" .) | nindent 6 }}
   template:
     metadata:
+      {{- if .Values.keycloak.truststore.enabled }}
+      annotations:
+        # Hash of source kind + name + key ONLY: the chart cannot see an existing Secret's content.
+        # A rotation means replacing the Secret AND restarting Keycloak; the leaf's sha256 fingerprint
+        # is recorded in docs/runbooks/rolling-a-service.md, not verified by the chart.
+        checksum/truststore: {{ printf "%s/%s/%s" (ternary "secret" "configmap" (not (not .Values.keycloak.truststore.existingSecret))) (.Values.keycloak.truststore.existingSecret | default .Values.keycloak.truststore.existingConfigMap) .Values.keycloak.truststore.key | sha256sum }}
+      {{- end }}
       labels:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "keycloak" "root" .) | nindent 8 }}
@@ -53,12 +61,32 @@ spec:
             - name: KC_HTTP_ENABLED
               value: "true"
             {{- end }}
+            {{- if .Values.keycloak.truststore.enabled }}
+            # Extra PEM trust for the broker issuer's pinned self-signed leaf (Keycloak 26 option truststore-paths).
+            - name: KC_TRUSTSTORE_PATHS
+              value: {{ printf "%s/%s" .Values.keycloak.truststore.mountPath .Values.keycloak.truststore.key | quote }}
+            {{- end }}
           volumeMounts:
+            {{- if .Values.keycloak.truststore.enabled }}
+            - name: truststore
+              mountPath: {{ .Values.keycloak.truststore.mountPath | quote }}
+              readOnly: true
+            {{- end }}
             - name: realm-config
               mountPath: /opt/keycloak/data/import
             - name: data
               mountPath: /opt/keycloak/data
       volumes:
+        {{- if .Values.keycloak.truststore.enabled }}
+        - name: truststore
+          {{- if .Values.keycloak.truststore.existingSecret }}
+          secret:
+            secretName: {{ .Values.keycloak.truststore.existingSecret | quote }}
+          {{- else }}
+          configMap:
+            name: {{ .Values.keycloak.truststore.existingConfigMap | quote }}
+          {{- end }}
+        {{- end }}
         - name: realm-config
           configMap:
             name: {{ .Release.Name }}-keycloak-realm

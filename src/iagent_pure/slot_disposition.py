@@ -144,20 +144,11 @@ FT_UNSUPPORTED = "unsupported"  # provider: I do not enumerate this class
 FT_NO_PROVIDER = "no_provider"  # nobody was asked — the gap, named rather than hidden
 FT_NO_REFERENT = "no_referent"  # the slot names a literal, not a referent; nothing to list
 
-#: THE FIFTH REASON, AND IT IS THE ONLY ONE WHERE A MENU EXISTED AND WAS REFUSED.
-#:
-#: Ruled 2026-09-16 (`sessions/2026-09-17-dispatch-cost-provider-scoped-by.md`): *"three states
-#: on an enumeration — scoped, class-wide, none. NEVER A CLASS-WIDE LIST WEARING A SCOPED
-#: MENU."* When slots are already bound in the turn and the provider answers class-wide anyway,
-#: the list it returned is real and the MENU would be a lie: `cost#RateTable` enumerates to 12
-#: while lot 3 accepts two, so ten of twelve picks produce the `not_in_model` refusal the menu
-#: exists to prevent — with the user's own click behind it.
-#:
-#: **A MENU IS WORSE THAN FREE TEXT HERE, WHICH IS WHY THIS IS NOT A DEGRADATION.** Free text
-#: does not imply validity; a menu does. Offering ten invalid chips teaches a user that the
-#: system's own suggestions are untrustworthy, and it does it at the moment they were trying to
-#: cooperate. So the options are DROPPED and the reason is named.
-FT_CLASS_WIDE = "class_wide"    # provider answered class-wide for a slot that needed scoping
+#: SUPERSEDED 2026-10-12 (architect, via saf's Q4 packet): a menu is kept whenever the engine
+#: returns a member list, so this reason is no longer emitted. It was ruled 2026-09-16 ("NEVER A
+#: CLASS-WIDE LIST WEARING A SCOPED MENU") and dropped the options. The name stays so card readers
+#: and `ask_message` still resolve it.
+FT_CLASS_WIDE = "class_wide"    # NO LONGER EMITTED since the 2026-10-12 ruling (menu kept); constant retained for card/ask_message readers
 
 #: Outcome -> the reason an ask carrying that outcome has no menu. SUPPLIED AT EMIT rather than
 #: refused, because refusing an invalid payload costs the reader the free-text box they could
@@ -177,6 +168,9 @@ _FT_BY_OUTCOME = {
     "fuzzy": FT_NO_PROVIDER,
     "mixed": FT_NO_PROVIDER,
     "ambiguous_in_domain": FT_NO_PROVIDER,
+    # RULED 2026-10-15: a same-class tie is an ask; reaches here with an empty menu only when
+    # every tied candidate is out of the slot's class.
+    "ambiguous_in_class": FT_NO_PROVIDER,
 }
 FREE_TEXT_REASONS = frozenset({
     FT_TOO_MANY, FT_UNSUPPORTED, FT_NO_PROVIDER, FT_NO_REFERENT, FT_CLASS_WIDE,
@@ -228,11 +222,51 @@ def mandatory_slots(declared: Sequence[Mapping[str, Any]]) -> list[Mapping[str, 
 _mandatory = mandatory_slots
 
 
+def _class_admits(candidate: Mapping[str, Any], referent: str) -> bool:
+    """May this candidate fill a slot whose class is `referent`? (Ruling 3, 2026-10-15.)
+
+    A SUBCLASS OF THE REFERENT IS THE REFERENT'S KIND. PR #57 moved safety's `part_number`
+    from `safety:SafetyCriticalItem` to `pcn:Component`; the critical item is still a
+    Component (`rdfs:subClassOf`), but an exact `class_uri == referent` filter dropped it,
+    so the most safety-relevant part vanished from its own menu.
+
+    THIS MODULE IS PURE, so the hierarchy cannot be looked up here: Engine O attaches
+    `class_chain` to each candidate (its own class first, then its ancestors, the same
+    `subClassOf*0..5` reach `/find_compatible_verbs` walks). A candidate WITHOUT a chain
+    falls back to exact match — the old behaviour — so a missing chain can never admit
+    anything; only a chain that names the referent does. A candidate with no class at all
+    stays admitted, as before.
+    """
+    if not referent:
+        return True
+    cls = candidate.get("class_uri")
+    if not cls or cls == referent:
+        return True
+    chain = candidate.get("class_chain")
+    return isinstance(chain, (list, tuple)) and referent in chain
+
+
+def bound_value(decl: Mapping[str, Any], cand: Mapping[str, Any]) -> str:
+    """What a slot receives for a candidate: the value a menu offers, a pick is validated against,
+    and `/fill_slots` binds.
+
+    A slot declaring `binds: identifier` wants the bare identifier the caller's words matched
+    (`matched_on`), falling back to `instance_id` when the provider set none. Any other slot gets
+    the `instance_id`. ontology_service does not ship `iagent_pure`, so it carries a mirror
+    (`_bound_value` in its main.py); `test_a_part_number_slot_binds_the_identifier_not_the_iri`
+    pins their agreement.
+    """
+    if decl.get("binds") == "identifier":
+        return str(cand.get("matched_on") or cand.get("instance_id") or "")
+    return str(cand.get("instance_id") or "")
+
+
 def _from_candidates(
     cands: Sequence[Mapping[str, Any]],
     *,
     referent: str,
     menu_bound: int,
+    decl: Mapping[str, Any] | None = None,
 ) -> tuple[tuple[Option, ...], int]:
     """Candidates → a bounded menu.
 
@@ -248,7 +282,7 @@ def _from_candidates(
     which is why the enumerator answers `too_many` instead of sending its first eight.
     """
     if referent:
-        cands = [c for c in cands if not c.get("class_uri") or c.get("class_uri") == referent]
+        cands = [c for c in cands if _class_admits(c, referent)]
     # DEDUPED BY VALUE, FIRST OCCURRENCE WINS — found by the elicitation corpus, run 1.
     # `"what does the Module Build depend on"` came back `mixed` with candidates
     # [P3, P4, P3] and the menu offered P3 TWICE. Every option routed, so menu integrity
@@ -262,8 +296,10 @@ def _from_candidates(
     seen: set[str] = set()
     opts_list: list[Option] = []
     for c in cands:
-        value = str(c.get("instance_id") or "")
-        if not value or value in seen:
+        if not c.get("instance_id"):
+            continue
+        value = bound_value(decl or {}, c)
+        if value in seen:
             continue
         seen.add(value)
         opts_list.append(Option(value, str(c.get("label") or value)))
@@ -325,6 +361,7 @@ def decide_disposition(
         if outcome in ASK_WITH_CANDIDATES:
             opts, truncated = _from_candidates(
                 res.get("candidates") or [], referent=referent, menu_bound=menu_bound,
+                decl=decl,
             )
             if opts:
                 return Disposition(
@@ -481,33 +518,29 @@ def decide_disposition(
                 for m in members
                 if m.get("instance_id")
             )
-            if opts and unscoped_but_required:
-                # ── NEVER A CLASS-WIDE LIST WEARING A SCOPED MENU (ruled 2026-09-16) ──────
-                #
-                # This slot DECLARES that its valid values depend on other slots, those slots
-                # are bound, and the provider did not narrow by them. So the list is wider
-                # than what the verb will accept: `cost#RateTable` enumerates to 12 while
-                # lot 3 accepts two, and ten of those picks produce the `not_in_model`
-                # refusal the menu exists to prevent — with the user's own click behind it.
-                # The list is DROPPED and the reason is named. Free text is honest here
-                # because it does not imply validity, and a menu does.
-                return Disposition(
-                    ASK, slot=name, reason=reason, spoken=spoken, found=found,
-                    option_source=SRC_NONE, free_text_reason=FT_CLASS_WIDE,
-                    total_count=len(opts),
-                    scoped_by=scoped_by,
-                    bound_slots_offered=tuple(sorted(offered)),
-                    detail=(
-                        f"{len(opts)} listed for the class, not scoped by "
-                        f"{', '.join(unscoped_but_required)}"
-                    ),
-                )
             if opts:
+                # ── A MENU IS KEPT WHENEVER THE ENGINE RETURNS A MEMBER LIST ──────────────
+                #
+                # Ruled 2026-10-12 (architect, via saf's Q4 packet): `scoped_by` -- which
+                # slots narrowed the list -- is optional metadata, never a precondition for
+                # a menu. This RELAXES the 2026-09-16 rule "never a class-wide list wearing
+                # a scoped menu", which dropped the list when a declared-and-bound slot was
+                # not in the provider's `scoped_by`.
+                #
+                # The metadata stays on the disposition so a consumer can still SEE that the
+                # list was not narrowed by the slots in play: `scoped_by` is what the
+                # provider reported, `bound_slots_offered` what it was offered, and `detail`
+                # names the declared-and-bound slots it did not apply.
                 return Disposition(
                     ASK, slot=name, reason=reason, spoken=spoken, found=found,
                     options=opts, option_source=SRC_ENUMERATION,
                     scoped_by=scoped_by,
                     bound_slots_offered=tuple(sorted(offered)),
+                    detail=(
+                        f"{len(opts)} listed, not scoped by "
+                        f"{', '.join(unscoped_but_required)}"
+                        if unscoped_but_required else ""
+                    ),
                 )
             # `members: []` is a real answer and an empty menu is not a menu. The class is
             # enumerable and holds nothing, which is closer to `empty` than to a question.
@@ -967,18 +1000,16 @@ def validate_bound_slots(
                         labels[str(m["instance_id"])] = str(m.get("label") or "")
         if not offered and resolve_identifier is not None:
             # The disambiguation menu: candidates for what the speaker actually said, filtered
-            # to the slot's class exactly as `_from_candidates` filters them.
+            # to the slot's class (or a subclass of it) exactly as `_from_candidates` filters them.
             try:
                 cands = resolve_identifier(name, referent) or []
             except Exception as exc:  # noqa: BLE001
                 refusals.append(f"{name}: resolver unreachable ({type(exc).__name__})")
                 continue
             for c in cands[:menu_bound]:
-                if c.get("instance_id") and (
-                    not c.get("class_uri") or c.get("class_uri") == referent
-                ):
-                    offered.append(str(c["instance_id"]))
-                    labels[str(c["instance_id"])] = str(c.get("label") or "")
+                if c.get("instance_id") and _class_admits(c, referent):
+                    offered.append(bound_value(decl, c))
+                    labels[bound_value(decl, c)] = str(c.get("label") or "")
 
         if not offered:
             refusals.append(f"{name}: no_menu — nothing was offered for this slot")

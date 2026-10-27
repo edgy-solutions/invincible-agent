@@ -263,6 +263,21 @@ delegate and answers everyone else exactly as it answers an absent id.
 `policy/sync/validate_policy.py::service_identity_recipients` is **unchanged**, because it governs
 *grants*, and a seeding is not a grant. See ADR-0041 §8.1.
 
+**INSTANCES OF THE SEEDING-DELEGATE READ, RULED 2026-10-19 (the architect).** A route is an instance
+of the amendment above when the record it discloses **derives from the event the delegate seeded**,
+and when it admits the delegate on that seeding and on nothing else. Each instance is listed here, and
+gov seals each against this section's wording.
+
+1. **The action route, `GET /cases/{case_id}/action`** (`get_case_action`, `src/iagent/gateway.py`;
+   ruled 2026-10-17: "a delegate reads only its own cases' action records, 403 on others and on
+   `/cases/{id}`"). The ActionRecord is written when the case the delegate's fault event opened is
+   released, so it derives from what the delegate seeded. The gate decides ownership by the case:
+   the delegate is admitted only when the runner's case exists and its `seeded_by` is the caller. A
+   nonexistent case, another delegate's case and a case with no `seeded_by` all answer one identical
+   403 `not_your_case`, before any artifact-store read. A record whose own `seeded_by` differs answers
+   the same 403. The delegate gets no spec, no definitions and no `can_view_case`.
+2. **The stage-enum read**, ruled for after 2026-10-23. Its route is cited here when it is built.
+
 ---
 
 ## §6 — The package is a `PublishedArtifact`

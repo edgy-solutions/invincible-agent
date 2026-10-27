@@ -37,10 +37,35 @@ record must say which row of which table chose each step.
 """
 from __future__ import annotations
 
+import logging
+import os
+from datetime import timedelta
 from typing import Any, Optional
 
 import restate
 from restate import ObjectContext, VirtualObject, Workflow, WorkflowContext, WorkflowSharedContext
+
+logger = logging.getLogger(__name__)
+
+def _case_workflow_retention() -> timedelta:
+    """How long Restate keeps a finished case's workflow (its state, `case` included) before it is
+    garbage-collected: CASE_WORKFLOW_RETENTION_DAYS, default 30 (ruled 2026-10-16: Restate's own
+    default is 1 day, which made the case record a clock, not evidence). Read once, at import.
+    Fewer than one day, or not a whole number of days, REFUSES the import: a runner that silently
+    kept a case for hours is worse than one that does not start. The durable record is the
+    Postgres case summary; this is the belt."""
+    raw = os.environ.get("CASE_WORKFLOW_RETENTION_DAYS", "30").strip() or "30"
+    try:
+        days = int(raw)
+    except ValueError:
+        days = 0
+    if days < 1:
+        raise RuntimeError(
+            f"CASE_WORKFLOW_RETENTION_DAYS must be a whole number of days >= 1; got {raw!r}")
+    return timedelta(days=days)
+
+
+CASE_WORKFLOW_RETENTION = _case_workflow_retention()
 
 #: FROZEN CONTRACT SURFACE — task rows name it, and ``/act`` and acks post to it.
 workflow_runner = Workflow("WorkflowRunner")
@@ -105,6 +130,99 @@ def _stamp_seeded_by(case_id: str, seeded_by: str) -> dict:
     return {"stamped": True}
 
 
+#: Attempts the case-summary write gets before it gives up. Bounded so a dead BFF cannot hold a
+#: finished case open for ever; the summary is evidence, but a case that has ended has ended.
+CASE_SUMMARY_MAX_ATTEMPTS = 5
+
+
+def _write_case_summary(case_id: str, summary: dict) -> dict:
+    """POST `{bff}/internal/cases/{case_id}/summary`, as `svc:case-runner`: the case's state, final
+    reason, transitions and seeded_by, which the BFF writes to the Postgres case row together with
+    the artifact ids it reads from the graph (ruled 2026-10-16: every terminal transition writes
+    the summary, so the record outlives Restate). Same transport and posture as
+    `_stamp_seeded_by`: a non-2xx is TERMINAL, a transport error raises plainly so Restate
+    retries it. The upsert is idempotent, so a retry or a replay writes nothing twice."""
+    try:
+        import requests
+        try:
+            import spo_step_executor as _spo  # type: ignore[no-redef]
+            import workflow_definition as _wd  # type: ignore[no-redef]
+        except ImportError:  # pragma: no cover — import path differs by runtime
+            from agent_fleet.restate_analyst import spo_step_executor as _spo
+            from agent_fleet.restate_analyst import workflow_definition as _wd
+    except ImportError as exc:  # pragma: no cover
+        raise restate.TerminalError(f"cannot write the case summary: {exc}", status_code=500) from exc
+    token = _spo.mint_case_runner_token()
+    resp = requests.post(
+        f"{_wd.bff_base_url()}/internal/cases/{case_id}/summary",
+        json=summary,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=_spo.STEP_HTTP_TIMEOUT,
+    )
+    if not 200 <= resp.status_code < 300:
+        raise restate.TerminalError(
+            f"writing the summary of case {case_id!r} was refused: HTTP {resp.status_code}",
+            status_code=502)
+    return {"written": True}
+
+
+async def _summarize(ctx, case: dict, *, state: str, final_reason: Optional[str]) -> None:
+    """Write the case summary at a terminal, through the journal, bounded in attempts. A write that
+    cannot be made is LOGGED and swallowed: it must neither turn a released case into a failed one
+    nor replace the TerminalError a failed case is about to raise.
+
+    ONLY TerminalError is swallowed: it is what a refused write raises and what the SDK answers once
+    `max_attempts` is spent (restate-sdk 0.14.0 `create_run_coroutine` journals the failure, the
+    await raises TerminalError). Anything else -- a disconnect, a wrong call -- propagates, so a
+    defect in this write is loud rather than a summary that is silently never written."""
+    summary = {"state": state, "final_reason": final_reason,
+               "transitions": case["transitions"], "seeded_by": case.get("seeded_by")}
+    try:
+        await ctx.run("write_case_summary",
+                      lambda: _write_case_summary(case["case_id"], summary),
+                      max_attempts=CASE_SUMMARY_MAX_ATTEMPTS)
+    except restate.TerminalError as exc:
+        logger.warning("case %s: the %s summary was not written: %s", case["case_id"], state, exc)
+
+
+#: The `emit` channel the maintenance case's ActionRecord rides on
+#: (`policy/overlays/openddil-lab/workflows/maint_release.yaml`, step `action`,
+#: `channel: maintenance_action`). At `released` the runner reads it off the instance and writes
+#: it to the artifact store through cortex-bff (2026-10-09; before that nothing wrote it).
+ACTION_RECORD_CHANNEL = "maintenance_action"
+
+
+def _write_action_record(case_id: str, record: dict, seeded_by: Optional[str],
+                         on_behalf_of: str) -> dict:
+    """POST `{bff}/internal/cases/{case_id}/action-record`, as `svc:case-runner`. Same posture as
+    `_stamp_seeded_by`: a non-2xx is TERMINAL (the case fails visibly rather than releasing with
+    its record unwritten); a transport error or an unmintable credential raises plainly so
+    Restate retries it. The route's artifact id is derived from the case and the action, so a
+    retry of this call writes nothing twice."""
+    try:
+        import requests
+        try:
+            import spo_step_executor as _spo  # type: ignore[no-redef]
+            import workflow_definition as _wd  # type: ignore[no-redef]
+        except ImportError:  # pragma: no cover — import path differs by runtime
+            from agent_fleet.restate_analyst import spo_step_executor as _spo
+            from agent_fleet.restate_analyst import workflow_definition as _wd
+    except ImportError as exc:  # pragma: no cover
+        raise restate.TerminalError(f"cannot write the action record: {exc}", status_code=500) from exc
+    token = _spo.mint_case_runner_token()
+    resp = requests.post(
+        f"{_wd.bff_base_url()}/internal/cases/{case_id}/action-record",
+        json={"record": record, "seeded_by": seeded_by, "on_behalf_of": on_behalf_of},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=_spo.STEP_HTTP_TIMEOUT,
+    )
+    if not 200 <= resp.status_code < 300:
+        raise restate.TerminalError(
+            f"writing the action record of case {case_id!r} was refused: HTTP {resp.status_code}",
+            status_code=502)
+    return {"written": True}
+
+
 def _terminal(fn, status_code: int):
     """Run a routing call; a routing failure is TERMINAL inside ``ctx.run`` (a retry of an
     untailored table produces the same gap in thirty seconds)."""
@@ -121,7 +239,7 @@ def _child_key(case_id: str, n: int) -> str:
     return f"{case_id}{_routing().CHILD_SEP}{n}"
 
 
-@workflow_runner.main()
+@workflow_runner.main(workflow_retention=CASE_WORKFLOW_RETENTION)
 async def run(ctx: WorkflowContext, request: dict) -> dict:
     if "child_of" in request:
         return await _run_instance(ctx, request)
@@ -246,12 +364,35 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
                 by=step.get("acted_by") or "system", reason=step.get("comments") or None,
                 at_name=f"at_{n}", instance_id=instance,
                 decided_by=f"{nxt['table']} row {nxt['row']}", **refreshed)
+            if env.get("outcome") == SEEDED_BY_STAMP_OUTCOME:
+                # THE RECORD IS WRITTEN BEFORE THE STAMP, so the stamp finds it. Read off the
+                # instance's own outbox through `outbox` (a shared handler of this workflow;
+                # the instance has finished, its state is still there), not off `env["outputs"]`,
+                # which keeps only the LAST record a step emitted.
+                emitted = await ctx.workflow_call(
+                    outbox, key=instance, arg={"channel": ACTION_RECORD_CHANNEL})
+                if emitted:
+                    on_behalf_of = case["seeded_by"] or next(
+                        (e.get("approver_sub") for e in reversed(chain) if e.get("approver_sub")),
+                        None)
+                    if not on_behalf_of:
+                        raise restate.TerminalError(
+                            f"case {case_id} released with an action record and neither a "
+                            "seeding delegate nor an approver to write it on behalf of",
+                            status_code=422)
+                    for i, item in enumerate(emitted, start=1):
+                        await ctx.run(
+                            f"write_action_record_{n}_{i}",
+                            lambda rec=item["record"], who=on_behalf_of: _write_action_record(
+                                case_id, rec, case["seeded_by"], who))
             if env.get("outcome") == SEEDED_BY_STAMP_OUTCOME and case["seeded_by"]:
                 await ctx.run(f"stamp_seeded_by_{n}",
                               lambda: _stamp_seeded_by(case_id, case["seeded_by"]))
             if nxt["terminal"]:
                 case["terminal"] = nxt["then"]
                 ctx.set("case", case)
+                await _summarize(ctx, case, state=case["terminal"],
+                                 final_reason=case["transitions"][-1].get("reason"))
                 break
             definition_id = nxt["then"]
         else:
@@ -263,6 +404,7 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
         # episode would make every later event for that fault a silent duplicate.
         await _record(ctx, case, frm=case["state"], outcome="failed", to="failed", by="system",
                       reason=str(exc), at_name="at_failed")
+        await _summarize(ctx, case, state="failed", final_reason=str(exc))
         if episode:
             ctx.object_send(release, key=episode, arg={"case_id": case_id})
         raise

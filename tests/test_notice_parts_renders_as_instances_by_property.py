@@ -21,6 +21,9 @@ import pytest
 
 from agent_fleet.ontology_service import notice_parts as np_mod
 from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
+from tests.planning.test_a_refusal_is_a_body_with_an_envelope_not_zero_rows import (  # noqa: F401
+    _render, m,
+)
 from tests.planning.test_planning_archetypes_are_projected import _fns
 from tests.test_notice_parts_provenance import NOTICE, PARTS, _row
 
@@ -68,16 +71,50 @@ def test_THE_ADDITION_IS_ADDITIVE_THE_VERB_STILL_ANSWERS_WHAT_IT_DID():
     assert answer["count"] == len(answer["rows"]) == len(answer["parts"])
 
 
-@pytest.mark.parametrize("answer", [
-    np_mod.notice_parts([_row(mpns=[])], NOTICE),   # a known notice naming no part
-    np_mod.notice_parts([], NOTICE),                 # unknown_notice
-    np_mod.notice_parts([], ""),                     # notice_required
-], ids=["no_parts", "unknown_notice", "notice_required"])
-def test_NO_PARTS_PROJECTS_NOTHING_SO_THE_PROSE_CARD_SAYS_WHY(answer):
-    """An empty table would read as "checked, none" for a refusal. The projector refuses an empty
-    list, render_ui degrades, and the document card carries the verb's own message."""
-    assert _project(answer) is None
+_REFUSALS = [
+    (np_mod.notice_parts([_row(mpns=[])], NOTICE), "no_affected_parts"),  # a known notice, no part
+    (np_mod.notice_parts([], NOTICE), "unknown_notice"),
+    (np_mod.notice_parts([], ""), "notice_required"),
+    (np_mod.notice_parts([_row(mpns=[f"P{i}" for i in range(5)])], NOTICE, 9), "page_out_of_range"),
+]
+_REFUSAL_IDS = [r for _, r in _REFUSALS]
+
+
+def _wrapped(answer):
+    return [{"persona": "SAFETY_ENGINEER", "expert_response": answer}]
+
+
+@pytest.mark.parametrize("answer,reason", _REFUSALS, ids=_REFUSAL_IDS)
+def test_A_REFUSAL_PROJECTS_A_REFUSAL_CARD_NOT_NO_CARD(m, answer, reason):
+    """Refusal ruling (#13): a refused body with no rows keeps the card, with an EMPTY ARRAY and
+    the envelope. An empty table alone would read as "checked, none"; the envelope says why.
+    Through the REAL projector (the #13 seal's loader): the text-slice `_fns` cannot see
+    `_refusal_envelope`, and raises NameError on any refused body."""
+    got = m._project_planning_archetype(ARCH, _wrapped(answer), "SAFETY_ENGINEER", None)
+    assert got is not None
+    assert got["archetype"] == ARCH and got["rows"] == []
+    assert got["refusal"] == {"refused": True, "outcome": "refused", "reason": reason}
     assert answer["message"]
+
+
+def test_CONTROL_THE_SAME_EMPTY_ANSWER_UNREFUSED_PROJECTS_NOTHING(m):
+    """Differs from the no_affected_parts case in exactly `refused`: the card exists BECAUSE the
+    verb refused, not because the projector now draws any empty answer."""
+    answer = np_mod.notice_parts([_row(mpns=[])], NOTICE)
+    del answer["refused"]
+    assert m._project_planning_archetype(ARCH, _wrapped(answer), "SAFETY_ENGINEER", None) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer,reason", _REFUSALS, ids=_REFUSAL_IDS)
+async def test_RENDER_UI_DRAWS_IT_ON_THE_REFUSAL_PATH(m, monkeypatch, answer, reason):
+    """The verb's refusal also carries `status: "refused"`; the card takes the refusal-envelope
+    path, not a declared non-answer status path."""
+    out, resp = await _render(m, monkeypatch, answer, archetype=ARCH)
+    assert resp.headers["X-Presentation-Path"] == "refusal-envelope"
+    comp = out["components"][0]
+    assert comp["archetype"] == ARCH and comp["rows"] == []
+    assert comp["refusal"]["reason"] == reason
 
 
 def test_THE_CAPABILITY_ROW_BINDS_THE_VERBS_OUTPUT_TYPE_AND_ITS_FIELDS_ARRIVE():

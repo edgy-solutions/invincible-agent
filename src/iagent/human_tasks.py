@@ -37,6 +37,11 @@ import httpx
 import psycopg2
 import psycopg2.extras
 
+# The fleet's ONE class for "Topaz could not answer" (ADR-0026), imported the way auth.py does,
+# so a raise here and a catch at the BFF are the same module object.
+from iagent.authz import AuthorizationUnavailable  # noqa: F401 -- raised and re-exported
+from iagent.authz import AuthorizationUnconfigured  # noqa: F401 -- raised and re-exported
+
 try:
     from agent_fleet.utils import program_membership as _program_membership
 except ImportError:  # pragma: no cover - run outside the repo root
@@ -91,6 +96,9 @@ CREATE INDEX IF NOT EXISTS idx_htp_status ON human_task_projection (status);
 -- a guessed default. IDEMPOTENT via IF NOT EXISTS.
 ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS workflow_service TEXT;
 ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS promise_name TEXT;
+-- case_id: the case a task belongs to (architect ruling 2026-10-17); NULLABLE, honest-absent for
+-- tasks not filed from a case. Lets a task holder read the case the task is about.
+ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS case_id TEXT;
 """
 
 
@@ -155,37 +163,61 @@ def apply_migration() -> None:
 
 def _resolve_audience_actors(audience: str) -> list[str]:
     """Ask the Topaz Directory for the authz_ids granted `actor` on this audience —
-    the authorized recipient set. Direct user grants only for v1 (group expansion
-    deferred; the manifest allows group#member). Returns [] if none (deny-by-
-    default: an ungranted audience yields NO rows -> invisible to everyone)."""
+    the authorized recipient set. Direct `user` grants, plus the members of every
+    `group#member` grant (RULED 2026-10-10), expanded ONE level. Deduped, first-seen
+    order. Returns [] if none (deny-by-default: an ungranted audience yields NO rows ->
+    invisible to everyone). A failure reading the audience OR any group's members RAISES;
+    a partial list would silently hide the task from the members it dropped."""
     if not _TOPAZ_DIRECTORY_URL:
         raise HumanTaskConfigError("TOPAZ_DIRECTORY_URL is unset")
-    params = {
-        "object_type": "task_audience",
-        "object_id": audience,
-        "relation": "actor",
-    }
-    with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+
+    def _list(c, params):
         r = c.get("/api/v3/directory/relations", params=params)
         r.raise_for_status()
         body = r.json()
+        return body.get("results") or body.get("relations") or []
+
     actors: list[str] = []
-    for rel in body.get("results") or body.get("relations") or []:
-        # subject is a user object; its id is the AUTHORIZATION identity (authz_id
-        # — the USER_ENTITLEMENT_CLAIM key Topaz is seeded by: email in sandbox,
-        # employee-ID at work-deploy). NOT necessarily an email.
-        if (rel.get("subject_type") == "user") and rel.get("subject_id"):
-            actors.append(rel["subject_id"])
+
+    def _add(authz_id):
+        if authz_id and authz_id not in actors:
+            actors.append(authz_id)
+
+    with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        rels = _list(c, {"object_type": "task_audience", "object_id": audience,
+                         "relation": "actor"})
+        for rel in rels:
+            # subject is a user object; its id is the AUTHORIZATION identity (authz_id
+            # — the USER_ENTITLEMENT_CLAIM key Topaz is seeded by: email in sandbox,
+            # employee-ID at work-deploy). NOT necessarily an email.
+            if rel.get("subject_type") == "user":
+                _add(rel.get("subject_id"))
+            elif (rel.get("subject_type") == "group"
+                  and rel.get("subject_relation") == "member" and rel.get("subject_id")):
+                # ONE level only: a member that is itself a group (nested) is NOT expanded.
+                for m in _list(c, {"object_type": "group", "object_id": rel["subject_id"],
+                                   "relation": "member"}):
+                    if m.get("subject_type") == "user":
+                        _add(m.get("subject_id"))
     return actors
 
 
-def check_can_act(audience: str, caller_id: str) -> bool:
-    """Application-layer gate: re-check Topaz `can_act` for this caller on this
-    audience at resolve time (defense in depth over the replication filter).
-    `caller_id` is the authz_id (Topaz's key). Deny-by-default: any error or empty
-    identity -> False."""
-    if not caller_id or not _TOPAZ_DIRECTORY_URL:
+def can_act_or_unavailable(audience: str, caller_id: str) -> bool:
+    """Topaz `can_act` for this caller on this audience, the same question as
+    :func:`check_can_act`, except that a Topaz failure (no connection, a non-2xx, an unreadable
+    body) RAISES the fleet's one `AuthorizationUnavailable` (`iagent.authz`, ADR-0026: "auth is
+    down" is not "you're denied") instead of reading as False. For a route that must answer 503,
+    not a deny, when Topaz is down (architect, 2026-10-17: "a holder of the task is never told
+    not_entitled because a dependency is down").
+    An empty identity is still False. An unset TOPAZ_DIRECTORY_URL RAISES
+    `AuthorizationUnconfigured` (`iagent.authz`) before any HTTP (architect, 2026-10-17, Q14:
+    "unset Topaz URL is 503 authorization_unconfigured, not 403 -- our misconfiguration is never
+    reported as entitlement."). `check_can_act`, which swallows every exception, still returns
+    False for its other callers."""
+    if not caller_id:
         return False
+    if not _TOPAZ_DIRECTORY_URL:
+        raise AuthorizationUnconfigured("TOPAZ_DIRECTORY_URL is unset")
     payload = {
         "object_type": "task_audience",
         "object_id": audience,
@@ -198,6 +230,17 @@ def check_can_act(audience: str, caller_id: str) -> bool:
             r = c.post("/api/v3/directory/check", json=payload)
             r.raise_for_status()
             return bool(r.json().get("check"))
+    except (httpx.HTTPError, ValueError) as exc:  # ValueError: a body that is not JSON
+        raise AuthorizationUnavailable(type(exc).__name__) from exc
+
+
+def check_can_act(audience: str, caller_id: str) -> bool:
+    """Application-layer gate: re-check Topaz `can_act` for this caller on this
+    audience at resolve time (defense in depth over the replication filter).
+    `caller_id` is the authz_id (Topaz's key). Deny-by-default: any error or empty
+    identity -> False."""
+    try:
+        return can_act_or_unavailable(audience, caller_id)
     except Exception:
         return False  # fail-closed
 
@@ -279,6 +322,115 @@ def task_exists(task_id: str) -> bool:
             return cur.fetchone() is not None
 
 
+def get_task_open_state(task_id: str) -> Optional[dict[str, Any]]:
+    """`{audience, open}` for a logical task, or None when no row carries the id. `open` is True
+    while ANY recipient row is still `pending` (the only status the queues read as open; a
+    resolution flips every recipient row at once). Read-only and NOT caller-scoped, so -- like
+    :func:`task_exists` -- only a route that goes on to gate on `check_can_act` may use it."""
+    if not task_id:
+        return None
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT MAX(audience) AS audience,
+                          COALESCE(BOOL_OR(status = 'pending'), FALSE) AS open
+                     FROM human_task_projection
+                    WHERE task_id = %s
+                   HAVING COUNT(*) > 0""",
+                (task_id,),
+            )
+            row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def get_open_task_payload(task_id: str) -> Optional[dict[str, Any]]:
+    """The parsed `payload` of a logical task's OPEN (`pending`) rows, or None when no row of the id
+    is `pending`. Every recipient row of a task carries the same payload, so one is enough. Read-only
+    and SERVICE-SIDE: not caller-scoped, like :func:`task_exists` -- asked by a route that built the
+    task id from an artifact it can already read. Do not reuse it on a human path."""
+    if not task_id:
+        return None
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT payload FROM human_task_projection
+                    WHERE task_id = %s AND status = 'pending' LIMIT 1""",
+                (task_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    p = row["payload"]
+    if isinstance(p, (str, bytes)):
+        p = json.loads(p)
+    return dict(p) if isinstance(p, dict) else {}
+
+
+def latest_task_for_subject(subject_ref: str, kind: str) -> Optional[dict[str, Any]]:
+    """`{task_id, payload}` of the NEWEST logical task of `kind` filed about `subject_ref` (any
+    status), or None when none was filed. Newest by `created_at`, then `task_id` so a tie is
+    deterministic. Read-only and SERVICE-SIDE, like :func:`get_open_task_payload`: asked by a route
+    that already read the subject. Do not reuse it on a human path."""
+    if not subject_ref or not kind:
+        return None
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT task_id, payload FROM human_task_projection
+                    WHERE subject_ref = %s AND kind = %s
+                    ORDER BY created_at DESC, task_id DESC LIMIT 1""",
+                (subject_ref, kind),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    p = row["payload"]
+    if isinstance(p, (str, bytes)):
+        p = json.loads(p)
+    return {"task_id": row["task_id"], "payload": dict(p) if isinstance(p, dict) else {}}
+
+
+#: A task REPLACED by a newer one for the same document (spec 204: a leaf change at review files a new
+#: generation and retires the old). NOT a resolution: no decision, no acted_by. Terminal, never open.
+SUPERSEDED = "superseded"
+
+
+def supersede_open_task(task_id: str) -> int:
+    """Mark every `pending` row of a logical task `superseded` (`updated_at` set); returns the
+    rowcount. Touches only `pending` rows -- a resolved row keeps its resolution. Not a resolution:
+    `decision`/`acted_by` are left as they were, and :func:`mark_task_resolved` refuses the status."""
+    now = int(time.time() * 1000)
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE human_task_projection
+                      SET status = 'superseded', updated_at = %s
+                    WHERE task_id = %s AND status = 'pending'""",
+                (now, task_id),
+            )
+            n = cur.rowcount
+        conn.commit()
+    return n
+
+
+def refresh_open_task(task_id: str, *, payload: dict[str, Any], title: str, summary: str) -> int:
+    """Rewrite the `payload`, `title` and `summary` of EVERY `pending` row of a logical task in one
+    UPDATE (`updated_at` set); returns the rowcount. A resolved row is never touched. Service-side,
+    like :func:`get_open_task_payload`: the audience is not changed here (the caller checks it)."""
+    now = int(time.time() * 1000)
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE human_task_projection
+                      SET payload = %s::jsonb, title = %s, summary = %s, updated_at = %s
+                    WHERE task_id = %s AND status = 'pending'""",
+                (json.dumps(payload or {}), title, summary, now, task_id),
+            )
+            n = cur.rowcount
+        conn.commit()
+    return n
+
+
 # ── Registration (materialize rows from the Topaz decision) ──────────────────
 
 def register_task(
@@ -295,6 +447,7 @@ def register_task(
     workflow_service: Optional[str] = None,
     promise_name: Optional[str] = None,
     excludes: Optional[list[str]] = None,
+    case_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Register a HumanTask: resolve the audience's authorized actors from Topaz
     and materialize ONE projection row per actor. Returns {task_id, recipients}.
@@ -357,7 +510,7 @@ def register_task(
         rows.append((
             str(uuid.uuid4()), kind, task_id, workflow_id, audience, actor_id,
             "pending", title, summary, requested_by, subject_ref, payload_json,
-            None, None, None, None, now, now, workflow_service, promise_name,
+            None, None, None, None, now, now, workflow_service, promise_name, case_id,
         ))
     if rows:
         with _pg_connect() as conn:
@@ -368,7 +521,7 @@ def register_task(
                        (id, kind, task_id, workflow_id, audience, recipient_id,
                         status, title, summary, requested_by, subject_ref, payload,
                         acted_by, acted_at, decision, comment, created_at, updated_at,
-                        workflow_service, promise_name)
+                        workflow_service, promise_name, case_id)
                        VALUES %s""",
                     rows,
                 )
@@ -387,13 +540,27 @@ def list_tasks_for(caller_id: str, *, status: str = "pending") -> list[dict[str,
             cur.execute(
                 """SELECT id, kind, task_id, workflow_id, audience, status, title,
                           summary, requested_by, subject_ref, payload, created_at,
-                          workflow_service, promise_name
+                          workflow_service, promise_name, case_id
                      FROM human_task_projection
                     WHERE recipient_id = %s AND status = %s
                     ORDER BY created_at DESC""",
                 (caller_id, status),
             )
             return [dict(r) for r in cur.fetchall()]
+
+
+def holds_task_on_case(case_id: str, caller_id: str) -> bool:
+    """True iff the caller is the recipient of a task filed on `case_id`, ANY status (a decided
+    task still shows the person the case it was about). Architect ruling 2026-10-17."""
+    if not case_id or not caller_id:
+        return False
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM human_task_projection WHERE case_id = %s AND recipient_id = %s LIMIT 1",
+                (case_id, caller_id),
+            )
+            return cur.fetchone() is not None
 
 
 # ── Case-1 fulfillment: write an asset_grants.yaml assertion + grant_sync ─────
@@ -468,7 +635,7 @@ def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, A
     with _pg_connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                """SELECT task_id, kind, status, decision, acted_by, acted_at, audience
+                """SELECT task_id, kind, status, decision, acted_by, acted_at, audience, payload
                      FROM human_task_projection
                     WHERE task_id = %s AND recipient_id = %s
                     ORDER BY updated_at DESC
@@ -897,6 +1064,9 @@ def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
             "'pending' cannot be a resolution: it is the only status the queue reads as OPEN, "
             "and storing it would return a resolved task to every queue that skips it."
         )
+    if decision == SUPERSEDED:
+        # A supersession is the BFF retiring a task, not a person's decision: it has no acted_by.
+        raise ValueError("'superseded' cannot be a resolution: use supersede_open_task")
     status = decision
     with _pg_connect() as conn:
         with conn.cursor() as cur:

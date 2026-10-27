@@ -46,7 +46,7 @@ def _policy(tmp_path, monkeypatch, steps):
     monkeypatch.setenv("WORKFLOW_DEFINITIONS_DIR", str(_dump(
         tmp_path / "workflows", {"write": {"id": "write", "name": "write", "steps": steps}})))
     monkeypatch.setattr(wd, "load_stub_verbs", lambda: {})
-    monkeypatch.setattr(main, "_register_human_task", lambda wf, task, kind="workflow_ack": {})
+    monkeypatch.setattr(main, "_register_human_task", lambda wf, task, kind="workflow_ack", case_id=None: {})
 
 
 @pytest.fixture

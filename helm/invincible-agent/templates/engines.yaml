@@ -79,11 +79,17 @@ spec:
                 name: {{ $.Release.Name }}-config
             - secretRef:
                 name: {{ $.Release.Name }}-secrets
-          {{- if $eng.env }}
+          {{- if or $eng.env (eq .component "engine-a") }}
           env:
             {{- range $k, $v := $eng.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
+            {{- end }}
+            {{- if eq .component "engine-a" }}
+            # How long Restate keeps a finished case workflow (its state included). Restate's own
+            # default is 1 day; the runner refuses to import below 1.
+            - name: CASE_WORKFLOW_RETENTION_DAYS
+              value: {{ $.Values.restate.caseWorkflowRetentionDays | default 30 | quote }}
             {{- end }}
           {{- end }}
           resources:

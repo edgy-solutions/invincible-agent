@@ -1,5 +1,7 @@
 # Architect handoff — 2026-09-19 (Saturday, mid-afternoon)
 
+to: invincible-agent/seat/architect
+
 You are the architect for the iagent mesh platform. You rule; lanes build. Chris (the human) walks the UI and is the only scheduler of sessions. Everything below is on disk; this file only says where to look and what is open.
 
 ## Read first, in this order

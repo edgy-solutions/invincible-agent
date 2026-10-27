@@ -45,7 +45,9 @@ ARTIFACT_BY_ID_CYPHER = """
 MATCH (a:AnswerArtifact {id: $artifact_id})
 OPTIONAL MATCH (a)-[:PRODUCED_FOR]->(owner:Actor {actor_id: $user_id})
 OPTIONAL MATCH (a)-[:DERIVED_FROM]->(parent:AnswerArtifact)
-""" + _RETURN
+""" + _RETURN.rstrip() + """,
+       a.rendered_output       AS rendered_output
+"""
 
 # Every AnswerArtifact the subject owns or seeded. The seeding arm is added in Python only when
 # the subject is a declared delegate, so a person whose id equals some `seeded_by` matches nothing.
@@ -56,6 +58,21 @@ OPTIONAL MATCH (a)-[:DERIVED_FROM]->(parent:AnswerArtifact)
 WITH a, owner, parent
 WHERE owner IS NOT NULL OR ($is_delegate AND a.seeded_by = $authz_id)
 """ + _RETURN
+
+
+# The artifacts of ONE case, with exactly the fields `is_entitled` decides on (`is_owner`,
+# `seeded_by`) plus what GET /ingest/{id}/status lists (`kind`, `released_at`). The caller filters
+# with `is_entitled`; this statement scopes nothing by caller on its own.
+CASE_ARTIFACTS_CYPHER = """
+MATCH (a:AnswerArtifact {case_id: $case_id})
+OPTIONAL MATCH (a)-[:PRODUCED_FOR]->(owner:Actor {actor_id: $user_id})
+RETURN a.id          AS id,
+       a.kind        AS kind,
+       a.released_at AS released_at,
+       owner IS NOT NULL AS is_owner,
+       a.seeded_by   AS seeded_by
+ORDER BY id
+"""
 
 
 def _as_dict(rec: Any) -> dict:

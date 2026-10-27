@@ -56,6 +56,32 @@ RESOLVE_FLOOR = 0.5
 _MIN_PHRASE_CHARS = 8
 
 
+#: A part number's separators are interchangeable: "PN-8802", "pn 8802" and "Pn_8802" are one
+#: spoken part. Runs of whitespace, hyphen and underscore collapse to ONE hyphen; nothing else is
+#: dropped, so the bare digits "8802" still do not name PN-8802 (the module's bare-number rule).
+_PN_SEPARATORS = re.compile(r"[\s_\-]+")
+
+
+def _normalise_part_number(text: str) -> str:
+    return _PN_SEPARATORS.sub("-", text.strip().casefold())
+
+
+def _part_number_hits(query: str) -> Dict[str, List[str]]:
+    """CSI ids whose `part_number` equals the query EXACTLY, and (only if none does) those that
+    equal it after normalising. EXACT BEFORE NORMALISED: an exact hit is the answer and the
+    normalised readings are not offered beside it; with no exact hit, several normalised hits
+    are returned together so the consumer sees the tie and never receives a silent pick."""
+    q = query.strip()
+    if not q:
+        return {"exact": [], "normalised": []}
+    exact = [c.csi_id for c in CRITICAL_ITEMS if c.part_number == q]
+    if exact:
+        return {"exact": exact, "normalised": []}
+    nq = _normalise_part_number(query)
+    return {"exact": [], "normalised": [c.csi_id for c in CRITICAL_ITEMS
+                                         if _normalise_part_number(c.part_number) == nq]}
+
+
 def _members() -> Dict[str, List[Dict[str, str]]]:
     """class URI -> [{identifier, label}], derived from the fixture.
 
@@ -64,6 +90,23 @@ def _members() -> Dict[str, List[Dict[str, str]]]:
     hand-kept-list shape this arc has met repeatedly. Adding a hazard to `entities.py` makes it
     resolvable here with no edit.
     """
+    return {k: [_both_keys(m) for m in v] for k, v in _raw_members().items()}
+
+
+def _both_keys(member: Dict[str, str]) -> Dict[str, str]:
+    """Publish the id under `instance_id` AND `identifier`, same value.
+
+    THE MENU READS `instance_id`: `iagent_pure/slot_disposition.py` builds each `Option` from
+    `m.get("instance_id")` and DROPS a member without one (decide_disposition, ~line 478-482;
+    validate_bound_slots, ~line 964-966), and `ontology_service/main.py::_bind_from_scope`
+    (~line 3181) filters the same way. This engine published `identifier` only, so its
+    enumeration was a list of members the menu silently discarded. `identifier` is kept: the
+    resolver's scorer and existing readers use it.
+    """
+    return {"instance_id": member["identifier"], **member}
+
+
+def _raw_members() -> Dict[str, List[Dict[str, str]]]:
     return {
         SAFETY + "Hazard": [
             {"identifier": h.hazard_id, "label": h.description} for h in HAZARDS
@@ -170,7 +213,31 @@ def resolve(identifier: str, class_uri: Optional[str] = None) -> List[Dict[str, 
                     "instance_id": m["identifier"],
                     "label": m["label"],
                     "score": score,
+                    "matched_on": "",  # the id tier does not say which field matched
                 })
+    # A CSI is also spoken by its part number. Same candidate shape as an id hit. `matched_on`
+    # names the part number, so engine-o's specificity gate sees the name that matched (the
+    # label "PN-8802 -- ... seal kit." ends in `kit`). lane/74, 2026-10-16.
+    pn = _part_number_hits(identifier)
+    pn_of = {c.csi_id: c.part_number for c in CRITICAL_ITEMS}
+    for cls, members in _members().items():
+        if class_uri and class_uri != cls:
+            continue
+        for m in members:
+            tier = ("exact" if m["identifier"] in pn["exact"]
+                    else "normalised" if m["identifier"] in pn["normalised"] else None)
+            if tier is None:
+                continue
+            score = 1.0 if tier == "exact" else 0.9
+            have = next((c for c in out if c["instance_id"] == m["identifier"]), None)
+            if have is None:
+                out.append({"class_uri": cls, "instance_id": m["identifier"],
+                            "label": m["label"], "score": score,
+                            "matched_on": pn_of.get(m["identifier"], "")})
+            else:
+                if score > have["score"]:
+                    have["matched_on"] = pn_of.get(m["identifier"], "")
+                have["score"] = max(have["score"], score)
     out.sort(key=lambda c: (-c["score"], c["instance_id"]))
     return out
 

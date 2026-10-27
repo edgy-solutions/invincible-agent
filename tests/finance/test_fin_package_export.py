@@ -198,8 +198,12 @@ def test_gate_4_binding_gates_fire_before_any_post(posts):
 def test_gate_5_a_disagreeing_scope_is_409_naming_the_derived_one(posts):
     status, detail = _export({**GOOD, "recipient_scope": "program_office.NP-OTHER"})
     assert status == 409 and posts == []
-    assert detail == {"reason": "recipient_scope_disagrees_with_canvas_audience",
-                      "derived": SCOPE}
+    # `message` joined this body in d0f80092 ("every 409 carries a message", sealed fleet-wide
+    # by tests/test_every_409_carries_a_message.py). Its wording is that seal's business; this
+    # arm keeps the exact equality on every OTHER key, so a fourth field still reds it.
+    assert {k: v for k, v in detail.items() if k != "message"} == {
+        "reason": "recipient_scope_disagrees_with_canvas_audience", "derived": SCOPE}
+    assert isinstance(detail.get("message"), str) and detail["message"].strip()
 
 
 def test_gate_6_a_non_reader_is_403_before_any_post(posts):
@@ -233,13 +237,15 @@ def test_both_export_routes_shape_through_the_ONE_helper():
         and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                 and n.func.id == "_shape_export_package_response" for n in ast.walk(fn))
     }
-    assert callers == {"export_package", "_export_package_from_template"}, sorted(callers)
+    # the cost path shapes inside `_call_engine_cost_package`, which export_package (single path
+    # and per-engine sections alike) calls: still one shaping call per route.
+    assert callers == {"_call_engine_cost_package", "_export_package_from_template"}, sorted(callers)
     assert src.count("engine returned no verifiable artifact hash") == 1
     assert src.count("_SHA256_LOCATOR_RE.match(sha)") == 1
 
 
 def test_the_cost_path_without_a_template_id_still_demands_a_recipient(posts):
-    status, detail = _export({})
+    status, detail = _export({"answers": [{"artifact_id": "a1"}]})
     assert status == 409 and detail["reason"] == "recipient_required" and posts == []
 
 
@@ -471,7 +477,7 @@ def test_the_duckdb_ddl_refuses_an_unmapped_type_by_name():
 # ── REAL BUILD ───────────────────────────────────────────────────────────────
 @pytest.fixture(scope="module")
 def real_build(tmp_path_factory):
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the program-finance canvas package export is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     from fastapi.testclient import TestClient
 
     from agent_fleet.finance_agent import main as fmain
@@ -521,7 +527,7 @@ def test_the_real_build_html_parses_has_no_cdn_and_names_six_panels(real_build):
 
 
 def test_the_real_build_duckdb_hash_is_in_the_manifest_and_the_tables_agree(real_build):
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the program-finance canvas package export is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     import build_fin_package as b
 
     path = real_build["duckdb"]
@@ -533,7 +539,7 @@ def test_the_real_build_duckdb_hash_is_in_the_manifest_and_the_tables_agree(real
 
 def test_the_build_refuses_when_the_duckdb_disagrees_with_the_state(tmp_path):
     """CONTROL for the arm above: `tables_agree` can say no."""
-    pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the program-finance canvas package export is NOT verified (root agent-fleet extra declares it; uv sync --extra agent-fleet)")
     import build_fin_package as b
 
     path = tmp_path / "x.duckdb"
@@ -559,3 +565,92 @@ def test_the_html_half_alone_parses_without_duckdb():
                         template_id="program_finance", as_of="2026-01-01", sha="0" * 40)
     assert check_javascript(html) == []
     assert "cdn.jsdelivr.net" not in html
+
+
+# ── AS_OF IS AN INPUT ────────────────────────────────────────────────────────
+def test_as_of_absent_is_resolved_once_and_reaches_the_engine_fin_body(posts, monkeypatch):
+    import iagent.gateway as gw
+
+    calls = []
+    monkeypatch.setattr(gw, "_export_request_date", lambda: calls.append(1) or "2031-03-04")
+    status, _ = _export({**GOOD, "recipient_scope": SCOPE})
+    assert status == 200 and len(calls) == 1
+    assert [p["json"]["as_of"] for p in posts] == ["2031-03-04"]
+
+
+def test_as_of_explicit_is_forwarded_verbatim_to_engine_fin(posts):
+    status, _ = _export({**GOOD, "recipient_scope": SCOPE, "as_of": "2026-01-02"})
+    assert status == 200
+    assert [p["json"]["as_of"] for p in posts] == ["2026-01-02"]
+
+
+@pytest.mark.parametrize("bad", ["2026-13-01", "yesterday"])
+def test_as_of_malformed_is_refused_by_the_request_model(bad):
+    import iagent.gateway as gw
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        gw.ExportPackageRequest(**GOOD, as_of=bad)
+
+
+def test_engine_as_of_in_the_body_reaches_the_builder(engine):
+    client, built = engine
+    r = client.post("/package_export", json={
+        "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": "2026-02-03"})
+    assert r.status_code == 200, r.text
+    assert built[0]["as_of"] == "2026-02-03"
+
+
+def test_engine_as_of_absent_is_the_request_date_resolved_once(engine, monkeypatch):
+    from agent_fleet.finance_agent import main as fmain
+
+    client, built = engine
+    calls = []
+    monkeypatch.setattr(fmain, "_request_date", lambda: calls.append(1) or "2031-03-04")
+    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": _canvas()})
+    assert r.status_code == 200, r.text
+    assert len(calls) == 1 and built[0]["as_of"] == "2031-03-04"
+
+
+@pytest.mark.parametrize("bad", ["2026-13-01", "yesterday"])
+def test_engine_as_of_malformed_is_422_and_builds_nothing(engine, bad):
+    client, built = engine
+    r = client.post("/package_export", json={
+        "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": bad})
+    assert r.status_code == 422 and built == []
+
+
+def test_the_real_build_carries_as_of_in_the_page_and_the_manifest_and_is_byte_stable(
+        tmp_path_factory):
+    pytest.importorskip("duckdb", reason="duckdb is not installed in this venv: the as_of fin export is NOT verified (uv sync --extra agent-fleet)")
+    from fastapi.testclient import TestClient
+
+    from agent_fleet.finance_agent import main as fmain
+
+    if not (ROOT / ".pyodide-cache").is_dir():
+        pytest.skip("no .pyodide-cache in this checkout; the real build cannot run")
+    dist = tmp_path_factory.mktemp("fin_dist_as_of")
+    canvas = {"template_id": "program_finance", "template_hash": template_ref(_template()),
+              "panels": [{"panel": i, "verb": v, "params": dict(p)}
+                         for i, (v, _s, p) in enumerate(_dispatches())]}
+    html_name, _ = fin_export.artifact_filenames(SCOPE)
+    pages, manifests = [], []
+    real_audit = fin_export.audit_line
+
+    def spy(manifest, **kw):
+        manifests.append(manifest)
+        return real_audit(manifest, **kw)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fmain, "_dist_dir", lambda root: dist)
+        mp.setattr(fin_export, "audit_line", spy)
+        with TestClient(fmain.app) as client:
+            for _ in range(2):
+                r = client.post("/package_export", json={
+                    "recipient_scope": SCOPE, "canvas": canvas, "as_of": "2026-02-03"})
+                assert r.status_code == 200, r.text[:400]
+                pages.append((dist / html_name).read_bytes())
+    assert pages[0] == pages[1]
+    html = pages[0].decode("utf-8")
+    assert "as of 2026-02-03" in html
+    assert [m["as_of"] for m in manifests] == ["2026-02-03", "2026-02-03"]

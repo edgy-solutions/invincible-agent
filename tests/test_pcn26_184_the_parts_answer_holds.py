@@ -22,7 +22,7 @@ from agent_fleet.ontology_service import notice_parts as np_mod
 from src.iagent import gateway as _gw
 from src.iagent.provenance import validate_provenance
 from tests.planning.test_planning_archetypes_are_projected import _fns
-from tests.test_notice_parts_provenance import _NOTICE, _SEEDED, _Driver, _mat, _row
+from tests.test_notice_parts_provenance import DROPPED_BY, _NOTICE, _SEEDED, _Driver, _mat, _row
 
 NOTICE = "PCN26-184"
 PARTS = ["5530-184", "5530-185"]
@@ -33,7 +33,10 @@ ARCH = "INSTANCES_BY_PROPERTY"
 
 
 def _answer(**kw):
-    return np_mod.read_notice_parts(_Driver([_row(notice=_N184, mpns=PARTS, **kw)]), NOTICE)
+    """Read as the dropper, as `tests/test_notice_parts_provenance.py` does: a drop-derived notice
+    is withheld from a caller who may not consume its origin, and an unnamed caller is not a person."""
+    return np_mod.read_notice_parts(_Driver([_row(notice=_N184, mpns=PARTS, **kw)]), NOTICE,
+                                    caller_id=DROPPED_BY)
 
 
 def _card(answer):

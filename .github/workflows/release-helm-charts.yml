@@ -1,23 +1,35 @@
 name: Release Helm Charts
 
+# NO `push` TRIGGER, AND THAT IS THE FIX (ruling 2026-10-25). This ran on its own `push` beside
+# build-containers.yml, finished in ~25 s while the matrix took ~5 min, and so published 0.4.66,
+# 0.4.68 and 0.4.69 with 0 of 19 images tagged: charts whose tag floor names images that did not
+# exist. A release that references images that do not exist is not a release. It is now CALLED by
+# build-containers.yml's `release` job, which `needs: build` for the same commit, and a missing
+# image fails it.
 on:
-  push:
-    branches:
-      - master
-      - main
-    paths:
-      - 'helm/**'
-  # MANUAL RUN FOR A RELEASE THAT SHIPPED BEFORE THE RETAG EXISTED. 0.3.77 was published with
-  # images tagged only by sha, and the retag needs `write:packages` — which CI's own token has
-  # and a person's PAT generally does not. Rather than hand someone a credential to run a
-  # script locally, the act happens where the credential already lives.
+  workflow_call:
+    inputs:
+      chart_version:
+        type: string
+        required: false
+        default: ''
+      sha:
+        type: string
+        required: false
+        default: ''
+  # THE REPAIR DISPATCH, for a release whose retag did not complete (0.3.77, which predates the
+  # retag; 0.4.68 and 0.4.69, which raced the build). It takes the RELEASE'S OWN COMMIT and tags the
+  # images built from it, because a release is its commit -- what the sandbox runs is a separate
+  # decision. The retag needs `write:packages`, which CI's own token has and a person's PAT
+  # generally does not, so the act happens where the credential already lives, and the run's job
+  # summary is its log. It never moves a tag: see retag_images_by_digest.py.
   workflow_dispatch:
     inputs:
       chart_version:
         description: 'Chart version to retag images to (e.g. 0.3.77)'
         required: true
       sha:
-        description: 'Commit whose images are retagged (full 40-char sha)'
+        description: 'The release tag''s commit, whose images are retagged (full 40-char sha)'
         required: true
 
 jobs:
@@ -79,17 +91,6 @@ jobs:
           fi
           echo "Chart version ${version} is unpublished — proceeding to release."
 
-      - name: Run chart-releaser
-        if: github.event_name != 'workflow_dispatch'
-        uses: helm/chart-releaser-action@v1.6.0
-        with:
-          charts_dir: helm
-          # Belt-and-braces only. The guard step above is what enforces the invariant;
-          # this must never again be the thing that silently swallows a drift.
-          skip_existing: true
-        env:
-          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-
       # ── RETAG EVERY IMAGE TO THE CHART VERSION, BY DIGEST ────────────────────────────────
       #
       # A chart that resolves to its OWN images is the point. `global.defaultImageTag` was
@@ -120,25 +121,65 @@ jobs:
           fi
           sha="${{ inputs.sha }}"
           if [ -z "${sha}" ]; then sha="${{ github.sha }}"; fi
+          # A DISPATCH TAGS THE RELEASE'S OWN COMMIT. The sha is typed by a person; the tag says
+          # which commit the release is. They must agree, or the release would name another
+          # commit's images.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tagged="$(git rev-parse -q --verify "refs/tags/invincible-agent-${version}^{commit}" || true)"
+            if [ "${tagged}" != "${sha}" ]; then
+              echo "::error::invincible-agent-${version} is commit '${tagged:-<no such tag>}', not ${sha}. Nothing tagged."
+              exit 2
+            fi
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
           # `|| rc=$?` IS LOAD-BEARING, not defensive. A GitHub `run:` block is `bash -e`, so a
-          # non-zero exit aborts the step AT the python line and `rc=$?` below never runs. The
-          # three-state handling underneath it read as deliberate and COULD NOT FIRE: exit 3
-          # would have failed the release rather than warned. Found by reading the shell that
-          # runs this, not the branch that looks correct.
+          # non-zero exit aborts the step AT the python line and the annotation below never runs.
           rc=0
           python scripts/retag_images_by_digest.py \
             --chart-version "${version}" \
             --sha "${sha}" \
-            --manifest image-digests.json || rc=$?
-          # 3 = some images are not published yet (the matrix may still be building). Visible,
-          # not fatal — distinct from 1, which is a retag that FAILED. Same three-state
-          # discipline the census uses: a thing that did not happen is not a thing that broke.
-          if [ "$rc" = "3" ]; then
-            echo "::warning::some images were missing for ${{ github.sha }}; see image-digests.json"
-          elif [ "$rc" != "0" ]; then
+            --manifest image-digests.json \
+            --summary-file "$GITHUB_STEP_SUMMARY" || rc=$?
+          # EVERY NON-ZERO IS FATAL. 3 = an image of this commit does not exist; 4 = a release tag
+          # already names another digest (never overwritten); 1 = a retag or a read failed. The
+          # codes differ so the annotation says which; none of them publishes.
+          case "$rc" in
+            0) ;;
+            3) echo "::error::images missing for ${sha}; no chart is published over them (image-digests.json)"; exit 3 ;;
+            4) echo "::error::a :${version} tag already names another digest; nothing was tagged or overwritten"; exit 4 ;;
+            *) echo "::error::the retag failed (exit ${rc}); see the log"; exit "$rc" ;;
+          esac
+
+      # READ BACK, NOT REPORTED. Every :<version> tag must resolve to the digest the manifest
+      # names, and the controls (fake digest, short commit, unpushed tag, wrong digest) must fail.
+      # Any non-zero, 3 included, fails the release.
+      - name: Verify the release tags resolve to the manifest digests
+        run: |
+          rc=0
+          python scripts/retag_images_by_digest.py --verify \
+            --chart-version "${{ steps.retag.outputs.version }}" \
+            --manifest image-digests.json > verify.log 2>&1 || rc=$?
+          # A FILE, NOT `| tee`: the default `run:` shell is `bash -e` without pipefail, so a pipe
+          # would hand `rc` tee's exit and a failed verify would read as 0.
+          cat verify.log
+          tail -n 1 verify.log >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" != "0" ]; then
+            echo "::error::the release tags did not verify (exit ${rc})"
             exit "$rc"
           fi
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      # PUBLISHED ONLY NOW, after every image is tagged and read back. chart-releaser used to run
+      # first, which is how a release came to exist over images that did not.
+      - name: Run chart-releaser
+        if: github.event_name != 'workflow_dispatch'
+        uses: helm/chart-releaser-action@v1.6.0
+        with:
+          charts_dir: helm
+          # Belt-and-braces only. The guard step above is what enforces the invariant;
+          # this must never again be the thing that silently swallows a drift.
+          skip_existing: true
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
 
       # THE MANIFEST IS THE CHECKABLE ARTEFACT. It records service -> digest, plus what was
       # MISSING and what FAILED — a manifest listing only successes is a claim that its list is

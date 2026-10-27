@@ -112,6 +112,9 @@ def plan_to_payload(plan, *, requested_by: str, acted_by: str = "",
             "disposition_state": gw.triples.get("dispositionState", ""),
             "disposition_ref": gw.triples.get("dispositionRef", ""),
             "proposed_by_ruleset": gw.triples.get("proposedByRuleset", ""),
+            # Present ONLY on a steward-corrected/added row; the key is absent otherwise, so an
+            # unedited row's payload is byte-identical to before.
+            **({"provenance": dict(gw.provenance)} if gw.provenance else {}),
         },
         "human_task": None if ht is None else {
             "task_key": ht.task_key,
@@ -227,7 +230,7 @@ def _mint_dispatch_task(task: dict) -> dict:
         #
         # Rides in `payload` (a pass-through jsonb) rather than as a new column: additive, no
         # migration, and nothing existing changes shape.
-        "payload": {"approved_by": task.get("acted_by") or ""},
+        "payload": {**(task.get("payload") or {}), "approved_by": task.get("acted_by") or ""},
     }
     # MINT AT USE — fresh service-identity token, never a stored one. A ServiceTokenError propagates
     # (retryable): a Keycloak blip is transient INFRA, not an authorization denial, so it must NOT
@@ -259,6 +262,11 @@ def _write_disposition_state(gw: dict) -> dict:
         "disposition_ref": gw["disposition_ref"],
         "proposed_by_ruleset": gw.get("proposed_by_ruleset", ""),
     }
+    # Steward-correction provenance rides the SAME write (engine-o stores it beside the identity).
+    # Absent on an unedited row, so those bodies are unchanged.
+    for _k in ("obtained_via", "corrected_by", "extracted_value", "corrected_value", "evidence"):
+        if _k in (gw.get("provenance") or {}):
+            body[_k] = gw["provenance"][_k]
     # svc:review-starter — RULED SEPARATELY from its eight siblings, and the reason is the point.
     # The other engine-A outbound calls are ungoverned reads and carry `svc:engine-a`, the process
     # identity. THIS one writes DISPOSITION STATE — the review-starter's own governed downstream

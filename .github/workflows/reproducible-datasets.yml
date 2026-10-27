@@ -1,0 +1,72 @@
+# Reproducible datasets: each .duckdb builder, run twice, must write the same bytes.
+#
+# WIRED TO pull_request, WHICH DEPARTS FROM docs/plans/no-ci-gate-on-the-suite.md's dispatch-only
+# rule, on the same narrow argument as validate-canvas-templates.yml: the subject is two
+# builders and a five-arm test (seconds, hermetic, no cluster or network), and byte-stability
+# on Linux is only worth anything if it is checked at merge, not afterwards.
+#
+# THE FALLBACK IS PRE-COMMITTED: if this goes red for an environment reason even once, demote it
+# to `workflow_dispatch` and say so in the packet.
+#
+# The last step fails a run whose tests skipped (no duckdb) or number fewer than the file
+# defines: a job that skips everything must not read as green.
+
+name: reproducible datasets
+
+on:
+  pull_request:
+    paths:
+      - "scripts/build_cost_dataset.py"
+      - "scripts/build_fin_package.py"
+      - "agent_fleet/cost_agent/**"
+      - "agent_fleet/finance_agent/**"
+      - "tests/test_dataset_builds_are_byte_identical.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/reproducible-datasets.yml"
+  workflow_dispatch:
+
+jobs:
+  reproducible:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+
+      - name: install
+        # The extra is required: duckdb lives in it, and without it the test file skips.
+        run: uv sync --locked --extra agent-fleet
+
+      - name: build each dataset repeatedly and compare bytes
+        run: |
+          set -u
+          rc=0
+          uv run pytest tests/test_dataset_builds_are_byte_identical.py -q --junitxml=reproducible.xml || rc=$?
+          echo "pytest exit code: $rc"
+          exit "$rc"
+
+      - name: the run really ran every arm, and print the recorded shas
+        run: |
+          set -u
+          expected="$(grep -c '^def test_' tests/test_dataset_builds_are_byte_identical.py)"
+          uv run python - "$expected" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          expected = int(sys.argv[1])
+          root = ET.parse("reproducible.xml").getroot()
+          cases = list(root.iter("testcase"))
+          skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
+          for c in cases:
+              for p in c.iter("property"):
+                  print(f"{c.get('name')}: {p.get('name')}={p.get('value')}")
+          if skipped:
+              sys.exit(f"skipped tests read as green: {skipped}")
+          if len(cases) < expected:
+              sys.exit(f"ran {len(cases)} tests, the file defines {expected}")
+          print(f"ok: {len(cases)} tests, none skipped")
+          PY

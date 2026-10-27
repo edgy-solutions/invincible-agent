@@ -39,6 +39,15 @@ from agent_fleet.finance_agent.seed import build_seed, check_consistency  # noqa
 FIN = "http://invincible-agent/fin#"
 STATE = build_seed()
 
+#: Enumerate and resolve answer only what the caller's program membership allows, so every
+#: call below names a caller and the membership check is replaced by a double that admits her.
+CALLER = "alice@example.com"
+
+
+@pytest.fixture
+def member(monkeypatch):
+    monkeypatch.setattr(engine, "can_view_program", lambda program, caller_id, **kw: True)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # The seed
@@ -465,7 +474,7 @@ def test_every_response_discloses_that_the_data_is_notional():
 # they drive the REAL consumer, and they read the REAL fan-out's request from its own source.
 
 
-def test_resolve_accepts_the_payload_the_fanout_actually_sends():
+def test_resolve_accepts_the_payload_the_fanout_actually_sends(member):
     """Engine O sends `{"identifier": ..., "query": ...}`. Anything else is a 422 in prod.
 
     The `text` spelling this engine shipped with was invisible to every registration check
@@ -474,7 +483,8 @@ def test_resolve_accepts_the_payload_the_fanout_actually_sends():
     from fastapi.testclient import TestClient
     with TestClient(engine.app) as client:
         r = client.post("/resolve_instance",
-                        json={"identifier": "meridian", "query": "what is the EAC"})
+                        json={"identifier": "meridian", "query": "what is the EAC",
+                              "user_email": CALLER})
         assert r.status_code == 200, f"the fan-out's own payload was refused: {r.text[:200]}"
         assert r.json()["candidates"], "identifier reached the scorer but matched nothing"
 
@@ -482,26 +492,39 @@ def test_resolve_accepts_the_payload_the_fanout_actually_sends():
 def test_the_fanout_request_shape_is_read_from_engine_o_not_remembered():
     """DERIVED, NOT TRANSCRIBED. If Engine O's fan-out changes its request keys, this fails
     rather than quietly describing a contract that moved."""
+    import ast
     src = (REPO / "agent_fleet" / "ontology_service" / "main.py").read_text(encoding="utf-8")
-    assert 'json={"identifier": identifier, "query": query}' in src, (
-        "Engine O's resolver fan-out no longer sends {identifier, query} — re-read it and "
+    fn = next(n for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.AsyncFunctionDef) and n.name == "_call_resolver")
+    sent = {k.value for n in ast.walk(fn) if isinstance(n, ast.Call)
+            and getattr(n.func, "attr", "") == "post"
+            for kw in n.keywords if kw.arg == "json" and isinstance(kw.value, ast.Dict)
+            for k in kw.value.keys if isinstance(k, ast.Constant)}
+    # 2026-10-10: the caller (`user_email`, `entitled_domains`) joined the body so an
+    # origin-scoped provider can gate on who asked. Engine-fin reads the two identity fields
+    # and need not read the caller, but it must not REFUSE the body that carries it.
+    assert sent == {"identifier", "query", "user_email", "entitled_domains"}, (
+        f"Engine O's resolver fan-out now sends {sorted(sent)} — re-read it and "
         "re-align engine-fin's ResolveRequest rather than trusting this test's memory"
     )
     fields = set(engine.ResolveRequest.model_fields)
     assert {"identifier", "query"} <= fields, fields
+    assert engine.ResolveRequest.model_config.get("extra") != "forbid", (
+        "engine-fin forbids extra fields, so every fan-out call carrying the caller is a 422")
     assert "text" not in fields, (
         "a `text` alias reintroduces two correct spellings for one field, which is how the "
         "next engine copies the wrong one"
     )
 
 
-def test_resolve_candidates_carry_the_key_engine_o_parses():
+def test_resolve_candidates_carry_the_key_engine_o_parses(member):
     """Engine O reads `c.get("instance_id")` and coerces a miss to "" — so the wrong key
     yields candidates that resolve 'successfully' with no usable id."""
     from fastapi.testclient import TestClient
     with TestClient(engine.app) as client:
         cands = client.post("/resolve_instance",
-                            json={"identifier": "meridian"}).json()["candidates"]
+                            json={"identifier": "meridian",
+                                  "user_email": CALLER}).json()["candidates"]
     assert cands
     for c in cands:
         assert c.get("instance_id"), f"candidate has no instance_id: {c}"
@@ -510,7 +533,7 @@ def test_resolve_candidates_carry_the_key_engine_o_parses():
             assert f in c, f"Engine O's parser reads {f}"
 
 
-def test_the_real_disposition_builds_a_real_menu_from_engine_f_members():
+def test_the_real_disposition_builds_a_real_menu_from_engine_f_members(member):
     """THE SEAL THAT WOULD HAVE CAUGHT THE SILENT HALF, and it drives the actual consumer.
 
     `decide_disposition` builds options from `m.get("instance_id")` and FILTERS OUT members
@@ -529,7 +552,8 @@ def test_the_real_disposition_builds_a_real_menu_from_engine_f_members():
     with TestClient(engine.app) as client:
         def enumerate_class(class_uri):
             return client.post("/enumerate_instances",
-                               json={"class_uri": class_uri, "limit": 8}).json()
+                               json={"class_uri": class_uri, "limit": 8,
+                                     "user_email": CALLER}).json()
 
         disp = decide_disposition(
             accepted={},
@@ -547,13 +571,14 @@ def test_the_real_disposition_builds_a_real_menu_from_engine_f_members():
     assert len(disp.options) == 5, f"expected the 5 control accounts, got {disp.options}"
 
 
-def test_enumerate_outcomes_match_the_contract_setting_peer():
+def test_enumerate_outcomes_match_the_contract_setting_peer(member):
     """engine-p sets the contract; engine-fin matches it rather than inventing spellings."""
     from fastapi.testclient import TestClient
     with TestClient(engine.app) as client:
         def enum(cls):
             return client.post("/enumerate_instances",
-                               json={"class_uri": FIN + cls, "limit": 8}).json()
+                               json={"class_uri": FIN + cls, "limit": 8,
+                                     "user_email": CALLER}).json()
         members = enum("ControlAccount")
         assert members["outcome"] == "members" and members["count"] == 5
         assert all("instance_id" in m and "label" in m for m in members["members"])

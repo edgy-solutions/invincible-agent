@@ -39,3 +39,13 @@ programs:
       BRAVO, bob of ALPHA only, carol of neither. Not a claim about any real program's membership.
     grant_to:
       - alice@example.com
+  NP-MERIDIAN:
+    granted_by: cnogradi
+    reason: >-
+      Sandbox fixture: engine-fin's seeded synthetic program (agent_fleet/finance_agent/seed.py
+      PROGRAM_ID). engine-fin lists and resolves only the programs the caller can_view_program
+      (lane/fin, 2026-10-27), so without this entry the finance canvas's "which program?" menu is
+      empty for everyone. alice is the finance-analysts fixture member. Not a claim about any
+      real program's membership.
+    grant_to:
+      - alice@example.com

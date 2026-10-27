@@ -333,7 +333,12 @@ class UnknownBinding(ValueError):
 
 class UnboundRequiredSlot(ValueError):
     """A declared, consumed shared slot has nothing bound to it yet — the ADR-0050 §3 carry,
-    not a fault in either the template or the request. 409."""
+    not a fault in either the template or the request. 409, and a POLICY REFUSAL: it asks the
+    caller to choose a value (`slot_refusal` names who widens the choice)."""
+
+    def __init__(self, message: str, slots: "list[str] | tuple[str, ...]" = ()):
+        super().__init__(message)
+        self.slots = sorted(slots)
 
 
 def validate_bindings(template: CanvasTemplate, bindings: dict[str, Any]) -> dict[str, Any]:
@@ -369,6 +374,310 @@ def validate_bindings(template: CanvasTemplate, bindings: dict[str, Any]) -> dic
             f"template {template.template_id!r} has panel(s) consuming shared slot(s) "
             f"{unbound} that nothing binds yet, so those panels would refuse. Supply it "
             f"in `bindings`. This is the ADR-0050 §3 carry, not a fault in the template or "
-            f"the request."
+            f"the request.",
+            unbound,
         )
     return clean
+
+
+# ── WHAT A SHARED SLOT CAN BE ASKED ABOUT, AND WHERE THE ASK IS OWNED ──────────────────────
+#
+# `SharedSlot` carries a name, a description and a `param`; it does not carry a CLASS, so the
+# server cannot say what to enumerate when a required one is unbound. This constant is the
+# STOP-GAP until it does. Widening `SharedSlot` is a proposal for the architect, and it would
+# touch the ratified yaml, which this change does not.
+#
+# Keyed by `param` (the dispatch identity, the word the verbs' signatures spell), valued by the
+# class engine-fin declares for that parameter (`agent_fleet/finance_agent/slots.py`'s
+# `_REFERENT_KIND`). `tests/planning/test_finance_canvas_asks_which_program.py` compares the
+# two, so a class that moves on one side reads red rather than enumerating the wrong thing.
+SHARED_SLOT_REFERENTS: dict[str, str] = {
+    "program_id": "http://invincible-agent/fin#Program",
+}
+
+#: The (persona, domain) cell that OWNS each referent in `SHARED_SLOT_REFERENTS`: the cell the
+#: second `mesh:seedCanvas` registration is made in, and the cell the 409's policy hint tells
+#: a caller who cannot see any member to get into. One constant for both, so they cannot drift.
+REFERENT_CELLS: dict[str, tuple[str, str]] = {
+    "http://invincible-agent/fin#Program": ("PROGRAM_FINANCE_ANALYST", "PROGRAM_FINANCE"),
+}
+
+
+class DispatchParamsRefused(ValueError):
+    """The supervisor's `params` could not be folded into a template and bindings. 422."""
+
+
+def _consumed_names(t: CanvasTemplate) -> set[str]:
+    return {c for p in t.panels for c in p.consumes}
+
+
+def _slot_for_key(t: CanvasTemplate, key: str) -> Optional[SharedSlot]:
+    """The shared slot a dispatch key addresses, by `param` or by `name`."""
+    for s in t.shared_slots:
+        if key == s.param or key == s.name:
+            return s
+    return None
+
+
+def _load_all(directory: "Path | None" = None) -> dict[str, CanvasTemplate]:
+    out: dict[str, CanvasTemplate] = {}
+    for tid in ratified_template_ids(directory):
+        try:
+            out[tid] = load_template(tid, directory)
+        except Exception:  # noqa: BLE001 - a template that will not load is not a candidate
+            continue
+    return out
+
+
+def fold_dispatch_params(
+    params: "dict[str, Any] | None",
+    template_id: "str | None",
+    bindings: "dict[str, Any] | None",
+    directory: "Path | None" = None,
+) -> tuple[str, dict[str, Any]]:
+    """Fold the supervisor's dispatch `params` into `(template_id, bindings)`.
+
+    The supervisor POSTs a bound verb's slots under `params`; `CanvasSeedRequest` had no such
+    field, so a chat-routed seedCanvas lost its `template_id` and built the portfolio board.
+
+    `template_id` comes back "" when neither source named one and `params` held nothing else:
+    the caller then keeps today's `canvas_type` default. When `params` holds keys, a template is
+    INFERRED from them and it is never the portfolio fallback: no match or several is a refusal.
+    Raises `DispatchParamsRefused` (422) for every disagreement.
+    """
+    given = (template_id or "").strip()
+    merged: dict[str, Any] = dict(bindings or {})
+    p = dict(params or {})
+    from_params = str(p.pop("template_id", "") or "").strip()
+
+    if given and from_params and given != from_params:
+        raise DispatchParamsRefused(
+            f"template_id {given!r} in the request disagrees with template_id "
+            f"{from_params!r} in params"
+        )
+    chosen = given or from_params
+    if not p:
+        return chosen, merged
+
+    templates = _load_all(directory)
+    if not chosen:
+        def _matches(t: CanvasTemplate) -> bool:
+            consumed = _consumed_names(t)
+            for key in p:
+                s = _slot_for_key(t, key)
+                if s is None or s.name not in consumed:
+                    return False
+            return True
+
+        hits = sorted(tid for tid, t in templates.items() if _matches(t))
+        if not hits:
+            raise DispatchParamsRefused(
+                f"params {sorted(p)} match no shared slot consumed by any ratified template "
+                f"(ratified: {sorted(templates)}); refusing rather than falling back to portfolio"
+            )
+        if len(hits) > 1:
+            raise DispatchParamsRefused(
+                f"params {sorted(p)} are ambiguous: they match templates {hits}; name one "
+                f"with template_id"
+            )
+        chosen = hits[0]
+
+    t = templates.get(chosen)
+    if t is None:
+        # Unknown id: the caller's template resolution refuses it by name (400).
+        return chosen, merged
+    for key, value in p.items():
+        s = _slot_for_key(t, key)
+        if s is None:
+            raise DispatchParamsRefused(
+                f"params key {key!r} matches no shared slot of template {chosen!r} "
+                f"(declared: {[x.name for x in t.shared_slots]})"
+            )
+        if value in (None, ""):
+            continue
+        value = str(value)
+        if s.name in merged and merged[s.name] not in (None, "") and merged[s.name] != value:
+            raise DispatchParamsRefused(
+                f"shared slot {s.name!r} is bound to {merged[s.name]!r} in `bindings` and "
+                f"{value!r} in params"
+            )
+        merged[s.name] = value
+    return chosen, merged
+
+
+def referent_slots(
+    templates: "dict[str, CanvasTemplate]", only: "set[str] | None" = None,
+) -> list[dict[str, Any]]:
+    """The referent-bearing slot declarations for the given templates, one per distinct `param`.
+
+    ONE BUILDER FOR BOTH CONSUMERS: the second `mesh:seedCanvas` registration and the 409's ask
+    read this, so what the router offers and what the seed route asks cannot drift. Only a
+    shared slot some panel consumes counts; `only` narrows it to a set of slot NAMES.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for t in templates.values():
+        consumed = _consumed_names(t)
+        for s in t.shared_slots:
+            if s.name not in consumed or (only is not None and s.name not in only):
+                continue
+            referent = SHARED_SLOT_REFERENTS.get(s.bind_as)
+            if referent is None or s.bind_as in out:
+                continue
+            out[s.bind_as] = {
+                "name": s.bind_as, "type": "string", "required": True,
+                "kind": "spoken-mandatory", "referent": referent,
+                "description": s.description,
+            }
+    return list(out.values())
+
+
+def seed_canvas_referent_slots(directory: "Path | None" = None) -> list[dict[str, Any]]:
+    """The slots of the program-cell `mesh:seedCanvas` registration: each referent-bearing
+    param, then an optional `template_id` whose menu is the templates consuming one."""
+    templates = _load_all(directory)
+    slots = referent_slots(templates)
+    params = {s["name"] for s in slots}
+    values = sorted(
+        tid for tid, t in templates.items()
+        if any(s.bind_as in params and s.name in _consumed_names(t) for s in t.shared_slots)
+    )
+    slots.append({
+        "name": "template_id", "type": "string", "required": False,
+        "kind": "spoken-optional", "values": values,
+        "description": "Which ratified canvas template to build.",
+    })
+    return slots
+
+
+def load_groups(path: "Path | None" = None) -> dict[str, Any]:
+    """`policy/groups.yaml`'s `groups` mapping. Separate so a test can substitute it."""
+    import yaml
+
+    p = path or (_CANVAS_DIR.parent / "groups.yaml")
+    return (yaml.safe_load(p.read_text(encoding="utf-8")) or {}).get("groups") or {}
+
+
+def policy_hint(
+    referent: str,
+    groups: "dict[str, Any] | None" = None,
+    *,
+    held: bool = False,
+    asked_in_cell: bool = False,
+) -> dict[str, Any]:
+    """Which cell owns `referent` and which groups grant it, for a caller whose enumeration
+    came back EMPTY. DERIVED from `REFERENT_CELLS` and the groups file, never typed.
+
+    THREE REPAIRS, AND THEY ARE DIFFERENT PEOPLE'S. `held` is whether the caller's token
+    already carries the owning cell; `asked_in_cell` is whether the enumeration was scoped to
+    it. A caller who holds the cell but asked from another one needs to SWITCH CELL — telling
+    them to get a group they already have sends them to an administrator for nothing. A caller
+    who holds it and asked from it sees no member because no member is granted to them (the
+    per-asset grant). Only a caller who does not hold it needs the group.
+    """
+    persona, domain = REFERENT_CELLS[referent]
+    noun = referent.rsplit("#", 1)[-1].rsplit("/", 1)[-1].lower() or "item"
+    g = load_groups() if groups is None else groups
+    names = sorted(
+        name for name, body in g.items()
+        if any(
+            (x or {}).get("persona") == persona and (x or {}).get("domain") == domain
+            for x in ((body or {}).get("grants") or [])
+        )
+    )
+    cell = f"{persona} · {domain}"
+    if held and not asked_in_cell:
+        repair = "switch_cell"
+        message = (
+            f"You hold {cell}, but this was asked from another cell, which can see no "
+            f"{noun}. Choose {cell} and ask again."
+        )
+    elif held:
+        repair = "grant_member"
+        message = (
+            f"You hold {cell}, but no {noun} in it is granted to you. Ask an administrator "
+            f"to grant you a {noun}."
+        )
+    elif names:
+        repair = "join_group"
+        who = " or ".join(f"`{n}`" for n in names)
+        message = (
+            f"You cannot see any {noun} from this cell. Ask an administrator to add you to "
+            f"group {who} (policy/groups.yaml), which grants {cell}, then choose that cell."
+        )
+    else:
+        repair = "declare_group"
+        message = (
+            f"You cannot see any {noun} from this cell. No group in policy/groups.yaml "
+            f"grants {cell}; ask an administrator to add one."
+        )
+    return {"cell": {"persona": persona, "domain": domain}, "groups": names,
+            "repair": repair, "message": message}
+
+
+#: Which rail grants a caller one MEMBER of a referent, for `policy_hint`'s `grant_member` repair
+#: ("ask an administrator to grant you a program"). One row per `REFERENT_CELLS` key (sealed by
+#: `tests/security/test_every_policy_refusal_names_policy_binding_grantor.py`).
+MEMBER_GRANTS: dict[str, tuple[str, str]] = {
+    "http://invincible-agent/fin#Program": ("program_members", "can_view_program"),
+}
+
+
+def slot_refusal(template: CanvasTemplate, slots: "list[str] | tuple[str, ...]",
+                 ask: "dict[str, Any] | None" = None) -> dict[str, Any]:
+    """`policy_refusal`'s `policy_id`, `missing_binding` and `candidates` for an unbound shared
+    slot -- the 409 is a policy refusal because it asks the caller to CHOOSE (architect,
+    2026-10-25), so it names who can widen the choice (`src/iagent/authz/refusal.py`).
+
+    THE FAMILY IS THE OWNING CELL'S. A slot whose referent a cell owns (`REFERENT_CELLS`) is
+    chosen from what that cell sees, and a cell is granted by `groups`. Measured 2026-10-25: no
+    layer filters `fin#Program` members by caller (engine-o's enumerate gate reaches only
+    sustainment IRIs; engine-fin's `EnumerateRequest` carries no caller), so `program_members`
+    does not bound the menu. A slot no cell owns is named under `code`: mapping it is a platform
+    change. Several unbound slots name the first one's family; the message names them all.
+
+    WITH THE ASK (`gateway._canvas_seed_ask`) the refusal says what the ask says, and tells the
+    caller nothing the ask does not already carry:
+      options        candidates = the option values (the caller's own menu)
+      switch_cell    candidates = [the owning cell]; missing_binding = active_cell(<cell>)
+      join_group     missing_binding = member_of(<group> | ...)
+      declare_group  missing_binding = a_group_granting(<cell>)
+      grant_member   `MEMBER_GRANTS`' family, named alone (object-scoped), and its relation
+    A broken ask (`{"error": ...}`) or none gives the slot's default, never a 500.
+    """
+    slots = sorted(slots)
+    by_name = {s.name: s for s in template.shared_slots}
+
+    def _referent(slot: str) -> Optional[str]:
+        s = by_name.get(slot)
+        return SHARED_SLOT_REFERENTS.get(s.bind_as) if s is not None else None
+
+    def _family(slot: str) -> str:
+        return "groups" if _referent(slot) in REFERENT_CELLS else "code"
+
+    family = _family(slots[0]) if slots else "code"
+    named = [s for s in slots if _family(s) == family] or ["?"]
+    out: dict[str, Any] = {"policy_id": family,
+                           "missing_binding": ", ".join(f"bind({s})" for s in named),
+                           "candidates": []}
+    if not isinstance(ask, dict) or ask.get("error"):
+        return out
+    policy = ask.get("policy")
+    if isinstance(policy, dict):
+        cell = policy.get("cell") or {}
+        label = f"{cell.get('persona')} · {cell.get('domain')}"
+        repair = policy.get("repair")
+        if repair == "switch_cell":
+            out.update(missing_binding=f"active_cell({label})", candidates=[label])
+        elif repair == "join_group" and policy.get("groups"):
+            out.update(policy_id="groups",
+                       missing_binding="member_of(" + " | ".join(policy["groups"]) + ")")
+        elif repair == "declare_group":
+            out.update(policy_id="groups", missing_binding=f"a_group_granting({label})")
+        elif repair == "grant_member":
+            grant = MEMBER_GRANTS.get(_referent(named[0]) or "")
+            if grant is not None:
+                out.update(policy_id=grant[0], missing_binding=f"{grant[1]}({named[0]})")
+        return out
+    options = ask.get("options") or []
+    out["candidates"] = [o["value"] for o in options if isinstance(o, dict) and o.get("value")]
+    return out

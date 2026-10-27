@@ -1,5 +1,5 @@
 """LEG 3 - THE UNIVERSAL REFERENT. A verb whose REQUIRED slot's referent is flagged
-`mesh:universalReferent` is compatible with EVERY class subject, not because it covers the
+`universal_referent` is compatible with EVERY class subject, not because it covers the
 subject's ancestor chain (LEG 2's rule) but because the referent declares itself unconstrained.
 
 WHY THIS LEG EXISTS. `mesh:explain` answers about `mesh:DocPage` - its own registered subject
@@ -7,38 +7,25 @@ WHY THIS LEG EXISTS. `mesh:explain` answers about `mesh:DocPage` - its own regis
 class is an honest ancestor-coverage referent for "explain this concept", and NOTHING IS
 `subClassOf mesh:Thing` by design (`setup/ontologies/mesh_system.ttl:736`: asserting that
 hierarchy would be a ratified superclass over ~24,000 nodes for one verb's benefit). So
-universality is a DECLARED FLAG read from Jena (`mesh:universalReferent true` on `mesh:Thing`),
-never a position in the Neo4j class tree, and LEG 3 admits on the flag rather than on coverage.
+universality is a DECLARED FLAG, never a position in the class tree, and LEG 3 admits on the flag
+rather than on coverage.
+
+THE FLAG'S SOURCE (architect ruling 2026-10-17, on 7f's ruling 5): the Neo4j node property
+`universal_referent` (snake_case, written by doc-tools' ontology sync), absent = false. It was a
+Jena CONSTRUCT before, refused for the service initiator on every call, so LEG 3 never fired. These
+arms hold the STATEMENT TEXT (both statements that carry LEG 3), that no Jena read is made, and
+that the endpoint sends no `universal_referents` parameter.
 
 `docs/measurements/docs-walk-sheet.md` names the dependency directly: "until [this leg] lands,
 `mesh:explain` cannot enter the candidate pool at all and every question below abstains before
 reaching this engine." This file is the seal for the leg that unblocks that census.
 
-── WHAT THIS FILE CAN AND CANNOT PROVE, GIVEN ITS SEAMS ──────────────────────────────────────
-Declaration arms read the Cypher text out of `main.py` (the same fence-slicing convention
-`test_the_pool_reaches_parameterised_verbs.py` uses) - these prove the QUERY is shaped right.
-Behavioural arms drive `_confirms_universal_referent` / `_universal_referent_iris` through a real
-`JenaMeshOntology` with an injected sync POST (the double from
-`test_a_mesh_ontology_read_records_what_it_read.py`) - these prove the JENA HALF is right.
+WHAT THIS FILE CAN AND CANNOT PROVE. Declaration arms read the Cypher text out of `main.py`.
 Endpoint arms drive `/find_compatible_verbs` through a fake Neo4j driver that returns SCRIPTED
-rows - these prove the WIRING between the two is right (the confirmed IRI list reaches the
-Cypher call as `universal_referents`, and a LEG-3-shaped row survives the domain filter and the
-dedupe). No arm here runs LEG 3's Cypher against a real graph: a fake driver's `session.run`
-returns canned rows regardless of the query text, so the join conditions
-(`ref.uri IN $universal_referents`, `r.iri = p.verb_iri AND r._tool_urn = p._tool_urn`) are
-checked STATICALLY (declaration arms) and never EXECUTED here. That is a real gap, named rather
-than papered over: only a live Neo4j run closes it.
-
-── THE IDENTITY GAP, AND WHY ONE ARM DELIBERATELY DOCUMENTS TODAY'S BEHAVIOUR AS BROKEN ───────
-`_POOL_READ_INITIATOR` is declared `kind="service"`, honestly, because `find_compatible_verbs`
-carries no caller identity to attribute a Jena read to. `Initiator.require_person` refuses a
-service kind before any query is sent. That means, AS WIRED TODAY, `_universal_referent_iris()`
-is refused on every call regardless of what Jena would have said - LEG 3 always degrades to
-LEGs 1+2 against a live cluster, until this route carries a real caller identity.
-`test_the_REAL_pool_initiator_is_refused_today` asserts exactly that, so the gap is a checked
-fact rather than a comment nobody re-reads. The other behavioural arms monkeypatch
-`_POOL_READ_INITIATOR` to a person-kind identity to exercise the CONFIRM logic in isolation -
-each says in its own docstring that it is testing tomorrow's wiring, not today's.
+rows: a fake driver's `session.run` returns canned rows regardless of the query text, so the join
+conditions are checked STATICALLY and never EXECUTED here (the leg-aware double in
+`test_find_compatible_verbs_via_mesh_graph.py` evaluates the flag per statement text). Only a live
+Neo4j run closes the rest.
 
 Run: uv run --frozen --extra agent-fleet pytest tests/routing/test_the_pool_reaches_the_universal_referent.py -v
 """
@@ -52,8 +39,6 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from iagent_mesh import Initiator
-from iagent_mesh.interfaces import ServiceIdentityRefused
 from iagent_pure.walk_census import load_rows, verb_names
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -62,9 +47,7 @@ _CENSUS = _REPO / "docs" / "measurements" / "walk-census.yaml"
 _CONST = "_FIND_COMPAT_VERBS_CYPHER = "
 _FENCE = chr(34) * 3
 
-THING = "http://invincible-agent/mesh#Thing"
-_TEST_JENA_ENDPOINT = "http://ontology.invalid/ds/sparql"
-PERSON = Initiator(subject="lane-seal-universal-referent", kind="person")
+FLAG_TEST = "coalesce(ref.universal_referent, false) = true"
 
 
 # ── reading the query text, the same convention the parameterisation seal uses ────────────────
@@ -154,12 +137,15 @@ def test_LEG_3_IS_SCOPED_TO_ONTOLOGY_CLASSES_ON_EVERY_END():
     assert "MATCH (vsubj)-[r]->(o:OntologyClass)" in leg3
 
 
-def test_LEG_3_ADMITS_ON_THE_CONFIRMED_LIST_not_a_baked_in_class_name():
-    leg3 = _leg3()
-    assert "ref.uri IN $universal_referents" in leg3, (
-        "LEG 3 must admit on the Jena-confirmed IRI list, not a class name written into the "
-        "Cypher - a baked-in name cannot be withdrawn if Jena stops confirming it"
-    )
+def test_LEG_3_ADMITS_ON_THE_NODE_FLAG_ABSENT_READING_AS_FALSE_not_on_a_parameter(engine_o_module):
+    """STATEMENT TEXT, both statements (the second is derived from the first at import): the flag is read off `ref`, with `coalesce(.., false)` so a
+    class whose property was removed (`SET c.prop = null` removes it) reads as not universal, and
+    no `$universal_referents` parameter survives anywhere in either statement."""
+    for name, text in (("_FIND_COMPAT_VERBS_CYPHER", _leg3()),
+                       ("_COMPAT_LEGS_AFTER_COVERAGE", engine_o_module._COMPAT_LEGS_AFTER_COVERAGE)):
+        assert FLAG_TEST in text, f"{name}: LEG 3 does not read the node flag"
+        assert "$universal_referents" not in text, f"{name}: still takes $universal_referents"
+        assert "universalReferent" not in text, f"{name}: reads the camelCase key, which does not exist"
 
 
 def test_NO_SQL_STYLE_COMMENT_REACHED_LEG_3():
@@ -192,25 +178,26 @@ def test_THE_COVERAGE_AND_PARAMETERISATION_LEGS_ARE_STILL_FIRST_AND_SECOND():
     assert "referent" in legs[1] and "PARAMETERISED_BY" in legs[1]
 
 
-# ── behavioural arms: `_confirms_universal_referent` / `_universal_referent_iris` ─────────────
+# ── endpoint arms: the statement LEG 3 sends, and that it reads no Jena ─────────────────────────
+
+
+def _neo4j_double() -> MagicMock:
+    """A fake `neo4j` whose `neo4j.exceptions` is a real submodule carrying REAL Exception
+    subclasses: main.py imports the outage classes from it and uses them in `except` tuples,
+    where a MagicMock attribute raises TypeError."""
+    import types
+    neo = MagicMock()
+    neo.exceptions = types.ModuleType("neo4j.exceptions")
+    for _x in ("ServiceUnavailable", "SessionExpired", "TransientError"):
+        setattr(neo.exceptions, _x, type(_x, (Exception,), {}))
+    return neo
 
 
 @pytest.fixture(scope="module")
 def engine_o_module():
     """Load `main.py` under a UNIQUE module name (never bare `main`: 155 files in this repo are
-    named that, and evicting a shared cache entry breaks unrelated in-suite tests -
-    `tests/test_ontology_routing.py` documents the measured symptom). `agent_fleet*` is
-    deliberately NOT stubbed, for the same reason that file gives: a MagicMock shadowing the real
-    package breaks `agent_fleet.utils.embed`.
-
-    `rdflib` is ALSO NOT STUBBED here, unlike `test_ontology_routing.py`'s copy of this fixture -
-    that file never touches Jena, but this one's whole point is `JenaMeshOntology.construct()`
-    parsing real Turtle through `mesh_ontology.py`'s local `from rdflib import Graph`. A stub
-    there is a `MagicMock` whose default `__iter__` yields nothing, so every CONSTRUCT read
-    would come back `outcome="empty"` regardless of the Turtle handed to the double - a fake
-    that agrees with a broken implementation and disagrees with a correct one. `rdflib` is a
-    real, already-installed dependency (`agent_fleet_ontology_service` pulls it in), so nothing
-    here is skipped for its absence."""
+    named that, and evicting a shared cache entry breaks unrelated in-suite tests).
+    `agent_fleet*` and `rdflib` are deliberately NOT stubbed."""
     svc_dir = _REPO / "agent_fleet" / "ontology_service"
     for _p in (str(svc_dir), str(_REPO)):
         if _p not in sys.path:
@@ -221,7 +208,8 @@ def engine_o_module():
         "neo4j", "baml_client", "baml_client.types", "baml_client.type_builder",
         "llm_utils", "utils", "utils.weaviate_utils",
     ]:
-        sys.modules.setdefault(name, MagicMock())
+        sys.modules.setdefault(name, _neo4j_double() if name == "neo4j" else MagicMock())
+    sys.modules.setdefault("neo4j.exceptions", sys.modules["neo4j"].exceptions)
 
     import importlib.util
 
@@ -239,148 +227,17 @@ def engine_o_module():
     return mod
 
 
-class _Resp:
-    def __init__(self, status: int, text: str) -> None:
-        self.status_code = status
-        self.text = text
+class _JenaMustNotBeCalled:
+    """A double that raises if LEG 3 (or anything on this route) reads Jena."""
 
-    def json(self):
-        import json
-        return json.loads(self.text)
+    def __init__(self) -> None:
+        self.calls = 0
 
+    def construct(self, *a, **kw):
+        self.calls += 1
+        raise AssertionError("LEG 3 made a Jena CONSTRUCT read; it reads the Neo4j node flag")
 
-class _Post:
-    """Records every call, so an arm can assert a query was never sent (the refused-identity
-    arm) or was sent exactly once (its control)."""
-
-    def __init__(self, status: int = 200, text: str = "", raises: bool = False) -> None:
-        self._status, self._text, self._raises = status, text, raises
-        self.calls: list[dict] = []
-
-    def __call__(self, url, *, data, headers):
-        self.calls.append({"url": url, "data": data, "headers": headers})
-        if self._raises:
-            raise OSError("connection refused")
-        return _Resp(self._status, self._text)
-
-
-def _turtle(is_class: bool, flagged: bool) -> str:
-    body = "@prefix mesh: <http://invincible-agent/mesh#> .\n"
-    body += "@prefix owl:  <http://www.w3.org/2002/07/owl#> .\n"
-    if is_class:
-        body += "mesh:Thing a owl:Class .\n"
-    if flagged:
-        body += 'mesh:Thing mesh:universalReferent "true" .\n'
-    return body
-
-
-def test_the_REAL_pool_initiator_is_refused_today(engine_o_module):
-    """THE FINDING THIS FILE MOST WANTS SURFACED. As wired, `_POOL_READ_INITIATOR` is
-    `kind="service"`, so `require_person` refuses the read BEFORE any query is sent - even
-    against a Jena double primed to confirm `mesh:Thing` cleanly. Against a live cluster this
-    means LEG 3 contributes zero rows today, always, until `find_compatible_verbs` carries a
-    real caller identity to attribute the read to. That is a design decision for a person, not a
-    substitute this pool should invent - so this arm checks that the CURRENT code degrades
-    exactly the way its own comment says, rather than silently working around the gap."""
-    mod = engine_o_module
-    assert mod._POOL_READ_INITIATOR.kind == "service", (
-        "the initiator is no longer service-kind; this arm (and its comment in main.py) is "
-        "stale and the identity gap this file documents may already be resolved"
-    )
-
-    post = _Post(text=_turtle(is_class=True, flagged=True))
-    original = mod._JENA_ONTOLOGY
-    mod._JENA_ONTOLOGY = type(original)(endpoint=_TEST_JENA_ENDPOINT, post=post)
-    try:
-        result = mod._universal_referent_iris()
-    finally:
-        mod._JENA_ONTOLOGY = original
-
-    assert result == [], (
-        "the service-kind initiator no longer degrades to an empty confirmed list - either the "
-        "boundary check changed or the initiator's kind changed; either way this is worth a "
-        "human decision, not a silent pass"
-    )
-    assert post.calls == [], "a query was sent despite the service-identity refusal — it leaked"
-
-
-@pytest.fixture
-def person_initiator(engine_o_module):
-    """Monkeypatches `_POOL_READ_INITIATOR` to a person-kind identity for the duration of one
-    test, to exercise the CONFIRM logic in isolation from the identity refusal proven above.
-    This represents the route's state ONCE a real caller identity is threaded through - not
-    today's wiring."""
-    original = engine_o_module._POOL_READ_INITIATOR
-    engine_o_module._POOL_READ_INITIATOR = PERSON
-    try:
-        yield
-    finally:
-        engine_o_module._POOL_READ_INITIATOR = original
-
-
-def _with_post(engine_o_module, post) -> None:
-    original = engine_o_module._JENA_ONTOLOGY
-    engine_o_module._JENA_ONTOLOGY = type(original)(endpoint=_TEST_JENA_ENDPOINT, post=post)
-    return original
-
-
-def test_a_class_carrying_the_flag_IS_confirmed(engine_o_module, person_initiator):
-    post = _Post(text=_turtle(is_class=True, flagged=True))
-    original = _with_post(engine_o_module, post)
-    try:
-        result = engine_o_module._universal_referent_iris()
-    finally:
-        engine_o_module._JENA_ONTOLOGY = original
-    assert result == [THING]
-    assert len(post.calls) == len(engine_o_module._CANDIDATE_UNIVERSAL_REFERENTS)
-
-
-def test_a_class_WITHOUT_the_flag_is_NOT_confirmed(engine_o_module, person_initiator):
-    """THE ARM WITH TEETH for the flag half. Being an `owl:Class` is necessary but not
-    sufficient - the pool must never admit on class-membership alone, or every ordinary class
-    would be treated as universal."""
-    post = _Post(text=_turtle(is_class=True, flagged=False))
-    original = _with_post(engine_o_module, post)
-    try:
-        result = engine_o_module._universal_referent_iris()
-    finally:
-        engine_o_module._JENA_ONTOLOGY = original
-    assert result == []
-
-
-def test_A_FLAG_ON_A_NON_CLASS_SUBJECT_is_NOT_confirmed(engine_o_module, person_initiator):
-    """THE ARM WITH TEETH for the class half. `mesh:universalReferent true` on something that
-    is not a registered `owl:Class` must not confirm - the flag alone is not sufficient either."""
-    post = _Post(text=_turtle(is_class=False, flagged=True))
-    original = _with_post(engine_o_module, post)
-    try:
-        result = engine_o_module._universal_referent_iris()
-    finally:
-        engine_o_module._JENA_ONTOLOGY = original
-    assert result == []
-
-
-def test_AN_UNREACHABLE_JENA_DEGRADES_TO_EMPTY_WITHOUT_RAISING(engine_o_module, person_initiator):
-    post = _Post(raises=True)
-    original = _with_post(engine_o_module, post)
-    try:
-        result = engine_o_module._universal_referent_iris()
-    finally:
-        engine_o_module._JENA_ONTOLOGY = original
-    assert result == []
-
-
-def test_A_REFUSED_READ_DEGRADES_TO_EMPTY_WITHOUT_RAISING(engine_o_module, person_initiator):
-    post = _Post(status=400, text="Parse error")
-    original = _with_post(engine_o_module, post)
-    try:
-        result = engine_o_module._universal_referent_iris()
-    finally:
-        engine_o_module._JENA_ONTOLOGY = original
-    assert result == []
-
-
-# ── endpoint arms: the wiring between Jena's confirmed set and the Cypher call ─────────────────
+    ask = construct
 
 
 class _FakeCompatSession:
@@ -442,15 +299,20 @@ def client(engine_o_module):
     return TestClient(engine_o_module.app)
 
 
-def test_AN_EMPTY_CONFIRMED_SET_REACHES_NEO4J_AS_AN_EMPTY_LIST_AND_THE_POOL_STAYS_EMPTY(
-    engine_o_module, client
+def test_THE_FLAG_OFF_STATEMENT_CARRIES_THE_NODE_FLAG_AND_NO_PARAMETER_AND_JENA_IS_NOT_CALLED(
+    engine_o_module, client, monkeypatch
 ):
-    """Nothing confirmed (Jena unreachable, refused, or no candidate flagged) → LEG 3
-    contributes zero rows. Exercised end to end: with no other coverage either, the pool comes
-    back empty and the endpoint answers 200, not an error - an empty pool is the supervisor's
-    signal to fall back to the generalist, never a 5xx."""
-    engine_o_module._JENA_ONTOLOGY = _with_post(engine_o_module, _Post(raises=True))
-    engine_o_module._NEO4J_DRIVER = _FakeCompatDriver(rows=[])
+    """The flag-off route sends one statement: its text carries the node-flag test and no
+    `$universal_referents`, the parameters carry no `universal_referents`, and no Jena read is
+    made (the double raises if one is). No other coverage either: the pool is empty and the
+    endpoint answers 200 - an empty pool is the supervisor's signal to fall back, never a 5xx.
+
+    This arm is about the FLAG-OFF route (one statement); `COMPATIBLE_VERBS_VIA_MESH` defaults on
+    and would 400 a request with no person."""
+    monkeypatch.setattr(engine_o_module, "COMPATIBLE_VERBS_VIA_MESH", False)
+    jena = _JenaMustNotBeCalled()
+    monkeypatch.setattr(engine_o_module, "_JENA_ONTOLOGY", jena)
+    monkeypatch.setattr(engine_o_module, "_NEO4J_DRIVER", _FakeCompatDriver(rows=[]))
 
     r = client.post(
         "/find_compatible_verbs",
@@ -459,8 +321,40 @@ def test_AN_EMPTY_CONFIRMED_SET_REACHES_NEO4J_AS_AN_EMPTY_LIST_AND_THE_POOL_STAY
     assert r.status_code == 200
     body = r.json()
     assert body["verbs"] == []
-    params = engine_o_module._NEO4J_DRIVER.session_obj.executed[1]
-    assert params["universal_referents"] == []
+    cypher, params = engine_o_module._NEO4J_DRIVER.session_obj.executed
+    assert FLAG_TEST in cypher and "$universal_referents" not in cypher
+    assert "universal_referents" not in params, params
+    assert jena.calls == 0
+
+
+def test_THE_FLAG_ON_ROUTE_SENDS_THE_SAME_TEXT_AND_NO_PARAMETER_AND_JENA_IS_NOT_CALLED(
+    engine_o_module, client, monkeypatch
+):
+    """The flag-on (via MeshGraph) path builds LEG 3 from `_COMPAT_LEGS_AFTER_COVERAGE`; the same
+    statement-text and no-Jena claims hold there."""
+    class _Coverage:
+        outcome, detail, rows = "ok", "", []
+
+    class _Graph:
+        def __init__(self, **kw):
+            pass
+
+        def verbs_for(self, *a, **kw):
+            return _Coverage()
+
+    monkeypatch.setattr(engine_o_module, "COMPATIBLE_VERBS_VIA_MESH", True)
+    monkeypatch.setattr(engine_o_module, "Neo4jGraph", _Graph)
+    jena = _JenaMustNotBeCalled()
+    monkeypatch.setattr(engine_o_module, "_JENA_ONTOLOGY", jena)
+    monkeypatch.setattr(engine_o_module, "_NEO4J_DRIVER", _FakeCompatDriver(rows=[]))
+    r = client.post("/find_compatible_verbs",
+                    json={"subject_uri": "http://invincible-agent/some#X",
+                          "on_behalf_of": "lane-seal@example.com"})
+    assert r.status_code == 200, r.text
+    cypher, params = engine_o_module._NEO4J_DRIVER.session_obj.executed
+    assert FLAG_TEST in cypher and "$universal_referents" not in cypher
+    assert "universal_referents" not in params, params
+    assert jena.calls == 0
 
 
 _DOCS_CENSUS_ROWS = load_rows(_CENSUS)
@@ -499,7 +393,7 @@ def test_the_docs_census_still_has_exactly_five_rows_EXPECTING_A_PRODUCIBLE_SPEL
 
 @pytest.mark.parametrize("row", _DOCS_ROWS, ids=[r.id for r in _DOCS_ROWS])
 def test_EVERY_DOCS_CENSUS_QUESTION_REACHES_mesh_explain_THROUGH_LEG_3(
-    engine_o_module, client, row
+    engine_o_module, client, row, monkeypatch
 ):
     """Pool MEMBERSHIP only - not the final draw/abstain outcome. All four rows route to
     `mesh:explain` (they declare `expect_verb: explain`, the spelling `verb_names` produces from
@@ -510,28 +404,20 @@ def test_EVERY_DOCS_CENSUS_QUESTION_REACHES_mesh_explain_THROUGH_LEG_3(
     endpoint). So this asserts mesh:explain is a CANDIDATE for all four, which is exactly as far
     as `/find_compatible_verbs` can honestly speak, and never asserts which ones draw.
 
-    Uses `person_initiator`-equivalent wiring (a person-kind Jena read) because the endpoint's
-    REAL initiator is service-kind and always refused (proven above) - this arm is checking that
-    ONCE that gap closes, entitled_domains filtering does not accidentally exclude mesh:explain
-    for any of the four personas/domains the census actually asks with.
+    This arm checks that entitled_domains filtering does not exclude mesh:explain for any of the
+    personas/domains the census actually asks with.
     """
-    original_initiator = engine_o_module._POOL_READ_INITIATOR
-    engine_o_module._POOL_READ_INITIATOR = PERSON
-    original_jena = _with_post(
-        engine_o_module, _Post(text=_turtle(is_class=True, flagged=True))
+    monkeypatch.setattr(engine_o_module, "COMPATIBLE_VERBS_VIA_MESH", False)
+    monkeypatch.setattr(engine_o_module, "_JENA_ONTOLOGY", _JenaMustNotBeCalled())
+    monkeypatch.setattr(engine_o_module, "_NEO4J_DRIVER",
+                        _FakeCompatDriver(rows=[_mesh_explain_row()]))
+    r = client.post(
+        "/find_compatible_verbs",
+        json={
+            "subject_uri": "http://invincible-agent/some#WhateverTheQuestionResolvedTo",
+            "entitled_domains": list(row.domains),
+        },
     )
-    engine_o_module._NEO4J_DRIVER = _FakeCompatDriver(rows=[_mesh_explain_row()])
-    try:
-        r = client.post(
-            "/find_compatible_verbs",
-            json={
-                "subject_uri": "http://invincible-agent/some#WhateverTheQuestionResolvedTo",
-                "entitled_domains": list(row.domains),
-            },
-        )
-    finally:
-        engine_o_module._POOL_READ_INITIATOR = original_initiator
-        engine_o_module._JENA_ONTOLOGY = original_jena
 
     assert r.status_code == 200
     body = r.json()
@@ -543,11 +429,67 @@ def test_EVERY_DOCS_CENSUS_QUESTION_REACHES_mesh_explain_THROUGH_LEG_3(
     explain = next(v for v in body["verbs"] if v["verb_iri"] == "mesh:explain")
     assert explain["compatibility"] == "universal"
 
-    params = engine_o_module._NEO4J_DRIVER.session_obj.executed[1]
-    assert params["universal_referents"] == [THING], (
-        "the Jena-confirmed set did not reach the Cypher call as `universal_referents` - the "
-        "wiring between `_universal_referent_iris` and the query params is broken"
-    )
+    cypher, params = engine_o_module._NEO4J_DRIVER.session_obj.executed
+    assert FLAG_TEST in cypher and "universal_referents" not in params
+
+
+# ── the control: an ordinary ask gains EXACTLY mesh:explain from the leg ────────────────────────
+# `test_find_compatible_verbs_via_mesh_graph.py` asserts explain is IN a COST-entitled pool; this
+# asserts the DIFFERENCE the leg makes is that one verb - not "non-empty", not "unchanged".
+
+_COST_SUBJECT = "http://invincible-agent/cost#LotCost"
+
+
+def _cost_row(verb: str, compatibility: str) -> dict:
+    return {**_mesh_explain_row(), "verb_iri": f"http://invincible-agent/cost#{verb}",
+            "verb_local": verb, "input_uri": _COST_SUBJECT, "output_uri": _COST_SUBJECT,
+            "endpoint_url": f"http://engine-cost.invalid/{verb}", "domains": ["COST"],
+            "hops": 0 if compatibility == "subject" else 1, "compatibility": compatibility}
+
+
+class _LegAwareSession(_FakeCompatSession):
+    """Answers the subject and referent rows always, and the universal rows only when the
+    statement tests the node flag AND the store holds a flagged referent (`flagged`) - as the
+    real `coalesce(ref.universal_referent, false) = true` does, an absent flag reading false."""
+
+    def __init__(self, universal_rows: list[dict], flagged: bool):
+        super().__init__([_cost_row("costLotBreakdown", "subject"),
+                          _cost_row("lotYield", "referent")])
+        self._universal, self._flagged = universal_rows, flagged
+
+    def run(self, cypher: str, **params):
+        self.executed = (cypher, params)
+        out = list(self._rows)
+        if self._flagged and FLAG_TEST in cypher:
+            out.extend(self._universal)
+        return out
+
+
+def _cost_pool(engine_o_module, client, monkeypatch, *, flagged: bool,
+               universal_rows: list[dict]) -> set[str]:
+    monkeypatch.setattr(engine_o_module, "COMPATIBLE_VERBS_VIA_MESH", False)
+    monkeypatch.setattr(engine_o_module, "_JENA_ONTOLOGY", _JenaMustNotBeCalled())
+    driver = _FakeCompatDriver(rows=[])
+    driver.session_obj = _LegAwareSession(universal_rows, flagged)
+    monkeypatch.setattr(engine_o_module, "_NEO4J_DRIVER", driver)
+    r = client.post("/find_compatible_verbs",
+                    json={"subject_uri": _COST_SUBJECT, "entitled_domains": ["COST"]})
+    assert r.status_code == 200, r.text
+    return {v["verb_iri"] for v in r.json()["verbs"]}
+
+
+def test_THE_POOL_GAINS_ONLY_mesh_explain_FOR_AN_ORDINARY_COST_ASK(
+    engine_o_module, client, monkeypatch
+):
+    universal = [_mesh_explain_row()]
+    without = _cost_pool(engine_o_module, client, monkeypatch, flagged=False,
+                         universal_rows=universal)
+    with_leg = _cost_pool(engine_o_module, client, monkeypatch, flagged=True,
+                          universal_rows=universal)
+    assert without == {"http://invincible-agent/cost#costLotBreakdown",
+                       "http://invincible-agent/cost#lotYield"}, without  # the ask is ordinary
+    assert with_leg - without == {"mesh:explain"}, sorted(with_leg - without)
+    assert without <= with_leg, sorted(without - with_leg)  # the leg removes nothing
 
 
 @pytest.fixture(scope="module", autouse=True)

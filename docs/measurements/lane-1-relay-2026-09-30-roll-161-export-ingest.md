@@ -63,7 +63,7 @@ Master: `09997efc` (merges) → `3f27c7cb` (export) → `e42cabde` (ingest) → 
   - the promotion store is unset (act → 503);
   - `GET /ingest/kinds` does not exist;
   - `envelope_label` has no production caller.
-- Tests: the ingest, promotion, projection, provenance, export, manifest and audit files: 136 passed. The 29 `test_classify_route` reds are baseline (present in `suite_m74`). `test_citation_paths` is red on ca's untracked packet, citing `docs/interfaces.md`.
+- Tests: the ingest, promotion, projection, provenance, export, manifest and audit files: 136 passed. The 29 `test_classify_route` reds are baseline (present in `suite_m74`). `test_citation_paths` is red on ca's untracked packet, citing `iagent-mesh-sdk/docs/interfaces.md`.
 
 ## Item 5 — HAZ-1003 Postgres check: NOT RUN
 

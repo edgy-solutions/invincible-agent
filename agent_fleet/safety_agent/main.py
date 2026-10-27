@@ -62,6 +62,9 @@ except ImportError:
     from agent_fleet.safety_agent import slots as slots_mod  # type: ignore[no-redef]
 
 SAFETY = "http://internal/sustainment/safety#"
+#: The sustainment plane's namespace; pinned by a test to safety_extension.ttl's `pcn:` prefix and to
+#: engine-o's `_COMPONENT_CLASS`.
+PCN = "http://internal/sustainment/pcn#"
 MESH = "http://invincible-agent/mesh#"
 
 # ── THE WORK-ORDER SUBJECT IS THE STANDARD'S CLASS, NOT A HOUSE SYNONYM ──────
@@ -203,7 +206,7 @@ VERBS: List[Dict[str, Any]] = [
             "DRAFTS ONLY - it cannot accept, reject or close anything; acceptance is a human "
             "task disposition by an entitled authority and this verb opens that review rather "
             "than resolving it. A hazard whose severity or probability is not assessed is "
-            "reported as not_assessed with the missing half named, never inferred from a "
+            "refused as not_assessed with the missing half named, never inferred from a "
             "neighbour and never defaulted. NOT a list of what is unattended - that is "
             "findOrphanedHazards. OWNS the phrasings: assess this hazard, what is the risk "
             "level, who has to accept this, draft the risk assessment."
@@ -246,6 +249,31 @@ VERBS: List[Dict[str, Any]] = [
         ],
     },
     {
+        # RULED 2026-10-15 (b): the SAME verb is also registered on pcn:Component, so a part
+        # that is a component but not a safety-critical item reaches it and gets the NAMED
+        # `no_failures_recorded` refusal (or `unknown_part` for a string that is no part number) instead of an UNKNOWN subject. A separate registration NAME
+        # (`name`), because registering one verb twice under one name deletes the first edge.
+        "fn": "what_failed_on_this_part",
+        "name": "engine_safety_what_failed_on_this_part_component",
+        "verb": "mesh:whatFailedOnThisPart",
+        "input_uri": PCN + "Component",
+        "output_uri": SAFETY + "FailureRecordSet",
+        "desc": (
+            "The same FRACAS lookup as for a safety-critical item, asked of any component. "
+            "Answers the recorded failures for any component that has them, and REFUSES (no task) "
+            "with outcome no_failures_recorded when no source holds a failure for the part, or "
+            "unknown_part when the string is no part number - neither is a clean bill. READ-ONLY."
+        ),
+        "synonyms": [
+            "what failed on this part", "failure history for this part",
+            "what failures are recorded for this part", "FRACAS lookup",
+        ],
+        "anti_synonyms": [
+            "what is the risk of deferring this work order", "assess this hazard",
+            "what hazards are unattended", "accept this risk",
+        ],
+    },
+    {
         "fn": "failure_trend_for_this_platform_by_month",
         "verb": "mesh:failureTrendForThisPlatformByMonth",
         "input_uri": SAFETY + "Platform",
@@ -271,7 +299,11 @@ VERBS: List[Dict[str, Any]] = [
     },
 ]
 
-BY_FN = {v["fn"]: v for v in VERBS}
+# One entry per fn: a verb registered on a second class repeats its fn, and the first (the
+# safety-owned registration) is the one the /measure route runs.
+BY_FN: Dict[str, Dict[str, Any]] = {}
+for _v in VERBS:
+    BY_FN.setdefault(_v["fn"], _v)
 
 #: Classes this engine registers verbs ON but does not resolve or enumerate, WITH the reason.
 #:
@@ -281,12 +313,26 @@ BY_FN = {v["fn"]: v for v in VERBS}
 #: is an elicitation offering free text where it should offer a menu, and the provider
 #: answering `unsupported`, which reads to the ask as a CONSIDERED refusal rather than a gap.
 _NOT_ENUMERABLE = {
+    PCN + "Component": (
+        "owned by the sustainment plane (engine-o resolves and enumerates components); Engine S "
+        "registers whatFailedOnThisPart on it so an unlisted part is refused by name."
+    ),
     MRO + "MaintenanceWorkOrderRecord": (
         "owned by the maintenance plane; Engine S reads work orders and does not own them. "
         "Minting a safety-namespaced work-order class to make this self-consistent would be "
         "the parallel-vocabulary mistake the ADR-0007 survey avoided one level up."
     ),
 }
+
+
+#: THE IDENTIFIER NAMESPACES THIS ENGINE OWNS (RULED 2026-10-12, architect's Q3: a namespace is
+#: claimed by exactly one engine, declared in its registration; engine-o's fan-out then refuses
+#: another provider's FUZZY candidate for an identifier in it). Hazards, safety-critical items
+#: and mitigations are this engine's. `WO-` is deliberately NOT declared: work orders belong to
+#: the maintenance plane (see the resolver's description). Declared on the resolveInstance row,
+#: the row the fan-out reads. Pinned to the fixture's own ids by
+#: tests/safety/test_id_namespaces_are_declared_by_the_engine_that_owns_them.py.
+ID_NAMESPACES = ("HAZ-", "CSI-", "MIT-")
 
 
 @asynccontextmanager
@@ -354,7 +400,7 @@ async def lifespan(app: FastAPI):
         # ONE NAME PER (VERB, SUBJECT). Registering one verb twice under one name DELETES the
         # first edge — the registrar's compensate-on-rescope sweep removes rows matching
         # (tool_urn, verb_iri) whose input_uri differs from the one being written.
-        name = f"engine_safety_{v['fn']}"
+        name = v.get("name") or f"engine_safety_{v['fn']}"
         try:
             register_engine_to_mesh(
                 name=name,
@@ -418,6 +464,7 @@ async def lifespan(app: FastAPI):
     # phone-book hit from some engine matching a digit.
     provider_specs = (
         {
+            "id_namespaces": list(ID_NAMESPACES),
             "name": "engine_safety_sustainment_resolve_instance",
             "verb": "mesh:resolveInstance",
             "input_uri": MESH + "InstanceIdentifier",
@@ -471,6 +518,7 @@ async def lifespan(app: FastAPI):
                 owner_persona=OWNER_PERSONA,
                 domains=DOMAINS,
                 mint=_mint,
+                id_namespaces=spec.get("id_namespaces"),
             )
             attempted.append(spec["verb"])
         except Exception as exc:  # noqa: BLE001
@@ -760,6 +808,17 @@ async def measure(fn_name: str, req: MeasureRequest) -> Dict[str, Any]:
             status_code=503,
             content={"error": "authorization_unavailable",
                      "message": "could not verify program membership", "fn": fn_name},
+        )
+    except measures.failure_source.SourceUnavailable as exc:
+        # A SYSTEM OF RECORD COULD NOT BE READ (or answered with an unusable hit). Decided, not
+        # a bug in a measure: 200 + `refused`, discriminated by `outcome` like `engine_fault`
+        # beside it (the supervisor drops a 5xx unread). NEVER an empty answer: on a failure
+        # history "could not read" must not read as "no failures".
+        return JSONResponse(
+            status_code=200,
+            content={"refused": True, "outcome": "source_unavailable",
+                     "reason": f"a system of record could not be read: {exc.connector}",
+                     "connector": exc.connector, "fn": fn_name},
         )
     except Exception as exc:  # noqa: BLE001
         # ── A REFUSAL IS NEVER A 5xx, AND THIS ONE WAS ──────────────────────────────────────

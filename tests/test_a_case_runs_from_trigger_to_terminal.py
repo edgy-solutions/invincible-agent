@@ -91,7 +91,7 @@ class _Ctx:
     async def get(self, k, **_kw):
         return self.state.get(k)
 
-    async def run(self, name, fn):
+    async def run(self, name, fn, **_opts):
         assert name not in self.runs, f"{self._key} journalled {name!r} twice"
         self.runs.append(name)
         return fn()
@@ -227,7 +227,7 @@ def policy(tmp_path, monkeypatch):
 def registered(monkeypatch):
     rows: list = []
     monkeypatch.setattr(main, "_register_human_task",
-                        lambda wf, task, kind="workflow_ack": rows.append(
+                        lambda wf, task, kind="workflow_ack", case_id=None: rows.append(
                             (wf, task["audience"], kind)) or {})
     return rows
 

@@ -143,6 +143,9 @@ def _registers_on_boot(agent_dir: pathlib.Path) -> bool:
 # for two and a half hours. It is on the list now. The list of excuses is gone with it, so the
 # next exclusion cannot be one line appended to a dict: it has to change the seal.
 #
+# UPDATE 2026-10-19 (ruling Q9): the bff IS now ruled onto the list -- it replays stored frontend
+# menus at startup -- so the "omitted because nobody has ruled it in" sentence below is history.
+#
 # THE BFF IS NOW IN THE POPULATION, AND ITS ABSENCE FROM THE LIST IS A DECISION RATHER THAN A
 # BLIND SPOT. This paragraph used to read "the population here does not reach the bff... it is
 # invisible to it", and that was true of the regex this file used to carry: it matched the
@@ -210,9 +213,20 @@ def test_every_registering_engine_is_in_the_reregister_list():
     )
 
 
+# THE ONE NON-ENGINE ENTRY (ruled Q9, 2026-10-19). The BFF replays the stored frontend menus at
+# startup, so the post-prime restart is what restores cortex's menu. It is not an engines.yaml
+# component, so it is accounted for here by NAME and verified to be a real Deployment in
+# frontend.yaml; an unknown name still fails.
+_NON_ENGINE_REREGISTER_ENTRIES = {"cortex-bff": "{{ .Release.Name }}-cortex-bff"}
+
+
 def test_the_reregister_list_names_only_real_components():
     """The other direction: a stale entry restarts nothing and hides that it restarts nothing."""
-    known = set(_components().values())
+    frontend = (_ENGINES_TPL.parent / "frontend.yaml").read_text(encoding="utf-8")
+    known = set(_components().values()) | {
+        name for name, rendered in _NON_ENGINE_REREGISTER_ENTRIES.items()
+        if f"name: {rendered}" in frontend
+    }
     unknown = sorted(c for c in _declared_reregister_list() if c not in known)
     assert not unknown, (
         f"reregisterEngines.deployments names components engines.yaml does not deploy: "

@@ -32,7 +32,9 @@ def _src(via, ingest_id=None, **over):
     block = provenance.make_provenance(
         authoritative_source="vendor-x", obtained_via=via, as_of=provenance.AS_OF_UNKNOWN,
         ingested_at="2026-09-30T00:00:00Z", ingest_run="run-1", standing="supervised",
-        ingest_id=ingest_id)
+        ingest_id=ingest_id,
+        **({"corrected_by": "steward@example.com", "extracted_value": ""}
+           if via == "steward-corrected" else {}))
     block.update(over)
     return {"provenance": block}
 
@@ -122,7 +124,8 @@ def test_for_EVERY_pair_the_farther_rung_wins_in_either_order(near, far):
 
 def test_the_ranking_is_the_tuple_with_unstamped_past_the_far_end():
     assert RANKING == provenance.OBTAINED_VIA + (UNSTAMPED,)
-    assert provenance.OBTAINED_VIA[-1] == provenance.USER_DROP == "user-drop"
+    assert provenance.OBTAINED_VIA[-1] == provenance.STEWARD_CORRECTED == "steward-corrected"
+    assert provenance.OBTAINED_VIA[-2] == provenance.USER_DROP == "user-drop"
 
 
 def test_a_writer_can_STAMP_user_drop_and_its_ingest_id():

@@ -49,15 +49,19 @@ non-empty declaration RAISES rather than answering a zero it did not measure.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
-from typing import Any, Callable
+import re
+from typing import Any, Callable, Optional
 
 import psycopg2
 from iagent_mesh.interfaces import EdgeIdentity, EdgeIdentityFilter, Initiator
 
 from .decision_record import canonical_json
-from .promotion import INGEST_ID_RE, object_prefix_for
+from .provenance import OBTAINED_VIA
+from .promotion import (INGEST_ID_RE, REJECTED_PREFIX, correction_key,  # noqa: F401
+                        object_prefix_for, quarantine_prefix_for)
 
 try:  # the package layout first; the container's flattened `utils` second (v2_substrate's idiom)
     from agent_fleet.utils.mesh_writers.neo4j_graph import Neo4jGraphWriter
@@ -67,8 +71,6 @@ except ImportError:  # pragma: no cover — runtime-dependent import path
 logger = logging.getLogger(__name__)
 
 _PG_DSN = os.getenv("PROJECTOR_POSTGRES_DSN", "").strip()
-
-REJECTED_PREFIX = "rejected/"
 
 _MIGRATION_SQL = """
 CREATE TABLE IF NOT EXISTS document_decision_record (
@@ -89,8 +91,12 @@ RETURNING record_id
 """
 
 _EXISTING_SQL = """
-SELECT decision, acted_by, acted_at FROM document_decision_record
+SELECT decision, acted_by, acted_at, record FROM document_decision_record
 WHERE record_id = %s OR ingest_id = %s
+"""
+
+_RECORD_FOR_SQL = """
+SELECT record FROM document_decision_record WHERE ingest_id = %s
 """
 
 
@@ -143,9 +149,30 @@ class PgDecisionLedger:
             return {"ok": True}
         if existing is None:
             return {"ok": False, "reason": "conflict_unreadable"}
-        decision, by, at = existing
+        decision, by, at = existing[:3]
+        # The stored record rides along so a replay can be held to what was recorded (its
+        # steward corrections); None when the row did not return it.
+        stored = existing[3] if len(existing) > 3 else None
         return {"ok": False, "reason": "immutable_conflict",
-                "existing": {"decision": decision, "acted_by": by, "acted_at": int(at)}}
+                "existing": {"decision": decision, "acted_by": by, "acted_at": int(at),
+                             "record": stored}}
+
+
+    def record_for(self, ingest_id: str) -> Optional[dict]:
+        """The stored decision record for `ingest_id`, or None when there is no row. A READ:
+        a store fault RAISES (the caller turns it into a 503)."""
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_RECORD_FOR_SQL, (ingest_id,))
+                row = cur.fetchone()
+        if row is None:
+            return None
+        rec = row[0]
+        if isinstance(rec, (bytes, bytearray, memoryview)):
+            rec = bytes(rec).decode("utf-8")
+        if isinstance(rec, str):
+            rec = json.loads(rec)
+        return rec if isinstance(rec, dict) else None
 
 
 class S3Quarantine:
@@ -173,13 +200,31 @@ class S3Quarantine:
             token = page["NextContinuationToken"]
         moved = []
         for key in keys:
-            dest = f"{REJECTED_PREFIX}{ingest_id}/{key[len(prefix):]}"
+            dest = quarantine_prefix_for(ingest_id) + key[len(prefix):]
             s3.copy_object(Bucket=self._bucket, Key=dest,
                            CopySource={"Bucket": self._bucket, "Key": key})
             moved.append(dest)
         for key in keys:
             s3.delete_object(Bucket=self._bucket, Key=key)
         return moved
+
+
+class S3CorrectionOutbox:
+    """`promotion.CorrectionOutbox` over the seam's bucket: one JSON object per correction record,
+    keyed `corrections/<ingest hex>/<record_id>.json`. Sorted keys and fixed separators make a
+    replay's bytes identical to the first write's, so the put converges."""
+
+    def __init__(self, client_factory: Callable[[], Any], bucket: str):
+        self._client = client_factory
+        self._bucket = bucket
+
+    def emit(self, record: dict) -> str:
+        key = correction_key(record["ingest_id"], record["record_id"])
+        body = json.dumps(record, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=False).encode("utf-8")
+        self._client().put_object(Bucket=self._bucket, Key=key, Body=body,
+                                  ContentType="application/json")
+        return key
 
 
 # ── THE GRAPH ─────────────────────────────────────────────────────────────────────────────────
@@ -202,6 +247,19 @@ _NODE_EXISTS_CYPHER = (
     f"RETURN count(n) AS n"
 )
 
+#: The node's current origin rung, or no row/None when it has none. Built FROM the family.
+_ORIGIN_RUNG_CYPHER = (
+    f"MATCH (n:{INGEST_FACT_FAMILY['node_label']} "
+    f"{{{INGEST_FACT_FAMILY['node_key']}: $ingest_id}})\n"
+    f"RETURN n.origin_resolved_by AS rung"
+)
+
+#: Rungs a steward attestation never replaces: a record origin outranks it, and an existing
+#: steward origin stays as first attested.
+_KEPT_RUNGS = {"record": "kept_record", "steward": "kept_steward"}
+
+STEWARD_ATTESTATION = "steward_attestation"
+
 #: Built FROM the family. Deletes the node ONLY IF it carries no relationship of any type --
 #: `WHERE NOT (n)--()` is untyped and undirected on purpose, so an edge from ANY other family
 #: (not just PROMOTION) still anchors the node and this never fires against it.
@@ -210,6 +268,42 @@ _DELETE_BARE_NODE_CYPHER = (
     f"{{{INGEST_FACT_FAMILY['node_key']}: $ingest_id}})\n"
     f"WHERE NOT (n)--()\n"
     f"DELETE n"
+)
+
+# -- ROW EDITS: the steward's corrections applied to THIS notice's SUBJECT_TO edges -------------
+# Component nodes are SHARED across notices (keyed on mpn alone): only this notice's edge is ever
+# deleted or written, never a node. The domain is a label, so it is validated before it is
+# interpolated.
+_DOMAIN_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+_NOTICE_COUNT_CYPHER = (
+    "MATCH (n:SustainmentNotice:{domain}) WHERE n.provenance_ingest_id = $ingest_id\n"
+    "RETURN count(n) AS n"
+)
+_DELETE_EDGE_CYPHER = (
+    "MATCH (c:Component:{domain} {{mpn: $mpn}})-[r:SUBJECT_TO]->(n:SustainmentNotice:{domain})\n"
+    "WHERE n.provenance_ingest_id = $ingest_id\n"
+    "DELETE r\n"
+    "RETURN count(*) AS n"
+)
+_NOTICE_MPNS_CYPHER = (
+    "MATCH (n:SustainmentNotice:{domain}) WHERE n.provenance_ingest_id = $ingest_id\n"
+    "OPTIONAL MATCH (c:Component:{domain})-[:SUBJECT_TO]->(n)\n"
+    "RETURN count(DISTINCT n) AS notices, collect(c.mpn) AS mpns"
+)
+_REMOVE_EDGES_CYPHER = (
+    "MATCH (c:Component:{domain})-[r:SUBJECT_TO]->(n:SustainmentNotice:{domain})\n"
+    "WHERE n.provenance_ingest_id = $ingest_id AND c.mpn IN $mpns\n"
+    "DELETE r\n"
+    "RETURN count(*) AS n"
+)
+_WRITE_EDGE_CYPHER = (
+    "MATCH (n:SustainmentNotice:{domain}) WHERE n.provenance_ingest_id = $ingest_id\n"
+    "MERGE (c:Component:{domain} {{mpn: $mpn}})\n"
+    "MERGE (c)-[r:SUBJECT_TO]->(n)\n"
+    "SET r.obtained_via = $obtained_via, r.corrected_by = $corrected_by,\n"
+    "    r.extracted_value = $extracted_value, r.evidence = $evidence,\n"
+    "    r.record_id = $record_id, r.disposition = $disposition, r.reason = $reason"
 )
 
 
@@ -276,6 +370,40 @@ class Neo4jIngestGraph:
                 f"ingest node create for {ingest_id}: {result.outcome}: {result.detail}")
         return True
 
+    def origin_rung(self, ingest_id: str) -> str | None:
+        """The node's `origin_resolved_by`, or None (no such node, or no origin written). A read
+        that raises propagates: an unknown rung is not an absent one."""
+        with self._driver.session() as session:
+            row = session.run(_ORIGIN_RUNG_CYPHER, ingest_id=ingest_id).single()
+        value = row["rung"] if row is not None else None
+        return value if isinstance(value, str) and value else None
+
+    def attest_origin(self, ingest_id: str, *, owner_domain: str, record_id: str) -> str:
+        """Record a steward's attestation of the document's origin. Returns "written",
+        "kept_record" or "kept_steward".
+
+        The ONE writer of this origin, for the promotion act and the backfill alike. Never
+        downgrades or overwrites: a node already at `origin_resolved_by` "record" or "steward"
+        is left alone; only no rung, or "unresolved", is written. The rung is the SDK's own
+        `Origin.resolved_by="steward"`; the ruling's name (`steward_attestation`) rides in the
+        evidence, citing the decision record. No `origin_program`: a steward attests a domain.
+        """
+        kept = _KEPT_RUNGS.get(self.origin_rung(ingest_id))
+        if kept:
+            return kept
+        from iagent_mesh.systems_of_record import Origin  # noqa: PLC0415
+
+        evidence = f"{STEWARD_ATTESTATION}:{record_id}"
+        Origin(owner_domain=owner_domain, resolved_by="steward", evidence=(evidence,))
+        result = self._writer.write_node(
+            self._initiator, label=INGEST_FACT_FAMILY["node_label"], id=ingest_id,
+            payload={"origin_owner_domain": owner_domain, "origin_resolved_by": "steward",
+                     "origin_evidence": evidence})
+        if result.outcome != "written":
+            raise RuntimeError(
+                f"origin attestation for {ingest_id}: {result.outcome}: {result.detail}")
+        return "written"
+
     def write_fact(self, ingest_id: str, fact: dict) -> None:
         result = self._writer.write_edge(
             self._initiator,
@@ -311,6 +439,83 @@ class Neo4jIngestGraph:
                 f"swept and the bare-node delete ran against it: a node survives only if it "
                 f"still carries an edge of another family, which this sweep must not cross")
         return count
+
+    def notice_mpns(self, ingest_id: str, *, domain: str) -> Optional[list]:
+        """READ: the exact `mpn` of every Component with a SUBJECT_TO edge to this ingest's
+        notice. None when no such notice node exists; [] for a notice with no edges."""
+        if not isinstance(domain, str) or not _DOMAIN_RE.match(domain):
+            raise ValueError(f"domain {domain!r} does not match {_DOMAIN_RE.pattern}")
+        with self._driver.session() as session:
+            row = session.run(_NOTICE_MPNS_CYPHER.format(domain=domain),
+                              ingest_id=ingest_id).single()
+        if row is None or int(row["notices"]) < 1:
+            return None
+        return [m for m in row["mpns"] if isinstance(m, str)]
+
+    def remove_notice_edges(self, ingest_id: str, mpns: list, *, domain: str) -> int:
+        """Delete THIS notice's SUBJECT_TO edge for each exact mpn: `DELETE r` only, never a
+        node (Components are shared across notices). Zero matches is a converged replay."""
+        if not isinstance(domain, str) or not _DOMAIN_RE.match(domain):
+            raise ValueError(f"domain {domain!r} does not match {_DOMAIN_RE.pattern}")
+        if not mpns:
+            return 0
+        with self._driver.session() as session:
+            row = session.run(_REMOVE_EDGES_CYPHER.format(domain=domain),
+                              mpns=list(mpns), ingest_id=ingest_id).single()
+        return int(row["n"]) if row is not None else 0
+
+    def apply_row_edits(self, ingest_id: str, row_edits: list, *, domain: str,
+                        record_id: str) -> dict:
+        """Apply a steward's row edits to THIS notice's SUBJECT_TO edges (the graph must be true
+        on its own, not filtered at read). deleted: remove the part's edge. corrected: remove the
+        extracted part's edge, write the corrected part's. added: write the part's edge.
+        header_corrected is NOT applied (named in `not_applied`).
+        Every statement is a MERGE or a DELETE of a matched edge, so a re-run converges.
+
+        A written edge carries the EDIT's own `obtained_via` (architect 2026-10-23: a hand-entered
+        part is `steward-entered`, a corrected one `steward-corrected`, and the graph tells them
+        apart by nothing else). It is never defaulted: a corrected or added edit whose
+        `obtained_via` is absent or off the ladder is refused before any statement runs."""
+        if not isinstance(domain, str) or not _DOMAIN_RE.match(domain):
+            raise ValueError(f"domain {domain!r} does not match {_DOMAIN_RE.pattern}")
+        out = {"deleted": 0, "corrected": 0, "added": 0, "not_applied": []}
+        edits = [e for e in (row_edits or []) if isinstance(e, dict)]
+        applicable = [e for e in edits if e.get("op") in ("deleted", "corrected", "added")]
+        out["not_applied"] = [e.get("field") for e in edits if e.get("op") == "header_corrected"]
+        if not applicable:
+            return out
+        for e in applicable:
+            if e["op"] != "deleted" and e.get("obtained_via") not in OBTAINED_VIA:
+                raise ValueError(
+                    f"a {e['op']} edit for {e.get('mpn')!r} carries obtained_via "
+                    f"{e.get('obtained_via')!r}, not a rung of {OBTAINED_VIA}; the edge is not "
+                    f"written with an invented one")
+        fmt = {"domain": domain}
+        with self._driver.session() as session:
+            row = session.run(_NOTICE_COUNT_CYPHER.format(**fmt), ingest_id=ingest_id).single()
+            if row is None or int(row["n"]) < 1:
+                raise RuntimeError(
+                    f"no SustainmentNotice:{domain} carries provenance_ingest_id {ingest_id}; "
+                    f"the row edits cannot be applied")
+            for e in applicable:
+                op = e["op"]
+                if op in ("deleted", "corrected"):
+                    r = session.run(_DELETE_EDGE_CYPHER.format(**fmt),
+                                    mpn=e["mpn"], ingest_id=ingest_id).single()
+                    if op == "deleted":
+                        out["deleted"] += int(r["n"]) if r is not None else 0
+                if op in ("corrected", "added"):
+                    target = e["corrected_value"] if op == "corrected" else e["mpn"]
+                    session.run(
+                        _WRITE_EDGE_CYPHER.format(**fmt), ingest_id=ingest_id, mpn=target,
+                        obtained_via=e["obtained_via"],
+                        corrected_by=e.get("corrected_by"),
+                        extracted_value=e.get("extracted_value"),
+                        evidence=e.get("evidence"), record_id=record_id,
+                        disposition=e.get("disposition"), reason=e.get("reason"))
+                    out[op] += 1
+        return out
+
 
 
 # ── THE INDEXES ───────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,11 @@
+# OVERLAY layer (ADR-0036). The deployment overlay is the authoritative registry for a content
+# kind's domain (architect ruling 2026-10-06) -- `passes`/`outputs` here MIRROR doc-tools'
+# generated `registry/content_kinds/work-instruction.yaml`, and the domain mirrors its
+# `content_kind_domains.json`. Mirrored on the architect's 2026-10-14 ruling ("mirror it now;
+# the real fix is" the door reading doc-tools' processable kinds, so the registry never drifts).
+kind: work-instruction
+domain: manufacturing
+passes:
+  - manufacturing.baml::ExtractWorkInstructions
+outputs:
+  - mfg:WorkInstruction

@@ -22,8 +22,9 @@
 # never from the caller — see the stream-side gate in `src/iagent/gateway.py` for what that
 # refuses.
 #
-# `finEacCalculation`'s `method` stays PANEL-LOCAL and must not be promoted here — it is a
-# per-panel choice, not a board subject, and asking it once would answer a different question.
+# No panel takes a `method`. The EAC panel is `finEacComparison`, which answers all three
+# methods at once (RULED 2026-09-09, see slot 5), so there is no per-panel method to pin and
+# none to promote to the board.
 #
 # ── COUPLED TO tests/planning/test_program_finance_seeds_six_panels.py AND
 # tests/planning/test_seed_canvas_takes_the_template_as_a_slot.py. ───────────────────────────
@@ -52,7 +53,7 @@ package:
   audience: program_office
 description: >-
   Funding status anchoring the top, with burn rate and performance indices beneath it, then the
-  variance decomposition, its ranked drivers, and the estimate at completion. The six
+  variance decomposition, its ranked drivers, and the three estimates at completion side by side. The six
   PROGRAM_FINANCE_ANALYST measures as one board — six cards that ADR-0050 §3 intends to come
   from a single ask once `program` can be bound.
 
@@ -147,25 +148,20 @@ panels:
       variance than the decomposition beside it would be two answers presented as one story.
 
   # ── SLOT 5 — the second pair's overflow; see the note on arity ─────────────────────────────
-  - verb: mesh:finEacCalculation
+  - verb: mesh:finEacComparison
     role: pair
     consumes: [program]
-    # SUBJECT, see finFundingStatus's comment above — declared from fin_eac_calculation's own
+    # SUBJECT, see finFundingStatus's comment above — declared from fin_eac_comparison's own
     # input_uri, confirmed by the mesh on every dispatch, never looked up here.
     subject: http://invincible-agent/fin#Program
-    slots:
-      method: CPI
     note: >-
       RULED 2026-09-09 — ALL THREE METHODS ON ONE PANEL. Not three panels, and not a pinned
       method: *pinning hides the divergence that is the finding*. CPI, CPI_SPI and
       REMAINING_AT_BUDGET span $13.13M / $14.15M / $14.79M against a $12.00M budget on the
       engine's own seed — a ~14%-of-BAC spread that IS the answer, and a template that silently
       picks one is choosing it on the reader's behalf.
-      **THE RULING CANNOT BE HONOURED BY THIS VERB YET, so `method: CPI` stands as a placeholder
-      and is NOT a considered choice.** `fin_eac_calculation` takes `method: EACMethod` — one
-      Literal — and raises `MethodRequired` on anything else; there is no multi-method affordance
-      anywhere in the finance engine. One panel is one verb invocation is one method. Honouring
-      the ruling needs an ENGINE change (the verb returning all three rows, or a sibling
-      comparison verb), which belongs to the finance lane, not to this file. Until then this
-      panel is inert anyway — the template refuses at seed time, see the header — so the
-      placeholder costs nothing and the ruling is recorded rather than quietly unmet.
+      HONOURED by `fin_eac_comparison`, which takes NO `method` slot by design and answers every
+      method in one invocation as COMPETING_MEASURES rows, each carrying its `method_label`
+      (cortex reads that label since d7d6593/bd782c5). This panel was `finEacCalculation` with
+      `method: CPI` as a recorded placeholder until the comparison verb existed; no `method` is
+      given here because the verb declares none.

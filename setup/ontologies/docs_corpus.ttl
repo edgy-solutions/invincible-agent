@@ -94,16 +94,16 @@ docs:runbook-rolling-a-service a mesh:DocPage ;
   rdfs:label "Rolling a service" ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
-  mesh:source "docs/pages/1b6db61a4e32e256d5601ba2e0277e49e4618717e12aa73c1283fe095961eb7e/rolling-a-service.md" ;
-  mesh:source_committed_at "2026-09-14T11:38:19-05:00" ;
-  mesh:body_sha "1b6db61a4e32e256d5601ba2e0277e49e4618717e12aa73c1283fe095961eb7e" .
+  mesh:source "docs/pages/70cc7ef5f6bdd7318a3eef1fa98f1eb25e45e8c37d5a603dbfd81ea02c9e7c2e/rolling-a-service.md" ;
+  mesh:source_committed_at "2026-10-24T21:20:24-05:00" ;
+  mesh:body_sha "70cc7ef5f6bdd7318a3eef1fa98f1eb25e45e8c37d5a603dbfd81ea02c9e7c2e" .
 # rolling-a-service.md: explains none — an honest row, not an omission.
 
 docs:runbook-writing-a-walk-sheet a mesh:DocPage ;
   rdfs:label "Writing a walk sheet" ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
-  mesh:source "docs/pages/c586eed1f2ee9d08f9d0974ccdfe7ec4fafd3808c7bfe7e46c220f94e26be2f2/writing-a-walk-sheet.md" ;
-  mesh:source_committed_at "2026-09-11T22:23:37-05:00" ;
-  mesh:body_sha "c586eed1f2ee9d08f9d0974ccdfe7ec4fafd3808c7bfe7e46c220f94e26be2f2" .
+  mesh:source "docs/pages/6191350a9890982993a71bf09112cdac0a01d7ebf9c01a8e99a0c46057d0cbe3/writing-a-walk-sheet.md" ;
+  mesh:source_committed_at "2026-10-12T08:54:05-05:00" ;
+  mesh:body_sha "6191350a9890982993a71bf09112cdac0a01d7ebf9c01a8e99a0c46057d0cbe3" .
 # writing-a-walk-sheet.md: explains none — an honest row, not an omission.

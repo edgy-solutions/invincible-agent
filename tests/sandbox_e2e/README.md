@@ -30,6 +30,10 @@ can reach the cluster API.
 - `test_engine_d_datahub_suite.py` — fires the DataHub-style query
   suite (ownership, freshness, lineage, schema, downstream impact)
   via Engine A's `search_datahub` tool.
+- `test_mrad_case_walks_to_closed.py` — a maintenance-fault case renders, is decided and
+  walks to `closed` through product routes only, as three people (`--initiator-token`,
+  `--decider-token`, `--releaser-token`, each a file); the release is `tier_ack` by the case id.
+  WRITES to the sandbox: run by hand after a roll, never from a unit run.
 
 ## Running
 

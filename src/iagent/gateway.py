@@ -37,24 +37,31 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import AsyncGenerator, Any, Optional
+from datetime import date as _date, datetime, timezone
+from typing import AsyncGenerator, Any, Literal, Optional
 
 import httpx
 from dotenv import load_dotenv
 from fastapi import (
     Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status,
 )
+from fastapi import Query as _Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
+from . import frontend_menu_store
+from .ingest_api import (
+    BINARY_200, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse, Entitlements,
+    Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing, RetriesListing,
+    RetryResponse, StatusBody, TitleLeafResponse,
+)
 from .identity_vault import (
     _ensure_the_audit_line_actually_ARRIVES,
     VAULT,
@@ -103,6 +110,415 @@ _DAGSTER_LOCATION = os.getenv("DAGSTER_LOCATION", "iagent")
 # being client-controlled. See `electric_shape_proxy` below.
 _ELECTRIC_UPSTREAM_URL = os.getenv("ELECTRIC_UPSTREAM_URL", "http://iagent-electric:3000")
 
+# ── Ingest watchdog (2026-10-12, pipeline failure must reach the row) ───────────────────
+
+# A row never sits at `received` or `extracting` for more than its timeout without either
+# advancing or failing: the loop below marks stale rows `failed:timeout`
+# (ingest_status.fail_stalled), naming the stage in failure.step and carrying the run id if a stage
+# POST ever reported one. `extracting` joined 2026-10-16: doc-tools logs a refused stage POST and
+# still ends its run SUCCESS, so a row whose review never landed sat at `extracting` for ever.
+# `review`, `awaiting_origin` and `awaiting_kind` are NOT watched -- they wait on a person (a steward,
+# or the dropper's leaf pick), not on the pipeline.
+#
+# THE RECEIVED DEFAULT IS 600 s, NOT THE SENSOR'S 30 s INTERVAL. A row whose run is QUEUED behind
+# `max_concurrent_runs` legitimately sits at `received` for minutes; a 30 s bound would fail every
+# queued drop. The stage route treats a `timeout` failure at EITHER stage as PROVISIONAL (a late run
+# supersedes it), so a too-early timeout is recoverable -- but it should still be rare, hence the
+# generous defaults. EXTRACTING gets 3600 s: a large CAD/PDF extraction legitimately runs long.
+# A value <= 0 disables that stage only; the watchdog is off when BOTH are <= 0.
+_INGEST_RECEIVED_TIMEOUT_SECONDS_DEFAULT = 600
+_INGEST_EXTRACTING_TIMEOUT_SECONDS_DEFAULT = 3600
+_INGEST_WATCHDOG_INTERVAL_SECONDS_DEFAULT = 30
+
+
+def _detail_with_message(status: int, detail):
+    """Ensure a 409's detail is a dict with a non-empty `message` (spec 204, "every 409 carries
+    `message`"). Used where the status or detail is relayed (an engine's refusal, a helper's
+    parameter) and so cannot be a literal. Any other status passes through untouched."""
+    if status != 409:
+        return detail
+    d = dict(detail) if isinstance(detail, dict) else {
+        "error": "conflict", "upstream": detail if not isinstance(detail, str) else None}
+    if isinstance(detail, str) and detail.strip():
+        d["message"] = detail
+    if not str(d.get("message") or "").strip():
+        d["message"] = "the request conflicts with the current state; reload and try again."
+    return d
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+_LEAF_BACKSTOP_ACTOR = "bff:manifest-leaf-backstop"
+_INGEST_LEAF_BACKSTOP_SECONDS_DEFAULT = 300
+
+# Ruling 2026-10-21 (a leaf set while the run is in flight): a PDF drop whose leaf (pcn|pdn) is set
+# while its Dagster run is in flight would strand -- doc-tools reads the kind ONLY from the drop's
+# sidecar `{object_prefix}manifest.json`, so that run ran as `pdf`, and every BFF "relaunch" re-reads
+# the SAME sidecar. So the BFF relaunches a row AS ITS LEAF: it rewrites the sidecar to the leaf FIRST,
+# then re-opens the row with reason `leaf_applied`. The relaunch pass polls every 60 s (not the
+# watchdog's hour-scale timeouts) and needs no user Retry. Env INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS;
+# <= 0 disables the pass.
+# INVARIANT: the sidecar is rewritten ONLY at a relaunch, so the sidecar's content_kind always names
+# the kind the latest launched run read. "sidecar kind == row leaf" therefore means "the leaf was
+# already applied" -> never relaunch again (no loops).
+_INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS_DEFAULT = 60
+_DAGSTER_TERMINAL_RUN_STATUSES = ("SUCCESS", "FAILURE", "CANCELED")
+# Ruling 2026-10-22 (a finished run with no leaf waits for a kind): "a row whose run has finished and
+# that has NO leaf goes to awaiting_kind (reason: kind_not_identified). Never left at extracting."
+# A TI PDF drop's run ended SUCCESS after posting `extracting` and nothing else, and the row sat there
+# leafless until a person picked a kind. `_ingest_kind_unidentified_tick` holds it (same 60 s cadence
+# and off switch as the relaunch pass); a pick from there relaunches as built on 10-21. The status
+# route serves the reason as `hold_reason`, only at awaiting_kind.
+_leaf_relaunch_last_at = None  # time.monotonic() seconds of the last relaunch pass
+
+
+def _backstop_candidates(raw) -> list:
+    """Map a manifest `leaf.candidates` list to `hold_for_kind`'s input (spec 204 D3 + the 10-21
+    page-fraction ruling). A candidate is kept only when its `leaf` (lowercased) is a leaf, `score`
+    is a finite number in [0, 1], and its `evidence_ref` carries `page` (an int >= 1 -- ONLY `page`,
+    never the older `page_number`, whose boxes are pixels) and a `bbox` that is null/absent (kept as
+    `"bbox": None`: stated on the page, no box to draw) or in page fractions (a pixel or malformed box
+    drops the candidate). `note` is carried when a non-blank string. Anything else drops THAT
+    candidate."""
+    import math
+
+    from . import ingest_status
+
+    out = []
+    for c in raw if isinstance(raw, list) else []:
+        if not isinstance(c, dict):
+            continue
+        leaf = str(c.get("leaf") or "").strip().lower()
+        score = c.get("score")
+        ev = c.get("evidence_ref")
+        if leaf not in ingest_status.LEAVES or not isinstance(ev, dict):
+            continue
+        if (isinstance(score, bool) or not isinstance(score, (int, float))
+                or not math.isfinite(score) or not 0 <= score <= 1):
+            continue
+        page = ev.get("page")
+        if isinstance(page, bool) or not isinstance(page, int) or page < 1:
+            continue
+        bbox = ev.get("bbox")
+        if bbox is not None and not _bbox_is_page_fractions(bbox):
+            continue
+        ref = {"page": page, "bbox": list(bbox) if bbox is not None else None}
+        note = ev.get("note")
+        if isinstance(note, str) and note.strip():
+            ref["note"] = note.strip()
+        out.append({"leaf": leaf, "score": score, "evidence_ref": ref})
+    return out
+
+
+def _find_leaf_manifest(row: dict) -> tuple:
+    """SYNC. `(key, manifest)` of the newest versioned manifest under the row's own directory that
+    names this ingest id AND carries a `leaf` block, else `(None, None)`. S3/parse errors raise."""
+    prefix = str(row.get("object_prefix") or "").rstrip("/")
+    if not prefix:
+        return None, None
+    s3 = _build_s3_client()
+    found, token = [], None
+    while True:
+        kw = {"Bucket": _ARTIFACT_BUCKET, "Prefix": f"{prefix}/generated/"}
+        if token:
+            kw["ContinuationToken"] = token
+        page = s3.list_objects_v2(**kw)
+        found += [o for o in (page.get("Contents") or [])
+                  if str(o.get("Key") or "").endswith("/manifest.json")]
+        token = page.get("NextContinuationToken") if page.get("IsTruncated") else None
+        if not token:
+            break
+    found.sort(key=lambda o: o.get("LastModified"), reverse=True)
+    for o in found:
+        m = _read_extraction_manifest(o["Key"])
+        if m.get("ingest_id") == row.get("id") and isinstance(m.get("leaf"), dict):
+            return o["Key"], m
+    return None, None
+
+
+async def _apply_manifest_leaf_block(row: dict, key, manifest: dict) -> tuple:
+    """Act on a row's manifest `leaf` block (shared by the manifest-leaf backstop and the finished-run
+    pass). A confident block (`_title_leaf`) rewrites the drop's sidecar to the leaf FIRST, then
+    re-opens the row as that kind (`set_leaf`, reason `leaf_applied`); otherwise the row is held at
+    `awaiting_kind` with the mapped candidates. Returns `(decision, ok)`; `ok` False = the row moved
+    under us (`row_moved`). Logs nothing; S3 errors raise to the caller's per-row except."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    rid = row.get("id")
+    block = manifest["leaf"]
+    title = _title_leaf(block.get("leaf"), block.get("outcome"))
+    if title is not None:
+        # The sidecar is rewritten to the leaf BEFORE the row is re-opened, so the relaunch
+        # runs as the leaf; an S3 error lands in the per-row except (row skipped).
+        await run_in_threadpool(lambda: _apply_leaf_to_sidecar(row, title))
+        ok = await run_in_threadpool(lambda: ingest_status.set_leaf(
+            rid, title, "title", set_by=_LEAF_BACKSTOP_ACTOR,
+            from_statuses=[ingest_status.EXTRACTING],
+            to_status=ingest_status.RECEIVED, bump_attempt=True,
+            retry_reason=ingest_status.REASON_LEAF_APPLIED)) is not None
+        return (f"title:{title}" if ok else "row_moved"), ok
+    outcome = block.get("outcome")
+    ok = await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+        rid, candidates=_backstop_candidates(block.get("candidates")),
+        detail=f"the title read named no leaf ({outcome or 'no outcome'}); "
+               "pick pcn or pdn",
+        from_statuses=[ingest_status.EXTRACTING]))
+    return ("awaiting_kind" if ok else "row_moved"), ok
+
+
+async def _ingest_leaf_backstop_tick(older_than_s: int) -> list:
+    """One backstop pass (spec 204, ruling "a pdf row runs no passes, so the review.json backstop
+    can't fire. Use manifest[\"leaf\"] instead"): a leaf-capable row at `extracting` with NO leaf,
+    quiet for `older_than_s`, whose versioned manifest carries a `leaf` block. A confident block
+    (`_title_leaf`) sets the leaf and relaunches the row as that kind; otherwise the row is held at
+    `awaiting_kind` with the mapped candidates. No manifest -> nothing (the timeout fails the row
+    later). Any S3/parse error skips the row; this never raises out of the tick. Returns the ids
+    acted on. `older_than_s` <= 0 disables it."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    if older_than_s <= 0:
+        return []
+    rows = await run_in_threadpool(
+        lambda: ingest_status.list_leafless_extracting(older_than_seconds=older_than_s, limit=50))
+    done: list = []
+    for row in rows:
+        if not _leaf_capable(row) or _row_leaf(row)[0] is not None:
+            continue
+        rid = row.get("id")
+        try:
+            key, manifest = await run_in_threadpool(lambda row=row: _find_leaf_manifest(row))
+            if manifest is None:
+                continue
+            decision, ok = await _apply_manifest_leaf_block(row, key, manifest)
+            logger.info("ingest_leaf_backstop ingest_id=%s key=%s decision=%s", rid, key, decision)
+            if ok:
+                done.append(rid)
+        except Exception as exc:  # noqa: BLE001 -- never raise out of the tick
+            logger.warning("ingest_leaf_backstop ingest_id=%s skipped (%s: %s)", rid,
+                           type(exc).__name__, exc)
+    return done
+
+
+async def _dagster_run_finished(run_id) -> bool:
+    """True iff Dagster says the run is terminal (SUCCESS|FAILURE|CANCELED). Anything else -- an error
+    (`_get_run_status` returns {}), RunNotFoundError, QUEUED, STARTED -- is False: fail closed, never
+    relaunch a run that may still be reading the sidecar."""
+    try:
+        ans = await _get_run_status(run_id)
+    except Exception:  # noqa: BLE001
+        return False
+    return (isinstance(ans, dict) and ans.get("__typename") == "Run"
+            and ans.get("status") in _DAGSTER_TERMINAL_RUN_STATUSES)
+
+
+async def _ingest_kind_unidentified_tick() -> list:
+    """One pass (ruling 2026-10-22, "a row whose run has finished and that has NO leaf goes to
+    awaiting_kind (reason: kind_not_identified). Never left at extracting."): a leaf-capable row at
+    `extracting` with NO leaf and a run id whose Dagster run is terminal (SUCCESS|FAILURE|CANCELED;
+    `_dagster_run_finished` fails closed). If the run left a manifest `leaf` block the row is handled
+    exactly as the manifest backstop does (`_apply_manifest_leaf_block`: a confident title relaunches
+    it as that leaf, else it is held with the candidates); with no manifest the row is held with no
+    candidates and reason `kind_not_identified`. The hold requires `run_id` to still be the one seen
+    finish (`expect_run_id`), so a relaunch that landed meanwhile wins. No run id -> skipped (the
+    extracting watchdog owns it). Never raises. Returns the ids acted on."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    try:
+        rows = await run_in_threadpool(
+            lambda: ingest_status.list_leafless_extracting(older_than_seconds=0, limit=50))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ingest_kind_unidentified listing failed (%s: %s)", type(exc).__name__, exc)
+        return []
+    done: list = []
+    for row in rows:
+        if not _leaf_capable(row) or _row_leaf(row)[0] is not None or not row.get("run_id"):
+            continue
+        rid = row.get("id")
+        try:
+            if not await _dagster_run_finished(row["run_id"]):
+                continue
+            key, manifest = await run_in_threadpool(lambda row=row: _find_leaf_manifest(row))
+            if manifest is not None:
+                decision, ok = await _apply_manifest_leaf_block(row, key, manifest)
+            else:
+                ok = await run_in_threadpool(lambda row=row: ingest_status.hold_for_kind(
+                    row["id"], candidates=[],
+                    detail="the run finished without identifying the kind; pick pcn or pdn",
+                    reason=ingest_status.REASON_KIND_NOT_IDENTIFIED, expect_run_id=row["run_id"],
+                    from_statuses=[ingest_status.EXTRACTING]))
+                decision = "awaiting_kind" if ok else "row_moved"
+            logger.info("ingest_kind_unidentified ingest_id=%s run_id=%s decision=%s",
+                        rid, row.get("run_id"), decision)
+            if ok:
+                done.append(rid)
+        except Exception as exc:  # noqa: BLE001 -- never raise out of the tick
+            logger.warning("ingest_kind_unidentified ingest_id=%s skipped (%s: %s)", rid,
+                           type(exc).__name__, exc)
+    return done
+
+
+def _drop_sidecar_key(row) -> str:
+    """The S3 key of the drop's sidecar -- exactly what `_write_ingest_object` writes."""
+    prefix = str(row.get("object_prefix") or "")
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
+    return f"{prefix}manifest.json"
+
+
+def _read_drop_sidecar(row) -> dict:
+    """SYNC. The drop's sidecar as a dict; raises on any S3/parse error."""
+    obj = _build_s3_client().get_object(Bucket=_ARTIFACT_BUCKET, Key=_drop_sidecar_key(row))
+    return json.loads(obj["Body"].read())
+
+
+def _apply_leaf_to_sidecar(row, leaf) -> bool:
+    """SYNC. Rewrite the drop's sidecar so doc-tools' next launch reads `leaf`: `content_kind`,
+    `domain_type` (the registration's domain, as the drop writes for a declared kind) and
+    `metadata.content_kind`; every other key is preserved. True if it wrote, False if the sidecar
+    already said so. Raises on S3 errors or an unregistered leaf. Called ONLY at a relaunch (see the
+    invariant at `_INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS_DEFAULT`)."""
+    import copy
+
+    from . import content_kinds
+
+    old = _read_drop_sidecar(row)
+    reg = content_kinds.by_kind(leaf)
+    if reg is None or not reg.domain:
+        raise ValueError(f"leaf {leaf!r} has no registered domain")
+    new = copy.deepcopy(old)
+    new["content_kind"] = leaf
+    new["domain_type"] = reg.domain
+    new["metadata"] = {**(old.get("metadata") or {}), "content_kind": leaf}
+    if new == old:
+        return False
+    _build_s3_client().put_object(Bucket=_ARTIFACT_BUCKET, Key=_drop_sidecar_key(row),
+                                  Body=json.dumps(new, indent=2).encode("utf-8"),
+                                  ContentType="application/json")
+    return True
+
+
+async def _ingest_leaf_relaunch_tick() -> list:
+    """One relaunch pass (ruling 2026-10-21): a leafed row (pcn|pdn) whose latest launched run read
+    another kind and has since FINISHED is rewritten into the sidecar as its leaf and re-opened at
+    `received` (reason `leaf_applied`), so doc-tools relaunches it as the leaf. Skips: not leaf-
+    capable; sidecar kind already == leaf (already applied -- the no-loop guard, and a declared drop
+    whose leaf run ended silent, which the watchdog owns); the run not finished. Never raises. Returns
+    the relaunched ids."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    done: list = []
+    try:
+        rows = await run_in_threadpool(
+            lambda: ingest_status.list_leafed_relaunch_candidates(limit=50))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ingest_leaf_relaunch listing failed (%s: %s)", type(exc).__name__, exc)
+        return done
+    for row in rows:
+        rid = row.get("id")
+        try:
+            leaf = str(row.get("content_kind") or "").strip().lower()
+            if not _leaf_capable(row):
+                continue
+            sidecar = await run_in_threadpool(lambda row=row: _read_drop_sidecar(row))
+            if str(sidecar.get("content_kind") or "").strip().lower() == leaf:
+                continue
+            if not await _dagster_run_finished(row.get("run_id")):
+                continue
+            await run_in_threadpool(lambda row=row, leaf=leaf: _apply_leaf_to_sidecar(row, leaf))
+            moved = await run_in_threadpool(lambda row=row, leaf=leaf: ingest_status.relaunch_as_leaf(
+                rid, leaf=leaf, from_status=row["status"], expect_attempt=row["attempt"]))
+            decision = "relaunched" if moved is not None else "row_moved"
+            logger.info("ingest_leaf_relaunch ingest_id=%s from=%s run_id=%s attempt=%s decision=%s",
+                        rid, row.get("status"), row.get("run_id"), row.get("attempt"), decision)
+            if moved is not None:
+                done.append(rid)
+        except Exception as exc:  # noqa: BLE001 -- never raise out of the tick
+            logger.warning("ingest_leaf_relaunch ingest_id=%s skipped (%s: %s)", rid,
+                           type(exc).__name__, exc)
+    return done
+
+
+async def _ingest_watchdog_tick(timeout_s: int, extracting_timeout_s: int = 0) -> list:
+    """One watchdog pass: fail every stale `received` and `extracting` document row (each stage only
+    if its timeout is > 0), log each id with its stage, return the ids. Split out of the loop so a
+    test can run one tick without sleeping."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    # The leaf relaunch pass and the finished-run-with-no-leaf pass share one 60 s cadence (not the
+    # watchdog's), and run first.
+    global _leaf_relaunch_last_at
+    _relaunch_s = _env_int("INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS",
+                           _INGEST_LEAF_RELAUNCH_INTERVAL_SECONDS_DEFAULT)
+    if _relaunch_s > 0 and (_leaf_relaunch_last_at is None
+                            or time.monotonic() - _leaf_relaunch_last_at >= _relaunch_s):
+        _leaf_relaunch_last_at = time.monotonic()
+        await _ingest_leaf_relaunch_tick()
+        await _ingest_kind_unidentified_tick()
+    # The manifest-leaf backstop runs BEFORE the fail pass: it can save a row the timeout would fail.
+    await _ingest_leaf_backstop_tick(
+        _env_int("INGEST_LEAF_BACKSTOP_SECONDS", _INGEST_LEAF_BACKSTOP_SECONDS_DEFAULT))
+    all_ids: list = []
+    for stage, limit in ((ingest_status.RECEIVED, timeout_s),
+                         (ingest_status.EXTRACTING, extracting_timeout_s)):
+        if limit <= 0:
+            continue
+        ids = await run_in_threadpool(
+            lambda stage=stage, limit=limit: ingest_status.fail_stalled(
+                stage=stage, older_than_seconds=limit))
+        for _id in ids:
+            logger.info("ingest watchdog: %s failed:timeout at %s (no stage move within %ss)",
+                        _id, stage, limit)
+        all_ids.extend(ids)
+    return all_ids
+
+
+async def _ingest_watchdog_loop(timeout_s: int, interval_s: int,
+                                extracting_timeout_s: int = 0) -> None:
+    from . import ingest_status
+
+    while True:
+        try:
+            await _ingest_watchdog_tick(timeout_s, extracting_timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except ingest_status.IngestStatusConfigError as exc:
+            # No DSN: the seam is dormant, and a dormant seam has nothing to watch.
+            logger.info("ingest watchdog dormant (no PG DSN): %s", exc)
+            return
+        except Exception as exc:  # noqa: BLE001 -- the next tick retries
+            logger.warning("ingest watchdog tick failed (%s: %s); retrying next tick",
+                           type(exc).__name__, exc)
+        await asyncio.sleep(interval_s)
+
+
+def _start_ingest_watchdog() -> "Optional[asyncio.Task]":
+    timeout_s = _env_int("INGEST_RECEIVED_TIMEOUT_SECONDS", _INGEST_RECEIVED_TIMEOUT_SECONDS_DEFAULT)
+    extracting_timeout_s = _env_int("INGEST_EXTRACTING_TIMEOUT_SECONDS",
+                                    _INGEST_EXTRACTING_TIMEOUT_SECONDS_DEFAULT)
+    interval_s = max(1, _env_int("INGEST_WATCHDOG_INTERVAL_SECONDS",
+                                 _INGEST_WATCHDOG_INTERVAL_SECONDS_DEFAULT))
+    if timeout_s <= 0 and extracting_timeout_s <= 0:
+        logger.info("ingest watchdog disabled (INGEST_RECEIVED_TIMEOUT_SECONDS=%s, "
+                    "INGEST_EXTRACTING_TIMEOUT_SECONDS=%s)", timeout_s, extracting_timeout_s)
+        return None
+    return asyncio.create_task(_ingest_watchdog_loop(timeout_s, interval_s, extracting_timeout_s))
+
+
 # ── Lifespan ──────────────────────────────────────────────
 
 @asynccontextmanager
@@ -143,6 +559,16 @@ async def lifespan(application: FastAPI):
         logger.info("ingestion seam dormant (no PG DSN): %s", exc)
     except Exception as exc:
         logger.warning("ingest_status migration failed (ingestion seam dormant): %s", exc)
+    # The case summary (ruled 2026-10-16): the durable record of a case that reached a terminal.
+    try:
+        from starlette.concurrency import run_in_threadpool
+        from . import case_summary
+        await run_in_threadpool(case_summary.apply_migration)
+        logger.info("case_summary migration applied")
+    except ingest_status.IngestStatusConfigError as exc:
+        logger.info("case summary dormant (no PG DSN): %s", exc)
+    except Exception as exc:
+        logger.warning("case_summary migration failed (case summary dormant): %s", exc)
     # ADR-0041 Open §1 (ruled 2026-09-30): the document_promotion decision record lives in the
     # same Postgres. Dormant on an unset DSN; `promotion.act` then refuses 503 naming the ledger.
     try:
@@ -270,15 +696,18 @@ async def lifespan(application: FastAPI):
         #   authority : the caller's own, re-checked per ask, exactly as the portfolio verb
         #   amplifies : one request -> N sequential governed asks. Declared `slow`.
         _ratified = ratified_template_ids()
+        # ONE DESCRIPTION, TWO REGISTRATIONS: one verb keeps one meaning in whichever cell it
+        # is registered, so the second registration below reads this same variable.
+        _seed_canvas_description = (
+            "Compose a canvas from a RATIFIED TEMPLATE by asking that template's panels "
+            "through the governed interview path and returning their artifact ids in "
+            "slot order. This BUILDS A BOARD; it does not answer a question. A request "
+            "for ONE measure is that measure's verb, not this one. `template_id` names "
+            "which board: " + ", ".join(_ratified) + "."
+        )
         _register_verb(
             name="cortex_bff_orchestration",
-            description=(
-                "Compose a canvas from a RATIFIED TEMPLATE by asking that template's panels "
-                "through the governed interview path and returning their artifact ids in "
-                "slot order. This BUILDS A BOARD; it does not answer a question. A request "
-                "for ONE measure is that measure's verb, not this one. `template_id` names "
-                "which board: " + ", ".join(_ratified) + "."
-            ),
+            description=_seed_canvas_description,
             verb="mesh:seedCanvas",
             input_uri="http://invincible-agent/idp#Portfolio",
             output_uri="http://invincible-agent/mesh#CanvasSeedResult",
@@ -304,6 +733,42 @@ async def lifespan(application: FastAPI):
                 "description": "Which ratified canvas template to build.",
             }],
         )
+        # ── THE SAME VERB IN THE PROGRAM-FINANCE CELL ──────────────────────────────────
+        #
+        # The portfolio registration above is typed `idp#Portfolio` and owned by
+        # PORTFOLIO_LEAD, so from the finance cell the chat grounded `mesh:finProgramBrief`
+        # instead and from any other cell nothing grounded. This one is typed by the class
+        # the finance board is ABOUT (`fin#Program`), so "make me a finance canvas" routes
+        # here and elicits "which program?" through the same disposition as every other verb.
+        #
+        # `name` MUST differ from the first registration's: the stale-row sweep deletes rows
+        # that share a tool_urn and verb but have a different input_uri, so a shared name
+        # would have each registration sweep the other's row away.
+        #
+        # THE SLOTS ARE DERIVED from the ratified templates and `SHARED_SLOT_REFERENTS`
+        # (`canvas_template.seed_canvas_referent_slots`), the same builder the 409's ask reads.
+        from .canvas_template import REFERENT_CELLS, seed_canvas_referent_slots
+
+        _fin_program = "http://invincible-agent/fin#Program"
+        _fin_persona, _fin_domain = REFERENT_CELLS[_fin_program]
+        _register_verb(
+            name="cortex_bff_orchestration_program_finance",
+            description=_seed_canvas_description,
+            verb="mesh:seedCanvas",
+            input_uri=_fin_program,
+            output_uri="http://invincible-agent/mesh#CanvasSeedResult",
+            endpoint_url=f"{_bff_base}/canvas/seed",
+            verb_synonyms=[
+                "make me a finance canvas",
+                "build the program finance board",
+                "set up a program finance canvas",
+                "make me a finance board for a program",
+            ],
+            owner_persona=_fin_persona,
+            domains=[_fin_domain],
+            cost_class="slow",
+            slots=seed_canvas_referent_slots(),
+        )
     except Exception as _exc:  # pragma: no cover
         # Best-effort, matching the fleet's posture: a failed registration means
         # the phrase is not routable yet, NOT that the BFF is down. Every other
@@ -315,7 +780,24 @@ async def lifespan(application: FastAPI):
             type(_exc).__name__, _exc,
         )
 
-    yield
+    _watchdog = _start_ingest_watchdog()
+    # Ruling Q9 (2026-10-19): replay the stored frontend menus into the graph. A background
+    # task: it must not hold startup or /health, and its exceptions never escape.
+    _menu_replay = asyncio.create_task(_replay_frontend_menus())
+    try:
+        yield
+    finally:
+        _menu_replay.cancel()
+        try:
+            await _menu_replay
+        except asyncio.CancelledError:
+            pass
+        if _watchdog is not None:
+            _watchdog.cancel()
+            try:
+                await _watchdog
+            except asyncio.CancelledError:
+                pass
 
 
 # ── App ───────────────────────────────────────────────────
@@ -585,12 +1067,17 @@ async def get_mesh_config(current_user: User = Depends(get_current_user)):
 # step 3 wired), `cells` is empty and `source` reflects the JWT-legacy
 # path. The picker (step 5) treats an empty cells list as "no picker
 # — the caller is on the legacy persona-in-JWT posture."
-@app.get("/me/entitlements")
+@app.get("/me/entitlements", tags=[INGEST_V1_TAG], responses={200: {"model": Entitlements}})
 async def get_me_entitlements(current_user: User = Depends(get_current_user)):
-    """Return the current user's (persona, domain) entitlement matrix."""
+    """Return the current user's (persona, domain) entitlement matrix.
+
+    `authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop
+    echoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it
+    as `on_behalf_of` is refused `not_a_delegate` (2026-10-21)."""
     ent = current_user.entitlements
     return {
         "user_id": current_user.id,
+        "authz_id": current_user.authz_id,
         "email": current_user.email,
         "cells": [
             {"persona": c.persona, "domain": c.domain} for c in ent.cells
@@ -615,6 +1102,9 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
 # in sandbox, employee-ID at work-deploy) — display uses .email, authz uses authz_id.
 
 from pydantic import BaseModel as _BaseModel  # noqa: E402
+from pydantic import BeforeValidator as _BeforeValidator, StrictFloat as _StrictFloat  # noqa: E402
+from pydantic import StrictInt as _StrictInt  # noqa: E402
+from typing import Annotated as _Annotated  # noqa: E402
 
 
 class HumanTaskRegisterRequest(_BaseModel):
@@ -641,11 +1131,188 @@ class HumanTaskRegisterRequest(_BaseModel):
     # DECLARED HERE because this model drops unknown fields silently: undeclared, an exclusion
     # sent by the runner would vanish and the dropper would be routed the task.
     excludes: list[str] = []
+    # The case this task belongs to (architect ruling 2026-10-17): a holder of the task may read
+    # the case. Blank is absent. DECLARED HERE because this model drops unknown fields silently.
+    case_id: Optional[str] = None
+
+    @field_validator("case_id", mode="before")
+    @classmethod
+    def _blank_case_id_is_absent(cls, v):
+        if isinstance(v, str):
+            return v.strip() or None
+        return v
+
+
+#: The grouped review's reject codes ARE the promotion's (architect ruling 2026-10-19: "the
+#: four-code ruling applies to every reject surface"), in `PROMOTION_REJECT_CODES`'s order --
+#: cortex's parity seal reads this literal and the Literal below, in order.
+_GROUPED_REJECT_CODES = ("not_a_notice", "unreadable", "parts_unusable", "duplicate")
+#: The pre-ruling names (`parts_list_unusable`, `superseded_or_duplicate`) were aliased onto these
+#: for the transition and are REFUSED since 199 (architect 2026-10-20: "drop the reject-code
+#: aliases (cortex already sends the four)").
+
+
+def _nonblank(v: str) -> str:
+    if not isinstance(v, str) or not v.strip():
+        raise ValueError("must be a non-empty string")
+    return v
+
+
+class _RowEditsModel(_BaseModel):
+    model_config = {"extra": "forbid"}
+
+
+class EvidenceRef(_BaseModel):
+    """Where on the source page a steward's edit is evidenced: the SDK's `EvidenceRef{page, bbox}`
+    (iagent-mesh-sdk lane/ca-0.9.11 provenance.py) plus an optional `note` (architect 2026-10-21;
+    the pre-ruling free string is now `note`). The wire also still takes that bare string until
+    cortex ships the struct; `_wire_evidence_ref` validates both.
+
+    Architect ruling (spec 205): "bbox may be null; page may not. Null bbox means 'stated on this
+    page, no box we can draw'. The card jumps to the page with no outline and labels it 'on page N,
+    no box'. Derived fields carry no evidence_ref at all." So `page` is required and `bbox` is
+    `None` (or omitted, which is the same) or four finite numbers."""
+    model_config = {"extra": "forbid", "frozen": True}
+    page: _StrictInt = Field(ge=1)
+    bbox: Optional[list[_StrictInt | _Annotated[_StrictFloat, Field(allow_inf_nan=False)]]] = Field(
+        default=None, min_length=4, max_length=4)
+    note: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _note(self):
+        if self.note is not None:
+            _nonblank(self.note)
+        return self
+
+
+def _wire_evidence_ref(v):
+    """The wire check for an evidence_ref: the struct (validated by `EvidenceRef`) or the legacy
+    non-blank string; anything else is a 422. The value is kept in the form it arrived in -- the
+    act normalizes it with `steward_correction.normalize_evidence_ref`, the same function the
+    runner applies to whatever it is forwarded."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        return _nonblank(v)
+    if isinstance(v, dict):
+        ref = EvidenceRef.model_validate(v)
+        return {"page": ref.page, "bbox": list(ref.bbox) if ref.bbox is not None else None,
+                **({"note": ref.note.strip()} if ref.note is not None else {})}
+    raise ValueError("an evidence_ref is {page, bbox, note?} or a non-blank string")
+
+
+_WireEvidenceRef = _Annotated[Optional[Any], _BeforeValidator(_wire_evidence_ref)]
+
+
+class DeletedRow(_RowEditsModel):
+    mpn: str
+    reason: str   # a delete needs a reason
+    evidence_ref: _WireEvidenceRef = None   # {page, bbox, note?} | non-blank str; optional until cortex-ui ships it
+
+
+class AddedRow(_RowEditsModel):
+    mpn: str
+    disposition: str
+    reason: str
+    evidence: str
+    evidence_ref: _WireEvidenceRef = None
+
+
+class CorrectedRow(_RowEditsModel):
+    mpn: str            # the EXTRACTED mpn -- identity never moves
+    corrected_mpn: str
+    evidence: str
+    evidence_ref: _WireEvidenceRef = None
+
+
+class RowEdits(_RowEditsModel):
+    """Steward row edits on a grouped-review approval (architect ruling 2026-10-10). The workflow's
+    `steward_correction.validate_row_edits` restates every rule against the server-authored batch;
+    this is the wire half, so a bad payload is a 422 before it reaches Restate. It is also the
+    document_promotion wire (carried on a `promoted` decision, server-flagged by
+    IAGENT_PROMOTION_ROW_EDITS)."""
+    deleted: list[DeletedRow] = []
+    added: list[AddedRow] = []
+    corrected: list[CorrectedRow] = []
+
+    @model_validator(mode="after")
+    def _rules(self):
+        for r in self.deleted:
+            _nonblank(r.mpn); _nonblank(r.reason)
+        for r in self.added:
+            for v in (r.mpn, r.disposition, r.reason, r.evidence):
+                _nonblank(v)
+        for r in self.corrected:
+            for v in (r.mpn, r.corrected_mpn, r.evidence):
+                _nonblank(v)
+            if r.corrected_mpn.strip().lower() == r.mpn.strip().lower():
+                raise ValueError(f"corrected_mpn must differ from mpn for {r.mpn!r} (ignoring case)")
+        seen: set = set()
+        for r in list(self.deleted) + list(self.corrected):
+            k = r.mpn.strip().lower()
+            if k in seen:
+                raise ValueError(f"mpn {r.mpn!r} appears more than once across deleted/corrected")
+            seen.add(k)
+        return self
+
+
+class HeaderEdit(_RowEditsModel):
+    """A steward correction of one header field of a promotion (ruling 10-20, Q8 amended), on the
+    same wire and flag as row_edits."""
+    field: Literal["mfr", "notice_id", "notice_date"]
+    value: str
+    evidence_ref: _WireEvidenceRef      # required: {page, bbox, note?} | non-blank str
+    reason: str
+
+    @model_validator(mode="after")
+    def _rules(self):
+        if self.evidence_ref is None:
+            raise ValueError("a header edit needs an evidence_ref")
+        for v in (self.value, self.reason):
+            _nonblank(v)
+        return self
+
+
+def _promotion_row_edits_enabled() -> bool:
+    """IAGENT_PROMOTION_ROW_EDITS: ON only for the exact string "true" (after strip, lowercased).
+    Default OFF (architect ruling 2026-10-18: server-flagged off until one live correction is proved)."""
+    return os.environ.get("IAGENT_PROMOTION_ROW_EDITS", "").strip().lower() == "true"
 
 
 class HumanTaskActRequest(_BaseModel):
     decision: str  # "approved" | "rejected"
     comment: str = ""
+    # Grouped review only. A narrow REJECT (wrong document / not a notice / duplicate) names why;
+    # REQUIRED for a grouped_review reject (checked at the route, where the kind is known).
+    reason_code: Optional[Literal["not_a_notice", "unreadable", "parts_unusable", "duplicate"]] = None
+    # Grouped review approval, or document promotion `promoted` (flag-gated at the route): steward
+    # deletes / additions / corrections, each with evidence.
+    row_edits: Optional[RowEdits] = None
+    # Document promotion `promoted` only (same flag as row_edits): header-field corrections.
+    header_edits: Optional[list[HeaderEdit]] = None
+    # document_empty_confirm `has_parts` only (spec 208): the page the steward points at.
+    page: Optional[_StrictInt] = None
+
+    @model_validator(mode="after")
+    def _verb_fields(self):
+        if self.page is not None and self.decision != "has_parts":
+            raise ValueError("page is only valid with decision='has_parts'")
+        if self.reason_code is not None and self.decision != "rejected":
+            raise ValueError("reason_code is only valid with decision='rejected'")
+        if self.row_edits is not None and self.decision not in ("approved", "promoted"):
+            raise ValueError("row_edits is only valid with decision='approved' (grouped review) "
+                             "or 'promoted' (document promotion)")
+        if self.header_edits is not None and not self.header_edits:
+            self.header_edits = None
+        if self.header_edits is not None:
+            if self.decision != "promoted":
+                raise ValueError("header_edits is only valid with decision='promoted' "
+                                 "(document promotion)")
+            _fields = [h.field for h in self.header_edits]
+            if len(set(_fields)) != len(_fields):
+                raise ValueError("header_edits names a field more than once")
+        return self
+
     # PCN grouped review only: optional per-part disposition overrides the reviewer
     # changed from the proposal, {mpn: {disposition, reason}}. Absent/empty = accept-all
     # (every part takes its proposed disposition). Ignored for non-grouped-review kinds.
@@ -687,6 +1354,7 @@ async def register_human_task(
                 workflow_id=req.workflow_id, subject_ref=req.subject_ref,
                 payload=req.payload, workflow_service=req.workflow_service,
                 promise_name=req.promise_name, excludes=req.excludes,
+                case_id=req.case_id,
             )
         )
     except human_tasks.HumanTaskConfigError as exc:
@@ -846,7 +1514,7 @@ async def file_triage_task(
             "recipients": len(result.get("recipients", []))}
 
 
-@app.get("/me/human_tasks")
+@app.get("/me/human_tasks", tags=[INGEST_V1_TAG], responses={200: {"model": HumanTasksListing}})
 async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
     """The caller's pending queue (REST initial-load; the live path is the
     Electric subscription). Filtered by recipient_id=caller.authz_id — the SAME key
@@ -930,7 +1598,7 @@ async def get_templates(current_user: User = Depends(get_current_user)):
     """
     from starlette.concurrency import run_in_threadpool
     from .canvas_template import (
-        load_template, ratified_template_ids, template_ref,
+        SHARED_SLOT_REFERENTS, load_template, ratified_template_ids, template_ref,
     )
 
     def _read():
@@ -956,6 +1624,20 @@ async def get_templates(current_user: User = Depends(get_current_user)):
                 "template_ref": template_ref(t),
                 "panels": len(t.panels),
                 "shared_slots": [sl.name for sl in (t.shared_slots or [])],
+                # `shared_slots` (names) stays as cortex reads it; this sibling says which of
+                # them the server can ASK about, so a picker can offer the row and expect a 409
+                # carrying an ask instead of only labelling it "needs a binding". No
+                # enumeration happens here: `askable` is a fact about the declaration.
+                "shared_slot_detail": [
+                    {
+                        "name": sl.name,
+                        "param": sl.bind_as,
+                        "required": sl.required,
+                        "consumed": any(sl.name in p.consumes for p in t.panels),
+                        "askable": sl.bind_as in SHARED_SLOT_REFERENTS,
+                    }
+                    for sl in (t.shared_slots or [])
+                ],
             })
         return rows, broken
 
@@ -1016,6 +1698,10 @@ class ReviewStartRequest(_BaseModel):
     # The doc-tools extraction trace id (review.json.trace_id), forwarded so the review
     # composition nests under the SAME Langfuse trace as the extraction (ADR-0038).
     trace_id: Optional[str] = None
+    # The ingest row this notice came through (`sha256:<64 hex>`), when the extraction names its
+    # source document. The ONLY key the narrow reject may use to mark an ingest row: the
+    # extracted doc_id (`notice_id`) is LLM-derived and never matches a row id.
+    ingest_id: Optional[str] = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     # ── ADMISSION FACTS: REMOVED FROM THE CONTRACT (ADR-0034 phase 1.3, consumer half) ────────
     # `format_fingerprint` / `pipeline_version` were briefly accepted here as caller-supplied
     # facts. They are gone: ReviewStarter DERIVES both from the artifact `artifact_uri` names.
@@ -1080,6 +1766,56 @@ def _ingress_idempotency_key(request_key: Optional[str], approver: str) -> Optio
 _PCN_REVIEW_BAD_REQUEST = {"REVIEW_STATE_UNSOURCED", "RULESET_INVALID", "RULES_NOT_FOUND"}
 
 
+def _review_on_behalf_of(artifact_uri: str) -> str:
+    """The PERSON a review's lookups run for (ruling (a), 2026-10-10): the dropper of the ingest the
+    reviewed artifact came from, DERIVED FROM THE ARTIFACT and never read from the body. doc-tools
+    writes `ingest_id` into `manifest.json`, the sibling of the review.json `artifact_uri` names; the
+    ingest's status row holds its dropper of record in `on_behalf_of` (the `actor` the drop route
+    also stamps as the IngestArtifact's `dropped_by_authz_id`). So a caller can name WHICH artifact,
+    and the artifact names whose review it is: one artifact cannot be composed under another
+    ingest's dropper.
+
+    "" (no person) when there is honestly none: no pointer, no manifest, a manifest without an
+    `ingest_id`, or an ingest the BFF never recorded. An OUTAGE is not "no person": a store that
+    does not answer raises 503 rather than composing under the seeded-only view."""
+    from urllib.parse import urlparse
+    from . import ingest_status
+
+    u = urlparse(artifact_uri or "")
+    key = u.path.lstrip("/")
+    if u.scheme != "s3" or not u.netloc or "/" not in key:
+        return ""
+    manifest_key = key.rsplit("/", 1)[0] + "/manifest.json"
+    try:
+        raw = _build_s3_client().get_object(Bucket=u.netloc, Key=manifest_key)["Body"].read()
+    except Exception as exc:  # noqa: BLE001
+        code = ""
+        resp = getattr(exc, "response", None)
+        if isinstance(resp, dict):
+            code = str((resp.get("Error") or {}).get("Code") or "")
+        if code in ("NoSuchKey", "404") or "NoSuchKey" in str(exc):
+            return ""
+        raise HTTPException(status_code=503, detail={
+            "error": "artifact_store_unreachable",
+            "message": f"the artifact store did not answer for the manifest beside {artifact_uri!r}: "
+                       f"{type(exc).__name__}: {exc}"})
+    try:
+        manifest = json.loads(raw)
+    except ValueError:
+        return ""
+    ingest_id = manifest.get("ingest_id") if isinstance(manifest, dict) else None
+    if not isinstance(ingest_id, str) or not ingest_id:
+        return ""
+    try:
+        row = ingest_status.get_row(ingest_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail={
+            "error": "ingest_status_unreachable",
+            "message": f"the ingest status store did not answer for {ingest_id!r}: "
+                       f"{type(exc).__name__}: {exc}"})
+    return str((row or {}).get("on_behalf_of") or "")
+
+
 @app.post("/reviews")
 async def start_review(
     req: ReviewStartRequest,
@@ -1128,6 +1864,7 @@ async def start_review(
     # attempt died unable to ever produce a review again. Live at work 2026-07-31: eleven
     # notices, eleven `STARTED` logs, one review.
     body["request_key"] = req.request_key or ""
+    body["ingest_id"] = req.ingest_id or ""   # rebuilding hop: absent here = absent downstream
     body["trace_id"] = req.trace_id or ""       # extraction trace id -> ReviewStarter adopts it (ADR-0038)
     # THE ARTIFACT'S LOCATION — a DIFFERENT field from the identity above, and the entire admission
     # contract. This is a REBUILDING HOP (the body is hand-enumerated twice over), which is exactly
@@ -1135,6 +1872,10 @@ async def start_review(
     # field that does not appear on this line does not exist downstream. Pinned by
     # tests/test_review_payload_passthrough.py.
     body["artifact_uri"] = req.artifact_uri or ""
+    # THE PERSON the composition's lookups run for: derived from the artifact above, never from the
+    # body (ruling (a)). ReviewStartRequest declares no such field, so a caller cannot assert one.
+    from starlette.concurrency import run_in_threadpool
+    body["on_behalf_of"] = await run_in_threadpool(_review_on_behalf_of, body["artifact_uri"])
     # ADMISSION FACTS ARE NO LONGER FORWARDED (ADR-0034 phase 1.3, consumer half). ReviewStarter
     # DERIVES `format_fingerprint` and `pipeline_version` from the artifact `artifact_uri` points at,
     # so a caller can no longer assert the trust key and thereby choose its own supervision level.
@@ -1609,6 +2350,7 @@ async def plan_measure(
     fn: str,
     body: PlanMeasureBody,
     x_frontend_id: Optional[str] = Header(default=None, alias="X-Frontend-Id"),
+    x_frontend_version: Optional[str] = Header(default=None, alias="X-Frontend-Version"),
     current_user: User = Depends(get_current_user),
 ):
     try:
@@ -1629,7 +2371,8 @@ async def plan_measure(
         # does not exist.
         raise HTTPException(status_code=422, detail=rr.json().get("detail"))
     if rr.status_code >= 400:
-        raise HTTPException(status_code=rr.status_code, detail=rr.json())
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, rr.json()))
 
     out = rr.json()
     return {
@@ -1640,6 +2383,7 @@ async def plan_measure(
         "state_version": out.get("state_version"),
         "rows": out.get("rows"),
         "frontend_id": x_frontend_id,
+        "frontend_version": x_frontend_version,
     }
 
 
@@ -1680,7 +2424,8 @@ async def plan_state_version(
         # not_in_model refusal on the measure route one function up.
         raise HTTPException(status_code=404, detail=rr.json().get("detail", state_ref))
     if rr.status_code >= 400:
-        raise HTTPException(status_code=rr.status_code, detail=rr.json())
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, rr.json()))
 
     out = rr.json()
     return {"state_ref": out.get("state_ref", state_ref), "state_version": out.get("version")}
@@ -1756,6 +2501,9 @@ def _shape_export_package_response(
             "reason": out.get("reason"),
             "outcome": out.get("outcome"),
         }
+        if "refused_answers" in out:
+            # THE CANVAS ANSWERS REFUSED BY NAME (RULED 10-16 Q1); passed through, not interpreted.
+            refusal["refused_answers"] = out["refused_answers"]
         if out.get("outcome") == "unavailable":
             # THE ENGINE COULD NOT BUILD, which is not an answer about this caller's export: a
             # missing runtime, an unpinned loader, a dirty algorithm. engine-cost says so in a
@@ -1810,6 +2558,24 @@ class ExportPackageRequest(_BaseModel):
     # `canvas_seed`), because `validate_bindings` and `panel_dispatch` are the identical
     # functions that call reads. Ignored on the cost path.
     bindings: Optional[dict[str, Any]] = None
+    # THE DATE THE PACKAGE CLAIMS, `YYYY-MM-DD`. Absent, `export_package` takes the request date
+    # once and forwards it to every engine call, so identical input gives an identical page.
+    as_of: Optional[str] = None
+
+    @field_validator("as_of")
+    @classmethod
+    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+            raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
+        _date.fromisoformat(v)  # a ValueError here is a 422 too
+        return v
+
+
+def _export_request_date() -> str:
+    """TODAY (UTC), AS THE DATE A REQUEST CLAIMS. One place, so a test can pin it."""
+    return datetime.now(timezone.utc).date().isoformat()
 
 
 def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]:
@@ -1857,6 +2623,142 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
     return resolved
 
 
+def _partition_export_answers(resolved: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Split a board's resolved answers by the engine that exports them.
+
+    "fin" claims an answer iff its verb is one engine-fin SERVES (`VERB_TO_FN`, derived, not
+    typed; imported lazily like `_fin_export_recipients_for`'s `export`). "cost" takes EVERY
+    OTHER answer, including verb None and unknown verbs. WHY: the ad-hoc path is engine-cost's
+    today, and engine-cost's `canvas.resolve` already refuses an unknown verb BY NAME; a third
+    exporting engine adds its own claim here.
+
+    Order: engines by first appearance on the board; answers within an engine in board order.
+    """
+    from agent_fleet.cost_agent.canvas import _verb_local
+    from agent_fleet.finance_agent.main import VERB_TO_FN
+    fin_verbs = {_verb_local(v) for v in VERB_TO_FN} - {None}
+    parts: dict[str, list[dict]] = {}
+    for ans in resolved:
+        local = _verb_local(ans.get("verb_iri"))
+        engine = "fin" if local in fin_verbs else "cost"
+        parts.setdefault(engine, []).append(ans)
+    return list(parts.items())
+
+
+def _fin_ad_hoc_refusal_section(answer_ids: list[str], recipient_scope: str) -> dict:
+    """The fin section of a mixed board: always a refusal, made HERE without calling engine-fin.
+
+    WHY: RULED 2026-10-10 (Q1): engine-fin exports ratified templates only -- that is the
+    finance control, not a gap -- so an ad-hoc finance card is refused, locally, without
+    calling engine-fin. (Q2): the section goes to the board's recipient and states "not a
+    ratified template", nothing else (no ids, no template name, no hint). (Q3): it lives in the
+    API response / exporter's view, never in the customer page. Sealed by
+    `tests/test_a_mixed_board_exports_per_engine.py::test_engine_fin_takes_ratified_templates_only`
+    and `::test_the_fin_section_states_not_a_ratified_template_and_nothing_else`.
+
+    RULED 2026-10-16: reason_code added; Q2's "nothing else" governs the prose.
+    """
+    return {
+        "engine": "fin",
+        "answers": answer_ids,
+        "export_id": None,
+        "status": "failed",
+        "recipient_scope": recipient_scope,
+        "outcome": "not_in_model",
+        "reason_code": "not_a_ratified_template",
+        "reason": "not a ratified template",
+    }
+
+
+def _refused_entries(engine: str, refused_answers: list[dict], recipient_scope: str) -> list[dict]:
+    """Each refused answer of an engine as a `failed` `documents[]` entry (RULED 2026-10-16:
+    "the refused entries go in documents[] per engine with reason_code and the refusal prose").
+
+    Items are grouped by `reason_code`, in order of each code's first appearance; a group's
+    `answers` are its ids in board order. Every item of one code carries the same constant
+    reason, so the group's reason is the first item's. Only ever `status: "failed"`: cortex's
+    reader drops the whole response on any other status. Never rendered on the customer page.
+    """
+    groups: dict[str, dict] = {}
+    for item in refused_answers:
+        code = item.get("reason_code")
+        g = groups.get(code)
+        if g is None:
+            g = groups[code] = {
+                "engine": engine,
+                "answers": [],
+                "export_id": None,
+                "status": "failed",
+                "recipient_scope": recipient_scope,
+                "outcome": "not_in_model",
+                "reason_code": code,
+                "reason": item.get("reason"),
+            }
+        g["answers"].append(item.get("answer_id"))
+    return list(groups.values())
+
+
+async def _call_engine_cost_package(
+    params: dict, bearer: str, *, recipient_scope: str, template_id: Optional[str],
+) -> dict:
+    """POST engine-cost's `package_export` and shape the answer. Raises HTTPException on an
+    unreachable engine, an HTTP refusal, or an in-band `unavailable` -- the single-engine path
+    lets that propagate; the per-engine split catches it into a section."""
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
+            rr = await client.post(
+                f"{_ENGINE_COST_URL}/measure/package_export",
+                json={"params": params},
+                # THE PERSON's identity, never a service identity (seed.py's RECIPIENT_READERS
+                # comment: no svc: reader is listed, and that is the confused-deputy argument
+                # applied here — a service calling on the caller's behalf must carry THAT
+                # caller's identity or refuse).
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "cost_engine_unreachable", "message": str(exc),
+        })
+
+    if rr.status_code >= 400:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, detail))
+
+    out = rr.json()
+    return _shape_export_package_response(
+        out, recipient_scope=recipient_scope, template_id=template_id,
+        extra={"lots_disclosed": out.get("lots_disclosed"), "sections": out.get("sections"),
+               **({"refused_answers": out["refused_answers"]} if out.get("refused_answers") is not None else {})},
+    )
+
+
+def _cost_refusal_section(exc: HTTPException, recipient_scope: str) -> dict:
+    """An engine-cost HTTPException as a refusal section, in `_shape_export_package_response`'s
+    in-band refusal shape. Not raised: on a mixed board the other engines still export."""
+    detail = exc.detail
+    outcome = "unavailable" if exc.status_code in (502, 503) else (
+        detail.get("outcome") if isinstance(detail, dict) else None
+    )
+    if isinstance(detail, dict) and detail.get("outcome") == "unavailable" and "reason" in detail:
+        reason = detail["reason"]
+    elif isinstance(detail, str):
+        reason = detail
+    else:
+        reason = json.dumps(detail, default=str)
+    return {
+        "export_id": None,
+        "status": "failed",
+        "recipient_scope": recipient_scope,
+        "reason": reason,
+        "outcome": outcome,
+    }
+
+
 @app.get("/export/package/recipients")
 async def export_package_recipients(current_user: User = Depends(get_current_user)):
     """The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller
@@ -1869,7 +2771,7 @@ async def export_package_recipients(current_user: User = Depends(get_current_use
 
 
 async def _export_package_from_template(
-    body: "ExportPackageRequest", request: Request, current_user: "User",
+    body: "ExportPackageRequest", request: Request, current_user: "User", as_of: str,
 ) -> dict:
     """ITEM 3's path: `body.template_id` names a ratified, packageable canvas template and
     `body.bindings` supplies its shared slots — the SAME shape `/canvas/seed` takes, because
@@ -1889,9 +2791,10 @@ async def _export_package_from_template(
     Only `program_finance` is wired to an engine today (engine-fin). A second packageable
     template would need its own dispatch here — this function does not invent one.
     """
+    from .authz.refusal import policy_refusal
     from .canvas_template import (
         UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, load_template,
-        panel_dispatch, ratified_template_ids, recipient_scope_for, template_ref,
+        panel_dispatch, ratified_template_ids, recipient_scope_for, slot_refusal, template_ref,
         validate_bindings,
     )
 
@@ -1921,7 +2824,9 @@ async def _export_package_from_template(
     except UnknownBinding as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except UnboundRequiredSlot as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        # A POLICY REFUSAL: it asks the caller to choose (`canvas_template.slot_refusal`).
+        raise policy_refusal("unbound_required_slot", status_code=409, message=str(exc),
+                             **slot_refusal(template, exc.slots))
 
     # `validate_bindings` already guarantees every slot this template's panels CONSUME is
     # bound, so `recipient_scope_for` cannot raise here in practice — this still catches it
@@ -1938,6 +2843,8 @@ async def _export_package_from_template(
             detail={
                 "reason": "recipient_scope_disagrees_with_canvas_audience",
                 "derived": recipient_scope,
+                "message": "the recipient_scope you sent disagrees with the one this canvas's "
+                           "audience derives; send the derived scope or omit it.",
             },
         )
 
@@ -1966,7 +2873,7 @@ async def _export_package_from_template(
         async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
             rr = await client.post(
                 f"{_ENGINE_FIN_URL}/package_export",
-                json={"recipient_scope": recipient_scope, "canvas": canvas},
+                json={"recipient_scope": recipient_scope, "canvas": canvas, "as_of": as_of},
                 headers={"Authorization": f"Bearer {bearer}"},
             )
     except Exception as exc:
@@ -1980,7 +2887,8 @@ async def _export_package_from_template(
             detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
         except Exception:
             detail = getattr(rr, "text", "engine refused")
-        raise HTTPException(status_code=rr.status_code, detail=detail)
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, detail))
 
     out = rr.json()
     return _shape_export_package_response(
@@ -2005,12 +2913,28 @@ async def export_package(
     which governs, and is refused rather than guessed at (422). Given `template_id`, this
     dispatches to `_export_package_from_template` (ITEM 3's path) and nothing below runs.
 
-    Absent `template_id`, four hard stops, in order, each refusing before the next is even
-    attempted:
+    Absent `template_id`, a request naming no answers (`answers` omitted or `[]`) is 400
+    `no_answers` (RULED 2026-10-17), BEFORE the recipient checks below: it is a shape fault,
+    refused ahead of entitlement, so a no-answers request with no recipient is a 400, not a 409.
+    The whole-program export through this route is gone.
+
+    Then four hard stops, in order, each refusing before the next is even attempted:
       1. no `recipient_scope` -> 409 (ADR-0047 §1: no default recipient)
       2. `recipient_scope` the caller may not export to -> 403 (see below)
       3. any canvas answer id that does not resolve -> 404, refused rather than dropped
       4. the engine unreachable, or the engine's own refusal, forwarded verbatim
+
+    A board that mixes engines' answers is SPLIT per engine (ruled 2026-10-09): `answers` are
+    partitioned by `_partition_export_answers` (engine-fin's verbs vs. everything else, which is
+    engine-cost's), each engine is given only its own, and when any engine-fin answer is
+    present the response is a 200 carrying `documents`, one section per engine: a refused engine
+    (engine-cost's refusal or unreachability, or engine-fin, which exports ratified templates
+    only -- RULED 2026-10-10 Q1, the finance control) renders as a refusal section and the others still export. Hard stop 4 then
+    applies to a section, not the response. RULED 2026-10-16: a refused answer is its own
+    `failed` entry in `documents[]` with a `reason_code` and the refusal prose (never on the
+    customer page); a cost-only board switches to `documents[]` only when engine-cost refused
+    something, and otherwise answers exactly as before. The top-level `reason` counts answers
+    ("r of n answers refused"), not engines.
     """
     if body.template_id and body.answers:
         raise HTTPException(
@@ -2022,8 +2946,18 @@ async def export_package(
             ),
         )
 
+    # RESOLVED ONCE, then forwarded on every engine call below.
+    as_of = body.as_of or _export_request_date()
+
     if body.template_id:
-        return await _export_package_from_template(body, request, current_user)
+        return await _export_package_from_template(body, request, current_user, as_of)
+
+    # RULED 2026-10-17: a request naming no answers (and no template) is refused. An empty
+    # list used to export the recipient's whole program -- a disclosure path nothing in the
+    # UI can reach (cortex-ui disables the button on an empty board). It is a shape fault, so
+    # it comes before the entitlement checks (409/403), the canvas's own order.
+    if not body.answers:
+        raise HTTPException(status_code=400, detail={"reason": "no_answers"})
 
     options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
 
@@ -2031,7 +2965,9 @@ async def export_package(
     if not recipient_scope:
         raise HTTPException(
             status_code=409,
-            detail={"reason": "recipient_required", "options": options},
+            detail={"reason": "recipient_required", "options": options,
+                    "message": "name the recipient this package is for (recipient_scope); "
+                               "the options are listed."},
         )
 
     if recipient_scope not in _export_recipients_for(current_user):
@@ -2047,49 +2983,73 @@ async def export_package(
             },
         )
 
-    canvas = None
-    if body.answers:
-        resolved = _resolve_export_answers(
-            [a.artifact_id for a in body.answers], current_user.id
-        )
-        canvas = {"answers": resolved}
-    # Empty answers -> no "canvas" key at all: the verb then exports the recipient's whole
-    # program, same as it did before canvases existed.
-
-    params: dict = {"recipient_scope": recipient_scope}
-    if canvas is not None:
-        params["canvas"] = canvas
+    # ALL ids resolve (404/503) BEFORE any engine is called or the board is split.
+    resolved = _resolve_export_answers(
+        [a.artifact_id for a in body.answers], current_user.id
+    )
+    parts: list[tuple[str, list[dict]]] = _partition_export_answers(resolved)
 
     bearer = _user_bearer(request)
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
-            rr = await client.post(
-                f"{_ENGINE_COST_URL}/measure/package_export",
-                json={"params": params},
-                # THE PERSON's identity, never a service identity (seed.py's RECIPIENT_READERS
-                # comment: no svc: reader is listed, and that is the confused-deputy argument
-                # applied here — a service calling on the caller's behalf must carry THAT
-                # caller's identity or refuse).
-                headers={"Authorization": f"Bearer {bearer}"},
-            )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail={
-            "error": "cost_engine_unreachable", "message": str(exc),
-        })
 
-    if rr.status_code >= 400:
-        try:
-            body_json = rr.json()
-            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
-        except Exception:
-            detail = getattr(rr, "text", "engine refused")
-        raise HTTPException(status_code=rr.status_code, detail=detail)
+    has_fin = any(engine == "fin" for engine, _ in parts)
+    cost_first: Optional[dict] = None
+    if not has_fin:
+        # ONLY engine-cost's answers: today's path and today's response, unchanged
+        # -- unless the engine REFUSED some of them (RULED 2026-10-16), below.
+        params: dict = {"recipient_scope": recipient_scope, "as_of": as_of}
+        params["canvas"] = {"answers": parts[0][1]}
+        cost_first = await _call_engine_cost_package(
+            params, bearer, recipient_scope=recipient_scope, template_id=body.template_id,
+        )
+        if not cost_first.get("refused_answers"):
+            return cost_first
 
-    out = rr.json()
-    return _shape_export_package_response(
-        out, recipient_scope=recipient_scope, template_id=body.template_id,
-        extra={"lots_disclosed": out.get("lots_disclosed"), "sections": out.get("sections")},
-    )
+    documents: list[dict] = []
+    for engine, answers in parts:
+        ids = [a["id"] for a in answers]
+        if engine == "fin":
+            documents.append(_fin_ad_hoc_refusal_section(ids, recipient_scope))
+            continue
+        if cost_first is not None:
+            section = cost_first
+        else:
+            try:
+                section = await _call_engine_cost_package(
+                    {"recipient_scope": recipient_scope, "canvas": {"answers": answers},
+                     "as_of": as_of},
+                    bearer, recipient_scope=recipient_scope, template_id=None,
+                )
+            except HTTPException as exc:
+                section = _cost_refusal_section(exc, recipient_scope)
+        refused_items = section.get("refused_answers") or []
+        if refused_items:
+            if section["status"] == "exists":
+                refused_ids = {i.get("answer_id") for i in refused_items}
+                rest = {k: v for k, v in section.items() if k != "refused_answers"}
+                documents.append({
+                    "engine": engine,
+                    "answers": [i for i in ids if i not in refused_ids],
+                    **rest,
+                })
+            documents.extend(_refused_entries(engine, refused_items, recipient_scope))
+            continue
+        doc = {"engine": engine, "answers": ids, **section}
+        if doc["status"] == "failed":
+            oc = doc.get("outcome")
+            doc["reason_code"] = oc if isinstance(oc, str) and oc else "engine_refused"
+        documents.append(doc)
+
+    ok = [d["status"] == "exists" for d in documents]
+    status = "exists" if all(ok) else ("partial" if any(ok) else "failed")
+    refused = sum(len(d["answers"]) for d in documents if d["status"] != "exists")
+    return {
+        "export_id": None,
+        "status": status,
+        "recipient_scope": recipient_scope,
+        "reason": None if not refused else f"{refused} of {len(body.answers)} answers refused",
+        "template_id": None,
+        "documents": documents,
+    }
 
 
 @app.get("/export/package/artifact/{filename}")
@@ -2161,7 +3121,8 @@ async def export_package_artifact(
             detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
         except Exception:
             detail = getattr(rr, "text", "engine refused")
-        raise HTTPException(status_code=rr.status_code, detail=detail)
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, detail))
 
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     etag = rr.headers.get("etag") or rr.headers.get("ETag")
@@ -2245,7 +3206,8 @@ async def _engine_p_write(path: str, payload: dict) -> dict:
             detail = body.get("detail", body) if isinstance(body, dict) else body
         except Exception:
             detail = getattr(rr, "text", "engine refused")
-        raise HTTPException(status_code=rr.status_code, detail=detail)
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, detail))
     return rr.json()
 
 
@@ -2729,15 +3691,204 @@ class CanvasSeedRequest(_BaseModel):
     `active_persona`/`active_domains` ride through to `/interview/stream` UNCHANGED — `None`
     lets the stream fall back to the caller's own default cell exactly as a hand-typed turn
     would, rather than this route inventing a cell on the caller's behalf.
+
+    `params`, `user_persona` AND `domain` ARE THE SUPERVISOR'S DISPATCH FIELDS. A bound verb is
+    dispatched by POSTing its bound slots under `params` plus the caller's chosen cell; this
+    model declared none of them, so pydantic DROPPED them silently and a chat-routed seedCanvas
+    lost its `template_id` and built the portfolio board. `canvas_template.fold_dispatch_params`
+    reads them now.
     """
     canvas_type: str = "portfolio_planning"
     template_id: Optional[str] = None
     bindings: Optional[dict[str, str]] = None
     active_persona: Optional[str] = None
     active_domains: Optional[list[str]] = None
+    params: Optional[dict[str, Any]] = None
+    user_persona: Optional[str] = None
+    domain: Optional[str] = None
 
 
-@app.post("/canvas/seed")
+# ── The /canvas/seed response bodies, DECLARED FOR THE OPENAPI ONLY ───────────────────────
+#
+# The route wires these through `responses=`, never `response_model=`: `response_model` filters
+# and serializes the body, which would add `template_id: null` to the partial and empty returns
+# and break the ruling that those stay three fields. Keys below are derived from the producers:
+# `iagent_pure.slot_disposition.ask_card`, `_canvas_seed_ask`, and `canvas_template.policy_hint`.
+class CanvasSeedResponse(_BaseModel):
+    artifact_ids: list[str] = Field(description="Slot-ordered ids; empty on a partial or empty seed.")
+    seeded: int = Field(description="Panels seeded.")
+    total: int = Field(description="Panels the template declares.")
+    template_id: Optional[str] = Field(
+        default=None,
+        description="Present on full success only; ABSENT (not null) on a partial or empty seed.",
+    )
+
+
+class CanvasSeedPolicyCell(_BaseModel):
+    persona: str
+    domain: str
+
+
+class CanvasSeedPolicy(_BaseModel):
+    cell: CanvasSeedPolicyCell = Field(description="The cell that owns the referent.")
+    groups: list[str] = Field(description="Groups in policy/groups.yaml that grant the cell.")
+    repair: Literal["switch_cell", "grant_member", "join_group", "declare_group"]
+    message: str
+
+
+class CanvasSeedAskOption(_BaseModel):
+    value: str
+    label: str
+
+
+class CanvasSeedAskStructuredData(_BaseModel):
+    slot: Optional[str] = None
+    options: list[CanvasSeedAskOption]
+    option_source: str
+    free_text_reason: Optional[str] = None
+    total_count: int
+    scoped_by: list[str]
+    bound_slots_offered: list[str]
+    already_known: dict[str, Any]
+
+
+class CanvasSeedAsk(_BaseModel):
+    """`ask_card(...)` plus `template_id`, `binding_slot` and (abstain on no members) `policy`."""
+    status: Literal["slot_elicitation", "slot_abstain"]
+    disposition: Literal["ask", "abstain"]
+    output_uri: str
+    verb_iri: str
+    sub_query: str
+    slot: Optional[str] = None
+    reason: str
+    spoken: str
+    found: str
+    options: list[CanvasSeedAskOption]
+    option_source: str
+    free_text_reason: Optional[str] = None
+    truncated_from: int
+    total_count: int
+    scoped_by: list[str]
+    bound_slots_offered: list[str]
+    accepted_slots: dict[str, Any]
+    message: str
+    summary: str
+    structured_data: CanvasSeedAskStructuredData
+    data: str
+    sources: list[Any]
+    template_id: str = Field(description="Always set by `_canvas_seed_ask`.")
+    binding_slot: Optional[str] = Field(description="The shared-slot NAME (not the dispatch param).")
+    policy: Optional[CanvasSeedPolicy] = Field(
+        default=None,
+        description="Present only when the caller's enumeration came back empty (an abstain).",
+    )
+
+
+class CanvasSeedAskUnavailable(_BaseModel):
+    error: Literal["ask_unavailable"]
+    detail: str = Field(description="The builder's exception class name.")
+
+
+class CanvasSeedRefusal(_BaseModel):
+    """`authz.refusal.refusal`'s envelope (ca's `iagent_mesh.refusal.Refusal` field names)."""
+    policy_id: str = Field(description="The policy family that refused, e.g. `groups` or `program_members`.")
+    missing_binding: str = Field(description="What the caller lacks, e.g. `can_view_program(program)`.")
+    grantable_by: str = Field(description="Who can grant it and how, from policy/grantors/.")
+    candidates: list[str] = Field(description="The choices that would satisfy it; empty when none is offered.")
+
+
+class CanvasSeedConflictDetail(_BaseModel):
+    error: Literal["unbound_required_slot"]
+    message: str
+    ask: Optional[CanvasSeedAsk | CanvasSeedAskUnavailable] = Field(
+        default=None,
+        description="Absent when no unbound slot is askable; best-effort, so it may be the unavailable form.",
+    )
+    refusal: CanvasSeedRefusal = Field(
+        description="Always present: the 409 asks the caller to choose or request something (`slot_refusal`).",
+    )
+
+
+class CanvasSeedConflict(_BaseModel):
+    detail: CanvasSeedConflictDetail
+
+
+def _canvas_seed_enumerator(user_email: str, entitled_domains: list):
+    """A SYNC `(class_uri, bound_slots=) -> {outcome, members, ...}` against engine-o's
+    `/enumerate_instances`, with the body `dynamic_supervisor._make_enumerator` sends. Sync
+    because `decide_disposition` calls it synchronously; the caller runs the whole disposition
+    in a threadpool so this never blocks the event loop. Raises on connect/timeout, which the
+    disposition files as `no_provider` rather than as a menu."""
+    def _enumerate(class_uri: str, *, bound_slots: dict | None = None) -> dict:
+        _bound = {str(k): str(v) for k, v in (bound_slots or {}).items() if v not in (None, "")}
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.post(
+                f"{_DAGSONTOLOGY_SVC_URL}/enumerate_instances",
+                json={"class_uri": class_uri, "bound_slots": _bound,
+                      "user_email": user_email,
+                      "entitled_domains": list(entitled_domains or [])},
+            )
+        resp.raise_for_status()
+        return resp.json() or {}
+    return _enumerate
+
+
+async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user: User):
+    """The ask for a 409'd seed, or None when no unbound slot is askable.
+
+    Built by the SAME disposition the chat path uses (`decide_disposition` + `ask_card`) from
+    the SAME slot declarations the program-cell registration carries
+    (`canvas_template.referent_slots`), so the two cannot drift. `policy` is added whenever the
+    caller's enumeration came back EMPTY (an abstain on no members) -- never for `no_provider` or
+    `too_many`, where a list exists or nobody was asked, and "you cannot see any" would be false.
+    It is derived from `REFERENT_CELLS`, policy/groups.yaml and the caller's own cells.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from iagent_pure.slot_disposition import ABSTAIN, ask_card, decide_disposition
+    from .canvas_template import (
+        REFERENT_CELLS, SHARED_SLOT_REFERENTS, policy_hint, referent_slots,
+    )
+
+    clean = {k: v for k, v in (request.bindings or {}).items() if v not in (None, "")}
+    consumed = {c for p in template.panels for c in p.consumes}
+    unbound = consumed - set(clean)
+    declared = referent_slots({template.template_id: template}, only=unbound)
+    if not declared:
+        return None
+    accepted = {s.bind_as: clean[s.name] for s in template.shared_slots if s.name in clean}
+    slot_name = {s.bind_as: s.name for s in template.shared_slots}
+
+    ent = current_user.entitlements
+    if request.active_domains:
+        domains = list(request.active_domains)
+    elif request.active_persona:
+        domains = ent.domains_for(request.active_persona)
+    else:
+        domains = sorted({c.domain for c in ent.cells})
+    enum = _canvas_seed_enumerator(current_user.authz_id, domains)
+
+    def _build():
+        disp = decide_disposition(accepted=accepted, declared=declared, enumerate_class=enum)
+        return disp, ask_card(
+            disp, verb_iri="mesh:seedCanvas",
+            sub_query=f"seed canvas {template.template_id}", accepted=accepted,
+        )
+
+    disp, ask = await run_in_threadpool(_build)
+    ask["template_id"] = template.template_id
+    ask["binding_slot"] = slot_name.get(disp.slot or "", disp.slot)
+    if disp.action == ABSTAIN:
+        referent = SHARED_SLOT_REFERENTS.get(disp.slot or "")
+        if referent in REFERENT_CELLS:
+            o_persona, o_domain = REFERENT_CELLS[referent]
+            held = any(c.persona == o_persona and c.domain == o_domain for c in ent.cells)
+            ask["policy"] = policy_hint(
+                referent, held=held, asked_in_cell=o_domain in domains,
+            )
+    return ask
+
+
+@app.post("/canvas/seed", responses={200: {"model": CanvasSeedResponse}, 409: {"model": CanvasSeedConflict}})
 async def canvas_seed(
     request: CanvasSeedRequest,
     http_request: Request,
@@ -2779,7 +3930,27 @@ async def canvas_seed(
     # — and a board that is WRONG is harder to catch than one that is absent. cortex-ui-60 hit
     # the client-side half of this same hazard tonight, where an unknown id fell through to
     # generic placement in complete silence.
-    from .canvas_template import load_template, ratified_template_ids
+    from .canvas_template import (
+        DispatchParamsRefused, fold_dispatch_params, load_template, ratified_template_ids,
+    )
+
+    # THE SUPERVISOR'S DISPATCH FIELDS, FOLDED BEFORE ANYTHING IS RESOLVED. `params` carries a
+    # chat-routed seedCanvas's bound slots and was silently dropped before this; a disagreement
+    # or an unplaceable key is a 422, and a keyed `params` never falls back to portfolio.
+    try:
+        _folded_id, _folded_bindings = fold_dispatch_params(
+            request.params, request.template_id, request.bindings
+        )
+    except DispatchParamsRefused as _perr:
+        raise HTTPException(status_code=422, detail=str(_perr))
+    request.template_id = _folded_id or request.template_id
+    request.bindings = _folded_bindings or request.bindings
+    # The caller's chosen cell rides in as `user_persona`/`domain`; it fills the picker fields
+    # ONLY when they are unset, so an explicit picker value always wins.
+    if request.active_persona is None and request.user_persona:
+        request.active_persona = request.user_persona
+    if request.active_domains is None and request.domain:
+        request.active_domains = [request.domain]
 
     _requested = (request.template_id or "").strip()
     if not _requested:
@@ -2825,8 +3996,10 @@ async def canvas_seed(
     # `canvas_template.validate_bindings` so packageExport's own gates (below, `/export/package`)
     # read the SAME checks rather than a second copy that could drift from this one. Messages
     # and status codes are unchanged; only where they are computed moved.
+    from .authz.refusal import policy_refusal
     from .canvas_template import (
-        UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, validate_bindings,
+        UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, slot_refusal,
+        validate_bindings,
     )
 
     try:
@@ -2836,7 +4009,28 @@ async def canvas_seed(
     except UnknownBinding as _terr:
         raise HTTPException(status_code=422, detail=str(_terr))
     except UnboundRequiredSlot as _terr:
-        raise HTTPException(status_code=409, detail=str(_terr))
+        _detail: dict = {"message": str(_terr)}
+        # THE 409 CARRIES THE ASK. Built by the disposition the chat path uses, so a picker
+        # gets "which program?" with candidates (or the policy to set) instead of only a
+        # refusal. It is best-effort by construction: a failure here must never turn the
+        # refusal into a 500.
+        try:
+            _ask = await _canvas_seed_ask(_template, request, current_user)
+            if _ask is not None:
+                _detail["ask"] = _ask
+                if _ask.get("policy"):
+                    _detail["message"] = _ask["policy"]["message"]
+                elif _ask.get("options"):
+                    _detail["message"] = _ask.get("message") or _detail["message"]
+        except Exception as _aerr:  # noqa: BLE001
+            logger.warning("canvas_seed: ask builder failed (%r); 409 keeps its plain body", _aerr)
+            _detail["ask"] = {"error": "ask_unavailable", "detail": type(_aerr).__name__}
+        # A POLICY REFUSAL (it asks the caller to choose): the envelope says what the ask says
+        # -- its options as candidates, its repair as the binding (`slot_refusal`).
+        raise policy_refusal(
+            "unbound_required_slot", status_code=409, message=_detail.pop("message"),
+            extra=_detail, **slot_refusal(_template, _terr.slots, _detail.get("ask")),
+        )
 
     if _template.template_id == "portfolio":
         inner = SeedPortfolioCanvasRequest(
@@ -2958,18 +4152,16 @@ async def canvas_seed(
         )
         return {"artifact_ids": [], "seeded": seeded, "total": total}
 
-    # NEITHER OPTIONAL FIELD IS SENT, AND THAT IS THE CORRECT STATE TODAY.
+    # `template_id` IS SENT NOW BECAUSE ITS READER EXISTS; `name` STAYS UNSENT.
     #
-    # `canvas_type` was dispatched for emission on the premise that the receiver reads
-    # it. IT DOES NOT — checked, 2026-08-29: cortex's CanvasSeed.contract.ts declares
-    # it `required: false`, and canvasSeedFromArtifact's return type is literally
-    # `{ ids: string[]; name?: string }`. No reader exists anywhere in that repo.
-    # Sending it would be a PRODUCER-side write with no consumer — the exact mirror of
-    # the orphan species the dispatch set out to remove — and it would cost breaking
-    # the seal directly above, whose stated purpose is keeping fields a future client
-    # might start depending on OFF this response. The honest order is: cortex reads it
-    # first (it matters only when a second canvas_type exists), then the producer
-    # states it. The arm's passthrough already carries it the day that happens.
+    # This comment used to say neither optional field was sent, on a measured premise
+    # (2026-08-29): cortex declared `canvas_type` `required: false` and no reader existed
+    # anywhere in that repo, so sending it would have been a PRODUCER-side write with no
+    # consumer. It named the order: cortex reads it first, then the producer states it.
+    # That condition is met: cortex-ui's canvasSeedFromArtifact
+    # (src/lib/canvasSeedFromAnswer.ts) now prefers `template_id` and treats `canvas_type` as
+    # legacy. So the full-success path names its template, and the partial and empty returns
+    # above are unchanged. `canvas_type` itself is still not sent: `template_id` supersedes it.
     #
     # `name` has a real reader, and still must not be sent: the phrase path has no
     # spoken name, so any value here would be invented. The receiver already defaults
@@ -2979,6 +4171,7 @@ async def canvas_seed(
         "artifact_ids": [a for a in (result.get("artifact_ids") or []) if a],
         "seeded": seeded,
         "total": total,
+        "template_id": _template.template_id,
     }
 
 
@@ -3196,6 +4389,12 @@ def _allowed_or_empty(kind: str) -> list:
         return []
 
 
+# Kinds whose review files NO document_promotion task (architect ruling 2026-10-17, on 7f's ruling
+# 1). An s1000d data module has no PCN/PDN card -- no notice id, mfr, parts, evidence crops -- so a
+# task filed under the review standard could not be vetted. See the stage route's review branch.
+_PROMOTION_SKIPPED_KINDS = frozenset({"s1000d-data-module"})
+
+
 def _delegate_principals() -> dict[str, frozenset[str]]:
     """R-089: the asserted delegate -> {principal authz_ids} map, read fresh from
     DELEGATE_ON_BEHALF_OF (deploy configuration, see helm configmap.yaml) ON EVERY CALL — never
@@ -3253,9 +4452,10 @@ def _admit_on_behalf_of(current_user, on_behalf_of: Optional[str]) -> tuple[str,
 def _promotion_stores(acted_by: str):
     """The stores a document_promotion act needs (ADR-0041 Open §1, ruled 2026-09-30).
 
-    All four are built here: the ledger (Postgres, beside human_task_projection), the objects
-    (the seam's bucket), the GRAPH through the SDK graph writer, and the INDEXES over the
-    declared ingest-carrying collections. The graph writes as the PERSON acting -- `acted_by`,
+    All five are built here: the ledger (Postgres, beside human_task_projection), the objects
+    (the seam's bucket), the GRAPH through the SDK graph writer, the INDEXES over the
+    declared ingest-carrying collections, and the CORRECTION OUTBOX (the same bucket, under
+    `corrections/`, for 7f to apply to RDF). The graph writes as the PERSON acting -- `acted_by`,
     the caller `can_act` is asked about -- so it is built per act, never once at startup.
 
     What this does NOT lift: a promotion still needs the ingest node. `/ingest` now creates one
@@ -3280,10 +4480,65 @@ def _promotion_stores(acted_by: str):
         graph=graph,
         indexes=promotion_stores.DeclaredIngestIndexes(),
         objects=promotion_stores.S3Quarantine(_build_s3_client, _ARTIFACT_BUCKET),
+        corrections=promotion_stores.S3CorrectionOutbox(_build_s3_client, _ARTIFACT_BUCKET),
     )
 
 
-@app.post("/human_tasks/{task_id}/act")
+# Separation of duties (architect ruling 2026-10-21): the person who chose a case's disposition
+# cannot approve it as supervisor on the same case. Maps a task kind to the case state that the
+# chooser's decision moved the case INTO; the chooser is the `by` of the last non-system
+# transition into that state.
+_SEPARATED_REVIEW_KINDS = {"maint_supervisor_approval": "maint_supervisor_review"}
+
+
+async def _read_ingest_row_for_act(task_id: str, ingest_id: str):
+    """The ingest row a promotion act is about, or None when it is absent (a legacy task proceeds).
+    Fail closed: an unreadable row is 503 `ingest_row_unreadable` and nothing is decided."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    try:
+        return await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+    except Exception as exc:  # noqa: BLE001 -- fail closed
+        logger.warning("act %s: the ingest row could not be read (%s: %s)", task_id,
+                       type(exc).__name__, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "ingest_row_unreadable", "task_id": task_id,
+            "message": "the document's status could not be read, so nothing was decided; "
+                       "try again"})
+
+
+async def _stale_extraction(task_id: str, row: dict) -> "HTTPException":
+    """The ONE 409 `stale_extraction` (spec 204, ruling "a leaf change at review makes the open task
+    stale: /act refuses it with 409 stale_extraction and the new task id"), built for both the
+    superseded-task miss path and the act guard. `new_task_id` is the row's current task when the row
+    is at review and that task is open, else None."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks, ingest_status
+
+    new_id = None
+    cur = _current_promotion_task_id(row) if row.get("status") == ingest_status.REVIEW else None
+    # never name the acted-on task as its own replacement (the legacy kind-mismatch case)
+    if cur is not None and cur != task_id:
+        try:
+            state = await run_in_threadpool(lambda: human_tasks.get_task_open_state(cur))
+        except Exception:  # noqa: BLE001 -- cannot know: no new id is claimed
+            state = None
+        if state and state.get("open"):
+            new_id = cur
+    if new_id:
+        msg = f"the leaf was changed; this task was replaced by {new_id}; act on that one"
+    else:
+        msg = ("the document is being re-extracted for its new leaf; a new task is filed when it "
+               "returns to review")
+    return HTTPException(status_code=409, detail={
+        "error": "stale_extraction", "task_id": task_id, "new_task_id": new_id,
+        "stage": row.get("status"), "message": msg})
+
+
+@app.post("/human_tasks/{task_id}/act", tags=[INGEST_V1_TAG], responses={200: {"model": ActResponse}})
 async def act_on_human_task(
     task_id: str,
     req: HumanTaskActRequest,
@@ -3332,6 +4587,16 @@ async def act_on_human_task(
         settled = await run_in_threadpool(
             lambda: human_tasks.get_task_resolution(task_id, caller_id=actor)
         )
+        if settled and settled.get("status") == human_tasks.SUPERSEDED:
+            # A superseded task is not pending, so it lands here and never reaches the guard below:
+            # answer the same stale_extraction (scoped to a recipient, so a non-recipient is 404).
+            _sp = settled.get("payload")
+            if isinstance(_sp, (str, bytes)):
+                _sp = json.loads(_sp)
+            _sing = _sp.get("ingest_id") if isinstance(_sp, dict) else None
+            _srow = (await _read_ingest_row_for_act(task_id, _sing)
+                     if isinstance(_sing, str) and _sing else None)
+            raise await _stale_extraction(task_id, _srow or {})
         if settled and settled.get("status") != "pending":
             raise HTTPException(status_code=409, detail={
                 "error": "task_already_resolved",
@@ -3350,6 +4615,27 @@ async def act_on_human_task(
     if not allowed:
         raise HTTPException(status_code=403, detail={"error": "not_authorized_to_act", "audience": audience})
 
+    # SAME-ACTOR (ruling 2026-10-21): after the audience gate, before any write, resume or
+    # delegated branch. Compared on `actor` (the principal), never the authenticated caller, so a
+    # delegate acting for the chooser is refused too. Approve only; a reject is not refused.
+    # Fail closed on an unreachable runner; no case / no chooser transition proceeds as before.
+    _review_state = _SEPARATED_REVIEW_KINDS.get(match.get("kind"))
+    if _review_state and req.decision == "approved" and match.get("case_id"):
+        _case_key = str(match["case_id"]).split(_CASE_INSTANCE_SEP)[0]
+        try:
+            _case = await _fetch_case(_case_key)
+        except Exception as exc:  # noqa: BLE001 -- connect errors, timeouts
+            raise HTTPException(status_code=503, detail={"error": "runner_unavailable"}) from exc
+        _chooser = None
+        for _t in (_case or {}).get("transitions") or []:
+            if _t.get("to") == _review_state and _t.get("by") and _t.get("by") != "system":
+                _chooser = _t["by"]
+        if _chooser is not None and _chooser == actor:
+            raise HTTPException(status_code=409, detail={
+                "error": "same_actor", "case_id": match["case_id"],
+                "message": "the person who chose this case's disposition cannot approve it "
+                           "as supervisor"})
+
     if via is not None:
         # R-089: a delegated act is supported ONLY for a workflow-backed resume whose kind is
         # neither document_promotion nor grouped_review — AFTER the authz check above, BEFORE
@@ -3361,7 +4647,46 @@ async def act_on_human_task(
         if not match.get("workflow_id") or match.get("kind") in (
                 "document_promotion", "grouped_review", "access_request"):
             raise HTTPException(status_code=409, detail={
-                "error": "delegated_act_unsupported", "kind": match.get("kind")})
+                "error": "delegated_act_unsupported", "kind": match.get("kind"),
+                "message": "a delegated act is supported only for a workflow-backed resume of "
+                           "another kind; act as the principal yourself."})
+
+    # row_edits is read ONLY by the grouped_review branch and (flag IAGENT_PROMOTION_ROW_EDITS on)
+    # the document_promotion branch below. Sent on any other kind, or on a promotion while the flag
+    # is off, it would be accepted and silently dropped, losing the correction (architect rulings
+    # 2026-10-17, 2026-10-18). Asked before verb validation so the refusal names the real cause,
+    # and before any write.
+    if req.row_edits is not None and match.get("kind") != "grouped_review":
+        if match.get("kind") == "document_promotion":
+            if not _promotion_row_edits_enabled():
+                raise HTTPException(status_code=422, detail={
+                    "error": "row_edits_not_for_kind", "kind": "document_promotion",
+                    "enabled": False,
+                    "message": "row edits on a document promotion are off on this deployment "
+                               "(IAGENT_PROMOTION_ROW_EDITS); sent here they would be lost"})
+        else:
+            raise HTTPException(status_code=422, detail={
+                "error": "row_edits_not_for_kind", "kind": match.get("kind"),
+                "message": "row edits are read only on a grouped review or a document "
+                           "promotion; sent here they would be lost"})
+
+    # header_edits (ruling 10-20): document_promotion only, behind the SAME flag as row_edits.
+    if req.header_edits and match.get("kind") != "document_promotion":
+        raise HTTPException(status_code=422, detail={
+            "error": "header_edits_not_for_kind", "kind": match.get("kind"),
+            "message": "header edits are read only on a document promotion; sent here they "
+                       "would be lost"})
+    if req.header_edits and not _promotion_row_edits_enabled():
+        raise HTTPException(status_code=422, detail={
+            "error": "header_edits_not_for_kind", "kind": "document_promotion",
+            "enabled": False,
+            "message": "header edits on a document promotion are off on this deployment "
+                       "(IAGENT_PROMOTION_ROW_EDITS); sent here they would be lost"})
+
+    if req.page is not None and match.get("kind") != EMPTY_CONFIRM_KIND:
+        raise HTTPException(status_code=422, detail={
+            "error": "page_not_for_kind", "kind": match.get("kind"),
+            "message": "a page is read only on a document_empty_confirm; sent here it would be lost"})
 
     # VERB VALIDATION, per the task's OWN species — after authz (never leak a kind to an
     # unauthorized caller through a validation error) and before any write.
@@ -3400,6 +4725,19 @@ async def act_on_human_task(
             "message": str(exc),
         })
 
+    # FULFILLMENT (document_empty_confirm, spec 208): the SAME writer as POST /ingest/{id}/empty. The
+    # audience gate and the verb validation above have passed; `_decide_empty` closes the task.
+    if match.get("kind") == EMPTY_CONFIRM_KIND:
+        _ep = match.get("payload")
+        if isinstance(_ep, (str, bytes)):
+            _ep = json.loads(_ep)
+        _eing = _ep.get("ingest_id") if isinstance(_ep, dict) else None
+        if not isinstance(_eing, str) or not _eing:
+            raise HTTPException(status_code=409, detail={
+                "error": "no_open_empty_task", "task_id": task_id,
+                "message": "the task names no ingest"})
+        return await _decide_empty(_eing, req.decision, actor, req.page, task_id=task_id)
+
     # FULFILLMENT (document_promotion, ADR-0041 §5/§6): the effect runs BEFORE the projection
     # resolves, for grouped_review's reason: a refused act must leave the task PENDING. The
     # decision record is the grant, so it is written fail-closed, and `promotion.act` re-asks
@@ -3407,6 +4745,162 @@ async def act_on_human_task(
     if match.get("kind") == "document_promotion":
         from . import ingest_status, promotion
         from .decision_record_writer import DECISION_RECORD_ERA
+
+        # A reject names one of the ruled codes (architect ruling 2026-10-17): `<code>` or
+        # `<code>: <note>`, case-sensitive. Asked after the blank-reason refusal (the declaration,
+        # above) and before `promotion.act`, so a refused code writes and resolves nothing.
+        _reject_code = None
+        if req.decision == promotion.REJECTED:
+            _c = req.comment.strip()
+            _reject_code = _c.split(":", 1)[0].strip() if ":" in _c else _c
+            if _reject_code not in promotion.PROMOTION_REJECT_CODES:
+                raise HTTPException(status_code=422, detail={
+                    "error": "reject_code_unknown", "codes": list(promotion.PROMOTION_REJECT_CODES),
+                    "task_id": task_id,
+                    "message": "a reject names one of the listed codes; a wrong value, a wrong "
+                               "part or missing rows is a correction (promote with row_edits), "
+                               "not a reject"})
+
+        # THE ACT REFUSES A STALE TASK (spec 203b, 204). The leaf may change until promotion, so the row
+        # is read FIRST: the task must be the row's CURRENT generation's, its kind must equal the kind
+        # it was filed with, and no extraction may be in flight -- else 409 `stale_extraction`, naming
+        # the new task when there is one. Fail closed on an unreadable row (503); a row that is absent is a legacy task
+        # with no projection claim and proceeds. Other stages (a `promoted` replay) are not refused.
+        # Asked before the steward-corrections block, so a refusal writes nothing.
+        _leaf_row = None
+        _payload = match.get("payload")
+        _ing = _payload.get("ingest_id") if isinstance(_payload, dict) else None
+        if isinstance(_ing, str) and _ing:
+            _leaf_row = await _read_ingest_row_for_act(task_id, _ing)
+        if _leaf_row is not None:
+            _row_ck = str(_leaf_row.get("content_kind") or "").strip().lower()
+            _task_ck = str(_payload.get("content_kind") or "").strip().lower()
+            if (task_id != _current_promotion_task_id(_leaf_row)
+                    or _row_ck != _task_ck
+                    or _leaf_row.get("status") in (
+                        ingest_status.RECEIVED, ingest_status.EXTRACTING,
+                        ingest_status.AWAITING_KIND, ingest_status.AWAITING_ORIGIN)):
+                raise await _stale_extraction(task_id, _leaf_row)
+        _leaf_rec = None
+        if _leaf_row is not None:
+            _lf, _ls, _lcb = _row_leaf(_leaf_row)
+            if _lf is not None:
+                _leaf_rec = {"leaf_source": _ls, "corrected_by": _lcb}
+
+        # STEWARD CORRECTIONS (architect ruling 2026-10-18; flag-gated above). Everything that can
+        # refuse is asked BEFORE `promotion.act`, so a refusal writes nothing.
+        edits = None
+        corrections = None
+        defect_aud = None
+        subject = None
+        _reviewed = None
+        _earlier = None
+        if req.row_edits is not None or req.header_edits:
+            from agent_fleet.restate_analyst import steward_correction
+            try:
+                subject = promotion.subject_from_payload(match.get("payload"))
+                if req.row_edits is not None:
+                    _mpns = await run_in_threadpool(lambda: _review_mpns_for_payload(subject))
+                    _reviewed = _mpns
+                    try:
+                        edits = steward_correction.validate_row_edits(
+                            req.row_edits.model_dump(), extracted_mpns=_mpns)
+                    except steward_correction.EditRefusal as exc:
+                        raise HTTPException(status_code=422, detail={
+                            "error": "row_edits_refused", "task_id": task_id,
+                            "message": str(exc)})
+                else:
+                    edits = steward_correction.RowEdits()
+                if req.header_edits:
+                    _hdr = await run_in_threadpool(lambda: _review_header_for_payload(subject))
+                    try:
+                        edits.header = steward_correction.validate_header_edits(
+                            [h.model_dump() for h in req.header_edits],
+                            extracted={"mfr": (_hdr.get("mfr")
+                                               if _hdr.get("mfr_source") == "header" else None),
+                                       "notice_id": _hdr.get("notice_id"),
+                                       "notice_date": _hdr.get("notice_date")},
+                            fallback={"mfr": _hdr.get("mfr_identity")})
+                    except steward_correction.EditRefusal as exc:
+                        raise HTTPException(status_code=422, detail={
+                            "error": "header_edits_refused", "task_id": task_id,
+                            "message": str(exc)})
+                if edits.is_empty():
+                    edits = None
+                else:
+                    defect_aud = f"dispatch_failure:{promotion.domain_of(audience)}"
+            except promotion.PromotionRefused as exc:
+                raise HTTPException(status_code=exc.status, detail={
+                    "error": exc.error, "task_id": task_id, "message": str(exc)})
+            if edits is not None:
+                _unroutable = {
+                    "error": "extraction_defect_unroutable", "audience": defect_aud,
+                    "task_id": task_id,
+                    "message": f"a correction files an extraction_defect, and nobody holds "
+                               f"{defect_aud}; nothing was written"}
+                try:
+                    _holders = await run_in_threadpool(
+                        lambda: human_tasks._resolve_audience_actors(defect_aud))
+                except Exception:  # noqa: BLE001 — cannot-know is a refusal, nothing written
+                    raise HTTPException(status_code=503, detail=_unroutable)
+                if not _holders:
+                    raise HTTPException(status_code=409, detail=_unroutable)
+                _by = current_user.authz_id
+                corrections = []
+                for r in edits.corrected:
+                    corrections.append({"op": "corrected", "mpn": r["mpn"].strip(),
+                                        **({"evidence_ref": r["evidence_ref"]}
+                                           if r.get("evidence_ref") is not None else {}),
+                                        **steward_correction.provenance_for(
+                                            acted_by=_by, extracted=r["mpn"].strip(),
+                                            corrected=r["corrected_mpn"].strip(),
+                                            evidence=r["evidence"].strip())})
+                for r in edits.added:
+                    corrections.append({"op": "added", "mpn": r["mpn"].strip(),
+                                        "disposition": r["disposition"], "reason": r["reason"],
+                                        **({"evidence_ref": r["evidence_ref"]}
+                                           if r.get("evidence_ref") is not None else {}),
+                                        **steward_correction.provenance_for(
+                                            acted_by=_by, extracted=None,
+                                            corrected=r["mpn"].strip(),
+                                            evidence=r["evidence"].strip())})
+                for r in edits.deleted:
+                    corrections.append({"op": "deleted", "mpn": r["mpn"].strip(),
+                                        "reason": r["reason"],
+                                        **({"evidence_ref": r["evidence_ref"]}
+                                           if r.get("evidence_ref") is not None else {})})
+                for r in edits.header:
+                    corrections.append({"op": "header_corrected", "field": r["field"],
+                                        "extracted_fallback": r.get("fallback"),
+                                        "reason": r["reason"],
+                                        **steward_correction.provenance_for(
+                                            acted_by=_by, extracted=r.get("extracted"),
+                                            corrected=r["value"],
+                                            evidence=steward_correction.evidence_text(
+                                                r["evidence_ref"])),
+                                        "evidence_ref": r["evidence_ref"]})
+
+        if req.decision == promotion.PROMOTED:
+            # The notice's SUBJECT_TO set is reconciled to the reviewed rows (ruled 2026-10-20),
+            # so the act needs the reviewed set. No extraction_ref: None (the act refuses 409 if a
+            # notice node exists).
+            try:
+                if subject is None:
+                    subject = promotion.subject_from_payload(match.get("payload"))
+            except promotion.PromotionRefused:
+                subject = None      # `promotion.act` refuses the same payload by name
+            if subject is not None:
+                if _reviewed is None and subject.extraction_ref:
+                    _s = subject
+                    _reviewed = await run_in_threadpool(lambda: _review_mpns_for_payload(_s))
+                if subject.notice_id:
+                    _s2 = subject
+                    try:
+                        _earlier = await run_in_threadpool(
+                            lambda: ingest_status.ingests_naming_notice(
+                                _s2.notice_id, exclude_ingest_id=_s2.ingest_id))
+                    except Exception:  # noqa: BLE001 — best effort; the record says unavailable
+                        _earlier = None
 
         try:
             from .trust_table import load_trust_table
@@ -3423,17 +4917,51 @@ async def act_on_human_task(
                         human_tasks.declaration_for(promotion.KIND)),
                     "trust_table_ref": _tbl,
                 },
-                era=DECISION_RECORD_ERA, now_ms=int(time.time() * 1000)))
+                era=DECISION_RECORD_ERA, now_ms=int(time.time() * 1000),
+                row_edits=corrections, reviewed_mpns=_reviewed, earlier_ingests=_earlier,
+                leaf=_leaf_rec))
         except promotion.PromotionRefused as exc:
             raise HTTPException(status_code=exc.status, detail={
                 "error": exc.error, "task_id": task_id, "message": str(exc)})
+        defect = None
+        if edits is not None:
+            # Filed AFTER the record stands and BEFORE the task resolves: a failure leaves the task
+            # pending, and acting again replays the record (immutable_conflict) and files it.
+            defect = steward_correction.defect_task(
+                notice=(subject.notice_id or subject.ingest_id), decision_id=done["record_id"],
+                pipeline_version=subject.pipeline_version, edits=edits, audience=defect_aud,
+                requested_by=actor, acted_by=current_user.authz_id,
+                ingest_id=subject.ingest_id)
+
+            def _file_defect():
+                if not human_tasks.task_exists(defect["task_key"]):
+                    try:
+                        human_tasks.register_task(
+                            kind=defect["kind"], task_id=defect["task_key"],
+                            audience=defect["audience"], title=defect["title"],
+                            summary=defect["summary"], requested_by=actor,
+                            subject_ref=subject.ingest_id, payload=defect["payload"])
+                    except human_tasks.NoRequester as exc:
+                        raise HTTPException(status_code=422, detail={
+                            "error": "no_requester", "message": str(exc)})
+            try:
+                await run_in_threadpool(_file_defect)
+            except HTTPException:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(status_code=503, detail={
+                    "error": "extraction_defect_not_filed", "task_id": task_id,
+                    "record_id": done["record_id"],
+                    "message": f"the promotion and its corrections are recorded but the "
+                               f"extraction_defect was not filed ({type(exc).__name__}); the "
+                               f"task stays pending and acting again files it"})
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
                 task_id, caller_id=actor, decision=req.decision,
                 comment=req.comment))
-        logger.info("document %s: task_id=%s ingest_id=%s record=%s by=%s",
+        logger.info("document %s: task_id=%s ingest_id=%s record=%s by=%s code=%s edits=%s",
                     req.decision, task_id, done["ingest_id"], done["record_id"],
-                    actor)
+                    actor, _reject_code, len(corrections or []))
 
         # PROJECTION UPDATE, BEST-EFFORT. The decision record (written above, inside
         # `promotion.act`) IS the grant — ADR-0041 §5 — and `ingest_status_projection` is only
@@ -3458,7 +4986,15 @@ async def act_on_human_task(
             logger.warning("ingest_status.update_status failed for ingest_id=%s (decision=%s): %s",
                            done["ingest_id"], req.decision, exc)
 
-        return {"task_id": task_id, "decision": req.decision, "rows_resolved": n, **done}
+        _body = {"task_id": task_id, "decision": req.decision, "rows_resolved": n, **done}
+        if _reject_code is not None:
+            _body["reject_code"] = _reject_code
+        if defect is not None:
+            _body["row_edits"] = {"corrected": len(edits.corrected), "added": len(edits.added),
+                                  "deleted": len(edits.deleted), "header": len(edits.header)}
+            _body["corrections"] = corrections
+            _body["extraction_defect"] = defect["task_key"]
+        return _body
 
     # FULFILLMENT (grouped_review): the decision must be VALIDATED by the workflow
     # (GroupedReview.submit_decision) BEFORE the projection is resolved. submit_decision
@@ -3473,14 +5009,36 @@ async def act_on_human_task(
             # on the grouped-task register). Fail loudly rather than mark-resolved-and-dangle.
             raise HTTPException(status_code=409, detail={"error": "grouped_review_unresumable",
                 "message": "grouped-review task has no workflow_id; cannot resume the review"})
-        if req.decision == "rejected":
-            # A grouped-review rejection must CANCEL the durable workflow, else it dangles
-            # suspended (the suspend-vs-fail DoS). Cancellation-on-reject is a filed follow-up;
-            # refuse loudly here rather than mark-resolved-and-dangle. To change dispositions,
-            # the reviewer sends per-part `overrides` and approves.
-            raise HTTPException(status_code=501, detail={"error": "grouped_reject_not_wired",
-                "message": "grouped-review rejection needs workflow cancellation (follow-up); "
-                           "use per-part overrides to change dispositions, then approve"})
+        if req.decision == "rejected" and req.reason_code is None:
+            raise HTTPException(status_code=422, detail={"error": "reason_code_required",
+                "message": "a grouped-review reject needs a reason_code",
+                "codes": list(_GROUPED_REJECT_CODES)})
+        if req.decision == "approved" and req.row_edits is not None:
+            # The batch rules (an added mpn must not collide with an extracted one, ...) need the
+            # SERVER-AUTHORED batch. Read it back (best effort) and refuse with 422 here; Restate's
+            # evaluate_submission re-validates regardless, so this is an early, clearer refusal.
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as _c:
+                    _gb = await _c.post(
+                        f"{_RESTATE_INGRESS_URL}/GroupedReview/{_restate_key(wf)}/get_batch")
+                _mpns = ([i.get("mpn") for i in (_gb.json().get("items") or [])]
+                         if _gb.status_code == 200 else None)
+            except Exception:  # noqa: BLE001 -- the workflow validates again
+                _mpns = None
+            if _mpns is not None:
+                _have = {str(m).strip().lower() for m in _mpns}
+                _e = req.row_edits
+                _bad = (
+                    [f"added mpn {r.mpn!r} collides with an extracted row"
+                     for r in _e.added if r.mpn.strip().lower() in _have]
+                    + [f"corrected_mpn {r.corrected_mpn!r} collides with an extracted row"
+                       for r in _e.corrected if r.corrected_mpn.strip().lower() in _have]
+                    + [f"mpn {r.mpn!r} is not a row of this review"
+                       for r in list(_e.deleted) + list(_e.corrected)
+                       if r.mpn.strip().lower() not in _have])
+                if _bad:
+                    raise HTTPException(status_code=422, detail={
+                        "error": "row_edits_invalid", "message": _bad[0], "problems": _bad})
         # approved -> submit the (accept-all + optional per-part overrides) decision.
         #
         # `acted_by` RIDES THE DECISION AS DATA (2026-08-05). Until now nothing carried the
@@ -3508,7 +5066,13 @@ async def act_on_human_task(
         # ATTRIBUTED silently re-aims the GATE — the two would move together with nothing to say
         # they should not. Same-value-different-question is the reason for the duplication, not an
         # oversight. See docs/plans/approval-bypass-bpmn-runner.md.
-        decision = {"overrides": req.overrides or {}, "acted_by": current_user.authz_id}
+        decision = {"overrides": req.overrides or {}, "acted_by": current_user.authz_id,
+                    "verdict": req.decision}
+        if req.decision == "rejected":
+            decision["reason_code"] = req.reason_code
+            decision["comment"] = req.comment
+        elif req.row_edits is not None:
+            decision["row_edits"] = req.row_edits.model_dump()
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 rr = await client.post(
@@ -3573,6 +5137,31 @@ async def act_on_human_task(
                 comment=req.comment, workflow_id=wf,
             )
         )
+        if sub.get("rejected"):
+            # NARROW REJECT: the workflow wrote nothing. The task is closed (above); the ingest row,
+            # when this notice is one, ends `review_rejected` (best effort -- never fail the act).
+            # Keyed by the INGEST ID only. The fingerprint is the extracted doc_id and never
+            # matches an ingest row; a review without an ingest id writes nothing.
+            _iid = sub.get("ingest_id") or ""
+            _row = "unlinked"
+            if _iid:
+                try:
+                    from . import ingest_status as _ist
+                    await run_in_threadpool(
+                        lambda: _ist.update_status(_iid, _ist.REVIEW_REJECTED,
+                                                   detail=req.reason_code or "rejected"))
+                    _row = "review_rejected"
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("review_rejected status not written for %s: %s", _iid, exc)
+            else:
+                logger.info("pcn grouped review rejected with no ingest_id: ingest row unlinked, "
+                            "task_id=%s wf=%s", task_id, wf)
+            logger.info("pcn grouped review rejected: task_id=%s wf=%s by=%s code=%s",
+                        task_id, wf, actor, req.reason_code)
+            return {"task_id": task_id, "decision": req.decision, "accepted": True,
+                    "rows_resolved": n, "review_dispatched": False,
+                    "reason_code": req.reason_code, "status": "review_rejected",
+                    "ingest_row": _row}
         logger.info("pcn grouped review approved: task_id=%s wf=%s by=%s resolved_count=%s",
                     task_id, wf, actor, sub.get("resolved_count"))
         return {"task_id": task_id, "decision": req.decision, "accepted": True,
@@ -3804,6 +5393,9 @@ class InterviewRequest(BaseModel):
     # non-UI callers (curl, scripts) keep working; they resolve to the LABELLED default
     # menu rather than being special-cased.
     frontend_id: str | None = None
+    # Menus are per (frontend_id, frontend_version): a stale tab's old bundle names its own
+    # version and is served that menu. Absent -> the newest registered version.
+    frontend_version: str | None = None
     # Required: identifies the chat thread / DagsterRunTracker key. A missing
     # session_id used to be silently filled with a fresh UUID per request,
     # which defeated the tracker's per-key dedup and caused back-to-back
@@ -4000,10 +5592,15 @@ class RegisterFrontendCapabilitiesResponse(BaseModel):
     # Refused rows are RETURNED, never silently dropped. A drop would reproduce the very
     # defect admission validation exists to prevent, one layer earlier.
     rejected: list[dict] = []
+    # True when the stored menu matched and the graph already held it, so nothing was emitted.
+    # `accepted` is len(admitted) either way (cortex checks sent == accepted).
+    unchanged: bool = False
 
 
 # Dedicated logger so registrations are easy to slice out in log search.
 _frontend_registry_logger = logging.getLogger("iagent.registry.frontend_capabilities")
+# THE LINE MUST ARRIVE, NOT MERELY BE CALLED (see the note on `logger` above).
+_ensure_the_audit_line_actually_ARRIVES(_frontend_registry_logger)
 
 
 def _sse(event: str, data: str) -> str:
@@ -5232,32 +6829,37 @@ def _load_domain_consumption_table() -> dict:
 
 async def _origin_visible_to_caller(rec: dict, current_user: User) -> bool:
     """Non-owner read path (ruling: "ORIGIN, not audience"). False (never raises) when
-    the artifact carries no recorded origin — that artifact stays on the
-    dropper/owner-only path, unchanged. Raises HTTPException(503) when Topaz cannot
-    answer the program-membership question — "could not tell" must not collapse into
-    the same 404 a real deny produces, the same distinction `get_current_user` already
-    draws for the entitlement matrix itself.
+    the artifact carries no recorded origin -- that artifact stays on the dropper/owner-only
+    path, unchanged. The rule itself is `origin_entitlement.visible_by_origin`, the ONE function
+    engine-o's notice read calls too (architect Q1, 2026-10-10): an origin with a domain and NO
+    program is a steward attestation and is decided by `can_consume` alone; a program, when the
+    origin names one, is a second conjunct asked of Topaz only AFTER the pure check admits the
+    caller (a non-consumer gets False/404, never 503 -- no existence oracle). Raises
+    HTTPException(503) when Topaz cannot answer the program-membership question -- "could not
+    tell" must not collapse into the same 404 a real deny produces, the same distinction
+    `get_current_user` already draws for the entitlement matrix itself.
     """
-    owner_domain = (rec.get("origin_owner_domain") or "").strip() if rec.get("origin_owner_domain") else ""
-    program = (rec.get("origin_program") or "").strip() if rec.get("origin_program") else ""
-    if not owner_domain or not program:
-        return False
-
     from . import human_tasks, origin as origin_mod
     from starlette.concurrency import run_in_threadpool
 
-    # THE PURE CHECK RUNS FIRST. A caller whose domains cannot consume this origin is denied
-    # without asking Topaz -- otherwise a Topaz outage answers 503 for an artifact that EXISTS
-    # and 404 for one that does not, and the status code becomes the existence oracle the 404
-    # was chosen to close. Only a caller the table already admits can see a 503.
+    # NO RECORDED ORIGIN -> False before anything about the caller is read: the docstring's
+    # "never raises" for that artifact (rev 187 merge restored this early return; the domain-only
+    # steward attestation still goes on to `visible_by_origin` below).
+    if not (rec.get("origin_owner_domain") or "").strip():
+        return False
     viewer_domains = {c.domain for c in current_user.entitlements.cells}
     table = _load_domain_consumption_table()
-    if not origin_mod.can_consume(viewer_domains, owner_domain, table):
-        return False
-
+    program = rec.get("origin_program")
     try:
-        is_member = await run_in_threadpool(
-            lambda: human_tasks.check_can_view_program(program, current_user.authz_id)
+        return await run_in_threadpool(
+            lambda: origin_mod.visible_by_origin(
+                viewer_domains=viewer_domains,
+                owner_domain=rec.get("origin_owner_domain"),
+                program=program,
+                table=table,
+                is_program_member=lambda p: human_tasks.check_can_view_program(
+                    p, current_user.authz_id),
+            )
         )
     except Exception as exc:  # noqa: BLE001 — Topaz unreachable: fail closed, report loudly
         logger.warning("program membership check unavailable for %s: %s", program, exc)
@@ -5266,63 +6868,12 @@ async def _origin_visible_to_caller(rec: dict, current_user: User) -> bool:
             detail={"error": "authorization_unavailable", "message": "could not verify program membership"},
         ) from exc
 
-    origin_obj = origin_mod.Origin(owner_domain=owner_domain, program=program, obtained_via="recorded")
-    return origin_mod.origin_visible(
-        viewer_domains=viewer_domains,
-        is_program_member=is_member,
-        origin=origin_obj,
-        table=table,
-    )
 
-
-class ArtifactResponse(_BaseModel):
-    """What a caller may read back about ONE of their own artifacts.
-
-    DELIBERATELY NOT THE RENDERED OUTPUT. This route exists so a headless reader can recover
-    what an artifact WAS — its subject, its verb, its status — not to serve the card a second
-    time. `rendered_output` is large, it is already streamed and projected, and a second
-    delivery path for it is a second thing to keep in step with the projector.
-    """
-    id: str
-    status: Optional[str] = None
-    summary: Optional[str] = None
-    question_text: Optional[str] = None
-    valid_as_of: Optional[int] = None
-    duration_ms: Optional[int] = None
-    derived_from: Optional[str] = None
-    # THE FIELD THE CALLER ACTUALLY CAME FOR. `null` when the artifact predates subject
-    # capture — absent, not "UNKNOWN", because a reader must be able to tell "this artifact
-    # has no recorded verb" from "its verb is the string UNKNOWN".
-    subject_uri: Optional[str] = None
-    verb_iri: Optional[str] = None
-    subject_instance_id: Optional[str] = None
-
-
-@app.get("/artifacts/{artifact_id}", response_model=ArtifactResponse, tags=["artifacts"])
-async def get_artifact(
-    artifact_id: str,
-    current_user: User = Depends(get_current_user),
-):
-    """Read back ONE artifact the caller produced — id, status, and its recorded route.
-
-    WHY IT EXISTS. Seeding returns artifact IDS and nothing else, so the verb each panel
-    actually ran is not knowable to any headless reader. ADR-0050's seal 3 compares the panel
-    set of two seeds; without this it recovers verbs by fetching artifacts, and that fetch
-    404'd — the arm would have burned a full seed (~5-7 min, measured) and then errored.
-
-    THE WORSE VERSION, and it is why the shape of this route matters: had verb recovery
-    returned `None` per panel instead of failing, both seeds would have compared EQUAL and
-    SEAL 3 WOULD HAVE PASSED. A broken instrument turning a seal green is strictly worse
-    than one turning it red. So `verb_iri` is `null` when unrecorded and never a placeholder,
-    and a caller comparing sets must treat all-null as VOID rather than as agreement — the
-    route cannot enforce that, but it can refuse to hand out a value that invites it.
-
-    SCOPED TO THE CALLER'S OWN, by the same `PRODUCED_FOR` edge `_pre_resolved_from_ask`
-    uses. Another user's artifact is a 404 and not a 403: telling a caller that an id EXISTS
-    but is not theirs is an existence oracle over other people's questions, and the question
-    text is the sensitive part. Same reasoning as `/resolve_instance`'s finding, applied
-    before it becomes one.
-    """
+async def _entitled_artifact_rec(artifact_id: str, current_user: User) -> dict:
+    """The ONE entitlement decision for reading an AnswerArtifact by id, shared by
+    `GET /artifacts/{id}` (body-less) and `GET /answers/{id}/body`. Returns the node record the
+    decision was made on; raises 403/404/503 exactly as `/artifacts/{id}` always has. Callers
+    choose what to project from the record; this function never decides what is returned."""
     # ── THE KEY THE WRITER STAMPED, NOT THE AUTHORIZATION IDENTITY ─────────────────────
     #
     # MEASURED 2026-09-09: this route read `authz_id` and 285 of alice's 286 artifacts were
@@ -5411,6 +6962,59 @@ async def get_artifact(
                 )
             raise HTTPException(status_code=404, detail=f"no artifact {artifact_id!r} for you")
 
+    return rec
+
+
+class ArtifactResponse(_BaseModel):
+    """What a caller may read back about ONE of their own artifacts.
+
+    DELIBERATELY NOT THE RENDERED OUTPUT. This route exists so a headless reader can recover
+    what an artifact WAS — its subject, its verb, its status — not to serve the card a second
+    time. `rendered_output` is large, it is already streamed and projected, and a second
+    delivery path for it is a second thing to keep in step with the projector.
+    """
+    id: str
+    status: Optional[str] = None
+    summary: Optional[str] = None
+    question_text: Optional[str] = None
+    valid_as_of: Optional[int] = None
+    duration_ms: Optional[int] = None
+    derived_from: Optional[str] = None
+    # THE FIELD THE CALLER ACTUALLY CAME FOR. `null` when the artifact predates subject
+    # capture — absent, not "UNKNOWN", because a reader must be able to tell "this artifact
+    # has no recorded verb" from "its verb is the string UNKNOWN".
+    subject_uri: Optional[str] = None
+    verb_iri: Optional[str] = None
+    subject_instance_id: Optional[str] = None
+
+
+@app.get("/artifacts/{artifact_id}", response_model=ArtifactResponse, tags=["artifacts"])
+async def get_artifact(
+    artifact_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Read back ONE artifact the caller produced — id, status, and its recorded route.
+
+    WHY IT EXISTS. Seeding returns artifact IDS and nothing else, so the verb each panel
+    actually ran is not knowable to any headless reader. ADR-0050's seal 3 compares the panel
+    set of two seeds; without this it recovers verbs by fetching artifacts, and that fetch
+    404'd — the arm would have burned a full seed (~5-7 min, measured) and then errored.
+
+    THE WORSE VERSION, and it is why the shape of this route matters: had verb recovery
+    returned `None` per panel instead of failing, both seeds would have compared EQUAL and
+    SEAL 3 WOULD HAVE PASSED. A broken instrument turning a seal green is strictly worse
+    than one turning it red. So `verb_iri` is `null` when unrecorded and never a placeholder,
+    and a caller comparing sets must treat all-null as VOID rather than as agreement — the
+    route cannot enforce that, but it can refuse to hand out a value that invites it.
+
+    SCOPED TO THE CALLER'S OWN, by the same `PRODUCED_FOR` edge `_pre_resolved_from_ask`
+    uses. Another user's artifact is a 404 and not a 403: telling a caller that an id EXISTS
+    but is not theirs is an existence oracle over other people's questions, and the question
+    text is the sensitive part. Same reasoning as `/resolve_instance`'s finding, applied
+    before it becomes one.
+    """
+    rec = await _entitled_artifact_rec(artifact_id, current_user)
+
     intent: dict = {}
     if rec.get("resolved_intent"):
         try:
@@ -5439,6 +7043,115 @@ async def get_artifact(
     )
 
 
+# ── Answers at scale (rev 187) ─────────────────────────────────────────────────────────
+#
+# Cortex measured one Electric shape of the projection at 6.82 MB for ~816 rows (`routing` 47%,
+# `rendered_output` 31%); a list row needs ~200 B. So: summaries here, one body by id below, and
+# `/artifacts/{id}` stays body-less.
+
+def _answers_scope_id(current_user: User) -> str:
+    """The caller key the Electric proxy filters on: the JWT `sub`, validated by the SAME
+    `_escape_sql_string_literal` (UUID check). The list query binds it as a parameter, so the
+    value is the raw id, never the quote-escaped literal -- the two are equal for any UUID."""
+    verified_user_id = current_user.id
+    try:
+        _escape_sql_string_literal(verified_user_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=403, detail="no usable caller identity on this request") from exc
+    return verified_user_id
+
+
+@app.get("/answers", tags=["answers"])
+async def list_answers(
+    page: int = _Query(1, ge=1),
+    size: int = _Query(50, ge=1, le=200),
+    sort: str = _Query("newest", pattern="^(newest|oldest)$"),
+    q: Optional[str] = _Query(None, max_length=500),
+    type: Optional[str] = _Query(None, max_length=100),
+    status: Optional[str] = _Query(None, max_length=100),
+    include_archived: bool = False,
+    current_user: User = Depends(get_current_user),
+):
+    """The caller's own answers as SUMMARIES (id, ts, title, summary, type, status, subject,
+    archived). Never a body. Archived answers are hidden unless `include_archived`."""
+    from starlette.concurrency import run_in_threadpool
+    from . import answer_list
+
+    caller = _answers_scope_id(current_user)
+    try:
+        return await run_in_threadpool(
+            lambda: answer_list.list_answers(
+                caller=caller, page=page, size=size, sort=sort, q=q, type_=type,
+                status=status, include_archived=include_archived,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("answers list failed: %s", exc)
+        raise HTTPException(status_code=503, detail="answer store unavailable")
+
+
+@app.get("/answers/{answer_id}/body", tags=["answers"])
+async def get_answer_body(
+    answer_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """ONE body, by id, under the SAME entitlement `/artifacts/{id}` applies. Archived answers
+    stay readable: archive hides, it never revokes."""
+    from .projector.apply_loop import _parse_json
+
+    rec = await _entitled_artifact_rec(answer_id, current_user)
+    return {
+        "id": str(rec["id"]),
+        "rendered_output": _parse_json(rec.get("rendered_output")),
+        "routing": _parse_json(rec.get("routing_inline")),
+        "resolved_intent": _parse_json(rec.get("resolved_intent")) or {},
+    }
+
+
+class ArchiveRequest(_BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
+class UnarchiveRequest(_BaseModel):
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+async def _set_archive(answer_id: str, current_user: User, *, archive: bool, reason: Optional[str]) -> dict:
+    from starlette.concurrency import run_in_threadpool
+    from . import answer_artifact_writer
+
+    rec = await _entitled_artifact_rec(answer_id, current_user)
+    # Owner only. FOLLOW-UP: steward cross-user tidy needs a Topaz permission; no persona check here.
+    if not rec.get("is_owner"):
+        raise HTTPException(status_code=404, detail=f"no artifact {answer_id!r} for you")
+    try:
+        changed = await run_in_threadpool(
+            lambda: answer_artifact_writer.set_archive_state(
+                neo4j_driver, answer_id, archive=archive,
+                by=current_user.id, reason=reason,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("archive write failed for %s: %s", answer_id, exc)
+        raise HTTPException(status_code=503, detail="artifact store unavailable")
+    return {"id": answer_id, "archived": archive, "changed": bool(changed)}
+
+
+@app.post("/answers/{answer_id}/archive", tags=["answers"])
+async def archive_answer(
+    answer_id: str, req: ArchiveRequest, current_user: User = Depends(get_current_user),
+):
+    """Hide an answer from the default view. Never deletes; idempotent."""
+    return await _set_archive(answer_id, current_user, archive=True, reason=req.reason)
+
+
+@app.post("/answers/{answer_id}/unarchive", tags=["answers"])
+async def unarchive_answer(
+    answer_id: str, req: UnarchiveRequest, current_user: User = Depends(get_current_user),
+):
+    return await _set_archive(answer_id, current_user, archive=False, reason=req.reason)
+
+
 async def _launch_supervisor_job(
     query: str,
     thread_id: str,
@@ -5450,6 +7163,7 @@ async def _launch_supervisor_job(
     # the archetype is chosen from THAT client's registered menu. Empty is not an error --
     # Engine F falls back to its global table, i.e. today's behaviour.
     frontend_id: str = "",
+    frontend_version: str = "",
     # ADR-0025 hop 2: caller's entitlement key (email) forwarded as a
     # runConfig key so the generalist-fallback subtask can hand it to
     # Engine D's query_metadata for the Topaz can_view ask.
@@ -5539,6 +7253,7 @@ async def _launch_supervisor_job(
         "user_email": user_email,
         # ADR-0017 amendment: names the rendering client so Engine F resolves ITS menu.
         "frontend_id": frontend_id or "",
+        "frontend_version": frontend_version or "",
         # ADR-0009 Step F'.2 additions:
         "user_persona": user_persona,
         "entitled_domains": entitled_domains,
@@ -6672,6 +8387,7 @@ async def _generate_dagster_stream_inner(
             bundle=_artifact_bundle,
             session_id=session_id,
             frontend_id=(request.frontend_id or ""),
+            frontend_version=(request.frontend_version or ""),
             user_persona=user_persona or "",
         ):
             yield _ev
@@ -6712,6 +8428,7 @@ async def _generate_dagster_stream_inner(
         # ADR-0017 amendment: read straight off the request -- the UI names itself, and an
         # absent value is a NON-UI caller (curl, script), not an error.
         frontend_id=(request.frontend_id or ""),
+        frontend_version=(request.frontend_version or ""),
         user_persona=user_persona,
         entitled_domains=entitled_domains,
         entity_refs=entity_refs,
@@ -6889,6 +8606,11 @@ async def _generate_dagster_stream_inner(
                     "subject_uri": _slots_md.get("subject_uri") or "",
                     "subject_instance_id": _slots_md.get("subject_instance_id") or "",
                     "subject_instance_label": _slots_md.get("subject_instance_label") or "",
+                    # `refused` when engine-o refused the slot fill for want of a person
+                    # (dynamic_supervisor `FILL_SLOTS_REFUSED`; ruled 2026-10-16), so a census
+                    # row reading the artifact can count it. Classify path only: the direct
+                    # path never calls /fill_slots.
+                    "fill_slots": _slots_md.get("fill_slots") or "",
                 }
                 logger.info(
                     "resolved_intent captured for run %s: verb=%s disposition=%s "
@@ -7378,6 +9100,7 @@ async def _stream_direct_outcome(
     session_id: str,
     frontend_id: str,
     user_persona: str,
+    frontend_version: str = "",
 ) -> AsyncGenerator[str, None]:
     """Emit the SSE for a turn the direct path answered, and fill the artifact bundle.
 
@@ -7571,6 +9294,7 @@ async def _stream_direct_outcome(
                     "persona": user_persona,
                     "output_uri": _output_uri,
                     "frontend_id": frontend_id or None,
+                    "frontend_version": frontend_version or None,
                 },
             )
             _resp.raise_for_status()
@@ -7808,6 +9532,197 @@ async def _dispatch_answer_artifact(bundle: dict) -> None:
 # ══════════════════════════════════════════════════════════
 
 
+def _emit_menu_to_registrar(registrar_url: str, frontend_id: str, frontend_version: str | None,
+                          admitted: list[dict]) -> tuple[int, list]:
+    """Emit each admitted capability to the registrar (SYNC HTTP: run it off the event loop).
+
+    Shared by the registration route and the startup replay. Returns (registered, failed)."""
+    from agent_fleet.presentation_agent.capabilities import capability_slug as _capability_slug
+    _graph_registered, _graph_failed = 0, []
+    from agent_fleet.utils.mesh_registration import _emit_presentation_to_registrar
+
+    for _c in admitted:
+        _contract = _c.get("contract") if isinstance(_c, dict) else None
+        _recomputes = None
+        if isinstance(_contract, dict) and "recomputes" in _contract:
+            # Tri-state preserved end to end: only a DECLARED value travels.
+            _recomputes = bool(_contract.get("recomputes"))
+        _outcome = _emit_presentation_to_registrar(
+            registrar_url=registrar_url,
+            # ⛔ SLUG VIA THE SHARED HELPER, NOT A SECOND rsplit. This read
+            # `.rsplit('#', 1)[-1].lower()`, which is correct for a FULL IRI and wrong for
+            # the COMPACT curie a frontend actually sends: `fin:BurnRateSeries` has no
+            # `#`, so the whole thing survived and the name became
+            #   presentation_multi_series_for_fin:burnrateseries__cortex-ui-desktop
+            # — a URN DELIMITER inside a URN component. Measured on the live substrate
+            # 2026-09-02: the __system_default__ rows written by the presentation agent
+            # were clean and the cortex-ui-desktop rows written HERE carried the colon,
+            # which is what identified this as the second site.
+            #
+            # THE SAME DEFECT WAS FIXED IN presentation_agent.capability_slug AND ONLY
+            # THERE, in the same week the five-registries lesson was written up. Fixing
+            # the instance you found is what stops you looking for the sibling. Imported
+            # rather than re-implemented so there is no third copy to diverge.
+            #
+            # ⚠️ THIS CHANGES THE tool_urn, and a presentation rebind INSERTS rather than
+            # replaces (see [[a-rebind-does-not-replace]]). So the next registration after
+            # this ships leaves the colon-bearing rows standing and double-binds every
+            # subject. It must ride the same migration as the archetype-out-of-the-name
+            # ruling, which moves every presentation urn anyway.
+            name=(
+                f"presentation_{str(_c.get('archetype') or '').lower()}"
+                f"_for_{_capability_slug(str(_c.get('subject_uri') or ''))}"
+                f"__{frontend_id}"
+            ),
+            description=(
+                f"{frontend_id} renders {_c.get('subject_uri')} "
+                f"as {_c.get('archetype')}"
+            ),
+            subject_uri=str(_c.get("subject_uri") or ""),
+            object_uri=str(_c.get("object_uri") or ""),
+            archetype=str(_c.get("archetype") or ""),
+            expected_fields=list(_c.get("expected_fields") or []),
+            persona_fit=list(_c.get("persona_fit") or []),
+            domain_fit=list(_c.get("domain_fit") or []),
+            # The mesh helper takes `version: str`. An ABSENT version is carried as
+            # empty rather than the string "None", which is what `str(None)` would put
+            # into the graph and what a reader would then see as a version.
+            version=frontend_version or "",
+            frontend_id=frontend_id,
+            recomputes=_recomputes,
+        )
+        if _outcome is True:
+            _graph_registered += 1
+        else:
+            _graph_failed.append({"subject_uri": _c.get("subject_uri"),
+                                  "reason_class": _outcome[0], "detail": _outcome[1][:200]})
+    return _graph_registered, _graph_failed
+
+
+
+_frontend_menu_store_instance = None
+_frontend_menu_store_warned = False
+
+
+def _frontend_menu_store():
+    """The menu store, or None when PROJECTOR_POSTGRES_DSN is unset (logged once, never a crash)."""
+    global _frontend_menu_store_instance, _frontend_menu_store_warned
+    if not frontend_menu_store.configured():
+        if not _frontend_menu_store_warned:
+            _frontend_menu_store_warned = True
+            _frontend_registry_logger.warning(
+                "frontend menu store dormant (no PROJECTOR_POSTGRES_DSN): menus are not "
+                "persisted and will not be replayed after a graph wipe")
+        return None
+    if _frontend_menu_store_instance is None:
+        _frontend_menu_store_instance = frontend_menu_store.PgFrontendMenuStore()
+    return _frontend_menu_store_instance
+
+
+def _fetch_graph_entries():
+    """The graph's registered menus, or None when it is unreachable (sync; run off the loop)."""
+    from agent_fleet.presentation_agent.graph_menu_source import fetch_registered_entries
+
+    return fetch_registered_entries()
+
+
+def _graph_holds_menu(entries, frontend_id: str, frontend_version: str | None,
+                      admitted: list[dict]) -> bool:
+    """True only when the graph (a dict, not None) holds this frontend's version with every
+    admitted capability.
+
+    COVERAGE IS KEYED BY (subject_uri, archetype), not by count: those two fields are what the
+    emit puts in the row's name (presentation_<archetype>_for_<subject>__<frontend_id>). The
+    graph read returns the EXPANDED IRI while the post may carry a CURIE (`fin:X`), so both
+    sides are canonicalised with `canonical_iri_for_lookup` before comparing (measured on the
+    sandbox 2026-10-20: 35 of 49 keys missed). A count would call a menu with one capability
+    swapped for another "held". The graph may hold MORE than the post (a stale row); that is
+    covered, and a changed menu is caught by the digest, not here.
+    """
+    if not isinstance(entries, dict):
+        return False
+    entry = entries.get(frontend_id)
+    if not isinstance(entry, dict):
+        return False
+    group = (entry.get("versions") or {}).get(frontend_version or "")
+    if not isinstance(group, dict):
+        return False
+    from agent_fleet.presentation_agent.capabilities import canonical_iri_for_lookup as _canon
+
+    held = {(_canon(str(c.get("subject_uri") or "")), c.get("archetype") or "")
+            for c in (group.get("capabilities") or [])}
+    wanted = {(_canon(str(c.get("subject_uri") or "")), str(c.get("archetype") or ""))
+              for c in admitted}
+    return wanted <= held
+
+
+# Replay retry schedule: 6 attempts, ~5 minutes in all (seconds slept BEFORE attempts 2..6).
+_FRONTEND_MENU_REPLAY_DELAYS = (15, 30, 60, 90, 105)
+
+
+def _replay_frontend_menus_once() -> bool:
+    """One replay pass. Returns True when done, False when it should be retried.
+
+    Retry while the graph read is None (unreachable) or the registrar refused every
+    capability of some frontend. Sync: run off the event loop.
+    """
+    from agent_fleet.presentation_agent import capability_registry as _cap_registry
+
+    registrar_url = os.getenv("MESH_REGISTRAR_URL")
+    store = _frontend_menu_store()
+    if store is None or not registrar_url:
+        return True
+    rows = store.load_all()
+    if not rows:
+        return True
+    for row in rows:
+        _cap_registry.register(row["frontend_id"], row["frontend_version"], row["menu"])
+    entries = _fetch_graph_entries()
+    if entries is None:
+        _frontend_registry_logger.warning(json.dumps({
+            "event": "frontend_menu_replay_graph_unreachable", "frontends": len(rows)}))
+        return False
+    done = True
+    for row in rows:
+        fid, ver, menu = row["frontend_id"], row["frontend_version"], row["menu"]
+        if not menu or _graph_holds_menu(entries, fid, ver, menu):
+            _frontend_registry_logger.info(json.dumps({
+                "event": "frontend_menu_replayed", "frontend_id": fid,
+                "registered": 0, "failed": 0, "skipped": len(menu)}))
+            continue
+        registered, failed = _emit_menu_to_registrar(registrar_url, fid, ver, menu)
+        _frontend_registry_logger.info(json.dumps({
+            "event": "frontend_menu_replayed", "frontend_id": fid,
+            "registered": registered, "failed": len(failed), "skipped": 0}))
+        if registered == 0 and failed:
+            done = False
+    return done
+
+
+async def _replay_frontend_menus() -> None:
+    """Background task at BFF startup: put stored frontend menus back into the graph after a wipe.
+
+    Never blocks startup or /health and never raises.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    attempts = len(_FRONTEND_MENU_REPLAY_DELAYS) + 1
+    for attempt in range(attempts):
+        if attempt:
+            await asyncio.sleep(_FRONTEND_MENU_REPLAY_DELAYS[attempt - 1])
+        try:
+            if await run_in_threadpool(_replay_frontend_menus_once):
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a replay fault is retried, never raised
+            _frontend_registry_logger.warning("frontend menu replay attempt %d failed: %s",
+                                              attempt + 1, exc)
+    _frontend_registry_logger.warning(json.dumps({
+        "event": "frontend_menu_replay_gave_up", "attempts": attempts}))
+
+
+
 @app.post("/register_frontend_capabilities", response_model=RegisterFrontendCapabilitiesResponse)
 async def register_frontend_capabilities(
     payload: RegisterFrontendCapabilitiesRequest,
@@ -7893,65 +9808,58 @@ async def register_frontend_capabilities(
     # field the way "engine-f" did -- and every UI behind this bff would then share
     # one menu. There is deliberately no default: absent is refused above.
     _graph_registered, _graph_failed = 0, []
+    _unchanged = False
     _registrar_url = os.getenv("MESH_REGISTRAR_URL")
     if _registrar_url:
-        from agent_fleet.utils.mesh_registration import _emit_presentation_to_registrar
+        # ── THE EMIT LOOP RUNS OFF THE EVENT LOOP ──────────────────────────────────
+        # Was: this loop ran inline in an `async def`, and each
+        # `_emit_presentation_to_registrar` is a SYNC HTTP POST (timeout=30.0). Measured
+        # live on rev 186 (2026-10-10): ~49 capabilities per registration at a mean 0.42s
+        # each held the loop ~21s per registration. Every cortex tab registers at load,
+        # two overlapping registrations exceeded the 50s liveness window (5 x 10s /health
+        # timeouts) and the probe killed cortex-bff (exit 137); each restart made the tabs
+        # re-register. Now the whole loop is a plain function run in the threadpool.
+        # `_cap_registry.register` above is an in-process dict and stays on the loop.
+        from starlette.concurrency import run_in_threadpool
 
-        for _c in _admitted:
-            _contract = _c.get("contract") if isinstance(_c, dict) else None
-            _recomputes = None
-            if isinstance(_contract, dict) and "recomputes" in _contract:
-                # Tri-state preserved end to end: only a DECLARED value travels.
-                _recomputes = bool(_contract.get("recomputes"))
-            _outcome = _emit_presentation_to_registrar(
-                registrar_url=_registrar_url,
-                # ⛔ SLUG VIA THE SHARED HELPER, NOT A SECOND rsplit. This read
-                # `.rsplit('#', 1)[-1].lower()`, which is correct for a FULL IRI and wrong for
-                # the COMPACT curie a frontend actually sends: `fin:BurnRateSeries` has no
-                # `#`, so the whole thing survived and the name became
-                #   presentation_multi_series_for_fin:burnrateseries__cortex-ui-desktop
-                # — a URN DELIMITER inside a URN component. Measured on the live substrate
-                # 2026-09-02: the __system_default__ rows written by the presentation agent
-                # were clean and the cortex-ui-desktop rows written HERE carried the colon,
-                # which is what identified this as the second site.
-                #
-                # THE SAME DEFECT WAS FIXED IN presentation_agent.capability_slug AND ONLY
-                # THERE, in the same week the five-registries lesson was written up. Fixing
-                # the instance you found is what stops you looking for the sibling. Imported
-                # rather than re-implemented so there is no third copy to diverge.
-                #
-                # ⚠️ THIS CHANGES THE tool_urn, and a presentation rebind INSERTS rather than
-                # replaces (see [[a-rebind-does-not-replace]]). So the next registration after
-                # this ships leaves the colon-bearing rows standing and double-binds every
-                # subject. It must ride the same migration as the archetype-out-of-the-name
-                # ruling, which moves every presentation urn anyway.
-                name=(
-                    f"presentation_{str(_c.get('archetype') or '').lower()}"
-                    f"_for_{_capability_slug(str(_c.get('subject_uri') or ''))}"
-                    f"__{payload.frontend_id}"
-                ),
-                description=(
-                    f"{payload.frontend_id} renders {_c.get('subject_uri')} "
-                    f"as {_c.get('archetype')}"
-                ),
-                subject_uri=str(_c.get("subject_uri") or ""),
-                object_uri=str(_c.get("object_uri") or ""),
-                archetype=str(_c.get("archetype") or ""),
-                expected_fields=list(_c.get("expected_fields") or []),
-                persona_fit=list(_c.get("persona_fit") or []),
-                domain_fit=list(_c.get("domain_fit") or []),
-                # The mesh helper takes `version: str`. An ABSENT version is carried as
-                # empty rather than the string "None", which is what `str(None)` would put
-                # into the graph and what a reader would then see as a version.
-                version=payload.frontend_version or "",
-                frontend_id=payload.frontend_id,
-                recomputes=_recomputes,
-            )
-            if _outcome is True:
-                _graph_registered += 1
-            else:
-                _graph_failed.append({"subject_uri": _c.get("subject_uri"),
-                                      "reason_class": _outcome[0], "detail": _outcome[1][:200]})
+        _, _admit_sha = frontend_menu_store.menu_digest(_admitted)
+        _store = _frontend_menu_store()
+        if _store is not None:
+            # NO-OP WHEN THE STORED MENU MATCHES AND THE GRAPH STILL HOLDS IT (ruling Q9). The
+            # store alone is not enough: a wipe empties the graph and leaves the row, so the
+            # graph is read too. An unreachable graph (None) is never a no-op.
+            def _already_registered() -> bool:
+                _row = _store.load(payload.frontend_id)
+                if not _row or _row["menu_sha256"] != _admit_sha:
+                    return False
+                if (_row["frontend_version"] or "") != (payload.frontend_version or ""):
+                    return False
+                return _graph_holds_menu(_fetch_graph_entries(), payload.frontend_id,
+                                         payload.frontend_version, _admitted)
+
+            _unchanged = await run_in_threadpool(_already_registered)
+        if _unchanged:
+            _frontend_registry_logger.info(json.dumps({
+                "event": "frontend_capabilities_unchanged",
+                "frontend_id": payload.frontend_id,
+                "frontend_version": payload.frontend_version,
+                "admitted_count": len(_admitted),
+            }))
+        else:
+            _graph_registered, _graph_failed = await run_in_threadpool(
+                _emit_menu_to_registrar, _registrar_url, payload.frontend_id,
+                payload.frontend_version, _admitted)
+            if _store is not None:
+                _saved = await run_in_threadpool(
+                    lambda: _store.save(payload.frontend_id, payload.frontend_version, _admitted,
+                                        registered_by=str(current_user.id),
+                                        registered_at=int(time.time())))
+                if not _saved.get("ok"):
+                    _frontend_registry_logger.error(json.dumps({
+                        "event": "frontend_menu_save_failed",
+                        "frontend_id": payload.frontend_id,
+                        "reason": _saved.get("reason"),
+                    }))
         if _graph_failed:
             # LOUD, and per-capability: a menu that is half in the graph renders
             # inconsistently depending on which shape an answer takes, which is far
@@ -7999,6 +9907,7 @@ async def register_frontend_capabilities(
         accepted=len(_admitted),
         rejected=_rejected,
         frontend_id=payload.frontend_id,
+        unchanged=_unchanged,
     )
 
 
@@ -8234,13 +10143,18 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
         # template: a caller asking for panel 0 must not be refused over panel 5's slot.
         _sp_unbound = sorted(set(_sp_panel.consumes) - set(_sp_bindings))
         if _sp_unbound:
-            raise HTTPException(
+            from .authz.refusal import policy_refusal
+            from .canvas_template import slot_refusal
+            # A POLICY REFUSAL (it asks the caller to choose) -- `canvas_template.slot_refusal`.
+            raise policy_refusal(
+                "unbound_required_slot",
                 status_code=409,
-                detail=(
+                message=(
                     f"template {_sp_template_id!r} panel {_sp_panel_idx} consumes shared "
                     f"slot(s) {_sp_unbound} that nothing binds yet. Supply it in seed_panel's "
                     f"`bindings`."
                 ),
+                **slot_refusal(_sp_template, _sp_unbound),
             )
 
     return StreamingResponse(
@@ -9070,7 +10984,8 @@ def _build_s3_client():
     )
 
 
-def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, manifest: dict) -> None:
+def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, manifest: dict,
+                         kind: str = "") -> None:
     """Write the raw bytes + manifest.json (manifest + embedded provenance block, ADR-0041
     §8) under `object_prefix` in the processing-artifacts bucket — the SAME bucket
     extraction_review_sensor.py's S3 sensor watches, so a future classifier pass can pick
@@ -9090,7 +11005,8 @@ def _write_ingest_object(*, object_prefix: str, filename: str, body: bytes, mani
     """
     s3 = _build_s3_client()
     safe_name = os.path.basename(filename) or "upload"
-    s3.put_object(Bucket=_ARTIFACT_BUCKET, Key=f"{object_prefix}{safe_name}", Body=body)
+    s3.put_object(Bucket=_ARTIFACT_BUCKET, Key=f"{object_prefix}{safe_name}", Body=body,
+                  ContentType=_SOURCE_MEDIA_TYPES.get(kind, "application/octet-stream"))
     s3.put_object(
         Bucket=_ARTIFACT_BUCKET,
         Key=f"{object_prefix}manifest.json",
@@ -9204,26 +11120,18 @@ async def _fetch_instance1_spec(case_id: str) -> Optional[dict]:
     return _restate_answer(resp)
 
 
-@app.get("/cases/{case_id}")
-async def get_case(case_id: str, current_user: User = Depends(get_current_user)):
-    """GET /cases/{case_id} -- project the case runner's state (WorkflowRunner, ADR-0039) as
-    cortex's `WorkflowCasePayload` (cortex-ui `src/archetypes/workflow-case/contract.ts`).
-
-    EXISTENCE-ORACLE SAFE: a case that does not exist and a case the caller is not entitled to
-    read (see `case_projection.can_view_case`) answer IDENTICALLY -- 404 `{"detail": "case not
-    found"}` -- same discipline as `GET /ingest/{id}/status`. The runner being unreachable is a
-    DIFFERENT fact (not an authz question) and answers 503 `{"error": "runner_unavailable"}`.
-
-    The pure projection and the entitlement gate live in `case_projection`; this route only
-    fetches runner/DB state and calls them.
-    """
+async def _load_viewable_case(case_id: str, current_user: User) -> tuple[dict, dict]:
+    """The case-visibility gate `GET /cases/{case_id}` and `GET /cases/{case_id}/action` share:
+    fetch the case (runner unreachable -> 503 `runner_unavailable`), then 404 `case not found`
+    when it is absent OR the caller may not read it (`case_projection.can_view_case`), the two
+    answering IDENTICALLY. Returns `(case, definitions)`."""
     from starlette.concurrency import run_in_threadpool
 
     from agent_fleet.restate_analyst.workflow_definition import (  # noqa: PLC0415
         WorkflowDefinitionError, get_workflow_definition,
     )
 
-    from . import case_projection, human_tasks
+    from . import case_projection
 
     try:
         case = await _fetch_case(case_id)
@@ -9257,7 +11165,53 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
         case, instance1_spec, definitions,
         caller_authz_id=current_user.authz_id, caller_domains=caller_domains,
     ):
-        raise HTTPException(status_code=404, detail="case not found")
+        # A HOLDER OF A TASK ON THIS CASE MAY READ IT (architect ruling 2026-10-17): the person
+        # a task was routed to must see what they are asked to decide, whatever their domain
+        # cells. Any status counts. The admission is by recipient row alone; a store that is
+        # unconfigured or down admits nobody, and the answer stays the identical 404.
+        from . import human_tasks
+
+        try:
+            _holds = await run_in_threadpool(
+                human_tasks.holds_task_on_case, case_id, current_user.authz_id)
+        except Exception:  # noqa: BLE001 -- unreadable store: deny, same 404
+            _holds = False
+        if not _holds:
+            raise HTTPException(status_code=404, detail="case not found")
+    return case, definitions
+
+
+@app.get("/cases/{case_id}")
+async def get_case(case_id: str, current_user: User = Depends(get_current_user)):
+    """GET /cases/{case_id} -- project the case runner's state (WorkflowRunner, ADR-0039) as
+    cortex's `WorkflowCasePayload` (cortex-ui `src/archetypes/workflow-case/contract.ts`).
+
+    EXISTENCE-ORACLE SAFE: a case that does not exist and a case the caller is not entitled to
+    read (see `case_projection.can_view_case`) answer IDENTICALLY -- 404 `{"detail": "case not
+    found"}` -- same discipline as `GET /ingest/{id}/status`. The runner being unreachable is a
+    DIFFERENT fact (not an authz question) and answers 503 `{"error": "runner_unavailable"}`.
+
+    The pure projection and the entitlement gate live in `case_projection`; this route only
+    fetches runner/DB state and calls them.
+
+    A DELEGATE IS NOT A SUBMITTER (ruled 2026-10-16): any caller acting under a delegate client
+    (a key of `_delegate_principals()`, e.g. svc:openddil) reads the artifacts it seeded
+    (GET /artifacts/{id}), never the whole case. Refused 403 BEFORE the fetch, so the answer is
+    identical whether or not the case exists (no existence oracle). R-089: the delegate map
+    is asserted by configuration this pass.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import case_projection, human_tasks
+
+    # R-089: the delegate map is asserted by configuration this pass, not verified.
+    if current_user.authz_id in _delegate_principals():
+        raise HTTPException(status_code=403, detail={
+            "error": "delegate_reads_artifacts_only",
+            "message": "a delegate reads the artifacts it seeded (GET /artifacts/{id}), "
+                       "never the whole case"})
+
+    case, definitions = await _load_viewable_case(case_id, current_user)
 
     instance_ids = [inst.get("instance_id") for inst in (case.get("instances") or [])
                     if inst.get("instance_id")]
@@ -9270,12 +11224,126 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
     return case_projection.project_workflow_case(case, definitions, task_rows)
 
 
-@app.post("/ingest")
+from pydantic import ConfigDict as _ConfigDict  # noqa: E402
+
+
+class CaseSignalRequest(_BaseModel):
+    """Body of `POST /cases/{case_id}/signals/{signal}`. `extra="forbid"`: the actor is never
+    a body field -- an `acted_by` (or anything else) the caller supplies is a 422."""
+    model_config = _ConfigDict(extra="forbid")
+    status: str
+    comments: str = ""
+
+
+# The case/instance separator: an instance key is `{case}~{n}`. The gateway does not import
+# agent_fleet, so the value is restated here; its source is
+# agent_fleet/restate_analyst/case_routing.py CHILD_SEP (a test seals that they agree).
+_CASE_INSTANCE_SEP = "~"
+
+
+@app.post("/cases/{case_id}/signals/{signal}")
+async def answer_case_signal(
+    case_id: str,
+    signal: str,
+    req: CaseSignalRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """POST /cases/{case_id}/signals/{signal} -- a person answers a case's human-audience
+    signal (a `signal_await` step, e.g. maint_release's `tier_ack`). A human acknowledgment is
+    a cortex action (architect ruling 2026-10-10).
+
+    GENERIC over the signal name, GATED by the journalled audience: this route names no signal.
+    engine-a's `WorkflowRunner.signal` checks `accepts`, `reason_required` and the authority
+    gate (`_authorize_resolution`: actor present, not excluded, audience journalled, `can_act`).
+    The actor is `current_user.authz_id`, never the body.
+
+    Not checked here: the audience / `can_act` (the `case` projection does not expose the
+    awaiting signal's audience, so the BFF cannot re-check it without inventing a read).
+
+    THE SIGNAL GOES TO THE INSTANCE, NOT THE CASE (D1, lane/74 live walk 10-17, case
+    712382d7-00c2-5610-a3cf-0e1c9ef5ea70). A `signal_await` journals `signal_accepts:<name>` on
+    the INSTANCE key `{case}~{n}`, so the runner refused every post to the bare case key with
+    "no signal ... is awaited". A `case_id` with no instance separator is therefore resolved
+    first: the awaiting instance is the LAST entry of the case record's `instances` (`run`
+    appends an instance before it calls it and runs them one at a time). A `case_id` that
+    already carries the separator is forwarded unchanged.
+    """
+    acted_by = (current_user.authz_id or "").strip()
+    if not acted_by:
+        raise HTTPException(status_code=401, detail={
+            "error": "no_actor",
+            "message": "a case signal needs an authenticated caller with an authz_id",
+        })
+    target = case_id
+    if _CASE_INSTANCE_SEP not in case_id:
+        try:
+            case = await _fetch_case(case_id)
+        except Exception as exc:  # noqa: BLE001 — connect errors, timeouts
+            raise HTTPException(status_code=502, detail={
+                "error": "runner_unreachable", "message": f"{type(exc).__name__}: {exc}"})
+        if case is None:
+            raise HTTPException(status_code=404, detail="case not found")
+        instances = case.get("instances") or []
+        # A case with no instance yet keeps the case key: nothing is awaited, and the runner
+        # says so (a refusal the caller can read) rather than the BFF inventing a target.
+        if instances:
+            target = instances[-1].get("instance_id") or case_id
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            rr = await client.post(
+                f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(target)}/signal",
+                json={"signal": signal, "status": req.status, "comments": req.comments,
+                      "acted_by": acted_by},
+            )
+    except Exception as exc:  # noqa: BLE001 — connect errors, timeouts
+        raise HTTPException(status_code=502, detail={
+            "error": "runner_unreachable", "message": f"{type(exc).__name__}: {exc}"})
+    sc = rr.status_code
+    if sc == 200:
+        return {"case_id": case_id, "instance_id": target, "signal": signal,
+                "status": req.status, "acted_by": acted_by}
+    msg = _restate_refusal_message(rr)
+    if sc == 400:
+        raise HTTPException(status_code=400, detail={"error": "signal_refused", "message": msg})
+    if sc in (401, 403):
+        # The caller IS authenticated: a refusal here is authority, not authentication.
+        raise HTTPException(status_code=403, detail={
+            "error": "not_authorized_to_act", "code": sc, "message": msg})
+    if sc == 404:
+        raise HTTPException(status_code=404, detail="case not found")
+    raise HTTPException(status_code=502, detail={
+        "error": "signal_failed", "code": sc, "message": msg})
+
+
+def _sniff_file_kind(head: bytes) -> Optional[str]:
+    """What the leading bytes say a drop is: "pdf", "xml" or None. Pure.
+
+    pdf: `%PDF-` anywhere in the first 1024 bytes (PDF readers accept the header anywhere in the
+    first KiB, and real files carry leading junk). xml: after an optional UTF-8 BOM and leading
+    ASCII whitespace the bytes start `<?xml`; a UTF-16 BOM (FF FE / FE FF) followed by `<?xml` in
+    that encoding counts too."""
+    head = bytes(head[:1024])
+    if b"%PDF-" in head:
+        return "pdf"
+    t = head[3:] if head.startswith(b"\xef\xbb\xbf") else head
+    if t.lstrip(b" \t\r\n\x0b\x0c").startswith(b"<?xml"):
+        return "xml"
+    if head[:2] == b"\xff\xfe" and head[2:].startswith("<?xml".encode("utf-16-le")):
+        return "xml"
+    if head[:2] == b"\xfe\xff" and head[2:].startswith("<?xml".encode("utf-16-be")):
+        return "xml"
+    return None
+
+
+@app.post("/ingest", tags=[INGEST_V1_TAG], responses={200: {"model": IngestResponse}})
 async def ingest_document(
     file: UploadFile = File(...),
     kind: str = Form(...),
-    on_behalf_of: str = Form(...),
+    # Blank or absent means the caller (`_admit_on_behalf_of`). `Form(...)` refused a blank as
+    # `missing` before that rule could run, so the documented "send it blank" was a 422.
+    on_behalf_of: str = Form(""),
     content_kind: Optional[str] = Form(None),
+    leaf: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
 ):
     """POST /ingest (ADR-0041 §8) — a non-technical user hand-carries a document in.
@@ -9293,17 +11361,23 @@ async def ingest_document(
 
     FORMAT IS NOT KIND. `kind` (pdf|cad|xml) is the FILE FORMAT — the `ingress-user/{kind}/`
     path segment and the projection's `kind` column — never a registered content kind.
-    `content_kind` is the SEPARATE, OPTIONAL channel for the picker's confirmed registered
-    kind (ADR-0041 §4): the gateway does not validate it against the registry (the registry
-    lives in doc-tools; the driver resolves and HALTs on an unregistered value — ca's
-    `resolve_content_kind`), it only refuses a value that is blank-after-strip or malformed.
-    Writing a bare file format into `manifest.metadata.content_kind` (the old behaviour) made
-    every user drop HALT as ContentKindUnregistered("pdf") — ADR-0021 rule 1 / ADR-0041 §4
-    reserve that key for a REGISTERED kind. Leaving `metadata.content_kind` absent when
-    undeclared is deliberate: absence is rule 1 not firing, and ADR-0021's 2026-09-30
-    amendment disables rule 2 under `ingress-user/` (that path segment is a format), so an
-    undeclared drop HALTs at the driver -- stage `failed` with a detail -- rather than being
-    resolved from a fabricated value.
+    `content_kind` is the SEPARATE channel for the picker's confirmed registered kind
+    (ADR-0041 §4), and it is REQUIRED (architect ruling 2026-10-12: the door refuses a kindless
+    drop where the uploader can still fix it, instead of accepting it and letting it die inside
+    a Dagster op on the ADR-0041 guard). Refusals, in this order and all BEFORE the bounded read
+    so nothing is written: blank-after-strip or malformed -> 422; absent -> 400
+    `content_kind_required`; declared but not in the registry (`content_kinds.by_kind` is None)
+    -> 400 `kind_unregistered`; an event-branch kind -> 422 `event_kind_requires_json`. Both 400s
+    carry `registered`, the sorted document-branch kind names, so the picker can offer them. Any
+    registered document-branch kind passes, including a deliberately domainless one like `pdf`
+    (it lands at `awaiting_origin` later, unchanged). When INGEST_DOOR_READS_PROCESSABLE_KINDS is on
+    (default OFF), one more check follows, still before the bounded read: no published list yet ->
+    503 `processable_kinds_unknown`; a kind absent from doc-tools' published list -> 400
+    `kind_unprocessable` (carrying `processable`). Writing a bare file format into
+    `manifest.metadata.content_kind` (the old behaviour) made every user drop HALT as
+    ContentKindUnregistered("pdf") -- ADR-0021 rule 1 / ADR-0041 §4 reserve that key for a
+    REGISTERED kind; ADR-0021's 2026-09-30 amendment disables rule 2 under `ingress-user/`
+    (that path segment is a format), so a kindless drop could never be resolved downstream.
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -9331,6 +11405,33 @@ async def ingest_document(
                 status_code=422,
                 detail="content_kind must be <=128 chars and must not contain '/'",
             )
+    # KIND AT DROP (architect directive 2026-10-23, overriding the 10-21 "no picker before the
+    # drop"): the composer's [PCN] [PDN] [Not sure] row sends `leaf` for the first two and nothing
+    # for "Not sure", whose path is unchanged (title read -> awaiting_kind -> pick -> relaunch). A
+    # leaf NARROWS the drop's kind: it BECOMES `declared_content_kind`, so the sidecar's
+    # `manifest.metadata.content_kind` and the row (`leaf_source=declared`, via record_received's
+    # `_declared_leaf`) carry it exactly as a drop that named the leaf as its content_kind does, and
+    # every check below (registered, event branch, processable) runs on the leaf. Refused before any
+    # write: not one of `ingest_status.LEAVES` -> 422 `leaf_unknown`; on a file that is not a PDF ->
+    # 422 `leaf_requires_pdf` (an XML/S1000D kind is structural, the composer never asks); against a
+    # declared content_kind other than `pdf` or the leaf itself -> 422 `leaf_conflicts_with_content_kind`.
+    if leaf is not None:
+        _leaf = leaf.strip().lower()
+        if _leaf not in ingest_status.LEAVES:
+            raise HTTPException(status_code=422, detail={
+                "error": "leaf_unknown", "leaves": list(ingest_status.LEAVES),
+                "message": (f"leaf must be one of {list(ingest_status.LEAVES)} (omit it for "
+                            f"'not sure'), got {leaf!r}")})
+        if kind != ingest_status.PDF:
+            raise HTTPException(status_code=422, detail={
+                "error": "leaf_requires_pdf",
+                "message": f"a leaf is declared on a PDF drop only; this drop's file kind is {kind!r}"})
+        if declared_content_kind is not None and declared_content_kind.lower() not in (ingest_status.PDF, _leaf):
+            raise HTTPException(status_code=422, detail={
+                "error": "leaf_conflicts_with_content_kind",
+                "message": (f"leaf {_leaf!r} contradicts content_kind {declared_content_kind!r}; "
+                            f"send one, or content_kind 'pdf' with the leaf")})
+        declared_content_kind = _leaf
 
     # EVENT KINDS ARE REFUSED AT THIS DOOR (section C, ingest/origin seam). A document-branch
     # kind is bytes to extract; an event-branch kind is a JSON IngestRequest validated against
@@ -9340,7 +11441,34 @@ async def ingest_document(
     # the branch=="event" block further down silently seed a workflow for bytes that were ALSO
     # durably written, which is what this repo did before this check existed.
     _registered_kind = content_kinds.by_kind(declared_content_kind) if declared_content_kind else None
-    if _registered_kind is not None and _registered_kind.branch == "event":
+    # THE DOOR 400 (architect ruling 2026-10-12): a document drop must name a REGISTERED kind.
+    # Before the event check and the bounded read, so a refused drop writes nothing.
+    if declared_content_kind is None or _registered_kind is None:
+        _doc_kinds = sorted(r.kind for r in content_kinds.registrations() if r.branch == "document")
+        if declared_content_kind is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "content_kind_required",
+                    "message": (
+                        "content_kind is required: pick the registered kind of this document "
+                        "and resubmit. Refusing before any write."
+                    ),
+                    "registered": _doc_kinds,
+                },
+            )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "kind_unregistered",
+                "message": (
+                    f"content_kind {declared_content_kind!r} is not a registered content kind. "
+                    "Refusing before any write."
+                ),
+                "registered": _doc_kinds,
+            },
+        )
+    if _registered_kind.branch == "event":
         raise HTTPException(
             status_code=422,
             detail={
@@ -9352,6 +11480,35 @@ async def ingest_document(
                 ),
             },
         )
+
+    # THE PROCESSABLE-KINDS CHECK (owner ruling, F2/F3): behind a flag that ships OFF. Flag off ->
+    # the store and cache are never touched. Flag on is deny-by-default: no published list yet ->
+    # 503; a list that lacks the declared kind -> 400. Still before the bounded read.
+    if os.getenv("INGEST_DOOR_READS_PROCESSABLE_KINDS", "").strip().lower() in ("1", "true", "yes", "on"):
+        from . import processable_kinds
+
+        try:
+            _processable = await run_in_threadpool(processable_kinds.current)
+        except processable_kinds.StoreUnreachable as exc:
+            # The driver's text can name the database host; it goes to the log, never to a dropper.
+            logger.warning("processable_kinds store unreachable at the ingest door: %s", exc)
+            raise HTTPException(status_code=503, detail={
+                "error": "processable_kinds_unknown",
+                "message": "the processable-kinds store was unreachable and nothing is cached. "
+                           "Refusing before any write.",
+            })
+        if _processable is None:
+            raise HTTPException(status_code=503, detail={
+                "error": "processable_kinds_unknown",
+                "message": "doc-tools has not published its processable kinds yet. Refusing before any write.",
+            })
+        if declared_content_kind not in _processable:
+            raise HTTPException(status_code=400, detail={
+                "error": "kind_unprocessable",
+                "message": f"content_kind {declared_content_kind!r} is registered but doc-tools does not "
+                           "process it. Refusing before any write.",
+                "processable": sorted(_processable),
+            })
 
     # BOUNDED READ. An unbounded `await file.read()` buffers the whole upload in this pod (1Gi
     # limit in values-sandbox), so one authenticated drop could take the BFF down for every
@@ -9373,6 +11530,16 @@ async def ingest_document(
             )
         _chunks.append(_chunk)
     body = b"".join(_chunks)
+    # THE SNIFF BINDS (architect ruling): the declared pdf|xml must be what the bytes are, checked
+    # before the dedupe row, the S3 object or the graph node. cad has no magic.
+    if kind in ("pdf", "xml"):
+        _sniffed = _sniff_file_kind(body[:1024])
+        if _sniffed != kind:
+            raise HTTPException(status_code=400, detail={
+                "error": "kind_mismatch", "declared_kind": kind, "sniffed_kind": _sniffed,
+                "filename": file.filename,
+                "message": f"the drop says {kind!r} but its bytes are "
+                           f"{_sniffed or 'neither pdf nor xml'}; refusing before any write"})
     sha256 = hashlib.sha256(body).hexdigest()
     # THE SAME DERIVATION `document_promotion` requires (promotion.INGEST_ID_RE): minting the
     # id any other way would refuse every seam-minted document's later promotion.
@@ -9454,7 +11621,7 @@ async def ingest_document(
     await run_in_threadpool(
         lambda: _write_ingest_object(
             object_prefix=object_prefix, filename=file.filename or "upload",
-            body=body, manifest=manifest,
+            body=body, manifest=manifest, kind=kind,
         )
     )
     row = await run_in_threadpool(
@@ -9798,29 +11965,13 @@ async def ingest_event(
     }
 
 
-@app.get("/ingest/{ingest_id}/status")
-async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_current_user)):
-    """GET /ingest/<id>/status — for the SUBMITTER or the on_behalf_of principal only.
-
-    EXISTENCE-ORACLE SAFE: ingest_status.get_status_for scopes the query to
-    `submitted_by = caller OR on_behalf_of = caller`; a caller who is neither gets a plain
-    404, indistinguishable from "no such ingest" — same discipline as the human-task
-    resolution lookup (human_tasks.get_task_resolution).
-
-    ONE NAME PER FIELD: the DB column is still `status` (`ingest_status.get_status_for`'s row
-    dict, and Electric subscribers on `/electric/shape` still read the column `status` — only
-    this route's own JSON key is renamed), and the row's own `id` is never echoed back — both
-    are replaced here by `stage`/`ingest_id`, matching ca's wire shapes.
-    """
+async def _ingest_status_body(row: dict, current_user: User) -> dict:
+    """The status route's response dict for one scoped row (shared by GET /ingest/<id>/status and
+    GET /ingest/mine, so the two shapes cannot drift). `row` is an `ingest_status.get_status_for` /
+    `list_mine` row already scoped to the caller; the duplicate original is re-read with the same scoping."""
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status
-
-    row = await run_in_threadpool(
-        lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id)
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="ingest not found")
 
     stage = row["status"]
     duplicate = None
@@ -9837,8 +11988,93 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         # row this caller is not scoped to see.
         stage = original["status"] if original is not None else None
         duplicate = {"of_ingest_id": row["duplicate_of"], "message": row.get("detail")}
+        # `failure` and `attempt` describe the row `stage` was taken from, so for a duplicate-arrival
+        # row they are the ORIGINAL's -- never the duplicate row's own.
+        source_row = original
+    else:
+        source_row = row
 
-    return {
+    # `failure` is None unless the reported stage is `failed`. A failed row with NO stored failure
+    # is a legacy row written before 2026-10-12; synthesise from `detail`. reason_code None means
+    # the producer did not classify the failure; it does not mean there was no failure.
+    failure = None
+    if stage == ingest_status.FAILED and source_row is not None:
+        failure = source_row.get("failure") or {
+            "reason_code": None, "reason": source_row.get("detail"), "step": None,
+            "run_id": None, "pin_digest": None, "failed_at": source_row.get("updated_at")}
+    attempt = int((source_row or row).get("attempt") or 1)
+    # DISPLAY ONLY, never an identity (LLM-extracted `doc_id`). The key is always present: None
+    # means "claimed, none known yet"; a duplicate reports the ORIGINAL's.
+    notice_id = (source_row or {}).get("notice_id") or None
+
+    artifacts: Optional[list] = []
+    if row.get("case_id"):
+        from . import artifact_reads
+
+        def _case_artifacts() -> list:
+            with neo4j_driver.session() as session:
+                recs = list(session.run(
+                    artifact_reads.CASE_ARTIFACTS_CYPHER,
+                    case_id=row["case_id"], user_id=(current_user.id or "").strip()))
+            # R-089: the delegate map is asserted by configuration this pass; a delegate is listed
+            # only the artifacts it seeded, the same predicate GET /artifacts/{id} applies.
+            delegates = _delegate_principals()
+            return [{"artifact_id": r["id"], "kind": r["kind"], "released_at": r["released_at"]}
+                    for r in recs
+                    if artifact_reads.is_entitled(
+                        r, authz_id=current_user.authz_id, delegates=delegates)]
+        try:
+            artifacts = await run_in_threadpool(_case_artifacts)
+        except Exception as exc:  # noqa: BLE001 — unknown, not none; the row must still answer
+            logger.warning("ingest %s: the case's artifacts could not be listed: %s", row["id"], exc)
+            artifacts = None
+
+    # The review task (208). At `review` the steward acts on ONE of two tasks: the empty-confirm task
+    # for the CURRENT attempt when the extraction found no rows (_hold_empty_for_confirmation filed
+    # it), else the current generation's promotion task. The open empty-confirm payload decides which,
+    # the same lookup _decide_empty makes. Off `review` all three are null. A failed read at review
+    # leaves all three null: "could not be determined", never a guessed task id.
+    review_task_id = review_shape = account = None
+    if source_row is not None and stage == ingest_status.REVIEW:
+        from . import human_tasks
+
+        _src_id = source_row.get("id") or ""
+        _empty_id = _empty_confirm_task_id(_src_id, source_row.get("attempt"))
+        try:
+            _empty = await run_in_threadpool(lambda: human_tasks.get_open_task_payload(_empty_id))
+        except Exception as exc:  # noqa: BLE001 — unknown, not none; the row must still answer
+            logger.warning("ingest %s: the review task could not be read: %s", row["id"], exc)
+        else:
+            if _empty is not None:
+                review_task_id, review_shape = _empty_id, "empty"
+                account = _empty.get("account")
+            else:
+                review_task_id = _promotion_task_id(
+                    _src_id, int(source_row.get("review_generation") or 0))
+                review_shape = "promotion"
+
+    # extraction_defect (packet 2026-10-11): the NEWEST extraction_defect task filed about this drop,
+    # as {task_id, edits}, or null when none is on record. `edits` counts ROWS deleted, added or
+    # corrected (a header correction is not a row; the empty has_parts defect has none, so 0). A
+    # failed read, or a duplicate whose original this caller cannot see, leaves the key ABSENT: no claim.
+    _ABSENT = object()
+    extraction_defect = _ABSENT
+    if source_row is not None:
+        from . import human_tasks
+
+        try:
+            _defect = await run_in_threadpool(lambda: human_tasks.latest_task_for_subject(
+                source_row.get("id") or "", "extraction_defect"))
+        except Exception as exc:  # noqa: BLE001 — unknown, not none; the row must still answer
+            logger.warning("ingest %s: the extraction defect could not be read: %s", row["id"], exc)
+        else:
+            extraction_defect = None if _defect is None else {
+                "task_id": _defect["task_id"],
+                "edits": sum(1 for e in (_defect["payload"].get("edits") or [])
+                             if isinstance(e, dict)
+                             and e.get("op") in ("corrected", "added", "deleted"))}
+
+    body = {
         "ingest_id": row["id"],
         "stage": stage,
         "detail": row.get("detail"),
@@ -9850,27 +12086,465 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         "dropped_by": {"authz_id": row.get("submitted_by")},
         "origin_suggestion": row.get("origin_suggestion"),
         "case_id": row.get("case_id"),
+        # The row's declared kind (nullable, key always present; ruling 2026-10-16): the dropper
+        # needs it to see why a review was refused as `no_declared_domain`.
+        "content_kind": row.get("content_kind"),
+        "failure": failure,
+        "attempt": attempt,
+        "notice_id": notice_id,
+        "artifacts": artifacts,
+        # Spec 204 / 208: the task a steward acts on while the row is at `review` (see above), which
+        # of the two it is, and the extraction's own account of an empty one. A generation change
+        # replaces a promotion task.
+        "review_task_id": review_task_id,
+        "review_shape": review_shape,
+        "account": account,
     }
+    if extraction_defect is not _ABSENT:
+        body["extraction_defect"] = extraction_defect
+    # The leaf (spec 203). Present ONLY for a leaf-capable row (absent, not null, for cad / xml /
+    # s1000d / ...: absent tells cortex "no claim", so it draws no chip). A duplicate reads the
+    # ORIGINAL's leaf; an invisible original leaves the keys absent. Never reads review.json per poll.
+    if source_row is not None and _leaf_capable(source_row):
+        leaf, leaf_source, corrected_by = _row_leaf(source_row)
+        body["leaf"] = leaf
+        body["leaf_source"] = leaf_source
+        body["corrected_by"] = corrected_by
+        body["leaf_candidates"] = (source_row.get("leaf_candidates")
+                                   if stage == ingest_status.AWAITING_KIND else None)
+        # WHY the row is held (ruling 2026-10-22, e.g. `kind_not_identified`): present exactly when
+        # the other leaf keys are, a value only at awaiting_kind (the column is stale elsewhere).
+        body["hold_reason"] = (source_row.get("hold_reason")
+                               if stage == ingest_status.AWAITING_KIND else None)
+    return body
 
 
-@app.post("/ingest/{ingest_id}/retry")
-async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_current_user)):
-    """POST /ingest/<id>/retry -- let the dropper un-strand their own row without a hand write
-    (roll #20 item 3).
+@app.get("/ingest/{ingest_id}/status", tags=[INGEST_V1_TAG], responses={200: {"model": StatusBody}})
+async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_current_user)):
+    """GET /ingest/<id>/status — for the SUBMITTER or the on_behalf_of principal only.
 
-    SAME caller scoping as GET /ingest/{ingest_id}/status just above (visible iff
-    submitted_by == caller OR on_behalf_of == caller): reuses that route's own
-    `ingest_status.get_status_for` lookup/predicate rather than writing a second, divergent
-    one, and refuses with the SAME plain 404 body a stranger or a missing row gets from
-    status -- existence-oracle-safe for the same reason.
+    EXISTENCE-ORACLE SAFE: ingest_status.get_status_for scopes the query to
+    `submitted_by = caller OR on_behalf_of = caller`; a caller who is neither gets a plain
+    404, indistinguishable from "no such ingest" — same discipline as the human-task
+    resolution lookup (human_tasks.get_task_resolution).
+
+    ONE NAME PER FIELD: the DB column is still `status` (`ingest_status.get_status_for`'s row
+    dict, and Electric subscribers on `/electric/shape` still read the column `status` — only
+    this route's own JSON key is renamed), and the row's own `id` is never echoed back — both
+    are replaced here by `stage`/`ingest_id`, matching ca's wire shapes.
+
+    `failure` (2026-10-12, pipeline failure must reach the row) is None unless `stage` is `failed`;
+    then it is {reason_code, reason, step, run_id, pin_digest, failed_at} (a legacy failed row with
+    none stored gets one synthesised from `detail`, reason_code None). `attempt` is how many times
+    the row has been opened (1 on arrival; POST /ingest/{id}/retry bumps it).
+
+    `artifacts` (ruled 2026-10-16) lists `{artifact_id, kind, released_at}` for the case the event
+    opened (`case_id`), so a delegate learns its artifact ids from the row it already may read.
+    ONLY what the caller may open: each artifact is filtered through `artifact_reads.is_entitled`,
+    the gate GET /artifacts/{id} applies, so an id the caller could not read is never listed. The
+    key is always present: `[]` means none (no case yet, or none the caller may open); `None` means
+    UNKNOWN (the graph could not be read; logged) -- the row itself still answers.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    row = await run_in_threadpool(
+        lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id)
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="ingest not found")
+
+    return await _ingest_status_body(row, current_user)
+
+
+_ingest_access_log = logging.getLogger("iagent.audit.ingest_access")
+# THE LINE MUST ARRIVE, NOT MERELY BE CALLED (see the note on `logger` above).
+_ensure_the_audit_line_actually_ARRIVES(_ingest_access_log)
+
+
+def _audit_ingest_access(route: str, ingest_id: str, caller: str, decision: str,
+                         reason: str) -> None:
+    """ONE audit line per access decision (allow INFO, deny WARNING). Names the route, the ingest
+    id, the caller and the decision -- never bytes, keys or presigned URLs."""
+    (_ingest_access_log.info if decision == "allow" else _ingest_access_log.warning)(
+        "ingest_access route=%s ingest_id=%s caller=%s decision=%s reason=%s",
+        route, ingest_id, caller, decision, reason)
+
+
+async def _ingest_review_access(ingest_id: str, current_user: User, route: str) -> tuple[dict, str]:
+    """The shared gate of GET /ingest/{id}/extraction and /source. Returns `(row, reason)`.
+
+    Row absent or an EVENT row -> 404 `ingest_not_found`. ALLOWED when the caller is the row's
+    `submitted_by` or `on_behalf_of` (casefold; reason `dropped_by`), or when the
+    `document_promotion:<id>` task exists, is still OPEN and the caller passes
+    `human_tasks.can_act_or_unavailable` on its audience (reason `task_holder`). Otherwise
+    403 `not_entitled`. Decided BEFORE any artifact-store read. Every decision is audited.
+
+    The architect, 2026-10-17:
+      * "Topaz outage is 503 ... a holder of the task is never told not_entitled because a
+        dependency is down." A Topaz or task-store failure is 503 `authorization_unavailable`
+        (an unconfigured task store is the fleet's `hitl_unconfigured`). Any other failure of
+        the task check still denies.
+      * Q14: "unset Topaz URL is 503 authorization_unconfigured, not 403 -- our
+        misconfiguration is never reported as entitlement." An unset TOPAZ_DIRECTORY_URL, met on
+        an open task, is 503 `authorization_unconfigured`. With no open task the answer does not
+        depend on Topaz, so it is still 403 `not_entitled` and Topaz is not consulted.
+      * "a service reads the source of drops it delegated because the delegate rule already
+        grants it (it seeded them), not because it is 'the submitter'; a service holding a
+        review task counts for nothing." A service caller (`_is_service_caller`) is decided
+        by the seeding-delegate rule alone (`artifact_reads.is_entitled`; reason
+        `seeding_delegate`), never by the dropper fields or a task. R-089: the delegate map is
+        asserted by configuration this pass."""
+    from starlette.concurrency import run_in_threadpool
+
+    import psycopg2
+
+    from . import human_tasks, ingest_status, promotion
+    from .artifact_reads import is_entitled
+
+    caller = (current_user.authz_id or "").strip()
+    row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+    if row is None or row.get("kind") == ingest_status.EVENT:
+        _audit_ingest_access(route, ingest_id, caller, "deny", "ingest_not_found")
+        raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+    if _is_service_caller(caller):
+        if is_entitled({"seeded_by": str(row.get("submitted_by") or "").strip()},
+                       authz_id=caller, delegates=_delegate_principals()):
+            _audit_ingest_access(route, ingest_id, caller, "allow", "seeding_delegate")
+            return row, "seeding_delegate"
+        _audit_ingest_access(route, ingest_id, caller, "deny", "not_entitled")
+        raise HTTPException(status_code=403, detail={
+            "error": "not_entitled",
+            "message": "a service reads only the drops it seeded as a declared delegate"})
+    cf = caller.casefold()
+    if cf and cf in {str(row.get("submitted_by") or "").strip().casefold(),
+                     str(row.get("on_behalf_of") or "").strip().casefold()} - {""}:
+        _audit_ingest_access(route, ingest_id, caller, "allow", "dropped_by")
+        return row, "dropped_by"
+    allowed = False
+    if caller:
+        try:
+            state = await run_in_threadpool(
+                lambda: human_tasks.get_task_open_state(
+                    _promotion_task_id(ingest_id, int(row.get("review_generation") or 0))))
+            if state and state.get("open") and state.get("audience"):
+                allowed = bool(await run_in_threadpool(
+                    lambda: human_tasks.can_act_or_unavailable(state["audience"], caller)))
+        except human_tasks.HumanTaskConfigError as exc:
+            _audit_ingest_access(route, ingest_id, caller, "deny", "hitl_unconfigured")
+            raise HTTPException(status_code=503, detail={
+                "error": "hitl_unconfigured", "message": str(exc)}) from exc
+        except human_tasks.AuthorizationUnconfigured as exc:
+            _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unconfigured")
+            raise HTTPException(status_code=503, detail={
+                "error": "authorization_unconfigured",
+                "message": "the deployment declares no authorization directory"}) from exc
+        except (human_tasks.AuthorizationUnavailable, psycopg2.Error) as exc:
+            logger.warning("ingest access task check unavailable: %s", type(exc).__name__)
+            _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unavailable")
+            raise HTTPException(status_code=503, detail={
+                "error": "authorization_unavailable",
+                "message": "could not verify the caller against the promotion task"}) from exc
+        except Exception as exc:  # noqa: BLE001 -- fail closed
+            logger.warning("ingest access task check failed: %s", type(exc).__name__)
+            allowed = False
+    if allowed:
+        _audit_ingest_access(route, ingest_id, caller, "allow", "task_holder")
+        return row, "task_holder"
+    _audit_ingest_access(route, ingest_id, caller, "deny", "not_entitled")
+    raise HTTPException(status_code=403, detail={
+        "error": "not_entitled",
+        "message": "only the dropper or a holder of the open promotion task may read this document"})
+
+
+def _evidence_ref(it: dict) -> Optional[dict]:
+    mm = it.get("match_method")
+    page = it.get("page_number")
+    bboxes = it.get("bboxes")
+    if (isinstance(page, int) and not isinstance(page, bool) and page >= 1
+            and isinstance(bboxes, list) and bboxes
+            and all(isinstance(b, (list, tuple)) and len(b) == 4
+                    and all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in b)
+                    for b in bboxes)):
+        return {"page": page, "bbox": bboxes[0], "bboxes": bboxes,
+                "page_dims": it.get("page_dims"),
+                "units": "pt" if it.get("match_method") == "text_layer_cell" else "px",
+                # architect 2026-10-17: cortex renders a cell match and a region match
+                # differently. An unrecognised method (e.g. inherited_doc_level) stays None --
+                # undecided, never guessed.
+                "quality": ("cell" if mm == "text_layer_cell"
+                            else "region" if isinstance(mm, str) and mm.startswith("region_")
+                            else None)}
+    return None
+
+
+@app.get("/ingest/{ingest_id}/extraction", tags=[INGEST_V1_TAG], responses={200: {"model": Extraction}})
+async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(get_current_user)):
+    """GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the
+    evidence reference (page, bbox, units, quality cell|region|null) the review card draws. Gate: `_ingest_review_access`
+    (the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of
+    review.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and
+    is counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /
+    `extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`.
+    `leaf` / `leaf_source` / `corrected_by` are the notice's pcn|pdn and where it came from, read from
+    the ROW only (`_row_leaf`); a row with no leaf shows `leaf: null` whatever review.json says.
+    A REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the
+    rejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404
+    `rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`."""
+    from starlette.concurrency import run_in_threadpool
+
+    row, _why = await _ingest_review_access(ingest_id, current_user, "extraction")
+    ref = str(row.get("extraction_ref") or "").strip()
+    if not ref:
+        raise HTTPException(status_code=422, detail={
+            "error": "no_extraction_ref",
+            "message": f"ingest {ingest_id} has no extraction_ref yet"})
+    prefix = str(row.get("object_prefix") or "")
+    if not prefix or not ref.startswith(prefix):
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": f"extraction_ref {ref!r} is not under this document's directory {prefix!r}"})
+    reloc = await run_in_threadpool(lambda: _rejected_relocation(ingest_id, row))
+    ref_at = _relocated(ref, reloc)
+    if ref_at is None:
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": f"extraction_ref {ref!r} is not under the rejection's source prefix"})
+    manifest = await run_in_threadpool(lambda: _read_extraction_manifest(ref_at))
+    key = _review_json_key(manifest, ref)
+    if not key or not key.startswith(prefix):
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": f"the review rows are not under this document's directory {prefix!r}"})
+    key_at = _relocated(key, reloc)
+    if key_at is None:
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": "the review rows are not under the rejection's source prefix"})
+    review = await run_in_threadpool(lambda: _read_review_json(key_at))
+    items = _review_items(review)
+    mpn_by_part: dict = {}
+    for it in items:
+        m = _PART_FIELD_RE.match(str(it.get("field_path") or ""))
+        if m and m.group(2) == "affected_mpn":
+            mpn_by_part.setdefault(int(m.group(1)), it.get("value"))
+    rows_out = []
+    without = 0
+    for it in items:
+        m = _PART_FIELD_RE.match(str(it.get("field_path") or ""))
+        if not m:
+            continue
+        pi = int(m.group(1))
+        ev = _evidence_ref(it)
+        if ev is None:
+            without += 1
+        rows_out.append({
+            "row_index": len(rows_out), "part_index": pi, "mpn": mpn_by_part.get(pi),
+            "field": m.group(2), "extracted_value": it.get("value"),
+            "obtained_via": it.get("match_method"),
+            "match_confidence": it.get("match_confidence"),
+            "needs_review": it.get("needs_review"), "review_reason": it.get("review_reason"),
+            "source_snippet": it.get("source_snippet"), "evidence_ref": ev})
+    summ = _review_notice_summary(review)
+    leaf, leaf_source, corrected_by = _row_leaf(row)
+    return {
+        "ingest_id": ingest_id,
+        "notice_id": summ["notice_id"],
+        "content_kind": row.get("content_kind"), "attempt": row.get("attempt"),
+        "leaf": leaf, "leaf_source": leaf_source, "corrected_by": corrected_by,
+        "notice": {"mfr": summ["mfr"], "mfr_source": summ["mfr_source"],
+                   "mfr_parent": summ["mfr_parent"],
+                   "notice_date": summ["notice_date"]},
+        "part_count": summ["part_count"],
+        "rows": rows_out, "rows_without_evidence": without, "review_ref": key,
+        "relocated_to": reloc[1] if reloc else None}
+
+
+_SOURCE_MEDIA_TYPES = {"pdf": "application/pdf", "xml": "application/xml"}
+
+
+def _rejected_relocation(ingest_id: str, row: dict) -> Optional[tuple]:
+    """Sync (threadpool): for a REJECTED row, `(from, to)` -- the prefix the rejection moved the
+    document's objects out of and into, read from the rejection record and never guessed. None for
+    any other row (`review_rejected`, the grouped narrow reject, moves nothing). 503
+    `decision_ledger_unreachable`; 404 `rejected_evidence_unlocated` when the record does not say
+    where the objects went (it predates the field)."""
+    from . import ingest_status, promotion_stores
+
+    if row.get("status") != ingest_status.REJECTED:
+        return None
+    try:
+        rec = promotion_stores.PgDecisionLedger().record_for(ingest_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decision ledger read failed for %s: %s", ingest_id, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "decision_ledger_unreachable",
+            "message": f"the decision ledger did not answer: {type(exc).__name__}"})
+    q = rec.get("quarantine") if isinstance(rec, dict) and rec.get("outcome") == "rejected" else None
+    frm = q.get("from") if isinstance(q, dict) else None
+    to = q.get("to") if isinstance(q, dict) else None
+    if not (isinstance(frm, str) and frm and isinstance(to, str) and to):
+        raise HTTPException(status_code=404, detail={
+            "error": "rejected_evidence_unlocated",
+            "message": f"ingest {ingest_id} was rejected and the rejection record does not say "
+                       "where its objects went (it predates the field); nothing is guessed"})
+    return frm, to
+
+
+def _relocated(key: str, reloc: Optional[tuple]) -> Optional[str]:
+    """`key` where the evidence now is: unchanged with no relocation; under the record's `to` when
+    `key` was under its `from`; None when it was not (the caller's `*_unbound` 422)."""
+    if reloc is None:
+        return key
+    frm, to = reloc
+    return to + key[len(frm):] if key.startswith(frm) else None
+
+
+def _open_source_object(ingest_id: str, row: dict) -> tuple[Any, str]:
+    """Sync (threadpool): resolve the row's own source object and open it. The key comes from the
+    drop manifest's `object_ref` (the seam's `<prefix><safe_name>`), which must be one of the
+    seam's keys for THIS document (`promotion.object_prefix_for`) and under the row's
+    `object_prefix`, else 422 `source_unbound`. 404 `source_absent`, 503
+    `artifact_store_unreachable`. A REJECTED row's objects live under `rejected/<id>/`: they are
+    read there through the rejection record (404 `rejected_evidence_unlocated`, 503
+    `decision_ledger_unreachable`). Returns `(s3 Body, original key)`."""
+    import json as _j
+
+    from . import promotion
+
+    prefix = str(row.get("object_prefix") or "")
+    if not prefix:
+        raise HTTPException(status_code=422, detail={"error": "source_unbound"})
+
+    def _get(key: str):
+        try:
+            return _build_s3_client().get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"]
+        except Exception as exc:  # noqa: BLE001
+            code = ""
+            resp = getattr(exc, "response", None)
+            if isinstance(resp, dict):
+                code = str((resp.get("Error") or {}).get("Code") or "")
+            if code in ("NoSuchKey", "404") or "NoSuchKey" in str(exc):
+                raise HTTPException(status_code=404, detail={"error": "source_absent"})
+            raise HTTPException(status_code=503, detail={
+                "error": "artifact_store_unreachable",
+                "message": f"the artifact store did not answer: {type(exc).__name__}"})
+
+    reloc = _rejected_relocation(ingest_id, row)
+    man_at = _relocated(f"{prefix}manifest.json", reloc)
+    if man_at is None:
+        raise HTTPException(status_code=422, detail={"error": "source_unbound"})
+    try:
+        dropped = _j.loads(_get(man_at).read())
+    except (ValueError, UnicodeDecodeError):
+        dropped = None
+    ref = dropped.get("object_ref") if isinstance(dropped, dict) else None
+    if (not isinstance(ref, str) or promotion.object_prefix_for(ingest_id, ref) is None
+            or not ref.startswith(prefix)):
+        raise HTTPException(status_code=422, detail={
+            "error": "source_unbound",
+            "message": f"the drop's source object is not a key under {prefix!r}"})
+    ref_at = _relocated(ref, reloc)
+    if ref_at is None:
+        raise HTTPException(status_code=422, detail={"error": "source_unbound"})
+    return _get(ref_at), ref
+
+
+@app.get("/ingest/{ingest_id}/source", tags=[INGEST_V1_TAG], responses={200: BINARY_200})
+async def ingest_source_route(ingest_id: str, current_user: User = Depends(get_current_user)):
+    """GET /ingest/<id>/source -- the dropped document's own bytes, streamed in chunks (never
+    buffered whole). Same gate and audit as `/extraction`; works for the dropper before any
+    extraction exists. 422 `source_unbound`, 404 `source_absent`, 503 `artifact_store_unreachable`;
+    a rejected row is read from `rejected/<id>/` through its record: 404 `rejected_evidence_unlocated`,
+    503 `decision_ledger_unreachable`.
+    The app-wide middleware sets `Cache-Control: no-store` on the response."""
+    import posixpath
+    from starlette.concurrency import run_in_threadpool
+
+    row, _why = await _ingest_review_access(ingest_id, current_user, "source")
+    body, key = await run_in_threadpool(lambda: _open_source_object(ingest_id, row))
+
+    def _chunks():
+        try:
+            while True:
+                chunk = body.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            close = getattr(body, "close", None)
+            if close:
+                close()
+
+    name = posixpath.basename(key).replace('"', "")
+    return StreamingResponse(
+        _chunks(), media_type=_SOURCE_MEDIA_TYPES.get(str(row.get("kind")), "application/octet-stream"),
+        headers={"Content-Disposition": f'inline; filename="{name}"',
+                 "Cache-Control": "private, no-store"})
+
+
+class IngestRetryRequest(_BaseModel):
+    """POST /ingest/{id}/retry's body: the extractor pin the caller observed NOW."""
+    pin_digest: str = Field(..., min_length=1)
+
+
+def _is_service_caller(authz_id: Optional[str]) -> bool:
+    """A non-human authz id: the `svc:` namespace (policy/users.yaml) or an asserted delegate
+    (`_delegate_principals`, R-089: a delegate is a service, never a person). Same predicate
+    family as safety_agent/measures.py."""
+    a = (authz_id or "").strip()
+    return bool(a) and (a.startswith("svc:") or a in _delegate_principals())
+
+
+@app.post("/ingest/{ingest_id}/retry", tags=[INGEST_V1_TAG], responses={200: {"model": RetryResponse}})
+async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] = None,
+                             current_user: User = Depends(get_current_user)):
+    """POST /ingest/<id>/retry. The architect's 2026-10-12 directive, "pipeline failure must reach
+    the row", supersedes the 2026-10-10 "pin-driven only, never the UI" ruling FOR FAILED ROWS: a
+    person may retry their OWN `failed` document row, and a service may retry one without a pin.
+    This is the one legitimate human retry, because the input was never processed. Every other
+    extraction retry stays pin-driven and service-only (supersedes the dropper's own retry of
+    roll #20 item 3).
+
+    THE RETRY ONLY RE-OPENS THE ROW (`ingest_status.retry_failed`: failed -> received, `failure`
+    cleared, `attempt` + 1). doc-tools' `ingress_user_sensor` does not relaunch an unchanged object:
+    its LastModified cursor has already passed it, and its run_key is `{ETag}-{key}`. So until
+    doc-tools adds a relaunch path, a retried row sits at `received` and the watchdog fails it again
+    with `timeout`. That outcome is visible and honest, not silent.
+
+    TWO ACTS SHARE THIS ROUTE, and the two 2026-10-10 rulings govern one each (rev 187 merge of #32
+    and #43; the architect is asked to confirm, packet 2026-10-11 "two rulings collide"):
+      * RE-FILING a promotion from recorded state (`awaiting_origin`, Q2c) re-extracts nothing and
+        is idempotent -- the dropper may do it, exactly as the accept and stage routes may.
+      * RE-EXTRACTION (every other stage) is pin-driven and service-only, as steward item 4 rules.
+
+    Gate, in order:
+      * A PERSON is looked up SCOPED (`get_status_for`: rows they submitted or are on_behalf_of).
+        Their own `failed` DOCUMENT row is re-opened (200 `received` with the new `attempt`; 409
+        `not_failed` if it stopped being failed under them). Their own `awaiting_origin` DOCUMENT
+        row goes to Q2c. Anything else -- another stage, a row
+        that is not theirs, no row at all -- is the SAME 403 `retry_is_pin_driven`, so the answer
+        tells a person nothing about rows they cannot already see. A person never reaches the
+        unscoped lookup or any extraction-retry action.
+      * A SERVICE is looked up unscoped. An `awaiting_origin` DOCUMENT row goes to Q2c (re-filing
+        is not pin-driven); a `failed` DOCUMENT row is re-opened with no pin. Otherwise it must send `{pin_digest}` (422 `pin_required`); a row with
+        no recorded pin is 409 `no_recorded_pin`; an equal pin is 409 `pin_unchanged`; only a
+        DIFFERENT pin proceeds to the dispatch below.
 
     Dispatch on the row:
-      * already terminal (promoted/rejected/failed/duplicate/case_opened) -- 409 `terminal`;
-        nothing to retry.
+      * already terminal (promoted/rejected/duplicate/case_opened, or a failed EVENT row) -- 409
+        `terminal`; nothing to retry.
+      * a DOCUMENT row at `awaiting_origin` (Q2c, 2026-10-10) -- NOT terminal: runs the state
+        function `_file_promotion_if_ready` with THIS caller as `requested_by`. Filed -> 200
+        `review` with the task; no accepted origin yet -> 409 `awaiting_origin`; origin
+        unreadable or filing refused -> 503 `promotion_not_filed` (row stays put).
       * an EVENT row, which by this point can only be sitting at `received` (its own only
         non-terminal stage -- POST /ingest/events moves it straight to `case_opened`, never
         through extracting/review) -- 409 `resend_the_event`: the row holds only the payload
         hash, so the fix is to resend the same event, not to retry here.
+      * a failed DOCUMENT row is re-opened at `received` (a row with a leaf has the drop's sidecar
+        rewritten to that leaf first; 503 `sidecar_unwritable` if it cannot be).
       * a DOCUMENT row at `received`/`extracting` -- 409 `in_pipeline`: extraction runs in
         doc-tools' own pipeline (ingress_user_sensor); a retry here cannot advance it.
       * a DOCUMENT row at `review` -- the one stage this CAN move: re-runs the
@@ -9883,19 +12557,101 @@ async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_cu
 
     from . import ingest_status
 
-    row = await run_in_threadpool(
-        lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id)
-    )
+    async def _refile_from_state(requested_by: str) -> dict:
+        """Q2c (2026-10-10): re-file a DOCUMENT row at `awaiting_origin` through the SAME state function
+        the accept and stage routes call, with the retrying party as `requested_by`. Filed -> 200
+        `review` with the task; no accepted origin yet -> 409 `awaiting_origin`; origin unreadable or
+        filing refused -> 503 `promotion_not_filed` (the row stays put). Re-extracts nothing."""
+        stage = ingest_status.AWAITING_ORIGIN
+        out = await _file_promotion_if_ready(ingest_id, requested_by=requested_by)
+        if out and out.get("filed"):
+            return {"ingest_id": ingest_id, "stage": ingest_status.REVIEW,
+                    "task_id": out["task_id"], "task_status": out["task_status"]}
+        if out and out.get("promoted"):
+            return {"ingest_id": ingest_id, "stage": ingest_status.PROMOTED,
+                    "task_id": None, "task_status": out["task_status"]}
+        if out is None:
+            raise HTTPException(status_code=409, detail={
+                "error": "awaiting_origin", "stage": stage,
+                "message": "no accepted origin is recorded for this artifact yet; a steward's accept files it"})
+        raise HTTPException(status_code=503, detail={"error": "promotion_not_filed",
+                                                     "reason": out.get("error"), "stage": stage})
+
+    def _refiles_from_state(r: Optional[dict]) -> bool:
+        return (r is not None and r.get("status") == ingest_status.AWAITING_ORIGIN
+                and r.get("kind") != ingest_status.EVENT)
+
+    def _is_failed_document(r: Optional[dict]) -> bool:
+        return (r is not None and r.get("status") == ingest_status.FAILED
+                and r.get("kind") != ingest_status.EVENT)
+
+    async def _reopen_failed(r: Optional[dict] = None) -> dict:
+        """Re-open a failed DOCUMENT row (`r`: the row the caller already read). A row with a leaf
+        (pcn|pdn) has the drop's sidecar rewritten to that leaf FIRST, so the relaunch runs as the leaf
+        and the leaf-relaunch pass finds nothing left to do; a sidecar that cannot be written is 503
+        `sidecar_unwritable` and the row is unchanged. `retry_failed` is one atomic UPDATE guarded on
+        `status = 'failed'`, so of two concurrent retries the second gets None -> 409."""
+        _leaf_now = str((r or {}).get("content_kind") or "").strip().lower()
+        if r and _leaf_capable(r) and _leaf_now in ingest_status.LEAVES:
+            try:
+                await run_in_threadpool(lambda: _apply_leaf_to_sidecar(r, _leaf_now))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ingest_retry ingest_id=%s sidecar not written (%s: %s)", ingest_id,
+                               type(exc).__name__, exc)
+                raise HTTPException(status_code=503, detail={
+                    "error": "sidecar_unwritable", "stage": ingest_status.FAILED,
+                    "message": "the drop's manifest could not be updated to the row's kind, so "
+                               "nothing was changed; try again"})
+        attempt = await run_in_threadpool(lambda: ingest_status.retry_failed(ingest_id))
+        if attempt is None:
+            raise HTTPException(status_code=409, detail={
+                "error": "not_failed",
+                "message": "only a failed document can be retried; this one is not failed."})
+        return {"ingest_id": ingest_id, "stage": ingest_status.RECEIVED, "attempt": attempt}
+
+    if not _is_service_caller(current_user.authz_id):
+        own = await run_in_threadpool(
+            lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id))
+        if _refiles_from_state(own):
+            return await _refile_from_state(current_user.authz_id)
+        if _is_failed_document(own):
+            return await _reopen_failed(own)
+        raise HTTPException(status_code=403, detail={
+            "error": "retry_is_pin_driven",
+            "message": "a retry is driven only by an extractor pin change, never by a person"})
+    row = await run_in_threadpool(lambda: ingest_status.get_status_unscoped(ingest_id))
     if row is None:
         raise HTTPException(status_code=404, detail="ingest not found")
+    if _refiles_from_state(row):
+        return await _refile_from_state(current_user.authz_id)
+    if _is_failed_document(row):
+        # No pin: the input was never processed, so there is no extractor pin to have changed.
+        return await _reopen_failed(row)
+    if body is None:
+        raise HTTPException(status_code=422, detail={
+            "error": "pin_required",
+            "message": "a service retry sends the extractor pin it observed: {pin_digest}"})
+    recorded_pin = row.get("pin_digest")
+    if not recorded_pin:
+        raise HTTPException(status_code=409, detail={
+            "error": "no_recorded_pin",
+            "message": "this row records no extractor pin (pin_fields_missing); a pin-driven "
+                       "retry needs the pin follow-up"})
+    if body.pin_digest == recorded_pin:
+        raise HTTPException(status_code=409, detail={
+            "error": "pin_unchanged",
+            "message": "the extractor pin is the one the failed run recorded; a retry would fail the same way until the pin changes."})
 
     stage = row["status"]
     _terminal_stages = (
         ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
-        ingest_status.DUPLICATE, ingest_status.CASE_OPENED, ingest_status.AWAITING_ORIGIN,
+        ingest_status.DUPLICATE, ingest_status.CASE_OPENED, ingest_status.REVIEW_REJECTED,
+        ingest_status.NO_PARTS,
     )
     if stage in _terminal_stages:
-        raise HTTPException(status_code=409, detail={"error": "terminal", "stage": stage})
+        raise HTTPException(status_code=409, detail={
+            "error": "terminal", "stage": stage,
+            "message": f"this document is {stage}, a terminal stage; it cannot move."})
 
     if row.get("kind") == ingest_status.EVENT:
         raise HTTPException(status_code=409, detail={
@@ -9903,6 +12659,11 @@ async def ingest_retry_route(ingest_id: str, current_user: User = Depends(get_cu
             "message": "the row holds only the payload hash; resend the same event to "
                        "POST /ingest/events, which is idempotent on event_id",
         })
+
+    if stage == ingest_status.AWAITING_KIND:
+        raise HTTPException(status_code=409, detail={
+            "error": "awaiting_kind", "stage": stage,
+            "message": "pick a leaf: POST /ingest/{id}/leaf"})
 
     if stage in (ingest_status.RECEIVED, ingest_status.EXTRACTING):
         raise HTTPException(status_code=409, detail={
@@ -9939,6 +12700,15 @@ class IngestStageUpdateRequest(_BaseModel):
     # Before this field existed Pydantic dropped it silently, and the promotion task was filed
     # with a payload the act refused.
     extraction_ref: Optional[str] = None
+    # 2026-10-12 (pipeline failure must reach the row, architect directive). `run_id` is the Dagster
+    # run, accepted on ANY target stage; the other four are the structured failure and are valid
+    # only with stage == "failed". `reason_code` is OPTIONAL on `failed` for legacy compatibility:
+    # doc-tools today posts `failed` with `detail` only and the two sides deploy separately.
+    reason_code: Optional[str] = None
+    reason: Optional[str] = None
+    step: Optional[str] = None
+    run_id: Optional[str] = None
+    pin_digest: Optional[str] = None
 
 
 def _read_extraction_manifest(key: str) -> dict:
@@ -9975,8 +12745,277 @@ def _read_extraction_manifest(key: str) -> dict:
     return doc
 
 
+_PART_FIELD_RE = re.compile(r"^parts\[(\d+)\]\.(.+)$")
+
+
+def _review_json_key(manifest: dict, extraction_ref: str) -> Optional[str]:
+    """The key of the review.json doc-tools wrote beside the manifest's `text_location` (same
+    directory), or None when `text_location` is an s3:// URL for another bucket. `text_location`
+    is a bare key or an `s3://<bucket>/<key>` URL; blank falls back to the directory of the
+    manifest itself (`extraction_ref`), which is the same generated/<base>/<version>/ directory."""
+    import posixpath
+    from urllib.parse import urlparse
+
+    loc = str((manifest or {}).get("text_location") or "").strip()
+    if loc.startswith("s3://"):
+        u = urlparse(loc)
+        if u.netloc != _ARTIFACT_BUCKET:
+            return None
+        key = u.path.lstrip("/")
+    else:
+        key = loc or str(extraction_ref or "").strip()
+    return posixpath.dirname(key) + "/review.json"
+
+
+def _read_review_json(key: str) -> dict:
+    """Read review.json at `key` (sync; threadpool). Same mapping as `_read_extraction_manifest`
+    but its own error names: 422 `extraction_rows_absent` (store said NoSuchKey), 503
+    `artifact_store_unreachable`, 422 `extraction_unreadable` (not a JSON object)."""
+    import json as _j
+
+    try:
+        body = _build_s3_client().get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"].read()
+    except Exception as exc:  # noqa: BLE001
+        code = ""
+        resp = getattr(exc, "response", None)
+        if isinstance(resp, dict):
+            code = str((resp.get("Error") or {}).get("Code") or "")
+        if code in ("NoSuchKey", "404") or "NoSuchKey" in str(exc):
+            raise HTTPException(status_code=422, detail={
+                "error": "extraction_rows_absent",
+                "message": "the store answered that this extraction has no review.json"})
+        raise HTTPException(status_code=503, detail={
+            "error": "artifact_store_unreachable",
+            "message": f"the artifact store did not answer: {type(exc).__name__}"})
+    try:
+        doc = _j.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        doc = None
+    if not isinstance(doc, dict):
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unreadable", "message": "review.json is not a JSON object"})
+    return doc
+
+
+def _bound_review_for_payload(subject) -> dict:
+    """The parsed review.json a promotion task points at (sync; threadpool). 422
+    `extraction_unbound` when the extraction is not under the document's own directory; the
+    readers raise their own HTTPException on a store failure."""
+    from . import promotion
+
+    ref = str(subject.extraction_ref or "").strip()
+    prefix = promotion.object_prefix_for(subject.ingest_id, subject.object_ref)
+    if not prefix or not ref.startswith(prefix):
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": f"extraction_ref {ref!r} is not under this document's directory {prefix!r}"})
+    manifest = _read_extraction_manifest(ref)
+    key = _review_json_key(manifest, ref)
+    if not key or not key.startswith(prefix):
+        raise HTTPException(status_code=422, detail={
+            "error": "extraction_unbound",
+            "message": f"the review rows are not under this document's directory {prefix!r}"})
+    return _read_review_json(key)
+
+
+def _review_header_for_payload(subject) -> dict:
+    """`_review_notice_summary` of the bound review (sync; threadpool); same binding checks."""
+    return _review_notice_summary(_bound_review_for_payload(subject))
+
+
+def _review_mpns_for_payload(subject) -> list:
+    """The affected_mpn of every part row of the review a promotion task points at (sync;
+    threadpool); binding as `_bound_review_for_payload`."""
+    out = []
+    for it in _review_items(_bound_review_for_payload(subject)):
+        m = _PART_FIELD_RE.match(str(it.get("field_path") or ""))
+        if m and m.group(2) == "affected_mpn":
+            v = it.get("value")
+            if isinstance(v, str) and v.strip():
+                out.append(v)
+    return out
+
+
+def _review_items(review: dict) -> list:
+    items = review.get("review_items")
+    return [it for it in items if isinstance(it, dict)] if isinstance(items, list) else []
+
+
+def _extraction_row_count(review: dict) -> int:
+    """How many part ROWS an extraction holds: the distinct `i` of the `parts[i].*` items of
+    review.json -- the same items `GET /ingest/{id}/extraction` serves as `rows` (one per field),
+    counted per part. Header items are not rows."""
+    return len({int(m.group(1)) for it in _review_items(review)
+                if (m := _PART_FIELD_RE.match(str(it.get("field_path") or "")))})
+
+
+async def _server_extraction_review(extraction_ref: str, prefix: str) -> Optional[dict]:
+    """The parsed review.json beside the manifest `extraction_ref` names, or None when it cannot be
+    read (no ref, not under the document's directory, store down, bad JSON). The ONE read behind
+    the zero-row check."""
+    from starlette.concurrency import run_in_threadpool
+
+    ref = str(extraction_ref or "").strip()
+    if not ref or not prefix or not ref.startswith(prefix):
+        return None
+    try:
+        manifest = await run_in_threadpool(lambda: _read_extraction_manifest(ref))
+        key = _review_json_key(manifest, ref)
+        if not key or not key.startswith(prefix):
+            return None
+        return await run_in_threadpool(lambda: _read_review_json(key))
+    except Exception:  # noqa: BLE001 -- HTTPException or anything else: unreadable
+        return None
+
+
+async def _server_extraction_row_count(extraction_ref: str, prefix: str) -> Optional[int]:
+    """The SERVER's row count for the extraction `extraction_ref` names, or None when it cannot be
+    read (no ref, not under the document's directory, store down, bad JSON). None is not zero:
+    a read failure keeps today's behaviour rather than becoming `extraction_empty`."""
+    review = await _server_extraction_review(extraction_ref, prefix)
+    if review is None:
+        return None
+    return _extraction_row_count(review)
+
+
+def _review_notice_id(review: dict) -> Optional[str]:
+    """The notice's own id as the extraction printed it -- review.json's `doc_id_raw`
+    (`PCN#20210316000.1`), or None when the header pass extracted none. doc-tools #141 (2026-10-17)
+    made it extraction-only: null, never a fallback to the key or the filename. DISPLAY ONLY. The
+    manifest's `doc_id` is NOT this: it is the filename-derived transport key."""
+    v = review.get("doc_id_raw")
+    return (v.strip() or None) if isinstance(v, str) else None
+
+
+def _title_leaf(doc_type, doc_type_source) -> Optional[str]:
+    """The leaf (`pcn`/`pdn`) a title read names CONFIDENTLY, else None. Confident iff
+    `doc_type_source == "title"` AND the lowercased, stripped `doc_type` is a leaf. A defaulted
+    `doc_type` is refused: doc-tools fills `"PCN"` when it derived nothing (sources
+    `no-title-evidence`, `title-ambiguous`, `defaulted`, or absent), so it is a routing default, not
+    a fact about the notice. ONE definition, used by `POST /ingest/{id}/title_leaf`."""
+    from . import ingest_status
+
+    dt = str(doc_type or "").strip().lower()
+    if doc_type_source == "title" and dt in ingest_status.LEAVES:
+        return dt
+    return None
+
+
+def _row_leaf(row) -> tuple:
+    """(leaf, leaf_source, corrected_by) for a row -- READ FROM THE ROW ONLY (spec 203b). The status
+    body, the review card, the `title_leaf` answer and the decision record all read it here.
+    `leaf` is `content_kind` lowercased when it names a leaf, else None. `leaf_source` is the stored
+    column as written (`declared`|`title`|`corrected`) with NO default: a NULL stays None.
+    `corrected_by` is `leaf_set_by` when the source is `corrected`, else None."""
+    from . import ingest_status
+
+    row = row or {}
+    ck = str(row.get("content_kind") or "").strip().lower()
+    leaf = ck if ck in ingest_status.LEAVES else None
+    source = row.get("leaf_source")
+    corrected_by = row.get("leaf_set_by") if source == "corrected" else None
+    return (leaf, source, corrected_by)
+
+
+def _same_passes(old_kind, new_kind) -> bool:
+    """True when both kinds are registered and declare EQUAL pass lists (spec 204, ruling "pcn<->pdn:
+    re-class, not re-run. Both kinds run the same passes, so the change is a recorded correction.
+    Re-run only when the two kinds' pass lists differ"). DERIVED from the content-kind registry --
+    there is no local table of kinds: an unregistered kind is never "the same", so it re-runs."""
+    from . import content_kinds
+
+    a = content_kinds.by_kind(str(old_kind or "").strip().lower())
+    b = content_kinds.by_kind(str(new_kind or "").strip().lower())
+    return a is not None and b is not None and tuple(a.passes) == tuple(b.passes)
+
+
+def _leaf_capable(row) -> bool:
+    """A leaf-capable row is not an event row and is a notice-in-waiting: its `content_kind` is a
+    leaf or `pdf`, or it is NULL and the file `kind` is `pdf`. cad / xml / s1000d / engineering-
+    document rows are not (the leaf keys are absent from their status body, `/leaf` refuses them)."""
+    from . import ingest_status
+
+    if row.get("kind") == "event":
+        return False
+    ck = str(row.get("content_kind") or "").strip().lower()
+    if ck in ingest_status.LEAVES or ck == "pdf":
+        return True
+    return (not ck) and row.get("kind") == "pdf"
+
+
+def _review_notice_summary(review: dict) -> dict:
+    """`{notice_id, mfr, mfr_source, mfr_identity, mfr_parent, notice_date, part_count}` from a
+    parsed review.json. `notice_id` is `_review_notice_id`; `mfr` is the `header.mfr` item's value,
+    else `notice_identity.mfr`; `mfr_source` says which: `"header"` (non-blank header value),
+    `"identity"` (the fallback supplied a non-blank value) or None. `mfr_identity` is
+    `notice_identity.mfr` stripped (None when absent or blank) whatever `mfr_source` is -- the act
+    route's evidence for a steward filling a missing header.mfr. Dates are strings as given."""
+    by_path: dict = {}
+    parts: set = set()
+    for it in _review_items(review):
+        fp = str(it.get("field_path") or "")
+        by_path.setdefault(fp, it.get("value"))
+        m = _PART_FIELD_RE.match(fp)
+        if m:
+            parts.add(int(m.group(1)))
+    ident = review.get("notice_identity")
+    mfr = by_path.get("header.mfr")
+    ident_mfr = ident.get("mfr") if isinstance(ident, dict) else None
+    mfr_identity = ident_mfr.strip() if isinstance(ident_mfr, str) and ident_mfr.strip() else None
+    if isinstance(mfr, str) and mfr.strip():
+        mfr_source = "header"
+    elif mfr_identity is not None:
+        mfr_source = "identity"
+    else:
+        mfr_source = None
+    if mfr_source == "identity":
+        mfr = mfr_identity          # a BLANK header value is a miss too; show what the source names
+    elif mfr is None:
+        mfr = ident_mfr
+    return {"notice_id": _review_notice_id(review),
+            "mfr": mfr, "mfr_source": mfr_source, "mfr_identity": mfr_identity,
+            "mfr_parent": by_path.get("header.mfr_parent"),
+            "notice_date": by_path.get("header.pub_date"), "part_count": len(parts)}
+
+
+async def _soft_review_summary(manifest: dict, extraction_ref: str, prefix: str) -> Optional[dict]:
+    """The notice summary for the review card's payload, or None when review.json is absent,
+    unbound or unreadable -- NEVER a refusal: the task must still file."""
+    from starlette.concurrency import run_in_threadpool
+
+    key = _review_json_key(manifest, extraction_ref)
+    if not key or not key.startswith(prefix):
+        return None
+    try:
+        review = await run_in_threadpool(lambda: _read_review_json(key))
+    except HTTPException:
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+    return _review_notice_summary(review)
+
+
+def _promotion_task_id(ingest_id: str, generation: int) -> str:
+    """The `document_promotion` task id for a document at a promotion GENERATION (spec 204): the
+    legacy `document_promotion:<id>` at generation 0, `document_promotion:<id>:g<n>` after. A leaf
+    change at review files the next generation and supersedes the old, so a stale id is refusable."""
+    from . import promotion
+
+    if not generation:
+        return f"{promotion.KIND}:{ingest_id}"
+    return f"{promotion.KIND}:{ingest_id}:g{int(generation)}"
+
+
+def _current_promotion_task_id(row) -> str:
+    """The task id the row's CURRENT generation names (a legacy row without the column reads 0)."""
+    row = row or {}
+    return _promotion_task_id(str(row.get("id") or ""), int(row.get("review_generation") or 0))
+
+
 async def _file_or_find_document_promotion_task(
     ingest_id: str, row: dict, *, requested_by: str, extraction_ref: Optional[str],
+    domain: Optional[str] = None, notice_out: Optional[dict] = None,
+    generation: Optional[int] = None,
 ) -> tuple[Optional[str], str]:
     """Find-or-file the `document_promotion` task for a DOCUMENT row at `review` -- the
     refactored-out body of `update_ingest_stage`'s own `if req.stage == ingest_status.REVIEW:`
@@ -9990,6 +13029,10 @@ async def _file_or_find_document_promotion_task(
     on the file format always misses the registry, resolves to a None domain, and files a task
     no one can be entitled to.
 
+    `domain`, when given (stripped non-empty), IS the audience domain and the kind registry is not
+    consulted: the origin-accept caller (`write_origin_route`) passes the accepted origin's
+    `owner_domain` (Q2 ruling 2026-10-10). Otherwise the audience comes from the kind registry.
+
     `requested_by` is the caller each route should be attributing the task to -- doc-tools'
     own service identity for `update_ingest_stage`'s transition INTO `review`, or the retrying
     caller's own authz_id for a retry; this helper does not decide which, it only takes it.
@@ -9997,7 +13040,17 @@ async def _file_or_find_document_promotion_task(
     THE PAYLOAD IS DERIVED, NOT ASSERTED (ADR-0034): everything the act needs beyond the domain
     and the dropper comes from the versioned extraction manifest `extraction_ref` names, read
     here and turned into the payload by `promotion.payload_from_extraction`. An existing task
-    needs no manifest, so `ALREADY_FILED` is answered before any of that.
+    needs no manifest, so `ALREADY_FILED` is answered before any of that -- and keeps the
+    payload and title it was filed with (a task filed before 193.2 never gains
+    `mfr`/`notice_date`/`part_count`/`attempt`) -- EXCEPT when its payload's `content_kind` differs from
+    the row's (the leaf changed, spec 203b): then the payload is derived exactly as below and every
+    `pending` row is rewritten (`human_tasks.refresh_open_task`); a different audience is 409
+    `leaf_moves_audience`, nothing written. Still answers `ALREADY_FILED`.
+
+    The payload also carries the review card's four header facts, always present, None when
+    unknown: `mfr`, `notice_date`, `part_count` (from the review.json beside the manifest's
+    `text_location`, read softly -- absent or unreadable never refuses the filing) and `attempt`
+    (the row's). The title is the notice id when there is one.
 
     Raises HTTPException for every refusal (422 `no_declared_domain`, 422 `no_extraction_ref`,
     422 `extraction_unbound`, 422 `extraction_absent`, 422 `extraction_unreadable`, 422
@@ -10011,25 +13064,53 @@ async def _file_or_find_document_promotion_task(
 
     from . import content_kinds, human_tasks, promotion
 
-    kind_reg = content_kinds.by_kind(row.get("content_kind"))
-    domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
+    domain = str(domain or "").strip() or None
+    if domain is None:
+        kind_reg = content_kinds.by_kind(row.get("content_kind"))
+        domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
     if domain is None:
         # UNDECLARED, UNREGISTERED, OR NO DOMAIN -- refuse before any write.
         raise HTTPException(status_code=422, detail={
             "error": "no_declared_domain",
             "message": f"ingest {ingest_id} has content_kind={row.get('content_kind')!r}, "
-                       "which resolves to no registered domain -- refusing to open a "
-                       "promotion task with no audience.",
+                       "which resolves to no steward pool to route the review to -- refusing to "
+                       "open a promotion task with no audience (the kind routes the review; it "
+                       "does not assert the document's domain).",
         })
     # DOMAIN CASING: registrations carry the LOWERCASE pipeline domain, but the Topaz grant
     # key in policy/task_grants.yaml is UPPERCASE -- uppercase it below for both the audience
-    # and the payload so the resolved domain actually matches a grant.
+    # and the payload's `review_pool` so the resolved pool actually matches a grant. The payload
+    # carries the ROUTING POOL under `review_pool`; it is not a fact about the document, so it
+    # must never ride under a plain `domain` key a reader could take for the document's own.
     domain = domain.upper()
     audience = f"{promotion.KIND}:{domain}"
-    task_id = f"{promotion.KIND}:{ingest_id}"
+    # `generation` None reads the row's own (the usual case); a re-class at review passes g+1 so the
+    # new task is filed under the next id while the row still carries g.
+    task_id = _promotion_task_id(
+        ingest_id, int(row.get("review_generation") or 0) if generation is None else generation)
+    _refresh = False
     if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
-        return task_id, "ALREADY_FILED"
-
+        # LEGACY PATH (spec 204): since a leaf change at review files a NEW generation, this in-place
+        # refresh serves only a task filed under 203 (same id, different kind) at the row's current
+        # generation.
+        # THE OPEN TASK FOLLOWS THE LEAF (spec 203b): a task filed for one kind and now facing a row
+        # of another (the leaf was changed after parts extraction and the re-extraction reached
+        # review again) is REWRITTEN in place; the same kind, or no open task, is ALREADY_FILED as
+        # always. The audience must not move.
+        existing = await run_in_threadpool(lambda: human_tasks.get_open_task_payload(task_id))
+        if existing is None:
+            return task_id, "ALREADY_FILED"
+        if (str(existing.get("content_kind") or "").strip().lower()
+                == str(row.get("content_kind") or "").strip().lower()):
+            return task_id, "ALREADY_FILED"
+        state = await run_in_threadpool(lambda: human_tasks.get_task_open_state(task_id))
+        if (state or {}).get("audience") != audience:
+            raise HTTPException(status_code=409, detail={
+                "error": "leaf_moves_audience",
+                "message": f"the new kind {row.get('content_kind')!r} routes to {audience!r}, "
+                           f"not the open task's audience {(state or {}).get('audience')!r}; "
+                           "nothing was written."})
+        _refresh = True
     ref = str(extraction_ref or "").strip()
     if not ref:
         raise HTTPException(status_code=422, detail={
@@ -10046,17 +13127,42 @@ async def _file_or_find_document_promotion_task(
                        f"{prefix!r}.",
         })
     manifest = await run_in_threadpool(lambda: _read_extraction_manifest(ref))
+    summ = await _soft_review_summary(manifest, ref, prefix)
+    # The notice's own id (DISPLAY ONLY, never an identity), for the status row AND the payload
+    # from ONE read: review.json's `doc_id_raw`, None when not extracted or not readable. Never the
+    # manifest's `doc_id`, the filename-derived key (2026-10-18: TI and IDT titled by file stem).
+    notice_id = (summ or {}).get("notice_id")
+    if notice_out is not None:
+        notice_out["notice_id"] = notice_id
     try:
-        derived = promotion.payload_from_extraction(ingest_id, row, manifest, ref)
+        derived = promotion.payload_from_extraction(ingest_id, row, manifest, ref,
+                                                    notice_id=notice_id)
     except promotion.PromotionRefused as exc:
         raise HTTPException(status_code=exc.status,
                             detail={"error": exc.error, "message": str(exc)})
-    payload = {**derived, "domain": domain, "dropped_by": {"authz_id": row.get("submitted_by")}}
+    attempt = row.get("attempt")
+    payload = {**derived, "review_pool": domain, "dropped_by": {
+        "authz_id": row.get("submitted_by"), "on_behalf_of": row.get("on_behalf_of")},
+        "mfr": summ["mfr"] if summ else None,
+        "notice_date": summ["notice_date"] if summ else None,
+        "part_count": summ["part_count"] if summ else None,
+        "attempt": attempt}
+    notice_id_ = str(payload.get("notice_id") or "").strip()
+    ck_ = str(payload.get("content_kind") or "").strip()
+    kind_label = ck_.upper() if ck_.lower() in ("pcn", "pdn") else (ck_ or "Document")
+    pc_ = payload["part_count"]
+    _title = notice_id_ or f"Promote document {ingest_id}"
+    _summary = (f"{kind_label} {notice_id_ or ingest_id} — "
+                f"{payload['mfr'] or 'manufacturer unknown'}, "
+                f"{pc_ if pc_ is not None else '?'} parts, attempt {attempt}.")
+    if _refresh:
+        await run_in_threadpool(lambda: human_tasks.refresh_open_task(
+            task_id, payload=payload, title=_title, summary=_summary))
+        return task_id, "ALREADY_FILED"
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
             kind=promotion.KIND, task_id=task_id, audience=audience,
-            title=f"Promote document {ingest_id}",
-            summary=f"Review the extracted document {ingest_id} for promotion.",
+            title=_title, summary=_summary,
             requested_by=requested_by, subject_ref=ingest_id,
             payload=payload,
         ))
@@ -10067,6 +13173,395 @@ async def _file_or_find_document_promotion_task(
     except human_tasks.NoRequester as exc:
         raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
     return task_id, "FILED"
+
+
+# ── document_empty_confirm (ruling 2026-10-23, spec 208) ─────────────────────────────────────────
+# A zero-row extraction on a NOTICE (content_kind in ingest_status.LEAVES) files this task instead of
+# failing the row. Two doors, one writer: `POST /human_tasks/{id}/act` and `POST /ingest/{id}/empty`
+# both call `_decide_empty`.
+EMPTY_CONFIRM_KIND = "document_empty_confirm"
+_EMPTY_DECISIONS = ("confirmed_no_parts", "has_parts")
+_EMPTY_OPEN_DETAIL = ("the extraction found no part rows; awaiting confirmation that the document "
+                      "has none")
+_EMPTY_DEFECT_REASON = "the steward says the document has parts; the extraction found none"
+_ADD_MISSED_PART_MSG = ("entering parts by hand on an empty extraction is not built yet (awaiting a "
+                        "ruling on where hand-entered parts land)")
+
+
+def _empty_confirm_task_id(ingest_id: str, attempt) -> str:
+    """One task per (ingest_id, attempt): a re-posted stage finds it, a relaunch files a new one."""
+    return f"{EMPTY_CONFIRM_KIND}:{ingest_id}:a{int(attempt or 1)}"
+
+
+def _empty_account(review) -> dict:
+    """The extraction's OWN account of why it found no rows, DERIVED from review.json's top-level
+    `stats` and `review_reasons`. An unreadable review.json or stats gives `why: "unknown"` and Nones:
+    no figure is ever invented."""
+    stats = review.get("stats") if isinstance(review, dict) else None
+    reasons = review.get("review_reasons") if isinstance(review, dict) else None
+
+    def _n(key):
+        v = stats.get(key) if isinstance(stats, dict) else None
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    n_tables, no_col, emitted = _n("n_tables"), _n("grid_no_parts_col"), _n("grid_rows_emitted")
+    if not isinstance(stats, dict):
+        why = "unknown"
+    elif n_tables == 0:
+        why = "no_table"
+    elif n_tables is not None and n_tables > 0 and no_col is not None and no_col > 0:
+        why = "no_parts_column"
+    else:
+        why = "zero_rows"
+    return {"n_tables": n_tables, "grid_no_parts_col": no_col, "grid_rows_emitted": emitted,
+            "review_reasons": [str(r) for r in reasons] if isinstance(reasons, list) else [],
+            "why": why}
+
+
+async def _file_or_find_empty_confirm_task(
+    ingest_id: str, row: dict, *, requested_by: str, account: dict, forced: bool,
+) -> tuple[str, str]:
+    """Find-or-file the `document_empty_confirm` task for the row's CURRENT attempt. Audience
+    `document_promotion:<DOMAIN>`, DOMAIN from the kind registry exactly as the promotion filer derives
+    it; no origin gate (nothing to promote). Same refusals as that filer: 422 `no_declared_domain`,
+    503 `hitl_unconfigured`, 422 `no_entitled_recipients`, 422 `no_requester`. Writes nothing on any."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, human_tasks, promotion
+
+    kind_reg = content_kinds.by_kind(row.get("content_kind"))
+    domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
+    if domain is None:
+        raise HTTPException(status_code=422, detail={
+            "error": "no_declared_domain",
+            "message": f"ingest {ingest_id} has content_kind={row.get('content_kind')!r}, which "
+                       "resolves to no steward pool to route the confirmation to."})
+    audience = f"{promotion.KIND}:{str(domain).upper()}"
+    attempt = row.get("attempt")
+    task_id = _empty_confirm_task_id(ingest_id, attempt)
+    if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
+        return task_id, "ALREADY_FILED"
+    payload = {"review_shape": "empty", "ingest_id": ingest_id, "attempt": attempt,
+               "source": f"/ingest/{ingest_id}/source", "account": account,
+               "forced_text_fallback": bool(forced), "add_missed_part": bool(forced),
+               "content_kind": row.get("content_kind")}
+    try:
+        await run_in_threadpool(lambda: human_tasks.register_task(
+            kind=EMPTY_CONFIRM_KIND, task_id=task_id, audience=audience,
+            title=f"No parts found in {ingest_id}",
+            summary=(f"The extraction of {ingest_id} (attempt {attempt}) found no part rows "
+                     f"({account.get('why')}). Confirm the document has none, or say it has parts."),
+            requested_by=requested_by, subject_ref=ingest_id, payload=payload))
+    except human_tasks.HumanTaskConfigError as exc:
+        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    except human_tasks.NoEntitledRecipients as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
+    return task_id, "FILED"
+
+
+async def _decide_empty(ingest_id: str, decision: str, actor: str, page, *,
+                        task_id: Optional[str] = None) -> dict:
+    """THE ONE WRITER of a `document_empty_confirm` decision; both doors call it, and it closes the
+    task either way. Refusals write nothing: 422 `invalid_decision` / `page_required` /
+    `page_not_for_decision`, 404 `ingest_not_found`, 409 `no_open_empty_task` (the row is not at
+    `review` with this attempt's task open), 409 `add_missed_part_not_built` (`has_parts` on the
+    second-zero task).
+
+    `confirmed_no_parts`: the row ends `no_parts` with detail `no parts (confirmed by <actor>)`.
+    `has_parts` (needs an integer page >= 1): files `extraction_defect` to
+    `dispatch_failure:<DOMAIN>` through the BFF's own task filer (the workflow's filer lives in
+    restate_analyst and is not reachable from here), then relaunches the row with the text fallback
+    forced (`attempt` + 1, back to `received`)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks, ingest_status, promotion
+
+    if decision not in _EMPTY_DECISIONS:
+        raise HTTPException(status_code=422, detail={
+            "error": "invalid_decision", "allowed": list(_EMPTY_DECISIONS)})
+    if decision == "confirmed_no_parts" and page is not None:
+        raise HTTPException(status_code=422, detail={
+            "error": "page_not_for_decision",
+            "message": "a page is read only on has_parts"})
+    if decision == "has_parts" and (
+            not isinstance(page, int) or isinstance(page, bool) or page < 1):
+        raise HTTPException(status_code=422, detail={
+            "error": "page_required",
+            "message": "has_parts needs the integer page (>= 1) the steward points at"})
+    row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+    if row is None or row.get("kind") == ingest_status.EVENT:
+        raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+    current_id = _empty_confirm_task_id(ingest_id, row.get("attempt"))
+    payload = (await run_in_threadpool(lambda: human_tasks.get_open_task_payload(current_id))
+               if row.get("status") == ingest_status.REVIEW else None)
+    if payload is None or (task_id is not None and task_id != current_id):
+        raise HTTPException(status_code=409, detail={
+            "error": "no_open_empty_task", "stage": row.get("status"), "task_id": task_id,
+            "message": "no open confirmation for this document's current attempt"})
+    if decision == "has_parts" and payload.get("add_missed_part"):
+        raise HTTPException(status_code=409, detail={
+            "error": "add_missed_part_not_built", "message": _ADD_MISSED_PART_MSG})
+    if decision == "confirmed_no_parts":
+        await run_in_threadpool(lambda: ingest_status.update_status(
+            ingest_id, ingest_status.NO_PARTS, detail=f"no parts (confirmed by {actor})"))
+        n = await run_in_threadpool(lambda: human_tasks.mark_task_resolved(
+            current_id, caller_id=actor, decision=decision, comment=""))
+        return {"ingest_id": ingest_id, "task_id": current_id, "decision": decision,
+                "stage": ingest_status.NO_PARTS, "rows_resolved": n}
+    # has_parts
+    state = await run_in_threadpool(lambda: human_tasks.get_task_open_state(current_id))
+    try:
+        defect_aud = f"dispatch_failure:{promotion.domain_of((state or {}).get('audience'))}"
+    except promotion.PromotionRefused as exc:
+        raise HTTPException(status_code=exc.status, detail={"error": exc.error, "message": str(exc)})
+    defect_id = f"extraction-defect:{ingest_id}:empty-a{row.get('attempt')}"
+    defect_payload = {"ingest_id": ingest_id, "page": page, "reason": _EMPTY_DEFECT_REASON,
+                      "account": payload.get("account"), "decided_by": actor}
+    try:
+        if not await run_in_threadpool(lambda: human_tasks.task_exists(defect_id)):
+            await run_in_threadpool(lambda: human_tasks.register_task(
+                kind="extraction_defect", task_id=defect_id, audience=defect_aud,
+                title=f"Extraction defect -- {ingest_id} found no parts (page {page})",
+                summary=(f"The extraction of {ingest_id} found no part rows; {actor} says the "
+                         f"document has parts (page {page})."),
+                requested_by=actor, subject_ref=ingest_id, payload=defect_payload))
+    except human_tasks.HumanTaskConfigError as exc:
+        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    except human_tasks.NoEntitledRecipients as exc:
+        raise HTTPException(status_code=409, detail={
+            "error": "extraction_defect_unroutable", "audience": defect_aud, "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
+    new_attempt = await run_in_threadpool(lambda: ingest_status.relaunch_with_text_fallback(
+        ingest_id, expect_attempt=int(row.get("attempt") or 1)))
+    if new_attempt is None:
+        raise HTTPException(status_code=409, detail={
+            "error": "no_open_empty_task",
+            "message": "the document moved while the decision was written; nothing was relaunched"})
+    n = await run_in_threadpool(lambda: human_tasks.mark_task_resolved(
+        current_id, caller_id=actor, decision=decision, comment=""))
+    return {"ingest_id": ingest_id, "task_id": current_id, "decision": decision,
+            "stage": ingest_status.RECEIVED, "attempt": new_attempt, "extraction_defect": defect_id,
+            "force_text_fallback": True, "rows_resolved": n}
+
+
+async def _hold_empty_for_confirmation(
+    ingest_id: str, row: dict, req, *, caller: str, prefix: str, adopt: dict, run: dict,
+) -> dict:
+    """The stage route's answer to a zero-row extraction on a NOTICE: file (or find) the
+    `document_empty_confirm` task, then move the row to `review` with the open detail. TASK FIRST,
+    STATUS SECOND, and a 4xx refusal fails the row retryably exactly as the promotion filer's does;
+    a 5xx writes nothing. Nothing is written `failed:extraction_empty`. A row whose
+    `force_text_fallback` is TRUE has already had its forced relaunch: its task carries
+    `add_missed_part`."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    review = await _server_extraction_review(req.extraction_ref, prefix)
+    account = _empty_account(review)
+    try:
+        task_id, _st = await _file_or_find_empty_confirm_task(
+            ingest_id, row, requested_by=caller, account=account,
+            forced=bool(row.get("force_text_fallback")))
+    except HTTPException as exc:
+        if 400 <= exc.status_code < 500:
+            _d = exc.detail if isinstance(exc.detail, dict) else {}
+            _err = _d.get("error") if isinstance(_d.get("error"), str) else None
+            _why = f"review refused ({exc.status_code}): {_err or exc.detail}"
+            try:
+                await run_in_threadpool(lambda: ingest_status.update_status(
+                    ingest_id, ingest_status.FAILED, detail=_why,
+                    failure={
+                        "reason_code": (_err if _err and ingest_status.REASON_CODE_RE.match(_err)
+                                        else "review_refused"),
+                        "reason": _why, "step": "review",
+                        "run_id": req.run_id or row.get("run_id"),
+                        "pin_digest": req.pin_digest,
+                        "failed_at": int(time.time() * 1000)},
+                    **adopt, **run))
+            except Exception as werr:  # noqa: BLE001 -- the caller must still see the refusal
+                logger.warning("ingest %s: the refused empty confirmation could not be written as "
+                               "failed (%s: %s)", ingest_id, type(werr).__name__, werr)
+        raise
+    try:
+        await run_in_threadpool(lambda: ingest_status.update_status(
+            ingest_id, ingest_status.REVIEW, extracted_count=req.extracted_count,
+            extracted_total=req.extracted_total, extraction_ref=req.extraction_ref,
+            detail=_EMPTY_OPEN_DETAIL, **adopt, **run))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid_stage_update", "message": str(exc)})
+    return {"ingest_id": ingest_id, "stage": ingest_status.REVIEW, "task_id": task_id,
+            "task_kind": EMPTY_CONFIRM_KIND}
+
+
+class IngestEmptyRequest(_BaseModel):
+    """POST /ingest/{ingest_id}/empty's body: the dropper's or steward's answer on an empty extraction."""
+    model_config = {"extra": "forbid"}
+    decision: Literal["confirmed_no_parts", "has_parts"]
+    page: Optional[_StrictInt] = None
+
+    @model_validator(mode="after")
+    def _page_only_with_has_parts(self):
+        if self.page is not None and self.decision != "has_parts":
+            raise ValueError("page is only valid with decision='has_parts'")
+        return self
+
+
+@app.post("/ingest/{ingest_id}/empty", tags=[INGEST_V1_TAG], responses={200: {"model": EmptyDecisionResponse}}, openapi_extra=PREVIEW_EXTRA)
+async def decide_empty_route(ingest_id: str, req: IngestEmptyRequest,
+                             current_user: User = Depends(get_current_user)):
+    """POST /ingest/{ingest_id}/empty -- answer a document's `document_empty_confirm`. Gate:
+    `_ingest_review_access` (the dropper, or a holder of the open promotion task: the same gate as
+    `/ingest/{id}/leaf`). The dropper may confirm their own: there is nothing to approve. The same
+    writer as the task act (`_decide_empty`)."""
+    await _ingest_review_access(ingest_id, current_user, "POST /ingest/{ingest_id}/empty")
+    return await _decide_empty(ingest_id, req.decision, (current_user.authz_id or "").strip(), req.page)
+
+
+@app.get("/ingest/retries", tags=[INGEST_V1_TAG], responses={200: {"model": RetriesListing}})
+async def list_ingest_retries(
+    limit: int = _Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+):
+    """GET /ingest/retries -- retried drops awaiting relaunch. SERVICE-ONLY: only `svc:doc-tools`
+    (see `_DOC_TOOLS_SERVICE_AUTHZ_ID`) may call this; every other caller gets 403.
+
+    The architect's 2026-10-12 ruling (Shape 1). `POST /ingest/{id}/retry` re-opens a failed row
+    at `received` with `attempt` + 1, but doc-tools' sensor cannot see the object again (its S3
+    cursor has passed it), so doc-tools polls THIS route and launches each entry with the Dagster
+    run_key `{ingest_id}-a{attempt}`. The row stays at `received` until the relaunched run posts
+    `extracting`, so the same entry is listed on every poll; the attempt-keyed run_key is what
+    makes the relaunch idempotent. A row not relaunched within `INGEST_RECEIVED_TIMEOUT_SECONDS`
+    is failed `timeout` by the watchdog, as before. Oldest first; event rows never appear.
+    Each entry's `reason` is `leaf_applied` (the BFF relaunched it as its leaf) or null (a Retry).
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    caller = (current_user.authz_id or "").strip()
+    if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_doc_tools",
+            "message": "GET /ingest/retries is callable only by doc-tools' own service identity.",
+        })
+    rows = await run_in_threadpool(lambda: ingest_status.list_pending_retries(limit=limit))
+    return {"retries": [
+        {"ingest_id": r["id"], "attempt": r["attempt"],
+         "run_key": f"{r['id']}-a{r['attempt']}",
+         "kind": r["kind"], "content_kind": r["content_kind"],
+         "object_prefix": r["object_prefix"], "sha256": r["sha256"],
+         "run_id": r["run_id"], "updated_at": r["updated_at"],
+         "reason": r.get("retry_reason"),
+         "force_text_fallback": bool(r.get("force_text_fallback"))}
+        for r in rows]}
+
+
+@app.get("/ingest/mine", tags=[INGEST_V1_TAG], responses={200: {"model": MineListing}})
+async def list_my_ingests(
+    limit: int = _Query(50, ge=1, le=200),
+    before: Optional[str] = _Query(None),
+    current_user: User = Depends(get_current_user),
+):
+    """GET /ingest/mine -- the caller's own drops (dropper or on_behalf_of), paged, newest first,
+    each in the same summary shape as GET /ingest/<id>/status. Architect ruling 2026-10-16: the
+    rail reads it on load and merges with live entries; browser storage is a cache, never the
+    record.
+
+    EXISTENCE-ORACLE SAFE BY SCOPING: `ingest_status.list_mine` carries `get_status_for`'s own
+    scoping (`submitted_by = caller OR on_behalf_of = caller`), so the route reveals only the
+    caller's own rows and nothing about anyone else's. Event rows are never listed; drops are
+    documents. A caller with no drops gets 200 `{"items": [], "next": null}`, never a 404.
+
+    PAGING is a keyset cursor, not OFFSET: `before` is the opaque string `{created_at}|{id}` that
+    a previous page returned as `next` (None on the last page). A malformed cursor is 422
+    `invalid_cursor`.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    cursor = None
+    if before is not None:
+        created, sep, row_id = before.partition("|")
+        try:
+            cursor = (int(created), row_id)
+        except ValueError:
+            cursor = None
+        if not sep or not row_id or cursor is None:
+            raise HTTPException(status_code=422, detail={"error": "invalid_cursor"})
+    rows = await run_in_threadpool(lambda: ingest_status.list_mine(
+        caller_id=current_user.authz_id, limit=limit + 1, before=cursor))
+    page = rows[:limit]
+    items = [await _ingest_status_body(r, current_user) for r in page]
+    nxt = f"{page[-1]['created_at']}|{page[-1]['id']}" if len(rows) > limit else None
+    return {"items": items, "next": nxt}
+
+
+class ProcessableKindsBody(BaseModel):
+    kinds: list[str]
+    source: Optional[str] = None
+
+    @field_validator("kinds")
+    @classmethod
+    def _check_kinds(cls, v):
+        if not v or len(v) > 512:
+            raise ValueError("kinds must hold 1..512 entries")
+        out = set()
+        for k in v:
+            k = (k or "").strip()
+            if not k or len(k) > 128 or "/" in k:
+                raise ValueError("each kind must be non-blank, <=128 chars, without '/'")
+            out.add(k)
+        return sorted(out)
+
+    @field_validator("source")
+    @classmethod
+    def _check_source(cls, v):
+        if v is not None and len(v) > 200:
+            raise ValueError("source must be <=200 chars")
+        return v
+
+
+@app.put("/ingest/processable-kinds")
+async def put_processable_kinds(
+    body: ProcessableKindsBody,
+    current_user: User = Depends(get_current_user),
+):
+    """PUT /ingest/processable-kinds -- doc-tools publishes the content kinds it can process.
+    SERVICE-ONLY (same gate as GET /ingest/retries). The BFF persists the list (one Postgres row)
+    and caches it; the ingest door reads the cache when INGEST_DOOR_READS_PROCESSABLE_KINDS is on.
+    `unregistered` lists published kinds the registry does not know (informational, not refused).
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, processable_kinds
+
+    caller = (current_user.authz_id or "").strip()
+    if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_doc_tools",
+            "message": "PUT /ingest/processable-kinds is callable only by doc-tools' own service identity.",
+        })
+    kinds = list(body.kinds)
+    try:
+        published_at = await run_in_threadpool(
+            lambda: processable_kinds.publish(kinds, body.source, caller))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("processable_kinds publish failed: %s: %s", type(exc).__name__, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "processable_kinds_store_unreachable",
+            "message": "the processable-kinds store did not take the write; nothing was published.",
+        })
+    processable_kinds.set_cache(kinds, published_at)
+    return {
+        "kinds": kinds,
+        "published_at": published_at.isoformat() if hasattr(published_at, "isoformat") else str(published_at),
+        "unregistered": [k for k in kinds if content_kinds.by_kind(k) is None],
+    }
 
 
 @app.post("/ingest/{ingest_id}/stage")
@@ -10101,7 +13596,21 @@ async def update_ingest_stage(
     EXCEPT when the resolved registration is DELIBERATELY DOMAINLESS (architect ruling
     2026-10-02: `domain` declared explicitly as null, not merely absent) -- then no task is
     filed at all (there is no fixed audience to file one against) and the row moves straight
-    to the out-of-band terminal stage `awaiting_origin` instead of `review`.
+    to the out-of-band stage `awaiting_origin` instead of `review`, persisting the body's
+    `extraction_ref` for the later filing. `awaiting_origin` is terminal for THIS route and for
+    the retry route; the ONE exit is a steward's accepted origin (`write_origin_route`), which
+    files `document_promotion:<owner_domain>` and moves the row to `review` (ruling 2026-10-10
+    Q2, superseding 10-02 for the accept branch only). Reject stays terminal and dropper-only.
+
+    PIPELINE FAILURE MUST REACH THE ROW (architect directive 2026-10-12): `failed` carries
+    {reason_code, reason, step, run_id, pin_digest}, stored as the row's `failure` and echoed by
+    GET /ingest/{id}/status. `reason_code` is optional (legacy `detail`-only posts still work),
+    but if given must match `ingest_status.REASON_CODE_RE`; the vocabulary is doc-tools' to own.
+    `run_id` is accepted on any target stage. The four failure fields on a non-`failed` stage are
+    422 `failure_fields_without_failed`. A `failed` row whose stored reason_code is `timeout`
+    (the BFF watchdog's, not doc-tools') is PROVISIONAL: it is treated as if it sat at `received`,
+    so a late run may still move it on (and moving off `failed` clears `failure`). Any other
+    `failed` row stays terminal.
     """
     from starlette.concurrency import run_in_threadpool
 
@@ -10111,13 +13620,16 @@ async def update_ingest_stage(
     # and `rejected` are the HUMAN document_promotion fulfillment's exclusive territory
     # (act_on_human_task above, via promotion.act) -- each carries a decision record this route
     # must never fabricate, so neither is a legal target here even though it is later in
-    # STAGES' own order.
+    # STAGES' own order. The one ruled exception: a delegate's drop of a kind in
+    # `_PROMOTION_SKIPPED_KINDS` is written `promoted` by the review branch below (2026-10-17).
     _stage_targets = (ingest_status.EXTRACTING, ingest_status.REVIEW, ingest_status.FAILED)
     _forward_order = (ingest_status.RECEIVED, ingest_status.EXTRACTING, ingest_status.REVIEW)
-    # `awaiting_origin` is OUT OF BAND like `duplicate` (ingest_status.py) -- terminal here too,
-    # so a later move (including `failed`) off it is refused 409, same as the other three.
+    # `awaiting_origin` is OUT OF BAND like `duplicate` (ingest_status.py) -- terminal HERE too
+    # (its one exit is a steward's accepted origin, filed by `_file_promotion_if_ready`; Q2
+    # ruling 2026-10-10), so a later move (including `failed`) off it is refused 409.
     _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
-                        ingest_status.AWAITING_ORIGIN)
+                        ingest_status.AWAITING_ORIGIN, ingest_status.REVIEW_REJECTED,
+                        ingest_status.AWAITING_KIND, ingest_status.NO_PARTS)
 
     caller = (current_user.authz_id or "").strip()
     if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
@@ -10133,10 +13645,38 @@ async def update_ingest_stage(
             "allowed": list(_stage_targets),
         })
 
+    # BEFORE any row read: the failure fields describe a failure, so they mean nothing on any
+    # other target stage -- refuse rather than silently drop them.
+    _failure_fields = {"reason_code": req.reason_code, "reason": req.reason, "step": req.step,
+                       "pin_digest": req.pin_digest}
+    if req.stage != ingest_status.FAILED:
+        _stray = [k for k, v in _failure_fields.items() if v is not None]
+        if _stray:
+            raise HTTPException(status_code=422, detail={
+                "error": "failure_fields_without_failed", "fields": _stray})
+    if req.run_id is not None and not req.run_id.strip():
+        raise HTTPException(status_code=422, detail={"error": "invalid_run_id"})
+    if req.reason_code is not None and not ingest_status.REASON_CODE_RE.match(req.reason_code):
+        raise HTTPException(status_code=422, detail={
+            "error": "invalid_reason_code",
+            "message": f"reason_code must match {ingest_status.REASON_CODE_RE.pattern}"})
+
     row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
     if row is None:
         raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
     current_stage = row["status"]
+
+    # A WATCHDOG TIMEOUT IS PROVISIONAL. `fail_stalled` writes `failed:timeout` for a row that
+    # merely sat at `received` (which a run queued behind max_concurrent_runs legitimately does) or
+    # at `extracting` (ruling 2026-10-16; a long extraction does). Treating that failure as
+    # terminal would turn a too-early timeout into a permanently lost document, so such a row
+    # behaves as if it still sat at `received` at EITHER stage (both in the terminal check and the
+    # forward-order check below), which keeps a late extracting or review POST acceptable. Only a failure doc-tools itself reported, or any
+    # other terminal stage, is final.
+    _timed_out = (current_stage == ingest_status.FAILED
+                  and (row.get("failure") or {}).get("reason_code") == ingest_status.REASON_TIMEOUT)
+    if _timed_out:
+        current_stage = ingest_status.RECEIVED
 
     if current_stage in _terminal_stages:
         raise HTTPException(status_code=409, detail={
@@ -10152,16 +13692,93 @@ async def update_ingest_stage(
                 <= _forward_order.index(current_stage)):
             raise HTTPException(status_code=409, detail={
                 "error": "backwards_move", "from": current_stage, "to": req.stage,
+                "message": f"a document cannot move backwards from {current_stage} to {req.stage}.",
             })
+
+    # `run_id` rides on any target stage, and only when given (COALESCE in update_status).
+    _run = {"run_id": req.run_id} if req.run_id is not None else {}
 
     task_id = None
     task_status = None
+    _notice: dict = {}
     if req.stage == ingest_status.REVIEW:
         # THE ROW CARRIES THE FILE FORMAT, NOT THE DECLARED KIND (review-audience fix,
         # 2026-10-06): resolve the registry on `content_kind` (the declared, registry-level
         # kind), never on `kind` (pdf|cad|xml) -- a lookup on the file format always misses the
         # registry, resolves to a None domain, and files a task no one can be entitled to.
+        #
+        # A ROW THE DROP LEFT WITHOUT A KIND ADOPTS THE MANIFEST'S (ruling 2026-10-16): doc-tools
+        # stamps `metadata.content_kind` from the sidecar, so a NULL row column is not "no kind",
+        # it is a kind not yet copied across. Adopt it only when it is REGISTERED, and never over a
+        # kind the row already carries. A failed read is swallowed HERE: find-or-file's own read
+        # produces the real refusal.
+        adopted_kind = None
+        _ref = str(req.extraction_ref or "").strip()
+        _prefix = str(row.get("object_prefix") or "")
+        if not row.get("content_kind") and _ref and _prefix and _ref.startswith(_prefix):
+            try:
+                _m = await run_in_threadpool(lambda: _read_extraction_manifest(_ref))
+                _k = (_m.get("metadata") or {}).get("content_kind")
+                if isinstance(_k, str) and _k.strip() and content_kinds.by_kind(_k) is not None:
+                    adopted_kind = _k
+            except Exception:  # noqa: BLE001 -- find-or-file re-reads and refuses properly
+                adopted_kind = None
+            if adopted_kind is not None:
+                row = {**row, "content_kind": adopted_kind}
+                logger.info("ingest %s: content_kind %r adopted from the extraction manifest",
+                            ingest_id, adopted_kind)
+        _adopt = {"content_kind": adopted_kind} if adopted_kind is not None else {}
         kind_reg = content_kinds.by_kind(row.get("content_kind"))
+        if row.get("content_kind") in _PROMOTION_SKIPPED_KINDS:
+            # NO document_promotion TASK for this kind (architect ruling 2026-10-17, on 7f's ruling
+            # 1): an s1000d data module has no PCN/PDN card to vet, so a task filed under the review
+            # standard could not be decided. A delegate's drop is already trusted and is promoted
+            # outright; a user's drop waits for a steward's origin, exactly as a domainless kind does.
+            # R-089: the delegate map is asserted by configuration this pass, not verified.
+            _dropper = str(row.get("submitted_by") or "").strip()
+            _to = (ingest_status.PROMOTED if _dropper in _delegate_principals()
+                   else ingest_status.AWAITING_ORIGIN)
+            await run_in_threadpool(lambda: ingest_status.update_status(
+                ingest_id, _to,
+                extracted_count=req.extracted_count, extracted_total=req.extracted_total,
+                extraction_ref=req.extraction_ref,
+                detail="content kind files no document_promotion task (ruling 2026-10-17)",
+                **_adopt, **_run))
+            return {"ingest_id": ingest_id, "stage": _to, "task_id": None,
+                    "task_status": "NO_TASK_KIND_SKIPS_PROMOTION"}
+        # A ZERO-ROW EXTRACTION NEVER FILES document_promotion (architect ruling 2026-10-17): a card
+        # with nothing to vet cannot be decided. Asked HERE, once, for every kind that files a
+        # promotion -- now (find-or-file) or later (`awaiting_origin` -> `_file_promotion_if_ready`)
+        # -- and before either moves or files anything. The count is the SERVER's, from review.json;
+        # a nonzero `extracted_count` claim does not outvote a zero count. The row goes
+        # failed:extraction_empty, which `ingest_status.retry_failed` re-opens (any failed
+        # non-event row). An unreadable review.json is NOT empty: today's refusal stands.
+        _rows = await _server_extraction_row_count(req.extraction_ref, _prefix)
+        if _rows == 0 or req.extracted_count == 0:
+            # A NOTICE (content_kind pcn|pdn) is asked about, not failed (ruling 2026-10-23, spec 208):
+            # a `document_empty_confirm` task, the row at `review`. Every other kind keeps today's
+            # failed:extraction_empty and 422 below, unchanged.
+            if str(row.get("content_kind") or "").strip().lower() in ingest_status.LEAVES:
+                return await _hold_empty_for_confirmation(
+                    ingest_id, row, req, caller=caller, prefix=_prefix, adopt=_adopt, run=_run)
+            _why = "the extraction found no part rows"
+            try:
+                await run_in_threadpool(lambda: ingest_status.update_status(
+                    ingest_id, ingest_status.FAILED, detail=_why,
+                    failure={
+                        "reason_code": "extraction_empty", "reason": _why, "step": "review",
+                        "run_id": req.run_id or row.get("run_id"),
+                        "pin_digest": req.pin_digest,
+                        "failed_at": int(time.time() * 1000)},
+                    **_adopt, **_run))
+            except Exception as werr:  # noqa: BLE001 -- the caller must still see the refusal
+                logger.warning("ingest %s: the empty extraction could not be written as failed "
+                               "(%s: %s)", ingest_id, type(werr).__name__, werr)
+            raise HTTPException(status_code=422, detail={
+                "error": "extraction_empty", "stage": ingest_status.FAILED,
+                "reason_code": "extraction_empty", "retryable": True,
+                "message": f"{_why}; the row is failed and may be retried"})
+
         # DELIBERATELY DOMAINLESS vs UNDECLARED/UNREGISTERED (architect ruling 2026-10-02):
         # a registered kind can declare `domain` EXPLICITLY as null -- "origin resolved by
         # evidence, not kind" (`pdf`, `engineering-document`, `doors-export`) -- and that is a
@@ -10173,9 +13790,9 @@ async def update_ingest_stage(
         # 2026-10-06 packet describes. Guarded behind `kind_reg.domain` being falsy first so a
         # domained registration (the common case, and the only shape existing tests' plain stub
         # objects carry) never has to support `model_fields_set` at all.
-        # Decided HERE, in the stage route, before the shared find-or-file helper: a retry never
-        # meets this case, because `awaiting_origin` is terminal and a row only reaches it
-        # through this branch.
+        # Decided HERE, in the stage route, before the shared find-or-file helper: a row only
+        # reaches `awaiting_origin` through this branch; the retry route calls the same state
+        # function (`_file_promotion_if_ready`) for a row sitting there.
         deliberately_domainless = (
             kind_reg is not None and not kind_reg.domain
             and "domain" in getattr(kind_reg, "model_fields_set", frozenset())
@@ -10184,11 +13801,20 @@ async def update_ingest_stage(
         if deliberately_domainless:
             # NO TASK -- there is no fixed audience to file one against; the origin_record
             # case (section 6) resolves this artifact's audience per-artifact, from evidence,
-            # later. Out-of-band terminal, same shape as `duplicate` (ingest_status.py).
+            # later. Out-of-band, same shape as `duplicate` (ingest_status.py); terminal for
+            # this route, exited only by a steward's accepted origin (Q2 ruling 2026-10-10).
             await run_in_threadpool(lambda: ingest_status.update_status(
                 ingest_id, ingest_status.AWAITING_ORIGIN,
                 extracted_count=req.extracted_count, extracted_total=req.extracted_total,
-                detail="origin resolved by evidence, not kind (ruling 2026-10-02)"))
+                extraction_ref=req.extraction_ref,
+                detail="origin resolved by evidence, not kind (ruling 2026-10-02)",
+                **_adopt, **_run))
+            # Q2b: the steward's accept may have landed while the row was still extracting.
+            promotion_out = await _file_promotion_if_ready(ingest_id, requested_by=caller)
+            if promotion_out and promotion_out.get("filed"):
+                return {"ingest_id": ingest_id, "stage": ingest_status.REVIEW,
+                        "task_id": promotion_out["task_id"],
+                        "task_status": promotion_out["task_status"]}
             return {"ingest_id": ingest_id, "stage": ingest_status.AWAITING_ORIGIN,
                     "task_id": None, "task_status": "NO_TASK_AWAITING_ORIGIN"}
 
@@ -10199,23 +13825,427 @@ async def update_ingest_stage(
         # discovering there is no entitled audience would strand the row at `review` with no
         # task and no way back (a retry on a row already at `review` is 409), so this call --
         # and everything it can raise -- happens before update_status below ever runs.
-        task_id, task_status = await _file_or_find_document_promotion_task(
-            ingest_id, row, requested_by=caller, extraction_ref=req.extraction_ref)
+        # A 4xx REFUSAL NOW MOVES THE ROW TO `failed` (ruling 2026-10-16): doc-tools logs a
+        # non-2xx and still ends its run SUCCESS, so a refusal that wrote nothing stranded the row
+        # at `extracting` for ever, unretryable (retry requires `failed`). Failing it names the
+        # refusal and lets the dropper retry. A 5xx is transient and writes NOTHING (the extracting
+        # watchdog covers a row that then stalls). The ORIGINAL exception always re-raises, so
+        # doc-tools still sees the status it would have seen.
+        try:
+            task_id, task_status = await _file_or_find_document_promotion_task(
+                ingest_id, row, requested_by=caller, extraction_ref=req.extraction_ref,
+                notice_out=_notice)
+        except HTTPException as exc:
+            if 400 <= exc.status_code < 500:
+                _d = exc.detail if isinstance(exc.detail, dict) else {}
+                _err = _d.get("error") if isinstance(_d.get("error"), str) else None
+                _msg = _d.get("message")
+                _why = f"review refused ({exc.status_code}): {_err or exc.detail}"
+                if _msg:
+                    _why += f": {_msg}"
+                try:
+                    await run_in_threadpool(lambda: ingest_status.update_status(
+                        ingest_id, ingest_status.FAILED, detail=_why,
+                        failure={
+                            "reason_code": (_err if _err and ingest_status.REASON_CODE_RE.match(_err)
+                                            else "review_refused"),
+                            "reason": _why, "step": "review",
+                            "run_id": req.run_id or row.get("run_id"),
+                            "pin_digest": req.pin_digest,
+                            "failed_at": int(time.time() * 1000)},
+                        **_adopt, **_run))
+                except Exception as werr:  # noqa: BLE001 -- the caller must still see the refusal
+                    logger.warning("ingest %s: the refused review could not be written as failed "
+                                   "(%s: %s)", ingest_id, type(werr).__name__, werr)
+            raise
 
     # STATUS MOVES ONLY AFTER THE TASK IS FILED (OR FOUND ALREADY_FILED) -- for `review`,
-    # everything above either raised (nothing written) or produced a resolvable audience; only
-    # now does the row actually move, so a 422/503 above never strands the row at `review` with
-    # no task. For `extracting`/`failed` there is no task step, so this runs unconditionally.
+    # everything above either raised or produced a resolvable audience; only now does the row
+    # move to `review`, so a 422/503 above never strands the row at `review` with no task. (A 4xx
+    # refusal of the review wrote `failed` just above so the row is retryable; a 5xx wrote
+    # nothing -- it is transient and the sender retries.) For `extracting`/`failed` there is no task step, so this runs unconditionally.
     # `extraction_ref` rides only on the move INTO review (where it was just validated).
     _extra = {"extraction_ref": req.extraction_ref} if req.stage == ingest_status.REVIEW else {}
+    if req.stage == ingest_status.REVIEW and _notice.get("notice_id"):
+        _extra["notice_id"] = _notice["notice_id"]
+    if req.stage == ingest_status.REVIEW:
+        _extra.update(_adopt)
+    _detail = req.detail
+    if req.stage == ingest_status.FAILED:
+        # `reason` falls back to `detail` (legacy posts); the existing non-blank-detail rule in
+        # update_status still refuses a failure with neither. `detail` is written as the reason so
+        # it stays meaningful to readers that only know `detail`.
+        _reason = req.reason if (req.reason and req.reason.strip()) else req.detail
+        _detail = _reason
+        _extra["failure"] = {
+            "reason_code": req.reason_code, "reason": _reason, "step": req.step,
+            # A failure that names no run of its own still names the one the row last recorded
+            # (an `extracting` POST that carried it): the directive asks for "the run id if any".
+            "run_id": req.run_id or row.get("run_id"), "pin_digest": req.pin_digest,
+            "failed_at": int(time.time() * 1000)}
     try:
         await run_in_threadpool(lambda: ingest_status.update_status(
             ingest_id, req.stage, extracted_count=req.extracted_count,
-            extracted_total=req.extracted_total, detail=req.detail, **_extra))
+            extracted_total=req.extracted_total, detail=_detail, **_extra, **_run))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"error": "invalid_stage_update", "message": str(exc)})
 
     return {"ingest_id": ingest_id, "stage": req.stage, "task_id": task_id, "task_status": task_status}
+
+
+def _bbox_is_page_fractions(bbox) -> bool:
+    """True when `bbox` is [x0, y0, x1, y1] in page FRACTIONS (architect ruling 10-21, "Crop
+    coordinates: page fractions"): four finite numbers, 0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1."""
+    import math
+
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return False
+    if not all(isinstance(n, (int, float)) and not isinstance(n, bool) and math.isfinite(n)
+               for n in bbox):
+        return False
+    x0, y0, x1, y1 = bbox
+    return 0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1
+
+
+class TitleEvidenceRef(EvidenceRef):
+    """A title candidate's crop: `EvidenceRef` plus the page-fraction bounds. A SUBCLASS so the
+    steward row_edits / header_edits evidence_ref (not yet converted) keeps `EvidenceRef` as it was.
+    Cortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422)."""
+
+    @model_validator(mode="after")
+    def _fractions(self):
+        if self.bbox is not None and not _bbox_is_page_fractions(self.bbox):
+            raise ValueError("a title candidate's bbox is [x0, y0, x1, y1] in page fractions: "
+                             "0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1")
+        return self
+
+
+class TitleCandidate(_BaseModel):
+    """One leaf the title read considered: `{leaf, score, evidence_ref}`. `evidence_ref` is the title
+    crop the read used (the struct `EvidenceRef`, required; not the legacy string)."""
+    model_config = {"extra": "forbid"}
+    leaf: str
+    score: _StrictInt | _Annotated[_StrictFloat, Field(allow_inf_nan=False)]
+    evidence_ref: TitleEvidenceRef
+
+    @field_validator("leaf")
+    @classmethod
+    def _leaf_nonblank(cls, v):
+        return _nonblank(v)
+
+    @field_validator("score")
+    @classmethod
+    def _score_in_unit_range(cls, v):
+        if not 0 <= v <= 1:
+            raise ValueError("score must be in [0, 1]")
+        return v
+
+
+class IngestTitleLeafRequest(_BaseModel):
+    """POST /ingest/{ingest_id}/title_leaf's body: what doc-tools' header/title read found."""
+    model_config = {"extra": "forbid"}
+    doc_type: Optional[str] = None
+    doc_type_source: Optional[str] = None
+    candidates: Optional[list[TitleCandidate]] = Field(default=None, max_length=3)
+    run_id: Optional[str] = None
+
+
+@app.post("/ingest/{ingest_id}/title_leaf", tags=[INGEST_V1_TAG], responses={200: {"model": TitleLeafResponse}})
+async def ingest_title_leaf_route(
+    ingest_id: str, req: IngestTitleLeafRequest, current_user: User = Depends(get_current_user),
+):
+    """POST /ingest/<id>/title_leaf -- SERVICE-ONLY (`svc:doc-tools`, same caller gate as the stage
+    route). doc-tools calls it after the header/title read and BEFORE parts extraction; the answer
+    says which kind's passes to run, or to stop (architect ruling 2026-10-21: a drop is never blocked
+    up front; if the title yields no leaf the row stops at `awaiting_kind` there).
+
+    Dispatch, in order: (1) a row that already carries a declared or corrected leaf
+    proceeds with it, writes nothing; (2) a row that is not leaf-capable proceeds, writes nothing;
+    (3) a CONFIDENT title (`_title_leaf`) is written as `leaf_source=title` and proceeds;
+    (4) otherwise the row is held at `awaiting_kind` with the candidates and doc-tools must stop.
+    Every write is one guarded UPDATE; when it matches nothing the row is re-read and decided again.
+    Allowed stages: `received`, `extracting` (a provisional timeout counts as `received`); anything
+    else is 409 `not_extracting`. A repeat on a held row is therefore 409, which is correct."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    caller = (current_user.authz_id or "").strip()
+    if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_doc_tools",
+            "message": "POST /ingest/{ingest_id}/title_leaf is callable only by doc-tools' own "
+                       "service identity.",
+        })
+    if req.run_id is not None and not req.run_id.strip():
+        raise HTTPException(status_code=422, detail={"error": "invalid_run_id"})
+
+    async def _read() -> dict:
+        r = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+        if r is None or r.get("kind") == ingest_status.EVENT:
+            raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+        return r
+
+    def _answer(r: dict, proceed: bool) -> dict:
+        leaf, leaf_source, corrected_by = _row_leaf(r)
+        return {"ingest_id": ingest_id, "proceed": proceed, "stage": r["status"],
+                "content_kind": r.get("content_kind"), "leaf": leaf, "leaf_source": leaf_source,
+                "corrected_by": corrected_by,
+                "leaf_candidates": (r.get("leaf_candidates")
+                                    if r["status"] == ingest_status.AWAITING_KIND else None)}
+
+    title = _title_leaf(req.doc_type, req.doc_type_source)
+    row = await _read()
+    for _ in range(4):
+        stage = row["status"]
+        timed_out = (stage == ingest_status.FAILED
+                     and (row.get("failure") or {}).get("reason_code") == ingest_status.REASON_TIMEOUT)
+        effective = ingest_status.RECEIVED if timed_out else stage
+        if effective not in (ingest_status.RECEIVED, ingest_status.EXTRACTING):
+            raise HTTPException(status_code=409, detail={
+                "error": "not_extracting", "stage": stage,
+                "message": f"a title read is accepted only while the document is extracting; it is {stage}."})
+        row_leaf, row_source, _cb = _row_leaf(row)
+        # 1. a declared or corrected leaf beats the title,
+        #    and a title leaf already on the row stands when this read names none
+        if row_leaf is not None and (row_source != "title" or title is None):
+            return _answer(row, True)
+        # 2. not a notice-in-waiting: nothing to decide
+        if not _leaf_capable(row):
+            return _answer(row, True)
+        # 3. a confident title
+        if title is not None:
+            written = await run_in_threadpool(lambda: ingest_status.set_leaf(
+                ingest_id, title, "title", set_by=caller, from_statuses=[stage]))
+            if written is not None:
+                logger.info("ingest_leaf ingest_id=%s caller=%s from=%s to=%s stage=%s",
+                            ingest_id, caller, row_leaf, title, written["status"])
+                return _answer(written, True)
+            row = await _read()
+            continue
+        # 4. no confident leaf: hold for a pick
+        held = await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+            ingest_id,
+            candidates=[c.model_dump() for c in (req.candidates or [])],
+            detail=(f"the title named no leaf ({req.doc_type_source or 'no source'}); "
+                    "pick pcn or pdn"),
+            run_id=req.run_id, from_statuses=[stage]))
+        row = await _read()
+        if held:
+            logger.info("ingest_leaf ingest_id=%s caller=%s from=%s to=%s stage=%s",
+                        ingest_id, caller, row_leaf, None, row["status"])
+            return _answer(row, False)
+    raise HTTPException(status_code=409, detail={
+        "error": "not_extracting", "stage": row["status"],
+        "message": f"a title read is accepted only while the document is extracting; it is {row['status']}."})
+
+
+class IngestLeafRequest(_BaseModel):
+    """POST /ingest/{ingest_id}/leaf's body: the leaf (pcn|pdn) the dropper or steward picks."""
+    model_config = {"extra": "forbid"}
+    leaf: str
+
+
+@app.post("/ingest/{ingest_id}/leaf", tags=[INGEST_V1_TAG], responses={200: {"model": LeafResponse}})
+async def ingest_leaf_route(
+    ingest_id: str, req: IngestLeafRequest, current_user: User = Depends(get_current_user),
+):
+    """POST /ingest/<id>/leaf -- the dropper's or steward's correction of a row's leaf (pcn|pdn),
+    recorded as `leaf_source=corrected` with who and when. Gate: `_ingest_review_access` (the
+    dropper, the holder of the open `document_promotion` task, or a seeding delegate service).
+    422 `unknown_leaf`; 409 `no_leaf_for_kind` for a row that is not leaf-capable.
+
+    The leaf can change until promotion (ruling 2026-10-21 "Leaf, final shape"); dropper and steward
+    use this one route. Dispatch on the stage:
+
+      received, extracting, failed   set_leaf(corrected) in place; the stage is unchanged. The
+                                     run in flight read the OLD kind from the drop's sidecar, so
+                                     `_ingest_leaf_relaunch_tick` relaunches the row AS THE LEAF
+                                     once its run has finished (within one 60 s poll)
+      awaiting_kind                  the drop's sidecar is rewritten to the leaf FIRST (a failure
+                                     is 503 `sidecar_unwritable`, nothing changed), then
+                                     set_leaf(corrected) and the row goes back to `received`,
+                                     `attempt` + 1, reason `leaf_applied`: nothing was extracted,
+                                     so the hold is released and doc-tools relaunches it from
+                                     GET /ingest/retries, running as the leaf
+      awaiting_origin, review        spec 204: RE-CLASS when `_same_passes(old, new)` (the two kinds
+                                     declare equal pass lists in the registry): awaiting_origin
+                                     records the correction and keeps its stage; review files the
+                                     next generation's task (`document_promotion:<id>:g<n>`) FIRST,
+                                     then records the correction, then supersedes the old task. The
+                                     answer adds `task_id` and `superseded_task_id`. RE-RUN when the
+                                     pass lists differ: back to `received`, `attempt` + 1 (and, at
+                                     review, the generation bumps and the old task is superseded;
+                                     the re-extraction's return to review files the new one)
+      promoted, rejected,            409 `leaf_not_changeable` (with the stage)
+      review_rejected
+
+    A write that matches nothing (the row moved under us) is 409 `leaf_not_changeable` with the
+    current stage. Answers the row's status body."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, human_tasks, ingest_status, promotion
+
+    route = "POST /ingest/{ingest_id}/leaf"
+    leaf = str(req.leaf or "").strip().lower()
+    if leaf not in ingest_status.LEAVES:
+        raise HTTPException(status_code=422, detail={
+            "error": "unknown_leaf", "allowed": list(ingest_status.LEAVES),
+            "message": "the kind must be one of: " + ", ".join(ingest_status.LEAVES)})
+
+    row, _reason = await _ingest_review_access(ingest_id, current_user, route)
+    caller = (current_user.authz_id or "").strip()
+    stage = row["status"]
+
+    async def _body() -> dict:
+        fresh = await run_in_threadpool(lambda: ingest_status.get_status_unscoped(ingest_id))
+        if fresh is None:
+            raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+        return await _ingest_status_body(fresh, current_user)
+
+    def _refuse(status_code: int, detail: dict, why: str):
+        _audit_ingest_access(route, ingest_id, caller, "deny", why)
+        raise HTTPException(status_code=status_code,
+                            detail=_detail_with_message(status_code, detail))
+
+    if not _leaf_capable(row):
+        _refuse(409, {"error": "no_leaf_for_kind", "stage": stage,
+                      "content_kind": row.get("content_kind"),
+                      "message": f"a {row.get('content_kind')} document has no kind to choose"},
+                "no_leaf_for_kind")
+    current_leaf, _src, _cb = _row_leaf(row)
+    if current_leaf == leaf:
+        _audit_ingest_access(route, ingest_id, caller, "allow", "same_leaf")
+        return await _body()
+
+    def _log(to_stage: str) -> None:
+        logger.info("ingest_leaf ingest_id=%s caller=%s from=%s to=%s stage=%s",
+                    ingest_id, caller, current_leaf, leaf, to_stage)
+
+    async def _moved() -> dict:
+        # The guarded write matched nothing: the row moved under us. Say so, with where it is now.
+        now = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+        _refuse(409, {"error": "leaf_not_changeable", "stage": (now or {}).get("status"),
+                      "message": "the document moved on while the kind was being set; "
+                                 "reload it and try again"}, "row_moved")
+
+    old_kind = row.get("content_kind")
+    same = _same_passes(old_kind, leaf)
+    for _round in range(3):
+        if _round:
+            # The row moved under a review-stage write: read it again and decide again.
+            row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+            if row is None:
+                raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+            stage = row["status"]
+            if _row_leaf(row)[0] == leaf:
+                _audit_ingest_access(route, ingest_id, caller, "allow", "same_leaf")
+                return await _body()
+
+        if stage in (ingest_status.RECEIVED, ingest_status.EXTRACTING, ingest_status.FAILED):
+            written = await run_in_threadpool(lambda: ingest_status.set_leaf(
+                ingest_id, leaf, "corrected", set_by=caller, from_statuses=[stage]))
+            if written is None:
+                await _moved()
+            _log(stage)
+            _audit_ingest_access(route, ingest_id, caller, "allow", "leaf_corrected")
+            return await _body()
+
+        if stage == ingest_status.AWAITING_ORIGIN and same:
+            # Same passes: the parts already extracted are valid for the new kind. A recorded
+            # correction, stage unchanged (the accepted origin still files the task).
+            written = await run_in_threadpool(lambda: ingest_status.set_leaf(
+                ingest_id, leaf, "corrected", set_by=caller,
+                from_statuses=[ingest_status.AWAITING_ORIGIN]))
+            if written is None:
+                await _moved()
+            _log(stage)
+            _audit_ingest_access(route, ingest_id, caller, "allow", "leaf_reclassed")
+            return await _body()
+
+        if stage in (ingest_status.AWAITING_KIND, ingest_status.AWAITING_ORIGIN) or (
+                stage == ingest_status.REVIEW and not same):
+            gen = int(row.get("review_generation") or 0)
+            at_review = stage == ingest_status.REVIEW
+            # The relaunch re-reads the drop's sidecar, so it is rewritten to the leaf FIRST; if it
+            # cannot be, nothing is written to the row.
+            try:
+                await run_in_threadpool(lambda: _apply_leaf_to_sidecar(row, leaf))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("ingest_leaf ingest_id=%s sidecar not written (%s: %s)", ingest_id,
+                               type(exc).__name__, exc)
+                _refuse(503, {"error": "sidecar_unwritable", "stage": stage,
+                              "message": "the drop's manifest could not be updated to the new "
+                                         "kind, so nothing was changed; try again"},
+                        "sidecar_unwritable")
+            written = await run_in_threadpool(lambda: ingest_status.set_leaf(
+                ingest_id, leaf, "corrected", set_by=caller,
+                from_statuses=[stage], to_status=ingest_status.RECEIVED, bump_attempt=True,
+                bump_generation=at_review, expect_generation=gen if at_review else None,
+                retry_reason=ingest_status.REASON_LEAF_APPLIED))
+            if written is None:
+                if at_review:
+                    continue
+                await _moved()
+            _log(ingest_status.RECEIVED)
+            _audit_ingest_access(route, ingest_id, caller, "allow",
+                                 "leaf_picked_reopened" if stage == ingest_status.AWAITING_KIND
+                                 else "leaf_corrected_reextract")
+            out = await _body()
+            if at_review:
+                old_id = _promotion_task_id(ingest_id, gen)
+                await run_in_threadpool(lambda: human_tasks.supersede_open_task(old_id))
+                out["task_id"] = None
+                out["superseded_task_id"] = old_id
+            return out
+
+        if stage == ingest_status.REVIEW:
+            # RE-CLASS AT REVIEW (same passes): file the next generation's task FIRST, then move
+            # the row, so a filing refusal writes nothing to the row (find-or-file discipline).
+            gen = int(row.get("review_generation") or 0)
+            old_id = _promotion_task_id(ingest_id, gen)
+            new_id = _promotion_task_id(ingest_id, gen + 1)
+            reg = content_kinds.by_kind(leaf)
+            new_aud = (f"{promotion.KIND}:{reg.domain.upper()}"
+                       if reg is not None and reg.domain else None)
+            old_state = await run_in_threadpool(lambda: human_tasks.get_task_open_state(old_id))
+            if (old_state and old_state.get("open") and new_aud is not None
+                    and old_state.get("audience") != new_aud):
+                _refuse(409, {"error": "leaf_moves_audience", "stage": stage,
+                              "message": f"the new kind {leaf!r} routes to {new_aud!r}, not the "
+                                         f"open task's audience {old_state.get('audience')!r}; "
+                                         "nothing was written."}, "leaf_moves_audience")
+            filed_id, _st = await _file_or_find_document_promotion_task(
+                ingest_id, {**row, "content_kind": leaf}, requested_by=caller,
+                extraction_ref=row.get("extraction_ref"), generation=gen + 1)
+            written = await run_in_threadpool(lambda: ingest_status.set_leaf(
+                ingest_id, leaf, "corrected", set_by=caller, from_statuses=[ingest_status.REVIEW],
+                bump_generation=True, expect_generation=gen))
+            if written is None:
+                # The row moved. Withdraw the g+1 task only if it is not now the row's CURRENT task:
+                # a concurrent re-class at the same generation may have won the write and made it so.
+                # A concurrent RE-RUN also lands on g+1 but leaves review, and files no task there.
+                _now = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+                if not (_now and _now.get("status") == ingest_status.REVIEW
+                        and _current_promotion_task_id(_now) == new_id):
+                    await run_in_threadpool(lambda: human_tasks.supersede_open_task(new_id))
+                continue
+            await run_in_threadpool(lambda: human_tasks.supersede_open_task(old_id))
+            _log(stage)
+            _audit_ingest_access(route, ingest_id, caller, "allow", "leaf_reclassed_at_review")
+            out = await _body()
+            out["task_id"] = filed_id
+            out["superseded_task_id"] = old_id
+            return out
+
+        break
+
+    if stage == ingest_status.REVIEW:
+        # Three rounds and the row kept moving under the guarded write.
+        await _moved()
+    _refuse(409, {"error": "leaf_not_changeable", "stage": stage,
+                  "message": f"the kind can change only until promotion; this document is {stage}"},
+            "leaf_not_changeable")
 
 
 # the case runner's own transport identity (policy/users.yaml: `svc:case-runner`, restate-analyst's
@@ -10260,6 +14290,15 @@ async def write_origin_route(
     Never raises for a refused WRITE -- `write_refused` is a normal outcome of a resolution that
     fails `check_dropper_bound` or shape validation, reported 200 like `written` is. Only the
     caller gate (403) and the missing-steward bound check (422) are HTTP errors.
+
+    A steward's ACCEPT IS THE ATTESTATION (ruling 2026-10-10 Q2, superseding the 10-02 "terminal"
+    ruling for the accept branch only): when the origin is `written` and the ingest row is at
+    `awaiting_origin`, `_file_promotion_if_ready` files `document_promotion:<owner_domain>` (the
+    domain READ BACK FROM THE STORE, what was written) and moves the row to `review` -- TASK
+    FIRST, STATUS SECOND; the stage and retry routes call the same function. A filing refusal never
+    undoes the write and never strands the row: the response stays `written` with
+    `promotion: {"filed": False, "error": ...}`. Reject stays terminal and dropper-only. The
+    response gains `promotion` (None when nothing was attempted); `status` is unchanged.
     """
     from iagent_mesh.interfaces import Initiator
 
@@ -10312,7 +14351,92 @@ async def write_origin_route(
         initiator=initiator,
         dropper_is_program_member=dropper_is_program_member,
     )
-    return {"status": result["status"], "reason": result.get("reason")}
+    promotion_out = None
+    if result["status"] == "written":
+        promotion_out = await _file_promotion_if_ready(
+            req.artifact_id, requested_by=_CASE_RUNNER_SERVICE_AUTHZ_ID)
+    return {"status": result["status"], "reason": result.get("reason"),
+            "promotion": promotion_out}
+
+
+def _read_accepted_origin(ingest_id: str) -> Optional[dict]:
+    """SYNC. The artifact's ACCEPTED origin -- {"owner_domain", "program", "resolved_by"} -- or None
+    when there is no node, no owner domain, or the rung is unresolved. A read that raises PROPAGATES:
+    an unknown origin is not an absent one. Same accepted-origin predicate as
+    `notice_parts.source_visibility`."""
+    from .promotion_stores import INGEST_FACT_FAMILY
+
+    if neo4j_driver is None:
+        raise RuntimeError("graph store not connected")
+    # Built FROM the family, so it names the node `write_origin` writes.
+    cypher = (
+        f"MATCH (n:{INGEST_FACT_FAMILY['node_label']} "
+        f"{{{INGEST_FACT_FAMILY['node_key']}: $ingest_id}})\n"
+        "RETURN n.origin_owner_domain AS owner_domain, n.origin_program AS program, "
+        "n.origin_resolved_by AS resolved_by"
+    )
+    with neo4j_driver.session() as session:
+        row = session.run(cypher, ingest_id=ingest_id).single()
+    if row is None:
+        return None
+    owner_domain, program, resolved_by = row["owner_domain"], row["program"], row["resolved_by"]
+    if not isinstance(owner_domain, str) or not owner_domain.strip():
+        return None
+    if resolved_by in (None, "", "unresolved"):
+        return None
+    return {"owner_domain": owner_domain, "program": program or None, "resolved_by": resolved_by}
+
+
+async def _file_promotion_if_ready(ingest_id: str, *, requested_by: str) -> Optional[dict]:
+    """FUNCTION OF STATE (Q2, 2026-10-10): files iff the row is at `awaiting_origin` AND an
+    accepted origin exists on the artifact; called from the accept route, the stage route and the
+    retry route, so the order the accept and the extraction land in cannot matter. TASK FIRST,
+    STATUS SECOND: a refusal leaves the row at `awaiting_origin`.
+
+    None when nothing was attempted (no row, row elsewhere, or no accepted origin yet);
+    {"filed": False, "error": ...} when attempted and refused or the origin was unreadable;
+    {"filed": True, "task_id", "task_status"} when filed and the row moved to `review`."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+    if row is None or row["status"] != ingest_status.AWAITING_ORIGIN:
+        return None
+    try:
+        origin = await run_in_threadpool(lambda: _read_accepted_origin(ingest_id))
+    except Exception as exc:  # noqa: BLE001 -- an unknown origin is not an absent one
+        logger.warning("promotion not filed, origin unreadable: ingest_id=%s error=%s",
+                       ingest_id, exc)
+        return {"filed": False, "error": "origin_unreadable"}
+    if origin is None:
+        return None
+    if row.get("content_kind") in _PROMOTION_SKIPPED_KINDS:
+        # The steward's accept is this kind's exit from `awaiting_origin` (architect ruling
+        # 2026-10-17): the origin is recorded, the row goes `promoted`, and NO document_promotion
+        # task is filed -- the same rule as the delegate path in the stage route, one step later.
+        await run_in_threadpool(lambda: ingest_status.update_status(
+            ingest_id, ingest_status.PROMOTED,
+            detail="accepted origin; content kind files no document_promotion task (ruling 2026-10-17)"))
+        return {"filed": False, "promoted": True, "task_id": None,
+                "task_status": "NO_TASK_KIND_SKIPS_PROMOTION"}
+    _notice: dict = {}
+    try:
+        task_id, task_status = await _file_or_find_document_promotion_task(
+            ingest_id, row, requested_by=requested_by,
+            extraction_ref=row.get("extraction_ref"), domain=origin["owner_domain"],
+            notice_out=_notice)
+    except HTTPException as exc:
+        err = exc.detail.get("error") if isinstance(exc.detail, dict) else str(exc.detail)
+        logger.warning("origin accepted but promotion not filed: ingest_id=%s error=%s",
+                       ingest_id, err)
+        return {"filed": False, "error": err}
+    domain_label = str(origin["owner_domain"]).strip().upper()
+    await run_in_threadpool(lambda: ingest_status.update_status(
+        ingest_id, ingest_status.REVIEW,
+        detail=f"accepted origin; promotion filed to document_promotion:{domain_label}",
+        **({"notice_id": _notice["notice_id"]} if _notice.get("notice_id") else {})))
+    return {"filed": True, "task_id": task_id, "task_status": task_status}
 
 
 _SEEDED_BY_STAMP_CYPHER = (
@@ -10333,8 +14457,11 @@ async def stamp_seeded_by_route(
 ):
     """The runner stamps the seeding delegate on a case's artifacts at `released` (ADR-0041 §8.1,
     RULED 2026-10-08). SERVICE-ONLY: only `svc:case-runner` may call this, same gate as
-    `/internal/origin/write`. `n == 0` is a 200, not an error: no producer writes case-linked
-    artifacts yet. Only a declared delegate can be a seeding delegate: anything else is 422.
+    `/internal/origin/write`. `n == 0` is a 200, not an error (a case that released without
+    writing a case-linked artifact stamps nothing). CORRECTED 2026-10-09: the maintenance case's
+    ActionRecord, written by `/internal/cases/{case_id}/action-record` just below, IS a
+    case-linked artifact, and the runner writes it before this stamp.
+    Only a declared delegate can be a seeding delegate: anything else is 422.
     R-089: the delegate map is asserted by configuration this pass."""
     from starlette.concurrency import run_in_threadpool
 
@@ -10356,6 +14483,326 @@ async def stamp_seeded_by_route(
         return int(rec["n"]) if rec is not None else 0
 
     return {"case_id": case_id, "stamped": await run_in_threadpool(_stamp)}
+
+
+# The case's artifact ids, read from the graph by the SERVER (never the runner's word). At
+# `released` the same call stamps `released_at` (ms epoch, the unit of `created_at`) on the
+# artifacts that do not carry one yet: `coalesce` keeps the FIRST release's instant when the
+# summary is re-delivered. GET /ingest/{id}/status lists it.
+_CASE_ARTIFACT_IDS_CYPHER = (
+    "MATCH (a:AnswerArtifact {case_id: $case_id}) RETURN a.id AS id ORDER BY id"
+)
+_CASE_ARTIFACT_RELEASE_CYPHER = (
+    "MATCH (a:AnswerArtifact {case_id: $case_id}) "
+    "SET a.released_at = coalesce(a.released_at, $now_ms) RETURN a.id AS id ORDER BY id"
+)
+
+# A case RELEASED when one of its hops had the outcome `released` -- the runner's
+# `SEEDED_BY_STAMP_OUTCOME`, the outcome it stamps seeded_by on. It is an OUTCOME, not the terminal
+# STATE: `maint_release_chaining` sends `released` on to the terminal `closed`, so a case that
+# released ends `closed` and a test of the terminal's name would never stamp.
+_RELEASED_OUTCOME = "released"
+
+
+def _case_released(transitions: list) -> bool:
+    return any(isinstance(t, dict) and t.get("outcome") == _RELEASED_OUTCOME for t in transitions)
+
+
+class CaseSummaryRequest(_BaseModel):
+    state: str
+    final_reason: Optional[str] = None
+    transitions: list
+    seeded_by: Optional[str] = None
+
+
+@app.post("/internal/cases/{case_id}/summary")
+async def write_case_summary_route(
+    case_id: str,
+    req: CaseSummaryRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """The runner writes the case summary at every terminal transition (released / failed /
+    rejected; ruled 2026-10-16): state, final reason, transitions, seeded_by and the artifact ids,
+    to the Postgres `case_summary` row, so the record outlives Restate. SERVICE-ONLY: only
+    `svc:case-runner` may call this, the same gate as `/internal/cases/{case_id}/seeded-by`.
+
+    The artifact ids are read from Neo4j here, not taken from the caller. When the case RELEASED
+    (a hop's outcome is `released`, see `_case_released`; its terminal state is then e.g.
+    `closed`) the same call stamps `released_at` on those artifacts (first release wins). The upsert is idempotent:
+    a re-delivery overwrites the row."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import case_summary
+
+    caller = (current_user.authz_id or "").strip()
+    if not _CASE_RUNNER_SERVICE_AUTHZ_ID or caller != _CASE_RUNNER_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_case_runner",
+            "message": "POST /internal/cases/{case_id}/summary is callable only by the case "
+                       "runner's own service identity.",
+        })
+    if not req.state.strip():
+        raise HTTPException(status_code=422, detail={"error": "state_is_blank"})
+
+    def _write() -> list:
+        released = _case_released(req.transitions)
+        cypher = _CASE_ARTIFACT_RELEASE_CYPHER if released else _CASE_ARTIFACT_IDS_CYPHER
+        params = {"case_id": case_id}
+        if released:
+            params["now_ms"] = int(time.time() * 1000)
+        with neo4j_driver.session() as session:
+            ids = [rec["id"] for rec in session.run(cypher, **params)]
+        case_summary.upsert_summary(
+            case_id=case_id, state=req.state, final_reason=req.final_reason,
+            transitions=req.transitions, seeded_by=req.seeded_by, artifact_ids=ids)
+        return ids
+
+    return {"case_id": case_id, "artifact_ids": await run_in_threadpool(_write)}
+
+
+ACTION_RECORD_KIND = "maintenance-action-record"
+
+
+class ActionRecordRequest(_BaseModel):
+    record: dict
+    seeded_by: Optional[str] = None
+    on_behalf_of: str
+
+
+def action_record_artifact_id(case_id: str, action_id: str) -> str:
+    """DETERMINISTIC: a Restate retry of the runner's write names the same artifact."""
+    digest = hashlib.sha256(f"{case_id}\0{action_id}".encode("utf-8")).hexdigest()[:32]
+    return f"action-record-{digest}"
+
+
+@app.post("/internal/cases/{case_id}/action-record")
+async def write_action_record_route(
+    case_id: str,
+    req: ActionRecordRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """The maintenance case's ActionRecord (R-114, an iagent-side OUTPUT artifact), written at
+    `released` by the runner (2026-10-09; ADR-0041 §8.1's first case-linked producer). SERVICE-
+    ONLY, same gate as `/internal/cases/{case_id}/seeded-by`.
+
+    ONE AnswerArtifact: id derived from (case_id, action_id) so a retry writes nothing twice
+    (`written: false` when it exists); `case_id` and, when given, `seeded_by` on the node;
+    `kind` = `maintenance-action-record`; the record as `rendered_output.record`; produced by the
+    case runner (delegate) FOR `on_behalf_of`, who is therefore the OWNER the read gate admits.
+    The record's own `provenance.case_id` must be the path's, refused before any write."""
+    from starlette.concurrency import run_in_threadpool
+
+    # Reached as `_aaw.AnswerArtifactBundle`, not the bare name: tests/routing/test_ask_to_answer_
+    # lineage.py reads the FIRST bare-name construction as the answer pipeline's bundle.
+    from . import answer_artifact_writer as _aaw
+
+    caller = (current_user.authz_id or "").strip()
+    if not _CASE_RUNNER_SERVICE_AUTHZ_ID or caller != _CASE_RUNNER_SERVICE_AUTHZ_ID:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_case_runner",
+            "message": "POST /internal/cases/{case_id}/action-record is callable only by the "
+                       "case runner's own service identity.",
+        })
+    if not (req.on_behalf_of or "").strip():
+        raise HTTPException(status_code=422, detail={"error": "on_behalf_of_required"})
+    # R-089: `seeded_by` must be a DECLARED delegate (the configured map, asserted not verified
+    # this pass), as at the seeded-by stamp; `on_behalf_of` is the case's principal as the runner
+    # read it from the case, RECORDED as the owner, not an act this route authorises.
+    if req.seeded_by is not None and req.seeded_by not in _delegate_principals():
+        raise HTTPException(status_code=422, detail={"error": "seeded_by_not_a_declared_delegate"})
+    provenance = req.record.get("provenance")
+    if not isinstance(provenance, dict) or provenance.get("case_id") != case_id:
+        raise HTTPException(status_code=422, detail={"error": "case_id_mismatch"})
+    action_id = req.record.get("action_id")
+    if not isinstance(action_id, str) or not action_id.strip():
+        raise HTTPException(status_code=422, detail={"error": "action_id_required"})
+
+    artifact_id = action_record_artifact_id(case_id, action_id)
+    now_ms = int(time.time() * 1000)
+    bundle = _aaw.AnswerArtifactBundle(
+        id=artifact_id,
+        question_text=f"Maintenance action record {action_id} for case {case_id}",
+        message_id=case_id,
+        valid_as_of=now_ms,
+        status="complete",
+        produced_by={"actor_type": "agent", "actor_id": _CASE_RUNNER_SERVICE_AUTHZ_ID},
+        produced_for={"user_id": req.on_behalf_of, "is_authenticated": True,
+                      "entitlement_source": "case_runner_delegate"},
+        resolved_intent={"kind": ACTION_RECORD_KIND, "case_id": case_id, "action_id": action_id},
+        routing=None,
+        rendered_output={"kind": ACTION_RECORD_KIND, "record": req.record},
+        kind=ACTION_RECORD_KIND,
+        case_id=case_id,
+        seeded_by=req.seeded_by,
+    )
+
+    def _write() -> tuple[bool, Optional[str]]:
+        with neo4j_driver.session() as session:
+            rec = session.run(
+                "MATCH (a:AnswerArtifact {id: $id}) RETURN count(a) AS n", id=artifact_id
+            ).single()
+        if rec is not None and int(rec["n"]) > 0:
+            return False, None
+        result = _aaw.AnswerArtifactWriter(driver=neo4j_driver).write_sync(bundle)
+        return result.success, result.error
+
+    written, error = await run_in_threadpool(_write)
+    exists_already = (not written) and error is None
+    if not written and not exists_already:
+        raise HTTPException(status_code=503, detail={"error": "artifact_write_failed"})
+    return {"case_id": case_id, "artifact_id": artifact_id, "written": written}
+
+
+def _read_action_records(case_id: str) -> list[dict]:
+    """Every maintenance action-record AnswerArtifact of the case, OLDEST first by `valid_as_of`:
+    `{artifact_id, seeded_by, valid_as_of, record}`. Decoded the way `/answers/{id}/body` decodes
+    (`rendered_output` is JSON text, the record at its `record` key). A node whose body does not
+    carry a record dict is skipped, never defaulted. Raises on a Neo4j failure."""
+    from .projector.apply_loop import _parse_json
+
+    with neo4j_driver.session() as session:
+        rows = list(session.run(
+            "MATCH (a:AnswerArtifact {kind: $kind, case_id: $case_id}) "
+            "RETURN a.id AS id, a.seeded_by AS seeded_by, a.valid_as_of AS valid_as_of, "
+            "a.rendered_output AS rendered_output",
+            kind=ACTION_RECORD_KIND, case_id=case_id,
+        ))
+    out: list[dict] = []
+    for row in rows:
+        body = _parse_json(row["rendered_output"])
+        record = body.get("record") if isinstance(body, dict) else None
+        if not isinstance(record, dict):
+            continue
+        out.append({"artifact_id": str(row["id"]), "seeded_by": row["seeded_by"],
+                    "valid_as_of": row["valid_as_of"] or 0, "record": record})
+    out.sort(key=lambda r: r["valid_as_of"])
+    return out
+
+
+def _action_chain(record: dict, transitions: list) -> list[dict]:
+    """The acts of one action record, in order chose -> approved* -> released. An act is present
+    only if it was recorded; no who/at is ever defaulted."""
+    transitions = [t for t in (transitions or []) if isinstance(t, dict)]
+    work_order = record.get("work_order") if isinstance(record.get("work_order"), dict) else {}
+    chain: list[dict] = []
+
+    option = work_order.get("option")
+    chosen = [t for t in transitions if option is not None and t.get("outcome") == option]
+    if chosen:
+        t = chosen[-1]
+        chain.append({"act": "chose", "who": t.get("by"), "at": t.get("at"), "option": option,
+                      "instance_id": t.get("instance_id")})
+    for e in record.get("approval_chain") or []:
+        if isinstance(e, dict) and e.get("decision") == "approved":
+            act = {"act": "approved", "who": e.get("approver_sub"), "at": e.get("decided_at"),
+                   "role": e.get("role")}
+            if "acted_via" in e:
+                act["acted_via"] = e["acted_via"]
+            chain.append(act)
+    released = [t for t in transitions if t.get("outcome") == _RELEASED_OUTCOME]
+    if released:
+        t = released[-1]
+        chain.append({"act": "released", "who": t.get("by"), "at": t.get("at"),
+                      "instance_id": t.get("instance_id")})
+    return chain
+
+
+@app.get("/cases/{case_id}/action")
+async def get_case_action(case_id: str, current_user: User = Depends(get_current_user)):
+    """GET /cases/{case_id}/action -- who chose, who approved, who released a maintenance case,
+    with the work order and the manual data modules it cites.
+
+    BODY. The stored ActionRecord verbatim AT THE TOP LEVEL (action_id, event_id, asset_id,
+    owning_tier, label, work_order, approval_chain, provenance, whatever keys it has), plus the
+    additive keys `case_id`, `artifact_id`, `acts`, `dmcs_cited`, and `action_ids` only when the
+    case has more than one record. A key the record already carries is never overwritten.
+
+    WHERE EACH ACT IS READ FROM. `chose`: the LAST case transition (runner state, as
+    `GET /cases/{id}`) whose outcome is the record's `work_order.option`. `approved`: one per
+    `approval_chain` entry of the record whose decision is `approved`, chain order (`acted_via`
+    only if recorded). `released`: the LAST case transition whose outcome is `released`. An act
+    that was not recorded is absent -- never invented. `dmcs_cited` is the record's
+    `provenance.manual_nodes_consulted`, de-duplicated, first-seen order.
+
+    THE RECORD IS WRITTEN WHEN THE CASE IS RELEASED (the release instance's outbox is read at its
+    completion, `/internal/cases/{id}/action-record`). A case that was approved but is not yet
+    released, or that was rejected, has no record and answers 404 `no_action_record`. With more
+    than one record the newest by `valid_as_of` is answered and `action_ids` lists them all,
+    oldest first.
+
+    GATE, two species. A DELEGATE (a key of `_delegate_principals()`) reads the action record of
+    a case it seeded and no other (ruled 2026-10-17 by the architect: "delegate reads only its
+    own cases' action records, 403 on others and on /cases/{id}"). Ownership is decided by the
+    CASE: the runner's case is fetched first (503 `runner_unavailable`) and the delegate is
+    admitted iff the case exists and its `seeded_by` is the caller; a nonexistent case, another
+    delegate's case and a case with no `seeded_by` answer one IDENTICAL 403 `not_your_case`, with
+    no artifact-store read. An admitted delegate with no record is 404 `no_action_record` (its
+    own pending case: nothing yet, not forbidden); a record whose own `seeded_by` differs is 403
+    too. No spec/definitions/`can_view_case` for a delegate. Any other SERVICE
+    (`_is_service_caller`) is that same 403 before any read: ADR-0047 §5.1 admits a service only
+    as a seeding declared delegate. Any other caller, a person, passes exactly
+    `GET /cases/{id}`'s gate (`_load_viewable_case`), then 404 `no_action_record` if none. A
+    Neo4j failure is 503 `artifact_store_unavailable`.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    async def _records() -> list[dict]:
+        try:
+            return await run_in_threadpool(_read_action_records, case_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("action record read failed: %s", exc)
+            raise HTTPException(status_code=503,
+                                detail={"error": "artifact_store_unavailable"}) from exc
+
+    def _not_your_case() -> HTTPException:
+        return HTTPException(status_code=403, detail={
+            "error": "not_your_case",
+            "message": "a delegate reads the action record of a case it seeded, and no other"})
+
+    # R-089: the delegate map is asserted by configuration this pass, not verified.
+    is_delegate = current_user.authz_id in _delegate_principals()
+    if is_delegate:
+        try:
+            case = await _fetch_case(case_id)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503,
+                                detail={"error": "runner_unavailable"}) from exc
+        seeded_by = case.get("seeded_by") if case else None
+        if not seeded_by or seeded_by != current_user.authz_id:
+            raise _not_your_case()
+    elif _is_service_caller(current_user.authz_id):
+        # ADR-0047 §5.1: a `svc:` principal is a recipient only as a seeding DECLARED delegate.
+        # An undeclared service is never asked the person gate, so dropping the case as itself,
+        # holding its labels or holding a task on it admits nothing (Q16's reading at
+        # /ingest/{id}/source). Same body as the delegate's refusal, before any read.
+        raise _not_your_case()
+    else:
+        case, _definitions = await _load_viewable_case(case_id, current_user)
+    records = await _records()
+    if not records:
+        raise HTTPException(status_code=404, detail={"error": "no_action_record"})
+    newest = records[-1]
+    if is_delegate and newest["seeded_by"] != current_user.authz_id:
+        raise _not_your_case()
+
+    record = newest["record"]
+    prov = record.get("provenance") if isinstance(record.get("provenance"), dict) else {}
+    dmcs: list = []
+    for d in prov.get("manual_nodes_consulted") or []:
+        if d and d not in dmcs:
+            dmcs.append(d)
+    additive = {
+        "case_id": case_id,
+        "artifact_id": newest["artifact_id"],
+        "acts": _action_chain(record, (case or {}).get("transitions") or []),
+        "dmcs_cited": dmcs,
+    }
+    if len(records) > 1:
+        additive["action_ids"] = [r["record"].get("action_id") for r in records]
+    body = dict(record)
+    for k, v in additive.items():
+        body.setdefault(k, v)  # a key the record carries is never overwritten
+    return body
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -10652,6 +15099,10 @@ async def electric_shape_proxy(
     else:
         escaped = _escape_sql_string_literal(verified_user_id)
         server_where = f"produced_for_user_id = '{escaped}'"
+        if table == "answer_artifact_projection":
+            # Rev 187: the default view hides archived answers (archive hides, never deletes;
+            # `GET /answers?include_archived=true` lists them). Other tables keep their filter.
+            server_where += " AND archived_at IS NULL"
     upstream_params["where"] = server_where
 
     upstream_url = f"{_ELECTRIC_UPSTREAM_URL}/v1/shape"

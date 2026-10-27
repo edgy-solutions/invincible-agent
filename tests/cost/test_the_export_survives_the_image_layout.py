@@ -30,6 +30,7 @@ rendering does not. That is the seam a card action should be built on.
 """
 from __future__ import annotations
 
+import inspect
 import os
 import pathlib
 import re
@@ -422,6 +423,22 @@ def _no_git(*_a, **_k):
     raise FileNotFoundError(2, "No such file or directory: 'git'")
 
 
+def _html_stub(real_builder, captured: dict | None = None):
+    """A stand-in for `builder.build_html` that takes the REAL signature, read from the function
+    it replaces before the patch lands. A fake of `(*_a, **kw)` accepts any call at all, so a
+    `package_export` passing a keyword the builder never declared stayed green here and raised
+    only in the pod. `bind` refuses exactly what the real builder would refuse."""
+    sig = inspect.signature(real_builder.build_html)
+
+    def fake(*args, **kwargs):
+        bound = sig.bind(*args, **kwargs).arguments
+        if captured is not None:
+            captured.update(bound)
+        return "<html></html>"
+
+    return fake
+
+
 def test_a_baked_sha_reaches_BOTH_the_manifest_AND_build_html_when_git_is_unusable(
     tmp_path, monkeypatch, real_builder):
     """ARM A -- the pod, reproduced faithfully: not a checkout (no `.git`), the builder and
@@ -434,12 +451,8 @@ def test_a_baked_sha_reaches_BOTH_the_manifest_AND_build_html_when_git_is_unusab
 
     captured: dict = {}
 
-    def fake_build_html(*_a, **kw):
-        captured["sha_kwarg"] = kw.get("sha")
-        return "<html></html>"
-
     monkeypatch.setattr(m, "_repo_root", lambda: root)
-    monkeypatch.setattr(real_builder, "build_html", fake_build_html)
+    monkeypatch.setattr(real_builder, "build_html", _html_stub(real_builder, captured))
     monkeypatch.setattr(subprocess, "run", _no_git)
     monkeypatch.setenv("IAGENT_GIT_SHA", _SHA_POD)
 
@@ -448,7 +461,7 @@ def test_a_baked_sha_reaches_BOTH_the_manifest_AND_build_html_when_git_is_unusab
     assert result["algorithm_sha"] == _SHA_POD, (
         "the manifest's algorithm_sha did not come from the baked IAGENT_GIT_SHA"
     )
-    assert captured["sha_kwarg"] == _SHA_POD, (
+    assert captured.get("sha") == _SHA_POD, (
         "build_html did not receive the SAME sha the manifest carries -- the two can now "
         "disagree about which commit the package names"
     )
@@ -489,12 +502,9 @@ def test_a_CHECKOUT_still_resolves_its_sha_through_GIT(tmp_path, monkeypatch, re
         calls.append(1)
         return _SHA_GIT
 
-    def fake_build_html(*_a, **_kw):
-        return "<html></html>"
-
     monkeypatch.setattr(m, "_repo_root", lambda: root)
     monkeypatch.setattr(real_builder, "algorithm_sha", fake_algorithm_sha)
-    monkeypatch.setattr(real_builder, "build_html", fake_build_html)
+    monkeypatch.setattr(real_builder, "build_html", _html_stub(real_builder))
     # POISONED ON PURPOSE. If the checkout branch ever reads the baked env instead of git,
     # this value -- distinct from `_SHA_GIT` -- would show up in the result and expose it.
     monkeypatch.setenv("IAGENT_GIT_SHA", "unknown")
@@ -503,6 +513,21 @@ def test_a_CHECKOUT_still_resolves_its_sha_through_GIT(tmp_path, monkeypatch, re
 
     assert calls, "a checkout must resolve its sha through builder.algorithm_sha(), not the baked env"
     assert result["algorithm_sha"] == _SHA_GIT
+
+
+def _stop_at_build_package(real_builder, captured: dict):
+    """A stand-in for `X.build_package` that takes the REAL signature, read from the function it
+    replaces -- never a frozen copy of the keywords one caller passed on one day. A frozen fake
+    turned `build_html` forwarding `as_of=` into a TypeError that read as this seam failing.
+    `bind` still refuses any call the real builder would refuse, so a caller passing a keyword
+    the builder never declared stays red here."""
+    sig = inspect.signature(real_builder.X.build_package)
+
+    def fake(*args, **kwargs):
+        captured.update(sig.bind(*args, **kwargs).arguments)
+        raise RuntimeError("stop here - captured")
+
+    return fake
 
 
 def test_build_html_USES_the_passed_sha_and_never_calls_its_OWN_algorithm_sha(
@@ -514,14 +539,11 @@ def test_build_html_USES_the_passed_sha_and_never_calls_its_OWN_algorithm_sha(
     """
     captured: dict = {}
 
-    def fake_build_package(_state, *, recipient_scope, algorithm_sha):
-        captured["algorithm_sha"] = algorithm_sha
-        raise RuntimeError("stop here - captured")
-
     def fail_if_called():
         raise AssertionError("algorithm_sha() (git) must not be called when sha is given")
 
-    monkeypatch.setattr(real_builder.X, "build_package", fake_build_package)
+    monkeypatch.setattr(real_builder.X, "build_package",
+                        _stop_at_build_package(real_builder, captured))
     monkeypatch.setattr(real_builder, "algorithm_sha", fail_if_called)
 
     with pytest.raises(RuntimeError, match="stop here - captured"):
@@ -541,12 +563,9 @@ def test_build_html_STILL_DEFAULTS_to_algorithm_sha_when_none_is_given(
         captured["called"] = True
         return "e" * 40
 
-    def fake_build_package(_state, *, recipient_scope, algorithm_sha):
-        captured["algorithm_sha"] = algorithm_sha
-        raise RuntimeError("stop here - captured")
-
     monkeypatch.setattr(real_builder, "algorithm_sha", fake_algorithm_sha)
-    monkeypatch.setattr(real_builder.X, "build_package", fake_build_package)
+    monkeypatch.setattr(real_builder.X, "build_package",
+                        _stop_at_build_package(real_builder, captured))
 
     with pytest.raises(RuntimeError, match="stop here - captured"):
         real_builder.build_html("notional-customer-alpha", pathlib.Path("/nonexistent"))

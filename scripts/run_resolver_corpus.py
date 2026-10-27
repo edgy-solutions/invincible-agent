@@ -24,6 +24,13 @@ returns: what a pure top-score rule WOULD have chosen. It documents rather than 
 that the one-line interim is unavailable — expect rows where argmax and the LLM disagree
 AND `instance_fired` is false, i.e. fixing selection alone would not have grounded them.
 
+THE CORPUS RUNS AS A PERSON OR NOT AT ALL (ruling (b), 2026-10-10: "scripts and
+restate_analyst send a real test persona or get refused — a domains list is never an
+entitlement"). Set `IA_CORPUS_ON_BEHALF_OF` to the test persona the corpus runs as (read at
+call time). It is sent as `user_email` on every `/resolve` and as `on_behalf_of` on every
+`/find_compatible_verbs`; the corpus's `domain` stays a SCOPE on the query, never the
+entitlement. Unset, the script refuses to run before it sends anything (exit 2).
+
 Read-only. Every call is a GET-shaped POST to /resolve plus two /find_compatible_verbs
 probes; nothing is written to any store.
 """
@@ -31,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import sys
 from collections import Counter, defaultdict
@@ -48,6 +56,25 @@ AMBIGUOUS = "AMBIGUOUS"
 
 
 # ---------------------------------------------------------------------------
+# The person every call runs as
+# ---------------------------------------------------------------------------
+PERSON_ENV = "IA_CORPUS_ON_BEHALF_OF"
+
+
+def _person() -> str:
+    """The test persona this run is for, read at call time. Blank is no person — refused."""
+    person = os.environ.get(PERSON_ENV, "").strip()
+    if not person:
+        raise RuntimeError(f"no_person: set {PERSON_ENV}; a domains list is never an entitlement")
+    return person
+
+
+# Every /resolve body below is a LITERAL dict naming `user_email`, not a helper's return value:
+# tests/security/test_every_engine_o_caller_is_classified.py derives each site's class from the
+# keys of the payload it can SEE, and a call it cannot read derives no keys at all.
+
+
+# ---------------------------------------------------------------------------
 # One probe
 # ---------------------------------------------------------------------------
 def probe(base: str, row: dict, meta: dict, timeout: float) -> dict:
@@ -56,11 +83,9 @@ def probe(base: str, row: dict, meta: dict, timeout: float) -> dict:
     try:
         r = requests.post(
             f"{base}/resolve",
-            json={
-                "query": row["query"],
-                "domain": meta.get("domain", "DATA_ENGINEERING"),
-                "domains": [meta.get("domain", "DATA_ENGINEERING")],
-            },
+            json={"query": row["query"], "user_email": _person(),
+                  "domain": meta.get("domain", "DATA_ENGINEERING"),
+                  "domains": [meta.get("domain", "DATA_ENGINEERING")]},
             timeout=timeout,
         )
         r.raise_for_status()
@@ -137,9 +162,11 @@ def probe(base: str, row: dict, meta: dict, timeout: float) -> dict:
 
 def _verbs(base: str, subject_uri: str, domains: list, timeout: float) -> int:
     try:
+        body = {"subject_uri": subject_uri, "max_hops": 5, "entitled_domains": domains,
+                "on_behalf_of": _person()}
         r = requests.post(
             f"{base}/find_compatible_verbs",
-            json={"subject_uri": subject_uri, "max_hops": 5, "entitled_domains": domains},
+            json=body,
             timeout=timeout,
         )
         r.raise_for_status()
@@ -175,7 +202,7 @@ def stamp(base: str, meta: dict, timeout: float, note: str = "") -> dict:
         try:
             r = requests.post(
                 f"{base}/resolve",
-                json={"query": q, "domain": meta.get("domain"),
+                json={"query": q, "user_email": _person(), "domain": meta.get("domain"),
                       "domains": [meta.get("domain")]},
                 timeout=timeout,
             )
@@ -203,7 +230,7 @@ def stamp(base: str, meta: dict, timeout: float, note: str = "") -> dict:
         try:
             r = requests.post(
                 f"{base}/resolve",
-                json={"query": ident, "domain": meta.get("domain"),
+                json={"query": ident, "user_email": _person(), "domain": meta.get("domain"),
                       "domains": [meta.get("domain")]},
                 timeout=timeout,
             )
@@ -249,7 +276,8 @@ def check_pool(base: str, meta: dict, timeout: float) -> tuple[bool, list]:
         try:
             r = requests.post(
                 f"{base}/resolve",
-                json={"query": q, "domain": meta.get("domain"), "domains": [meta.get("domain")]},
+                json={"query": q, "user_email": _person(), "domain": meta.get("domain"),
+                      "domains": [meta.get("domain")]},
                 timeout=timeout,
             )
             r.raise_for_status()
@@ -494,6 +522,12 @@ def main() -> int:
         return diff(*args.diff)
     if not args.base_url:
         ap.error("--base-url is required unless --diff")
+
+    if not os.environ.get(PERSON_ENV, "").strip():
+        print(f"REFUSING TO RUN — no person: set {PERSON_ENV} to the test persona this corpus "
+              "runs as. Ruling (b): scripts send a real test persona or get refused; the "
+              "corpus's domain is a scope, never an entitlement.", file=sys.stderr)
+        return 2
 
     doc = yaml.safe_load(pathlib.Path(args.corpus).read_text(encoding="utf-8"))
     meta, corpus_rows = doc.get("meta", {}), doc["rows"]
