@@ -319,14 +319,14 @@ def test_the_three_eac_methods_disagree_materially():
     )
 
 
-def test_the_route_refuses_a_missing_mandatory_slot_before_calling_the_verb():
+def test_the_route_refuses_a_missing_mandatory_slot_before_calling_the_verb(member):
     """The refusal must be reachable by the ROUTER, not only by a direct caller — that is
     what declaring slots from day one buys, and it is why the message is built from the
     declaration rather than from a string."""
     from fastapi.testclient import TestClient
     with TestClient(engine.app) as client:
         r = client.post("/measure/fin_eac_calculation",
-                        json={"params": {"program_id": "NP-MERIDIAN"}})
+                        json={"params": {"program_id": "NP-MERIDIAN"}, "user_email": CALLER})
         assert r.status_code == 422
         detail = r.json()["detail"]
         assert detail["needs_slots"] == ["method"]
@@ -334,12 +334,12 @@ def test_the_route_refuses_a_missing_mandatory_slot_before_calling_the_verb():
             assert name in detail["question"]
 
 
-def test_an_unknown_subject_is_not_an_empty_result():
+def test_an_unknown_subject_is_not_an_empty_result(member):
     """'The model does not capture X' and 'the query found nothing' are different claims,
     and collapsing them is how a typo becomes a confident zero."""
     from fastapi.testclient import TestClient
     with TestClient(engine.app) as client:
-        r = client.post("/measure/fin_burn_rate", json={"params": {"program_id": "NOPE"}})
+        r = client.post("/measure/fin_burn_rate", json={"params": {"program_id": "NOPE"}, "user_email": CALLER})
         assert r.status_code == 422
         assert "not_in_model" in r.json()["detail"]
 
@@ -432,18 +432,18 @@ def test_indices_rows_never_name_a_field_value_unit():
             "the amounts beside the ratios have a unit and it must be stated"
         )
 
-def test_performance_indices_carry_no_currency():
+def test_performance_indices_carry_no_currency(member):
     """CPI is a ratio. A dollar sign on 0.85 is a lie the producer told, and the absence of
     the verb from VALUE_UNIT is the assertion that prevents it."""
     assert "fin_performance_indices" not in measures.VALUE_UNIT
     from fastapi.testclient import TestClient
     with TestClient(engine.app) as client:
         body = client.post("/measure/fin_performance_indices",
-                           json={"params": {"program_id": "NP-MERIDIAN"}}).json()
+                           json={"params": {"program_id": "NP-MERIDIAN"}, "user_email": CALLER}).json()
     assert "value_unit" not in body
 
 
-def test_every_response_discloses_that_the_data_is_notional():
+def test_every_response_discloses_that_the_data_is_notional(member):
     """A finance figure that leaves this engine without saying it is notional is a figure
     somebody can paste into a deck. A docstring is not visible from a screenshot."""
     from fastapi.testclient import TestClient
@@ -452,7 +452,7 @@ def test_every_response_discloses_that_the_data_is_notional():
             params = {"program_id": "NP-MERIDIAN"}
             if fn == "fin_eac_calculation":
                 params["method"] = "CPI"
-            body = client.post(f"/measure/{fn}", json={"params": params}).json()
+            body = client.post(f"/measure/{fn}", json={"params": params, "user_email": CALLER}).json()
             assert "NOTIONAL" in body["data_provenance"]
 
 
