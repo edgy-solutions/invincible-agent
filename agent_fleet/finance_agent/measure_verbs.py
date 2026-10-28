@@ -56,7 +56,19 @@ except ImportError:
     from agent_fleet.finance_agent import measures as _measures
     from agent_fleet.finance_agent.entities import periods_in
 
-MEASURE_VERB_POLICY_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "policy" / "measure_verbs"
+def _default_seed_dir() -> Path:
+    """`<repo>/policy/measure_verbs`, found by walking up rather than counting levels: in the
+    flattened image this file is `/app/<module>.py`, whose `parents` are `('/app', '/')`, so a
+    fixed `parents[2]` raises IndexError at import."""
+    here = Path(__file__).resolve()
+    for ancestor in here.parents:
+        candidate = ancestor / "policy" / "measure_verbs"
+        if candidate.is_dir():
+            return candidate
+    return Path("/app/policy/measure_verbs")
+
+
+MEASURE_VERB_POLICY_DIR_DEFAULT = _default_seed_dir()
 _SEED_ENV = "MEASURE_VERB_POLICY_DIR"
 _OVERLAY_ENV = "MEASURE_VERB_OVERLAY_DIRS"
 
