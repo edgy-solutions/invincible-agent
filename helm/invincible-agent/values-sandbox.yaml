@@ -991,7 +991,16 @@ cortexUi:
     # e0c3c6d descends from c390a03, and Dockerfile, docker-entrypoint.sh, nginx.conf, package
     # files and the src's import.meta.env reads are unchanged; helm/ (chart 0.3.0) and .github/
     # (retag-image.yml) moved, neither of them a build input.
-    digest: "sha256:c02ee0d262d64a04aa5f201224af6ac9351944c0b0f9735d5d3c4949b3a2f533"
+    # 2026-10-28, chart 0.4.71 (architect: "cortex pinned at e09e2ac (image 57e40789…)"; P0:
+    # "both clusters get the same image"): cortex-ui e09e2ac re-pins PRODUCER_REF to 4a5ff6b6,
+    # platform #121, the ruled evidence_ref {page, bbox, note?} -> 57e40789, the same digest
+    # values.yaml now carries by default. Measured before pinning: the FULL tag resolves to this
+    # digest, an OCI index with amd64 and arm64; the abbreviated tag and the full sha with its last
+    # hex altered both answer 404. e09e2ac descends from e0c3c6d. Dockerfile, docker-entrypoint.sh,
+    # nginx.conf and helm/ are unchanged, and the src gains no import.meta.env read (one comment
+    # naming it is removed). package.json gains a `gen:api` script, and .github/ moves only the CI
+    # PRODUCER_REF; neither is a build input.
+    digest: "sha256:57e4078925d3b1fe44724c207c262c0fb3e8315a718bba20eb564b67f8eea43a"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
