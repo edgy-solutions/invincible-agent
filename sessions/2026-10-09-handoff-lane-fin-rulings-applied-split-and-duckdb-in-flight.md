@@ -19,6 +19,65 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-28: P0 fixed in #132; #117 never landed, so it is #130; measure is #135, CDRL in build. Read this first
+
+- **#117 is merged, but not into master.** #113 merged into master at 10-27 13:25Z. #117 merged
+  afterwards (10-28 14:46Z) into #113's branch, which was dead by then, so `bdc1a94f` is not in
+  master.
+  - Reopened as **#130** (`fin/verbs-honour-program-members` → master); all checks pass or were
+    skipped.
+  - Until #130 merges, a typed program id still bypasses the grant at `/measure`.
+  - Memory: `a-merged-pr-can-be-merged-into-a-dead-base`.
+- **P0 of 10-28.**
+  - **(1) The empty "which program?" menu** was timing, not a defect, per the architect's ruling.
+  - **(2) The 502 on `/canvas/seed`** came from cortex #34's re-send after the program pick
+    (query + program_id + persona, no domains). It is fixed in **#132**
+    (`fin/canvas-seed-derives-the-cell`, `1f7596c6`):
+    - a persona-only seed gets `domains_for(persona)`;
+    - an unheld persona gets a 403 `persona_not_held` via `policy_refusal`;
+    - domains without a persona get a 400 `field: active_persona`;
+    - when every panel answers the same 400 or 422, the seed answers that status as
+      `seed_panel_refused`, naming the field.
+  - **Owed:** the UI acceptance after the roll, which is Chris's exact sentence, then the pick of
+    NP-MERIDIAN, then a 6/6 seed. **The sentence is still owed by Chris.**
+- **Directive of 10-28:** "(1) a measure overlay contract plus one synthetic algorithm through ask
+  and the canvas; (2) a CDRL export from a profile plus an xlsx template. Spec first, packet the
+  contract to Chris."
+  - **Contract packet** (placed, untracked):
+    `invincible-agent/sessions/2026-10-28-packet-to-architect-fin-for-finance-the-measure-contract-and-the-cdrl-profile.md`.
+    Sections 1–4 are written for finance.
+  - **Proposal:**
+    `docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md`, committed in
+    #135.
+  - **(1) is #135** (`fin/measure-rows-tcpi`, `1390ce8f`, against master, carrying #130 as a merge
+    commit). It adds:
+    - the `measure_verbs` overlay kind (`MEASURE_VERB_OVERLAY_DIRS`);
+    - the pure module `measure_modules/tcpi.py`;
+    - the sample `fin_tcpi`;
+    - `CANVAS_OVERLAY_DIRS` with the sample board `program_finance_tcpi`;
+    - the env keys in sandbox values only.
+
+    It has three caveats:
+    - **The chart-version seal is red by decision.** No bump yet: the bump belongs to the release
+      that rolls it.
+    - **`fin:ToCompletePerformanceIndexSeries` sits in `finance_extension.ttl` as SAMPLE.**
+      Without it, Contract D would refuse the registration batch.
+    - **The roll needs a re-prime.**
+  - **(2) is in build.** The spec is `scratchpad/spec-cdrl-export-profile.md` (session
+    `91ad3195`), on branch `fin/cdrl-export-profile`, stacked on #135. It covers:
+    - openpyxl;
+    - the `fin_export_profiles` kind (`FIN_EXPORT_PROFILE_OVERLAY_DIRS`);
+    - a deterministic sample template;
+    - engine `/cdrl_profiles` and `/cdrl_export`;
+    - BFF `/export/cdrl/profiles` and `/export/cdrl`.
+- **Next.**
+  1. Review the CDRL build and open its PR against master.
+  2. Packet lane/01 (cc the architect and cortex-ui) with the shared profile header
+     `{name, format, scope, label}`.
+  3. Merge order: #130, #132, #135, then CDRL.
+  4. After the roll: the P0 sentence; the TCPI ask as alice; `program_finance_tcpi` seeding 2/2;
+     the CDRL download, with bob refused.
+
 ## Update 2026-10-27, later: the verbs check is PR #117, stacked on #113. Read this first
 
 - **The ruling.** "#113 merges. Next: the finance verbs (/measure, /package_export) check program
