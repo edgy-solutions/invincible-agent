@@ -47,11 +47,18 @@ MANIFEST = {
 }
 
 
-def _item(fp, value, *, page=2, bboxes=((10.0, 20.0, 30.0, 40.0),), method="text_layer_cell"):
-    return {"field_path": fp, "value": value, "source_snippet": f"snip {value}", "region": "table",
+def _item(fp, value, *, page=2, bboxes=((10.0, 20.0, 30.0, 40.0),), method="text_layer_cell", wire="auto"):
+    # `wire` is 7f's wire_evidence_ref: "auto" builds a valid one from page + the first bbox
+    # (as fractions); a dict is used as given; None omits the key (a legacy review.json).
+    if wire == "auto":
+        wire = ({"page": page, "bbox": [0.1, 0.2, 0.3, 0.4]} if page and bboxes else None)
+    d = {"field_path": fp, "value": value, "source_snippet": f"snip {value}", "region": "table",
             "page_number": page, "bboxes": [list(b) for b in bboxes] if bboxes is not None else [],
             "page_dims": [612, 792], "match_method": method, "match_confidence": 0.9,
             "needs_review": False, "review_reason": None, "approval_state": "pending"}
+    if wire is not None:
+        d["wire_evidence_ref"] = wire
+    return d
 
 
 #: The notice's own id as the extraction PRINTED it. Deliberately NOT the manifest's `doc_id`
@@ -245,10 +252,9 @@ def test_extraction_rows_are_mapped_and_evidence_less_rows_are_counted(monkeypat
     # a row with no bbox, and a row with no page: null evidence, both counted
     assert b["rows"][2]["evidence_ref"] is None and b["rows"][3]["evidence_ref"] is None
     assert b["rows_without_evidence"] == 2
-    ev = b["rows"][0]["evidence_ref"]
-    assert ev == {"page": 2, "bbox": [10.0, 20.0, 30.0, 40.0],
-                  "bboxes": [[10.0, 20.0, 30.0, 40.0]], "page_dims": [612, 792], "units": "pt",
-                  "quality": "cell"}
+    # 7f's wire_evidence_ref is served byte-equal: same keys, no added page_dims/units/quality
+    assert b["rows"][0]["evidence_ref"] == {"page": 2, "bbox": [0.1, 0.2, 0.3, 0.4]}
+    assert b["rows"][1]["evidence_ref"] == {"page": 3, "bbox": [0.1, 0.2, 0.3, 0.4]}
 
 
 def test_extraction_notice_id_is_the_printed_id_not_the_key_nor_the_row(monkeypatch, s3):
@@ -268,25 +274,27 @@ def test_extraction_notice_id_is_null_when_none_was_extracted(monkeypatch):
     assert "notice_id" in b and b["notice_id"] is None, b["notice_id"]
 
 
-def test_units_are_pt_for_a_text_layer_cell_and_px_for_anything_else(monkeypatch, s3):
-    _gate(monkeypatch, row=_row())
-    _as(monkeypatch, DROPPER)
-    rows = _get(f"/ingest/{ID}/extraction").json()["rows"]
-    assert rows[0]["evidence_ref"]["units"] == "pt"
-    assert rows[1]["obtained_via"] == "layout_fuzzy"
-    assert rows[1]["evidence_ref"]["units"] == "px"
-
-
-def test_evidence_quality_is_cell_region_or_undecided():
+def test_evidence_ref_is_7fs_wire_ref_when_valid_and_null_otherwise(caplog):
     from src.iagent import gateway
-    ev = lambda m: gateway._evidence_ref(_item("parts[0].mpn", "A", method=m))  # noqa: E731
-    assert ev("text_layer_cell")["quality"] == "cell"
-    assert ev("region_preferred")["quality"] == "region"
-    assert ev("region_image")["quality"] == "region"
-    # architect 2026-10-17: an unrecognised method is undecided, never guessed
-    inherited = ev("inherited_doc_level")
-    assert inherited is not None and inherited["quality"] is None
-    assert gateway._evidence_ref(_item("parts[0].mpn", "A", bboxes=None)) is None
+    good = {"page": 2, "bbox": [0.1, 0.2, 0.3, 0.4], "note": "2 boxes"}
+    it = _item("parts[0].mpn", "A", wire=good)
+    assert gateway._evidence_ref(it) is good
+    assert gateway._evidence_ref(_item("parts[0].mpn", "A", wire={"page": 1, "bbox": None})) == {"page": 1, "bbox": None}
+    # absent (legacy review.json, no wire_evidence_ref): null, even with page_number + bboxes
+    legacy = _item("parts[0].mpn", "A", wire=None)
+    assert "bboxes" in legacy and gateway._evidence_ref(legacy) is None
+    bad = {
+        "page": {"page": 0, "bbox": None}, "bbox_not_fractions": {"page": 1, "bbox": [10, 20, 30, 40]},
+        "bbox_degenerate": {"page": 1, "bbox": [0.3, 0.2, 0.1, 0.4]},
+        "extra_key:page_dims": {"page": 1, "bbox": None, "page_dims": [1, 1]},
+        "note_blank": {"page": 1, "bbox": None, "note": "  "}}
+    for check, w in bad.items():
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="cortex"):
+            assert gateway._evidence_ref(_item("parts[0].mpn", "A", wire=w)) is None
+        warned = [r.getMessage() for r in caplog.records if "wire_evidence_ref" in r.getMessage()]
+        assert len(warned) == 1 and "parts[0].mpn" in warned[0], (check, warned)
+        assert check in warned[0], (check, warned)
 
 
 def test_extraction_refusals(monkeypatch, s3):
