@@ -710,3 +710,36 @@ def test_favourable_follows_the_CONVENTION_and_not_the_sign():
             )
 
     assert verdicts() == baseline, "the convention was not restored — later tests would inherit it"
+
+
+def test_every_declared_verb_has_both_ends_of_contract_d_declared_in_the_ttl(monkeypatch):
+    """The same seal as above for verbs a deployment DECLARES (sample overlay). A declared output
+    class missing from the TTL is the planning engine's twelve 422s again: Contract D refuses the
+    whole registration batch atomically, built-ins included."""
+    sample = REPO / "policy" / "overlays" / "sample" / "measure_verbs"
+    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(sample))
+    declared = engine._load_declared()
+    assert declared, "the sample overlay declares no measure"
+    monkeypatch.setattr(engine, "DECLARED", declared)
+    ttl = (REPO / "setup" / "ontologies" / "finance_extension.ttl").read_text(encoding="utf-8")
+    mesh_ttl = (REPO / "setup" / "ontologies" / "mesh_system.ttl").read_text(encoding="utf-8")
+    text = ttl + mesh_ttl
+    for call in engine._registration_calls("http://engine"):
+        for uri in (call["input_uri"], call["output_uri"]):
+            local = uri.rsplit("#", 1)[-1]
+            prefix = "fin:" if uri.startswith(FIN) else "mesh:"
+            assert f"{prefix}{local} a owl:Class" in text, (
+                f"{uri} is registered by {call['verb']} but declared in no seeded TTL")
+
+
+def test_a_declared_verbs_slots_equal_its_subject_verbs_and_name_referents_when_ids(monkeypatch):
+    sample = REPO / "policy" / "overlays" / "sample" / "measure_verbs"
+    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(sample))
+    declared = engine._load_declared()
+    monkeypatch.setattr(engine, "DECLARED", declared)
+    twin = {s["name"]: s for s in slots.slots_for("fin_performance_indices")}
+    for row in declared.values():
+        for s in engine._declared_slots(row):
+            assert s == twin[s["name"]], f"{row.measure_id}.{s['name']} drifted from its twin"
+            if s["name"].endswith("_id") and s["kind"].startswith("spoken"):
+                assert s.get("referent", "").startswith(FIN), f"{row.measure_id}.{s['name']}"

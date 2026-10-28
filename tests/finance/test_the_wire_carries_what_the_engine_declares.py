@@ -2295,3 +2295,27 @@ def test_the_BUILDER_SELECTOR_REJECTS_what_it_must():
             f"{label}: the selector rejected this source for the wrong reason -- expected a "
             f"message carrying {fragment!r}, got {str(caught.value)[:160]!r}"
         )
+
+
+# -- DECLARED verbs (a measure is an overlay row) -----------------------------------------
+# Every seal above iterates the built-in tables. A verb a deployment DECLARES is served by the
+# same route, so its series, reference and verdict must reach the wire from its ROW, and are
+# asserted here from the row, with the sample overlay (policy/overlays/sample) as the population.
+
+def test_a_declared_measure_carries_its_rows_declaration_on_the_wire(monkeypatch):
+    from agent_fleet.finance_agent import main as fmain
+    from agent_fleet.finance_agent import measure_verbs
+
+    sample = Path(__file__).resolve().parents[2] / "policy" / "overlays" / "sample" / "measure_verbs"
+    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(sample))
+    declared = fmain._load_declared()
+    assert declared, "the sample overlay declares no measure"
+    monkeypatch.setattr(fmain, "DECLARED", declared)
+    for fn, row in declared.items():
+        body = _envelope(fn)
+        assert body["series"] == [dict(s) for s in row.series], fn
+        assert body["reference"] == dict(row.reference), fn
+        assert body["output_uri"] == measures.FIN + row.output_uri, fn
+        assert body["value_label"] == row.series[0]["label"], fn
+        assert body["method"]["module_sha256"] == row.module_sha256, fn
+        assert body["verdict"] == measure_verbs.declared_verdict(row, body["rows"]), fn

@@ -1,0 +1,45 @@
+# SAMPLE -- invented in this repo to prove the measure-row contract end to end. A deployment
+# replaces it with its own. Overlay layer: policy/overlays/sample/. Proposal:
+# docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md
+measure_id: fin_tcpi
+verb: finToCompletePerformanceIndex
+name: To-complete performance index (BAC)
+description: >-
+  The efficiency the remaining work must achieve for the program to finish on its budget at
+  completion, reported period by period. Above 1.00 the rest of the work must be done more
+  efficiently than budgeted; below 1.00, less. Undefined once the budget is spent. A dimensionless
+  ratio, never an amount. NOT how efficiently the work has been done so far - that is
+  finPerformanceIndices (CPI and SPI). NOT a forecast of the final cost - that is
+  finEacCalculation. OWNS the phrasings: TCPI, to-complete performance index, what efficiency do we
+  need to finish on budget.
+synonyms:
+  - to-complete performance index
+  - TCPI
+  - efficiency needed to finish on budget
+anti_synonyms:
+  - cost performance index
+  - CPI
+  - estimate at completion
+inputs:
+  params: {program_id: {required: true}, window: {required: false}}
+  state: {bac: program.bac, bcwp: cumulative.bcwp, acwp: cumulative.acwp}
+computation:
+  module: agent_fleet.finance_agent.measure_modules.tcpi
+  function: tcpi_bac
+  version: "1.0.0"
+  derived_from:
+    authority: Public EVM methodology (DoD/DAU EVM Gold Card formulation)
+    clause: TCPI (BAC)
+    citation: name-only
+    transcription: TCPI = (BAC - BCWP) / (BAC - ACWP)
+outputs:
+  archetype: PERIOD_SERIES
+  output_uri: ToCompletePerformanceIndexSeries
+  series: [{key: tcpi, label: TCPI}]          # dimensionless: no unit key
+  reference: {value: 1.0, label: at budgeted efficiency}
+  undefined: {reason: budget_spent, when: BAC <= cumulative ACWP (the budget is spent; no efficiency completes the work within it)}
+policy:
+  status: sample
+  cells: [PROGRAM_FINANCE]
+  granted_by: <accountable approver>
+  reason: proves the measure-row contract end to end on synthetic NP-MERIDIAN data

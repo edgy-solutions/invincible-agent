@@ -144,6 +144,12 @@ fin:PerformanceIndexSeries a owl:Class ;
     rdfs:label "Performance Index Series" ;
     rdfs:comment "Dimensionless ratios indexed by period, each accompanied by the two quantities it was divided from, and by its cumulative counterpart. Carries no currency and refuses one: a ratio has no unit, and the amounts travelling beside it declare their unit under a separate field so nothing promotes a currency onto the ratio. A period with no reported quantities is ABSENT rather than zero." .
 
+# SAMPLE: output class of the sample overlay measure fin_tcpi (policy/overlays/sample/measure_verbs).
+fin:ToCompletePerformanceIndexSeries a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "To-Complete Performance Index Series" ;
+    rdfs:comment "The dimensionless efficiency the remaining work must achieve to finish on budget, indexed by period, each value accompanied by the method name and version that produced it. A period in which the budget is already spent carries a reason and no number. Carries no currency and refuses one." .
+
 fin:BurnRateSeries a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Burn Rate Series" ;

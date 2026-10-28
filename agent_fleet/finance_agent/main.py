@@ -40,12 +40,14 @@ from pydantic import BaseModel, Field, field_validator
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
     import export
+    import measure_verbs
     import measures
     from entities import FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled
     from seed import build_seed, check_consistency, notional_banner
     from slots import missing_mandatory, refusal_for, slots_for, with_live_vocabularies
 except ImportError:
     from agent_fleet.finance_agent import export
+    from agent_fleet.finance_agent import measure_verbs
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent.entities import (
         FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled,
@@ -366,6 +368,76 @@ VERBS: list[dict[str, Any]] = [
 BY_FN = {v["fn"]: v for v in VERBS}
 
 
+def _load_declared() -> dict[str, "measure_verbs.MeasureVerbRow"]:
+    """The measures a deployment DECLARED as overlay rows (proposal: a measure is an overlay row).
+
+    Read from `MEASURE_VERB_OVERLAY_DIRS` at call time; none declared is the default and an
+    empty dict. A malformed row set RAISES, so the engine does not boot half a catalogue.
+    """
+    return {r.measure_id: r for r in measure_verbs.load_measure_verbs(
+        builtins=(measures.OUTPUT_URI, [v["verb"].split(":", 1)[-1] for v in VERBS]),
+    )}
+
+
+#: measure_id -> row. Loaded ONCE, here, like every other compose loader. The routes read this
+#: name at call time, so a test that replaces it replaces what the engine serves.
+DECLARED: dict[str, "measure_verbs.MeasureVerbRow"] = _load_declared()
+
+
+def _declared_input_uri() -> str:
+    """The subject a declared measure registers on: the one `fin_performance_indices` uses, so a
+    declared PERIOD_SERIES is asked of what that series is asked of, never a hand-typed URI."""
+    return BY_FN["fin_performance_indices"]["input_uri"]
+
+
+def _declared_slots(row: "measure_verbs.MeasureVerbRow") -> list[dict[str, Any]]:
+    """`program_id` / `window` slots EQUAL to `fin_performance_indices`'s, filtered to the row's
+    params. Derived, never hand-written: a slot typed here is a second declaration of a fact
+    the signature already makes."""
+    return [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
+
+
+def _registration_calls(base: str) -> list[dict[str, Any]]:
+    """The keyword arguments of every `register_engine_to_mesh` call this engine makes for its
+    verbs (built-in then declared), minus the `mint`. One list, read by the lifespan and by the
+    seal that pins what is registered -- the loop that registered and the test that checked it
+    were two copies of one fact."""
+    periods = [p for p in FISCAL_PERIODS if any(f.period == p for f in STATE.facts)]
+    plan = [
+        (v, v["input_uri"], "engine_fin_finance") for v in VERBS
+    ] + [
+        (v, subj, "engine_fin_finance_by_subject")
+        for v in VERBS for subj in v.get("also_askable_of", ())
+    ]
+    calls: list[dict[str, Any]] = [
+        dict(
+            name=reg_name,
+            description=v["desc"],
+            verb=v["verb"],
+            input_uri=subject_uri,
+            output_uri=measures.OUTPUT_URI[v["fn"]],
+            verb_synonyms=v["synonyms"],
+            verb_anti_synonyms=v.get("anti_synonyms"),
+            endpoint_url=f"{base}/measure/{v['fn']}",
+            slots=with_live_vocabularies(slots_for(v["fn"]), periods=periods),
+        )
+        for v, subject_uri, reg_name in plan
+    ]
+    for r in DECLARED.values():
+        calls.append(dict(
+            name="engine_fin_finance",
+            description=r.description or r.name,
+            verb="mesh:" + r.verb,
+            input_uri=_declared_input_uri(),
+            output_uri=measures.FIN + r.output_uri,
+            verb_synonyms=list(r.synonyms),
+            verb_anti_synonyms=list(r.anti_synonyms) or None,
+            endpoint_url=f"{base}/measure/{r.measure_id}",
+            slots=with_live_vocabularies(_declared_slots(r), periods=periods),
+        ))
+    return calls
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Register every verb as its own predicate edge, then the two provider verbs.
@@ -460,41 +532,19 @@ async def lifespan(app: FastAPI):
     # (tool_urn, verb_iri). The precedent for doing it correctly is Engine A's `findSchema`,
     # which carries BOTH idp:Column and idp:Dataset under `engine_a_find_schema_column` and
     # `engine_a_find_schema`. This follows that idiom rather than inventing one.
-    _registrations = [
-        (v, v["input_uri"], "engine_fin_finance") for v in VERBS
-    ] + [
-        (v, subj, "engine_fin_finance_by_subject")
-        for v in VERBS for subj in v.get("also_askable_of", ())
-    ]
-    for v, _subject_uri, _reg_name in _registrations:
+    for _call in _registration_calls(base):
         try:
             register_engine_to_mesh(
                 mint=_mint,
-                name=_reg_name,
-                description=v["desc"],
-                verb=v["verb"],
-                input_uri=_subject_uri,
-                output_uri=measures.OUTPUT_URI[v["fn"]],
-                verb_synonyms=v["synonyms"],
-                verb_anti_synonyms=v.get("anti_synonyms"),
-                endpoint_url=f"{base}/measure/{v['fn']}",
                 owner_persona=OWNER_PERSONA,
                 domains=DOMAINS,
                 cost_class="fast",
-                # DECLARED FROM DAY ONE. This engine is the first to register slots on its
-                # first registration rather than acquire them later — which is what makes
-                # `fin_eac_calculation`'s refusal reachable by the router at all, instead of
-                # a rule only this process knows.
-                slots=with_live_vocabularies(
-                    slots_for(v["fn"]),
-                    periods=[p for p in FISCAL_PERIODS
-                             if any(f.period == p for f in STATE.facts)],
-                ),
+                **_call,
             )
         except Exception as exc:  # pragma: no cover
             # Best-effort, matching the fleet's posture: a failed registration means this
             # verb is not routable yet, NOT that the engine is down.
-            print(f"[engine-fin] registration failed for {v['verb']}: {exc}")
+            print(f"[engine-fin] registration failed for {_call['verb']}: {exc}")
 
     # THE RESOLVER PROVIDER — without it, four of six verbs cannot be filled from a phrase.
     #
@@ -666,6 +716,15 @@ def list_verbs() -> dict[str, Any]:
             "slots": with_live_vocabularies(slots_for(v["fn"])),
         }
         for v in VERBS
+    ] + [
+        {
+            "verb": "mesh:" + r.verb,
+            "fn": r.measure_id,
+            "input_uri": _declared_input_uri(),
+            "output_uri": measures.FIN + r.output_uri,
+            "slots": with_live_vocabularies(_declared_slots(r)),
+        }
+        for r in DECLARED.values()
     ]}
 
 
@@ -684,6 +743,8 @@ def _measure_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
     registered menu (ADR-0042 §2). An engine that named a view here would re-open
     `archetype-chosen-before-data` from the other end.
     """
+    if fn in DECLARED:
+        return _declared_envelope(DECLARED[fn], params)
     if fn not in measures.OUTPUT_URI:
         raise HTTPException(status_code=404, detail=f"unknown measure {fn!r}")
     func = getattr(measures, fn, None)
@@ -768,11 +829,55 @@ def _measure_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
+    """The envelope of a DECLARED measure: the PERIOD_SERIES shape `fin_performance_indices`
+    answers in, with `series` and `reference` from the row and the method beside the figure.
+
+    `verdict` is the mechanical restatement `measure_verbs.declared_verdict` builds from the row's
+    own reference (absent when there are no rows), so the brief never falls back to "reported
+    (see artifact)". `method` carries the module's bytes' hash, so the
+    figure names the exact code that computed it (ADR-0053 section 5).
+    """
+    unknown = sorted(set(params) - set(row.params))
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"bad params for {row.measure_id}: {unknown}")
+    missing = [n for n in row.params if _declared_param_required(row, n) and params.get(n) is None]
+    if missing:
+        raise HTTPException(status_code=422, detail={
+            "needs_slots": missing, "question": refusal_for(
+                "fin_performance_indices", [s for s in slots_for("fin_performance_indices")
+                                            if s["name"] in missing]),
+        })
+    try:
+        rows = measure_verbs.run_declared(STATE, row, **params)
+    except NotInModel as exc:
+        raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
+    fn = row.measure_id
+    envelope = {  # not `return {`: the wire seals select the built-in builder by that anchor
+        "measure": fn,
+        "output_uri": measures.FIN + row.output_uri,
+        "artifact_id": _artifact_id(fn, params, rows),
+        "value_label": row.series[0].get("label", row.name),
+        "series": [dict(s) for s in row.series],
+        **({"reference": dict(row.reference)} if row.reference else {}),
+        "data_provenance": notional_banner(),
+        "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
+                   "module_sha256": row.module_sha256},
+        **({"verdict": _v} if (_v := measure_verbs.declared_verdict(row, rows)) is not None else {}),
+        "rows": rows,
+    }
+    return envelope
+
+
+def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
+    return name == "program_id"
+
+
 @app.post("/measure/{fn}")
 def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
     """The ordinary route. A THIN WRAPPER — `_measure_envelope` is the one place a verb is
     run and shaped; this route and `package_export` below are its only two callers."""
-    if fn not in measures.OUTPUT_URI:  # a verb name is not a program secret: 404 stays first
+    if fn not in measures.OUTPUT_URI and fn not in DECLARED:  # a verb name is not a program secret: 404 stays first
         raise HTTPException(status_code=404, detail=f"unknown measure {fn!r}")
     _require_visible(req.params.get("program_id"), _verb_caller(req.user_email))
     return _measure_envelope(fn, dict(req.params))
@@ -789,6 +894,7 @@ def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
 #: verb -> fn, DERIVED from VERBS so a verb added above is immediately packageable and this
 #: map cannot itself name a verb the catalogue does not hold.
 VERB_TO_FN: dict[str, str] = {v["verb"]: v["fn"] for v in VERBS}
+VERB_TO_FN.update({"mesh:" + r.verb: r.measure_id for r in DECLARED.values()})
 
 
 class PackagePanel(BaseModel):
