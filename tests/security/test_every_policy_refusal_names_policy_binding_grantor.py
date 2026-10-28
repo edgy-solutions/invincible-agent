@@ -539,7 +539,7 @@ def test_an_overlay_row_replaces_the_seed_grantor(R, tmp_path, monkeypatch):
 
 def test_an_object_scoped_family_is_named_without_its_key(R):
     scoped = sorted(f for f, g in R.grantors().items() if g.object_scoped)
-    assert scoped == ["asset_grants", "ontology_compartments", "program_members"]
+    assert scoped == ["asset_grants", "ontology_compartments", "program_members", "recipient_readers"]
     for fam in scoped:
         assert R.refusal(fam, "member_of(program)")["policy_id"] == fam
         with pytest.raises(ValueError, match="object-scoped"):

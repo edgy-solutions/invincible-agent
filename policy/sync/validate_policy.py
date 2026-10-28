@@ -20,6 +20,8 @@ definition of "valid", never a parallel re-implementation):
   - program_members.yaml          → program_member_sync.load_programs
   - capability_grants.yaml        → also: a `grant_to_groups` group exists and has members, and
     a `can_drop:<K>` key names a KNOWN content kind (see known_content_kinds)
+  - recipient_readers.yaml        → recipient_reader_sync.load_readers (WHEN PRESENT; not in
+    DATA_FILES -- see the note there)
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
     no sync of its own — can_consume is evaluated in-process)
   - every DATA file must EXIST — explicit-empty (`grants: []`) is a
@@ -65,6 +67,7 @@ from task_grant_sync import load_audiences
 from ontology_compartment_sync import load_compartments
 from capability_grant_sync import load_capabilities
 from program_member_sync import load_programs
+from recipient_reader_sync import load_readers
 
 # The eight DATA files a deployment asserts (enums excluded — product-owned).
 # domain_consumption.yaml added 2026-10-02 (origin-entitlement ruling): it has no
@@ -81,6 +84,12 @@ DATA_FILES = (
     "domain_consumption.yaml",
     "program_members.yaml",
 )
+
+# recipient_readers.yaml is DELIBERATELY NOT in DATA_FILES: that tuple means "every deployment must
+# assert this file", and adding it would fail the seed of every existing deployment whose policy
+# repository lacks it. It is validated WHEN PRESENT (see validate()). Whether it becomes
+# required -- and so whether an absent file is an error here and FATAL in the sync Job -- is an
+# OPEN question with the architect.
 
 
 def known_content_kinds() -> tuple[set[str], list[str]]:
@@ -383,6 +392,17 @@ def validate(
                 f"kind open. Known kinds ({len(_kinds)}) were composed from the `kind:` field "
                 f"of: " + "; ".join(_sources))
 
+    # recipient_readers.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note
+    # there; required-or-not is open with the architect). Absent = no reader asserted = every
+    # recipient check denies, which is fail-closed, so absence is not an error here.
+    readers: list = []
+    _readers_path = policy_dir / "recipient_readers.yaml"
+    if _readers_path.is_file():
+        readers_raw = _read_yaml(_readers_path, errors)
+        readers, reader_errors = load_readers(readers_raw)
+        errors.extend(f"recipient_readers.yaml: {e}" for e in reader_errors)
+        print(f"  recipient_readers.yaml: {len(readers)} recipient scope(s)")
+
     # ADMISSION POSTURE (ADR-0034). Validated through the SAME parser the runtime loads with, so
     # there is ONE definition of a well-formed table and this gate cannot drift from the loader.
     # Added when the table acquired a production reader (phase 1.3) — before that it was a git
@@ -452,6 +472,8 @@ def validate(
             [(c.key, gt) for c in caps for gt in c.grant_to], known_users))
         errors.extend(unknown_user_subjects("program_members.yaml",
             [(p.key, gt) for p in programs for gt in p.grant_to], known_users))
+        errors.extend(unknown_user_subjects("recipient_readers.yaml",
+            [(r.object_id, gt) for r in readers for gt in r.grant_to], known_users))
 
     # grant_to_groups: the group must exist and have members (2026-10-10 ruling).
     errors.extend(unusable_group_audiences(
@@ -477,6 +499,10 @@ def validate(
     # 2026-10-02) — a `svc:` principal must never be a program member.
     errors.extend(service_identity_recipients("program_members.yaml",
         [(p.key, gt) for p in programs for gt in p.grant_to]))
+    # ADR-0047 §5.1: a recipient's disclosure package is DISCLOSURE too (the loader refuses a
+    # `svc:` grantee itself; this is the shared check, kept so the two cannot drift).
+    errors.extend(service_identity_recipients("recipient_readers.yaml",
+        [(r.object_id, gt) for r in readers for gt in r.grant_to]))
 
     return errors
 

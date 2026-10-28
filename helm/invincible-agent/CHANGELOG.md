@@ -17,6 +17,19 @@
 - **Before that roll, a human `topaz_sync` must create `group:alert-processors`** (new group in
   `policy/groups.yaml`, alice in `policy/users.yaml`), or the capability leg exits 5.
 
+**Chart changes**
+
+- **A `recipient_readers` policy rail.** Who may download a recipient's disclosure package, from
+  the engine that owns the scope, becomes a git-asserted Topaz relation (architect, 2026-10-27
+  ruling 4, refined 2026-10-28). The Topaz manifest gains a `recipient_scope` type
+  (`reader: user`, `can_read_recipient`; object id `<owner>:<scope>`, owner `finance` | `cost`),
+  and the `task-grant-sync` Job gains a last leg, `recipient_reader_sync`. In the configMap/git
+  overlay modes `recipient_readers.yaml` is optional: absent logs a `WARN:` and skips the leg
+  (no reader asserted, every recipient check denies); whether absence becomes FATAL is open.
+  `policy/recipient_readers.yaml` ships with both owners empty; the finance and cost lanes move
+  their own rows. No engine reads the rail yet. Loading the new manifest type is done by the
+  existing `topaz-manifest-load` Job.
+
 ## 0.4.71 — 2026-10-28
 
 Cut from master `4a5ff6b6` (architect, 2026-10-28), so that the work cluster installs a version
