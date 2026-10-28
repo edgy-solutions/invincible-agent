@@ -177,8 +177,14 @@ def test_the_published_schema_accepts_cortexs_new_ref():
     dict(CORTEX_NEW_REF, note=" "),
 ], ids=["old_ref", "pixels_units", "pixels_page_dims", "new_plus_null_page_dims", "note_null", "note_blank"])
 def test_the_published_schema_refuses_cortexs_old_ref_and_its_parts(bad):
-    with pytest.raises(jsonschema.ValidationError):
-        jsonschema.validate(bad, _published_evidence_ref_schema())
+    schema = _published_evidence_ref_schema()
+    errors = list(jsonschema.Draft202012Validator(schema).iter_errors(bad))
+    assert errors, f"the published schema accepted {bad}"
+    # cortex 10-27: refused BY A KEY NOT IN THE CONTRACT, never merely by a missing one.
+    assert not any(e.validator == "required" for e in errors)
+    extra = set(bad) - {"page", "bbox", "note"}
+    if extra:
+        assert any(e.validator == "additionalProperties" for e in errors), [e.message for e in errors]
 
 
 def test_control_a_wire_ref_with_a_null_note_is_served_null(monkeypatch, fx):
