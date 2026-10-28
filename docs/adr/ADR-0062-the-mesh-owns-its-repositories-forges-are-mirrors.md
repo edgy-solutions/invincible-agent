@@ -9,6 +9,9 @@ lane/gov (§5)
 **Related:**
   - [`ADR-0026`](ADR-0026-persona-entitlement-topaz-authorization.md): Topaz authorization. A
     merge to a grant path takes effect through the Topaz sync (§6).
+  - [`ADR-0027`](ADR-0027-composable-approval-policy.md): composable approval. §5's second
+    approver is an N-of-one-audience join. Decision 6 (an unsatisfiable join fails closed and is
+    released) binds it. Where the join is decided is open (§5).
   - [`ADR-0041`](ADR-0041-user-contributed-documents-ingest-on-arrival-provenance-gated-truth.md):
     the dropper rule. Whoever proposes a change may not approve it. Review in engine-r uses the
     same exclusion. `sessions/` has one ruled exception (§2).
@@ -242,15 +245,168 @@ policy, no review decision and no audit that engine-r does not also hold.
 
 ### 5. Merge policy
 
-> **Owned by lane/gov. To be written in this PR.**
->
-> The brief:
->
-> - Who may propose, review, merge and tag, per repository and per path, on the policy rail
->   with grantors. Refusals carry the envelope.
-> - Which paths need a second approver. `policy/` and release tags do, in the same shape as
->   saf's second-approver rule; gov cites its tests in #114 and #115.
-> - Which lane owns which `sessions/` path, for §2's exception.
+Written by lane/gov. §2 says what the verbs do; this section says **who**.
+
+**One rail says who: `policy/repository_paths.yaml`.**
+
+- It is a rail like the others in `policy/`: a reviewed file, plus a grantor row at
+  `policy/grantors/repository_paths.yaml` (family `repository_paths`, not object-scoped).
+- It is not a grant path, so it **applies by roll** (§6). engine-r reads its baked copy.
+- A change to the rail therefore governs the proposals that come after its roll. It never
+  governs the proposal that makes it.
+
+```yaml
+repository_paths:
+  invincible-agent:                      # repository id, as engine-r keys it (§2)
+    paths:
+      policy/:                           # a path prefix; the longest matching prefix wins
+        review: repo_review:POLICY       # a task audience in policy/task_grants.yaml
+        approvers: 2
+        granted_by: <who ratified the row>
+        reason: <why>
+      sessions/:
+        review: owning_lane              # the one value that is not an audience (below)
+        approvers: 1
+    tags:
+      invincible-agent-*:                # a tag-name pattern
+        review: repo_release:invincible-agent
+        approvers: 2
+```
+
+**How a path is matched.**
+
+- **Longest prefix wins.** A path takes the row with the longest matching prefix.
+- **A path that matches no row is not governed.** That is §2's check 6, and this rail is the one
+  place check 6 reads.
+- **The rail cannot widen check 6.** `validate_policy` refuses a row outside §1's governed roots
+  (`policy/`, `docs/adr/`, `tests/fixtures/`, `sessions/`). Only the follow-on ADR (§1) can let
+  engine-r merge application source.
+- **Several rows means all of them.** A proposal whose diff touches several rows needs every row
+  satisfied. One approver counts toward each row whose audience they hold.
+
+**What `review` means.** `review` names a task audience in `policy/task_grants.yaml`, and to
+approve you must hold `can_act` on it. That is the same Topaz permission the HITL queue already
+decides on, so there is no second decider. An audience's `grant_to` holds users only, and its
+groups' members are users, so **a service identity never approves**. Agents propose; a person
+approves.
+
+**Who, per verb.**
+
+| verb | who | how it is decided |
+| --- | --- | --- |
+| `propose` | any caller whose `authz_id` is in `policy/users.yaml`, service identities included | Proposing grants nothing and moves no target ref. An unmapped forge account parks at `awaiting_identity` (§3). |
+| `review` | a holder of `can_act` on each touched row's audience, **never the proposer** | The proposal's review task excludes the proposer from its audience, which is ADR-0057 §4's form of ADR-0041's dropper rule. |
+| `merge` | **nobody holds a merge grant** | engine-r merges when every touched row's approvals are complete **at the reviewed head sha** and the pre-receive checks pass. Any party to the proposal may ask for the merge; asking decides nothing. `On-Behalf-Of` is the approver whose approval completed it, and the audit note names every approver. |
+| `tag` | a holder of `can_act` on the tag row's audience | A tag is proposed as a (name, sha) pair, and engine-r creates it once the approvals are complete. A release-tag repair (§2 check 2) takes the same approvals plus its reason. A tag that matches no row is refused. |
+
+**The first rows (repository `invincible-agent`).** The new audiences (`repo_review:*` and
+`repo_release:*`) are rows in `policy/task_grants.yaml`. The first-slice PR adds them; this ADR
+does not.
+
+| path or tag | review audience | approvers |
+| --- | --- | --- |
+| `policy/` (overlays included) | `repo_review:POLICY` | **2** |
+| `policy/asset_grants.yaml` | `access_grant:<DOMAIN>`, taken from each row the diff changes; this is §7's grantor | **2** (see Open questions) |
+| `policy/program_members.yaml`, `policy/groups.yaml` | `repo_review:POLICY` (neither family has an audience of its own yet) | **2** |
+| `policy/repository_paths.yaml`, `policy/task_grants.yaml`, `policy/grantors/` | `repo_review:POLICY` | **2** |
+| workflow specs (§4) | §4 names the audience | **2**: they live under `policy/workflows/`, so they are `policy/` paths unless the architect carves them out |
+| `docs/adr/` | `repo_review:ADR` | 1 |
+| `tests/fixtures/` (no goldens directory exists at `93ea39af`) | `repo_review:FIXTURES` | 1 |
+| `sessions/` | the owning lane (below) | 0 when the exception applies, otherwise 1 |
+| release tags `invincible-agent-*` | `repo_release:invincible-agent` | **2** |
+
+**The second approver: saf's rule, in the same shape.** saf built it for the delete of a
+safety-critical part in #114 (`409b5344`) and #115 (`a7f5995c`). Its arms are in
+`tests/test_a_delete_of_a_safety_critical_part_needs_a_second_approver.py`, and engine-r keeps
+each one:
+
+1. **The first approval is recorded as pending, with its `authz_id`, on the review task's
+   record.** Nothing merges
+   (`test_the_first_approval_records_pending_with_the_authz_id_and_deletes_nothing`).
+2. **The same `authz_id` again is 409 `same_actor`.** Nothing merges
+   (`test_the_same_authz_id_again_is_409_same_actor_and_deletes_nothing`).
+3. **A different `authz_id` in the audience completes it, once**
+   (`test_a_different_authz_id_completes_the_delete_once`).
+4. **A pending approval lasts seven days**
+   (`test_a_pending_inside_seven_days_still_completes`). An approval after that is a fresh first
+   approval, not a completion
+   (`test_an_action_after_seven_days_is_a_fresh_first_approval_not_a_completion`).
+
+engine-r adds what a part delete does not need:
+
+5. **Both approvals are of one head sha.** A proposal that moves voids its pending approval,
+   because the merge names the reviewed sha (§2).
+6. **Neither approver is the proposer.**
+7. **An approval that can never complete fails closed and is released** (ADR-0027 Decision 6).
+   If the audience, less the proposer and the pending approver, is empty, the proposal closes with
+   that reason. It does not park.
+8. **`validate_policy` refuses a row whose audience has fewer distinct users than `approvers`.**
+   Groups are expanded one level, as the queue expands them. Rule 7 is then a runtime event (a
+   member left, or the proposer is a member), never a configuration.
+
+§5 fixes the **observable** rule, which is these arms. It does not fix where completeness is
+decided. ADR-0027 Decision 4 makes that a Topaz evaluation, but saf's rule decides in the engine.
+See Open questions.
+
+**`sessions/`: which lane owns which path.**
+
+- **A file's owner is the lane its `from:` line names**, read as an address:
+  - `<repo>/<branch>`, or a seat `<repo>/seat/<name>`;
+  - the legacy `ia-<worktree>/lane/<branch>` is read but never written (ruled 2026-10-07).
+
+  For a new file this is the `from:` line at the proposal head. For an existing file it is the
+  line at the target head.
+- **A file whose `from:` line does not parse has no owner and never takes the exception.** It
+  goes to review. An unparseable line fails toward review, never toward a silent pass. At
+  `93ea39af`, 359 `sessions/*.md` files break down as:
+
+  | `from:` line | files |
+  | --- | --- |
+  | `<repo>/<lane-or-seat>/<name>` | 143 |
+  | legacy form | 95 |
+  | no `from:` line | 47 |
+  | something else (prose, a session name, a repository with no lane) | 74 |
+
+  So an edit to any of those last 121 files goes to review.
+- **The exception (§2) applies only when all of these hold:**
+  - every path in the diff is under `sessions/`;
+  - every file is added or modified, with no deletion and no rename;
+  - every file has the same owner, and that lane is **bound to the proposer** (below);
+  - no existing file's `from:` line changes.
+- **A new file whose `from:` names a lane not bound to the proposer is refused.** A packet does
+  not speak for another lane.
+- **Every other `sessions/` proposal** goes to one approver: a principal bound to the owning lane,
+  or `repo_review:SESSIONS` when there is no owner.
+- **Checks 3–5 run on every packet**, with or without the exception.
+- **The binding is a rail, `policy/lanes.yaml`.** It maps an address to the `authz_id`s that may
+  propose as that lane. It is a `policy/` path, so it takes two approvers. **No lane holds the
+  exception until it is bound.** Today every lane commits as one identity, so a binding needs a
+  principal per lane first. See Open questions.
+
+**Application source: what a merge requires.** Nothing, because engine-r merges none of it (§1,
+check 6). No forge CI result is an input to any engine-r merge.
+
+For governed paths the inputs are the approvals above and §2's pre-receive checks. One gap
+follows from this:
+
+- Today a path-filtered forge workflow validates `policy/canvases/**`.
+- No forge workflow runs `validate_policy` at all (checked at `93ea39af`).
+- Once engine-r is the writer, a mirror's CI runs **after** the merge, too late to gate it.
+
+So **`validate_policy` and the canvas-template check run as a pre-receive check on any proposal
+touching `policy/`, at its head.** §5 names that check; adding it to §2's list is §2's job.
+
+**Refusals carry the envelope.** These are new refusal sites, so each is classified in the PR
+that builds it (ruled 2026-10-27). The family column is §5's proposal for that classification. It
+is not the classification itself.
+
+| site | status | proposed family | missing binding |
+| --- | --- | --- | --- |
+| review by a caller without `can_act` | 403 | `task_grants` | `can_act(task_audience:<aud>)` |
+| review by the proposer | 403 | `code` (no grant changes it) | the dropper rule |
+| the same approver again | 409 `same_actor` | `code` | the second-approver rule |
+| a path or tag that matches no row (check 6) | 403 | `repository_paths` | a row covering the path |
+| a new packet whose `from:` names a lane not bound to the proposer | 403 | `lanes` | a binding in `policy/lanes.yaml` |
 
 ### 6. Consequences and non-goals
 
@@ -396,6 +552,27 @@ rulings are folded in above. These remain open:
   the question by mirroring to a separate repository. Cutover cannot avoid it.
 - **Storage placement and backup** for the repositories' volume, given the single-node
   concentration of stateful volumes we already carry.
+- **§5 and §7: one Grant, or two?**
+  - §5 gives every `policy/` path two approvers, and that includes `asset_grants.yaml`.
+  - §7's access request completes on **one** Grant.
+  - The sandbox `access_grant:DATA_ENGINEERING` audience has one member (alice), so §5's rule 8
+    would refuse that row and the slice could not complete.
+
+  The fix is one of: grant paths take one approver, or the sandbox audience gains a second
+  member. This is the architect's to rule. (§5)
+- **Where the second-approver join is decided.**
+  - ADR-0027 Decision 4 makes "are all required approvals present" a Topaz evaluation, and
+    rejects an engine that tracks partial state and decides completion.
+  - saf's rule (#114, #115) decides in the engine.
+
+  §5 fixes the observable rule and leaves where it is decided open. ADR-0027's composable layer
+  is unbuilt. (§5)
+- **A principal per lane.**
+  - The `sessions/` exception binds a lane to the `authz_id`s that may propose as it
+    (`policy/lanes.yaml`).
+  - Today every lane commits as one identity, so no binding distinguishes one lane from another.
+  - Until each lane has its own principal, no lane holds the exception, and every packet goes to
+    review. (§5)
 
 ## Indicators for revisiting
 
