@@ -1086,6 +1086,12 @@ cortexBff:
     # 2026-10-20, ON for 198 with cortex's flag still off (step 2 of the order in the 10-19
     # morning report): the server takes row_edits on a promotion, no UI sends them yet.
     IAGENT_PROMOTION_ROW_EDITS: "true"
+    # Who a policy refusal names as the grantor (src/iagent/authz/refusal.py). The seed
+    # (policy/grantors/) is deployment-neutral; this overlay names the sandbox's own approver
+    # (architect, 2026-10-27, ruling 5). Sandbox only: the chart sets no default, so a deployment
+    # without this key reads the seed. A path that does not exist composes NOTHING, silently --
+    # tests/security/test_the_sandbox_names_its_grantor.py holds it to a directory with rows.
+    GRANTOR_OVERLAY_DIRS: "/app/policy/overlays/sample/grantors"
   ingress:
     enabled: true
     className: traefik
