@@ -1821,63 +1821,39 @@
       },
       "EvidenceRef": {
         "additionalProperties": false,
-        "description": "Where on the page an extracted value was read (units pt for a cell match, else px).",
+        "description": "7f's `wire_evidence_ref`, served as is (architect rulings 2026-10-21 and 2026-10-28).\n\n`bbox` is page fractions `[x0, y0, x1, y1]`, origin top-left, `0 <= x0 < x1 <= 1` and\n`0 <= y0 < y1 <= 1`. A null bbox means \"on this page, no box\" (ruling 205). Nothing else\nis served: no `bboxes`, `page_dims`, `units` or `quality`.",
         "properties": {
           "bbox": {
-            "items": {
-              "type": "number"
-            },
-            "title": "Bbox",
-            "type": "array"
-          },
-          "bboxes": {
-            "items": {
-              "items": {
-                "type": "number"
-              },
-              "type": "array"
-            },
-            "title": "Bboxes",
-            "type": "array"
-          },
-          "page": {
-            "title": "Page",
-            "type": "integer"
-          },
-          "page_dims": {
-            "title": "Page Dims"
-          },
-          "quality": {
             "anyOf": [
               {
-                "enum": [
-                  "cell",
-                  "region"
-                ],
-                "type": "string"
+                "items": {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Quality"
+            "title": "Bbox"
           },
-          "units": {
-            "enum": [
-              "pt",
-              "px"
-            ],
-            "title": "Units",
+          "note": {
+            "pattern": "\\S",
+            "title": "Note",
             "type": "string"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
           }
         },
         "required": [
-          "page",
-          "bbox",
-          "bboxes",
-          "page_dims",
-          "units",
-          "quality"
+          "page"
         ],
         "title": "EvidenceRef",
         "type": "object"
@@ -6657,7 +6633,7 @@
     },
     "/ingest/{ingest_id}/extraction": {
       "get": {
-        "description": "GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the\nevidence reference (page, bbox, units, quality cell|region|null) the review card draws. Gate: `_ingest_review_access`\n(the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of\nreview.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and\nis counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /\n`extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`.\n`leaf` / `leaf_source` / `corrected_by` are the notice's pcn|pdn and where it came from, read from\nthe ROW only (`_row_leaf`); a row with no leaf shows `leaf: null` whatever review.json says.\nA REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the\nrejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404\n`rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`.",
+        "description": "GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the\nevidence reference (7f's `wire_evidence_ref`: page, bbox in page fractions, optional note) the review card draws. Gate: `_ingest_review_access`\n(the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of\nreview.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and\nis counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /\n`extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`.\n`leaf` / `leaf_source` / `corrected_by` are the notice's pcn|pdn and where it came from, read from\nthe ROW only (`_row_leaf`); a row with no leaf shows `leaf: null` whatever review.json says.\nA REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the\nrejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404\n`rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`.",
         "operationId": "ingest_extraction_route_ingest__ingest_id__extraction_get",
         "parameters": [
           {

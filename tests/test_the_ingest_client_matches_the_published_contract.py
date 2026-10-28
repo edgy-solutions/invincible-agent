@@ -281,7 +281,7 @@ REVIEW = {
     "pages": [], "stats": {"text_layer_parts": 1},
     "review_items": [
         {"field_path": "parts[0].affected_mpn", "value": "ABC123", "source_snippet": "ABC123",
-         "region": "table", "page_number": 2, "bboxes": [[10.0, 20.0, 30.0, 40.0]],
+         "region": "table", "page_number": 2, "wire_evidence_ref": {"page": 2, "bbox": [0.1, 0.2, 0.3, 0.4]}, "bboxes": [[10.0, 20.0, 30.0, 40.0]],
          "page_dims": [612, 792], "match_method": "text_layer_cell", "match_confidence": 0.9,
          "needs_review": False, "review_reason": None, "approval_state": "pending"}]}
 

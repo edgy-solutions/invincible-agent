@@ -12255,31 +12255,47 @@ async def _ingest_review_access(ingest_id: str, current_user: User, route: str) 
         "message": "only the dropper or a holder of the open promotion task may read this document"})
 
 
+def _wire_evidence_ref_failure(w) -> Optional[str]:
+    """The first contract check `w` fails, or None. Contract: `ingest_api.EvidenceRef`."""
+    import math
+    if not isinstance(w, dict):
+        return "not_object"
+    for k in w:
+        if k not in ("page", "bbox", "note"):
+            return f"extra_key:{k}"
+    page = w.get("page")
+    if not isinstance(page, int) or isinstance(page, bool) or page < 1:
+        return "page"
+    bbox = w.get("bbox")
+    if bbox is not None:
+        if (not isinstance(bbox, (list, tuple)) or len(bbox) != 4
+                or not all(isinstance(n, (int, float)) and not isinstance(n, bool)
+                           and math.isfinite(n) and 0 <= n <= 1 for n in bbox)):
+            return "bbox_not_fractions"
+        if not (bbox[0] < bbox[2] and bbox[1] < bbox[3]):
+            return "bbox_degenerate"
+    if "note" in w and (not isinstance(w["note"], str) or not w["note"].strip()):
+        return "note_blank"
+    return None
+
+
 def _evidence_ref(it: dict) -> Optional[dict]:
-    mm = it.get("match_method")
-    page = it.get("page_number")
-    bboxes = it.get("bboxes")
-    if (isinstance(page, int) and not isinstance(page, bool) and page >= 1
-            and isinstance(bboxes, list) and bboxes
-            and all(isinstance(b, (list, tuple)) and len(b) == 4
-                    and all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in b)
-                    for b in bboxes)):
-        return {"page": page, "bbox": bboxes[0], "bboxes": bboxes,
-                "page_dims": it.get("page_dims"),
-                "units": "pt" if it.get("match_method") == "text_layer_cell" else "px",
-                # architect 2026-10-17: cortex renders a cell match and a region match
-                # differently. An unrecognised method (e.g. inherited_doc_level) stays None --
-                # undecided, never guessed.
-                "quality": ("cell" if mm == "text_layer_cell"
-                            else "region" if isinstance(mm, str) and mm.startswith("region_")
-                            else None)}
+    # Architect rulings 2026-10-21 (BFF serves 7f's wire_evidence_ref as is) and 2026-10-28 (the
+    # contract holds nothing else): a legacy item with no wire_evidence_ref has no evidence_ref.
+    if "wire_evidence_ref" not in it:
+        return None
+    w = it["wire_evidence_ref"]
+    failed = _wire_evidence_ref_failure(w)
+    if failed is None:
+        return w
+    logger.warning("wire_evidence_ref refused (%s) for %s", failed, it.get("field_path"))
     return None
 
 
 @app.get("/ingest/{ingest_id}/extraction", tags=[INGEST_V1_TAG], responses={200: {"model": Extraction}})
 async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(get_current_user)):
     """GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the
-    evidence reference (page, bbox, units, quality cell|region|null) the review card draws. Gate: `_ingest_review_access`
+    evidence reference (7f's `wire_evidence_ref`: page, bbox in page fractions, optional note) the review card draws. Gate: `_ingest_review_access`
     (the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of
     review.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and
     is counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /
