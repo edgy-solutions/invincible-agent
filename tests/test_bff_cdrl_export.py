@@ -137,3 +137,16 @@ def test_8_a_filename_off_the_cdrl_pattern_is_not_fetched(engine):
     status, detail = _export()
     assert status == 502 and detail["error"] == "fin_engine_bad_cdrl_response"
     assert len(calls) == 1
+
+
+def test_8_the_artifact_fetch_carries_the_callers_own_bearer(engine):
+    """The engine decides who may fetch a CDRL from the bearer on `/artifact` (a `svc:` bearer or
+    none is refused there), so the BFF must forward THE PERSON's bearer on the fetch, exactly as it
+    does to `/cdrl_export`. Dropping it, or sending a service token, 403s every member."""
+    calls, _ = engine
+    status, _resp = _export()
+    assert status == 200
+    posts = [c for c in calls if c[0] == "POST"]
+    gets = [c for c in calls if c[0] == "GET" and "/artifact/" in c[1]]
+    assert len(posts) == 1 and len(gets) == 1
+    assert gets[0][3] == {"Authorization": "Bearer tok"} == posts[0][3]

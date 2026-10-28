@@ -365,3 +365,78 @@ def test_7_the_artifact_route_serves_the_file_to_a_member_only(served, monkeypat
     assert r.status_code == 200
     assert r.content == (dist / name).read_bytes()
     assert c.get("/artifact/fin-cdrl-nope-NOPE.xlsx").status_code == 404
+
+
+# --- the flattened image: no checkout, no package builder, no Pyodide runtime -------------------
+# The finance image ships neither `scripts/build_fin_package.py` nor `.pyodide-cache`, so
+# `_repo_root()` is None in the pod. A CDRL is an xlsx and needs neither: it is written to
+# `_cdrl_out_dir()`, which BOTH `/cdrl_export` and `/artifact` read.
+
+@pytest.fixture
+def pod(profiles, monkeypatch, tmp_path):
+    """The deployed pod: `_repo_root` finds nothing."""
+    d = Double()
+    monkeypatch.setattr(engine, "can_view_program", d)
+    monkeypatch.setattr(engine, "_repo_root", lambda: None)
+    monkeypatch.delenv("FIN_CDRL_ARTIFACT_DIR", raising=False)
+    with TestClient(engine.app) as c:
+        yield c, d
+
+
+def test_9_without_a_checkout_the_env_dir_is_where_a_cdrl_is_written_and_served(pod, monkeypatch, tmp_path):
+    c, _ = pod
+    out = tmp_path / "cdrl-out"                       # does not exist yet: created on first write
+    monkeypatch.setenv("FIN_CDRL_ARTIFACT_DIR", str(out))
+    r = _post(c)
+    assert r.status_code == 200, r.text
+    name = r.json()["artifact_filename"]
+    assert (out / name).is_file()
+    assert c.get(f"/artifact/{name}").status_code == 403          # no bearer: not a member
+    monkeypatch.setattr(engine, "_current_caller", lambda: SimpleNamespace(authz_id=ALICE))
+    got = c.get(f"/artifact/{name}")
+    assert got.status_code == 200 and got.content == (out / name).read_bytes()
+
+
+def test_9_with_no_env_the_functions_own_default_is_used(pod, monkeypatch, tmp_path):
+    c, _ = pod
+    fallback = tmp_path / "workspace" / "fin_cdrl"
+    monkeypatch.setattr(engine, "_CDRL_FALLBACK_DIR", fallback)   # the default, NOT the env
+    assert engine._cdrl_out_dir() == fallback
+    r = _post(c)
+    assert r.status_code == 200, r.text
+    name = r.json()["artifact_filename"]
+    assert (fallback / name).is_file()
+    monkeypatch.setattr(engine, "_current_caller", lambda: SimpleNamespace(authz_id=ALICE))
+    assert c.get(f"/artifact/{name}").status_code == 200
+
+
+def test_9_in_a_checkout_the_dist_dir_is_unchanged(served, monkeypatch):
+    _, dist, _ = served
+    monkeypatch.delenv("FIN_CDRL_ARTIFACT_DIR", raising=False)
+    assert engine._cdrl_out_dir() == dist
+
+
+def test_9_the_503_is_only_a_directory_that_cannot_be_written(pod, monkeypatch, tmp_path):
+    c, _ = pod
+    blocker = tmp_path / "a-file"
+    blocker.write_text("not a directory")
+    monkeypatch.setenv("FIN_CDRL_ARTIFACT_DIR", str(blocker / "sub"))
+    r = _post(c)
+    assert r.status_code == 503
+    assert "cannot be created or written" in r.json()["detail"]
+
+
+# --- who may fetch a CDRL artifact: the program's members, by the caller's own bearer ------------
+
+def test_10_a_non_member_bearer_and_a_service_bearer_are_refused_a_member_is_served(served, monkeypatch):
+    c, dist, d = served
+    name = _post(c).json()["artifact_filename"]
+    for who, expect in ((BOB, 403), ("svc:supervisor", 403), (None, 403), (ALICE, 200)):
+        monkeypatch.setattr(
+            engine, "_current_caller",
+            (lambda: None) if who is None else (lambda w=who: SimpleNamespace(authz_id=w)),
+        )
+        r = c.get(f"/artifact/{name}")
+        assert r.status_code == expect, (who, r.status_code)
+        if expect == 403:
+            assert r.json()["detail"] == ENVELOPE, who      # and it never served the bytes

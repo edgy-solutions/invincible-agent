@@ -146,6 +146,29 @@ def _dist_dir(root: pathlib.Path) -> pathlib.Path:
     return root / "dist"
 
 
+#: WHERE A CDRL IS WRITTEN WHEN THERE IS NO CHECKOUT -- the deployed pod. The finance image ships
+#: neither the package builder nor the Pyodide runtime, so `_repo_root()` is None there; an xlsx
+#: needs neither. `/app/agent_workspace` is the image's own workspace (`SWARMS_WORKSPACE`,
+#: `Dockerfile.agent`: created and chowned to `appuser` before `USER appuser`), and the chart sets no
+#: securityContext / readOnlyRootFilesystem and mounts no volume on engine pods, so the container
+#: filesystem under /app is writable.
+_CDRL_FALLBACK_DIR = pathlib.Path("/app/agent_workspace/fin_cdrl")
+_CDRL_DIR_ENV = "FIN_CDRL_ARTIFACT_DIR"
+
+
+def _cdrl_out_dir() -> pathlib.Path:
+    """THE ONE PLACE a CDRL artifact's directory is named, for BOTH `/cdrl_export` (writer) and
+    `/artifact` (reader): the env override, else the checkout's `dist/` (dev and tests), else the
+    pod-writable fallback. A package is unchanged: it still needs `_repo_root()`."""
+    override = os.getenv(_CDRL_DIR_ENV)
+    if override:
+        return pathlib.Path(override)
+    root = _repo_root()
+    if root is not None:
+        return _dist_dir(root)
+    return _CDRL_FALLBACK_DIR
+
+
 def _in_a_checkout(root: pathlib.Path) -> bool:
     """Whether `root` is a real git checkout, as distinct from "can build a package here" —
     the deployed pod can satisfy `_can_build_a_package_here` and still have no `.git` and no
@@ -1147,17 +1170,20 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
     _require_visible(body.program_id, _verb_caller(body.user_email))
     as_of = body.as_of or _request_date()
 
-    root = _repo_root()
-    if root is None:
+    out_dir = _cdrl_out_dir()
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path, envelope = cdrl.build_cdrl(
+            STATE, profile, program_id=body.program_id, as_of=as_of,
+            out_dir=out_dir, run_source=lambda fn, params: _cdrl_source(fn, params),
+        )
+    except OSError as e:
+        # THE ONLY 503: the artifact directory cannot be created or written.
         raise HTTPException(
             status_code=503,
-            detail="this deployment cannot write an artifact — the package directory is absent "
-                   "from this image",
-        )
-    path, envelope = cdrl.build_cdrl(
-        STATE, profile, program_id=body.program_id, as_of=as_of,
-        out_dir=_dist_dir(root), run_source=lambda fn, params: _cdrl_source(fn, params),
-    )
+            detail="this deployment cannot write an artifact — the CDRL artifact directory "
+                   f"cannot be created or written ({type(e).__name__})",
+        ) from e
     data = path.read_bytes()
     print(f"[engine-fin] cdrlExport: {json.dumps({'profile': profile.name, 'program_id': body.program_id, 'cells_sha256': envelope['cells_sha256']})}")
     return {
@@ -1208,10 +1234,14 @@ def get_artifact(filename: str) -> FileResponse:
             # NAMES THE PACKAGE, NEVER ITS READERS — the same asymmetry cost's route keeps.
             raise HTTPException(status_code=403, detail=f"not entitled to {scope!r}'s package")
 
-    root = _repo_root()
-    if root is None:
+    if cdrl_program is not None:
+        directory: Optional[pathlib.Path] = _cdrl_out_dir()
+    else:
+        root = _repo_root()
+        directory = _dist_dir(root) if root is not None else None
+    if directory is None:
         raise HTTPException(status_code=404, detail="no such artifact")
-    path = _dist_dir(root) / filename
+    path = directory / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail="no such artifact")
 
