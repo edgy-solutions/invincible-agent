@@ -85,7 +85,7 @@ def test_a_listed_critical_item_with_no_failures_refuses_no_failures_recorded():
     """RULED 2026-10-16: a resolved part with no failures refuses `no_failures_recorded`, listed or
     not. It is told from an unresolvable string by its OUTCOME, not by refusing or not."""
     out = measures.what_failed_on_this_part(part_number="PN-8802")
-    assert "PN-8802" in entities.CRITICAL_PART_NUMBERS
+    assert "PN-8802" in {c.part_number for c in entities.SAFETY_ITEMS}
     assert out["refused"] is True and out["outcome"] == "no_failures_recorded", out
     assert out["part_number"] == "PN-8802" and "PN-8802" in out["reason"]
     assert "failures" not in out and not any("task" in k for k in out)
@@ -107,7 +107,7 @@ def test_a_non_critical_part_number_that_exists_elsewhere_in_the_fixture_still_r
     on the critical items list (it is `assess_deferral_risk`'s OWN discriminating control for
     exactly that reason). This verb's input class is `safety:SafetyCriticalItem`, so a real but
     non-critical part number must refuse exactly like a part number that never existed."""
-    assert "PN-8803" not in entities.CRITICAL_PART_NUMBERS, (
+    assert "PN-8803" not in {c.part_number for c in entities.SAFETY_ITEMS}, (
         "fixture assumption broke: PN-8803 is now a critical item, so it no longer controls "
         "the 'real but not on this verb's input class' case"
     )

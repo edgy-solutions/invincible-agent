@@ -317,7 +317,10 @@ HAZARDS: tuple[Hazard, ...] = (
     ),
 )
 
-CRITICAL_ITEMS: tuple[SafetyCriticalItem, ...] = (
+#: The safety item records (entity data). They carry NO critical meaning: whether a part is
+#: safety-critical is the graph property `safety_critical` on its Component node, set by the
+#: safety pass and seeded by setup/safety_critical_seed.py. Do not read membership here as criticality.
+SAFETY_ITEMS: tuple[SafetyCriticalItem, ...] = (
     SafetyCriticalItem(
         csi_id="CSI-5001",
         part_number="PN-8801",
@@ -426,11 +429,6 @@ FAILURE_RECORDS: tuple[FailureRecord, ...] = (
     # control. A verb that cannot tell "no rows" from "unknown part" would answer this one
     # the same way as a part number that was never on the list at all.
 )
-
-#: Part numbers on the critical items list, derived rather than restated — a
-#: second hand-kept list of the same fact is the shape ADR-0051 §4 spent an
-#: extraction removing.
-CRITICAL_PART_NUMBERS = frozenset(c.part_number for c in CRITICAL_ITEMS)
 
 BY_HAZARD_ID = {h.hazard_id: h for h in HAZARDS}
 

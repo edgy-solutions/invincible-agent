@@ -87,7 +87,7 @@ def test_the_empty_answer_cannot_be_told_from_a_clean_part_by_its_counts(monkeyp
     """No quantity oracle: a denied caller's counts equal a clean part's counts."""
     pf.install(monkeypatch, caller=pf.CAROL, members={})
     denied = measures.what_failed_on_this_part(part_number=PART)
-    clean = [c.part_number for c in entities.CRITICAL_ITEMS
+    clean = [c.part_number for c in entities.SAFETY_ITEMS
              if not any(r.part_number == c.part_number for r in entities.FAILURE_RECORDS)]
     assert clean, "fixture assumption: some critical part has no failure"
     ref = measures.what_failed_on_this_part(part_number=clean[0])
@@ -250,7 +250,7 @@ def test_the_gateway_asks_through_the_engines_asker(monkeypatch):
 def test_a_personless_caller_on_a_part_with_no_records_is_no_person_not_no_failures(monkeypatch, caller):
     """The subject: a part with ZERO records, so a personal caller would get no_failures_recorded.
     The control (below) differs in the caller kind ONLY."""
-    clean = [c.part_number for c in entities.CRITICAL_ITEMS
+    clean = [c.part_number for c in entities.SAFETY_ITEMS
              if not any(r.part_number == c.part_number for r in entities.FAILURE_RECORDS)][0]
     pf.install(monkeypatch, caller=pf.ALICE, members=pf.ALL_PROGRAMS)
     ctl = measures.what_failed_on_this_part(part_number=clean)
