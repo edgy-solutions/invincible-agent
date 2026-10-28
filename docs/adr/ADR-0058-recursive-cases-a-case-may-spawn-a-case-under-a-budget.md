@@ -1,9 +1,10 @@
 # ADR-0058 — Recursive cases: a case may spawn a case, under its seals and a declared budget
 
-**Status:** Draft, third revision. Written for the architect on the 10-23 order. Nothing is built.
-The architect decided the five open questions of the second revision on 10-27. §Decisions of
-2026-10-27 records them, and the budget numbers wait on Lane 74's census.
-**Date:** 2026-10-22; revised 2026-10-27
+**Status:** Proposed (architect, 2026-10-28). Nothing is built. The architect decided the five
+open questions of the second revision on 10-27, and §Decisions of 2026-10-27 records them. The
+first measurement is Lane 74's model-call census from engine logs (§4, "The measured unit"). The
+budget numbers wait on it.
+**Date:** 2026-10-22; revised 2026-10-27; proposed 2026-10-28
 **Deciders:** architect (decision); Chris (review); Lane 74 (draft)
 **Related:**
   - [`ADR-0029`](ADR-0029-process-workflow-model-spo-steps-restate.md): the process model. A case
@@ -291,7 +292,8 @@ The five open questions of the second revision, as decided, and where each lande
    - The budget is defined in §4, not §2.
    - Defining RAH as the budget would make §Context say the primitives came from the budget.
      With the acronym gone, there is nothing left to define.
-   - If you want a named term for the budget, say which section it goes in.
+   - **Closed (architect, 10-28):** RAH is done as it stands. There is no new term, and the
+     budget's definition in §4 stands.
 2. **`MAX_CASE_DEPTH = 4`** (§2): a root and three levels of descendants. Because a tree is now
    deeper than parent and child, the level census gains depth-3 arms for the properties that hold
    across a tree, plus a depth-limit arm (§3.1–3.10).
@@ -304,7 +306,7 @@ The five open questions of the second revision, as decided, and where each lande
 
 ## Still open
 
-- **The budget numbers:** from Lane 74's census.
+- **The budget numbers:** from Lane 74's census, the ADR's first measurement (architect, 10-28).
 - **Who builds per-case `model_calls` reporting** in the five engines (§Consequences).
 - **Who builds the retry seal** (§4). It is not assigned.
 - **Who owns the nine model-calling steps** (§Consequences). They are not assigned.
