@@ -16,6 +16,7 @@ import pytest
 
 httpx = pytest.importorskip("httpx")
 pytest.importorskip("fastapi")
+import jsonschema  # noqa: E402  -- a hard import: the schema arms must read the published file
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import gateway  # noqa: E402
@@ -142,15 +143,49 @@ def test_every_served_ref_validates_against_the_published_schema(monkeypatch, fx
         _item("parts[1].affected_mpn", "C", wire_evidence_ref={"page": 1, "bbox": None})])
     served = [r["evidence_ref"] for r in b["rows"]]
     assert len(served) == 3 and all(s is not None for s in served)
-    try:
-        import jsonschema
-    except ImportError:
-        jsonschema = None
     for s in served:
-        if jsonschema is not None:
-            jsonschema.validate(s, schema)
-        else:
-            ingest_api.EvidenceRef.model_validate(s)
+        jsonschema.validate(s, schema)
+
+
+# cortex-ui src/lib/rowFractionSeal.test.ts, verbatim. Architect 2026-10-28: a schema that admits
+# both shapes seals nothing, so the PUBLISHED schema must accept NEW_REF and refuse OLD_REF.
+CORTEX_OLD_REF = {"page": 3, "bbox": [223, 917, 661, 953],
+                  "page_dims": {"width": 1700, "height": 2200}, "units": "px"}
+CORTEX_NEW_REF = {"page": 3, "bbox": [0.131176, 0.416818, 0.388824, 0.433182]}
+
+
+def _published_evidence_ref_schema():
+    return json.loads(OPENAPI_PATH.read_text(encoding="utf-8"))["components"]["schemas"]["EvidenceRef"]
+
+
+def test_cortexs_refs_are_the_fixtures_shapes(fx):
+    # By value: cortex writes the pixel numbers as ints, the fixture as floats.
+    assert CORTEX_NEW_REF == fx["new_shape"]
+    assert CORTEX_OLD_REF == fx["old_shape"]
+
+
+def test_the_published_schema_accepts_cortexs_new_ref():
+    jsonschema.validate(CORTEX_NEW_REF, _published_evidence_ref_schema())
+
+
+@pytest.mark.parametrize("bad", [
+    CORTEX_OLD_REF,
+    {k: v for k, v in CORTEX_OLD_REF.items() if k != "page_dims"},  # pixels, no page_dims
+    {k: v for k, v in CORTEX_OLD_REF.items() if k != "units"},      # page_dims alone
+    dict(CORTEX_NEW_REF, page_dims=None),                           # today's wire: null page_dims
+    dict(CORTEX_NEW_REF, note=None),                                # note?: string, never null
+    dict(CORTEX_NEW_REF, note=" "),
+], ids=["old_ref", "pixels_units", "pixels_page_dims", "new_plus_null_page_dims", "note_null", "note_blank"])
+def test_the_published_schema_refuses_cortexs_old_ref_and_its_parts(bad):
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(bad, _published_evidence_ref_schema())
+
+
+def test_control_a_wire_ref_with_a_null_note_is_served_null(monkeypatch, fx):
+    b = _serve(monkeypatch, [_item("parts[0].affected_mpn", "A",
+                                   wire_evidence_ref=dict(fx["new_shape"], note=None))])
+    assert b["rows"][0]["evidence_ref"] is None
+    assert b["rows_without_evidence"] == 1
 
 
 def test_control_the_old_shape_alone_is_served_null_and_counted(monkeypatch, fx):

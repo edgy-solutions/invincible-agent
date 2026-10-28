@@ -12274,7 +12274,7 @@ def _wire_evidence_ref_failure(w) -> Optional[str]:
             return "bbox_not_fractions"
         if not (bbox[0] < bbox[2] and bbox[1] < bbox[3]):
             return "bbox_degenerate"
-    if "note" in w and w["note"] is not None and (not isinstance(w["note"], str) or not w["note"].strip()):
+    if "note" in w and (not isinstance(w["note"], str) or not w["note"].strip()):
         return "note_blank"
     return None
 

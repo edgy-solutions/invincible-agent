@@ -1842,15 +1842,9 @@
             "title": "Bbox"
           },
           "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
+            "pattern": "\\S",
+            "title": "Note",
+            "type": "string"
           },
           "page": {
             "minimum": 1.0,

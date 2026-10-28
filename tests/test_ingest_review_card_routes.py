@@ -4,7 +4,7 @@ WHAT THESE DEFEND:
   * the task payload carries mfr / notice_date / part_count / attempt (always present, None when
     review.json is absent -- the task still files) and the title is the notice id.
   * GET /ingest/{id}/extraction maps review.json's `parts[i].*` items to rows with an
-    `evidence_ref` (units pt for text_layer_cell, px otherwise) or null, counted.
+    `evidence_ref` (7f's wire_evidence_ref as is, else null) counted when null.
   * the gate (dropper, or holder of the OPEN task) is decided BEFORE any S3 read; every decision
     is audited once on `iagent.audit.ingest_access`.
   * GET /ingest/{id}/source streams the dropped bytes; a key outside the prefix is 422.

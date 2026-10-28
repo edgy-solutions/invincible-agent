@@ -185,7 +185,8 @@ class EvidenceRef(_Strict):
     """
     page: Annotated[int, Field(strict=True, ge=1)]
     bbox: Annotated[list[Annotated[float, Field(ge=0, le=1)]], Field(min_length=4, max_length=4)] | None = None
-    note: str | None = None
+    # `note?: string` -- omitted when there is none, never null (7f omits it; cortex refuses null).
+    note: Annotated[str, Field(pattern=r"\S")] = None
 
 
 class ExtractionRow(_Strict):
