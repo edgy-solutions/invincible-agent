@@ -36,6 +36,7 @@ from iagent.canvas_template import (  # noqa: E402
 )
 
 SCOPE = "program_office.NP-MERIDIAN"
+CALLER = "alice@example.com"  # engine-fin refuses a caller who cannot view the scope's program
 BINDINGS = {"program": "NP-MERIDIAN"}
 SHA64 = "sha256:" + "a" * 64
 
@@ -269,6 +270,7 @@ def engine(monkeypatch):
                                  "template_hash": kw["template_hash"]},
                     "html_sha256": SHA64, "html_bytes": 1, "duckdb_sha256": SHA64}
 
+    monkeypatch.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
     monkeypatch.setattr(fmain, "_repo_root", lambda: ROOT)
     monkeypatch.setitem(sys.modules, "build_fin_package", _Builder)
     monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
@@ -286,14 +288,14 @@ def _canvas(mutate=None):
 
 def test_engine_refuses_an_unknown_scope_403(engine):
     client, built = engine
-    r = client.post("/package_export", json={"recipient_scope": "program_office.NOPE",
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": "program_office.NOPE",
                                               "canvas": _canvas()})
     assert r.status_code == 403 and built == []
 
 
 def test_engine_refuses_an_empty_canvas_422(engine):
     client, built = engine
-    r = client.post("/package_export", json={"recipient_scope": SCOPE,
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE,
                                               "canvas": {**_canvas(), "panels": []}})
     assert r.status_code == 422 and built == []
 
@@ -301,20 +303,20 @@ def test_engine_refuses_an_empty_canvas_422(engine):
 def test_engine_refuses_an_unknown_verb_422(engine):
     client, built = engine
     c = _canvas(lambda ps: ps[0].update(verb="mesh:finNoSuchVerb"))
-    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": c})
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": c})
     assert r.status_code == 422 and built == []
 
 
 def test_engine_refuses_a_foreign_program_403_and_drops_nothing(engine):
     client, built = engine
     c = _canvas(lambda ps: ps[2]["params"].update(program_id="NP-OTHER"))
-    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": c})
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": c})
     assert r.status_code == 403 and built == []
 
 
 def test_engine_CONTROL_a_valid_canvas_passes_every_refusal_and_reaches_the_builder(engine):
     client, built = engine
-    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": _canvas()})
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert r.status_code == 200, r.text
     assert len(built) == 1 and len(built[0]["panels"]) == 6
 
@@ -335,7 +337,7 @@ def test_engine_names_a_builder_that_cannot_run_503(engine, monkeypatch, raised,
         raise raised
 
     monkeypatch.setattr(sys.modules["build_fin_package"], "build", staticmethod(_raise))
-    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": _canvas()})
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert len(built) == 1, "the builder was never reached -- this arm refused somewhere earlier"
     assert r.status_code == 503, r.text
     assert fragment in r.json()["detail"], r.json()["detail"]
@@ -343,13 +345,13 @@ def test_engine_names_a_builder_that_cannot_run_503(engine, monkeypatch, raised,
 
 def test_each_panels_artifact_id_is_the_one_measure_serves(engine):
     client, built = engine
-    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": _canvas()})
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert r.status_code == 200, r.text
     from agent_fleet.finance_agent import main as fmain
 
     assert len(built[0]["panels"]) == 6
     for p in built[0]["panels"]:
-        m = client.post(f"/measure/{p['fn']}", json={"params": p["params"]})
+        m = client.post(f"/measure/{p['fn']}", json={"params": p["params"], "user_email": CALLER})
         assert m.status_code == 200, f"{p['fn']}: {m.text[:200]}"
         assert m.json()["artifact_id"] == p["artifact_id"], p["fn"]
     assert fmain.VERB_TO_FN[built[0]["panels"][0]["verb"]] == built[0]["panels"][0]["fn"]
@@ -494,6 +496,7 @@ def real_build(tmp_path_factory):
         return real_audit(manifest, **kw)
 
     with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
         mp.setattr(fmain, "_dist_dir", lambda root: dist)
         mp.setattr(fin_export, "audit_line", spy)
         canvas = {
@@ -502,7 +505,7 @@ def real_build(tmp_path_factory):
                        for i, (v, _s, p) in enumerate(_dispatches())],
         }
         with TestClient(fmain.app) as client:
-            r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": canvas})
+            r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": canvas})
     assert r.status_code == 200, r.text[:400]
     html_name, duckdb_name = fin_export.artifact_filenames(SCOPE)
     return {"resp": r.json(), "manifest": manifests[0], "html": dist / html_name,
@@ -596,7 +599,7 @@ def test_as_of_malformed_is_refused_by_the_request_model(bad):
 def test_engine_as_of_in_the_body_reaches_the_builder(engine):
     client, built = engine
     r = client.post("/package_export", json={
-        "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": "2026-02-03"})
+        "user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": "2026-02-03"})
     assert r.status_code == 200, r.text
     assert built[0]["as_of"] == "2026-02-03"
 
@@ -607,7 +610,7 @@ def test_engine_as_of_absent_is_the_request_date_resolved_once(engine, monkeypat
     client, built = engine
     calls = []
     monkeypatch.setattr(fmain, "_request_date", lambda: calls.append(1) or "2031-03-04")
-    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": _canvas()})
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert r.status_code == 200, r.text
     assert len(calls) == 1 and built[0]["as_of"] == "2031-03-04"
 
@@ -616,7 +619,7 @@ def test_engine_as_of_absent_is_the_request_date_resolved_once(engine, monkeypat
 def test_engine_as_of_malformed_is_422_and_builds_nothing(engine, bad):
     client, built = engine
     r = client.post("/package_export", json={
-        "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": bad})
+        "user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": bad})
     assert r.status_code == 422 and built == []
 
 
@@ -642,12 +645,13 @@ def test_the_real_build_carries_as_of_in_the_page_and_the_manifest_and_is_byte_s
         return real_audit(manifest, **kw)
 
     with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
         mp.setattr(fmain, "_dist_dir", lambda root: dist)
         mp.setattr(fin_export, "audit_line", spy)
         with TestClient(fmain.app) as client:
             for _ in range(2):
                 r = client.post("/package_export", json={
-                    "recipient_scope": SCOPE, "canvas": canvas, "as_of": "2026-02-03"})
+                    "user_email": CALLER, "recipient_scope": SCOPE, "canvas": canvas, "as_of": "2026-02-03"})
                 assert r.status_code == 200, r.text[:400]
                 pages.append((dist / html_name).read_bytes())
     assert pages[0] == pages[1]

@@ -616,6 +616,9 @@ class MeasureRequest(BaseModel):
     is asked of what was reported; there is no forkable state, so there is nothing to name.
     """
     params: dict[str, Any] = Field(default_factory=dict)
+    # Defaulted so an old-shape caller does not 422 at the roll; an empty `user_email` sees
+    # nothing, so the default fails closed.
+    user_email: str = ""
 
 
 @app.get("/health")
@@ -769,6 +772,9 @@ def _measure_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
 def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
     """The ordinary route. A THIN WRAPPER — `_measure_envelope` is the one place a verb is
     run and shaped; this route and `package_export` below are its only two callers."""
+    if fn not in measures.OUTPUT_URI:  # a verb name is not a program secret: 404 stays first
+        raise HTTPException(status_code=404, detail=f"unknown measure {fn!r}")
+    _require_visible(req.params.get("program_id"), _verb_caller(req.user_email))
     return _measure_envelope(fn, dict(req.params))
 
 
@@ -808,6 +814,9 @@ class PackageExportRequest(BaseModel):
     recipient_scope: str
     canvas: PackageCanvas
     as_of: Optional[str] = None
+    # Defaulted so an old-shape caller does not 422 at the roll; an empty `user_email` sees
+    # nothing, so the default fails closed.
+    user_email: str = ""
 
     @field_validator("as_of")
     @classmethod
@@ -824,16 +833,18 @@ class PackageExportRequest(BaseModel):
 def package_export(body: PackageExportRequest) -> dict[str, Any]:
     """Build one recipient's self-contained validation package.
 
-    FOUR ORDERED REFUSALS, each before the next is even asked:
+    FIVE ORDERED REFUSALS, each before the next is even asked:
       1. an unknown recipient scope — 403, never 404 (ADR-0049 Ruling 4: "no such recipient"
          and "this recipient has nothing" must not look alike, and this is the former).
-      2. an empty panel list — 422, nothing to disclose.
-      3. a panel naming a verb this engine does not serve — 422, named by verb.
-      4. a panel whose own `program_id` disagrees with the recipient's program — 403, because
+      2. the caller cannot view the scope's program — 403 with the refusal envelope. Every
+         panel equals the scope's program (refusal 5), so one check covers the package.
+      3. an empty panel list — 422, nothing to disclose.
+      4. a panel naming a verb this engine does not serve — 422, named by verb.
+      5. a panel whose own `program_id` disagrees with the recipient's program — 403, because
          a program embedded in a package another program's recipient can open is exactly the
          cross-program leak the scope exists to prevent.
 
-    Only once all four pass does this call `_measure_envelope` — THE SAME FUNCTION
+    Only once all five pass does this call `_measure_envelope` — THE SAME FUNCTION
     `/measure/{fn}` calls — once per panel, then hand the served envelopes to
     `scripts.build_fin_package.build` to write the artifact. Nothing here recomputes a row a
     second way.
@@ -843,6 +854,7 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
         program_id = export.program_for_recipient(body.recipient_scope)
     except Unentitled as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    _require_visible(program_id, _verb_caller(body.user_email))
 
     if not body.canvas.panels:
         raise HTTPException(status_code=422, detail="a package needs at least one panel")
@@ -1197,17 +1209,72 @@ def _program_of(class_uri: str, instance_id: str) -> str | None:
     return getattr(item, "program_id", None) or None
 
 
-def _visible_to(caller: str, members: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The members whose program the caller may view. Withheld is unknown: no marker is added.
+def _can_view(program: Any, caller: str) -> bool:
+    """THE ONE PREDICATE every route uses: may `caller` view `program`? Deny by default.
 
-    A service sees nothing (ADR-0047 5.1: a service is never a program member). An empty caller
-    sees nothing because `can_view_program` answers False for one without a lookup; a check of
-    our own here was measured redundant (its removal mutant stayed green), so there is none.
-    One check per distinct program. `httpx.HTTPError` propagates.
+    A service sees nothing (ADR-0047 5.1: a service is never a program member), and is refused
+    here without a lookup. A program that is not a non-empty string is no program. An empty
+    caller sees nothing because `can_view_program` answers False for one without a lookup; a
+    check of our own here was measured redundant (its removal mutant stayed green), so there
+    is none. `httpx.HTTPError` propagates.
     """
     caller = (caller or "").strip()
     if caller.startswith("svc:"):
-        return []
+        return False
+    if not isinstance(program, str) or not program:
+        return False
+    return can_view_program(program, caller)
+
+
+def _verb_caller(body_user_email: str) -> str:
+    """The subject `/measure/{fn}` and `/package_export` decide program visibility for.
+
+    ORDER: the BEARER FIRST. A user bearer IS the caller (graph_host's identity ruling; the
+    same read `/artifact` makes), and a body `user_email` NEVER overrides it, even a different
+    one. The body is only a SERVICE's delegation: when there is no bearer, or the bearer is a
+    `svc:` principal (the supervisor), the body names who the service acts for. `_can_view`
+    still refuses a `svc:` result. Under OBSERVE the bearer's claim is unverified, the same
+    trust as the body field; it is verified once REQUIRE flips.
+    """
+    c = _current_caller()
+    if c is not None and c.authz_id and not c.authz_id.startswith("svc:"):
+        return c.authz_id
+    return body_user_email or ""
+
+
+def _require_visible(program_id: Any, caller: str) -> None:
+    """403 with the refusal envelope unless the caller may view the program; 503 on an outage.
+
+    The detail is a CONSTANT: no program id, so a program that does not exist and one that
+    exists but is not granted answer byte-identically (that is what object-scoped means).
+    No `grantable_by`: the engine holds no grantor map and cannot speak for the deployment;
+    the BFF completes the envelope with `relay_refusal` (iagent.authz.refusal).
+    """
+    try:
+        ok = _can_view(program_id, caller)
+    except httpx.HTTPError as e:
+        raise HTTPException(503, f"program membership check failed: {e}") from e
+    if not ok:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "program_not_visible",
+                "refusal": {
+                    "policy_id": "program_members",
+                    "missing_binding": "can_view_program(program)",
+                    "candidates": [],
+                },
+                "message": "You are not a member of the program this request names.",
+            },
+        )
+
+
+def _visible_to(caller: str, members: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The members whose program the caller may view. Withheld is unknown: no marker is added.
+
+    One check per distinct program, through `_can_view` (which holds the svc/empty rules).
+    `httpx.HTTPError` propagates.
+    """
     verdict: dict[str, bool] = {}
     out: list[dict[str, Any]] = []
     for m in members:
@@ -1215,7 +1282,7 @@ def _visible_to(caller: str, members: list[dict[str, Any]]) -> list[dict[str, An
         if prog is None:
             continue
         if prog not in verdict:
-            verdict[prog] = can_view_program(prog, caller)
+            verdict[prog] = _can_view(prog, caller)
         if verdict[prog]:
             out.append(m)
     return out
