@@ -111,6 +111,8 @@ agent-fleet = [
     # file's sha256, and a test venv on another duckdb version verifies a container the engine
     # never writes. Before this line the importorskip("duckdb") sites skipped in every lane venv.
     "duckdb==1.5.2",
+    # engine-r core (ADR-0062 section 2): libgit2, in-process, no git binary.
+    "pygit2",
 ]
 
 [dependency-groups]
