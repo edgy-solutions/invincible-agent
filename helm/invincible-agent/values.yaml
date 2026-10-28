@@ -1617,10 +1617,17 @@ cortexUi:
   image:
     repository: edgy-solutions/cortex-ui/frontend
     tag: ""
-    # DIGEST WINS OVER TAG when set. Empty here on purpose: the default values file must not
-    # pin a digest that only one environment has pulled. Set it per-environment — see
-    # values-sandbox.yaml, and the rationale in `invincible-agent.image` in _helpers.tpl.
-    digest: ""
+    # DIGEST WINS OVER TAG when set; the rationale is `invincible-agent.image` in _helpers.tpl.
+    # PINNED HERE FROM 0.4.71 (architect, 2026-10-28: "cut release 0.4.71 ... with cortex pinned
+    # at e09e2ac (image 57e40789…), so work installs it by version"). Until 0.4.70 this was
+    # empty on purpose, so that the default file would not pin a digest only one environment had
+    # pulled. The ruling replaces that: the release names the frontend it was proved with, and
+    # an environment that installs by version gets those bytes. Measured before pinning:
+    # cortex-ui e09e2acce926966ba32055698628142e2934a98c, the full tag, resolves to this digest,
+    # an OCI index with linux/amd64 and linux/arm64. The abbreviated tag and the full sha with
+    # its last hex altered both answer 404. An environment's own values file still overrides
+    # this pin (values-sandbox.yaml carries the same digest).
+    digest: "sha256:57e4078925d3b1fe44724c207c262c0fb3e8315a718bba20eb564b67f8eea43a"
   port: 8080
   resources:
     requests:

@@ -1,5 +1,43 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.71 — 2026-10-28
+
+Cut from master `4a5ff6b6` (architect, 2026-10-28), so that the work cluster installs a version
+and never a master sha. Sandbox has run these images since roll 221, by `global.imageTag`. It
+carries every master merge since 0.4.70 (`b59e4a0f`): #112, #95, #108, #101, #107, #113, #118,
+#120 and #121.
+
+**Chart changes**
+
+- **The default values pin the frontend.** `cortexUi.image.digest` in `values.yaml` →
+  `sha256:57e40789…`, cortex-ui `e09e2ac`, which re-pins its producer to `4a5ff6b6`'s published
+  contract. Until 0.4.70 the default was empty and fell through to `:latest`. An environment's
+  own values still override it. `values-sandbox.yaml` moves to the same digest, from `c02ee0d2…`
+  (cortex-ui `e0c3c6d`).
+
+**Images.** A chart bump restarts every pod.
+- **cortex-bff (`src/iagent`):**
+  - `GET /ingest/{id}/extraction` serves doc-tools' `wire_evidence_ref` unchanged, and the
+    published `EvidenceRef` is exactly `{page, bbox, note?}` with `additionalProperties: false`
+    (#121, PCN-2683). A row with no ref, or with a ref that fails the contract, is served
+    `evidence_ref: null` and counted. A failing ref also logs one WARNING naming the check. The
+    old synthesized keys (`page_dims`, `bboxes`, `units`, `quality`) are gone; a review.json
+    written before doc-tools v0.2.2 now reads `null` on every row.
+  - a 409 that asks is declared as a refusal, with its grantor (#107).
+- **finance-agent:** program enumeration and resolve return only the programs the caller
+  `can_view_program` (#113).
+- **Policy baked into the images:**
+  - edge-02 task audiences mirror edge-01's, and the OpenDDIL maintenance-fault event kind's
+    domain is MAINTENANCE (#118);
+  - the openddil-lab course row mirrors doc-tools' third pass, `render.pages` (#120).
+
+**⚠ Before installing on a cluster that has not synced Topaz since #118:** `task_grants.yaml`
+names three new groups (`maint-approvers-edge-02`, `maint-tier-ack-edge-02`,
+`maint-supervisors-edge-02`). Sync Topaz first, or `task-grant-sync` exits 5 and the release
+reads failed. Sandbox was synced before roll 220.
+
+**No deploy effect:** #95 (tests), #101, #108 and #112 (docs and sessions).
+
 ## 0.4.70 — 2026-10-26
 
 Roll 208. It carries every master merge since 0.4.69 (`7a45a3cb`): #93, #100, #97, #99, #96,
