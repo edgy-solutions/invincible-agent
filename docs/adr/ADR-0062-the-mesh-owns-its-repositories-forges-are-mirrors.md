@@ -66,8 +66,9 @@ where humans can interact. It is never the record.
 **Out of scope:**
 
 - **Application source and its CI.** Engine code, the chart and the build pipeline are still
-  authored and built on the forge. engine-r holds them, because it holds the whole repository
-  (below), but this ADR does not move their authoring or their CI.
+  authored and built on the forge, and **the forge remains their writer** until a follow-on ADR.
+  engine-r holds these paths because it holds the whole repository (below), but it refuses to
+  merge any change to them (§2, check 6).
 - **Large binaries.** Images, model weights and captured fixtures above a size bound stay in
   their stores (registry, object store). A repository may reference them by digest; it does not
   hold them.
@@ -103,7 +104,8 @@ first-slice PR, not by this ADR.
 **One writer.**
 
 - **The engine is the only writer of refs.** It performs every merge and every tag. No forge, no
-  lane and no human pushes a ref directly.
+  lane and no human pushes a ref directly. The forge's writing of application paths (§1) is the
+  one exception, and it is settled at cutover (Open questions).
 - Ref updates for a repository run on one single-writer key per repository, as a Restate
   virtual object keyed by repository id. Two merges into one repository are serialized by
   construction, not by a lock someone has to remember.
@@ -172,6 +174,10 @@ carries the standard refusal envelope.
    engine.
 5. **Every commit carries the three trailers** above. For repositories held in engine-r, this
    replaces R-058's lane trailer.
+6. **Only governed paths merge.** A proposal whose diff touches a path engine-r does not govern
+   (application source, §1) is refused with the policy envelope, reason **"path not governed by
+   engine-r"**. This holds until the follow-on ADR. It is a new refusal site, so it is classified
+   in the PR that builds it (ruled 2026-10-27).
 
 **Audit.**
 
@@ -254,10 +260,10 @@ policy, no review decision and no audit that engine-r does not also hold.
 - File browsing, blame, history graphs and code search remain wherever a human already reads
   them, which is usually a mirror.
 
-**CI for application code stays on the forge.** Holding the whole repository means a change to
-application source also lands through engine-r's merge: it arrives from the forge as an inbound
-proposal (§3), and the merged result is mirrored back. Its CI still runs on the forge, from the
-PR and from the mirror's push.
+**Application code stays on the forge: its writer and its CI.** A forge PR that touches
+application source can still arrive as an inbound proposal (§3), but engine-r refuses to merge it
+("path not governed by engine-r", §2 check 6). The forge remains the writer of those paths, and
+their CI runs there, until a follow-on ADR.
 
 **How a merge reaches the engines is unchanged for now.** Policy is baked into images at
 `/app/policy` and applied by a roll. Two kinds of path take effect differently:
@@ -266,6 +272,9 @@ PR and from the mirror's push.
   `policy/asset_grants.yaml`.
   - These **apply on merge, through the Topaz sync.** Authorization decisions change when the
     sync completes, not at a roll.
+  - **engine-r runs the sync itself**, in-cluster, with the same credential the task-grant-sync
+    hook uses, read from a Kubernetes Secret. No human is in the apply path. The hook stays, for
+    rolls.
   - The baked copy still lags. Some engines also read these files from their baked copy: for
     example, the refusal hint's group list comes from `canvas_template.load_groups`. That copy
     catches up at the next pin-bump roll, and until then a hint can name the old groups.
@@ -276,8 +285,9 @@ PR and from the mirror's push.
 Engines reading policy from engine-r at runtime is a follow-on ADR, not this one.
 
 **History already on GitHub is imported once, then mirrored.** The import brings the whole
-repository's history into engine-r with its shas unchanged. From that moment on, engine-r is the
-record and GitHub is a mirror like any other.
+repository's history into engine-r with its shas unchanged. At cutover (§7, Open questions),
+engine-r becomes the record and GitHub a mirror like any other. Until then, the slice mirrors
+to a separate repository.
 
 **ADR-0057 §4 changes for `policy/`.** There, approval produces "a PR". Here it produces an
 engine-r proposal, and engine-r performs the merge. The rule that a proposer may not ratify their
@@ -299,8 +309,11 @@ packet merges without review when its proposer owns the path.
 
 ### 7. First slice
 
-engine-r holds the invincible-agent repository on sandbox, mirrored to GitHub. The slice
-exercises its `policy/` and `sessions/` paths.
+engine-r holds the invincible-agent repository on sandbox. It mirrors to a **separate GitHub
+repository, `invincible-agent-mirror`**, not to the repository the lanes push to today. Mirroring
+to the live repository would make engine-r and the lanes two writers of one master, which is
+what this ADR forbids. Cutting over the real repository is its own decision, made after the slice
+has measured. The slice exercises the `policy/` and `sessions/` paths.
 
 The slice's real policy change is an **access request**, end to end:
 
@@ -322,23 +335,26 @@ built after this ADR reads Proposed.
 The slice is complete when it has been measured, with the audit record shown. The slice report
 must show:
 
-1. **The import.** The report gives the import's commit count and head sha against GitHub's, and
-   the two heads are equal. The whole repository is imported, so no sha is rewritten.
+1. **The import.** The report gives the import's commit count and head sha against the live
+   repository's at the import sha, and the two heads are equal. The whole repository is imported,
+   so no sha is rewritten.
 2. **The access request.** The report shows:
    - the requester's refusal;
    - the proposal id and its head sha;
    - the review task id, and the grantor who approved it;
    - the merge sha, whose second parent is the reviewed head;
-   - the sync's completion;
+   - the sync's completion, run by engine-r with no human in the apply path;
    - the requester's successful retry;
-   - the mirror's sha on GitHub after the push, which must equal engine-r's;
+   - the sha on `invincible-agent-mirror` after the push, which must equal engine-r's;
    - the wall-clock time of each leg.
 3. **The audit note** for that merge, as `audit` returns it, and the same note read back from the
    mirror.
-4. **Three refusals, each observed and each carrying the envelope:**
-   - a direct push to the GitHub mirror is refused;
+4. **Four refusals, each observed and each carrying the envelope:**
+   - a direct push to `invincible-agent-mirror` is refused;
    - an approval by the proposer is refused;
-   - a merge naming a sha other than the reviewed head is refused.
+   - a merge naming a sha other than the reviewed head is refused;
+   - a proposal touching an application-source path is refused, with "path not governed by
+     engine-r".
 5. **The mirror is re-pointed.** A second mirror target is configured and receives the same refs,
    and nothing else changes. This is a sandbox stand-in for replacing a forge.
 6. **The engine readback.** After the pin-bump roll that the merge opened, an engine that reads
@@ -370,17 +386,14 @@ that fetch layer.** It is the subject of its own ADR later.
 
 ## Open questions (named, not decided here)
 
-The architect ruled on the draft's open questions on 2026-10-28, and the rulings are folded in
-above. These remain open, or arose from folding the rulings in:
+The architect ruled on the draft's open questions and on four follow-ups on 2026-10-28. All the
+rulings are folded in above. These remain open:
 
 - **ADR-0061 is not on master.** §4 depends on it landing.
-- **Which GitHub repository the slice mirrors to.** If engine-r on sandbox mirrors to the
-  repository the lanes push to today, engine-r and the lanes become two writers of one master.
-  This is for the first slice's order.
-- **Who runs the Topaz sync on merge.** Today a human executes every live Topaz write. Whether
-  the merge triggers the sync, or files a task for a human to run it, is open.
-- **What engine-r's merge requires on application-source paths.** In particular, whether the
-  forge's CI result is an input to the merge. §5 may hold the answer.
+- **Cutover of the real repository** is its own decision, made after the slice has measured.
+  Part of that decision: the forge remains the writer of application paths (§1) while engine-r
+  writes the governed ones, and both live in one repository with one master. The slice avoids
+  the question by mirroring to a separate repository. Cutover cannot avoid it.
 - **Storage placement and backup** for the repositories' volume, given the single-node
   concentration of stateful volumes we already carry.
 
