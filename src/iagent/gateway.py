@@ -74,6 +74,7 @@ from .answer_artifact_writer import (
     DurabilityStatus,
     get_writer,
 )
+from .authz.refusal import relay_refusal
 
 
 logger = logging.getLogger("cortex")
@@ -2871,7 +2872,8 @@ async def _export_package_from_template(
         async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
             rr = await client.post(
                 f"{_ENGINE_FIN_URL}/package_export",
-                json={"recipient_scope": recipient_scope, "canvas": canvas, "as_of": as_of},
+                json={"recipient_scope": recipient_scope, "canvas": canvas, "as_of": as_of,
+                      "user_email": current_user.authz_id},
                 headers={"Authorization": f"Bearer {bearer}"},
             )
     except Exception as exc:
@@ -2886,7 +2888,7 @@ async def _export_package_from_template(
         except Exception:
             detail = getattr(rr, "text", "engine refused")
         raise HTTPException(status_code=rr.status_code,
-                            detail=_detail_with_message(rr.status_code, detail))
+                            detail=_detail_with_message(rr.status_code, relay_refusal(detail)))
 
     out = rr.json()
     return _shape_export_package_response(
