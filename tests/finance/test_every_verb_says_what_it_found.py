@@ -29,6 +29,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_fleet.finance_agent import measures as m
+from agent_fleet.finance_agent import main as fmain
 from agent_fleet.finance_agent.main import app
 from agent_fleet.finance_agent.seed import build_seed
 
@@ -39,13 +40,15 @@ EXTRA = {"fin_eac_calculation": {"method": "CPI"}}
 
 @pytest.fixture(scope="module")
 def client():
-    with TestClient(app) as c:
+    with pytest.MonkeyPatch.context() as mp, TestClient(app) as c:
+        mp.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
         yield c
 
 
 def _payload(client, fn):
     return client.post(f"/measure/{fn}",
-                       json={"params": {**PARAMS, **EXTRA.get(fn, {})}}).json()
+                       json={"params": {**PARAMS, **EXTRA.get(fn, {})},
+                             "user_email": "alice@example.com"}).json()
 
 
 @pytest.mark.parametrize("fn", sorted(m.OUTPUT_URI))
