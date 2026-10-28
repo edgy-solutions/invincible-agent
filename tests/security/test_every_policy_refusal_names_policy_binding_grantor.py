@@ -654,6 +654,10 @@ def test_every_owned_referent_has_a_member_grant_and_every_slot_a_carried_family
     assert sorted(f for f in families if f not in R.grantors()) == []
     assert ct.slot_refusal(tmpls[0], ["no_such_slot"]) == {
         "policy_id": "code", "missing_binding": "bind(no_such_slot)", "candidates": []}
+    # Options name the member grant only for a referent that has one: a slot no cell owns
+    # keeps `code` with the same menu.
+    assert ct.slot_refusal(tmpls[0], ["no_such_slot"], {"options": [{"value": "x"}]}) == {
+        "policy_id": "code", "missing_binding": "bind(no_such_slot)", "candidates": ["x"]}
 
 
 _FIN_GROUPS = {"finance-analysts": {"grants": [
@@ -668,7 +672,10 @@ def _fin_asks():
     return [
         ("options", {"options": [{"value": "NP-MERIDIAN", "label": "Notional Program Meridian"}],
                      "message": "Which program?"},
-         ("groups", "bind(program)", ["NP-MERIDIAN"])),
+         ("program_members", "bind(program)", ["NP-MERIDIAN"])),
+        # Control for the options arm: an ask with no menu (too many to offer, or nobody asked)
+        # keeps the cell's family, so the member grant is named only where it bounds a list.
+        ("no_options", {"message": "Which program?"}, ("groups", "bind(program)", [])),
         ("join_group", {"policy": hint(PROGRAM, _FIN_GROUPS)},
          ("groups", "member_of(finance-analysts)", [])),
         ("switch_cell", {"policy": hint(PROGRAM, _FIN_GROUPS, held=True)},
@@ -727,7 +734,10 @@ async def test_the_finance_canvas_409_says_what_its_ask_says(case, monkeypatch):
     assert sys.modules["iagent.authz.refusal"] is live
     if isinstance(ask, dict):
         assert d["ask"] == ask  # fin's body is kept, not rebuilt
-        assert d["message"] == (ask.get("policy") or ask)["message"]
+        if ask.get("policy") or ask.get("options"):
+            assert d["message"] == (ask.get("policy") or ask)["message"]
+        else:  # no menu and no repair: the 409 keeps the template's own message
+            assert "['program']" in d["message"] and "Supply it" in d["message"]
     elif ask is None:
         assert "ask" not in d and "['program']" in d["message"] and "Supply it" in d["message"]
     else:
