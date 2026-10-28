@@ -2136,6 +2136,7 @@ from iagent_pure.slot_acceptance import (
 # second copy. Aliased to their old private names: every call site and seal below reads
 # unchanged, and the diff stays about the move rather than about renaming.
 from iagent.verb_lookup import find_compatible_verbs as _lookup_compatible_verbs
+from iagent.authz.refusal import relay_refusal
 from iagent_pure.verb_eligibility import (
     filter_verbs_by_arity as _filter_verbs_by_arity,
     predicate_from_compat_record as _predicate_from_compat_record,
@@ -2548,6 +2549,61 @@ def _log_subtask_review_request_asset(
         )
     )
     return True
+
+
+_RELAYED_REFUSAL_STATUSES = (401, 403, 409)
+
+
+def _refusal_from_engine_4xx(context, endpoint, response) -> Optional[Dict[str, Any]]:
+    """The 200-style refusal dict for an engine's refusal-bearing 401/403/409, else None.
+
+    None means "not a refusal": a status outside the three, a body that is not JSON, or JSON
+    that carries no refusal. The caller then takes today's `raise_for_status()` path. Never
+    raises -- this runs ahead of the transport handler.
+    """
+    status = getattr(response, "status_code", None)
+    if status not in _RELAYED_REFUSAL_STATUSES:
+        return None
+    try:
+        body = response.json()
+    except Exception:  # noqa: BLE001 -- not JSON means not a refusal
+        return None
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if not isinstance(detail, dict):
+        detail = body
+    if not isinstance(detail, dict):
+        return None
+    r = detail.get("refusal")
+    r_ok = isinstance(r, dict) and bool(r.get("policy_id")) and bool(r.get("missing_binding"))
+    if not (r_ok or detail.get("refused") is True):
+        return None
+    err = detail.get("error")
+    outcome = err if isinstance(err, str) and err else (detail.get("outcome") or "refused")
+    data: Dict[str, Any] = {
+        "refused": True,
+        "outcome": outcome,
+        "reason": detail.get("message") or detail.get("reason"),
+        "status_code": status,
+    }
+    if r_ok:
+        # The grantor map is LOADED here, on the deny path, from this image's policy rail. A
+        # load failure or a malformed engine field must not turn a refusal back into a crashed
+        # op, so it degrades to the engine's two names WITHOUT `grantable_by` -- an engine
+        # never speaks for the deployment's grantor, even by default.
+        try:
+            data["refusal"] = relay_refusal({"refusal": r})["refusal"]
+        except Exception:  # noqa: BLE001 -- the refusal still travels
+            context.log.error("execute_subtask: could not fill the grantor for %s's refusal",
+                              endpoint, exc_info=True)
+            data["refusal"] = {"policy_id": str(r["policy_id"]),
+                               "missing_binding": str(r["missing_binding"])}
+    for k in ("connector", "fn", "hazard_id", "gap", "ask"):
+        if k in detail:
+            data[k] = detail[k]
+    context.log.info(
+        "execute_subtask: engine at %s refused with %s %s", endpoint, status, outcome
+    )
+    return data
 
 
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
@@ -3422,8 +3478,14 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             headers=_telemetry_headers(config, caller_token=_caller_token) or None,
             timeout=1800,
         )
-        response.raise_for_status()
-        data = response.json()
+        # A REFUSAL IS AN ANSWER. An engine that says "this caller lacks the grant" has
+        # answered correctly; reading its 401/403/409 as an outage tells the user the system
+        # is broken when it is the grant that is missing. So a refusal-bearing body travels
+        # the success path as the same `{refused: true, ...}` dict a 200-refusal does.
+        data = _refusal_from_engine_4xx(context, endpoint, response)
+        if data is None:
+            response.raise_for_status()
+            data = response.json()
     except (requests.exceptions.RequestException, ValueError) as exc:
         # ValueError covers a 200 with an unparseable body — the engine answered with
         # something that is not JSON, which is a failure to answer, not a successful answer.

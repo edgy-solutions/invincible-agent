@@ -568,6 +568,14 @@ def holds_task_on_case(case_id: str, caller_id: str) -> bool:
 _ASSET_GRANTS_FILE = os.getenv("ASSET_GRANTS_FILE", "/app/policy/asset_grants.yaml")
 _GRANT_SYNC = os.getenv("GRANT_SYNC_PY", "/app/policy/sync/grant_sync.py")
 
+# The grant write's audit line -- who, what, when -- until ADR-0062 §7's engine-r merge
+# replaces this path with a commit (architect, 2026-10-28). Dedicated so it slices out of a
+# log search, and it must ARRIVE: the BFF's root handler sits at WARNING (see identity_vault).
+from iagent.identity_vault import _ensure_the_audit_line_actually_ARRIVES  # noqa: E402
+
+_grant_audit_log = logging.getLogger("iagent.audit.grant_write")
+_ensure_the_audit_line_actually_ARRIVES(_grant_audit_log)
+
 
 def write_grant_and_sync(*, subject: str, asset: str, granted_by: str,
                          reason: str) -> dict[str, Any]:
@@ -600,6 +608,10 @@ def write_grant_and_sync(*, subject: str, asset: str, granted_by: str,
             # block style, no default_style — avoids the safe_dump block-scalar
             # flattening gotcha; the single-line reason needs no block scalar.
             _yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+        _grant_audit_log.info(
+            "grant_written granted_by=%s subject=%s asset=%s at=%s",
+            granted_by, subject, asset, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        )
 
     env = dict(os.environ)
     env["ASSET_GRANTS_FILE"] = _ASSET_GRANTS_FILE
