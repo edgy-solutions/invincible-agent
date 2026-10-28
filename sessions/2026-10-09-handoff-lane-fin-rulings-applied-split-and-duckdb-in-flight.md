@@ -63,7 +63,7 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
     - **`fin:ToCompletePerformanceIndexSeries` sits in `finance_extension.ttl` as SAMPLE.**
       Without it, Contract D would refuse the registration batch.
     - **The roll needs a re-prime.**
-  - **(2) is in build.** The spec is `scratchpad/spec-cdrl-export-profile.md` (session
+  - **(2) is #136** (`fin/cdrl-export-profile`, head `36d48100`, against master, carrying #130 and #135). Its review found two defects that only the image would show, both now fixed: #135 `1b5c90ab` (`parents[2]` raised IndexError at import in the flattened image) and `36d48100` (the CDRL was written behind `_repo_root()`, which the finance image cannot satisfy). The spec was `scratchpad/spec-cdrl-export-profile.md` (session
     `91ad3195`), on branch `fin/cdrl-export-profile`, stacked on #135. It covers:
     - openpyxl;
     - the `fin_export_profiles` kind (`FIN_EXPORT_PROFILE_OVERLAY_DIRS`);
