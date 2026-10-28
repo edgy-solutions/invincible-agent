@@ -8,6 +8,7 @@ it into Persona-specific sub-tasks, fans those out concurrently to Engine E
 
 import os
 import json
+import re
 import requests
 import sys
 import time
@@ -1728,6 +1729,23 @@ def _redeem_caller_token(context, config) -> str:
             "no_run_id", "this op has no run id, so there is no reference to redeem"
         )
 
+    # THE SLOT. The BFF holds one single-use reference per fan-out slot, and this subtask's
+    # slot is its Dagster mapping key (`task_<n>`) -- Dagster's own record, like the run id.
+    # A missing or unparseable key is refused, NEVER defaulted to 0: defaulting would make
+    # every subtask contend for slot 0, which is exactly the replay this exists to remove.
+    _mk = None
+    try:
+        _mk = context.get_mapping_key()
+    except Exception:  # noqa: BLE001 -- a context without a mapping key has no slot
+        _mk = None
+    _m = re.match(r"^task_(\d+)$", str(_mk or ""))
+    if not _m:
+        raise CallerIdentityUnavailable(
+            "no_slot",
+            f"this op's mapping key {_mk!r} is not task_<n>, so it has no vault slot to redeem",
+        )
+    slot = int(_m.group(1))
+
     # ── STEP ONE: AUTHENTICATE OURSELVES. A DISTINCT FAILURE FROM A VAULT REFUSAL ──
     #
     # The supervisor authenticates AS ITSELF to redeem — invariant 1 at the far end checks
@@ -1761,6 +1779,7 @@ def _redeem_caller_token(context, config) -> str:
             # Invariant 4: the launcher THIS RUN records, cross-checked at the BFF
             # against the subject of the token that was stashed.
             "claimed_launcher": getattr(config, "user_email", "") or "",
+            "slot": slot,
         },
         headers={"Authorization": f"Bearer {_svc_token}"},
         timeout=15,

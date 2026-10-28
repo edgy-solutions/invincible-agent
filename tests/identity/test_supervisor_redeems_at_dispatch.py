@@ -137,6 +137,10 @@ class _Resp:
 class _Ctx:
     run_id = "0f1e2d3c-run"
 
+    # Dagster's real OpExecutionContext has get_mapping_key(); a fanned-out execute_subtask always has one.
+    def get_mapping_key(self):
+        return "task_0"
+
     class log:
         @staticmethod
         def info(*a, **k): ...
