@@ -1821,63 +1821,45 @@
       },
       "EvidenceRef": {
         "additionalProperties": false,
-        "description": "Where on the page an extracted value was read (units pt for a cell match, else px).",
+        "description": "7f's `wire_evidence_ref`, served as is (architect rulings 2026-10-21 and 2026-10-28).\n\n`bbox` is page fractions `[x0, y0, x1, y1]`, origin top-left, `0 <= x0 < x1 <= 1` and\n`0 <= y0 < y1 <= 1`. A null bbox means \"on this page, no box\" (ruling 205). Nothing else\nis served: no `bboxes`, `page_dims`, `units` or `quality`.",
         "properties": {
           "bbox": {
-            "items": {
-              "type": "number"
-            },
-            "title": "Bbox",
-            "type": "array"
-          },
-          "bboxes": {
-            "items": {
-              "items": {
-                "type": "number"
-              },
-              "type": "array"
-            },
-            "title": "Bboxes",
-            "type": "array"
-          },
-          "page": {
-            "title": "Page",
-            "type": "integer"
-          },
-          "page_dims": {
-            "title": "Page Dims"
-          },
-          "quality": {
             "anyOf": [
               {
-                "enum": [
-                  "cell",
-                  "region"
-                ],
+                "items": {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "note": {
+            "anyOf": [
+              {
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Quality"
+            "title": "Note"
           },
-          "units": {
-            "enum": [
-              "pt",
-              "px"
-            ],
-            "title": "Units",
-            "type": "string"
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
           }
         },
         "required": [
-          "page",
-          "bbox",
-          "bboxes",
-          "page_dims",
-          "units",
-          "quality"
+          "page"
         ],
         "title": "EvidenceRef",
         "type": "object"

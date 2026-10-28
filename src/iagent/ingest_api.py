@@ -12,9 +12,9 @@ Deliberately EXCLUDED from v1:
 """
 from __future__ import annotations
 
-from typing import Any, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 INGEST_V1_TAG = "ingest-v1"
 INGEST_API_VERSION = "1.2.0"
@@ -177,13 +177,15 @@ class Notice(_Strict):
 
 
 class EvidenceRef(_Strict):
-    """Where on the page an extracted value was read (units pt for a cell match, else px)."""
-    page: int
-    bbox: list[float]
-    bboxes: list[list[float]]
-    page_dims: Any
-    units: Literal["pt", "px"]
-    quality: Literal["cell", "region"] | None
+    """7f's `wire_evidence_ref`, served as is (architect rulings 2026-10-21 and 2026-10-28).
+
+    `bbox` is page fractions `[x0, y0, x1, y1]`, origin top-left, `0 <= x0 < x1 <= 1` and
+    `0 <= y0 < y1 <= 1`. A null bbox means "on this page, no box" (ruling 205). Nothing else
+    is served: no `bboxes`, `page_dims`, `units` or `quality`.
+    """
+    page: Annotated[int, Field(strict=True, ge=1)]
+    bbox: Annotated[list[Annotated[float, Field(ge=0, le=1)]], Field(min_length=4, max_length=4)] | None = None
+    note: str | None = None
 
 
 class ExtractionRow(_Strict):
