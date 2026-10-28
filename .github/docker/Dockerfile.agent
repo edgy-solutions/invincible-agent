@@ -146,6 +146,10 @@ COPY policy/measures/ /app/policy/measures/
 # rows reach the image through the `policy/overlays/` COPY above. Proposal: a measure is an
 # overlay row. An absent directory composes to no rows, so this is not a boot dependency.
 COPY policy/measure_verbs/ /app/policy/measure_verbs/
+# THE SIXTH: the CDRL export-profile seed (a README, no rows). A profile and its xlsx template
+# reach the image through the `policy/overlays/` COPY above. An absent directory composes to no
+# profiles, so this is not a boot dependency.
+COPY policy/fin_export_profiles/ /app/policy/fin_export_profiles/
 # ── THE COST PACKAGE BUILDER AND ITS PINNED RUNTIME ────────────────────────
 #
 # `cost_agent.measures.package_export` builds a self-contained artifact from the

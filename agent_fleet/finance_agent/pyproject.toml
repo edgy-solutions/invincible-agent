@@ -13,6 +13,7 @@ dependencies = [
     "pydantic",
     "httpx",
     "python-dotenv",
+    "openpyxl>=3.1.5",
 ]
 
 # DELIBERATELY THIN, and copied from Engine P's list rather than from a fuller engine's.

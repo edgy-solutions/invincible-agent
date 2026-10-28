@@ -115,6 +115,9 @@ agentFleet:
     # shared agentFleet configmap carries both and each service reads only its own.
     MEASURE_VERB_OVERLAY_DIRS: "/app/policy/overlays/sample/measure_verbs"
     CANVAS_OVERLAY_DIRS: "/app/policy/overlays/sample/canvases"
+    # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
+    # and its template are invented. engine-fin reads it.
+    FIN_EXPORT_PROFILE_OVERLAY_DIRS: "/app/policy/overlays/sample/fin_export_profiles"
 
     # MinIO / S3 — the SHARED config (iagent-config) the prime-substrate Job reads
     # (it bridges these to S3_ENDPOINT_URL / AWS_* via optional configMapKeyRefs).

@@ -22,3 +22,7 @@ baml_shared/baml_client/** text eol=lf
 # `bash -n` began failing at line 52 while `sh -n` still passed — the two shells disagreeing is
 # what made it look like a syntax bug rather than an encoding one.
 .githooks/* text eol=lf
+
+# An xlsx is a zip: never diff, merge or normalise line endings. The CDRL sample template is
+# pinned by sha256 in its profile row, so a changed byte refuses the profile at load.
+*.xlsx binary

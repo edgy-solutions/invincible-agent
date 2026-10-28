@@ -39,14 +39,18 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
+    import cdrl
     import export
+    import export_profiles
     import measure_verbs
     import measures
     from entities import FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled
     from seed import build_seed, check_consistency, notional_banner
     from slots import missing_mandatory, refusal_for, slots_for, with_live_vocabularies
 except ImportError:
+    from agent_fleet.finance_agent import cdrl
     from agent_fleet.finance_agent import export
+    from agent_fleet.finance_agent import export_profiles
     from agent_fleet.finance_agent import measure_verbs
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent.entities import (
@@ -382,6 +386,22 @@ def _load_declared() -> dict[str, "measure_verbs.MeasureVerbRow"]:
 #: measure_id -> row. Loaded ONCE, here, like every other compose loader. The routes read this
 #: name at call time, so a test that replaces it replaces what the engine serves.
 DECLARED: dict[str, "measure_verbs.MeasureVerbRow"] = _load_declared()
+
+
+def _load_profiles() -> dict[str, "export_profiles.ExportProfile"]:
+    """The CDRL export profiles a deployment declared (proposal: a CDRL is an export profile).
+
+    Read from `FIN_EXPORT_PROFILE_OVERLAY_DIRS`; none declared is the default and an empty dict. A
+    malformed set RAISES (naming the file and the reason), so the engine does not boot with half a
+    catalogue of deliverables. A profile may source from a declared measure, so this reads
+    `DECLARED`.
+    """
+    return {p.name: p for p in export_profiles.load_export_profiles(declared=DECLARED)}
+
+
+#: name -> profile. Loaded ONCE, here, like every other compose loader. The routes read this name
+#: at call time, so a test that replaces it replaces what the engine serves.
+PROFILES: dict[str, "export_profiles.ExportProfile"] = _load_profiles()
 
 
 def _declared_input_uri() -> str:
@@ -916,6 +936,16 @@ def _request_date() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
+def _valid_as_of(v: Optional[str]) -> Optional[str]:
+    """`as_of` is a calendar date or absent. Shared by every export request."""
+    if v is None:
+        return v
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
+    date.fromisoformat(v)  # a ValueError here is a 422 too
+    return v
+
+
 class PackageExportRequest(BaseModel):
     recipient_scope: str
     canvas: PackageCanvas
@@ -927,12 +957,7 @@ class PackageExportRequest(BaseModel):
     @field_validator("as_of")
     @classmethod
     def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
-            raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
-        date.fromisoformat(v)  # a ValueError here is a 422 too
-        return v
+        return _valid_as_of(v)
 
 
 @app.post("/package_export")
@@ -1063,6 +1088,102 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /cdrl_profiles, POST /cdrl_export -- a CDRL is an export profile
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Proposal docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md, Part 2.
+# Like `package_export` this is NOT a mesh verb: a deliverable is asked for by name from the BFF's
+# export route, never routed to by a phrase.
+
+@app.get("/cdrl_profiles")
+def cdrl_profiles() -> list[dict[str, str]]:
+    """The composed profiles' shared header (`name, format, scope, label`) and NOTHING else: no
+    template path, no hash, no sources. A catalogue of what can be asked for, not of how."""
+    return [p.header() for p in sorted(PROFILES.values(), key=lambda p: p.name)]
+
+
+class CdrlExportRequest(BaseModel):
+    profile: str
+    program_id: str
+    as_of: Optional[str] = None
+    # Defaulted so an old-shape caller does not 422 at the roll; an empty `user_email` sees
+    # nothing, so the default fails closed.
+    user_email: str = ""
+
+    @field_validator("as_of")
+    @classmethod
+    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
+        return _valid_as_of(v)
+
+
+def _cdrl_source(fn: str, params: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """One source of a CDRL: `_measure_envelope` (THE function `/measure/{fn}` serves) and the
+    method identity beside it. A declared measure's envelope carries `method`; a built-in's does
+    not, so its identity is its verb's name at version `builtin`."""
+    envelope = _measure_envelope(fn, params)
+    if fn in DECLARED:
+        return envelope, dict(envelope["method"])
+    return envelope, {"fn": fn, "name": BY_FN[fn]["verb"].split(":", 1)[-1], "version": "builtin"}
+
+
+@app.post("/cdrl_export")
+def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
+    """Build one program's CDRL from a profile and its template.
+
+    ORDERED REFUSALS, each before the next is even asked: an unknown profile is 404
+    `unknown_profile` (a profile name is not a program secret, as an unknown verb is not); the
+    caller cannot view the program is 403 with `package_export`'s envelope (`_require_visible`),
+    BEFORE anything is measured and before a byte is written; a deployment that cannot write an
+    artifact here is 503. Only then does `build_cdrl` run each source through `_cdrl_source`.
+    """
+    profile = PROFILES.get(body.profile)
+    if profile is None:
+        raise HTTPException(status_code=404, detail={
+            "error": "unknown_profile",
+            "message": f"no export profile {body.profile!r}",
+            "profiles": sorted(PROFILES),
+        })
+    _require_visible(body.program_id, _verb_caller(body.user_email))
+    as_of = body.as_of or _request_date()
+
+    root = _repo_root()
+    if root is None:
+        raise HTTPException(
+            status_code=503,
+            detail="this deployment cannot write an artifact — the package directory is absent "
+                   "from this image",
+        )
+    path, envelope = cdrl.build_cdrl(
+        STATE, profile, program_id=body.program_id, as_of=as_of,
+        out_dir=_dist_dir(root), run_source=lambda fn, params: _cdrl_source(fn, params),
+    )
+    data = path.read_bytes()
+    print(f"[engine-fin] cdrlExport: {json.dumps({'profile': profile.name, 'program_id': body.program_id, 'cells_sha256': envelope['cells_sha256']})}")
+    return {
+        "artifact_filename": path.name,
+        "artifact_sha256": "sha256:" + hashlib.sha256(data).hexdigest(),
+        "artifact_bytes": len(data),
+        "artifact_uri": _artifact_uri(path.name),
+        "profile": profile.name,
+        "program_id": body.program_id,
+        "as_of": as_of,
+        "envelope": envelope,
+    }
+
+
+def _cdrl_artifact_program(filename: str) -> Optional[str]:
+    """The program a CDRL artifact name belongs to, or None if it is no CDRL this engine produces.
+    DERIVED from the composed profiles crossed with the seed's programs through
+    `cdrl.artifact_filename`, never parsed out of the string (the closed-set rule `/artifact` keeps
+    for packages)."""
+    for profile in PROFILES.values():
+        for program in STATE.programs:
+            if filename == cdrl.artifact_filename(profile.name, program.program_id):
+                return program.program_id
+    return None
+
+
 @app.get("/artifact/{filename}")
 def get_artifact(filename: str) -> FileResponse:
     """Serve a produced package file — CLOSED SET, then ENTITLEMENT, mirroring
@@ -1070,16 +1191,22 @@ def get_artifact(filename: str) -> FileResponse:
     two engines' packages are indistinguishable risks to whoever fetches them.
     """
     scope = export.scope_of_artifact(filename)
-    if scope is None:
+    cdrl_program = _cdrl_artifact_program(filename) if scope is None else None
+    if scope is None and cdrl_program is None:
         # A NAME NOT IN THE CLOSED SET IS A 404, BEFORE ANY ENTITLEMENT CHECK. Answering an
         # unrecognised name with 403 would confirm that SOME package exists under it.
         raise HTTPException(status_code=404, detail="no such artifact")
 
-    caller = _current_caller()
-    readers = export.readers_for_recipient(scope)
-    if caller is None or caller.authz_id not in readers:
-        # NAMES THE PACKAGE, NEVER ITS READERS — the same asymmetry cost's route keeps.
-        raise HTTPException(status_code=403, detail=f"not entitled to {scope!r}'s package")
+    if cdrl_program is not None:
+        # A CDRL is one program's deliverable: who may fetch it is who may view the program
+        # (the check `/cdrl_export` made), not a recipient reader list.
+        _require_visible(cdrl_program, _verb_caller(""))
+    else:
+        caller = _current_caller()
+        readers = export.readers_for_recipient(scope)
+        if caller is None or caller.authz_id not in readers:
+            # NAMES THE PACKAGE, NEVER ITS READERS — the same asymmetry cost's route keeps.
+            raise HTTPException(status_code=403, detail=f"not entitled to {scope!r}'s package")
 
     root = _repo_root()
     if root is None:
@@ -1088,7 +1215,9 @@ def get_artifact(filename: str) -> FileResponse:
     if not path.is_file():
         raise HTTPException(status_code=404, detail="no such artifact")
 
-    media = "text/html" if filename.endswith(".html") else "application/octet-stream"
+    media = ("text/html" if filename.endswith(".html")
+             else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+             if filename.endswith(".xlsx") else "application/octet-stream")
     # NO STARLETTE FALLBACK: `FileResponse` comes from `fastapi.responses` (imported at the
     # top of this module), never from `starlette.responses` directly — the same dependency
     # seal cost's route holds, because the two classes are not guaranteed interchangeable
