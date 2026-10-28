@@ -3457,6 +3457,33 @@ def _seed_failure_from_data(data: str | None) -> dict:
     return {"event": "pipeline_error", "kind": kind, "cause": cause or "unrecorded"}
 
 
+def _seed_failure_from_http(status: int, raw: bytes | None) -> dict:
+    """The typed failure of one panel the stream REFUSED before opening: `{event: "http",
+    status, cause, field}`, read defensively from FastAPI's body (`{"detail": {"error", ...}}`,
+    or a 422's `{"detail": [{"loc": [...]}]}`). An unreadable body records `unrecorded`."""
+    cause: str = "unrecorded"
+    field = None
+    try:
+        body = json.loads((raw or b"").decode("utf-8", "replace") or "null")
+    except (ValueError, TypeError):
+        body = None
+    d = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(d, dict):
+        if isinstance(d.get("error"), str) and d["error"]:
+            cause = d["error"]
+        if isinstance(d.get("field"), str) and d["field"]:
+            field = d["field"]
+        elif cause == "incomplete_override":
+            req = d.get("requested") if isinstance(d.get("requested"), dict) else {}
+            field = "active_persona" if not req.get("persona") else "active_domains"
+    elif isinstance(d, list) and d and isinstance(d[0], dict):
+        cause = "validation_error"
+        loc = d[0].get("loc")
+        if isinstance(loc, (list, tuple)) and len(loc) > 1:
+            field = ".".join(str(x) for x in loc[1:])
+    return {"event": "http", "status": status, "cause": cause, "field": field}
+
+
 @app.post("/seed/portfolio_canvas")
 async def seed_portfolio_canvas(
     request: SeedPortfolioCanvasRequest,
@@ -3626,6 +3653,11 @@ async def seed_template_canvas(
                 ) as resp:
                     if resp.status_code != 200:
                         detail = "HTTP " + str(resp.status_code)
+                        try:
+                            _raw = await resp.aread()
+                        except Exception:  # noqa: BLE001
+                            _raw = b""
+                        failure = _seed_failure_from_http(resp.status_code, _raw)
                     else:
                         saw_final = False
                         saw_error = False
@@ -3835,6 +3867,17 @@ def _canvas_seed_enumerator(user_email: str, entitled_domains: list):
     return _enumerate
 
 
+def _canvas_seed_domains(request, ent) -> list[str] | None:
+    """The cell a seed request names: explicit `active_domains` (truthy -- `[]` is unset) win;
+    else `ent.domains_for(active_persona)` when a persona is named; else None (the caller named
+    no cell). ONE derivation, shared by the ask and the seed."""
+    if request.active_domains:
+        return list(request.active_domains)
+    if request.active_persona:
+        return ent.domains_for(request.active_persona)
+    return None
+
+
 async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user: User):
     """The ask for a 409'd seed, or None when no unbound slot is askable.
 
@@ -3861,12 +3904,7 @@ async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user:
     slot_name = {s.bind_as: s.name for s in template.shared_slots}
 
     ent = current_user.entitlements
-    if request.active_domains:
-        domains = list(request.active_domains)
-    elif request.active_persona:
-        domains = ent.domains_for(request.active_persona)
-    else:
-        domains = sorted({c.domain for c in ent.cells})
+    domains = _canvas_seed_domains(request, ent) or sorted({c.domain for c in ent.cells})
     enum = _canvas_seed_enumerator(current_user.authz_id, domains)
 
     def _build():
@@ -3953,6 +3991,29 @@ async def canvas_seed(
         request.active_persona = request.user_persona
     if request.active_domains is None and request.domain:
         request.active_domains = [request.domain]
+    # THE CELL A PERSONA NAMES. The stream refuses a persona without domains, so a persona-only
+    # seed (the chat re-send after the "which program?" pick) is completed HERE from the
+    # caller's own entitlements, the same derivation the ask uses. A seed never picks a cell
+    # the caller did not name: neither field set stays unset.
+    if request.active_persona and not request.active_domains:
+        _derived = _canvas_seed_domains(request, current_user.entitlements)
+        if not _derived:
+            from .authz.refusal import policy_refusal as _policy_refusal
+            raise _policy_refusal(
+                "persona_not_held", policy_id="groups",
+                missing_binding=f"a_group_granting({request.active_persona})",
+                message=f"you hold no cell under persona {request.active_persona}",
+            )
+        request.active_domains = _derived
+    elif request.active_domains and not request.active_persona:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "incomplete_override", "field": "active_persona",
+                "message": "a seed names its domains without a persona; send active_persona "
+                           "(or user_persona) too",
+            },
+        )
 
     _requested = (request.template_id or "").strip()
     if not _requested:
@@ -4112,11 +4173,36 @@ async def canvas_seed(
 
         def _entitlement_shaped(r: dict) -> bool:
             f = r.get("failure")
+            if f is not None and f.get("event") == "http":
+                return f.get("status") == 403
             if f is not None:
                 return (f.get("cause") or "unrecorded") in _SEED_ENTITLEMENT_CAUSES
             return "403" in str(r.get("detail") or "")
 
         _all_entitlement = bool(_failed) and all(_entitlement_shaped(r) for r in _failed)
+        _http = [r["failure"] for r in _failed if (r.get("failure") or {}).get("event") == "http"]
+        _relay = (
+            not _all_entitlement and len(_http) == len(_failed)
+            and len({f["status"] for f in _http}) == 1 and _http[0]["status"] in (400, 422)
+        )
+        if _relay:
+            _ucauses = sorted({f["cause"] for f in _http})
+            _fields = sorted({f["field"] for f in _http if f.get("field")})
+            _rdetail = {
+                "error": "seed_panel_refused",
+                "upstream_error": _ucauses[0] if len(_ucauses) == 1 else _ucauses,
+                "fields": _fields,
+                "causes": _ucauses,
+                "message": (
+                    f"seeded 0 of {total} panels; every panel was refused as a malformed "
+                    f"request: {_ucauses} (fields: {_fields})"
+                ),
+            }
+            logger.warning("canvas_seed: NOTHING seeded (0/%s) -- panels refused the request: %s",
+                           total, _rdetail)
+            if _http[0]["status"] == 400:
+                raise HTTPException(status_code=400, detail=_rdetail)
+            raise HTTPException(status_code=422, detail=_rdetail)
         logger.warning(
             "canvas_seed: NOTHING seeded (0/%s) -- refusing with %s. Upstream: %s causes: %s",
             total, 403 if _all_entitlement else 502, sorted(_codes)[:5], _causes,
@@ -6165,8 +6251,11 @@ def _project_sources(mat: dict) -> list[dict] | None:
         # `obtained_via`, `ingest_id`, `dropped_by`, `promoted_by`: the graph's provenance as a
         # retrieval path copies it onto each source (engine-o's notice_parts.py is the first);
         # `promoted_by` is what the floor's promoted set is read from below.
+        # `mpn` and `notice_id`: the part and the notice a whichPartsDoesThisNoticeAffect source
+        # is ABOUT. Without them the citation is a label ("P/N 5530-184") and a URI, and nothing
+        # downstream can join a source to its table row or its notice without parsing either.
         for extra in ("matched_for", "provenance", "obtained_via", "ingest_id", "dropped_by",
-                      "promoted_by"):
+                      "promoted_by", "mpn", "notice_id"):
             if extra in src:
                 projected[extra] = src[extra]
         out.append(projected)
