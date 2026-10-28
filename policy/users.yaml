@@ -61,6 +61,7 @@ users:
                             # hold production cost data.
       - maint-tier-ack-edge-01   # 2026-10-11 ruling: actor-only (no cell); see groups.yaml
       - maint-tier-ack-edge-02   # 2026-10-27: the edge-02 mirror, actor-only (no cell)
+      - alert-processors         # FIXTURE grant, 2026-10-28: alice is the sandbox alert processor (PCN/PDN drops); not a claim about who drops notices in production.
       - finance-analysts    # FIXTURE grant, 2026-08-31: alice is the
                             # Engine F demo actor, so the persona/domain picker offers
                             # her the PROGRAM_FINANCE_ANALYST cell and a finance question
