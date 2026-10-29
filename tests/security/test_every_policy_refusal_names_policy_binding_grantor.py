@@ -248,6 +248,11 @@ NO_AUDIENCE = "integrity: no journalled audience to check against; fails closed"
 CONFLICT = "a 409 on the target's state: it asks the caller to choose nothing and request nothing"
 NAMED = "a 409 whose body names its one resolution (the value or call to send); nothing to choose"
 NOT_BUILT = "a 409 for a verb not built yet (awaiting a ruling); no grant makes it exist"
+#: engine-r's pre-receive checks (ADR-0062 §2). A RepoRefusal's status is WRITTEN in the library,
+#: which PR B's route forwards, so it is counted here.
+REPO_CHECK = "an ADR-0062 §2 pre-receive check on the proposal's content: the diff must change; no grant lifts it"
+REPO_UNCONFIGURED = "integrity: the deployment's check-4 term list is absent; engine-r fails closed and no grant lifts it"
+ER = "agent_fleet/repository_agent/repo_core.py"
 
 #: No binding could lift these, so they keep their bodies. Value = why.
 NOT_POLICY: dict[str, str] = {
@@ -328,6 +333,26 @@ NOT_POLICY: dict[str, str] = {
     'src/iagent/gateway.py::_decide_empty::no_open_empty_task | no open confirmation for this do': CONFLICT,
     'src/iagent/gateway.py::_decide_empty::no_open_empty_task | the document moved while the dec': CONFLICT,
     'src/iagent/gateway.py::act_on_human_task::no_open_empty_task | the task names no ingest': CONFLICT,
+    # -- engine-r (#133, ADR-0062 §2), classified 2026-10-28 --
+    f"{ER}::Repo._check_approvals::proposer_cannot_approve": DUTIES,
+    f"{ER}::Repo._check_approvals::approval_of_another_sha": STATE,
+    f"{ER}::Repo._check_approvals::no_approval": STATE,
+    f"{ER}::Repo.proposal::unknown_proposal": CONFLICT,
+    f"{ER}::Repo.merge::proposal_closed": CONFLICT,
+    f"{ER}::Repo.merge::reviewed_sha_is_not_head": CONFLICT,
+    f"{ER}::Repo.merge::target_missing": CONFLICT,
+    f"{ER}::Repo.merge::target_moved": CONFLICT,
+    f"{ER}::Repo.merge::merge_conflict": CONFLICT,
+    f"{ER}::Repo.merge::missing_trailers": REPO_CHECK,
+    f"{ER}::Repo.merge::secret_in_diff": REPO_CHECK,
+    f"{ER}::Repo.merge::customer_context_in_diff": REPO_CHECK,
+    f"{ER}::Repo.merge::customer_terms_absent": REPO_UNCONFIGURED,
+    f"{ER}::validate_policy_check.validate_policy_check::policy_invalid": REPO_CHECK,
+    f"{ER}::Repo._tag_common::unknown_sha": CONFLICT,
+    f"{ER}::Repo._tag_common::target_moved": CONFLICT,
+    f"{ER}::Repo.tag::tag_exists": CONFLICT,
+    f"{ER}::Repo.tag::release_tag_immutable": CONFLICT,
+    f"{ER}::Repo.repair_tag::unknown_tag": CONFLICT,
 }
 
 RELAY = "relay"
@@ -381,6 +406,10 @@ PENDING: dict[str, str] = {
     # 2026-10-28: the CDRL export routes relay engine-fin's 403 (program_not_visible) through here;
     # `tests/test_bff_cdrl_export.py::test_8_an_engine_403_is_relayed_with_grantable_by` is its seal.
     f"{GW}::_engine_failure::<relay_refusal>": RELAY,
+    # engine-r check 6 (#133). ADR-0062 §5 names the family `repository_paths`, but its rail file
+    # and grantor row arrive with engine-r's engine PR; until then the governed rows are held in
+    # code, which is what `code` names. That PR moves this row to `repository_paths` and builds it.
+    f"{ER}::Repo.merge::path_not_governed": "code",
 }
 
 
