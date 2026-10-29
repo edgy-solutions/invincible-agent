@@ -27,7 +27,13 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
   - Chris's five ids: "not worth chasing".
 - **#139** (`fin/verb-on-every-answer`, `1bee9f8e`, against master) builds both repairs.
   - Targeted runs are green: 23, 42, 2 and 24 passed.
-  - It flags, for a ruling, a seed turn whose dispatch *raises*: it falls through to the supervisor.
+  - **The seed-turn raise is RULED and fixed** (`32d513e5` and `82fa2b46`). A raise on a seed turn is now a
+    `pipeline_error` that names the step. Its cause is `seed_panel_dispatch_raised`, with
+    `retryable: true`, and the artifact is `failed` with the verb and a `failure_cause`. It never
+    reaches the supervisor.
+    - All 5 mutants red a named arm.
+    - Runs: 15, 10 and 39 passed.
+    - A comment is on #139.
 - **Open PRs:**
   - #136 and #137 are CI-green;
   - #137 needs master merged in after #136 lands;
