@@ -6,8 +6,7 @@ Arms:
    loads through the REAL loader, with the overlay variable pointed at it, with zero refusals;
    and there is at least one block of each tag (so the arm cannot pass on an untagged doc);
 2. the keys the doc lists in its key tables are the code's: export profiles = `_TOP_KEYS`;
-   measure rows = the top-level keys of the sample row (`_build` has no constant, it reads named
-   keys, so the sample row, which carries every one of them, is the only source);
+   measure rows = `measure_verbs._TOP_KEYS`;
 3. the doc's formats table names exactly `export_profiles.FORMATS`;
 4. the doc's variables table names every `*_OVERLAY_DIRS` variable the three loader modules read
    (found by grep over their source, so a new variable in code reds the doc).
@@ -130,12 +129,10 @@ def test_the_export_profile_key_table_is_the_loaders_top_keys():
         f"doc lists {sorted(listed)}; the loader accepts {sorted(export_profiles._TOP_KEYS)}")
 
 
-def test_the_measure_row_key_table_is_the_top_keys_of_the_sample_row():
-    sample = yaml.safe_load((SAMPLE / "measure_verbs" / "fin_tcpi.yaml").read_text(encoding="utf-8"))
+def test_the_measure_row_key_table_is_the_loaders_top_keys():
     listed = _column(_section(2), "key")
-    assert listed == set(sample), (
-        f"doc lists {sorted(listed)}; the sample row, which carries every key `_build` reads, "
-        f"has {sorted(sample)}")
+    assert listed == set(measure_verbs._TOP_KEYS), (
+        f"doc lists {sorted(listed)}; the loader accepts {sorted(measure_verbs._TOP_KEYS)}")
 
 
 # -- arm 3: the formats table --------------------------------------------------------------------

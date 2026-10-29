@@ -52,8 +52,8 @@ A measure row declares a number computed per month from a program's earned-value
 loads, a user can ask for it in chat ("What is the to-complete performance index for NP-MERIDIAN?")
 and it can be a source for an export profile (section 3). The row declares; it never calculates.
 
-Top-level keys. Required unless marked optional. A key not in this table is ignored, not refused, so
-nothing you put there takes effect.
+Top-level keys. Required unless marked optional. A key not in this table is refused at load (a
+`formula`, for example), so nothing you put there can look as if it took effect.
 
 | key | what it holds |
 |---|---|
@@ -156,6 +156,7 @@ program the user has been granted, and nothing in a row can widen that.
 - You gave a `measure_id` that does not start `fin_`, or that is a built-in measure's id, or a
   `verb` that is a built-in's name.
 - You left out a required key (including `derived_from.authority`, `clause`, `transcription`).
+- You added a top-level key the table does not list (a `formula`, an `expression`, a note field).
 - You put anything but `params` and `state` under `inputs` (a formula, an expression, a query).
 - You asked for a quantity outside the closed list, or a parameter other than `program_id`/`window`.
 - You pointed at a module that imports outside the allowed four, declares no `VERSION`, or declares
