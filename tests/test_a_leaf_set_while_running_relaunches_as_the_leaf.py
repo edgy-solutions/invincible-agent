@@ -35,6 +35,9 @@ from tests.test_the_leaf_is_on_the_row_and_the_dropper_can_correct_it import (  
     ALICE, DOCTOOLS, ID, PREFIX, SIDECAR_KEY, _as, _leaf, db, drop_sidecar, put_sidecar,
     read_sidecar,
 )
+from tests._can_drop_open import can_drop_open  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("can_drop_open")
 
 RUN = "run-1"
 

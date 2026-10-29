@@ -19,6 +19,9 @@ from src.iagent import ingest_status as ist  # noqa: E402
 from tests.test_a_promotion_takes_row_edits_behind_its_flag import (  # noqa: E402,F401
     INGEST_ID as WORLD_ID, PAYLOAD, world,
 )
+from tests._can_drop_open import can_drop_open  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("can_drop_open")
 from tests.test_the_leaf_is_on_the_row_and_the_dropper_can_correct_it import (  # noqa: E402,F401
     ALICE, BOB, DOCTOOLS, ID, PREFIX, REF, _as, _by_kind_pdn_reruns, _leaf, _title, db,
 )

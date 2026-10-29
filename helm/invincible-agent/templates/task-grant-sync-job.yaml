@@ -216,6 +216,14 @@ spec:
               fi
               cp "$OVERLAY/task_grants.yaml" /work/policy/
               cp "$OVERLAY/program_members.yaml" /work/policy/
+              # capability_grants.yaml: the `can_drop:<kind>` rows are the declaration that a kind is
+              # gated (the ingest door reads the Topaz object each row creates). Missing = FATAL, as in
+              # topaz-seed-cronjob.yaml: no fallback to the image's sandbox copy.
+              if [ ! -f "$OVERLAY/capability_grants.yaml" ]; then
+                echo "FATAL: policy overlay is missing capability_grants.yaml — refusing (no fallback to the image's sandbox copy)" >&2
+                exit 2
+              fi
+              cp "$OVERLAY/capability_grants.yaml" /work/policy/
               # recipient_readers.yaml is OPTIONAL here, unlike the two above: ABSENT means no
               # reader is asserted, so every recipient check denies (fail-closed) -- a loud WARN
               # and the leg is skipped, not a FATAL. Whether absence becomes FATAL is OPEN with
@@ -232,6 +240,7 @@ spec:
               export TASK_GRANTS_FILE="$POLICY_DIR/task_grants.yaml"
               export PROGRAM_MEMBERS_FILE="$POLICY_DIR/program_members.yaml"
               export RECIPIENT_READERS_FILE="$POLICY_DIR/recipient_readers.yaml"
+              export CAPABILITY_GRANTS_FILE="$POLICY_DIR/capability_grants.yaml"
               echo "===== PROGRAM MEMBER SYNC (program_member_sync — program membership, startup sync, runs BEFORE grants) ====="
               python policy/sync/program_member_sync.py
               echo "===== TASK GRANT SYNC (task_grant_sync — HITL fifth namespace, startup sync) ====="
@@ -242,6 +251,11 @@ spec:
               else
                 echo "WARN: recipient_reader_sync skipped (no recipient_readers.yaml in the overlay)" >&2
               fi
+              echo "===== CAPABILITY GRANT SYNC (capability_grant_sync — writes capability:can_drop:<kind>, the ingest door's gate) ====="
+              # Same invocation as topaz-seed-cronjob.yaml (no arguments: prune of can_drop:* objects
+              # whose row is gone is the script's own default). `set -e` fails the Job on any non-zero
+              # exit: 2 malformed rail, 4 readback failed, 5 granted group absent from Topaz.
+              python policy/sync/capability_grant_sync.py
           {{- if ne $mode "image" }}
           volumeMounts:
             {{- if eq $mode "git" }}

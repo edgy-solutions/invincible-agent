@@ -275,6 +275,47 @@ def check_can_invoke(capability: str, caller_id: str) -> bool:
         return False  # fail-closed
 
 
+def capability_object_exists(capability: str) -> bool:
+    """Does the Topaz directory object `capability:<capability>` exist? 404 -> False, found ->
+    True. Unlike :func:`check_can_invoke`, this NEVER swallows: here False means OPEN (the
+    `can_drop:<kind>` gate exists only while its object does), so a transport error, any other
+    non-2xx, or an unreadable answer RAISES `AuthorizationUnavailable`, and an unset
+    TOPAZ_DIRECTORY_URL RAISES `AuthorizationUnconfigured` (503 either way, never open).
+    Same directory API and object type as `policy/sync/topaz_sync.py`'s `object_exists`."""
+    if not _TOPAZ_DIRECTORY_URL:
+        raise AuthorizationUnconfigured("TOPAZ_DIRECTORY_URL is unset")
+    from urllib.parse import quote
+
+    try:
+        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+            r = c.get(f"/api/v3/directory/object/capability/{quote(capability, safe='')}")
+    except httpx.HTTPError as exc:
+        raise AuthorizationUnavailable(type(exc).__name__) from exc
+    if r.status_code == 404:
+        return False
+    if not r.is_success:
+        raise AuthorizationUnavailable(f"HTTP {r.status_code}")
+    return True
+
+
+def can_drop_refusal(kind: str, dropper_id: str) -> "dict | None":
+    """The `can_drop:<kind>` gate. None = the dropper may drop this kind; otherwise the fields of
+    the refusal, for the gateway to raise through `policy_refusal`. A kind is gated iff
+    `capability:can_drop:<kind>` exists; an absent object is OPEN. A raise from
+    `capability_object_exists` propagates (never open)."""
+    capability = f"can_drop:{kind}"
+    if not capability_object_exists(capability):
+        return None
+    if check_can_invoke(capability, dropper_id):
+        return None
+    return {
+        "policy_id": f"capability_grants:{capability}",
+        "missing_binding": f"can_invoke({capability})",
+        "message": f"{dropper_id!r} may not drop a {kind!r} document: it is not granted "
+                   f"{capability}.",
+    }
+
+
 def check_can_view_program(program: str, caller_id: str) -> bool:
     """Application-layer gate for the origin-entitlement ruling's audience half
     (architect, 2026-10-02): Topaz ``can_view_program(caller, program)`` on the
