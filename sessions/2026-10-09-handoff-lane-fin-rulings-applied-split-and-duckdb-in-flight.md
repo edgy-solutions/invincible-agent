@@ -19,6 +19,20 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-28, last: repairs 1 and 2 are #139. Read this first
+
+- **The ruling.** Repairs 1 and 2 were approved: the export reads the routing record's verb, and a
+  failed seed records its verb and cause.
+  - The supervisor's four exits are Lane 1's, for 0.4.72.
+  - Chris's five ids: "not worth chasing".
+- **#139** (`fin/verb-on-every-answer`, `1bee9f8e`, against master) builds both repairs.
+  - Targeted runs are green: 23, 42, 2 and 24 passed.
+  - It flags, for a ruling, a seed turn whose dispatch *raises*: it falls through to the supervisor.
+- **Open PRs:**
+  - #136 and #137 are CI-green;
+  - #137 needs master merged in after #136 lands;
+  - item (2), the plan export profile, comes after #136.
+
 ## Update 2026-10-28, latest: "no verb" on plan answers measured and reported; nothing fixed. Read this first
 
 - **Rulings on #137.** The architect confirmed the reading: a recipient is offered when it takes at
