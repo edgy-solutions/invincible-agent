@@ -24,3 +24,4 @@ table:
     - {from: fin_tcpi.tcpi, format: "0.000"}
 methods_sheet: Methods               # every source's method name, version, module sha256
 manifest_sheet: _manifest            # hidden; the ADR-0053 section 4 envelope as JSON
+provenance_sheets: true            # false = deliver exactly the template sheets (no Methods/_manifest)

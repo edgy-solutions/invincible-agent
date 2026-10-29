@@ -22,3 +22,12 @@ both kinds. This kind is kept out of `policy/exports/` on purpose.
 **A profile computes nothing.** Every number in the file is a value a verb returned, joined on
 `table.key`; a `formula`, `compute` or `expression` key is refused, as is a column naming a field
 its source does not return, and a template whose sha256 differs from `template.sha256`.
+
+**`provenance_sheets: true|false`** (optional, default `true`; a real YAML boolean, anything else
+refuses to load). With `true` the delivered file carries a `Methods` sheet and a hidden `_manifest`
+sheet beside the template's own. With `false` the file has exactly the template's sheets: it is
+for a customer form that accepts no extra sheets. A `false` row that also names `methods_sheet` or
+`manifest_sheet` is refused (the names would be silently ignored). The provenance still travels,
+outside the file: `/cdrl_export`'s JSON `envelope` carries every source's method, and the BFF's
+`X-Cells-Sha256` header carries `envelope.cells_sha256`. With `false` that hash covers only the
+cells written, the title block and the table.
