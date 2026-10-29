@@ -43,6 +43,11 @@ live `capability` object whose id starts with `can_drop:` and that no row names 
 REOPENS the kind to every caller. Every other capability object stays ensure-not-pruned (the
 object prune is scoped to the `can_drop:` prefix and to prune=True; prune=False deletes nothing).
 
+`can_export:<P>` IS DENY-BY-DEFAULT, the opposite of `can_drop:`. The door asks can_invoke on
+`can_export:<P>` and False refuses, so a profile with no row is exportable by nobody and object
+existence decides nothing. What revokes it is the invoker-relation prune above (delete the row, the
+relation goes); the `can_drop:` OBJECT prune deliberately does not cover `can_export:` objects.
+
 Exit codes: 0 ok - 2 malformed - 4 readback failed - 5 a granted group object is absent from live
 Topaz.
 

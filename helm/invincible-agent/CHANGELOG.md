@@ -17,6 +17,13 @@
 - **Before that roll, a human `topaz_sync` must create `group:alert-processors`** (new group in
   `policy/groups.yaml`, alice in `policy/users.yaml`), or the capability leg exits 5.
 
+- **The `can_export:<profile>` convention** (header comment in `policy/capability_grants.yaml`):
+  who may export export profile `<profile>`, deny-by-default (no row, nobody). `validate_policy`
+  gains three refusals: a `can_export:` key naming an unknown profile; a profile name in both the
+  review-export and fin CDRL sets; a review-export profile with no row (default row
+  `grant_to_groups: [alert-processors]`). A CDRL row is allowed, not required, pending a ruling.
+  **No rows ship**, so nothing to sync and no roll precondition.
+
 **Chart changes**
 
 - **A `recipient_readers` policy rail.** Who may download a recipient's disclosure package, from

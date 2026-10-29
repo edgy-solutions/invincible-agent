@@ -43,6 +43,18 @@
 # gate: deleting a `can_drop:` row REOPENS the kind to every caller, and
 # capability_grant_sync.py (prune=True) deletes the orphan `can_drop:` objects to make that so.
 # validate_policy.py refuses a `can_drop:<K>` key whose K is not a known content kind.
+#
+# THE `can_export:<profile>` CONVENTION. A capability keyed `can_export:<P>` decides who may
+# export export profile P, by the profile's `name`. DENY-BY-DEFAULT, unlike `can_drop`: the door
+# asks can_invoke on `can_export:<P>` and False refuses, so a profile with NO row is exportable by
+# NOBODY; object existence decides nothing, there is no object prune, and deleting a row revokes
+# through the invoker-relation prune. "alert-processors by default" is met by COMPLETENESS, not a
+# generated default (the sync Job's image cannot reliably see every profile overlay):
+# validate_policy.py refuses a review-export profile (policy/exports) that no `can_export:<P>` row
+# decides; the default row is `grant_to_groups: [alert-processors]`. A row for a fin CDRL profile
+# is ALLOWED (its name must be known) but NOT REQUIRED, pending the architect's ruling: a CDRL is
+# a program-office deliverable, and an alert-processors default looks wrong for it. validate_policy
+# also refuses a `can_export:<P>` key naming no known profile, and a name in both kinds.
 capabilities:
   # ADR-0029 Slice-1 demo fixture: the promotion workflow's publish emit. alice
   # (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) is the initiator authorized to

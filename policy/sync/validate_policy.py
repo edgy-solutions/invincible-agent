@@ -20,6 +20,9 @@ definition of "valid", never a parallel re-implementation):
   - program_members.yaml          → program_member_sync.load_programs
   - capability_grants.yaml        → also: a `grant_to_groups` group exists and has members, and
     a `can_drop:<K>` key names a KNOWN content kind (see known_content_kinds)
+  - capability_grants.yaml        → also: a `can_export:<P>` key names a KNOWN export profile
+    (see known_export_profiles), no profile name is in BOTH kinds, and every review-export
+    profile (policy/exports) has a `can_export:<P>` row (deny-by-default: no row, nobody exports)
   - recipient_readers.yaml        → recipient_reader_sync.load_readers (WHEN PRESENT; not in
     DATA_FILES -- see the note there)
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
@@ -124,6 +127,64 @@ def known_content_kinds() -> tuple[set[str], list[str]]:
                 found += 1
         sources.append(f"{d.as_posix()} ({found} kind(s))")
     return kinds, sources
+
+
+def known_export_profiles(
+    sources: list[tuple[Path, str]] | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """The export profiles a `can_export:<P>` capability key may name: {name: kind}, and notes.
+
+    kind is "review_export" (lane/01's ingest-review profiles, policy/exports) or "fin_cdrl"
+    (fin's CDRL profiles). `sources` is an ordered [(dir, kind)] for tests; None composes:
+      - review_export: <root>/policy/exports (lane/01 adds its overlay env var here once it
+        defines one; the directory does not exist yet, which is read as absent, not an error);
+      - fin_cdrl: the seed (FIN_EXPORT_PROFILE_POLICY_DIR if set, else
+        <root>/policy/fin_export_profiles), each dir in FIN_EXPORT_PROFILE_OVERLAY_DIRS, then the
+        sandbox's overlay (policy/overlays/sample/fin_export_profiles).
+    Within a kind fin's semantics apply (agent_fleet/finance_agent/export_profiles.py): dirs are
+    applied in order, a later same-`name` row replaces an earlier one, `deleted: true` removes the
+    name. Only `name` and `deleted` are read (this gate runs where the engines are not
+    importable); unparseable files are ignored, as known_content_kinds does. A name present in
+    both final sets is a COLLISION: a note starting `COLLISION:` which validate() turns into an
+    error. Each source's note reads `<dir> (<n> profile(s))` or `<dir> (absent)`."""
+    root = Path(__file__).resolve().parents[2]
+    if sources is None:
+        sources = [(root / "policy" / "exports", "review_export")]
+        sources.append((Path(os.getenv("FIN_EXPORT_PROFILE_POLICY_DIR")
+                             or root / "policy" / "fin_export_profiles"), "fin_cdrl"))
+        raw = (os.getenv("FIN_EXPORT_PROFILE_OVERLAY_DIRS") or "").strip()
+        sources += [(Path(p.strip()), "fin_cdrl") for p in raw.split(os.pathsep) if p.strip()]
+        sources.append((root / "policy" / "overlays" / "sample" / "fin_export_profiles", "fin_cdrl"))
+    by_kind: dict[str, set[str]] = {}
+    notes: list[str] = []
+    for d, kind in sources:
+        names = by_kind.setdefault(kind, set())
+        if not d.is_dir():
+            notes.append(f"{d.as_posix()} (absent)")
+            continue
+        found = 0
+        for f in sorted(d.glob("*.yaml")):
+            try:
+                doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except (OSError, yaml.YAMLError):
+                continue
+            n = doc.get("name") if isinstance(doc, dict) else None
+            if not (isinstance(n, str) and n.strip()):
+                continue
+            n = n.strip()
+            if doc.get("deleted") is True:
+                names.discard(n)
+            else:
+                names.add(n)
+                found += 1
+        notes.append(f"{d.as_posix()} ({found} profile(s))")
+    profiles: dict[str, str] = {}
+    for kind, names in by_kind.items():
+        for n in sorted(names):
+            if n in profiles:
+                notes.append(f"COLLISION: {n!r} is a {profiles[n]} profile and a {kind} profile")
+            profiles[n] = kind
+    return profiles, notes
 
 
 def _read_yaml(path: Path, errors: list[str]) -> dict:
@@ -391,6 +452,31 @@ def validate(
                 f"NOT a known content kind -- a misspelt key gates nothing and leaves the real "
                 f"kind open. Known kinds ({len(_kinds)}) were composed from the `kind:` field "
                 f"of: " + "; ".join(_sources))
+
+    # `can_export:<P>` (DENY-BY-DEFAULT, unlike can_drop): the door asks can_invoke on
+    # `can_export:<P>` and False refuses, so a profile with no row is exportable by NOBODY. There is
+    # no generated default (the sync Job's image cannot reliably see every profile overlay), so the
+    # "alert-processors by default" is met by COMPLETENESS here: every review-export profile must
+    # have a row. A fin CDRL row is allowed but NOT required (pending the architect's ruling: a CDRL
+    # is a program-office deliverable, an AP default looks wrong for it).
+    _profiles, _pnotes = known_export_profiles()
+    for _n in _pnotes:
+        if _n.startswith("COLLISION:"):
+            errors.append(f"capability_grants.yaml: export profile {_n}")
+    _pnotes = [n for n in _pnotes if not n.startswith("COLLISION:")]
+    _export_keys = {c.key[len("can_export:"):] for c in caps if c.key.startswith("can_export:")}
+    for _p in sorted(_export_keys - set(_profiles)):
+        errors.append(
+            f"capability_grants.yaml: 'can_export:{_p}' names {_p!r}, which is NOT a known export "
+            f"profile -- a misspelt key gates nothing and the real profile stays unexportable. "
+            f"Known profiles ({len(_profiles)}) were composed from the `name` field of: "
+            + "; ".join(_pnotes))
+    for _p, _k in sorted(_profiles.items()):
+        if _k == "review_export" and _p not in _export_keys:
+            errors.append(
+                f"capability_grants.yaml: review-export profile {_p!r} has no 'can_export:{_p}' "
+                f"row, so NOBODY could export it (deny-by-default). Add one; the default is "
+                f"`grant_to_groups: [alert-processors]`")
 
     # recipient_readers.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note
     # there; required-or-not is open with the architect). Absent = no reader asserted = every
