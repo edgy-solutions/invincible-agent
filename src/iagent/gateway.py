@@ -3139,6 +3139,119 @@ async def export_package_artifact(
     )
 
 
+# -- CDRL export (proposal: a CDRL is an export profile, Part 2) ---------------
+#
+# Mirrors the package_export client above: the BFF forwards THE PERSON's bearer, the engine decides
+# program visibility (its 403 is relayed here with `grantable_by` filled by `relay_refusal`), and
+# the bytes are fetched back through the engine's own /artifact route.
+
+_CDRL_XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_CDRL_FILENAME_RE = re.compile(r"^fin-cdrl-[A-Za-z0-9_.-]+\.xlsx$")
+
+
+def _engine_failure(label: str, rr) -> HTTPException:
+    """A refusal or failure an engine answered with, as this gateway's answer. 403 is the engine's
+    policy refusal completed by `relay_refusal`; anything else is a 502 naming the engine status."""
+    try:
+        body_json = rr.json()
+        detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+    except Exception:
+        detail = getattr(rr, "text", "engine refused")
+    if rr.status_code == 403:
+        return HTTPException(status_code=403, detail=relay_refusal(detail))
+    return HTTPException(status_code=502, detail={
+        "error": f"{label}_engine_failed", "engine_status": rr.status_code, "engine_detail": detail,
+    })
+
+
+@app.get("/export/cdrl/profiles")
+async def export_cdrl_profiles(request: Request, current_user: User = Depends(get_current_user)):
+    """The CDRL picker's option list: the engine's `[{name, format, scope, label}]`, relayed. The
+    header keys only; the engine never sends a template path, a hash or a source."""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            rr = await client.get(
+                f"{_ENGINE_FIN_URL}/cdrl_profiles",
+                headers={"Authorization": f"Bearer {_user_bearer(request)}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_unreachable", "message": str(exc),
+        })
+    if rr.status_code >= 400:
+        raise _engine_failure("fin", rr)
+    return rr.json()
+
+
+@app.get("/export/cdrl")
+async def export_cdrl(
+    request: Request,
+    profile: str,
+    program_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """One program's CDRL as an xlsx. `X-Cells-Sha256` is the hash of every cell the producer
+    wrote (the reproducibility claim; the file's own bytes are not claimed reproducible).
+
+    Refusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with
+    `grantable_by` filled); any other engine failure is a 502 naming the engine's status.
+    """
+    bearer = _user_bearer(request)
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            rr = await client.post(
+                f"{_ENGINE_FIN_URL}/cdrl_export",
+                json={"profile": profile, "program_id": program_id,
+                      "user_email": current_user.authz_id},
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_unreachable", "message": str(exc),
+        })
+    if rr.status_code == 404:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = None
+        if isinstance(detail, dict) and detail.get("error") == "unknown_profile":
+            raise HTTPException(status_code=404, detail=detail)
+    if rr.status_code >= 400:
+        raise _engine_failure("fin", rr)
+
+    out = rr.json()
+    filename = out.get("artifact_filename")
+    cells_sha256 = (out.get("envelope") or {}).get("cells_sha256")
+    if not (isinstance(filename, str) and _CDRL_FILENAME_RE.match(filename) and cells_sha256):
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_bad_cdrl_response",
+            "message": "engine returned no verifiable CDRL artifact",
+        })
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            fr = await client.get(
+                f"{_ENGINE_FIN_URL}/artifact/{filename}",
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_unreachable", "message": str(exc),
+        })
+    if fr.status_code >= 400:
+        raise _engine_failure("fin", fr)
+
+    return Response(
+        content=fr.content,
+        media_type=_CDRL_XLSX_MEDIA,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Cells-Sha256": str(cells_sha256),
+        },
+    )
+
+
 # -- The plan WRITE seam (ADR-0042 section 3) ---------------------------------
 #
 # Engine P has had a complete write surface since Phase 1 -- fork, append op, baseline op,

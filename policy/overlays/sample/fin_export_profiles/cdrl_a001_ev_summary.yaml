@@ -1,0 +1,26 @@
+# SAMPLE -- a notional CDRL. A001 / DI-NOTIONAL-0001 name no real contract or data item.
+name: cdrl_a001_ev_summary
+format: xlsx
+scope: program                       # one file per program
+label: CDRL A001 - Notional EV summary (synthetic)
+audience: program_office
+cdrl: {item: A001, title: Notional Earned Value Summary, data_item: DI-NOTIONAL-0001, frequency: monthly}
+template: {file: cdrl_a001_ev_summary.xlsx, sha256: 041f60148f0a6fb3aedc9c382151482d0e77c7eb48a6e7506ef01a8653d52f4a}
+sheet: EV Summary
+cells: {B2: program.name, B3: program.id, B4: as_of, B5: cdrl.item}
+sources:
+  - fn: fin_performance_indices
+  - fn: fin_tcpi
+table:
+  start: A8                          # row 7 is the template's own header row
+  key: period
+  columns:
+    - {from: period}
+    - {from: fin_performance_indices.cum_bcws, format: "#,##0"}
+    - {from: fin_performance_indices.cum_bcwp, format: "#,##0"}
+    - {from: fin_performance_indices.cum_acwp, format: "#,##0"}
+    - {from: fin_performance_indices.cum_cpi, format: "0.000"}
+    - {from: fin_performance_indices.cum_spi, format: "0.000"}
+    - {from: fin_tcpi.tcpi, format: "0.000"}
+methods_sheet: Methods               # every source's method name, version, module sha256
+manifest_sheet: _manifest            # hidden; the ADR-0053 section 4 envelope as JSON

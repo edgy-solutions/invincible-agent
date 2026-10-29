@@ -403,6 +403,9 @@ PENDING: dict[str, str] = {
     f"{SPO}::dispatch_spo_step::access denied ({{}}) dispatching {{}} to {{}} — the PE": RELAY,
     f"{SPO}::execute_declared_query::access denied ({{}}) on declared query {{}} -> {{}}; f": RELAY,
     f"{SPO}::execute_direct_call::access denied ({{}}) on direct_call {{}} -> {{}}; fail": RELAY,
+    # 2026-10-28: the CDRL export routes relay engine-fin's 403 (program_not_visible) through here;
+    # `tests/test_bff_cdrl_export.py::test_8_an_engine_403_is_relayed_with_grantable_by` is its seal.
+    f"{GW}::_engine_failure::<relay_refusal>": RELAY,
     # engine-r check 6 (#133). ADR-0062 §5 names the family `repository_paths`, but its rail file
     # and grantor row arrive with engine-r's engine PR; until then the governed rows are held in
     # code, which is what `code` names. That PR moves this row to `repository_paths` and builds it.

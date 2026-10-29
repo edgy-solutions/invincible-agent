@@ -1250,7 +1250,7 @@ services:
       - method: GET
         path: /artifact/{filename}
         identity: "caller authz_id, checked against the recipient's reader list"
-        gate: "AUTHORIZATION on the caller (export.readers_for_recipient) + a DERIVED filename allow-list; transport auth (OBSERVE)"
+        gate: "AUTHORIZATION on the caller (export.readers_for_recipient, or program visibility for a CDRL name) + a DERIVED filename allow-list; transport auth (OBSERVE)"
         exposes: the-whole-disclosure-package
         consumers: ["cortex-bff /export/package/artifact/{filename}", the recipient the package was built for]
         class: gated
@@ -1267,7 +1267,40 @@ services:
           THE READER LIST IS SEED DATA (export.RECIPIENT_READERS), not policy: a real
           deployment reads that relation from the grant rail where it can be reviewed and
           revoked. 404 in a deployed pod where the builder and runtime are absent from the
-          image, since nothing is written there.
+          image, since nothing is written there. A CDRL (fin-cdrl-<profile>-<program>.xlsx, the
+          allow-list derived from the composed profiles crossed with the seed programs) is
+          gated instead on program visibility (_require_visible), the check /cdrl_export made,
+          because a CDRL is one program's deliverable and has no recipient reader list.
+      - method: GET
+        path: /cdrl_profiles
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: export-profile-catalogue
+        consumers: ["cortex-bff /export/cdrl/profiles"]
+        class: releasable_by_design
+        justification: >-
+          The CDRL picker's catalogue: the composed export profiles' shared header ONLY
+          (name, format, scope, label). It carries no template path, no template hash, no source
+          verb and no program data, so what it releases is the names of the deliverables a
+          deployment declared in its overlay. The BFF route that relays it requires
+          get_current_user.
+      - method: POST
+        path: /cdrl_export
+        identity: "caller authz_id (bearer first, body user_email only for a service's delegation)"
+        gate: "program visibility (_require_visible, the check /measure/{fn} and /package_export run) BEFORE anything is measured; transport auth (OBSERVE)"
+        exposes: object-store-write
+        consumers: ["cortex-bff /export/cdrl"]
+        class: gated
+        justification: >-
+          THE PRODUCTION HALF OF A CDRL (proposal: a CDRL is an export profile, Part 2). An
+          unknown profile is 404 unknown_profile (a profile name is not a program secret); then
+          the caller must be able to view the program or the answer is the 403
+          program_not_visible envelope byte-equal to /measure/{fn}'s, with no source measured and
+          no file written; a service caller sees nothing. Only then does it run each source
+          through _measure_envelope, the function /measure/{fn} serves, fill the profile's xlsx
+          template and WRITE fin-cdrl-<profile>-<program>.xlsx to the shared dist directory,
+          answering the package_export locator shape plus the cells_sha256 envelope. 503 (named)
+          when the image has no package directory to write to.
 
   docs_agent:
     file: agent_fleet/docs_agent/main.py
@@ -2021,6 +2054,33 @@ services:
           identical check on the identical token — belt AND braces on one disclosure,
           not a redundant no-op, since the engine is not itself reachable from a
           browser.
+      - method: GET
+        path: /export/cdrl/profiles
+        identity: keycloak-jwt
+        gate: "get_current_user; the engine's /cdrl_profiles answer is relayed"
+        exposes: export-profile-catalogue
+        consumers: [cortex-ui export picker]
+        class: gated
+        justification: >-
+          The CDRL picker's option list: the engine's [{name, format, scope, label}], relayed.
+          Header keys only (no template path, hash or source). An engine failure is a 502 naming
+          the engine's status.
+      - method: GET
+        path: /export/cdrl
+        identity: keycloak-jwt
+        gate: "get_current_user + the engine's program-visibility check on the person's own bearer (a 403 is relayed with grantable_by filled by relay_refusal)"
+        exposes: gated-content
+        consumers: [cortex-ui export picker]
+        class: gated
+        justification: >-
+          One program's CDRL as an xlsx (Content-Type spreadsheetml.sheet, Content-Disposition
+          attachment, X-Cells-Sha256 = the hash of every cell the producer wrote). The BFF POSTs
+          the engine's /cdrl_export with the person's bearer and authz_id and fetches the file
+          back through the engine's /artifact route, which repeats the program-visibility check
+          on the same token. 404 unknown_profile is relayed as 404; 403 program_not_visible is
+          relayed through relay_refusal so the caller reads who can grant it; any other engine
+          failure is a 502 naming the engine status. The filename served is the engine's,
+          checked against fin-cdrl-*.xlsx, never built from the query string.
       - method: POST
         path: /internal/identity/redeem
         identity: keycloak-jwt

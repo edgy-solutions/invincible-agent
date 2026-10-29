@@ -5995,6 +5995,80 @@
         "summary": "Electric Shape Proxy"
       }
     },
+    "/export/cdrl": {
+      "get": {
+        "description": "One program's CDRL as an xlsx. `X-Cells-Sha256` is the hash of every cell the producer\nwrote (the reproducibility claim; the file's own bytes are not claimed reproducible).\n\nRefusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with\n`grantable_by` filled); any other engine failure is a 502 naming the engine's status.",
+        "operationId": "export_cdrl_export_cdrl_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "profile",
+            "required": true,
+            "schema": {
+              "title": "Profile",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Cdrl"
+      }
+    },
+    "/export/cdrl/profiles": {
+      "get": {
+        "description": "The CDRL picker's option list: the engine's `[{name, format, scope, label}]`, relayed. The\nheader keys only; the engine never sends a template path, a hash or a source.",
+        "operationId": "export_cdrl_profiles_export_cdrl_profiles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Cdrl Profiles"
+      }
+    },
     "/export/package": {
       "post": {
         "description": "Produce a recipient's disclosure package — THE GOVERNED EMIT, run synchronously.\n\nProduction never returns `\"status\": \"producing\"`: `measures.package_export` runs and\nwrites to disk inline, in the same request, so there is no async job to poll. A caller\ngets `\"exists\"` or `\"failed\"` in the same response that asked for the build.\n\n`template_id` and `answers` are MUTUALLY EXCLUSIVE — a canvas template's own panels decide\nwhat is exported, so naming one while also handing over cost `answers` is ambiguous about\nwhich governs, and is refused rather than guessed at (422). Given `template_id`, this\ndispatches to `_export_package_from_template` (ITEM 3's path) and nothing below runs.\n\nAbsent `template_id`, a request naming no answers (`answers` omitted or `[]`) is 400\n`no_answers` (RULED 2026-10-17), BEFORE the recipient checks below: it is a shape fault,\nrefused ahead of entitlement, so a no-answers request with no recipient is a 400, not a 409.\nThe whole-program export through this route is gone.\n\nThen four hard stops, in order, each refusing before the next is even attempted:\n  1. no `recipient_scope` -> 409 (ADR-0047 §1: no default recipient)\n  2. `recipient_scope` the caller may not export to -> 403 (see below)\n  3. any canvas answer id that does not resolve -> 404, refused rather than dropped\n  4. the engine unreachable, or the engine's own refusal, forwarded verbatim\n\nA board that mixes engines' answers is SPLIT per engine (ruled 2026-10-09): `answers` are\npartitioned by `_partition_export_answers` (engine-fin's verbs vs. everything else, which is\nengine-cost's), each engine is given only its own, and when any engine-fin answer is\npresent the response is a 200 carrying `documents`, one section per engine: a refused engine\n(engine-cost's refusal or unreachability, or engine-fin, which exports ratified templates\nonly -- RULED 2026-10-10 Q1, the finance control) renders as a refusal section and the others still export. Hard stop 4 then\napplies to a section, not the response. RULED 2026-10-16: a refused answer is its own\n`failed` entry in `documents[]` with a `reason_code` and the refusal prose (never on the\ncustomer page); a cost-only board switches to `documents[]` only when engine-cost refused\nsomething, and otherwise answers exactly as before. The top-level `reason` counts answers\n(\"r of n answers refused\"), not engines.",
