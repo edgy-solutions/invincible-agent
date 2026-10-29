@@ -309,3 +309,12 @@ capabilities:
       row's EXISTENCE gates the kind: deleting the row reopens `pdn` to every caller. A deployment
       configures this in its own policy repository.
     grant_to_groups: [alert-processors]
+
+  # ingest:exportBatch (2026-10-28 overnight ruling): GET /ingest/export (the batch) and the
+  # export of a notice the caller did not drop. See src/iagent/export_profiles.py.
+  ingest:exportBatch:
+    granted_by: cnogradi
+    reason: >-
+      2026-10-28 overnight ruling: batch export of promoted notices over a date range, for the
+      alert-processors group.
+    grant_to_groups: [alert-processors]

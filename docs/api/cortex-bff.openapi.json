@@ -1945,6 +1945,44 @@
         "title": "ExportPackageRequest",
         "type": "object"
       },
+      "ExportProfile": {
+        "additionalProperties": false,
+        "description": "One row of GET /ingest/export/profiles (a valid `policy/exports/<name>.yaml`).",
+        "properties": {
+          "format": {
+            "enum": [
+              "csv",
+              "json"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "granularity": {
+            "enum": [
+              "notice_part",
+              "notice"
+            ],
+            "title": "Granularity",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "format",
+          "granularity",
+          "label"
+        ],
+        "title": "ExportProfile",
+        "type": "object"
+      },
       "Extraction": {
         "additionalProperties": false,
         "description": "GET /ingest/{id}/extraction.",
@@ -6538,6 +6576,122 @@
         "summary": "Ingest Event"
       }
     },
+    "/ingest/export": {
+      "get": {
+        "description": "GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the\nrange (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.\nA service caller (`_is_service_caller`) gets the same 403 before Topaz is asked.\nGate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy\nrefusal; Topaz down is 503). At most 92 days (both ends counted) and 500 notices. LOUD, NOT\nPARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,\nextraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks\non is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`).",
+        "operationId": "ingest_export_batch_route_ingest_export_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "profile",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Export Batch Route",
+        "tags": [
+          "ingest-export"
+        ]
+      }
+    },
+    "/ingest/export/profiles": {
+      "get": {
+        "description": "GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:\n`[{name, format, granularity, label}]`. An invalid profile is logged at ERROR and left out.\nAny authenticated caller (a name and a label are not notice content).",
+        "operationId": "ingest_export_profiles_route_ingest_export_profiles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExportProfile"
+                  },
+                  "title": "Response 200 Ingest Export Profiles Route Ingest Export Profiles Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Export Profiles Route",
+        "tags": [
+          "ingest-export"
+        ]
+      }
+    },
     "/ingest/mine": {
       "get": {
         "description": "GET /ingest/mine -- the caller's own drops (dropper or on_behalf_of), paged, newest first,\neach in the same summary shape as GET /ingest/<id>/status. Architect ruling 2026-10-16: the\nrail reads it on load and merges with live entries; browser storage is a cache, never the\nrecord.\n\nEXISTENCE-ORACLE SAFE BY SCOPING: `ingest_status.list_mine` carries `get_status_for`'s own\nscoping (`submitted_by = caller OR on_behalf_of = caller`), so the route reveals only the\ncaller's own rows and nothing about anyone else's. Event rows are never listed; drops are\ndocuments. A caller with no drops gets 200 `{\"items\": [], \"next\": null}`, never a 404.\n\nPAGING is a keyset cursor, not OFFSET: `before` is the opaque string `{created_at}|{id}` that\na previous page returned as `next` (None on the last page). A malformed cursor is 422\n`invalid_cursor`.",
@@ -6763,6 +6917,68 @@
           "ingest-v1"
         ],
         "x-stability": "preview"
+      }
+    },
+    "/ingest/{ingest_id}/export": {
+      "get": {
+        "description": "GET /ingest/<id>/export?profile=<name> -- one PROMOTED notice rendered through a profile\n(`policy/exports/`, 7f's batch-column-map vocabulary). A service caller never reaches the\ncapability: the original 403 is re-raised and Topaz is not asked. Gate: `_ingest_review_access` (the\ndropper, or a holder of the open task), and a caller it would 403 is admitted when they hold\nthe `ingest:exportBatch` capability (reason `export_capability`); a Topaz failure while that\nis consulted is 503, a False re-raises the ORIGINAL 403. 422 `export_profile_unknown` /\n`export_profile_invalid`; 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the\nexport serves review.json's values, so a promotion carrying steward row or header edits would\nexport the uncorrected ones; refused until a later slice applies corrections); 503\n`decision_ledger_unreachable`; 422 `export_blocked` (naming notice, part, column).",
+        "operationId": "ingest_export_route_ingest__ingest_id__export_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ingest_id",
+            "required": true,
+            "schema": {
+              "title": "Ingest Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "profile",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Export Route",
+        "tags": [
+          "ingest-export"
+        ]
       }
     },
     "/ingest/{ingest_id}/extraction": {

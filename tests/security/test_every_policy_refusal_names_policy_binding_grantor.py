@@ -300,6 +300,8 @@ NOT_POLICY: dict[str, str] = {
     'agent_fleet/restate_analyst/workflow_runner.py::keep_revision::case {} does not hold this episode (open: {}); a': CONFLICT,
     'agent_fleet/restate_analyst/workflow_runner.py::keep_revision::case {} holds this episode with no revision 1 to': CONFLICT,
     "agent_fleet/restate_analyst/workflow_runner.py::revise::case {}'s trigger declares no episode, so a revi": CONFLICT,
+    'src/iagent/gateway.py::_export_notice_extraction::export_corrections_not_applied | the promotion carries steward co': NAMED,
+    'src/iagent/gateway.py::_export_notice_extraction::ingest_not_promoted | only a promoted notice can be ex': CONFLICT,
     'src/iagent/gateway.py::_export_package_from_template::recipient_scope_disagrees_with_canvas_audience | the recipient_scope you sent dis': NAMED,
     'src/iagent/gateway.py::_file_or_find_document_promotion_task::leaf_moves_audience | the new kind {} routes to {}, no': CONFLICT,
     'src/iagent/gateway.py::_stale_extraction::stale_extraction | <msg>': NAMED,

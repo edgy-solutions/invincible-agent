@@ -99,6 +99,12 @@ _RECORD_FOR_SQL = """
 SELECT record FROM document_decision_record WHERE ingest_id = %s
 """
 
+_PROMOTED_BETWEEN_SQL = """
+SELECT ingest_id, acted_at FROM document_decision_record
+WHERE decision = %s AND acted_at >= %s AND acted_at < %s
+ORDER BY acted_at, ingest_id LIMIT %s
+"""
+
 
 class DecisionLedgerConfigError(RuntimeError):
     """The ledger was asked to operate without its DSN. Same posture as HumanTaskConfigError."""
@@ -173,6 +179,19 @@ class PgDecisionLedger:
         if isinstance(rec, str):
             rec = json.loads(rec)
         return rec if isinstance(rec, dict) else None
+
+
+    def promoted_between(self, start_ms: int, end_ms: int, limit: int) -> list:
+        """`[(ingest_id, acted_at_ms)]` of the promotions with `start_ms <= acted_at < end_ms`
+        (epoch ms, as `append` writes them), oldest first, at most `limit`. `decision` is
+        `promotion.PROMOTED`, the value `append` stores from `record["outcome"]`. A READ: a store
+        fault RAISES (the caller turns it into a 503)."""
+        from .promotion import PROMOTED
+
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_PROMOTED_BETWEEN_SQL, (PROMOTED, start_ms, end_ms, limit))
+                return [(r[0], int(r[1])) for r in cur.fetchall()]
 
 
 class S3Quarantine:
