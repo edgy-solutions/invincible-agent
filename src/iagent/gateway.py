@@ -2780,9 +2780,9 @@ class ExportOfferRequest(_BaseModel):
 #: The recipient-level code for a board whose answers this recipient's export takes none of.
 _OFFER_TAKES_NONE = "takes_none_of_these_answers"
 _OFFER_TAKES_NONE_REASON = "none of these answers is a kind this recipient's export takes"
-#: Row code for a cost answer on a board where the engine resolved every answer yet none is
-#: about a lot, so there is nothing to disclose; the reason is the engine's own message.
-_OFFER_NO_LOT_COVERED = "no_lot_covered"
+#: The export's own code (a section that failed naming only some answers) for a cost answer the
+#: engine did not name: no answer is about a lot, or an id twice. The reason is the engine's message.
+_OFFER_UNNAMED = "not_in_model"
 
 
 def _offer_for_recipient(resolved: list[dict], scope: str) -> dict:
@@ -2839,7 +2839,7 @@ def _offer_for_recipient(resolved: list[dict], scope: str) -> dict:
             # is still refused, and still appears once.
             for a in cost_answers:
                 if a["id"] not in rows:
-                    _row(a["id"], _OFFER_NO_LOT_COVERED, str(exc))
+                    _row(a["id"], _OFFER_UNNAMED, str(exc))
         else:
             exports = list(composed["answers"])
             for item in composed["refused"]:
@@ -3146,6 +3146,19 @@ async def export_package(
                     **rest,
                 })
             documents.extend(_refused_entries(engine, refused_items, recipient_scope))
+            if section["status"] != "exists":
+                # A FAILED section that names only some answers (canvas.resolve's "no answer
+                # is about a lot" refusal) still owes the rest: an answer in no document is
+                # an answer the exporter never accounted for.
+                named = {i.get("answer_id") for i in refused_items}
+                rest_ids = [i for i in ids if i not in named]
+                if rest_ids:
+                    documents.append({
+                        "engine": engine, "answers": rest_ids, "export_id": None,
+                        "status": "failed", "recipient_scope": recipient_scope,
+                        "outcome": "not_in_model", "reason_code": "not_in_model",
+                        "reason": section.get("reason"),
+                    })
             continue
         doc = {"engine": engine, "answers": ids, **section}
         if doc["status"] == "failed":

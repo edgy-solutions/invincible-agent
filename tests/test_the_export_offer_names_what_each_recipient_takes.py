@@ -66,7 +66,13 @@ BOARDS = {
         _card("x1", PROGRAM_VERB), _card("x2", None), _card("x3", "mesh:costLotBreakdown"),
         _card("x4", "mesh:planSchedule"),
     ],
+    # canvas.resolve refuses it for NO LOT, naming only the no-verb answer
+    "lotless": [_card("l1", "mesh:costRateAssumptions"), _card("l2", None)],
+    # one answer sent twice: resolve raises "appears twice" with nothing named
+    "duplicate": [_card("d1", PROGRAM_VERB)],
 }
+#: The ids a board is SENT with, where that differs from its cards (a duplicate is one id).
+SENT = {"duplicate": ["d1", "d1"]}
 
 
 @pytest.fixture
@@ -231,7 +237,7 @@ def test_an_answer_the_engine_does_not_name_is_still_refused_once(offer):
     for rec in _by_scope(offer(cards, readers=_everyone_reads())).values():
         assert rec["offered"] is False and rec["exports"] == []
         assert [r["reason_code"] for r in rec["refused"]] == [
-            C.NOT_AN_EXPORTABLE_COST_VERB, "no_lot_covered"]
+            C.NOT_AN_EXPORTABLE_COST_VERB, "not_in_model"]
         _every_id_once(rec, cards)
 
 
@@ -307,8 +313,8 @@ def test_the_offer_agrees_with_the_real_export(offer, real_cost_engine, name):
     """THE JOIN. For each board and each recipient: what `POST /export/package` exported and
     refused (ids, reason_codes, prose) equals what the offer said it would."""
     cards = BOARDS[name]
-    ids = [c["id"] for c in cards]
-    offered = _by_scope(offer(cards, readers=_everyone_reads()))
+    ids = SENT.get(name) or [c["id"] for c in cards]
+    offered = _by_scope(offer(cards, ids=ids, readers=_everyone_reads()))
     assert sorted(offered) == SCOPES
     for scope in SCOPES:
         rec = offered[scope]
@@ -321,3 +327,23 @@ def test_the_offer_agrees_with_the_real_export(offer, real_cost_engine, name):
         assert refused == {x["answer_id"]: (x["reason_code"], x["reason"])
                            for x in rec["refused"]}, (scope, r.json())
         assert (r.json()["status"] != "failed") == rec["offered"], (scope, r.json())
+        # an id sent twice is ONE answer in the offer's accounting (rows are keyed by id)
+        assert set(exported) | set(refused) == set(ids), (scope, r.json())
+
+
+@pytest.mark.parametrize("name", ["lotless", "portfolio", "mixed", "partial_cost"])
+def test_every_board_answer_is_in_exactly_one_document(offer, real_cost_engine, name):
+    """Defends: the export accounts for every answer once (a duplicated id is the single-section shape, covered by the agreement arm),
+    and the refused count is the sum of the failed documents' answers."""
+    cards = BOARDS[name]
+    ids = SENT.get(name) or [c["id"] for c in cards]
+    offer(cards, ids=ids, readers=_everyone_reads())  # stands up the store
+    with TestClient(gateway.app) as client:
+        r = client.post("/export/package", json={
+            "answers": [{"artifact_id": i} for i in ids], "recipient_scope": A_SCOPE})
+    body = r.json()
+    assert r.status_code == 200 and "documents" in body, r.text
+    seen = [a for d in body["documents"] for a in d["answers"]]
+    assert sorted(seen) == sorted(ids), body
+    failed = sum(len(d["answers"]) for d in body["documents"] if d["status"] != "exists")
+    assert body["reason"] == f"{failed} of {len(ids)} answers refused", body
