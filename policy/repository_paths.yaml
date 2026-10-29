@@ -1,0 +1,117 @@
+# REPOSITORY PATHS -- who must approve a change to which path of a mesh-owned repository
+# (ADR-0062 section 5). engine-r (agent_fleet/repository_agent) is the only reader.
+#
+#   * LONGEST PREFIX WINS. A path takes the row with the longest matching prefix.
+#   * A PATH MATCHING NO ROW IS NOT GOVERNED. That is engine-r's check 6, and this file is the one
+#     place check 6 reads.
+#   * THE RAIL CANNOT WIDEN check 6. Every path key must start with one of ADR-0062 section 1's
+#     governed roots (policy/, docs/adr/, tests/fixtures/, sessions/); validate_policy refuses
+#     any other. Only the follow-on ADR can let engine-r merge application source.
+#   * IT APPLIES BY ROLL, NOT BY SYNC. engine-r reads its baked copy, so a change here governs the
+#     proposals that come after its roll, never the proposal that makes it.
+#   * SEVERAL TOUCHED ROWS MEANS ALL MUST BE SATISFIED. One approver counts toward each row whose
+#     audience they hold.
+#   * `review` NAMES A policy/task_grants.yaml AUDIENCE; its `can_act` holders approve. Audiences
+#     hold users only, so a service identity never approves. The one value that is not an
+#     audience is `owning_lane`, legal only on a `sessions/` path row, which then also names
+#     `unowned_review` (the audience used when the file has no owner). Whether the 0-approver
+#     exception applies is decided at runtime by engine-r, never by this file.
+#   * validate_policy refuses a row whose audience has fewer DISTINCT users than `approvers`
+#     (groups expanded one level), so a row can never be unsatisfiable by configuration.
+#
+# Grantor row: policy/grantors/repository_paths.yaml.
+
+repository_paths:
+  invincible-agent:
+    paths:
+      policy/:
+        review: repo_review:POLICY
+        approvers: 2
+        granted_by: cnogradi
+        reason: >-
+          ADR-0062 section 5: the policy rails, overlays included, take two approvers.
+          policy/asset_grants.yaml deliberately has NO row of its own and falls under this one
+          (see the note below).
+
+      # DELIBERATELY NO `policy/asset_grants.yaml` ROW. Section 5's table gives it the audience
+      # access_grant:<DOMAIN> (taken per changed row) at 2 approvers. But the sandbox's
+      # access_grant:DATA_ENGINEERING audience has ONE user, so rule 8 would refuse the row.
+      # Until the architect rules (a second member, or a different count), asset_grants.yaml
+      # falls under the `policy/` row above (repo_review:POLICY, 2).
+
+      policy/program_members.yaml:
+        review: repo_review:POLICY
+        approvers: 1
+        granted_by: cnogradi
+        reason: >-
+          ADR-0062 section 5: one Grant, ruled 2026-10-28 (architect B4/B5). The only policy/
+          row below two approvers; a new member needs a ruling.
+
+      policy/groups.yaml:
+        review: repo_review:POLICY
+        approvers: 2
+        granted_by: cnogradi
+        reason: >-
+          ADR-0062 section 5: the family has no audience of its own yet, so repo_review:POLICY
+          decides, at two.
+
+      policy/repository_paths.yaml:
+        review: repo_review:POLICY
+        approvers: 2
+        granted_by: cnogradi
+        reason: >-
+          ADR-0062 section 5: this rail says who approves, so changing it takes two.
+
+      policy/task_grants.yaml:
+        review: repo_review:POLICY
+        approvers: 2
+        granted_by: cnogradi
+        reason: >-
+          ADR-0062 section 5: the audiences decide who approves everything, so two.
+
+      policy/grantors/:
+        review: repo_review:POLICY
+        approvers: 2
+        granted_by: cnogradi
+        reason: >-
+          ADR-0062 section 5: the grantor rows say who can grant, so two.
+
+      policy/leak_terms.yaml:
+        review: repo_review:POLICY
+        approvers: 2
+        granted_by: cnogradi
+        reason: >-
+          ADR-0062 section 5: two approvers. Exempt from engine-r's check 4, ruled 2026-10-28;
+          the exemption lives in engine-r, not in this file.
+
+      docs/adr/:
+        review: repo_review:ADR
+        approvers: 1
+        granted_by: cnogradi
+        reason: >-
+          ADR-0062 section 5: ADRs take one approver from repo_review:ADR.
+
+      tests/fixtures/:
+        review: repo_review:FIXTURES
+        approvers: 1
+        granted_by: cnogradi
+        reason: >-
+          ADR-0062 section 5: fixtures take one approver from repo_review:FIXTURES.
+
+      sessions/:
+        review: owning_lane
+        unowned_review: repo_review:SESSIONS
+        approvers: 1
+        granted_by: cnogradi
+        reason: >-
+          ADR-0062 section 5: a packet is reviewed by its owning lane, or by repo_review:SESSIONS
+          when it has no owner. The 0-approver exception is decided at runtime by engine-r,
+          never by this file.
+
+    tags:
+      invincible-agent-*:
+        review: repo_release:invincible-agent
+        approvers: 2
+        granted_by: cnogradi
+        reason: >-
+          ADR-0062 section 5: a release tag takes two approvers from repo_release:invincible-agent.

@@ -1,5 +1,20 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.74 — not yet cut
+
+Entries merged after the 0.4.73 cut (`e2c03799`). The releaser dates this heading at the cut.
+
+**Policy changes (ADR-0062 section 5: the repository-paths rail)**
+
+- **Five new `task_grants.yaml` audiences**: `repo_review:POLICY`, `repo_review:ADR`,
+  `repo_review:FIXTURES`, `repo_review:SESSIONS` and `repo_release:invincible-agent`, each
+  `grant_to` alice and bob.
+- **No new group, so no `topaz_sync` precondition**: alice and bob already exist in `users.yaml`.
+  The audiences ride the next planned fleet release.
+- **`policy/repository_paths.yaml` and `policy/grantors/repository_paths.yaml` are new**, consumed
+  by engine-r only (it reads its baked copy; there is no sync). `validate_policy` checks the rail
+  when present.
+
 ## 0.4.73 — 2026-10-30
 
 Cut from master `e2c03799`. It carries every master merge since 0.4.72 (`77fb1d73`): #148, #151,
