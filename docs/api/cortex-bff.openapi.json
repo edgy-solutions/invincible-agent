@@ -3973,6 +3973,11 @@
           "run_id": {
             "title": "Run Id",
             "type": "string"
+          },
+          "slot": {
+            "default": 0,
+            "title": "Slot",
+            "type": "integer"
           }
         },
         "required": [

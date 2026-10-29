@@ -46,6 +46,8 @@ forgeable-actor shape the plan item prohibits.
 """
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import os
 import sys
@@ -89,6 +91,7 @@ __all__ = [
     "RedemptionResult",
     "VAULT",
     "vault_ttl_seconds",
+    "vault_slots",
 ]
 
 
@@ -110,6 +113,48 @@ def vault_ttl_seconds() -> int:
         return max(1, int(os.getenv("IDENTITY_VAULT_TTL_SECONDS", "") or _DEFAULT_TTL_SECONDS))
     except ValueError:
         return _DEFAULT_TTL_SECONDS
+
+
+# ONE REFERENCE PER FAN-OUT SLOT. Every subtask is its own process and the reference is
+# single-use, so a plan with two caller-identity subtasks would read its second redemption as
+# a REPLAY. The BFF stashes `slots` entries (keys `run_id#0 .. run_id#(slots-1)`); each
+# subtask redeems the one named by its Dagster mapping key. See
+# docs/plans/user-token-reaches-specialists.md, Phase 1.
+_DEFAULT_SLOTS = 8
+_MAX_SLOTS = 64
+
+# A slot never outlives its token's own `exp`, less this skew.
+_EXP_SKEW_SECONDS = 30.0
+
+
+def vault_slots() -> int:
+    """IDENTITY_VAULT_SLOTS, default 8, clamped to [1, 64]."""
+    try:
+        n = int(os.getenv("IDENTITY_VAULT_SLOTS", "") or _DEFAULT_SLOTS)
+    except ValueError:
+        n = _DEFAULT_SLOTS
+    return max(1, min(_MAX_SLOTS, n))
+
+
+def _expiry_of(token: str) -> Optional[float]:
+    """The ``exp`` claim of a JWT, read WITHOUT verifying it (mirrors
+    ``agent_fleet.utils.service_identity._expiry_of``; mirrored, not imported, because
+    ``src/iagent`` does not depend on ``agent_fleet``). The expiry only bounds how long the
+    vault holds the token; it is never trusted as identity. None if unreadable."""
+    try:
+        payload = token.split(".")[1]
+        exp = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["exp"]
+        return float(exp) if isinstance(exp, (int, float)) else None
+    except Exception:  # noqa: BLE001 -- an unreadable token simply has no exp bound
+        return None
+
+
+def _key(run_id: str, slot: int) -> str:
+    return f"{run_id}#{slot}"
+
+
+def _run_of(key: str) -> str:
+    return key.rsplit("#", 1)[0]
 
 
 class RedemptionOutcome:
@@ -194,7 +239,7 @@ class IdentityVault:
         self._tombstones: Dict[str, _Tombstone] = {}
 
     # ── writing ────────────────────────────────────────────────────────────────────────
-    def stash(self, run_id: str, token: str, subject: str) -> None:
+    def stash(self, run_id: str, token: str, subject: str, slots: int = 1) -> None:
         """Hold the caller's own token against the run that will need it.
 
         Called by the BFF the instant ``launchRun`` returns a run id — while it still holds
@@ -203,21 +248,37 @@ class IdentityVault:
         """
         if not run_id or not token:
             raise ValueError("identity vault: run_id and token are both required")
+        if slots < 1:
+            raise ValueError("identity vault: slots must be >= 1")
         now = self._clock()
+        life = float(self._ttl)
+        exp = _expiry_of(token)
+        if exp is not None:
+            # `exp` is wall-clock; the vault clock is injectable/monotonic, so convert to a
+            # remaining duration. A slot never outlives its token and is never extended.
+            life = min(life, exp - time.time() - _EXP_SKEW_SECONDS)
+            if life <= 0:
+                logger.warning(
+                    "identity_vault: not stashing run_id=%s outcome=token_already_expired", run_id
+                )
+                return
         with self._lock:
             self._evict_locked(now)
-            self._entries[run_id] = _Entry(
-                token=token,
-                subject=subject,
-                stashed_at=now,
-                expires_at=now + self._ttl,
-            )
+            for k in range(slots):
+                self._entries[_key(run_id, k)] = _Entry(
+                    token=token,
+                    subject=subject,
+                    stashed_at=now,
+                    expires_at=now + life,
+                )
         # No token, no subject prefix games — the run id and the fact, nothing that could
         # reconstruct a credential from logs.
-        logger.info("identity_vault: stashed reference run_id=%s ttl=%ss", run_id, self._ttl)
+        logger.info("identity_vault: stashed reference run_id=%s ttl=%ss slots=%d",
+                    run_id, self._ttl, slots)
 
     # ── reading, exactly once ──────────────────────────────────────────────────────────
-    def redeem(self, run_id: str, claimed_launcher: Optional[str] = None) -> RedemptionResult:
+    def redeem(self, run_id: str, claimed_launcher: Optional[str] = None,
+               slot: int = 0) -> RedemptionResult:
         """ATOMIC redeem-and-delete. Succeeds at most once per stash, ever.
 
         ``claimed_launcher`` is INVARIANT 4: the launcher the redeeming run has recorded in
@@ -227,12 +288,13 @@ class IdentityVault:
         credential redeemable after one would let an attacker retry until they guessed.
         """
         now = self._clock()
+        key = _key(run_id, slot)
         with self._lock:
             self._evict_locked(now)
 
-            entry = self._entries.get(run_id)
+            entry = self._entries.get(key)
             if entry is None:
-                tomb = self._tombstones.get(run_id)
+                tomb = self._tombstones.get(key)
                 if tomb is not None:
                     # INVARIANT 2's loud half. Two redemptions of one reference is the tell
                     # of a compromised supervisor identity. It must never succeed quietly
@@ -254,17 +316,20 @@ class IdentityVault:
             # branch is reachable only if the clock moved between the two reads. Kept
             # because an expired credential must never be handed out on a timing edge.
             if now >= entry.expires_at:
-                del self._entries[run_id]
+                del self._entries[key]
                 logger.warning("identity_vault: reference for run_id=%s expired", run_id)
                 return RedemptionResult(RedemptionOutcome.EXPIRED)
 
             if claimed_launcher and claimed_launcher != entry.subject:
-                del self._entries[run_id]
-                self._tombstones[run_id] = _Tombstone(
-                    subject=entry.subject,
-                    redeemed_at=now,
-                    expires_at=now + self._tombstone_ttl,
-                )
+                # A mismatch is an anomaly of the RUN, not of one slot: consume every
+                # remaining slot of the run, so the attacker cannot try the next one.
+                for k in [k for k in self._entries if _run_of(k) == run_id]:
+                    del self._entries[k]
+                    self._tombstones[k] = _Tombstone(
+                        subject=entry.subject,
+                        redeemed_at=now,
+                        expires_at=now + self._tombstone_ttl,
+                    )
                 logger.error(
                     "identity_vault: LAUNCHER MISMATCH for run_id=%s — the run records a "
                     "different launcher than the token that was stashed. Refusing and "
@@ -274,8 +339,8 @@ class IdentityVault:
 
             # THE ATOMIC STEP: the entry leaves the map in the same critical section that
             # produced the token. There is no window in which a second caller can observe it.
-            del self._entries[run_id]
-            self._tombstones[run_id] = _Tombstone(
+            del self._entries[key]
+            self._tombstones[key] = _Tombstone(
                 subject=entry.subject,
                 redeemed_at=now,
                 expires_at=now + self._tombstone_ttl,
@@ -292,7 +357,7 @@ class IdentityVault:
             for k in [k for k, e in self._entries.items() if now >= e.expires_at]:
                 del self._entries[k]
                 logger.info("identity_vault: reference for run_id=%s evicted unredeemed "
-                            "(the safe default)", k)
+                            "(the safe default)", _run_of(k))
         if self._tombstones:
             for k in [k for k, t in self._tombstones.items() if now >= t.expires_at]:
                 del self._tombstones[k]

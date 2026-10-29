@@ -66,6 +66,7 @@ from .identity_vault import (
     _ensure_the_audit_line_actually_ARRIVES,
     VAULT,
     RedemptionOutcome,
+    vault_slots,
     vault_ttl_seconds,
     logger as _vault_audit_log,   # the ONE logger whose level the vault owns
 )
@@ -4409,6 +4410,10 @@ class RedeemIdentityBody(BaseModel):
     # supervisor image degrades to "no cross-check" rather than to a hard failure — but a
     # supervisor that sends it gets the stronger guarantee.
     claimed_launcher: Optional[str] = None
+    # Which fan-out slot of the run this subtask redeems (its Dagster mapping key,
+    # `task_<n>`). One single-use reference per slot, so two caller-identity subtasks in one
+    # plan do not read as a replay. Bounded to [0, IDENTITY_VAULT_SLOTS) below.
+    slot: int = 0
 
 
 @app.post("/internal/identity/redeem")
@@ -4446,15 +4451,30 @@ async def redeem_caller_identity(
             },
         )
 
+    _slots = vault_slots()
+    if body.slot < 0 or body.slot >= _slots:
+        _vault_audit_log.error(
+            "identity_vault: REFUSED redemption for run_id=%s slot=%s — outside [0, %s)",
+            body.run_id, body.slot, _slots,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "slot_out_of_range",
+                "run_id": body.run_id,
+                "message": f"slot must be in [0, {_slots}).",
+            },
+        )
+
     # INVARIANTS 2, 3, 4 are all enforced inside this one call, atomically.
-    result = VAULT.redeem(body.run_id, claimed_launcher=body.claimed_launcher)
+    result = VAULT.redeem(body.run_id, claimed_launcher=body.claimed_launcher, slot=body.slot)
 
     # INVARIANT 6 — one line per redemption: run_id, subject, timestamp, outcome. The
     # timestamp is the log record's own. The vault's whole legitimacy is that the token's
     # journey is VISIBLE.
     _vault_audit_log.info(
-        "identity_vault: redemption run_id=%s caller=%s subject=%s outcome=%s",
-        body.run_id, caller, result.subject or "-", result.outcome,
+        "identity_vault: redemption run_id=%s slot=%s caller=%s subject=%s outcome=%s",
+        body.run_id, body.slot, caller, result.subject or "-", result.outcome,
     )
 
     if result.ok:
@@ -8669,7 +8689,7 @@ async def _generate_dagster_stream_inner(
     # honest place for it to fail, not here where the cause would be guessed at.
     if caller_token:
         try:
-            VAULT.stash(run_id, caller_token, subject=user_email)
+            VAULT.stash(run_id, caller_token, subject=user_email, slots=vault_slots())
         except Exception as _vault_exc:  # noqa: BLE001
             logger.warning(
                 "identity_vault: could not stash the caller reference for run %s (%s: %s). "

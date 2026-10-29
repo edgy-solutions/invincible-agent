@@ -18,6 +18,8 @@ definition of "valid", never a parallel re-implementation):
   - ontology_compartments.yaml    → ontology_compartment_sync.load_compartments
   - capability_grants.yaml        → capability_grant_sync.load_capabilities
   - program_members.yaml          → program_member_sync.load_programs
+  - capability_grants.yaml        → also: a `grant_to_groups` group exists and has members, and
+    a `can_drop:<K>` key names a KNOWN content kind (see known_content_kinds)
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
     no sync of its own — can_consume is evaluated in-process)
   - every DATA file must EXIST — explicit-empty (`grants: []`) is a
@@ -50,6 +52,7 @@ Exit: 0 valid · 2 any error (all errors listed, none silently dropped).
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -78,6 +81,40 @@ DATA_FILES = (
     "domain_consumption.yaml",
     "program_members.yaml",
 )
+
+
+def known_content_kinds() -> tuple[set[str], list[str]]:
+    """The content kinds a `can_drop:<K>` capability key may name, and what they were composed from.
+
+    Read straight from the `kind:` field of every `*.yaml` row in the SEED directory
+    (policy/content_kinds), each directory in CONTENT_KIND_OVERLAY_DIRS (the deployment's, as
+    src/iagent/content_kinds.py reads it), and the chart's default overlay
+    (policy/overlays/openddil-lab/content_kinds), because this gate runs where src/iagent and
+    the SDK are not importable (a private policy repo's CI). Returns (kinds, sources) where each
+    source reads `<dir> (<n> kind(s))` or `<dir> (absent)`, so a refusal can say what it knew."""
+    root = Path(__file__).resolve().parents[2]
+    dirs = [root / "policy" / "content_kinds"]
+    raw = (os.getenv("CONTENT_KIND_OVERLAY_DIRS") or "").strip()
+    dirs += [Path(p.strip()) for p in raw.split(os.pathsep) if p.strip()]
+    dirs.append(root / "policy" / "overlays" / "openddil-lab" / "content_kinds")
+    kinds: set[str] = set()
+    sources: list[str] = []
+    for d in dirs:
+        if not d.is_dir():
+            sources.append(f"{d.as_posix()} (absent)")
+            continue
+        found = 0
+        for f in sorted(d.glob("*.yaml")):
+            try:
+                doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except (OSError, yaml.YAMLError):
+                continue
+            k = doc.get("kind") if isinstance(doc, dict) else None
+            if isinstance(k, str) and k.strip():
+                kinds.add(k.strip())
+                found += 1
+        sources.append(f"{d.as_posix()} ({found} kind(s))")
+    return kinds, sources
 
 
 def _read_yaml(path: Path, errors: list[str]) -> dict:
@@ -174,9 +211,13 @@ def unknown_user_subjects(file_label: str, pairs, known_users: set[str]) -> list
     return out
 
 
-def unusable_group_audiences(audiences, groups: dict, users: list) -> list[str]:
+def unusable_group_audiences(audiences, groups: dict, users: list, *,
+                             file_label: str = "task_grants.yaml", noun: str = "audience",
+                             nobody: str = "the task would route to NOBODY") -> list[str]:
     """`grant_to_groups` gate. A group not in groups.yaml, or with zero members in users.yaml,
-    routes the task to NOBODY (the phantom-user failure by another door). PURE."""
+    routes the task to NOBODY (the phantom-user failure by another door). PURE. The keyword
+    arguments only relabel the message for another file that carries `key` + `grant_to_groups`
+    rows (capability_grants.yaml); the defaults are task_grants.yaml's wording, unchanged."""
     members: dict[str, int] = {}
     for u in users:
         if isinstance(u, dict):
@@ -186,11 +227,11 @@ def unusable_group_audiences(audiences, groups: dict, users: list) -> list[str]:
     for a in audiences:
         for g in a.grant_to_groups:
             if g not in (groups or {}):
-                out.append(f"task_grants.yaml: audience {a.key!r} grants group {g!r}, which is "
+                out.append(f"{file_label}: {noun} {a.key!r} grants group {g!r}, which is "
                            f"NOT a group in groups.yaml")
             elif not members.get(g):
-                out.append(f"task_grants.yaml: audience {a.key!r} grants group {g!r}, which has "
-                           f"ZERO members in users.yaml - the task would route to NOBODY")
+                out.append(f"{file_label}: {noun} {a.key!r} grants group {g!r}, which has "
+                           f"ZERO members in users.yaml - {nobody}")
     return out
 
 
@@ -330,6 +371,18 @@ def validate(
     errors.extend(f"program_members.yaml: {e}" for e in program_errors)
     print(f"  program_members.yaml: {len(programs)} program(s)")
 
+    # `can_drop:<K>` (2026-10-28 ruling): the key gates drops of content kind K by the capability
+    # OBJECT's existence, so a misspelt kind (`can_drop:pnc`) would gate a kind nobody drops and
+    # leave `pcn` open, silently. REFUSE it, naming what the known set was composed from.
+    _kinds, _sources = known_content_kinds()
+    for c in caps:
+        if c.key.startswith("can_drop:") and c.key[len("can_drop:"):] not in _kinds:
+            errors.append(
+                f"capability_grants.yaml: {c.key!r} names {c.key[len('can_drop:'):]!r}, which is "
+                f"NOT a known content kind -- a misspelt key gates nothing and leaves the real "
+                f"kind open. Known kinds ({len(_kinds)}) were composed from the `kind:` field "
+                f"of: " + "; ".join(_sources))
+
     # ADMISSION POSTURE (ADR-0034). Validated through the SAME parser the runtime loads with, so
     # there is ONE definition of a well-formed table and this gate cannot drift from the loader.
     # Added when the table acquired a production reader (phase 1.3) — before that it was a git
@@ -403,6 +456,10 @@ def validate(
     # grant_to_groups: the group must exist and have members (2026-10-10 ruling).
     errors.extend(unusable_group_audiences(
         audiences, groups_raw.get("groups") or {}, users_raw.get("users") or []))
+    errors.extend(unusable_group_audiences(
+        caps, groups_raw.get("groups") or {}, users_raw.get("users") or [],
+        file_label="capability_grants.yaml", noun="capability",
+        nobody="nobody could invoke the capability"))
 
     # ── NO SERVICE IDENTITY AS A DISCLOSURE RECIPIENT ───────────────────────────────────────
     #

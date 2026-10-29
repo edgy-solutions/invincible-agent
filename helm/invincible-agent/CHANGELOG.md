@@ -1,5 +1,22 @@
 # invincible-agent helm chart — changelog
 
+## Unreleased
+
+**Policy changes (2026-10-28 ruling: pcn and pdn droppable by the alert-processors group only)**
+
+- **`capability_grant_sync` learns `grant_to_groups`** and prunes orphan `can_drop:` objects. A
+  group is written as `group:<G>#member` on `invoker`; the sync never creates the group and exits 5,
+  before any write, when it is absent from live Topaz. With prune on, it deletes live `capability`
+  objects named `can_drop:*` that no row names (never any other capability object).
+- **Two `can_drop:` rows** in `policy/capability_grants.yaml`: `can_drop:pcn` and `can_drop:pdn`,
+  both `grant_to_groups: [alert-processors]`. A kind is gated iff `capability:can_drop:<kind>`
+  exists, so deleting a row reopens the kind to every caller.
+- **Nothing gates a drop until Lane 1's door lands.** These rows are inert data until it does.
+- **The sync must also run in the task-grant-sync hook Job** (Lane 1's change); this entry does not
+  wire it.
+- **Before that roll, a human `topaz_sync` must create `group:alert-processors`** (new group in
+  `policy/groups.yaml`, alice in `policy/users.yaml`), or the capability leg exits 5.
+
 ## 0.4.71 — 2026-10-28
 
 Cut from master `4a5ff6b6` (architect, 2026-10-28), so that the work cluster installs a version

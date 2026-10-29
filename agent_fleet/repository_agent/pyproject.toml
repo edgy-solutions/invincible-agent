@@ -1,0 +1,13 @@
+[project]
+name = "repository-agent"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # engine-r core (ADR-0062 section 2): an in-process repository-of-record library.
+    # libgit2 through pygit2 -- the ADR forbids a git binary in the path.
+    "pygit2",
+    # ed25519 + the ssh-signature format (sshsig.py)
+    "cryptography",
+    # the repository_paths rail
+    "pyyaml",
+]
