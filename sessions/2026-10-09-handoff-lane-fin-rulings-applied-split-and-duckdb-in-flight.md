@@ -19,6 +19,33 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-28, later: #135 merged; the export offer is #137; item (2) is next after #136. Read this first
+
+- **Merged:** #130 and #135. Origin/master holds #135 as `69c98538`. **#136** (CDRL) is next in Chris's
+  confirmed order (#130 → #135 → #136).
+- **Chris confirmed:**
+  - **The P0 sentence** was `make me a finance canvas`, then the program pick.
+  - **The sample type** `fin:ToCompletePerformanceIndexSeries` stays in the finance ontology file.
+  - **Re-prime after the roll** is Lane 1's, done with the 0.4.72 roll.
+- **The exporter directive (architect, 10-28).** A Portfolio canvas was exported to
+  NOTIONAL-CUSTOMER-ALPHA and refused 5/5 ("resolved no verb, not_in_model").
+  - **(1) is #137** (`fin/export-offer`, `e9aa7dfe`). It adds `POST /export/package/recipients`,
+    which returns each recipient as offered or greyed, plus a row per refused answer. The decision
+    is made by the export's own functions, and an agreement arm checks it against the real
+    engine-cost. It also fixes the export dropping lotless answers from `documents[]`.
+    - The spec is `scratchpad/spec-export-offer.md` (session `91ad3195`).
+  - **(2) is next after #136:** the plan-answer export profile under `policy/exports`, which is
+    lane/01's machinery, with kinds declared per profile.
+  - **Packets placed (untracked) in the master tree's `sessions/`:**
+    - to cortex-ui: `2026-10-28-packet-to-cortex-ui-fin-the-export-picker-greys-before-export-and-a-refusal-is-a-row-per-answer.md`;
+    - to the architect: `2026-10-28-packet-to-architect-fin-export-offer-is-137-one-reading-to-confirm-and-a-seed-verb-finding.md`.
+  - **Open with the architect:**
+    - Confirm "covers" = takes at least one answer. A partial board stays offered.
+    - Who measures why seeded Portfolio answers carry no `verb_iri`? The direct-dispatch early
+      exits are the suspect.
+- **Master's gov ratchet is red** on 19 sites in `repo_core.py`, from lane/01's #133. lane/01 has
+  already been sent a packet. Not ours, so do not widen it.
+
 ## Update 2026-10-28: P0 fixed in #132; #117 never landed, so it is #130; measure is #135, CDRL in build. Read this first
 
 - **#117 is merged, but not into master.** #113 merged into master at 10-27 13:25Z. #117 merged
