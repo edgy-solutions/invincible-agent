@@ -3145,8 +3145,15 @@ async def export_package_artifact(
 # program visibility (its 403 is relayed here with `grantable_by` filled by `relay_refusal`), and
 # the bytes are fetched back through the engine's own /artifact route.
 
-_CDRL_XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-_CDRL_FILENAME_RE = re.compile(r"^fin-cdrl-[A-Za-z0-9_.-]+\.xlsx$")
+#: The closed map from a CDRL file's extension to its media type (mirrors the engine's
+#: `cdrl.MEDIA_TYPES`); the filename regex admits exactly its keys.
+_CDRL_MEDIA = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "csv": "text/csv; charset=utf-8",
+    "json": "application/json",
+}
+_CDRL_FILENAME_RE = re.compile(r"^fin-cdrl-[A-Za-z0-9_.-]+\.(" + "|".join(_CDRL_MEDIA) + r")$")
 
 
 def _engine_failure(label: str, rr) -> HTTPException:
@@ -3190,7 +3197,7 @@ async def export_cdrl(
     program_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    """One program's CDRL as an xlsx. `X-Cells-Sha256` is the hash of every cell the producer
+    """One program's CDRL in the profile's format (xlsx, docx, csv or json). `X-Cells-Sha256` is the hash of every cell the producer
     wrote (the reproducibility claim; the file's own bytes are not claimed reproducible).
 
     Refusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with
@@ -3244,7 +3251,7 @@ async def export_cdrl(
 
     return Response(
         content=fr.content,
-        media_type=_CDRL_XLSX_MEDIA,
+        media_type=_CDRL_MEDIA[filename.rpartition(".")[2]],
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Cells-Sha256": str(cells_sha256),

@@ -112,6 +112,7 @@ agent-fleet = [
     # never writes. Before this line the importorskip("duckdb") sites skipped in every lane venv.
     "duckdb==1.5.2",
     "openpyxl>=3.1.5",
+    "python-docx>=1.1.2",
     # engine-r core (ADR-0062 section 2): libgit2, in-process, no git binary.
     "pygit2",
 ]
