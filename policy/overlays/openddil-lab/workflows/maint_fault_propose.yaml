@@ -130,8 +130,8 @@ steps:
     role: maintainer
     chooses_from: outputs.maint_fault_propose.options
     approves: [replace_now, replace_after_resupply, defer_with_restriction, evacuate_for_depot]
-    # SAMPLE: four hours.
-    deadline_seconds: 14400
+    # SANDBOX: 72 hours (ruled 2026-10-28). An unanswered approval still escalates; silence never approves.
+    deadline_seconds: 259200
 
 observable_state:
   visible: [domain_stages, decide.status]
