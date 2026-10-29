@@ -92,10 +92,14 @@ first-slice PR, not by this ADR.
 **Storage.**
 
 - Bare repositories live on cluster storage, on a PVC `engine-r-repos` (20Gi, Neo4j's storage
-  class, on the node pool that holds the other stateful volumes; no new node).
+  class, on the node pool that holds the other stateful volumes; no new node). The volume is
+  **not pinned** to a node.
 - **Backup** is the mirror (§3) plus a nightly tar of the PVC to the object store.
 - The **signing key** is ed25519. It is generated in-cluster into the Secret `engine-r-signing`,
   and its public half is committed at `docs/keys/engine-r.pub` so that mirrors verify.
+- **Every key is generated in-cluster.** Its private half goes in a Secret and its public half in
+  a ConfigMap `<secret>-pub`, so the public half can be read without reading the Secret. This
+  covers the signing key and the mirror's deploy key (§7).
 - Access is in-process through libgit2 (pygit2). There is **no shell-out** to a `git` binary and
   **no forge** in the path.
 
@@ -182,6 +186,9 @@ carries the standard refusal envelope.
    - The terms come from `policy/leak_terms.yaml`. The committed seed holds the sandbox hostnames
      and the synthetic program names only.
    - A work deployment adds its own terms in an overlay that is never committed.
+   - Check 4 **exempts exactly one path, `policy/leak_terms.yaml`** (ruled 2026-10-28), because
+     an edit to it adds the terms themselves. An arm proves that a term in any other file is
+     still refused. Edits to the exempt file take two approvers (§5).
 5. **Every commit carries the three trailers** above. For repositories held in engine-r, this
    replaces R-058's lane trailer.
 6. **Only governed paths merge.** A proposal whose diff touches a path engine-r does not govern
@@ -317,6 +324,7 @@ does not.
 | `policy/program_members.yaml` | `repo_review:POLICY` (the family has no audience of its own yet) | **1**: one Grant (ruled 2026-10-28) |
 | `policy/groups.yaml` | `repo_review:POLICY` (the family has no audience of its own yet) | **2** |
 | `policy/repository_paths.yaml`, `policy/task_grants.yaml`, `policy/grantors/` | `repo_review:POLICY` | **2** |
+| `policy/leak_terms.yaml` | `repo_review:POLICY` | **2**; exempt from check 4 (§2, ruled 2026-10-28) |
 | workflow specs (§4) | §4 names the audience | **2**: they live under `policy/workflows/`, so they are `policy/` paths unless the architect carves them out |
 | `docs/adr/` | `repo_review:ADR` | 1 |
 | `tests/fixtures/` (no goldens directory exists at `93ea39af`) | `repo_review:FIXTURES` | 1 |
@@ -483,10 +491,20 @@ The mirror is `edgy-solutions/invincible-agent-mirror`, a private repository tha
 empty. engine-r pushes to it with a deploy key that has write access. The key's private half is in
 the Secret `engine-r-mirror`, and it is reported only as a length and a sha256 prefix.
 
-engine-r is its own Deployment, so rolling it never rolls the fleet.
+engine-r is its own Deployment, so rolling it never rolls the fleet. It has **its own chart and
+release** (ruled 2026-10-28). Two pieces of its registration live in the fleet: its Keycloak
+client (`templates/secrets.yaml`), and the `repo_review:*` and `repo_release:*` audiences in
+`policy/task_grants.yaml`. Those edits ride the **next planned fleet release** and never get a
+roll of their own. A new audience still goes merge, then the Topaz sync, then the roll.
 
 The slice's real policy change is an **access request** for one row of
-`policy/program_members.yaml` (one Grant), end to end:
+`policy/program_members.yaml` (one Grant). The names are synthetic (ruled 2026-10-28):
+
+- `repo_review:POLICY` holds **alice** and **bob**.
+- **bob** requests program **`NP-MERIDIAN`**, and **alice** grants it. The review audience
+  excludes the proposer (§5), so alice is the only possible grantor.
+
+End to end:
 
 1. **Propose.** A caller is refused. The refusal card's **Request access** action files a grant
    proposal to the path's `grantable_by`.
@@ -528,8 +546,10 @@ must show:
      engine-r".
 5. **The mirror is re-pointed.** A second mirror target is configured and receives the same refs,
    and nothing else changes. This is a sandbox stand-in for replacing a forge.
-6. **The engine readback.** After the pin-bump roll that the merge opened, an engine that reads
-   the merged policy from its baked copy serves a value equal to the merged file.
+6. **The engine readback.** The grant applies by sync and opens no roll (§6). So the slice adds
+   **one non-grant `policy/` change** through engine-r and rolls **the one engine that reads it**
+   (ruled 2026-10-28). After that roll, the engine serves a value equal to the merged file, read
+   from its baked copy. The roll touches only that engine, never the fleet.
 
 ### 8. Reserved: user repositories as a knowledge source
 
@@ -557,8 +577,8 @@ that fetch layer.** It is the subject of its own ADR later.
 
 ## Open questions (named, not decided here)
 
-The architect ruled on the draft's open questions and on four follow-ups on 2026-10-28. All the
-rulings are folded in above. These remain open:
+On 2026-10-28 the architect ruled on the draft's open questions, then on the four questions those
+rulings raised. All the rulings are folded in above. These remain open:
 
 - **ADR-0061 is not on master.** §4 depends on it landing.
 - **Cutover of the real repository** is its own decision, made after the slice has measured.
@@ -570,22 +590,22 @@ rulings are folded in above. These remain open:
   - the signing key (§2);
   - the mirror repository and its credential (§7);
   - one Grant: the slice's change is one `program_members.yaml` row, with one approver (§5, §7);
-  - check 4's term list (§2).
-- **Raised by those rulings (Lane 1, 2026-10-28):**
-  - **Check 4 reads a file that holds its own terms.** A proposal that edits
-    `policy/leak_terms.yaml` adds lines containing terms, so check 4 refuses it. Proposed:
-    check 4 exempts exactly that one path, and an arm proves a term in any other file is still
-    refused. Its edits still take `policy/`'s two approvers.
-  - **"Never touches the fleet" and registration.** engine-r's Keycloak client
-    (`templates/secrets.yaml`) and the `repo_review:*` / `repo_release:*` audiences in
-    `policy/task_grants.yaml` live in the fleet chart. A chart version bump rolls every pod.
-    Proposed: engine-r ships as its own chart and release, and those one-time fleet edits ride
-    the next planned fleet release rather than a roll of their own.
-  - **Measurement 6 needs a roll.** `program_members.yaml` applies by sync, not by roll (§6).
-    So the engine readback needs a second, non-grant `policy/` change and a roll of the one engine
-    that reads it.
-  - **`repo_review:POLICY` needs at least one member** for rule 8, and the slice needs a synthetic
-    requester, program and approver named.
+  - check 4's term list (§2);
+  - check 4's exemption for `policy/leak_terms.yaml`, with two approvers (§2, §5);
+  - engine-r's own chart and release, with its fleet registration riding the next planned fleet
+    release (§7);
+  - measurement 6: one non-grant `policy/` change and a roll of the one engine that reads it (§7);
+  - the slice's names: `repo_review:POLICY` holds alice and bob, and bob requests `NP-MERIDIAN`
+    while alice grants it (§7);
+  - keys are generated in-cluster, with their public halves in ConfigMaps, and the volume is not
+    pinned (§2).
+- **Raised by those rulings (Lane 1, 2026-10-28): the walk's program name and check 4's seed.**
+  - B6's seed holds "the synthetic program names", and `NP-MERIDIAN` is a synthetic program name.
+    If the seed lists it, check 4 refuses the slice's own grant: bob's proposal adds a
+    `program_members.yaml` line naming `NP-MERIDIAN`.
+  - Proposed: the seed's synthetic names are **decoys**, used only by check 4's refusal arm. A
+    name a grant may carry, `NP-MERIDIAN` included, is never in the seed. An arm proves bob's
+    proposal clears check 4.
 - **Where the second-approver join is decided.**
   - ADR-0027 Decision 4 makes "are all required approvals present" a Topaz evaluation, and
     rejects an engine that tracks partial state and decides completion.
