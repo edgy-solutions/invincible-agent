@@ -190,9 +190,11 @@ users:
   # validate_policy refuses a grant_to that is not in this file. It carries no `default`
   # persona/domain cell -- no persona is a supervisor's, and the architect ruled "the supervisor
   # grant, not a mechanic one" (2026-10-17). It holds the document_promotion:MAINTENANCE audience
-  # (task_grants.yaml) and, from 2026-10-17, maint-supervisors-edge-01: the OpenDDIL dry run is
-  # "atlantia chooses, liaison.coalition approves, alice releases", and approving is the
-  # maint_supervisor_review step. bob stays in that group as the fallback.
+  # (task_grants.yaml) and, from 2026-10-17, maint-supervisors-edge-01: in the OpenDDIL dry run
+  # atlantia chooses and liaison.coalition approves, and approving is the maint_supervisor_review
+  # step. The 10-17 script read "... alice releases"; the architect ruled 2026-10-28 (case
+  # 9062f943) that the supervisor's approval IS the release, so the dry run has two actors and no
+  # alice step. bob stays in that group as the fallback.
   #
   # From 2026-10-20 (architect directive item 1) it is also in maint-approvers-edge-01, the
   # maint_fault_approval:edge-01 audience: the dry run needs liaison to hold the fault-approval
@@ -225,7 +227,8 @@ users:
 
   # operator.borduria's fixed id in OpenDDIL's realm (2026-10-17 addendum: map all four brokered
   # users the way atlantia was). A mechanic, so the same one cell through openddil-maintainers. It
-  # holds no task audience; the dry run's chain is atlantia, liaison.coalition, alice.
+  # holds no task audience; the dry run's chain is atlantia, then liaison.coalition (two actors,
+  # ruled 2026-10-28).
   - id: 22222222-2222-4222-8222-222222222222
     display_name: Operator (OpenDDIL brokered principal operator.borduria - MAINTENANCE mechanic)
     groups:

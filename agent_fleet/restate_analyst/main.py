@@ -1902,6 +1902,92 @@ async def _race_deadline(ctx, promise, deadline_seconds: Optional[int]) -> "tupl
     return False, await promise.value()
 
 
+def _cr_flatten(request: Any) -> dict:
+    """The case's flattened trigger facts -- the base `chain` reads at the end of the definition."""
+    try:
+        import case_routing as _cr  # type: ignore[no-redef]
+    except ImportError:  # pragma: no cover
+        from agent_fleet.restate_analyst import case_routing as _cr
+    return _cr.flatten(request) if isinstance(request, dict) else {}
+
+
+def _kind_accepts(kind: Optional[str]) -> Optional[tuple]:
+    """The verbs a task kind accepts, from the SDK's declarations (seed, then every overlay's
+    ``task_kinds/``), or None when the kind is not loadable here. None means "could not tell", never
+    "accepts nothing": the renderer then trusts the step's own ``approves``."""
+    if not kind:
+        return None
+    try:
+        from iagent_mesh.task_kinds import compose  # noqa: PLC0415
+        seed = Path(__file__).resolve().parents[2] / "policy" / "task_kinds"
+        raw = (os.getenv("TASK_KIND_OVERLAY_DIRS") or "").strip()
+        overlays = ([p for p in (x.strip() for x in raw.split(os.pathsep)) if p] if raw
+                    else sorted(str(d) for d in (seed.parent / "overlays").glob("*/task_kinds")))
+        for k in compose(seed, overlays):
+            if str(getattr(k, "kind", "")) == kind:
+                return tuple(getattr(k, "accepts", None) or ())
+    except Exception:  # noqa: BLE001 -- unreadable declarations are "unknown", not "empty"
+        return None
+    return None
+
+
+def _choice_consequence_text(definition_id: str, step, facts: Optional[dict]) -> Optional[str]:
+    """What each approving choice leads to, DERIVED from the chaining table (never restated).
+
+    The routing rule (e.g. the supervisor rule) has one home, the table; a constant on the card
+    claiming "choosing one approves it" contradicts a table that routes a verb to a second approval.
+    A verb the table does not route is a declaration defect and is refused, not hidden."""
+    try:
+        import case_routing as _cr  # type: ignore[no-redef]
+        from workflow_definition import get_workflow_definition  # type: ignore[no-redef]
+    except ImportError:  # pragma: no cover -- import path differs by runtime
+        from agent_fleet.restate_analyst import case_routing as _cr
+        from agent_fleet.restate_analyst.workflow_definition import get_workflow_definition
+
+    verbs = list(step.approves or [])
+    accepts = _kind_accepts(getattr(step, "task_kind", None))
+    if accepts is not None:
+        verbs = [v for v in verbs if v in accepts]
+    if not verbs:
+        return None
+    rows = _cr.verb_consequences(definition_id, verbs, facts or {})
+    if not rows:
+        return None
+    unrouted = [r["verb"] for r in rows if not r["then"]]
+    if unrouted:
+        raise restate.TerminalError(
+            f"step {step.id}: approved verb(s) {unrouted} are routed by no row of the chaining table "
+            f"after {definition_id!r}; a card cannot say what they lead to", status_code=422)
+
+    def _name(did: str) -> str:
+        try:
+            return get_workflow_definition(did).name
+        except Exception:  # noqa: BLE001
+            return did
+
+    def _cond(when: dict) -> str:
+        return " and ".join(f"{k} is {str(v).lower() if isinstance(v, bool) else v}"
+                            for k, v in when.items()) or "otherwise"
+
+    groups: dict = {}
+    sentences: list = []
+    for r in rows:
+        if r["conditional"]:
+            legs = ", ".join(f"to {_name(leg['then'])} when {_cond(leg['when'])}" for leg in r["then"])
+            sentences.append((r["verb"], f"Choosing {r['verb']} leads {legs}."))
+        else:
+            groups.setdefault(r["then"][0], []).append(r["verb"])
+    out = [f"Choosing {' or '.join(vs)} leads to {_name(t)}." for t, vs in groups.items()]
+    out += [text for _, text in sentences]
+    return " ".join(out)
+
+
+def _compose_summary(bound: Optional[str], derived: Optional[str]) -> Optional[str]:
+    """The bound step summary and the derived consequence text, either alone if the other is empty."""
+    parts = [x for x in (bound, derived) if x]
+    return " ".join(parts) if parts else bound
+
+
 def _bind_placeholders(
     value: Optional[str], bindings: dict, *, where: str, strict: bool = False,
     context: Optional[dict] = None,
@@ -1959,7 +2045,7 @@ def _bind_placeholders(
 
 async def _run_grouped_human_await(
     ctx: WorkflowContext, workflow_id: str, step, promise_name: str,
-    request: dict, bindings: dict, user_jwt: str,
+    request: dict, bindings: dict, user_jwt: str, definition_id: Optional[str] = None,
 ) -> dict:
     """``completion.mode == "grouped"`` — one approval settles a SERVER-AUTHORED
     batch of N items. The sealed ``GroupedReview`` mechanics, lifted into the
@@ -2028,7 +2114,9 @@ async def _run_grouped_human_await(
         "disposition": "grouped_review",
         "title": _bind_placeholders(step.title, bindings, where=f"step {step.id} title")
         or f"Review {len(batch_items)} affected part(s) — notice {notice_id or notice_fingerprint}",
-        "summary": _bind_placeholders(step.summary, bindings, where=f"step {step.id} summary")
+        "summary": _compose_summary(
+            _bind_placeholders(step.summary, bindings, where=f"step {step.id} summary"),
+            _choice_consequence_text(definition_id, step, _cr_flatten(request)) if definition_id else None)
         or f"{len(batch_items)} affected part(s) need a disposition review",
         "mpn": "",
         "notice_fingerprint": notice_fingerprint,
@@ -2298,7 +2386,7 @@ async def _run_definition(
 
             if step.completion.mode == "grouped":
                 results.append(await _run_grouped_human_await(
-                    ctx, workflow_id, step, promise_name, request, bindings, user_jwt,
+                    ctx, workflow_id, step, promise_name, request, bindings, user_jwt, wf.id,
                 ))
                 continue
 
@@ -2315,8 +2403,10 @@ async def _run_definition(
                     step.audience, bindings, where=f"step {step.id} audience", strict=True, context=context),
                 "title": _bind_placeholders(
                     step.title, bindings, where=f"step {step.id} title", context=context),
-                "summary": _bind_placeholders(
-                    step.summary, bindings, where=f"step {step.id} summary", context=context),
+                "summary": _compose_summary(
+                    _bind_placeholders(
+                        step.summary, bindings, where=f"step {step.id} summary", context=context),
+                    _choice_consequence_text(wf.id, step, _cr_flatten(request))),
                 "subject_ref": _bind_placeholders(
                     step.subject_ref, bindings, where=f"step {step.id} subject_ref", context=context),
                 "requested_by": step.requested_by or identity["authz_id"],

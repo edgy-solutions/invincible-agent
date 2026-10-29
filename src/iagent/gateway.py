@@ -2588,6 +2588,14 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
     REFUSED, NEVER DROPPED (canvas.py's rule): an id that does not resolve raises 404 rather
     than being silently omitted from the canvas — an export quietly missing an answer nobody
     asked to drop would look complete while disclosing less than the caller intended.
+
+    THE VERB HAS TWO HOMES. `resolved_intent.verb_iri` is read first; answers written before
+    `e4154f91` (2026-09-04) carry the verb only in the routing record (`routing_inline`
+    -> `action.iri`), and `resolved_intent` holds the ExtractIntent output with no verb. The
+    routing record is read only when the intent has none: the two agreed on all 1,018 artifacts
+    carrying both (measured 2026-10-28). `UNKNOWN` there means the supervisor chose no verb, so
+    `no_verb` stays the true refusal for those. `subject_instance_id` is read from the intent
+    alone. An old or malformed routing record yields None, never an error.
     """
     resolved: list[dict] = []
     for artifact_id in artifact_ids:
@@ -2617,9 +2625,17 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
             v = str(v or "").strip()
             return None if not v or v == "UNKNOWN" else v
 
+        verb = _or_none(intent.get("verb_iri"))
+        if verb is None:
+            try:
+                _routing = json.loads(rec.get("routing_inline") or "null")
+                verb = _or_none(_routing["action"]["iri"])
+            except (ValueError, TypeError, KeyError):
+                verb = None
+
         resolved.append({
             "id": str(rec["id"]),
-            "verb_iri": _or_none(intent.get("verb_iri")),
+            "verb_iri": verb,
             "subject_instance_id": _or_none(intent.get("subject_instance_id")),
         })
     return resolved
@@ -2769,6 +2785,117 @@ async def export_package_recipients(current_user: User = Depends(get_current_use
         "recipients": [
             {"value": s, "label": s} for s in _export_recipients_for(current_user)
         ]
+    }
+
+class ExportOfferRequest(_BaseModel):
+    """`POST /export/package/recipients`'s body: the same answer items `ExportPackageRequest`
+    takes (`ExportAnswer`), and nothing else -- the offer names no recipient, it lists them."""
+    answers: list[ExportAnswer] = []
+
+
+#: The recipient-level code for a board whose answers this recipient's export takes none of.
+_OFFER_TAKES_NONE = "takes_none_of_these_answers"
+_OFFER_TAKES_NONE_REASON = "none of these answers is a kind this recipient's export takes"
+#: The export's own code (a section that failed naming only some answers) for a cost answer the
+#: engine did not name: no answer is about a lot, or an id twice. The reason is the engine's message.
+_OFFER_UNNAMED = "not_in_model"
+
+
+def _offer_for_recipient(resolved: list[dict], scope: str) -> dict:
+    """What ONE recipient's export would do with this board, decided by the export's own
+    functions and never by a parallel rule: `_partition_export_answers` splits the board,
+    engine-fin's answers are refused as `_fin_ad_hoc_refusal_section` refuses them, and
+    engine-cost's are decided by `canvas.resolve`, the call `measures.package_export` makes
+    first, with the same arguments. Every answer id lands exactly once in `exports` or
+    `refused`; `refused` is in board order.
+
+    The exception classes are the ones `canvas` itself bound (`canvas.Unentitled`), not a
+    second import of `entities`: the module has a flat-import fallback, and two module objects
+    would make two classes of one name so the `except` below would never match.
+    """
+    from agent_fleet.cost_agent import canvas as _canvas
+    from agent_fleet.cost_agent import seed as _cost_seed
+
+    parts = dict(_partition_export_answers(resolved))
+    cost_answers = parts.get("cost", [])
+    fin_ids = {a["id"] for a in parts.get("fin", [])}
+    kinds = {a["id"]: _canvas._verb_local(a.get("verb_iri")) for a in resolved}
+    board = list(dict.fromkeys(a["id"] for a in resolved))
+
+    rows: dict[str, dict] = {}
+
+    def _row(aid: str, code: str, reason: str) -> None:
+        rows[aid] = {"answer_id": aid, "kind": kinds[aid], "reason_code": code, "reason": reason}
+
+    fin_refusal = _fin_ad_hoc_refusal_section([], scope)
+    for aid in fin_ids:
+        _row(aid, fin_refusal["reason_code"], fin_refusal["reason"])
+
+    exports: list[str] = []
+    reason_code: Optional[str] = None
+    reason: Optional[str] = None
+    if not cost_answers:
+        reason_code, reason = _OFFER_TAKES_NONE, _OFFER_TAKES_NONE_REASON
+    else:
+        try:
+            composed = _canvas.resolve(
+                {"answers": cost_answers}, recipient_scope=scope,
+                entitled_lots=_cost_seed.lots_for_recipient(scope),
+            )
+        except _canvas.Unentitled:
+            reason_code, reason = "unentitled", _canvas.ENTITLEMENT_REFUSAL
+            for a in cost_answers:
+                _row(a["id"], reason_code, reason)
+        except _canvas.NotInModel as exc:
+            reason_code, reason = _OFFER_TAKES_NONE, _OFFER_TAKES_NONE_REASON
+            named = exc.refused if isinstance(exc.refused, list) and exc.refused else []
+            for item in named:
+                _row(item["answer_id"], item["reason_code"], item["reason"])
+            # An answer the engine did not name (every answer resolved, none is about a lot)
+            # is still refused, and still appears once.
+            for a in cost_answers:
+                if a["id"] not in rows:
+                    _row(a["id"], _OFFER_UNNAMED, str(exc))
+        else:
+            exports = list(composed["answers"])
+            for item in composed["refused"]:
+                _row(item["answer_id"], item["reason_code"], item["reason"])
+
+    return {
+        "offered": bool(exports) and reason_code is None,
+        "reason_code": reason_code,
+        "reason": reason,
+        "exports": exports,
+        "refused": [rows[aid] for aid in board if aid in rows],
+    }
+
+
+@app.post("/export/package/recipients")
+async def export_package_offer(
+    body: ExportOfferRequest, current_user: User = Depends(get_current_user),
+):
+    """The recipient picker for THIS board: for each recipient the caller may export to, which
+    of the board's answers that recipient's export takes and which it refuses, with the
+    reasons -- so a board no recipient takes is greyed before Export, not refused after it.
+
+    Recipients are exactly `_export_recipients_for(current_user)`, in that order: one the
+    caller may not export to is ABSENT, never greyed (ADR-0047 §5). A recipient is `offered`
+    iff its export would take at least one answer; a partial board stays offered (mixed-board
+    partial export is ruled, 2026-10-09/16) and `refused` names the answers that will not go.
+    Gates, as the export's: no answers is 400 `no_answers`; an id that does not resolve is
+    404 (503 when the store is down).
+    """
+    if not body.answers:
+        raise HTTPException(status_code=400, detail={"reason": "no_answers"})
+    resolved = _resolve_export_answers(
+        [a.artifact_id for a in body.answers], current_user.id
+    )
+    return {
+        "answers": len(body.answers),
+        "recipients": [
+            {"value": s, "label": s, **_offer_for_recipient(resolved, s)}
+            for s in _export_recipients_for(current_user)
+        ],
     }
 
 
@@ -3035,6 +3162,19 @@ async def export_package(
                     **rest,
                 })
             documents.extend(_refused_entries(engine, refused_items, recipient_scope))
+            if section["status"] != "exists":
+                # A FAILED section that names only some answers (canvas.resolve's "no answer
+                # is about a lot" refusal) still owes the rest: an answer in no document is
+                # an answer the exporter never accounted for.
+                named = {i.get("answer_id") for i in refused_items}
+                rest_ids = [i for i in ids if i not in named]
+                if rest_ids:
+                    documents.append({
+                        "engine": engine, "answers": rest_ids, "export_id": None,
+                        "status": "failed", "recipient_scope": recipient_scope,
+                        "outcome": "not_in_model", "reason_code": "not_in_model",
+                        "reason": section.get("reason"),
+                    })
             continue
         doc = {"engine": engine, "answers": ids, **section}
         if doc["status"] == "failed":
@@ -8477,6 +8617,14 @@ async def _generate_dagster_stream_inner(
         # second question of a session would resume the first one's state and reducers that
         # append would merge two answers. A session is not a run.
         _run_id = 'run-' + uuid.uuid4().hex
+
+        def _direct_stage_events() -> list:
+            _t0 = _direct_stages[0][2] if _direct_stages else time.time()
+            return [
+                _stage(_kind, _status, elapsed_ms=max(0, int((_at - _t0) * 1000)))
+                for _kind, _status, _at in _direct_stages
+            ]
+
         try:
             _direct = await asyncio.to_thread(
                 functools.partial(
@@ -8517,14 +8665,53 @@ async def _generate_dagster_stream_inner(
                 )
             )
         except Exception as exc:  # noqa: BLE001
-            # A RAISE IS A FALL-BACK, not an error for the user. `dispatch_pre_resolved` is
-            # contracted not to raise; if it does, that is a bug in the fast path and the
-            # slow path still answers the question.
+            # A RAISE IS A FALL-BACK on an ordinary turn, and a SERVER FAULT on a seed turn.
+            # `dispatch_pre_resolved` is contracted not to raise; if it does, that is a bug
+            # in the fast path. An ordinary question still has a phrase, so the slow path
+            # answers it. A seed turn has no phrase underneath it (see the FALL_BACK branch
+            # below), so the same fall-through would answer a different question than the
+            # panel named: it fails visibly, bound to the step it died in.
             logger.warning(
-                "direct path raised for run %s (%s: %s) — routing the full path",
+                "direct path raised for run %s (%s: %s) — %s",
                 session_id, type(exc).__name__, exc,
+                "failing the seed turn" if _is_seed_panel_turn else "routing the full path",
             )
             _direct = None
+            if _is_seed_panel_turn:
+                # STARTED-WITH-NO-OUTCOME means the raise landed inside that step; with
+                # nothing reported the first step was never left.
+                _step = (
+                    _direct_stages[-1][0] if _direct_stages
+                    else direct_dispatch.STAGE_VERIFYING
+                )
+                for _ev in _direct_stage_events():
+                    yield _ev
+                if _direct_stages and _direct_stages[-1][1] == "started":
+                    yield _stage(_step, "failed")
+                # The class name only: an engine exception's text can carry an internal
+                # host. The log line above keeps the full text.
+                _seed_cause = "seed_panel_dispatch_raised"
+                _msg = (
+                    f"seed_panel's dispatch failed in step {_step} "
+                    f"({type(exc).__name__})"
+                )
+                _artifact_bundle["status"] = "failed"
+                _ri = dict(_artifact_bundle.get("resolved_intent") or {})
+                for _k in ("verb_iri", "subject_uri", "subject_instance_id"):
+                    _v = _pre_resolved.get(_k)
+                    if _v not in (None, ""):
+                        _ri.setdefault(_k, _v)
+                _ri.setdefault("failure_cause", {
+                    "exception": _seed_cause,
+                    "message": _msg,
+                    "where": "seed_panel_dispatch",
+                    "step": _step,
+                })
+                _artifact_bundle["resolved_intent"] = _ri
+                yield _perror(_msg, kind=_step, retryable=True, cause=_seed_cause)
+                yield _sse("stream_end", "{}")
+                await _dispatch_answer_artifact(_artifact_bundle)
+                return
 
         # DELIVERED AFTER THE FACT, WITH THEIR REAL TIMES. The dispatch is sync and runs in
         # a worker thread, so the events cannot be yielded as they happen without a queue —
@@ -8532,11 +8719,8 @@ async def _generate_dagster_stream_inner(
         # each stage carries the elapsed time actually measured at its own boundary rather
         # than a timeline composed here.
         if _direct is not None:
-            _t0 = _direct_stages[0][2] if _direct_stages else time.time()
-            for _kind, _status, _at in _direct_stages:
-                yield _stage(
-                    _kind, _status, elapsed_ms=max(0, int((_at - _t0) * 1000))
-                )
+            for _ev in _direct_stage_events():
+                yield _ev
 
         if _direct is not None and _direct.kind not in (
             direct_dispatch.ROUTED, direct_dispatch.ABSTAIN
@@ -8587,15 +8771,33 @@ async def _generate_dagster_stream_inner(
                 # disagreement must reach the caller as a visible failure, never get laundered
                 # through the classifier guessing at a label.
                 _artifact_bundle["status"] = "failed"
+                # THE ARTIFACT RECORDS WHAT THE STREAM SAYS. One cause code feeds both, and the
+                # template's verb is written like `_stream_direct_outcome` writes it (setdefault,
+                # never over a fuller intent): without them the failed seed read as an
+                # unattributable `NoCauseRecorded` with no verb (18 such rows, 2026-10-28).
+                _seed_cause = (
+                    "seed_panel_verb_not_visible"
+                    if direct_dispatch.VERB_NO_LONGER_COMPATIBLE in _detail["reason"]
+                    else "seed_panel_fell_back"
+                )
+                _ri = dict(_artifact_bundle.get("resolved_intent") or {})
+                for _k in ("verb_iri", "subject_uri", "subject_instance_id"):
+                    _v = _pre_resolved.get(_k)
+                    if _v not in (None, ""):
+                        _ri.setdefault(_k, _v)
+                _ri.setdefault("disposition", _direct.kind)
+                _ri.setdefault("failure_cause", {
+                    "exception": _seed_cause,
+                    "message": _detail["reason"],
+                    "where": "seed_panel_fall_back",
+                    "outcome": _direct.kind,
+                })
+                _artifact_bundle["resolved_intent"] = _ri
                 yield _perror(
                     f"seed_panel's declared route is no longer valid: {_detail['reason']}",
                     kind="verifying_route",
                     retryable=True,
-                    cause=(
-                        "seed_panel_verb_not_visible"
-                        if direct_dispatch.VERB_NO_LONGER_COMPATIBLE in _detail["reason"]
-                        else "seed_panel_fell_back"
-                    ),
+                    cause=_seed_cause,
                 )
                 yield _sse("stream_end", "{}")
                 await _dispatch_answer_artifact(_artifact_bundle)
