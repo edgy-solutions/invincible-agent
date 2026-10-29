@@ -19,6 +19,26 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-28, latest: "no verb" on plan answers measured and reported; nothing fixed. Read this first
+
+- **Rulings on #137.** The architect confirmed the reading: a recipient is offered when it takes at
+  least one answer, and partial export stands.
+- **The "no verb" measurement is done, and reported before any fix,** as ruled. The packet is
+  `sessions/2026-10-28-packet-to-architect-fin-no-verb-on-plan-answers-measured-the-premise-is-a-different-path.md`
+  in the master tree, untracked.
+- **What it found:**
+  - Portfolio never takes the seed dispatch. Its panels declare no subject, so it goes through the
+    phrase path.
+  - Of 103 phrase answers, 43 predate `e4154f91` (Sep 4). Their verb is in
+    `routing_inline.action.iri`, not in `resolved_intent`.
+  - 6 are the supervisor's `no_verb_classified` exit; `no_verb` is correct for them.
+  - The real seed-dispatch gap is 18 failed `program_finance` seeds from Oct 8. They carry no verb
+    and no cause, because the seed_panel FALL_BACK branch writes neither.
+  - The five ids on Chris's board are not known.
+- **Next: WAIT for the ruling on repairs 1–5.** I recommended 1 (export falls back to
+  `routing_inline.action.iri`) plus 3, with 4 routed to the supervisor's owner. Item (2) and the
+  #137 merge from master still wait on #136.
+
 ## Update 2026-10-28, later: #135 merged; the export offer is #137; item (2) is next after #136. Read this first
 
 - **Merged:** #130 and #135. Origin/master holds #135 as `69c98538`. **#136** (CDRL) is next in Chris's
