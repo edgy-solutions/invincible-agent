@@ -1,8 +1,8 @@
 # ADR-0063 — Field kinds from OpenDDIL: FRACAS reports, safety findings, cyber indicators
 
 **Status:** Proposed. This is design only: there is no code and no roll. `lane/01` drafted §1–§4
-against `47502b35`. §2's safety half and §5 are `lane/saf`'s. §1's registry rows are
-`doc-tools/lane/7f`'s.
+against `47502b35`. §2's safety half and §5 are `lane/saf`'s. §1's registry rows were assigned to
+`doc-tools/lane/7f`. An event row has no extractor half (F2a), so 7f reviewed the platform's rows instead (§1).
 **Date:** 2026-10-28
 **Deciders:** architect (assigned 2026-10-28); domain owners per section
 **Related:**
@@ -24,8 +24,9 @@ Each finding was measured on `47502b35` and changes a section below.
 
 | # | premise | what the tree says |
 | --- | --- | --- |
-| F1 | review_shape is "record / finding / indicator" | `review_shape` is `Optional[Literal["notice", "document"]]` (iagent_mesh `ingest.py:339`). None of the three is admissible. Widening it is a change to ca's SDK. |
-| F2 | `arrives_as: json` | `arrives_as` is an open token (`ingest.py:307`, validator `:422-430`), so `json` is admissible. But no overlay sets it, and "event" is already a **`branch`** (`CONTENT_KIND_BRANCHES = ("document", "event")`, `:136`). The existing event kind, `maintenance-fault-event`, uses `branch: event`. |
+| F1 | review_shape is "record / finding / indicator" | **The pinned SDK has no `review_shape`.** At the pin (iagent_mesh v0.9.10), `ContentKindRegistration` is `extra="forbid"` and has eight fields: `kind, branch, passes, outputs, seeds_workflow, identity_field, refresh, domain` (`ingest.py:222-271`). `review_shape` (`Optional[Literal["notice","document"]]`) exists only on ca's untagged `lane/ca-0.9.11`. An earlier draft cited that branch's line numbers as though they were the pin (corrected 2026-10-28, from 7f's §1 packet). **The question is also moot:** an event-branch kind never opens a promotion review, so none of the three needs a `review_shape` (§1 decision 2). |
+| F2 | `arrives_as: json` | **The pin has no `arrives_as` either** (v0.9.11 only). "Event" is already two things at the pin. It is a **`branch`** (`CONTENT_KIND_BRANCHES = ("document", "event")`, `ingest.py:136`). It is also an **arrival shape**: `ingest_status.KINDS` is `(pdf, cad, xml, event)`, and `event` is kept outside `FILE_KINDS` so that a file cannot be dropped as one (`ingest_status.py:128,138`). The existing event kind, `maintenance-fault-event`, uses `branch: event`. |
+| F2a | an event row carries passes and outputs, as a document row does | On `branch: event`, `passes`/`outputs` are **forbidden**, `seeds_workflow`/`identity_field` are **required**, and `refresh` is optional (SDK 0.9.7; 7f's §1 packet). Two consequences. "A kind with no pass is not a kind" applies to the document branch only. And a row with no `seeds_workflow` is refused at compose. |
 | F3 | the FRACAS consumer receives events | It is a **read-time connector**. `agent_fleet/safety_agent/failure_source.py` (`FAILURE_SOURCE_CONNECTORS`, `values.yaml:671`) is queried by `what_failed_on_this_part` (`safety_agent/main.py:224`). There is no event sink to land on. |
 | F4 | "define the return event" for corrective action | iagent `ADR-0054:177` says the FRACAS phase-2 flip (corrective actions writing back) "is therefore its own decision". `ADR-0056` puts it out of scope. §2 can name the event, but building it pulls Phase 2 forward. |
 | F5 | a finding "can set safety_critical by the ruled rule" | The rule is a static part-number list: `safety_critical(mpn, domain)` is `mpn in mpns(domain)`, with `DOMAIN = "SUSTAINMENT"` (`safety_critical.py:36,49`). A finding cannot add a part to it. It can only **trigger** the promotion for a part the rule already names. |
@@ -41,47 +42,71 @@ Side note, not a premise: `ADR-0035:94` says `snowflake` where `provenance.py` s
 
 ## §1 — Three kinds, registered where kinds live
 
-The platform owns `kind`, `domain`, `arrives_as` and `review_shape`; 7f writes the rows. The rows
-are overlay files under `policy/overlays/<deployment>/content_kinds/`, the same place as
-`maintenance-fault-event.yaml`. They use the SDK model `ContentKindRegistration` (iagent_mesh
-`ingest.py:194`).
+The rows are overlay files under `policy/overlays/openddil-lab/content_kinds/`, the same place as
+`maintenance-fault-event.yaml`. They use the pinned SDK model `ContentKindRegistration` (iagent_mesh
+v0.9.10, `ingest.py:194`).
 
-| kind | branch | arrives_as | review_shape | domain | identity_field | seeds_workflow |
-| --- | --- | --- | --- | --- | --- | --- |
-| `fracas_report` | event | `json` | `record` (F1) | SUSTAINMENT (§3) | `event_id` | none (§2) |
-| `safety_finding` | event | `json` | `finding` (F1) | SUSTAINMENT (§3) | `event_id` | saf's Engine S definition (§2) |
-| `cyber_indicator` | event | `json` | `indicator` (F1) | §3, open | `event_id` | none |
+**The rows are wholly the platform's.** The 2026-10-24 ruling splits a kind between two owners. The
+platform owns what a kind IS. doc-tools owns what it RUNS: `passes`, which the overlay mirrors. An event
+row has no passes (F2a), so it has nothing for doc-tools to own or mirror. doc-tools' drift test compares
+shared kinds only, and `maintenance-fault-event` already exists in iagent alone. So doc-tools' generator
+does not need to learn `branch`/`refresh` for these rows to land. That plumbing is 7f's to build if
+doc-tools ever wants to read event kinds. It does not block this ADR. This corrects a "registry seed
+row" reading of §2.
+
+| kind | branch | domain | identity_field | seeds_workflow | refresh |
+| --- | --- | --- | --- | --- | --- |
+| `fracas-report` | event | §3 | `event_id` | `fracas_record_failure` (Lane 1, PROPOSED; §2) | none (push-only) |
+| `safety-finding` | event | §3 | `event_id` | `safety_finding_review` (saf, §2) | none |
+| `cyber-indicator` | event | §3 | `event_id` | `cyber_indicator_review` (Lane 1, PROPOSED; §2) | none |
 
 **Decisions.**
-1. **`branch: event` carries "not a document".** `arrives_as: json` is the payload's encoding. It
-   is admissible today (F2), and it keeps both facts, so a later JSON *document* is not mistaken
-   for an event.
-2. **`review_shape` widens by three.** The proposal is
-   `Literal["notice", "document", "record", "finding", "indicator"]`. That is ca's SDK
-   (iagent_mesh), and it arrives as a minor version. Until it lands, the three rows are refused at
-   compose, which is the correct failure. The alternative is to reuse `notice` for all three.
-   That is rejected: the reviewer's card would be the same for a failure, a hazard and an
-   indicator.
-3. **The door is `POST /ingest/events`** (`gateway.py:12137`, `IngestEventRequest` at `:12103`).
+1. **`branch: event` carries "not a document". No `arrives_as` is set.** The branch and the `event`
+   arrival shape (F2) already say "this did not arrive as a file". `arrives_as` exists to choose which
+   kinds are *offered as a leaf* for a file drop. An event kind is never offered, so the key would be
+   a fact nothing reads. It is also not on the pin (F2). The earlier `arrives_as: json` is withdrawn.
+2. **No `review_shape`.** It is withdrawn too, and with it the SDK widening this section used to request
+   (F1). `review_shape` picks the card a *promotion* review opens. An event is never promoted: it
+   **seeds a workflow**. The reviewer's card is that workflow's task kind, with one task kind per kind.
+   The card for a failure, a hazard and an indicator differs by its task kind, not by an SDK enum.
+3. **Every row names its workflow.** `seeds_workflow` is required on `branch: event` (F2a).
+   - `safety_finding_review` is saf's (§2).
+   - `fracas_record_failure` is the one-step landing §2 describes. It writes the record to the
+     store the `openddil-events` connector reads, and has no human step.
+   - `cyber_indicator_review` is a single `human_await` addressed to `cyber_watch:<tier>`.
+
+   The last two names are Lane 1's proposals. **There is no per-kind route**: the seam reads
+   `seeds_workflow` off the matched row, which is what the withdrawal of `POST /maintenance/events`
+   chose (SDK 0.9.7). Three new routes would re-introduce it.
+4. **Kind ids are hyphenated.** Every registered kind is (`maintenance-fault-event`, `doors-export`,
+   `work-instruction`), and a later rename is invisible to the registry fingerprint. Workflow and
+   task-kind ids keep the tree's underscore form (`maintenance_fault`, `safety_finding_review`).
+   The two forms name different things, so they do not drift into each other.
+5. **The door is `POST /ingest/events`** (`gateway.py:12137`, `IngestEventRequest` at `:12103`).
    Each event carries `on_behalf_of`, admitted by `_admit_on_behalf_of`. OpenDDIL's broker
    identity must be in the delegate map (F10). That is a values change per deployment, not a
    policy row, and §3 proposes moving it onto the rail.
-4. **The episode key** is a trigger's `episode: list[str]`, hashed by `episode_key`
-   (`case_routing.py:81,233-238`). For all three kinds it is
-   `[openddil_episode_id, openddil_asset_id]`, plus `fault_code` for fracas_report. These are
+6. **The episode key is not `identity_field`.** It is a trigger's `episode: list[str]`, hashed by
+   `episode_key` (`case_routing.py:81,233-238`). For all three kinds it is
+   `[openddil_episode_id, openddil_asset_id]`, plus `fault_code` for fracas-report. These are
    OpenDDIL's own ids, carried verbatim. The asset id has the DIS form seen on the 1010 walks
-   (`dis:<site>:<app>:<entity>`).
-5. **The event is the record, not a pointer to one.** `identity_field: event_id`, as for
-   `maintenance-fault-event`, so a resend is the same row.
+   (`dis:<site>:<app>:<entity>`). OpenDDIL does **not** precompute a compound key. The single
+   `identity_field` names the row, and the trigger's list names the case.
+7. **The event is the record, not a pointer to one.** `identity_field: event_id`, as for
+   `maintenance-fault-event`, so a resend is the same row. Its ingest id is in the event namespace,
+   `^evt-[0-9a-f]{64}$` (`ingest_status.py:147`), and is never a document's id. §4 carries this.
+8. **The return event is not a fourth kind here.** Whether OpenDDIL's return leg is a kind turns on
+   F4's ruling. If it is a kind, it is a fourth `branch: event` row with the same shape. This
+   section does not add it before that ruling.
 
-7f fills the extractor-side columns of each row: passes, outputs, the label. The table above is
-the platform half and nothing more.
+There are no extractor-side columns. An event row has no passes, outputs or label to fill (F2a). 7f's
+§1 contribution is the review of this table (its 2026-10-28 packet) and not more rows.
 
 ---
 
 ## §2 — Where each lands
 
-**`fracas_report` → engine-safety's failure source, not a new sink (F3).**
+**`fracas-report` → engine-safety's failure source, not a new sink (F3).**
 - The event is admitted, stored as a `safety:FailureRecord` row in the store a new
   `FAILURE_SOURCE_CONNECTORS` entry reads (name proposed: `openddil-events`), and is then
   answered by the existing verbs. `what_failed_on_this_part` stays read-time and unchanged.
@@ -94,14 +119,14 @@ the platform half and nothing more.
   carries:
   - `on_behalf_of`, the approver;
   - the episode key from §1.4;
-  - `failure_event_id`, the fracas_report's `event_id`;
+  - `failure_event_id`, the fracas-report's `event_id`;
   - `action`, the disposing verb;
   - `mod_record_ref`, the maintenance action record;
   - the §4 provenance block.
 - **Ruling needed.** Building it is ADR-0054:177's "own decision". Until that decision is made,
   the name and shape are reserved and nothing emits.
 
-**`safety_finding` → Engine S. saf's half is below.** Two constraints from this side:
+**`safety-finding` → Engine S. saf's half is below.** Two constraints from this side:
 - A finding may **trigger** the `safety_critical = true` promotion. It sets it only where the rule
   already names the part (F5), and it never clears it (ruled 2026-10-28; the census at
   `test_no_automated_path_clears_safety_critical.py:66-67` covers any new write path by its form).
@@ -109,7 +134,7 @@ the platform half and nothing more.
 
 > **[lane/saf — §2 safety: the definition, its task kind, the state named on the card.]**
 
-**`cyber_indicator` → audience `cyber_watch` and a card.**
+**`cyber-indicator` → audience `cyber_watch` and a card.**
 - Audiences are `task_grants.yaml` rows keyed `<audience>:<scope>`, with `grant_to_groups`
   (compare `maint_tier_ack:ORG`, `:436`). `cyber_watch:<tier>` follows that form.
 - A new group means: merge, then Chris runs topaz_sync, then roll (the standing order).
@@ -123,9 +148,9 @@ the platform half and nothing more.
 
 | kind | domain | audience | deployment overlay carries |
 | --- | --- | --- | --- |
-| fracas_report | SUSTAINMENT (existing; Engine S's `DOMAIN`) | the FRACAS card's existing readers | the connector entry, the tiers |
-| safety_finding | SUSTAINMENT | saf's task kind's audience | the interlock rules (below) |
-| cyber_indicator | **new: `CYBER_DEFENSE`**, ADR-0009 first (F7) | `cyber_watch:<tier>` | the indicator-to-asset scope |
+| fracas-report | SUSTAINMENT (existing; Engine S's `DOMAIN`) | the FRACAS card's existing readers | the connector entry, the tiers |
+| safety-finding | SUSTAINMENT | saf's task kind's audience | the interlock rules (below) |
+| cyber-indicator | **new: `CYBER_DEFENSE`**, ADR-0009 first (F7) | `cyber_watch:<tier>` | the indicator-to-asset scope |
 
 - **The overlay per deployment** is ADR-0036's seed/overlay `compose()`. Deployment rows live
   under `policy/overlays/<deployment>/`, and `openddil-lab` is the first.
@@ -137,6 +162,13 @@ the platform half and nothing more.
   any other grant (F10). The chart keeps rendering it. Only the source moves.
 - **CYBER_DEFENSE is the only new domain.** The alternative is ENTERPRISE, which is rejected: its
   cells grant document reads unrelated to indicators, so every ENTERPRISE holder would see them.
+- **7f proposed maintenance / safety / cyber.** Only one of those three is an existing domain.
+  `MAINTENANCE` and `SUSTAINMENT` both exist (`policy/domain_consumption.yaml:73,105`), and
+  `MAINTENANCE` is `maintenance-fault-event`'s. There is no `SAFETY` domain: `safety#` is a namespace
+  under `sustainment/` (`agent_fleet/safety_agent/main.py:64`). Both FRACAS records and findings land
+  in Engine S, which reads SUSTAINMENT. So the table keeps SUSTAINMENT for both of them, and it adds no
+  SAFETY domain. If a FRACAS record should instead be readable by MAINTENANCE holders, that is a
+  second grant on the existing domain, not a new one.
 
 ---
 
@@ -175,13 +207,14 @@ overlay row (7f), the broker in the delegate map, and the part on the safety_cri
 ## §6 — Alignment by concept name
 
 Cited, not restated:
-- **MIL-HDBK-2155** (FRACAS): fracas_report, fracas_corrective_action.
-- **MIL-STD-882** (system safety): safety_finding, safety_critical.
-- **NIST SP 800-82**, **MITRE ATT&CK for ICS** and **STIX**: cyber_indicator, cyber_watch.
+- **MIL-HDBK-2155** (FRACAS): fracas-report, fracas_corrective_action.
+- **MIL-STD-882** (system safety): safety-finding, safety_critical.
+- **NIST SP 800-82**, **MITRE ATT&CK for ICS** and **STIX**: cyber-indicator, cyber_watch.
 
 ## Open questions for the architect
 
-1. F1: is the SDK widening of `review_shape` approved, so ca can be asked?
+1. §1 decision 3: are the workflow names `fracas_record_failure` and `cyber_indicator_review`
+   accepted? (The `review_shape` widening this question used to ask about is withdrawn; see F1.)
 2. F4: is building `fracas_corrective_action` in scope now, or only reserving its name?
 3. F7: is CYBER_DEFENSE approved, and is the ADR-0009 amendment `lane/01`'s?
 4. F10: is moving the delegate map onto the policy rail approved? It changes who reviews a
