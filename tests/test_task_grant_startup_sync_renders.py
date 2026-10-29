@@ -194,7 +194,7 @@ def test_configmap_mode_render_carries_the_program_members_fatal():
         "--set", "topazSeed.policySource.configMap.name=iagent-policy-overlay",
     )
     i = out.index("name: t-task-grant-sync")
-    block = out[i:i + 4500]
+    block = out[i:i + 7000]
     assert "FATAL: policy overlay is missing program_members.yaml" in block
     assert "FATAL: policy overlay is missing task_grants.yaml" in block
     assert 'export PROGRAM_MEMBERS_FILE="$POLICY_DIR/program_members.yaml"' in block

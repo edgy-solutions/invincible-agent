@@ -160,7 +160,7 @@ bounds, so it keeps the cell's family. A slot no cell owns keeps `code`, menu or
 `policy/program_members.yaml`). Without that filter the options row would name a grant nothing checks.
 
 **The hard-coded readers.** Ruled: "platform maintainers" is an acceptable grantor text now.
-Moving `RECIPIENT_READERS` onto the policy rail is a queue item after #96.
+Moving `RECIPIENT_READERS` onto the policy rail is ruling 4 below.
 
 ## The architect's rulings on the open questions (2026-10-27)
 
@@ -180,9 +180,19 @@ Moving `RECIPIENT_READERS` onto the policy rail is a queue item after #96.
    - Finance's options come from engine-fin's filtered list (#113).
    - `switch_cell`'s single candidate is a cell the caller already holds.
    - `relay_refusal` does not carry an engine's candidates through, so a relay offers none.
-4. **`RECIPIENT_READERS` moves onto the rail.** Its family is `program_members`, with
-   `granted_by` per program; finance first, cost second. "The platform maintainers" is the honest
-   grantor until that lands.
+4. **`RECIPIENT_READERS` moves onto the rail.** "The platform maintainers" is the honest grantor
+   until that lands. Refined 2026-10-28: "gov writes the rail shape (a recipient_readers family
+   with grantors); fin and cost each move their own RECIPIENT_READERS onto it. Owners build, gov
+   seals." So the family is `recipient_readers`, not `program_members` as first written here.
+   - **The rail is built:** `policy/recipient_readers.yaml`, keyed by owner (`finance`, `cost`)
+     then recipient scope, each row with `granted_by`, `reason` and `grant_to`.
+     - It reaches Topaz through `policy/sync/recipient_reader_sync.py`, as `recipient_scope`
+       `<owner>:<scope>`, relation `reader`.
+     - Engines ask `can_read_recipient` through `agent_fleet/utils/recipient_readers.py`.
+     - Its grantor row is `policy/grantors/recipient_readers.yaml`, and it is object-scoped.
+   - **The two code tables stay** until their owners move them. The ratchet in
+     `tests/security/test_recipient_readers_rail.py` refuses a third, and reds when a moved one
+     is still listed as pending.
 5. **The sandbox overlay** names the sandbox's actual approver; the seed stays neutral. Overlays
    are what deployments are for.
 6. **Joining.** Any merge that adds a 401/403/409-ask site classifies it in the same merge. The

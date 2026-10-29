@@ -257,6 +257,21 @@ data:
         permissions:
           can_view_program: member
 
+      # RECIPIENT READERS — who may download a recipient's disclosure package from the engine
+      # that OWNS the scope (architect, 2026-10-27 ruling 4, refined 2026-10-28: the engines'
+      # code-held RECIPIENT_READERS tables move onto the policy rail). Object id is
+      # `<owner>:<scope>` (owner = finance | cost): the two engines' disclosures are entitled
+      # independently, so a reader of one engine's scope is never a reader of the other's even
+      # when the scope string collides. USERS ONLY, deliberately no `group#member`: the rail
+      # (policy/recipient_readers.yaml) asserts users and refuses `svc:` principals (ADR-0047
+      # §5.1). Its own type, not folded into `program` (program membership is read visibility
+      # of origin-carrying artifacts; this is download of a disclosure package).
+      recipient_scope:
+        relations:
+          reader: user
+        permissions:
+          can_read_recipient: reader
+
       # ---------------------------------------------------------------
       # ADR-0026 additions — persona/entitlement authorization.
       #
