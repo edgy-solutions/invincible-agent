@@ -445,7 +445,7 @@ class Repo:
         target_ref = meta["target_ref"]
         tip = self._read_tip(target_ref)
         if tip is None:
-            raise RepoRefusal(409, "target_moved", missing_binding="the target ref", message="the target ref is gone")
+            raise RepoRefusal(409, "target_missing", missing_binding="the target ref", message="the target ref is gone")
         head_commit = self._r[reviewed_sha]
         if tip == meta["base_sha"]:
             tree = head_commit.tree.id
