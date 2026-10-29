@@ -91,7 +91,11 @@ first-slice PR, not by this ADR.
 
 **Storage.**
 
-- Bare repositories live on cluster storage.
+- Bare repositories live on cluster storage, on a PVC `engine-r-repos` (20Gi, Neo4j's storage
+  class, on the node pool that holds the other stateful volumes; no new node).
+- **Backup** is the mirror (§3) plus a nightly tar of the PVC to the object store.
+- The **signing key** is ed25519. It is generated in-cluster into the Secret `engine-r-signing`,
+  and its public half is committed at `docs/keys/engine-r.pub` so that mirrors verify.
 - Access is in-process through libgit2 (pygit2). There is **no shell-out** to a `git` binary and
   **no forge** in the path.
 
@@ -175,6 +179,9 @@ carries the standard refusal envelope.
    system names, column names, template names, hostnames, program names — in docs, code,
    fixtures or packets. Synthetic names only. This is Chris's standing rule, written into the
    engine.
+   - The terms come from `policy/leak_terms.yaml`. The committed seed holds the sandbox hostnames
+     and the synthetic program names only.
+   - A work deployment adds its own terms in an overlay that is never committed.
 5. **Every commit carries the three trailers** above. For repositories held in engine-r, this
    replaces R-058's lane trailer.
 6. **Only governed paths merge.** A proposal whose diff touches a path engine-r does not govern
@@ -306,8 +313,9 @@ does not.
 | path or tag | review audience | approvers |
 | --- | --- | --- |
 | `policy/` (overlays included) | `repo_review:POLICY` | **2** |
-| `policy/asset_grants.yaml` | `access_grant:<DOMAIN>`, taken from each row the diff changes; this is §7's grantor | **2** (see Open questions) |
-| `policy/program_members.yaml`, `policy/groups.yaml` | `repo_review:POLICY` (neither family has an audience of its own yet) | **2** |
+| `policy/asset_grants.yaml` | `access_grant:<DOMAIN>`, taken from each row the diff changes | **2** (the slice's access request uses `program_members.yaml` instead, so this row's count is not exercised by §7) |
+| `policy/program_members.yaml` | `repo_review:POLICY` (the family has no audience of its own yet) | **1**: one Grant (ruled 2026-10-28) |
+| `policy/groups.yaml` | `repo_review:POLICY` (the family has no audience of its own yet) | **2** |
 | `policy/repository_paths.yaml`, `policy/task_grants.yaml`, `policy/grantors/` | `repo_review:POLICY` | **2** |
 | workflow specs (§4) | §4 names the audience | **2**: they live under `policy/workflows/`, so they are `policy/` paths unless the architect carves them out |
 | `docs/adr/` | `repo_review:ADR` | 1 |
@@ -471,7 +479,14 @@ to the live repository would make engine-r and the lanes two writers of one mast
 what this ADR forbids. Cutting over the real repository is its own decision, made after the slice
 has measured. The slice exercises the `policy/` and `sessions/` paths.
 
-The slice's real policy change is an **access request**, end to end:
+The mirror is `edgy-solutions/invincible-agent-mirror`, a private repository that Chris creates
+empty. engine-r pushes to it with a deploy key that has write access. The key's private half is in
+the Secret `engine-r-mirror`, and it is reported only as a length and a sha256 prefix.
+
+engine-r is its own Deployment, so rolling it never rolls the fleet.
+
+The slice's real policy change is an **access request** for one row of
+`policy/program_members.yaml` (one Grant), end to end:
 
 1. **Propose.** A caller is refused. The refusal card's **Request access** action files a grant
    proposal to the path's `grantable_by`.
@@ -550,16 +565,27 @@ rulings are folded in above. These remain open:
   Part of that decision: the forge remains the writer of application paths (§1) while engine-r
   writes the governed ones, and both live in one repository with one master. The slice avoids
   the question by mirroring to a separate repository. Cutover cannot avoid it.
-- **Storage placement and backup** for the repositories' volume, given the single-node
-  concentration of stateful volumes we already carry.
-- **§5 and §7: one Grant, or two?**
-  - §5 gives every `policy/` path two approvers, and that includes `asset_grants.yaml`.
-  - §7's access request completes on **one** Grant.
-  - The sandbox `access_grant:DATA_ENGINEERING` audience has one member (alice), so §5's rule 8
-    would refuse that row and the slice could not complete.
-
-  The fix is one of: grant paths take one approver, or the sandbox audience gains a second
-  member. This is the architect's to rule. (§5)
+- **Ruled 2026-10-28, folded in above:**
+  - storage and backup (§2);
+  - the signing key (§2);
+  - the mirror repository and its credential (§7);
+  - one Grant: the slice's change is one `program_members.yaml` row, with one approver (§5, §7);
+  - check 4's term list (§2).
+- **Raised by those rulings (Lane 1, 2026-10-28):**
+  - **Check 4 reads a file that holds its own terms.** A proposal that edits
+    `policy/leak_terms.yaml` adds lines containing terms, so check 4 refuses it. Proposed:
+    check 4 exempts exactly that one path, and an arm proves a term in any other file is still
+    refused. Its edits still take `policy/`'s two approvers.
+  - **"Never touches the fleet" and registration.** engine-r's Keycloak client
+    (`templates/secrets.yaml`) and the `repo_review:*` / `repo_release:*` audiences in
+    `policy/task_grants.yaml` live in the fleet chart. A chart version bump rolls every pod.
+    Proposed: engine-r ships as its own chart and release, and those one-time fleet edits ride
+    the next planned fleet release rather than a roll of their own.
+  - **Measurement 6 needs a roll.** `program_members.yaml` applies by sync, not by roll (§6).
+    So the engine readback needs a second, non-grant `policy/` change and a roll of the one engine
+    that reads it.
+  - **`repo_review:POLICY` needs at least one member** for rule 8, and the slice needs a synthetic
+    requester, program and approver named.
 - **Where the second-approver join is decided.**
   - ADR-0027 Decision 4 makes "are all required approvals present" a Topaz evaluation, and
     rejects an engine that tracks partial state and decides completion.
