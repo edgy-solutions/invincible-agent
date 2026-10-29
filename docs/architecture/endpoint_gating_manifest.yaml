@@ -2434,6 +2434,14 @@ services:
         class: gated
         justification: "auth-gated. FINDING (over-permissioned): caller is any authenticated user, not restricted to a service identity (docstring says it should be). Tighten to a service principal."
       - method: POST
+        path: /internal/human_tasks/expire
+        identity: get_current_user
+        gate: auth-only
+        exposes: action
+        consumers: [workflow/service seam]
+        class: gated
+        justification: "auth-gated, same gate as register (same over-permission FINDING: any authenticated user, not a service principal). Retires only still-pending rows of a timed-out await; a resolved task is untouched, so the write cannot reopen or decide anything."
+      - method: POST
         path: /canvas/lineage_edges
         identity: "get_current_user -> caller_email + entitled_domains"
         gate: "delegates:datahub_wrapper /lineage_edges"

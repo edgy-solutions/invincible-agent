@@ -2680,6 +2680,30 @@
         "title": "HumanTaskActRequest",
         "type": "object"
       },
+      "HumanTaskExpireRequest": {
+        "properties": {
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "HumanTaskExpireRequest",
+        "type": "object"
+      },
       "HumanTaskRegisterRequest": {
         "description": "Register a HumanTask. Called by a suspending workflow (Slice 1b) — or, at\nthe foundation checkpoint, directly — to fan a task out to its audience's\nauthorized actors. Fields are CLEARANCE-SAFE (reference + summary, never\ncompartmented content).",
         "properties": {
@@ -7353,6 +7377,48 @@
           }
         ],
         "summary": "Write Case Summary Route"
+      }
+    },
+    "/internal/human_tasks/expire": {
+      "post": {
+        "description": "Retire the still-`pending` queue row(s) of a task whose human_await TIMED OUT, so neither\nREST nor the feed offers a task nobody can act on. INTERNAL seam, same gate as register\n(get_current_user). `expired == 0` is a 200: an already-resolved task stays resolved.",
+        "operationId": "expire_human_task_internal_human_tasks_expire_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanTaskExpireRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Expire Human Task"
       }
     },
     "/internal/human_tasks/register": {
