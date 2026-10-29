@@ -124,9 +124,9 @@ steps:
     subject_ref: "{asset_id}"
     title: "Fault {trigger.fault.fault_code} on {asset_id}: choose a disposition"
     summary: >-
-      Four options, each citing the manual and the spares record. Choosing one approves it;
-      reject sends it back for a new proposal, defer parks it until a revisit time. Both need a
-      reason. An unanswered proposal escalates; it is never approved by silence.
+      Four options, each citing the manual and the spares record. Reject sends it back for a
+      new proposal, defer parks it until a revisit time. Both need a reason. An unanswered
+      proposal escalates; it is never approved by silence.
     role: maintainer
     chooses_from: outputs.maint_fault_propose.options
     approves: [replace_now, replace_after_resupply, defer_with_restriction, evacuate_for_depot]
