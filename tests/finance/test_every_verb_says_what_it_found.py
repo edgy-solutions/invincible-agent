@@ -181,3 +181,23 @@ def test_the_drivers_verdict_reads_the_RANKING_rather_than_re_sorting():
     rows = m.fin_variance_drivers(STATE, program_id="NP-MERIDIAN")
     assert rows[0].get("rank") == 1
     assert str(rows[0]["entity_name"]) in m.VERDICT["fin_variance_drivers"](rows)
+
+
+def test_EVERY_declared_verb_leads_with_a_figure_and_not_with_a_pointer(monkeypatch):
+    """The overlay-declared verbs (sample overlay) are verbs too: the brief reads their verdict by
+    the same `_headline`, and a declared row without one would lead with the pointer."""
+    from pathlib import Path
+
+    from agent_fleet.graph_host.graphs.fin_program_brief import _headline
+
+    sample = Path(__file__).resolve().parents[2] / "policy" / "overlays" / "sample" / "measure_verbs"
+    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(sample))
+    declared = fmain._load_declared()
+    assert declared
+    monkeypatch.setattr(fmain, "DECLARED", declared)
+    monkeypatch.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
+    with TestClient(app) as c:
+        for fn in sorted(declared):
+            headline = _headline(_payload(c, fn))
+            assert headline != "reported (see artifact)", f"{fn} leads the brief with a pointer"
+            assert headline.strip(), fn
