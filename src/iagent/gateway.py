@@ -2771,6 +2771,117 @@ async def export_package_recipients(current_user: User = Depends(get_current_use
         ]
     }
 
+class ExportOfferRequest(_BaseModel):
+    """`POST /export/package/recipients`'s body: the same answer items `ExportPackageRequest`
+    takes (`ExportAnswer`), and nothing else -- the offer names no recipient, it lists them."""
+    answers: list[ExportAnswer] = []
+
+
+#: The recipient-level code for a board whose answers this recipient's export takes none of.
+_OFFER_TAKES_NONE = "takes_none_of_these_answers"
+_OFFER_TAKES_NONE_REASON = "none of these answers is a kind this recipient's export takes"
+#: Row code for a cost answer on a board where the engine resolved every answer yet none is
+#: about a lot, so there is nothing to disclose; the reason is the engine's own message.
+_OFFER_NO_LOT_COVERED = "no_lot_covered"
+
+
+def _offer_for_recipient(resolved: list[dict], scope: str) -> dict:
+    """What ONE recipient's export would do with this board, decided by the export's own
+    functions and never by a parallel rule: `_partition_export_answers` splits the board,
+    engine-fin's answers are refused as `_fin_ad_hoc_refusal_section` refuses them, and
+    engine-cost's are decided by `canvas.resolve`, the call `measures.package_export` makes
+    first, with the same arguments. Every answer id lands exactly once in `exports` or
+    `refused`; `refused` is in board order.
+
+    The exception classes are the ones `canvas` itself bound (`canvas.Unentitled`), not a
+    second import of `entities`: the module has a flat-import fallback, and two module objects
+    would make two classes of one name so the `except` below would never match.
+    """
+    from agent_fleet.cost_agent import canvas as _canvas
+    from agent_fleet.cost_agent import seed as _cost_seed
+
+    parts = dict(_partition_export_answers(resolved))
+    cost_answers = parts.get("cost", [])
+    fin_ids = {a["id"] for a in parts.get("fin", [])}
+    kinds = {a["id"]: _canvas._verb_local(a.get("verb_iri")) for a in resolved}
+    board = list(dict.fromkeys(a["id"] for a in resolved))
+
+    rows: dict[str, dict] = {}
+
+    def _row(aid: str, code: str, reason: str) -> None:
+        rows[aid] = {"answer_id": aid, "kind": kinds[aid], "reason_code": code, "reason": reason}
+
+    fin_refusal = _fin_ad_hoc_refusal_section([], scope)
+    for aid in fin_ids:
+        _row(aid, fin_refusal["reason_code"], fin_refusal["reason"])
+
+    exports: list[str] = []
+    reason_code: Optional[str] = None
+    reason: Optional[str] = None
+    if not cost_answers:
+        reason_code, reason = _OFFER_TAKES_NONE, _OFFER_TAKES_NONE_REASON
+    else:
+        try:
+            composed = _canvas.resolve(
+                {"answers": cost_answers}, recipient_scope=scope,
+                entitled_lots=_cost_seed.lots_for_recipient(scope),
+            )
+        except _canvas.Unentitled:
+            reason_code, reason = "unentitled", _canvas.ENTITLEMENT_REFUSAL
+            for a in cost_answers:
+                _row(a["id"], reason_code, reason)
+        except _canvas.NotInModel as exc:
+            reason_code, reason = _OFFER_TAKES_NONE, _OFFER_TAKES_NONE_REASON
+            named = exc.refused if isinstance(exc.refused, list) and exc.refused else []
+            for item in named:
+                _row(item["answer_id"], item["reason_code"], item["reason"])
+            # An answer the engine did not name (every answer resolved, none is about a lot)
+            # is still refused, and still appears once.
+            for a in cost_answers:
+                if a["id"] not in rows:
+                    _row(a["id"], _OFFER_NO_LOT_COVERED, str(exc))
+        else:
+            exports = list(composed["answers"])
+            for item in composed["refused"]:
+                _row(item["answer_id"], item["reason_code"], item["reason"])
+
+    return {
+        "offered": bool(exports) and reason_code is None,
+        "reason_code": reason_code,
+        "reason": reason,
+        "exports": exports,
+        "refused": [rows[aid] for aid in board if aid in rows],
+    }
+
+
+@app.post("/export/package/recipients")
+async def export_package_offer(
+    body: ExportOfferRequest, current_user: User = Depends(get_current_user),
+):
+    """The recipient picker for THIS board: for each recipient the caller may export to, which
+    of the board's answers that recipient's export takes and which it refuses, with the
+    reasons -- so a board no recipient takes is greyed before Export, not refused after it.
+
+    Recipients are exactly `_export_recipients_for(current_user)`, in that order: one the
+    caller may not export to is ABSENT, never greyed (ADR-0047 §5). A recipient is `offered`
+    iff its export would take at least one answer; a partial board stays offered (mixed-board
+    partial export is ruled, 2026-10-09/16) and `refused` names the answers that will not go.
+    Gates, as the export's: no answers is 400 `no_answers`; an id that does not resolve is
+    404 (503 when the store is down).
+    """
+    if not body.answers:
+        raise HTTPException(status_code=400, detail={"reason": "no_answers"})
+    resolved = _resolve_export_answers(
+        [a.artifact_id for a in body.answers], current_user.id
+    )
+    return {
+        "answers": len(body.answers),
+        "recipients": [
+            {"value": s, "label": s, **_offer_for_recipient(resolved, s)}
+            for s in _export_recipients_for(current_user)
+        ],
+    }
+
 
 async def _export_package_from_template(
     body: "ExportPackageRequest", request: Request, current_user: "User", as_of: str,

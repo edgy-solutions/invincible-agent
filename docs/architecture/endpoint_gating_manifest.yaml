@@ -1982,6 +1982,25 @@ services:
           claim and the SAME function the production and download routes below gate on,
           so the menu a caller sees cannot promise more than the other two routes allow.
       - method: POST
+        path: /export/package/recipients
+        identity: keycloak-jwt
+        gate: "get_current_user + the recipient list is _export_recipients_for(user) (seed.readers_for_recipient keyed on authz_id); answers refused-not-dropped via the artifact store's own ownership query"
+        exposes: gated-content
+        consumers: [cortex-ui canvas export (mesh:packageExport)]
+        class: gated
+        justification: >-
+          The recipient picker FOR A BOARD. Takes the board's answer ids and returns, for each
+          recipient the caller may export to, which answers that recipient's export would take
+          and which it would refuse, so a board no recipient takes is greyed before Export is
+          pressed. The recipients are exactly the GET's (_export_recipients_for), so the menu
+          never widens: a recipient the caller may not export to is absent, not greyed. Each
+          decision is made by the export's own functions (the engine partition, the fin
+          refusal section, engine-cost's canvas.resolve with the recipient's own lots), never
+          a parallel rule; an unentitled recipient's reason is the constant entitlement prose
+          and names no recipient, answer or lot (RULED 2026-10-17). Answer ids resolve through
+          the same ownership query as the export: one that does not resolve is a 404, an empty
+          board a 400. Nothing is produced or written.
+      - method: POST
         path: /export/package
         identity: keycloak-jwt
         gate: "get_current_user + recipient_scope required and must be one authz_id reads (seed.readers_for_recipient); answers refused-not-dropped via the artifact store's own ownership query"

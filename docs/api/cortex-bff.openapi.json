@@ -1871,6 +1871,21 @@
         "title": "ExportAnswer",
         "type": "object"
       },
+      "ExportOfferRequest": {
+        "description": "`POST /export/package/recipients`'s body: the same answer items `ExportPackageRequest`\ntakes (`ExportAnswer`), and nothing else -- the offer names no recipient, it lists them.",
+        "properties": {
+          "answers": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExportAnswer"
+            },
+            "title": "Answers",
+            "type": "array"
+          }
+        },
+        "title": "ExportOfferRequest",
+        "type": "object"
+      },
       "ExportPackageRequest": {
         "properties": {
           "answers": {
@@ -3973,6 +3988,11 @@
           "run_id": {
             "title": "Run Id",
             "type": "string"
+          },
+          "slot": {
+            "default": 0,
+            "title": "Slot",
+            "type": "integer"
           }
         },
         "required": [
@@ -6095,6 +6115,46 @@
           }
         ],
         "summary": "Export Package Recipients"
+      },
+      "post": {
+        "description": "The recipient picker for THIS board: for each recipient the caller may export to, which\nof the board's answers that recipient's export takes and which it refuses, with the\nreasons -- so a board no recipient takes is greyed before Export, not refused after it.\n\nRecipients are exactly `_export_recipients_for(current_user)`, in that order: one the\ncaller may not export to is ABSENT, never greyed (ADR-0047 §5). A recipient is `offered`\niff its export would take at least one answer; a partial board stays offered (mixed-board\npartial export is ruled, 2026-10-09/16) and `refused` names the answers that will not go.\nGates, as the export's: no answers is 400 `no_answers`; an id that does not resolve is\n404 (503 when the store is down).",
+        "operationId": "export_package_offer_export_package_recipients_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportOfferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Package Offer"
       }
     },
     "/federated_image": {
