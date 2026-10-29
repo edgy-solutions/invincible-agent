@@ -19,6 +19,76 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-28, overnight: brief items 1–4 each have a PR; two fin reds on master fixed. Read this first
+
+The architect's overnight brief (to `invincible-agent/lane/fin`):
+
+| item | PR | branch / sha | CI |
+|---|---|---|---|
+| 1. A seed-turn dispatch error is a 5xx naming the step | #139 MERGED | | |
+| 2. Plan answers export profile under `policy/exports`; a Portfolio board exports to a plan recipient | **#148** | `fin/plan-answers-export` `b73d3400` | running at writing |
+| 3a. Provenance sheets optional per profile | **#143** | `fin/cdrl-provenance-optional` `002a8219` | green vs master |
+| 3b. docx/csv/json formats | **#144**, which includes #143 | `fin/cdrl-formats` `86673740` | green vs master |
+| 4. Finance overlay contract doc | **#147**, stacked on #144 | `fin/overlay-contract-doc` `6bbef281` | **NO CI**: base `fin/cdrl-formats`; rebase onto master after #144 |
+
+#136 and #137 also merged.
+
+### Item 2 (#148) ships DARK. Do not "fix" that.
+
+- Readers come from gov's `recipient_readers` rail under owner `plan`.
+- Gov's seal `tests/security/test_recipient_readers_rail.py:152` pins the owners at `{finance, cost}`.
+  Fin reverted its edits to gov's files and does not widen their seal.
+- `can_read_recipient("plan", …)` answers False until gov adds the owner and row and Chris syncs.
+  A test arm seals that this deny-by-default holds.
+- The packet to gov is in the master tree's `sessions/`, untracked:
+  `2026-10-28-packet-to-gov-recipient-readers-needs-a-third-owner-plan.md`.
+- **Six readings in the #148 body await the architect.** The main one is that `kinds` is all 14 Engine P
+  verbs, `planCommitScenario`/`planDiff`/`planSessionChanges` included.
+
+### Fin's reds on master
+
+- **#145** (`fin/canvas-seed-enumerator-hop` `2b1202c5`) fixes the identity census.
+  - The BFF's `_canvas_seed_enumerator` and its two engine-fin exports are hops 18–21.
+  - Hop 19's identity is REQUIRED, held through `REQUIRED_IDENTITY`.
+  - The packet to lane/01 is placed.
+  - CI had one red: docs-agent's GHCR login timeout, an infra flake. The failed job was re-run; read
+    it again.
+- **#150** (`fin/inband-refusal-test-names-the-rest` `34a09c48`) is a test-only fix.
+  - `test_gateway_passes_an_in_band_refusal_list_through` had been stale since #137, whose runs did
+    not include it.
+  - The test now expects the unnamed rest; a control is added.
+- **Merge-order chore:** #145 adds hops 18–21, and #148 adds hop 22. Whichever lands second needs its
+  hop numbering checked.
+
+### Found and fixed in #147
+
+A measure row silently IGNORED an unknown top-level key, such as `formula:`. It now refuses one,
+through `measure_verbs._TOP_KEYS`.
+
+The doc also states two things for the architect:
+- `MEASURE_OVERLAY_DIRS` (method rows) has no runtime effect today;
+- a nonexistent overlay path is read as empty, with no error.
+
+### Next
+
+1. Read CI on #145 (the re-run), #148 and #150.
+2. When #144 merges, rebase #147 onto master and read its checks.
+3. Gov's answer on the `plan` owner, then Chris's sync, then a live check: alice exports a Portfolio
+   board to `notional-plan-office`.
+4. Still owed, and not in the overnight list: move finance's and cost's RECIPIENT_READERS onto the
+   rail (gov ruling 4). This needs truthful `granted_by`, a Topaz-outage policy, and PENDING
+   families changed from `"code"` to `"recipient_readers"`.
+5. Post-roll acceptance after Lane 1's roll:
+   - the P0 sentence, then the pick, gives a seed 6/6;
+   - alice's TCPI;
+   - `program_finance_tcpi` 2/2;
+   - the CDRL twice gives the same `X-Cells-Sha256`;
+   - bob gets 403.
+
+**Tooling note.** On this box, `grep -i -F -f` aborts with code 134, and its output inside `$(…)` is
+empty, which looks like 0 hits. Run the leak scan through PowerShell `Select-String -SimpleMatch`
+and print counts only.
+
 ## Update 2026-10-28, last: repairs 1 and 2 are #139. Read this first
 
 - **The ruling.** Repairs 1 and 2 were approved: the export reads the routing record's verb, and a
