@@ -107,7 +107,49 @@ the platform half and nothing more.
   `test_no_automated_path_clears_safety_critical.py:66-67` covers any new write path by its form).
 - A finding has no task kind yet (F9). saf names it and its workflow.
 
-> **[lane/saf — §2 safety: the definition, its task kind, the state named on the card.]**
+**`safety_finding` — saf's half (ruled 2026-10-28: no workflow takes a finding, so a new one is
+added).**
+- **What it is.** A cited occurrence against a `Hazard`, so evidence for the safety pass and not a
+  risk assessment. Severity, probability and acceptance stay iagent's and stay a human act
+  (`docs/adr/ADR-0051-sustainment-safety-the-mesh-drafts-a-risk-and-refuses-to-accept-it.md`).
+  It arrives with `on_behalf_of` = "" (the service itself): `openddil:openddil-contracts/decisions/ADR-0052-safety-states-and-release-interlocks.md:151-175`.
+  Alignment is MIL-STD-882 by concept name (§6).
+- **Registration.** `safety_finding` is a **registry seed row** (7f; the platform owns kinds), not
+  an overlay row. It is an event-branch row whose `seeds_workflow` is **`safety_finding_review`**
+  (`ContentKindRegistration`: `branch: event` requires `seeds_workflow` and `identity_field`,
+  forbids `passes` and `outputs`). The row's spelling (hyphen or underscore) and domain are 7f's
+  and Lane 1's. The workflow id does not depend on them: workflow ids in the tree are
+  underscored (`maintenance_fault`, `safety_acceptance_direct`) whatever the kind's spelling.
+- **Workflow `safety_finding_review`.** New: `policy/workflows/safety_finding_review.yaml`, one
+  `human_await` step modelled on `policy/workflows/safety_acceptance_direct.yaml`, whose header
+  says it is authored and runs only once the event row selects it. `safety_acceptance_direct`
+  is **not** revived. `domain_stages: [received, review_pending, disposed]`; `subject_ref` is the
+  hazard id; `completion: single, any_of`.
+- **Task kind `safety_finding_review`** (new overlay row, `policy/overlays/sample/task_kinds/`),
+  archetype `APPROVAL_TASK`, badge `FINDING`. Outcomes:
+  - `confirmed` (the ruled "accept"; not spelled `accepted`, which in
+    `risk_acceptance_*` means residual risk accepted and must keep meaning only that);
+  - `dismissed`, reason-required;
+  - `new_hazard` (the "open hazard" outcome; the verb name and its reason requirement already
+    exist on `hazard_link_review`). It opens the hazard for the human's later draft; the task
+    drafts no level.
+  There is no risk-level verb, so the task cannot accept risk.
+- **Audience.** A role-and-domain string, `safety_finding_review:SUSTAINMENT`: the safety
+  steward, SUSTAINMENT. It follows the `<audience>:<scope>` keys of `policy/task_grants.yaml`
+  (compare `hazard_link_review:SUSTAINMENT`, `:306`). It is a new grant row, so: merge, Chris runs topaz_sync, then roll.
+- **Requester.** A service raising a task with `on_behalf_of` is ruled admissible; Lane 1 confirms
+  `register_task` (`src/iagent/human_tasks.py:407`) accepts it and adds the test (a §5 prerequisite).
+- **The state on the card.** `review_pending` while the task is open; `disposed` once closed. The
+  card is `KNOWLEDGE_DOCUMENT`, as the other safety cards. The finding's observed / declared /
+  derived class is shown from the §4 block and is never folded into a rung.
+- **Idempotence.** The case key is derived from the episode `(/asset_id, /hazard, /opened_at)`
+  (`openddil:...ADR-0052...md`), so a repeat of one episode lands on the same case and opens no
+  second task. Where that key sits on the ledger entry is Lane 1's (Q4).
+- **Refusals, named.** `unknown_hazard` and `hazard_closed` (`agent_fleet/safety_agent/measures.py:266,371`)
+  create no task. A finding with no resolvable part is `no_asset_part_join` (new).
+- **`safety_critical`.** Agreed with F5: a finding may only trigger the promotion for a part the
+  rule already names, written as a literal `= true` under a condition (the #128 seal), and never
+  `false`. The first slice (§5) sets nothing.
 
 **`cyber_indicator` → audience `cyber_watch` and a card.**
 - Audiences are `task_grants.yaml` rows keyed `<audience>:<scope>`, with `grant_to_groups`
@@ -166,11 +208,41 @@ the platform half and nothing more.
 
 ## §5 — First demo-able slice
 
-> **[lane/saf — a `safety_finding` "deferred safety-critical maintenance past interval" arriving
-> on 1010 and landing as an Engine S task with the state named; sized in days.]**
+A `safety_finding` for asset 1010 arrives and lands as a `safety_finding_review` task in the
+state `review_pending`.
 
-Its prerequisites from §1–§4: the SDK `review_shape` widening and `source_class` (ca), the
-overlay row (7f), the broker in the delegate map, and the part on the safety_critical list (F5).
+- **1010** is an OpenDDIL lab asset id (`openddil:...ADR-0052...md:223-225`;
+  `openddil:...ADR-0053...md:232`), not a port or a build. That OpenDDIL slice sends nothing to
+  iagent (`...ADR-0052...md:236`), so the demo hand-posts the finding, and says so.
+- **The predicate.** "Deferred past interval" has no source here: `WorkOrder`
+  (`agent_fleet/safety_agent/entities.py:110`) and `Hazard` (`:82`) carry no interval or due date,
+  and `assess_deferral_risk` (`measures.py:217`) joins WorkOrder × CSI × hazard. What OpenDDIL
+  can send is `service_due_unreleased` (due, no open work). The slice carries whatever the
+  finding says; it computes no deferral (Q2).
+
+| piece | days | note |
+| --- | --- | --- |
+| seed-row check (the `safety_finding` event row selects the workflow) | 0.5 | the row is 7f's |
+| **workflow `safety_finding_review`** (definition, header, stages, seed wiring, its own tests) | **2.0** | **new by ruling; was not in the first estimate** |
+| landing (hazard resolution, named refusals, case key from the episode) | 1.0 | hand-seeded asset-to-hazard fixture |
+| task kind + grant row (`safety_finding_review:SUSTAINMENT`) | 1.5 | topaz_sync before the roll |
+| card and state (`review_pending`) | 1.0 | cortex-ui draws it |
+| tests (refusals, idempotence, no `false`, no risk verb) | 1.5 | |
+| **total** | **7.5** | **2.5 days over the 5.0 first estimate (+50%)** |
+
+The overrun is the workflow (+2.0) and the heavier test set (+0.5). The estimate excludes the
+OpenDDIL sender, the interval source and any write to `safety_critical`. The likeliest further
+overrun is the seed-row wiring, because doc-tools cannot yet project an event row.
+
+**Prerequisites** from §1–§4 and other lanes:
+- `safety_finding` as a **registry seed row** (7f; the platform owns kinds). This corrects the
+  earlier "7f's overlay row".
+- doc-tools: event rows projectable (`ContentKindEntry` has no `branch` or `refresh`).
+- Lane 1, ruling 3: `register_task` accepts a service with `on_behalf_of`, with its test.
+- The broker in the delegate map (F10).
+- OpenDDIL emits one precomputed episode key (7f's change 3); else the row cannot be finished.
+- ca's `review_shape` widening and `source_class`, if the card needs them (F1).
+- A part on the `safety_critical` list (F5), for any later promotion; the slice itself needs none.
 
 ## §6 — Alignment by concept name
 
@@ -186,3 +258,19 @@ Cited, not restated:
 3. F7: is CYBER_DEFENSE approved, and is the ADR-0009 amendment `lane/01`'s?
 4. F10: is moving the delegate map onto the policy rail approved? It changes who reviews a
    broker grant.
+5. (saf, Q1; agrees with F5) Is a finding only ever a trigger for a part the rule already names?
+   Recommend yes: the rule stays a static list, and a finding that would add a part is a separate
+   rule change, not made here.
+6. (saf, Q2) Which predicate does the slice carry: `service_due_unreleased` (what OpenDDIL can
+   send) or "deferred past interval" (what the order says)? Neither side computes the latter.
+   Recommend the first, and ask OpenDDIL for an interval only if the second is wanted.
+7. (saf, Q3 resolved) Audience of a service-origin task: answered by rulings 1 and 3, a
+   role-and-domain string and `on_behalf_of` on `register_task`. Left only to confirm that the
+   safety steward group needs the new grant row and topaz_sync before the roll.
+8. (saf, Q4, owner Lane 1) Where does the episode key live on the ledger entry? I found no
+   field. Recommend a named field on the case, not the task payload.
+9. (saf, Q5, §4) Does the source class travel as its own per-entry field beside `obtained_via`,
+   never mapped to a rung? Recommend yes (F6).
+10. (saf, Q6, owner Lane 1) Who owns the asset_id to part (mpn) to WorkOrder join? Without it a
+    finding reaches neither `assess_deferral_risk` nor the promotion. Recommend a read-time lookup
+    owned by Engine S's source, not stored on the finding.
