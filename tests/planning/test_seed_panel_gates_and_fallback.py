@@ -175,7 +175,7 @@ def stubbed_stream(monkeypatch):
     leaving `is_interview_active=False`), the chain-slot read, the trailing artifact write, the
     classified path's first call (`_launch_supervisor_job`, call-counted), and `dispatch_pre_
     resolved` itself (FALL_BACK, unconditionally)."""
-    calls = {"supervisor": 0}
+    calls = {"supervisor": 0, "bundles": []}
 
     class _FakeHttpClient:
         def __init__(self, *a, **k): ...
@@ -188,6 +188,8 @@ def stubbed_stream(monkeypatch):
     monkeypatch.setattr(gw, "_accumulated_slots", lambda *a, **k: {})
 
     async def _fake_dispatch_answer_artifact(bundle):
+        # THE BUNDLE, NEVER THE STORE: what the real writer is handed (before its backstop).
+        calls["bundles"].append(bundle)
         return None
 
     monkeypatch.setattr(gw, "_dispatch_answer_artifact", _fake_dispatch_answer_artifact)
@@ -287,3 +289,58 @@ async def test_a_seed_panel_FALL_BACK_because_the_verb_is_not_visible_carries_th
     blob = "".join([ev async for ev in gw._generate_dagster_stream_inner(req)])
     assert "seed_panel_verb_not_visible" in blob, blob
     assert "seed_panel_fell_back" not in blob
+
+
+# ── SECTION 3 — the failed seed's artifact records the template's verb and the cause ─────────
+# Layer asserted: the bundle handed to `_dispatch_answer_artifact` (stubbed, so the real
+# backstop that writes `NoCauseRecorded` does not run; the point is that it has nothing to do).
+
+_NOT_VISIBLE = "verb mesh:finX {} with fin#Y"
+
+
+def _pipeline_error(blob: str) -> dict:
+    import json as _json
+    lines = blob.splitlines()
+    for i, ln in enumerate(lines):
+        if ln.startswith("event: pipeline_error"):
+            return _json.loads(lines[i + 1][len("data: "):])
+    raise AssertionError(f"no pipeline_error in the stream: {blob!r}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("not_visible", [True, False], ids=["verb_not_visible", "fell_back"])
+async def test_a_failed_seed_artifact_records_the_templates_verb_and_the_cause(
+    stubbed_stream, monkeypatch, not_visible,
+):
+    from iagent.canvas_template import load_template, panel_dispatch
+
+    reason = (
+        _NOT_VISIBLE.format(gw.direct_dispatch.VERB_NO_LONGER_COMPATIBLE) if not_visible
+        else "the mesh no longer agrees with this declared subject"
+    )
+    monkeypatch.setattr(
+        gw, "dispatch_pre_resolved",
+        lambda **k: gw.direct_dispatch.DirectOutcome(
+            kind=gw.direct_dispatch.FALL_BACK, reason=reason),
+    )
+    bindings = {"program": "NP-MERIDIAN"}
+    template = load_template("program_finance")
+    verb, _subject, _params = panel_dispatch(template, 0, bindings)
+    panel_subject = template.panels[0].subject
+    req = gw.InterviewRequest(
+        message="irrelevant label", session_id="s-seed-fb-3",
+        seed_panel={"template_id": "program_finance", "panel": 0, "bindings": bindings},
+    )
+    blob = "".join([ev async for ev in gw._generate_dagster_stream_inner(req)])
+
+    (bundle,) = stubbed_stream["bundles"]
+    ri = bundle["resolved_intent"]
+    assert bundle["status"] == "failed"
+    assert verb and ri["verb_iri"] == verb
+    assert ri["subject_uri"] == panel_subject
+    cause = ri["failure_cause"]
+    assert cause["exception"] == _pipeline_error(blob)["cause"]
+    assert cause["message"] == reason
+    assert cause["exception"] != "NoCauseRecorded"
+    assert cause["exception"] == (
+        "seed_panel_verb_not_visible" if not_visible else "seed_panel_fell_back")

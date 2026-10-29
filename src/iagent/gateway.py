@@ -2588,6 +2588,14 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
     REFUSED, NEVER DROPPED (canvas.py's rule): an id that does not resolve raises 404 rather
     than being silently omitted from the canvas — an export quietly missing an answer nobody
     asked to drop would look complete while disclosing less than the caller intended.
+
+    THE VERB HAS TWO HOMES. `resolved_intent.verb_iri` is read first; answers written before
+    `e4154f91` (2026-09-04) carry the verb only in the routing record (`routing_inline`
+    -> `action.iri`), and `resolved_intent` holds the ExtractIntent output with no verb. The
+    routing record is read only when the intent has none: the two agreed on all 1,018 artifacts
+    carrying both (measured 2026-10-28). `UNKNOWN` there means the supervisor chose no verb, so
+    `no_verb` stays the true refusal for those. `subject_instance_id` is read from the intent
+    alone. An old or malformed routing record yields None, never an error.
     """
     resolved: list[dict] = []
     for artifact_id in artifact_ids:
@@ -2617,9 +2625,17 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
             v = str(v or "").strip()
             return None if not v or v == "UNKNOWN" else v
 
+        verb = _or_none(intent.get("verb_iri"))
+        if verb is None:
+            try:
+                _routing = json.loads(rec.get("routing_inline") or "null")
+                verb = _or_none(_routing["action"]["iri"])
+            except (ValueError, TypeError, KeyError):
+                verb = None
+
         resolved.append({
             "id": str(rec["id"]),
-            "verb_iri": _or_none(intent.get("verb_iri")),
+            "verb_iri": verb,
             "subject_instance_id": _or_none(intent.get("subject_instance_id")),
         })
     return resolved
@@ -8474,15 +8490,33 @@ async def _generate_dagster_stream_inner(
                 # disagreement must reach the caller as a visible failure, never get laundered
                 # through the classifier guessing at a label.
                 _artifact_bundle["status"] = "failed"
+                # THE ARTIFACT RECORDS WHAT THE STREAM SAYS. One cause code feeds both, and the
+                # template's verb is written like `_stream_direct_outcome` writes it (setdefault,
+                # never over a fuller intent): without them the failed seed read as an
+                # unattributable `NoCauseRecorded` with no verb (18 such rows, 2026-10-28).
+                _seed_cause = (
+                    "seed_panel_verb_not_visible"
+                    if direct_dispatch.VERB_NO_LONGER_COMPATIBLE in _detail["reason"]
+                    else "seed_panel_fell_back"
+                )
+                _ri = dict(_artifact_bundle.get("resolved_intent") or {})
+                for _k in ("verb_iri", "subject_uri", "subject_instance_id"):
+                    _v = _pre_resolved.get(_k)
+                    if _v not in (None, ""):
+                        _ri.setdefault(_k, _v)
+                _ri.setdefault("disposition", _direct.kind)
+                _ri.setdefault("failure_cause", {
+                    "exception": _seed_cause,
+                    "message": _detail["reason"],
+                    "where": "seed_panel_fall_back",
+                    "outcome": _direct.kind,
+                })
+                _artifact_bundle["resolved_intent"] = _ri
                 yield _perror(
                     f"seed_panel's declared route is no longer valid: {_detail['reason']}",
                     kind="verifying_route",
                     retryable=True,
-                    cause=(
-                        "seed_panel_verb_not_visible"
-                        if direct_dispatch.VERB_NO_LONGER_COMPATIBLE in _detail["reason"]
-                        else "seed_panel_fell_back"
-                    ),
+                    cause=_seed_cause,
                 )
                 yield _sse("stream_end", "{}")
                 await _dispatch_answer_artifact(_artifact_bundle)
