@@ -8380,6 +8380,14 @@ async def _generate_dagster_stream_inner(
         # second question of a session would resume the first one's state and reducers that
         # append would merge two answers. A session is not a run.
         _run_id = 'run-' + uuid.uuid4().hex
+
+        def _direct_stage_events() -> list:
+            _t0 = _direct_stages[0][2] if _direct_stages else time.time()
+            return [
+                _stage(_kind, _status, elapsed_ms=max(0, int((_at - _t0) * 1000)))
+                for _kind, _status, _at in _direct_stages
+            ]
+
         try:
             _direct = await asyncio.to_thread(
                 functools.partial(
@@ -8420,14 +8428,53 @@ async def _generate_dagster_stream_inner(
                 )
             )
         except Exception as exc:  # noqa: BLE001
-            # A RAISE IS A FALL-BACK, not an error for the user. `dispatch_pre_resolved` is
-            # contracted not to raise; if it does, that is a bug in the fast path and the
-            # slow path still answers the question.
+            # A RAISE IS A FALL-BACK on an ordinary turn, and a SERVER FAULT on a seed turn.
+            # `dispatch_pre_resolved` is contracted not to raise; if it does, that is a bug
+            # in the fast path. An ordinary question still has a phrase, so the slow path
+            # answers it. A seed turn has no phrase underneath it (see the FALL_BACK branch
+            # below), so the same fall-through would answer a different question than the
+            # panel named: it fails visibly, bound to the step it died in.
             logger.warning(
-                "direct path raised for run %s (%s: %s) — routing the full path",
+                "direct path raised for run %s (%s: %s) — %s",
                 session_id, type(exc).__name__, exc,
+                "failing the seed turn" if _is_seed_panel_turn else "routing the full path",
             )
             _direct = None
+            if _is_seed_panel_turn:
+                # STARTED-WITH-NO-OUTCOME means the raise landed inside that step; with
+                # nothing reported the first step was never left.
+                _step = (
+                    _direct_stages[-1][0] if _direct_stages
+                    else direct_dispatch.STAGE_VERIFYING
+                )
+                for _ev in _direct_stage_events():
+                    yield _ev
+                if _direct_stages and _direct_stages[-1][1] == "started":
+                    yield _stage(_step, "failed")
+                # The class name only: an engine exception's text can carry an internal
+                # host. The log line above keeps the full text.
+                _seed_cause = "seed_panel_dispatch_raised"
+                _msg = (
+                    f"seed_panel's dispatch failed in step {_step} "
+                    f"({type(exc).__name__})"
+                )
+                _artifact_bundle["status"] = "failed"
+                _ri = dict(_artifact_bundle.get("resolved_intent") or {})
+                for _k in ("verb_iri", "subject_uri", "subject_instance_id"):
+                    _v = _pre_resolved.get(_k)
+                    if _v not in (None, ""):
+                        _ri.setdefault(_k, _v)
+                _ri.setdefault("failure_cause", {
+                    "exception": _seed_cause,
+                    "message": _msg,
+                    "where": "seed_panel_dispatch",
+                    "step": _step,
+                })
+                _artifact_bundle["resolved_intent"] = _ri
+                yield _perror(_msg, kind=_step, retryable=True, cause=_seed_cause)
+                yield _sse("stream_end", "{}")
+                await _dispatch_answer_artifact(_artifact_bundle)
+                return
 
         # DELIVERED AFTER THE FACT, WITH THEIR REAL TIMES. The dispatch is sync and runs in
         # a worker thread, so the events cannot be yielded as they happen without a queue —
@@ -8435,11 +8482,8 @@ async def _generate_dagster_stream_inner(
         # each stage carries the elapsed time actually measured at its own boundary rather
         # than a timeline composed here.
         if _direct is not None:
-            _t0 = _direct_stages[0][2] if _direct_stages else time.time()
-            for _kind, _status, _at in _direct_stages:
-                yield _stage(
-                    _kind, _status, elapsed_ms=max(0, int((_at - _t0) * 1000))
-                )
+            for _ev in _direct_stage_events():
+                yield _ev
 
         if _direct is not None and _direct.kind not in (
             direct_dispatch.ROUTED, direct_dispatch.ABSTAIN

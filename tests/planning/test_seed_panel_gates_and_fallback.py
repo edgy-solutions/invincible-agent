@@ -344,3 +344,70 @@ async def test_a_failed_seed_artifact_records_the_templates_verb_and_the_cause(
     assert cause["exception"] != "NoCauseRecorded"
     assert cause["exception"] == (
         "seed_panel_verb_not_visible" if not_visible else "seed_panel_fell_back")
+
+
+def _sse_events(blob: str, name: str) -> list[dict]:
+    import json as _json
+    lines = blob.splitlines()
+    return [
+        _json.loads(lines[i + 1][len("data: "):])
+        for i, ln in enumerate(lines) if ln == f"event: {name}"
+    ]
+
+
+_SENTINEL = "http://internal-host.example"
+_DD = gw.direct_dispatch
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reported, step",
+    [
+        ([(_DD.STAGE_VERIFYING, "started"), (_DD.STAGE_VERIFYING, "completed"),
+          (_DD.STAGE_CALLING, "started")], _DD.STAGE_CALLING),
+        ([], _DD.STAGE_VERIFYING),
+    ],
+    ids=["at_calling", "before_any_stage"],
+)
+async def test_a_dispatch_raise_on_a_seed_turn_fails_visibly_naming_its_step(
+    stubbed_stream, monkeypatch, reported, step,
+):
+    """A raise out of `dispatch_pre_resolved` on a seed turn is a retryable 5xx-class failure
+    bound to the step it died in, never the full supervisor run (a seed turn has no phrase).
+    With no stage reported, no stage event is honest (nothing started): the error is bound to
+    `verifying_route` by `kind` alone."""
+    from iagent.canvas_template import load_template, panel_dispatch
+
+    def _raises(**kwargs):
+        for kind, status in reported:
+            kwargs["on_stage"](kind, status)
+        raise RuntimeError(f"engine unreachable at {_SENTINEL}/x")
+
+    monkeypatch.setattr(gw, "dispatch_pre_resolved", _raises)
+    bindings = {"program": "NP-MERIDIAN"}
+    template = load_template("program_finance")
+    verb, _subject, _params = panel_dispatch(template, 0, bindings)
+    req = gw.InterviewRequest(
+        message="irrelevant label", session_id="s-seed-raise-1",
+        seed_panel={"template_id": "program_finance", "panel": 0, "bindings": bindings},
+    )
+    blob = "".join([ev async for ev in gw._generate_dagster_stream_inner(req)])
+
+    assert stubbed_stream["supervisor"] == 0, "a seed-turn raise fell through to the full run"
+    err = _pipeline_error(blob)
+    assert err["kind"] == step
+    assert err["retryable"] is True
+    assert err["cause"] == "seed_panel_dispatch_raised"
+    failed = [e["kind"] for e in _sse_events(blob, "pipeline_stage") if e["status"] == "failed"]
+    assert failed == ([step] if reported else [])
+
+    (bundle,) = stubbed_stream["bundles"]
+    assert bundle["status"] == "failed"
+    ri = bundle["resolved_intent"]
+    assert verb and ri["verb_iri"] == verb
+    assert ri["subject_uri"] == template.panels[0].subject
+    cause = ri["failure_cause"]
+    assert cause["exception"] == err["cause"]
+    assert cause["step"] == step
+    assert _SENTINEL not in cause["message"]
+    assert _SENTINEL not in err["message"]
