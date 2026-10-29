@@ -99,7 +99,8 @@ first-slice PR, not by this ADR.
   and its public half is committed at `docs/keys/engine-r.pub` so that mirrors verify.
 - **Every key is generated in-cluster.** Its private half goes in a Secret and its public half in
   a ConfigMap `<secret>-pub`, so the public half can be read without reading the Secret. This
-  covers the signing key and the mirror's deploy key (§7).
+  covers engine-r's own keys, which today means the signing key. A forge credential is not a key
+  (§3).
 - Access is in-process through libgit2 (pygit2). There is **no shell-out** to a `git` binary and
   **no forge** in the path.
 
@@ -228,6 +229,16 @@ carries the standard refusal envelope.
 - On the forge, the mirror's identity is the only identity allowed to push. The forge's own merge
   path is disabled for mirrored repositories, so a forge-side merge cannot create a second
   history.
+- **A forge credential is an app installation, never a key** (ruled 2026-10-29). That rules out
+  deploy keys, SSH keys and personal tokens. On GitHub the credential is a GitHub App:
+  - it has Contents: write, and is installed on the mirror repository only;
+  - its Secret holds `app.pem`, `app_id` and `installation_id`;
+  - for each push, engine-r signs a JWT with the app key and exchanges it for an installation
+    token that lasts at most an hour;
+  - engine-r pushes over HTTPS as `x-access-token`.
+
+  No long-lived push credential leaves the Secret. The ruling followed an org policy that
+  disables deploy keys.
 
 **Inbound.**
 
@@ -488,8 +499,10 @@ what this ADR forbids. Cutting over the real repository is its own decision, mad
 has measured. The slice exercises the `policy/` and `sessions/` paths.
 
 The mirror is `edgy-solutions/invincible-agent-mirror`, a private repository that Chris creates
-empty. engine-r pushes to it with a deploy key that has write access. The key's private half is in
-the Secret `engine-r-mirror`, and it is reported only as a length and a sha256 prefix.
+empty. engine-r pushes to it as the GitHub App `engine-r-mirror`, which is installed on that
+repository only (§3). The app's credential is in the Secret `engine-r-mirror`. Its value is never
+read into a transcript. A check of the Secret uses `kubectl describe` or `-o name`, never a
+formatter.
 
 engine-r is its own Deployment, so rolling it never rolls the fleet. It has **its own chart and
 release** (ruled 2026-10-28). Two pieces of its registration live in the fleet: its Keycloak
@@ -588,7 +601,9 @@ rulings raised. All the rulings are folded in above. These remain open:
 - **Ruled 2026-10-28, folded in above:**
   - storage and backup (§2);
   - the signing key (§2);
-  - the mirror repository and its credential (§7);
+  - the mirror repository (§7);
+  - the forge credential: an app installation, never a key (§3, §7; ruled 2026-10-29, replacing
+    the deploy key that an org policy disables);
   - one Grant: the slice's change is one `program_members.yaml` row, with one approver (§5, §7);
   - check 4's term list (§2);
   - check 4's exemption for `policy/leak_terms.yaml`, with two approvers (§2, §5);
