@@ -2476,6 +2476,75 @@ def _fin_export_recipients_for(user: "User") -> list[str]:
     )
 
 
+# -- PLAN ANSWERS EXPORT (policy/exports) ----------------------------------------------------
+#
+# A plan recipient is named by an answer-export profile (`agent_fleet/utils/answer_exports.py`,
+# seed `policy/exports/`), not by cost's `RECIPIENT_SCOPES`. Its READERS are the
+# `recipient_readers` rail under owner "plan": `can_read_recipient("plan", scope, authz_id)`.
+# Deny-by-default; until that owner exists on the rail nobody can export to one, which is intended.
+_PLAN_OWNER = "plan"
+_PLAN_PROFILES: Optional[dict] = None
+_NOT_A_KIND = "not_a_kind_this_recipient_takes"
+
+
+def _plan_profiles() -> dict:
+    """The loaded profiles, once per process. A profile set that does not load is logged and
+    answers {} (not cached, so it retries): a bad plan profile must not take cost's picker or
+    export down with it."""
+    global _PLAN_PROFILES
+    if _PLAN_PROFILES is None:
+        from agent_fleet.utils import answer_exports as _ae
+        try:
+            _PLAN_PROFILES = _ae.load_answer_export_profiles()
+        except _ae.AnswerExportError as exc:
+            logger.error("answer export profiles do not load: %s", exc)
+            return {}
+    return _PLAN_PROFILES
+
+
+def _plan_scope_names() -> list[str]:
+    return sorted({s for p in _plan_profiles().values() for s in p.recipients})
+
+
+def _plan_reader(scope: str, authz_id: Optional[str]) -> bool:
+    """`can_read_recipient("plan", ...)`; a transport/HTTP failure is a 503, never a deny."""
+    from agent_fleet.utils.recipient_readers import can_read_recipient
+    try:
+        return bool(authz_id) and bool(can_read_recipient(_PLAN_OWNER, scope, authz_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("recipient_readers check failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail={"reason": "recipient_readers_unavailable"}
+        ) from exc
+
+
+def _plan_recipients_for(user: "User") -> list[str]:
+    """Every plan recipient scope `user` may export to: named by a loaded profile and admitted by
+    the `recipient_readers` rail. A blank `authz_id` is []."""
+    if not user.authz_id:
+        return []
+    return [s for s in _plan_scope_names() if _plan_reader(s, user.authz_id)]
+
+
+def _plan_recipients_or_none(user: "User") -> list[str]:
+    """For the pickers only: a rail that cannot be asked omits the plan recipients rather than
+    taking cost's own list down. The export and the download still answer 503."""
+    try:
+        return _plan_recipients_for(user)
+    except HTTPException:
+        return []
+
+
+def _plan_refusal_403(scope: str) -> HTTPException:
+    """The compliant refusal for a plan recipient the caller is not a reader of: the family
+    `recipient_readers` is object-scoped, so it names the family and no key."""
+    from .authz.refusal import policy_refusal
+    return policy_refusal(
+        "not_a_recipient_you_may_export_to", policy_id="recipient_readers",
+        missing_binding="can_read_recipient(recipient_scope)",
+        message="You are not a reader of this recipient.", extra={"recipient_scope": scope})
+
+
 def _user_bearer(request: Request) -> str:
     """The caller's raw bearer, exactly as the disposition route reads it above."""
     return (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
@@ -2597,7 +2666,13 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
     `no_verb` stays the true refusal for those. `subject_instance_id` is read from the intent
     alone. An old or malformed routing record yields None, never an error.
     """
-    resolved: list[dict] = []
+    return [_resolve_export_record(r) for r in _read_export_records(artifact_ids, user_id)]
+
+
+def _read_export_records(artifact_ids: list[str], user_id: str) -> list:
+    """The `_ARTIFACT_BY_ID_CYPHER` record of each id, owner-checked: 404 for one that does not
+    resolve (refused, never dropped), 503 when the store is down."""
+    records: list = []
     for artifact_id in artifact_ids:
         try:
             with neo4j_driver.session() as session:
@@ -2613,32 +2688,93 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
                 status_code=404,
                 detail={"reason": "answer_not_found", "artifact_id": artifact_id},
             )
+        records.append(rec)
+    return records
 
-        intent: dict = {}
-        if rec.get("resolved_intent"):
-            try:
-                intent = json.loads(rec["resolved_intent"]) or {}
-            except (ValueError, TypeError):
-                intent = {}
 
-        def _or_none(v):
-            v = str(v or "").strip()
-            return None if not v or v == "UNKNOWN" else v
+def _resolve_export_record(rec) -> dict:
+    """One record as the engines' `{id, verb_iri, subject_instance_id}` (the two homes of the
+    verb are explained on `_resolve_export_answers`). Widens nothing."""
+    intent: dict = {}
+    if rec.get("resolved_intent"):
+        try:
+            intent = json.loads(rec["resolved_intent"]) or {}
+        except (ValueError, TypeError):
+            intent = {}
 
-        verb = _or_none(intent.get("verb_iri"))
-        if verb is None:
-            try:
-                _routing = json.loads(rec.get("routing_inline") or "null")
-                verb = _or_none(_routing["action"]["iri"])
-            except (ValueError, TypeError, KeyError):
-                verb = None
+    def _or_none(v):
+        v = str(v or "").strip()
+        return None if not v or v == "UNKNOWN" else v
 
-        resolved.append({
-            "id": str(rec["id"]),
-            "verb_iri": verb,
-            "subject_instance_id": _or_none(intent.get("subject_instance_id")),
+    verb = _or_none(intent.get("verb_iri"))
+    if verb is None:
+        try:
+            _routing = json.loads(rec.get("routing_inline") or "null")
+            verb = _or_none(_routing["action"]["iri"])
+        except (ValueError, TypeError, KeyError):
+            verb = None
+
+    return {
+        "id": str(rec["id"]),
+        "verb_iri": verb,
+        "subject_instance_id": _or_none(intent.get("subject_instance_id")),
+    }
+
+
+def _plan_partition(resolved: list[dict], profile) -> tuple[list[dict], list[dict]]:
+    """THE ONE DECISION a plan recipient makes about a board, used by the export and the offer
+    alike: (taken answers, refused items). Taken = verb in `profile.kinds`, in board order.
+    Refused = `{answer_id, kind, reason_code, reason}`: `no_verb` when the answer has none,
+    `not_a_kind_this_recipient_takes` otherwise."""
+    from agent_fleet.cost_agent.canvas import REFUSAL_REASONS, NO_VERB, _verb_local
+    kinds = {_verb_local(k) for k in profile.kinds} - {None}
+    taken: list[dict] = []
+    refused: list[dict] = []
+    for ans in resolved:
+        local = _verb_local(ans.get("verb_iri"))
+        if local is not None and local in kinds:
+            taken.append(ans)
+        elif local is None:
+            refused.append({"answer_id": ans["id"], "kind": None, "reason_code": NO_VERB,
+                            "reason": REFUSAL_REASONS[NO_VERB]})
+        else:
+            refused.append({
+                "answer_id": ans["id"], "kind": local, "reason_code": _NOT_A_KIND,
+                "reason": f"not a kind the {profile.name} export takes "
+                          f"({len(profile.kinds)} kinds)",
+            })
+    return taken, refused
+
+
+def _plan_rows(records: list, taken_ids: set[str]) -> list[dict]:
+    """The rows of the taken answers, in board order, read from the SAME records the board was
+    resolved from (no second query). Keys are `answer_exports.ANSWER_FIELDS`."""
+    rows: list[dict] = []
+    for rec in records:
+        resolved = _resolve_export_record(rec)
+        if resolved["id"] not in taken_ids:
+            continue
+        subject = None
+        try:
+            intent = json.loads(rec.get("resolved_intent") or "null")
+            if isinstance(intent, dict):
+                subject = intent.get("subject_uri") or None
+        except (ValueError, TypeError):
+            subject = None
+        valid = rec.get("valid_as_of")
+        if valid is not None and hasattr(valid, "isoformat"):
+            valid = valid.isoformat()
+        rows.append({
+            "answer_id": resolved["id"],
+            "question": rec.get("question_text"),
+            "summary": rec.get("summary"),
+            "verb": resolved["verb_iri"],
+            "subject": subject,
+            "program": rec.get("origin_program"),
+            "status": rec.get("status"),
+            "valid_as_of": None if valid is None else str(valid),
         })
-    return resolved
+    return rows
 
 
 def _partition_export_answers(resolved: list[dict]) -> list[tuple[str, list[dict]]]:
@@ -2783,7 +2919,8 @@ async def export_package_recipients(current_user: User = Depends(get_current_use
     sees are exactly the scopes their `authz_id` reads, never the full recipient catalogue."""
     return {
         "recipients": [
-            {"value": s, "label": s} for s in _export_recipients_for(current_user)
+            {"value": s, "label": s}
+            for s in _export_recipients_for(current_user) + _plan_recipients_or_none(current_user)
         ]
     }
 
@@ -2870,6 +3007,22 @@ def _offer_for_recipient(resolved: list[dict], scope: str) -> dict:
     }
 
 
+def _plan_offer_for_recipient(resolved: list[dict], scope: str) -> dict:
+    """`_offer_for_recipient`'s shape for a plan recipient, decided by `_plan_partition` -- the
+    function the export takes its own decision from."""
+    from agent_fleet.utils import answer_exports as _ae
+    profile = _ae.profile_for_recipient(_plan_profiles(), scope)
+    taken, refused = _plan_partition(resolved, profile)
+    exports = list(dict.fromkeys(a["id"] for a in taken))
+    return {
+        "offered": bool(exports),
+        "reason_code": None if exports else _OFFER_TAKES_NONE,
+        "reason": None if exports else _OFFER_TAKES_NONE_REASON,
+        "exports": exports,
+        "refused": refused,
+    }
+
+
 @app.post("/export/package/recipients")
 async def export_package_offer(
     body: ExportOfferRequest, current_user: User = Depends(get_current_user),
@@ -2895,6 +3048,9 @@ async def export_package_offer(
         "recipients": [
             {"value": s, "label": s, **_offer_for_recipient(resolved, s)}
             for s in _export_recipients_for(current_user)
+        ] + [
+            {"value": s, "label": s, **_plan_offer_for_recipient(resolved, s)}
+            for s in _plan_recipients_or_none(current_user)
         ],
     }
 
@@ -3026,6 +3182,81 @@ async def _export_package_from_template(
     )
 
 
+async def _call_engine_cost_answers_export(payload: dict, bearer: str) -> dict:
+    """POST engine-cost's `/answers_export`. Its 403 is the engine's policy refusal completed by
+    `relay_refusal`; its 503 (`recipient_readers_unavailable`) stays a 503."""
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            rr = await client.post(
+                f"{_ENGINE_COST_URL}/answers_export", json=payload,
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "cost_engine_unreachable", "message": str(exc),
+        })
+    if rr.status_code >= 400:
+        if rr.status_code == 403:
+            raise _engine_failure("cost", rr)
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+    return rr.json()
+
+
+async def _export_plan_answers(
+    body: "ExportPackageRequest", request: Request, current_user: User, recipient_scope: str,
+) -> dict:
+    """A board exported to a plan recipient: no cost or fin call is made.
+
+    The answers whose verb is in the profile's `kinds` are rendered by engine-cost's
+    `/answers_export`; the rest are refused by name, as `_refused_entries` shapes them. The
+    rows come from the same `_ARTIFACT_BY_ID_CYPHER` records the board resolved from.
+    """
+    from agent_fleet.utils import answer_exports as _ae
+    profile = _ae.profile_for_recipient(_plan_profiles(), recipient_scope)
+    records = _read_export_records([a.artifact_id for a in body.answers], current_user.id)
+    resolved = [_resolve_export_record(r) for r in records]
+    taken, refused_items = _plan_partition(resolved, profile)
+
+    documents: list[dict] = []
+    if taken:
+        taken_ids = [a["id"] for a in taken]
+        rows = _plan_rows(records, set(taken_ids))
+        # CONTENT-ADDRESSED, as cost's: the same inputs name the same export.
+        export_id = hashlib.sha256(json.dumps(
+            {"recipient_scope": recipient_scope, "rows": rows},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str,
+        ).encode("utf-8")).hexdigest()
+        out = await _call_engine_cost_answers_export(
+            {"recipient_scope": recipient_scope, "export_id": export_id,
+             "user_email": current_user.authz_id, "rows": rows},
+            _user_bearer(request),
+        )
+        section = _shape_export_package_response(
+            out, recipient_scope=recipient_scope, template_id=None,
+            extra={"profile": out.get("profile")},
+        )
+        documents.append({"engine": "cost", "answers": taken_ids, **section})
+    documents.extend(_refused_entries("cost", refused_items, recipient_scope))
+
+    ok = [d["status"] == "exists" for d in documents]
+    status = "exists" if all(ok) else ("partial" if any(ok) else "failed")
+    refused = sum(len(d["answers"]) for d in documents if d["status"] != "exists")
+    export_id = next((d["export_id"] for d in documents if d["status"] == "exists"), None)
+    return {
+        "export_id": export_id,
+        "status": status,
+        "recipient_scope": recipient_scope,
+        "reason": None if not refused else f"{refused} of {len(body.answers)} answers refused",
+        "template_id": None,
+        "documents": documents,
+    }
+
+
 @app.post("/export/package")
 async def export_package(
     body: ExportPackageRequest,
@@ -3089,9 +3320,12 @@ async def export_package(
     if not body.answers:
         raise HTTPException(status_code=400, detail={"reason": "no_answers"})
 
-    options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
-
     recipient_scope = (body.recipient_scope or "").strip()
+    is_plan_scope = recipient_scope in _plan_scope_names()
+    plan_recipients = _plan_recipients_for(current_user) if is_plan_scope else []
+    options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
+    options += [{"value": s, "label": s} for s in (
+        plan_recipients if is_plan_scope else _plan_recipients_or_none(current_user))]
     if not recipient_scope:
         raise HTTPException(
             status_code=409,
@@ -3099,6 +3333,11 @@ async def export_package(
                     "message": "name the recipient this package is for (recipient_scope); "
                                "the options are listed."},
         )
+
+    if is_plan_scope:
+        if recipient_scope not in plan_recipients:
+            raise _plan_refusal_403(recipient_scope)
+        return await _export_plan_answers(body, request, current_user, recipient_scope)
 
     if recipient_scope not in _export_recipients_for(current_user):
         # WHY PRODUCTION IS GATED HERE, NOT ONLY THE DOWNLOAD: every recipient's package
@@ -3214,10 +3453,18 @@ async def export_package_artifact(
     # first, then finance — which is safe only because the two engines' filename sets are
     # DISJOINT (sealed in tests/finance/test_fin_package_export.py): were a name ever claimed
     # by both, this order would silently prefer cost's scope and recipients_fn over finance's.
+    from agent_fleet.utils import answer_exports as _ae
     scope = _cost_seed.scope_of_artifact(filename)
+    plan_hit = None if scope is not None else _ae.match_artifact(_plan_profiles(), filename)
     if scope is not None:
         engine_url = _ENGINE_COST_URL
         recipients_fn = _export_recipients_for
+        engine_label = "cost"
+    elif plan_hit is not None:
+        # A plan answers export: produced by engine-cost, read on the `recipient_readers` rail.
+        scope = plan_hit[1]
+        engine_url = _ENGINE_COST_URL
+        recipients_fn = _plan_recipients_for
         engine_label = "cost"
     else:
         scope = _fin_export.scope_of_artifact(filename)

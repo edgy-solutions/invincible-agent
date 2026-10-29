@@ -120,6 +120,11 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
      SUPERVISOR, "execute_subtask", "_make_enumerator", ("config." + FIELD,)),
     ("17 · onto the wire to /enumerate_instances",
      SUPERVISOR, "_make_enumerator", "<dict>", (FIELD,)),
+    # Hop 22: the plan answers export. The BFF names the caller to engine-cost's /answers_export,
+    # whose reader check keys on it. Numbered 22 because a parallel branch
+    # (fin/canvas-seed-enumerator-hop) is registering hops 18-21; reconcile on merge.
+    ("22 · onto the wire to engine-cost's /answers_export",
+     GATEWAY, "_export_plan_answers", "<dict>", ("current_user.authz_id",)),
 ]
 
 #: Sites that READ the identity without naming it under :data:`FIELD` -- ``getattr`` with a

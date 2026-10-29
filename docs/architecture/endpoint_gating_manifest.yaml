@@ -1130,6 +1130,21 @@ services:
           SEED DATA (`seed.RECIPIENT_READERS`), not policy. A real deployment reads that
           relation from the grant rail where it can be reviewed and revoked; a mapping in a
           seed can be changed by anyone who can change the engine."
+      - method: POST
+        path: /answers_export
+        identity: "caller authz_id (body user_email, as the BFF names it), checked on the recipient_readers rail under owner plan"
+        gate: "AUTHORIZATION on the caller (can_read_recipient, deny-by-default; a rail that cannot be asked is 503) + a recipient named by an answer-export profile; transport auth (OBSERVE)"
+        exposes: object-store-write
+        consumers: ["cortex-bff /export/package (a plan recipient)"]
+        class: gated
+        justification: >-
+          Renders the rows a plan recipient takes with its policy/exports profile and writes
+          the file beside package_export's own. The BFF decides which answers the recipient
+          takes (the profile's kinds); this route re-checks the caller as a reader of the
+          recipient BEFORE anything is written, so it does not rest on the gateway being the
+          only caller. 404 for a recipient no profile names, 403 (policy_id recipient_readers)
+          for a non-reader, 503 recipient_readers_unavailable when the rail cannot be asked.
+          The same readers gate GET /artifact/{filename} for an ia-answers-* name.
 
   finance_agent:
     inbound_transport_auth: engine-fin

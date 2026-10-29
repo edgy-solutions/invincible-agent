@@ -150,6 +150,10 @@ COPY policy/measure_verbs/ /app/policy/measure_verbs/
 # reach the image through the `policy/overlays/` COPY above. An absent directory composes to no
 # profiles, so this is not a boot dependency.
 COPY policy/fin_export_profiles/ /app/policy/fin_export_profiles/
+# THE SEVENTH: the answer-export profile seed (`agent_fleet/utils/answer_exports.py`, read by
+# engine-cost's /answers_export). Without it the engine finds no profile for any recipient and
+# answers 404 `no_profile_for_recipient`. The BFF image carries the whole policy/ directory.
+COPY policy/exports/ /app/policy/exports/
 # ── THE COST PACKAGE BUILDER AND ITS PINNED RUNTIME ────────────────────────
 #
 # `cost_agent.measures.package_export` builds a self-contained artifact from the
