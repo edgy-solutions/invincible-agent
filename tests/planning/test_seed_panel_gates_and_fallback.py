@@ -406,6 +406,7 @@ async def test_a_dispatch_raise_on_a_seed_turn_fails_visibly_naming_its_step(
     ri = bundle["resolved_intent"]
     assert verb and ri["verb_iri"] == verb
     assert ri["subject_uri"] == template.panels[0].subject
+    assert "failure_cause" in ri, "a raised seed left no cause on the artifact (NoCauseRecorded)"
     cause = ri["failure_cause"]
     assert cause["exception"] == err["cause"]
     assert cause["step"] == step
