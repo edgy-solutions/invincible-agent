@@ -126,9 +126,16 @@ are asked of every definition in the draft, whether or not a selection table rea
 The model omitted these more often than anything else (§8). A slot asked by name ("Required: the
 task kind for the approval ...") is asked before the stage is wired in, not after.
 
-The agent never asks about something the draft already states. Order:
+**Confirmed once** (the turn check, ruled 2026-10-30, §10). A required slot the draft already
+holds a value for is asked once more, to confirm, when no turn asked about it: its value was set
+in a turn that asked something else, or in the opening. The slots checked are the trigger's
+stages, each approval step's task kind, each approval step's `excludes`, and each complete
+routing table. An unanswered confirm is left open; it may not be deferred.
+
+The agent never asks about something the draft already states, except a confirm. Order:
 1. contradictions;
-2. then missing items, by facet: trigger, actors, steps, approvals, outputs.
+2. then missing items, by facet: trigger, actors, steps, approvals, outputs;
+3. then confirms, by facet.
 
 ### 4. A contradiction is asked, never resolved by the last answer
 
@@ -756,6 +763,10 @@ now 13: it includes the stages answer.
 | 17 | 9/13 | 0 | 6 | 0 | 1 | 0 | **runnable** | 267 |
 | 18 | 32/13 | 4 | 8 | 10 | 13 | 1 | cannot_run | 661 |
 
+**Run 17 is the first real one** (architect, 10-30): runnable, with all four stages drafted. Run 7
+was runnable with half the workflow missing; runs 8 to 15 never drafted more than two stages. Run
+17 still carries 6 semantic diffs against the expected bundle, and it asked no chaining slot.
+
 - **The stages gap is closed in 2 of 3 runs.**
   - Runs 16 and 17 asked `trigger.stages` first. Both then asked `steps.<stage>` for the program
     approval and the record, and drafted all four stages. Runs 10 to 15 never drafted more than two.
@@ -789,6 +800,10 @@ now 13: it includes the stages answer.
     - a slot asked twice with no change in the draft is a stall the loop could report instead of
       asking it a third time.
   - Neither is built here. Both wait for the ruling on order.
+  - *Correction (10-30):* there is no third time. The loop already stops at two asks and leaves
+    the key open. What was owed is a signal, not a cap: the second ask, when its answer changed
+    nothing, is reported as stalled rather than as unresolved. Built in the turn-check subsection
+    below.
 - **The restate arm.** Run 18 sent the positional path `steps[0].deadline_seconds` again, at turn
   18. It was refused once, with no second refusal.
 - **The planted deferral was recorded live in all three runs, and the counter reads 0 of 1.**
@@ -847,6 +862,64 @@ The two misses have different causes. One is in the instrument, the other in the
        disposition. Re-asking that one is exactly what would surface the planted contradiction.
   3. **A grammar line only,** naming `excludes: []` as a value the statement must say. Runs 10 to
      18 already ignore the general rule.
+
+#### 2026-10-30: the turn check, a stalled signal, and a terminal is what a row points to
+
+Ruling (architect, 10-30): build the turn check (remedy 2 above) and take three runs. Put the two
+run-18 fixes in the same build: the grammar line "a terminal is what a row points to", and a
+stalled signal on a repeated question whose answer changed nothing.
+
+- **The turn check.** For each required slot the draft holds a value for, take the last turn that
+  set each of its leaves. The slot is attributed if, at or after that turn, the person answered
+  either:
+  - a question whose key is the slot's key, or a dotted prefix of it either way;
+  - for a task kind, the question about that step's stage, which asks what the approver decides;
+  - a confirm or an overwrite contradiction that names the leaf.
+
+  The opening asks nothing, so it attributes nothing. An unattributed slot becomes a `confirm`
+  gap: "the draft says ..., but you were never asked about it. Is that right? If not, what is
+  it?" Its `revises` is the slot's own leaves, so an answer that differs replaces the value, and a
+  leaf the answer touches outside the slot is an overwrite contradiction, asked as any other.
+  - Slots checked: `trigger.stages`; `approvals.<wf>.<step>.task_kind` (the step's task kind and
+    the kind's `accepts`); `actors.<wf>.<step>.excludes`; `<facet>.<wf>.next` for a complete
+    routing table (`matches`, `domain`, `rows`, `terminals`).
+  - A confirm is asked once, after every missing item. Unanswered, it is left open; it may not be
+    deferred.
+- **What it costs.** The check cannot tell a slot the person stated in passing from one the model
+  invented; both were set by a turn that asked something else. So each fixture now confirms the
+  slots its person stated in passing: PCN 1, maintenance 2, training 4. The bank answers each in
+  the person's own words. The oracle question counts (t7) move from 13/10/11 to 14/12/15.
+- **The stall.** When a question is asked the second time and its answer leaves the files and the
+  deferrals exactly as they were, the key is recorded in `stalled` and left open as "stalled:
+  asked again and the answer changed nothing". It is not counted as unresolved. The loop already
+  stopped at two asks; the stall only names why.
+- **The terminal.** The grammar gains: "A terminal is what a row points to (`then: <terminal>`),
+  not an outcome: every value in the domain still needs its own row, and an outcome that ends the
+  case has a row whose `then` names a terminal listed in `terminals`." A row slot for an outcome
+  already listed in `terminals` says so in its question: the row still has to name it.
+- **The scripted user narrows its path answers.** When it answers by path (no bank entry under
+  the asked key), it now repeats the person's words but sets only the one fact asked. Before, it
+  replayed the whole entry it matched, often the opening. That re-set values the person had since
+  revised, and under the turn check the re-sets raised overwrite contradictions nobody planted
+  (training: `accepts`, `reason_required`). This changes the instrument: the "answered by path"
+  answers of runs 19 on are narrower than those of runs 7 to 18.
+- **The measure row** gains `confirms`, `stalled` and `contradictions_asked`.
+- **Seals.** `tests/socratic` gives 88 passed (12 new):
+  - each fixture's oracle run confirms exactly the slots its person stated in passing;
+  - an extractor that writes `excludes: []` on the program approval unasked, as runs 10 to 18
+    did: the slot is confirmed, the answer overwrites it, the planted contradiction is asked, and
+    the result is runnable and equal to the expected bundle. Control: answered in its own turn,
+    the slot is asked as missing, never confirmed;
+  - an unanswered confirm is asked once and left open, never deferred (an `excludes` key, and a
+    task kind, which no other rule keeps from deferral);
+  - the opening attributes nothing, with a control;
+  - a repeated question whose answer changes nothing is stalled; control: a second answer that
+    changes the draft is not;
+  - the grammar line, and the terminal hint in the row question, with a control.
+- **Mutants,** each restored and checked with `cmp`, each red on an assertion: every slot
+  attributed; no stage relation for the task kind; a confirm deferrable; a confirm asked twice; a
+  stall on the first ask; a stall that ignores a change; no grammar line; no row hint; the
+  scripted user not narrowed.
 
 ## Consequences
 

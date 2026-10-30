@@ -95,7 +95,7 @@ _LEAF_WORDS = {
 class Gap:
     key: str          # stable string, the fixture bank's lookup key
     facet: str        # one of: trigger, actors, steps, approvals, outputs
-    kind: str         # "missing" | "contradiction"
+    kind: str         # "missing" | "contradiction" | "confirm"
     question: str     # user-facing text (templated; names the stage/step in plain words)
     proposed: Any = None                       # an overwrite contradiction: the value not applied
     revises: Tuple[Tuple[str, str], ...] = ()  # (file, leaf path) pairs an answer may overwrite
@@ -110,6 +110,9 @@ class Draft:
     kept_earlier: List[str] = field(default_factory=list)     # contradictions resolved to the earlier
     open: Dict[str, str] = field(default_factory=dict)        # NON-deferrable gap key -> why it is open
     asked: Counter = field(default_factory=Counter)           # gap key -> times asked
+    answered: Dict[str, int] = field(default_factory=dict)    # gap key -> last turn it was answered
+    vouched: Dict[Tuple[str, str], int] = field(default_factory=dict)  # (file, leaf) -> turn the
+    #   person answered a question naming that leaf (a confirm or an overwrite contradiction)
 
 
 class PatchError(ValueError):
@@ -713,8 +716,12 @@ def _chain_slots(wid: str, facet: str, tfile: str, table: dict,
             continue
         when = (f"'{combo[0]}'" if len(attrs) == 1
                 else ", ".join(f"{_words(a)} '{c}'" for a, c in facts.items()))
+        listed = [str(c) for c in combo if c in (table.get("terminals") or [])]
+        # run 18 listed outcomes as terminals and left them without rows (ADR-0061 §10)
+        hint = (f" ('{listed[0]}' is listed as a final state, but a final state is what a row "
+                f"points to: the row for '{listed[0]}' still has to name it.)" if listed else "")
         out.append(Gap(f"{facet}.{wid}.next.{'+'.join(str(c) for c in combo)}", facet, "missing",
-                       f"Required: when {_words(wid)} ends {when}, what happens next?",
+                       f"Required: when {_words(wid)} ends {when}, what happens next?{hint}",
                        revises=revises))
     return out
 
@@ -778,6 +785,105 @@ def required_slots(files: Dict[str, dict]) -> List[Gap]:
     return out
 
 
+def _related(a: str, b: str) -> bool:
+    """True iff dotted key or path ``a`` is ``b`` or one is the other's prefix at a segment."""
+    return (a == b or a.startswith(b + ".") or a.startswith(b + "[")
+            or b.startswith(a + ".") or b.startswith(a + "["))
+
+
+def _set_turn(draft: Draft, file: str, path: str) -> Optional[int]:
+    """The last turn that set ``path`` of ``file``, or a leaf over or under it; None if none."""
+    turns = [t for (f, p), t in draft.set_at.items() if f == file and _related(p, path)]
+    return max(turns) if turns else None
+
+
+def _value_slots(files: Dict[str, dict]) -> List[Tuple[str, str, Tuple[Tuple[str, str], ...], str]]:
+    """Each required slot the draft already HOLDS a value for, as (key, facet, leaves, what the
+    draft says): the slot's key is the one ``required_slots`` asks while the value is absent."""
+    out: List[Tuple[str, str, Tuple[Tuple[str, str], ...], str]] = []
+    wfs, kinds, decisions = _workflows(files), _kinds(files), _decisions(files)
+    chain_by_after: Dict[str, Tuple[str, dict]] = {}
+    for name, (tf, t) in decisions.items():
+        if t.get("after"):
+            chain_by_after.setdefault(str(t["after"]), (tf, t))
+    for f, t in _of(files, "triggers"):
+        stages = t.get(_STAGES)
+        if isinstance(stages, list) and stages:
+            out.append((f"trigger.{_STAGES}", "trigger", ((f, _STAGES),),
+                        f"a {_words(t.get('trigger') or _stem(f))} case passes through "
+                        f"{', '.join(_words(x) for x in stages)}, in that order"))
+    for wid, (f, raw) in wfs.items():
+        for s in _steps(raw):
+            sid = s.get("id")
+            if s.get("kind") != "human_await" or not sid:
+                continue
+            tk = s.get("task_kind")
+            named = _kinds_for(str(tk), kinds) if tk else []
+            if named:
+                kf, kraw = kinds[named[0]]
+                acc = kraw.get("accepts")
+                out.append((f"approvals.{wid}.{sid}.task_kind", "approvals",
+                            ((f, f"steps[id={sid}].task_kind"), (kf, "accepts")),
+                            f"{_words(sid)} in {_words(wid)} is a {_words(tk)} task"
+                            + (f", answered {' or '.join(map(str, acc))}" if isinstance(acc, list) and acc
+                               else "")))
+            if "excludes" in s:
+                ex = s["excludes"]
+                said = (f"nobody is barred from answering at {_words(sid)} in {_words(wid)}"
+                        if not ex else f"{_fmt(ex)} may not answer at {_words(sid)} in {_words(wid)}")
+                out.append((f"actors.{wid}.{sid}.excludes", "actors",
+                            ((f, f"steps[id={sid}].excludes"),), said))
+    for wid, (f, raw) in wfs.items():
+        if wid not in chain_by_after:
+            continue
+        verbs, last = _emits(raw, kinds)
+        facet = "approvals" if last is not None and last.get("kind") == "human_await" else "outputs"
+        tf, table = chain_by_after[wid]
+        if _chain_slots(wid, facet, tf, table, verbs):
+            continue  # not complete: its own slots are asked
+        rows = "; ".join(f"{_fmt(r.get('when'))} -> {r.get('then')}"
+                         for r in table.get("rows") or [] if isinstance(r, dict))
+        out.append((f"{facet}.{wid}.next", facet,
+                    tuple((tf, x) for x in ("matches", "domain", "rows", "terminals")),
+                    f"after {_words(wid)}: {rows}"))
+    return out
+
+
+def _attributed(draft: Draft, key: str, leaves: Tuple[Tuple[str, str], ...]) -> bool:
+    """True iff the person answered a question about each leaf of the slot in or after the turn
+    that last set it (ADR-0061 §10, the turn check, architect 2026-10-30): a question whose key is
+    the slot's or over or under it, or one naming the leaf itself (a confirm, an overwrite
+    contradiction). The stage question asks what the approver decides, so it covers that stage's
+    task kinds. The opening asks nothing, so it covers nothing."""
+    stage = "steps." + key.split(".")[1] if key.endswith(".task_kind") else None
+    for file, path in leaves:
+        t = _set_turn(draft, file, path)
+        if t is None:
+            continue
+        if any(f == file and _related(p, path) and vt >= t for (f, p), vt in draft.vouched.items()):
+            continue
+        if any(at >= t and (_related(k, key) or k == stage) for k, at in draft.answered.items()):
+            continue
+        return False
+    return True
+
+
+def confirms(draft: Draft) -> List[Gap]:
+    """A required slot the draft holds a value for that the person was never asked about: asked
+    once to confirm (ADR-0061 §10). Runs 10 to 18 drafted ``excludes: []`` on every approval
+    unasked, so the planted contradiction behind that question was never reached. An answer that
+    differs replaces the slot's own value; one that touches a leaf the person did state is an
+    overwrite contradiction, asked like any other."""
+    out: List[Gap] = []
+    for key, facet, leaves, said in _value_slots(draft.files):
+        if _attributed(draft, key, leaves):
+            continue
+        out.append(Gap(key, facet, "confirm",
+                       f"Required, to confirm: the draft says {said}, but you were never asked "
+                       "about it. Is that right? If not, what is it?", revises=leaves))
+    return out
+
+
 _BARRED_RX = re.compile(r"actors\.[^.]+\.[^.]+\.excludes")
 
 
@@ -788,6 +894,8 @@ def non_deferrable(draft: Draft, key: str) -> Optional[str]:
         return "a runtime refusal may not be deferred"
     if any(x.key == key for x in required_slots(draft.files)):
         return "a required slot may not be deferred"
+    if any(x.key == key for x in confirms(draft)):
+        return "a required slot the person has not confirmed may not be deferred"
     if _BARRED_RX.fullmatch(key):
         return "who is barred from an approval may not be deferred"
     return None
@@ -835,15 +943,17 @@ def _completeness(files: Dict[str, dict]) -> List[Gap]:
 def gaps(draft: Draft) -> List[Gap]:
     """Everything still to settle, highest priority first: pending overwrite contradictions, then
     other contradictions, then missing items by facet (trigger, actors, steps, approvals, outputs).
-    A gap whose key is deferred is settled."""
-    return [g for g in _all_gaps(draft) if draft.asked[g.key] < 2]
+    A gap whose key is deferred is settled. A confirm is asked once."""
+    return [g for g in _all_gaps(draft) if draft.asked[g.key] < (1 if g.kind == "confirm" else 2)]
 
 
 def _all_gaps(draft: Draft) -> List[Gap]:
-    """``gaps`` before the asked-twice cut. An open key ranks after every other gap."""
-    rest = required_slots(draft.files) + problems(draft.files) + _completeness(draft.files)
+    """``gaps`` before the asked-twice cut. A confirm ranks after every missing item; an open key
+    ranks after every other gap."""
+    rest = (required_slots(draft.files) + problems(draft.files) + _completeness(draft.files)
+            + confirms(draft))
     seen: set = set()
-    pend, contra, missing = [], [], []
+    pend, contra, missing, confirm = [], [], [], []
     for g in list(draft.pending) + rest:
         if g.key in seen or g.key in draft.deferrals:
             continue
@@ -852,10 +962,13 @@ def _all_gaps(draft: Draft) -> List[Gap]:
             pend.append(g)
         elif g.kind == "contradiction":
             contra.append(g)
+        elif g.kind == "confirm":
+            confirm.append(g)
         else:
             missing.append(g)
     missing.sort(key=lambda g: _FACET_RANK[g.facet])  # stable: generation order within a facet
-    out = pend + contra + missing
+    confirm.sort(key=lambda g: _FACET_RANK[g.facet])
+    out = pend + contra + missing + confirm
     return [g for g in out if g.key not in draft.open] + [g for g in out if g.key in draft.open]
 
 
@@ -1123,6 +1236,9 @@ RULES
 - REQUIRED: every workflow has a chaining table (decisions/<x>.yaml with after: <workflow id>).
 - REQUIRED: every chaining table declares matches, a domain listing every value of each input it
   matches (for outcome: every way the workflow can end), and one row for each of those values.
+- A terminal is what a row points to (`then: <terminal>`), not an outcome: every value in the
+  domain still needs its own row, and an outcome that ends the case has a row whose `then` names a
+  terminal listed in `terminals`.
 - REQUIRED: every human_await step sets excludes: the "{trigger.<field>}" of whoever may not
   answer, or [] when the user says anyone may answer or nobody is barred.
 - A step with a deadline_seconds can also end timed_out (the runner's outcome when the deadline
@@ -1261,6 +1377,7 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
     messages: List[dict] = []
     contradictions_asked: List[str] = []
     unanswerable = unresolved = turn = 0
+    stalled: List[str] = []
     answers = transcript.get("answers") or {}
     if answer is None:
         def answer(g: Gap, d: Draft) -> Optional[dict]:  # noqa: F811
@@ -1308,9 +1425,20 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
             if any(p.key == g.key for p in draft.pending):
                 draft.pending = [p for p in draft.pending if p.key != g.key]
             continue
+        before = copy.deepcopy((draft.files, draft.deferrals))
         _apply_or_charge(draft, extractor, entry, g, turn, model_errors)
-        if (g.key not in draft.deferrals and g.key not in draft.open
-                and any(x.key == g.key for x in _all_gaps(draft))):
+        draft.answered[g.key] = turn
+        if g.kind in ("confirm", "contradiction"):
+            for leaf in g.revises:
+                draft.vouched[leaf] = turn
+        live = g.key not in draft.deferrals and any(x.key == g.key for x in _all_gaps(draft))
+        if live and draft.asked[g.key] > 1 and (draft.files, draft.deferrals) == before:
+            # asked again (a repeat is of an open key) and the answer changed nothing: run 18
+            # asked ten questions twice (ADR-0061 §10)
+            stalled.append(g.key)
+            leave(g, "stalled: asked again and the answer changed nothing")
+            draft.pending = [p for p in draft.pending if p.key != g.key]
+        elif live and g.key not in draft.open:
             unresolved += 1
             leave(g, "answer did not settle it")
             draft.pending = [p for p in draft.pending if p.key != g.key]
@@ -1326,6 +1454,7 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
         "messages": messages,
         "unanswerable": unanswerable,
         "unresolved": unresolved,
+        "stalled": stalled,
         "kept_earlier": list(draft.kept_earlier),
         "contradictions_asked": contradictions_asked,
         "deferrals": dict(draft.deferrals),

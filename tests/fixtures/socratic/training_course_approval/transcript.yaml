@@ -361,6 +361,41 @@ answers:
               outcome: refused
             then: course_publish_refused
       defer: []
+  actors.course_content_review.content.excludes:
+    says: The subject matter expert may not be the author.
+    facts:
+      set:
+      - file: workflows/course_content_review.yaml
+        path: steps[id=content].excludes
+        value:
+        - '{trigger.author.authz_id}'
+      defer: []
+  actors.course_security_review.security.excludes:
+    says: The security officer may not be the author.
+    facts:
+      set:
+      - file: workflows/course_security_review.yaml
+        path: steps[id=security].excludes
+        value:
+        - '{trigger.author.authz_id}'
+      defer: []
+  actors.course_accreditation.accreditation.excludes:
+    says: The training manager may not be the author.
+    facts:
+      set:
+      - file: workflows/course_accreditation.yaml
+        path: steps[id=accreditation].excludes
+        value:
+        - '{trigger.author.authz_id}'
+      defer: []
+  approvals.course_content_review.content.task_kind:
+    says: Content review is a course content review.
+    facts:
+      set:
+      - file: workflows/course_content_review.yaml
+        path: steps[id=content].task_kind
+        value: course_content_review
+      defer: []
 planted:
   contradictions:
   - contradiction:chaining.course_content_review_chaining.deferred

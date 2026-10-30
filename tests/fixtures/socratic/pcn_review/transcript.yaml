@@ -354,6 +354,14 @@ answers:
               outcome: filed
             then: pcn_dispositioned
       defer: []
+  actors.pcn_acknowledge.acknowledge.excludes:
+    says: Nobody is barred from acknowledging.
+    facts:
+      set:
+      - file: workflows/pcn_acknowledge.yaml
+        path: steps[id=acknowledge].excludes
+        value: []
+      defer: []
 planted:
   contradictions:
   - contradiction:workflows/pcn_impact_review.yaml#steps[id=engineering_disposition].excludes

@@ -60,8 +60,9 @@ def oracle_runs():
         seen = []  # (key, was it a gap of the draft at the moment of asking)
 
         def extractor(entry, draft, gap, _seen=seen):
+            # before the asked-count cut: the loop counts the ask first, and a confirm is asked once
             if gap is not None:
-                _seen.append((gap.key, gap.key in [g.key for g in se.gaps(draft)]))
+                _seen.append((gap.key, gap.key in [g.key for g in se._all_gaps(draft)]))
             return se.OracleExtractor()(entry, draft, gap)
 
         runs[name] = (t, se.run(t, extractor), seen)
@@ -459,8 +460,9 @@ def test_t7_every_fixture_is_runnable_under_the_oracle_and_the_aligner(name):
         assert row["exact"] is True and row["deferred_refusals"] == []
         if aligned:
             assert row["answered_by_path"] == []
+    # 10-30 turn check: +1, +2, +4 confirms of slots each person stated in passing (ADR-0061 §10)
     assert sm.measure(name, se.OracleExtractor())["questions"] == {
-        "pcn_review": 13, "maint_case_release": 10, "training_course_approval": 11}[name]
+        "pcn_review": 14, "maint_case_release": 12, "training_course_approval": 15}[name]
 
 
 def _event_values_unseen(name: str, transcript: dict) -> list:
@@ -563,10 +565,14 @@ def test_the_scripted_user_delivers_a_fact_the_bank_has_no_key_for():
     for s in draft["workflows/pcn_acknowledge.yaml"]["steps"]:
         if s.get("id") == "acknowledge":
             del s["excludes"]
-    u = sm.AligningUser(tr, expected)
     key = "actors.pcn_acknowledge.acknowledge.excludes"
+    del tr["answers"][key]  # banked since the turn check (10-30); the seal is about a key with none
+    u = sm.AligningUser(tr, expected)
     g = se.Gap(key, "actors", "missing", "q")
-    assert u(g, se.Draft(files=draft)) == tr["answers"]["steps.pcn_acknowledge"]
+    stage = tr["answers"]["steps.pcn_acknowledge"]
+    # the person repeats the one fact asked, in the words they first said it
+    assert u(g, se.Draft(files=draft)) == {"says": stage["says"], "facts": {"set": [
+        {"file": "workflows/pcn_acknowledge.yaml", "path": "steps[id=acknowledge].excludes", "value": []}]}}
     assert u.answered_by_path == [(key, "steps.pcn_acknowledge")]
     assert u.unbanked == []
     # that deadline is banked (as a deferral), so drop the key: no entry sets the path either
@@ -722,7 +728,9 @@ def test_the_scripted_user_answers_a_chaining_slot_from_the_entry_that_sets_the_
     del f[CH]["domain"]["outcome"]
     u = _pcn_user()
     got = u(_slots(f)[VALUES_KEY], se.Draft(files=f))
-    assert got == _transcript("pcn_review")["answers"]["approvals.pcn_impact_review.next"]
+    assert got == {"says": _transcript("pcn_review")["answers"]["approvals.pcn_impact_review.next"]["says"],
+                   "facts": {"set": [{"file": CH, "path": "domain.outcome",
+                                      "value": exp[CH]["domain"]["outcome"]}]}}
     assert u.answered_by_path == [(VALUES_KEY, "approvals.pcn_impact_review.next")]
 
 
@@ -787,3 +795,113 @@ def test_a_declared_stage_no_row_names_yet_is_paired_by_its_place_in_the_list():
     # control: a list of another length pairs nothing by place
     draft[TRIG]["stages"] = draft[TRIG]["stages"][:3]
     assert u.translate(key, draft) is None
+
+
+# ── 10-30: the turn check; a stalled question; a terminal is what a row points to ──────────────
+
+PROGRAM = "workflows/pcn_program_approval.yaml"
+PLANTED = "contradiction:workflows/pcn_impact_review.yaml#steps[id=engineering_disposition].excludes"
+CONFIRMED = {  # the slots each fixture's person stated in passing, so the turn check asks them
+    "pcn_review": ["actors.pcn_acknowledge.acknowledge.excludes"],
+    "maint_case_release": ["actors.maint_case_inspection.inspection.excludes",
+                           "actors.maint_case_supervisor_release.supervisor.excludes"],
+    "training_course_approval": ["actors.course_content_review.content.excludes",
+                                 "actors.course_security_review.security.excludes",
+                                 "actors.course_accreditation.accreditation.excludes",
+                                 "approvals.course_content_review.content.task_kind"],
+}
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_the_turn_check_confirms_exactly_the_slots_no_turn_asked(name, oracle_runs):
+    _, r, _ = oracle_runs[name]
+    assert [q["key"] for q in r["questions"] if q["kind"] == "confirm"] == CONFIRMED[name]
+
+
+def _unasked_excludes(transcript):
+    """Runs 10 to 18 (ADR-0061 §10): the model writes `excludes: []` on the program approval while
+    answering the stage question, which says nothing about who may answer."""
+    def extractor(entry, draft, gap):
+        patch = se.OracleExtractor()(entry, draft, gap)
+        if gap is not None and gap.key == "steps.pcn_program_approval":
+            patch = {**patch, "set": list(patch.get("set") or []) + [
+                {"file": PROGRAM, "path": "steps[id=program_approval].excludes", "value": []}]}
+        return patch
+    return extractor
+
+
+def test_a_slot_the_model_filled_unasked_is_confirmed_and_reaches_the_planted_contradiction():
+    t = _transcript("pcn_review")
+    r = se.run(t, _unasked_excludes(t))
+    assert {"key": BARRED_KEY, "kind": "confirm", "facet": "actors"} in r["questions"]
+    assert PLANTED in r["contradictions_asked"]
+    assert r["status"] == "runnable" and r["files"] == _expected("pcn_review")
+
+
+def test_control_a_slot_answered_in_its_own_turn_is_not_confirmed():
+    t = _transcript("pcn_review")
+    r = se.run(t, se.OracleExtractor())
+    assert [q["kind"] for q in r["questions"] if q["key"] == BARRED_KEY] == ["missing"]
+    assert PLANTED in r["contradictions_asked"]
+
+
+@pytest.mark.parametrize("name,key", [
+    ("pcn_review", "actors.pcn_acknowledge.acknowledge.excludes"),
+    # a task kind is deferrable as a plain question: only the confirm rule keeps it open
+    ("training_course_approval", "approvals.course_content_review.content.task_kind")])
+def test_an_unanswered_confirm_is_asked_once_and_left_open_never_deferred(name, key):
+    t = _transcript(name)
+    del t["answers"][key]
+    r = se.run(t, se.OracleExtractor())
+    assert [q["key"] for q in r["questions"]].count(key) == 1
+    assert key in r["open"] and key not in r["deferrals"]
+    assert r["status"] == "cannot_run"
+
+
+def test_the_opening_attributes_nothing():
+    d = se.Draft()
+    se.apply_patch(d, _transcript("pcn_review")["opening"]["facts"], 0)
+    keys = {g.key for g in se.confirms(d)}
+    assert "actors.pcn_impact_review.engineering_disposition.excludes" in keys
+    # control: a question about the slot, answered after the opening, attributes it
+    d.answered["actors.pcn_impact_review.engineering_disposition.excludes"] = 1
+    assert "actors.pcn_impact_review.engineering_disposition.excludes" not in {g.key for g in se.confirms(d)}
+
+
+def _silent_on(key, second=None):
+    def extractor(entry, draft, gap):
+        if gap is not None and gap.key == key:
+            return second if (second is not None and draft.asked[key] > 1) else {}
+        return se.OracleExtractor()(entry, draft, gap)
+    return extractor
+
+
+def test_a_repeated_question_whose_answer_changes_nothing_is_stalled():
+    t = _transcript("pcn_review")
+    r = se.run(t, _silent_on("trigger.stages"))
+    assert [q["key"] for q in r["questions"]].count("trigger.stages") == 2
+    assert r["stalled"] == ["trigger.stages"]
+    assert "stalled" in r["open"]["trigger.stages"]
+
+
+def test_control_a_repeated_question_whose_answer_changed_something_is_not_stalled():
+    t = _transcript("pcn_review")
+    note = {"set": [{"file": TRIG, "path": "note", "value": "changed"}]}
+    r = se.run(t, _silent_on("trigger.stages", second=note))
+    assert [q["key"] for q in r["questions"]].count("trigger.stages") == 2
+    assert r["stalled"] == []
+    assert "did not settle" in r["open"]["trigger.stages"]
+
+
+def test_the_grammar_says_a_terminal_is_what_a_row_points_to():
+    assert "A terminal is what a row points to" in se._GRAMMAR
+
+
+def test_a_row_slot_for_an_outcome_listed_as_terminal_says_the_row_still_names_it():
+    f = _good()
+    f[CH]["terminals"] = f[CH]["terminals"] + ["rejected"]
+    f[CH]["rows"] = [r for r in f[CH]["rows"] if r["when"]["outcome"] == "approved"]
+    q = _slots(f)
+    assert "'rejected' is listed as a final state" in q["approvals.pcn_impact_review.next.rejected"].question
+    # control: an outcome not listed as terminal gets no such line
+    assert "final state" not in q["approvals.pcn_impact_review.next.needs_info"].question

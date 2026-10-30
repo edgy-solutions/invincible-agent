@@ -299,6 +299,24 @@ answers:
               outcome: refused
             then: returned_to_maintenance
       defer: []
+  actors.maint_case_inspection.inspection.excludes:
+    says: The inspector may not be the person who asked for the release.
+    facts:
+      set:
+      - file: workflows/maint_case_inspection.yaml
+        path: steps[id=inspection].excludes
+        value:
+        - '{trigger.requested_by.authz_id}'
+      defer: []
+  actors.maint_case_supervisor_release.supervisor.excludes:
+    says: The supervisor may not be the person who asked for the release.
+    facts:
+      set:
+      - file: workflows/maint_case_supervisor_release.yaml
+        path: steps[id=supervisor].excludes
+        value:
+        - '{trigger.requested_by.authz_id}'
+      defer: []
 planted:
   contradictions:
   - contradiction:workflows/maint_case_inspection.yaml#steps[id=inspection].deadline_seconds

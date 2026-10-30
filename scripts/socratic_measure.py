@@ -157,6 +157,8 @@ def _fact_target(key: str) -> Optional[Tuple[str, str]]:
     s = key.split(".")
     if len(s) == 4 and s[0] == "actors" and s[3] == "excludes":
         return f"workflows/{s[1]}.yaml", f"steps[id={s[2]}].excludes"
+    if len(s) == 4 and s[0] == "approvals" and s[3] == "task_kind":
+        return f"workflows/{s[1]}.yaml", f"steps[id={s[2]}].task_kind"
     if len(s) == 4 and s[0] == "approvals" and s[3] == "deadline":
         return f"workflows/{s[1]}.yaml", f"steps[id={s[2]}].deadline_seconds"
     if len(s) == 3 and s[0] == "approvals" and s[2] == "reason_required":
@@ -192,6 +194,18 @@ def _sets_path(entry: dict, file: str, path: str) -> bool:
         if se._get(scratch, file, path)[0]:
             return True
     return False
+
+
+def _narrowed(entry: dict, file: str, path: str) -> dict:
+    """``entry`` with its facts cut to the one ``path`` of ``file`` the question asks: a person
+    asked one thing repeats that thing, not the whole earlier statement. Replaying all of it re-set
+    values a later answer had revised, and raised contradictions nobody planted (ADR-0061 §10)."""
+    scratch = {file: {}}
+    for fact in ((entry.get("facts") or {}).get("set") or []):
+        if isinstance(fact, dict) and fact.get("file") == file:
+            se.apply_patch(se.Draft(files=scratch), {"set": [fact]}, 0)
+    return {**entry, "facts": {"set": [{"file": file, "path": path,
+                                        "value": se._get(scratch, file, path)[1]}]}}
 
 
 class AligningUser:
@@ -364,7 +378,7 @@ class AligningUser:
             hit = self.entry_for_path(*tgt) if tgt else None
             if hit is not None:
                 self.answered_by_path.append((gap.key, hit[0]))
-                return hit[1]
+                return _narrowed(hit[1], *tgt)
             self.unbanked.append(gap.key)
             return None
         if t != gap.key:
@@ -426,6 +440,9 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "refused_patches": r["model_errors"],
         "transport_errors": list(getattr(extractor, "transport_errors", [])),
         "asked": keys,
+        "confirms": [q["key"] for q in r["questions"] if q["kind"] == "confirm"],
+        "stalled": r["stalled"],
+        "contradictions_asked": r["contradictions_asked"],
         "deferrals": r["deferrals"],
         "files": r["files"],
         "seconds": secs,
