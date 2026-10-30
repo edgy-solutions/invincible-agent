@@ -87,6 +87,18 @@ opening:
         - rejected
     defer: []
 answers:
+  trigger.stages:
+    says: A course can pass through four stages, content review, security review, accreditation
+      and publishing.
+    facts:
+      set:
+      - file: triggers/course_submitted.yaml
+        path: stages
+        value:
+        - course_content_review
+        - course_security_review
+        - course_accreditation
+        - course_publish
   steps.course_security_review:
     says: Security review goes to a security officer who is not the author. They can clear the course
       or say it is not releasable, and not releasable needs a reason. Only clearing counts as approval.

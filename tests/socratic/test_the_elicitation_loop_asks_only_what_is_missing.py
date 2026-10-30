@@ -403,7 +403,7 @@ def test_t6_required_slots_cover_a_definition_no_table_reaches():
     f = _maintenance_run3_shape()
     slots = {g.key: g for g in se.required_slots(f)}
     assert set(slots) == {"approvals.stage_one.look.task_kind", "approvals.stage_one.next",
-                          "actors.stage_one.look.excludes"}
+                          "actors.stage_one.look.excludes", "trigger.stages"}
     named = {g.key: g.question for g in se.gaps(se.Draft(files=f))}
     for k in slots:
         assert named[k].startswith("Required:")
@@ -420,7 +420,7 @@ def test_t7_every_fixture_is_runnable_under_the_oracle_and_the_aligner(name):
         if aligned:
             assert row["answered_by_path"] == []
     assert sm.measure(name, se.OracleExtractor())["questions"] == {
-        "pcn_review": 12, "maint_case_release": 9, "training_course_approval": 10}[name]
+        "pcn_review": 13, "maint_case_release": 10, "training_course_approval": 11}[name]
 
 
 def _event_values_unseen(name: str, transcript: dict) -> list:
@@ -684,3 +684,66 @@ def test_the_scripted_user_answers_a_chaining_slot_from_the_entry_that_sets_the_
     got = u(_slots(f)[VALUES_KEY], se.Draft(files=f))
     assert got == _transcript("pcn_review")["answers"]["approvals.pcn_impact_review.next"]
     assert u.answered_by_path == [(VALUES_KEY, "approvals.pcn_impact_review.next")]
+
+
+# ── 10-30: a chaining slot binds to its table; the trigger declares its stages ──────────────────
+
+ACK = "workflows/pcn_acknowledge.yaml"
+ACK_CH = "decisions/pcn_acknowledge_chaining.yaml"
+TRIG = "triggers/pcn_received.yaml"
+STAGES = ["pcn_impact_review", "pcn_acknowledge", "pcn_program_approval", "pcn_record"]
+
+
+def _run15_shape():
+    """Run 15 (ADR-0061 §10): a stage with no disposing step, and an empty routing table after it."""
+    f = _good()
+    f[ACK]["steps"] = [{"kind": "render", "id": "note", "template": {"pcn": "{trigger.pcn_id}"}}]
+    f[ACK_CH] = {"decision": "pcn_acknowledge_chaining", "after": "pcn_acknowledge"}
+    return f
+
+
+def test_a_routing_table_after_a_stage_that_cannot_end_is_asked_its_values():
+    f = _run15_shape()
+    g = _slots(f).get("outputs.pcn_acknowledge.next.domain.outcome")
+    assert g is not None and g.question.startswith("Required:")
+    assert se.non_deferrable(se.Draft(files=f), g.key) is not None
+
+
+def test_a_trigger_that_declares_no_stages_is_a_required_slot():
+    g = _slots(_good()).get("trigger.stages")
+    assert g is not None and g.question.startswith("Required:")
+    assert se.non_deferrable(se.Draft(files=_good()), "trigger.stages") is not None
+
+
+def test_each_declared_stage_not_drafted_is_a_required_slot_and_only_those():
+    f = _good()
+    f[TRIG]["stages"] = STAGES + ["pcn_supplier_query"]
+    named = lambda: sorted(k for k in _slots(f) if k.startswith(("trigger.", "steps.")))  # noqa: E731
+    assert named() == ["steps.pcn_supplier_query"]
+    del f["workflows/pcn_record.yaml"]
+    assert named() == ["steps.pcn_record", "steps.pcn_supplier_query"]
+    assert _slots(f)["steps.pcn_record"].question.startswith("Required:")
+
+
+def test_the_stages_are_draft_only_the_served_trigger_drops_them():
+    f = _good()
+    f[TRIG]["stages"] = list(STAGES)
+    assert se.runnable(f) == []
+    assert "stages" not in se.finalize(f)[TRIG]
+    assert "contradiction:trigger" not in _keys(f)
+    # control: the runner's own Trigger refuses the field, so the drop is what makes it runnable
+    with pytest.raises(Exception, match="stages"):
+        se._cr.Trigger.model_validate(f[TRIG])
+
+
+def test_a_declared_stage_no_row_names_yet_is_paired_by_its_place_in_the_list():
+    u = _pcn_user()
+    assert u.stages == STAGES
+    draft = _rename(_good(), {"pcn_program_approval": "program_approval_stage"})
+    del draft[CH]  # nothing routes to the program approval yet
+    draft[TRIG]["stages"] = ["pcn_impact_review", "pcn_acknowledge", "program_approval_stage", "pcn_record"]
+    key = "actors.program_approval_stage.program_approval.excludes"
+    assert u.translate(key, draft) == BARRED_KEY
+    # control: a list of another length pairs nothing by place
+    draft[TRIG]["stages"] = draft[TRIG]["stages"][:3]
+    assert u.translate(key, draft) is None

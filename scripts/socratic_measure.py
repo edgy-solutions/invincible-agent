@@ -203,7 +203,8 @@ class AligningUser:
     are literal), so a definition is paired by the path a case reaches it by (the canonical BFS
     position). Steps pair k-th of a kind with k-th of the same kind; task kinds are the ones aligned
     human_await steps name; a chaining table follows its aligned `after`. A name no path reaches is
-    NOT aligned -- the question is unanswerable, never answered as some other stage."""
+    NOT aligned -- the question is unanswerable, never answered as some other stage -- unless it is
+    a stage the trigger declares, paired by its place in the person's list of stages."""
 
     def __init__(self, transcript: dict, expected_files: dict):
         self.bank = transcript.get("answers") or {}
@@ -213,6 +214,14 @@ class AligningUser:
         self.unbanked: list = []
         self.answered_by_path: list = []
         self.opening = transcript.get("opening")
+        # the person's own list of stages, from the entry that declares it: `finalize` drops the
+        # list from the served trigger, so the expected bundle does not carry it
+        self.stages = None
+        for e in [self.opening] + list(self.bank.values()):
+            for fact in (((e or {}).get("facts") or {}).get("set") or []):
+                if (isinstance(fact, dict) and str(fact.get("file", "")).startswith("triggers/")
+                        and fact.get("path") == "stages"):
+                    self.stages = fact.get("value")
 
     def entry_for_path(self, file: str, path: str) -> Optional[Tuple[str, dict]]:
         """The (source key, entry) whose facts set ``path`` of ``file``; the opening first, then the
@@ -233,9 +242,8 @@ class AligningUser:
         """draft stage name -> expected stage name, by lock-step walk from the selection tables."""
         m: dict = {}
         bad: set = set()
-        if not d["sel"] or not e["sel"]:
-            return m
-        queue = deque([(d["sel"].get("rows") or [], e["sel"].get("rows") or [])])
+        queue = deque([(d["sel"].get("rows") or [], e["sel"].get("rows") or [])]
+                      if d["sel"] and e["sel"] else [])
         while queue:
             drows, erows = queue.popleft()
             by_when = {_when_key(r.get("when")): r for r in erows if isinstance(r, dict)}
@@ -254,7 +262,16 @@ class AligningUser:
                     dc, ec = d["chain"].get(dt), e["chain"].get(et)
                     if dc and ec:
                         queue.append((dc[1].get("rows") or [], ec[1].get("rows") or []))
-        return {k: v for k, v in m.items() if k not in bad}
+        m = {k: v for k, v in m.items() if k not in bad}
+        # A stage the trigger declares may have no path to walk yet (asked for before any row names
+        # it); it pairs by its place in the person's own list, only when both lists name the same
+        # number of stages, and never over a pairing the walk made.
+        ds, es = d["trigger"].get("stages"), self.stages
+        if isinstance(ds, list) and isinstance(es, list) and len(ds) == len(es):
+            for a, b in zip(map(str, ds), map(str, es)):
+                if a not in m and b not in m.values():
+                    m[a] = b
+        return m
 
     def _maps(self, draft_files: dict) -> dict:
         d, e = _index(draft_files), _index(self.expected)

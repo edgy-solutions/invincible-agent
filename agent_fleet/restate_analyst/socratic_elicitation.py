@@ -67,6 +67,10 @@ _DISPOSING = {"human_await", "signal_await", "wait"}
 _ACTOR_FIELDS = {"audience", "excludes"}
 _APPROVAL_FIELDS = {"task_kind", "deadline_seconds", "approves", "role"}
 _FOLDERS = ("triggers", "decisions", "workflows", "task_kinds")
+#: The trigger's list of every stage (definition id) a case can pass through, in the person's
+#: order (architect, 2026-10-30). DRAFT-ONLY: the runner's Trigger refuses an unknown field, so
+#: ``finalize`` drops it; the loop reads it to ask for each stage not yet drafted.
+_STAGES = "stages"
 
 _LEAF_WORDS = {
     "excludes": "who may not decide",
@@ -498,7 +502,7 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
     for f, t in triggers:
         tname = str(t.get("trigger") or _stem(f))
         try:
-            _cr.Trigger.model_validate(t)
+            _cr.Trigger.model_validate({k: v for k, v in t.items() if k != _STAGES})
         except ValidationError as exc:
             for e in exc.errors():
                 if e["type"] == "missing":
@@ -717,8 +721,9 @@ def _chain_slots(wid: str, facet: str, tfile: str, table: dict,
 
 def required_slots(files: Dict[str, dict]) -> List[Gap]:
     """Slots asked by name for EVERY definition in the draft, reachable or not (ADR-0061 R4): the
-    task kind of each approval, who is barred from answering each approval (``excludes``), the
-    routing table after each definition that ends in a verb, and that table's values and rows."""
+    trigger's stages and each stage not yet drafted, the task kind of each approval, who is barred
+    from answering each approval (``excludes``), the routing table after each definition that ends
+    in a verb, and the values and rows of every routing table that names a drafted definition."""
     out: List[Gap] = []
     wfs = _workflows(files)
     kinds = _kinds(files)
@@ -727,6 +732,20 @@ def required_slots(files: Dict[str, dict]) -> List[Gap]:
     for name, (tf, t) in decisions.items():
         if t.get("after"):
             chain_by_after.setdefault(str(t["after"]), (tf, t))
+    for f, t in _of(files, "triggers"):
+        stages = t.get(_STAGES)
+        if not isinstance(stages, list) or not stages:
+            out.append(Gap(f"trigger.{_STAGES}", "trigger", "missing",
+                           f"Required: every stage a {_words(t.get('trigger') or _stem(f))} case can "
+                           "pass through, in order -- each review, approval, acknowledgement or "
+                           "record. Name them all.", revises=((f, _STAGES),)))
+            continue
+        for st in stages:
+            if str(st) not in wfs:
+                out.append(Gap(f"steps.{st}", "steps", "missing",
+                               f"Required: the stage {_words(st)} is not described yet. What happens "
+                               "in it: who acts, what they decide, and how it ends?",
+                               revises=((f, _STAGES),)))
     for wid, (f, raw) in wfs.items():
         for s in _steps(raw):
             if s.get("kind") != "human_await":
@@ -744,11 +763,13 @@ def required_slots(files: Dict[str, dict]) -> List[Gap]:
                                "one is."))
     for wid, (f, raw) in wfs.items():
         verbs, last = _emits(raw, kinds)
-        if last is None:
-            continue
-        facet = "approvals" if last.get("kind") == "human_await" else "outputs"
+        facet = "approvals" if last is not None and last.get("kind") == "human_await" else "outputs"
         if wid in chain_by_after:
+            # bound to the table, not to a stage that can end: run 15's empty table after a stage
+            # with no disposing step was never asked about (ADR-0061 §10)
             out += _chain_slots(wid, facet, *chain_by_after[wid], verbs)
+            continue
+        if last is None:
             continue
         tail = f": {', '.join(verbs)}" if verbs else ""
         out.append(Gap(f"{facet}.{wid}.next", facet, "missing",
@@ -892,6 +913,8 @@ def restate(draft: Draft) -> str:
 
 def finalize(files: Dict[str, dict]) -> Dict[str, dict]:
     out = copy.deepcopy(files)
+    for f, d in _of(out, "triggers"):
+        d.pop(_STAGES, None)
     for f, d in _of(out, "workflows"):
         roles: List[str] = []
         for s in _steps(d):
@@ -1092,6 +1115,9 @@ RULES
   "{trigger.<field>}" in a template or exclusion.
 - When the question is a contradiction ("Which holds?"), set exactly the path the question names.
 - When the user says they cannot say yet, DEFER the gap being asked, with their reason.
+- REQUIRED: the trigger lists `stages`: every workflow id a case can pass through, in the user's
+  order (a stage already drafted is named by its workflow id). Each stage is drafted as
+  workflows/<stage>.yaml with id <stage>.
 - REQUIRED: every human_await step has task_kind naming a task_kinds/<kind>.yaml you also set
   (with accepts).
 - REQUIRED: every workflow has a chaining table (decisions/<x>.yaml with after: <workflow id>).

@@ -73,6 +73,18 @@ opening:
           excludes: []
     defer: []
 answers:
+  trigger.stages:
+    says: A notice can pass through four stages, the impact review, the acknowledgement, the program
+      approval and the record.
+    facts:
+      set:
+      - file: triggers/pcn_received.yaml
+        path: stages
+        value:
+        - pcn_impact_review
+        - pcn_acknowledge
+        - pcn_program_approval
+        - pcn_record
   trigger.requires:
     says: Every notice has to carry its kind, its notice number, the part number, the change class and
       who logged it.

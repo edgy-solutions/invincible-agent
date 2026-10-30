@@ -78,6 +78,17 @@ opening:
           deadline_seconds: 172800
     defer: []
 answers:
+  trigger.stages:
+    says: A release passes through three stages, the QA inspection, the supervisor's release and
+      the release record.
+    facts:
+      set:
+      - file: triggers/maint_case_ready.yaml
+        path: stages
+        value:
+        - maint_case_inspection
+        - maint_case_supervisor_release
+        - maint_case_release_record
   approvals.maint_case_inspection.inspection.task_kind:
     says: The inspector can pass it or send it back for rework, and rework needs a reason. The answers
       are recorded as passed and rework.
