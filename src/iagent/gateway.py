@@ -8538,6 +8538,9 @@ async def _generate_dagster_stream_inner(
     _artifact_id = request.artifact_id or (
         f"urn:li:answerArtifact:{session_id}-{uuid.uuid4().hex[:8]}"
     )
+    # True once a ROUTED subtask_slots_decision (non-empty verb_iri) has been captured into
+    # resolved_intent. See the precedence guard at the reader.
+    _resolved_from_routed = False
     _artifact_bundle: dict = {
         "id": _artifact_id,
         "question_text": user_query,
@@ -9012,6 +9015,17 @@ async def _generate_dagster_stream_inner(
                     except (ValueError, TypeError):
                         return fallback
 
+                # PRECEDENCE, order-independent. A run can have several subtasks and every
+                # materialization lands here. (1) A no-verb record (empty verb_iri, an early
+                # exit) must NOT replace a resolved_intent already taken from a routed record:
+                # a routed subtask wins over an early exit. (2) A routed record DOES replace a
+                # no-verb one. Keyed on a local flag, not on the bundle's prior contents: the
+                # ExtractIntent output seeded there first has no verb_iri contract.
+                _is_routed_rec = bool(_slots_md.get("verb_iri"))
+                if not _is_routed_rec and _resolved_from_routed:
+                    continue
+                if _is_routed_rec:
+                    _resolved_from_routed = True
                 _artifact_bundle["resolved_intent"] = {
                     "verb_iri": _slots_md.get("verb_iri") or "",
                     "disposition": _slots_md.get("disposition") or "",
@@ -9034,13 +9048,17 @@ async def _generate_dagster_stream_inner(
                     # row reading the artifact can count it. Classify path only: the direct
                     # path never calls /fill_slots.
                     "fill_slots": _slots_md.get("fill_slots") or "",
+                    "no_verb_reason": _slots_md.get("no_verb_reason") or "",
+                    "fallback_detail": _slots_md.get("fallback_detail") or "",
+                    "rejected_verb_iri": _slots_md.get("rejected_verb_iri") or "",
                 }
                 logger.info(
                     "resolved_intent captured for run %s: verb=%s disposition=%s "
-                    "accepted=%d refused=%d",
+                    "no_verb_reason=%s accepted=%d refused=%d",
                     run_id,
                     _slots_md.get("verb_iri") or "-",
                     _slots_md.get("disposition") or "-",
+                    _slots_md.get("no_verb_reason") or "-",
                     len(_artifact_bundle["resolved_intent"]["accepted_slots"] or {}),
                     len(_artifact_bundle["resolved_intent"]["refused_slots"] or []),
                 )
