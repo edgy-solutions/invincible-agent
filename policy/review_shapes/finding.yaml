@@ -1,0 +1,6 @@
+# Platform seed for the review_shape registry (architect ruling 10-30): one row per card.
+# Overlaid per deployment by policy/overlays/<name>/review_shapes/; see README.md here.
+review_shape: finding
+item_kind: finding
+rules_version: finding.v1
+rules: []

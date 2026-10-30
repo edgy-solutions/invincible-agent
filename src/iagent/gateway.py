@@ -56,6 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
+from iagent_mesh.review_coverage import ReviewShapeRow
 from . import frontend_menu_store
 from .ingest_api import (
     BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse,
@@ -13599,6 +13600,24 @@ async def ingest_export_profiles_route(current_user: User = Depends(get_current_
             continue
         out.append({"name": p.name, "format": p.format, "granularity": p.granularity,
                     "label": p.label})
+    return out
+
+
+@app.get("/review-shapes", tags=["ingest-export"],
+         responses={200: {"model": list[ReviewShapeRow]}})
+async def review_shapes_route(current_user: User = Depends(get_current_user)):
+    """GET /review-shapes -- the valid review-shape registry rows (`policy/review_shapes`, the
+    seed plus the deployment overlays), sorted by `review_shape`. An invalid row is logged at
+    ERROR and left out. Any authenticated caller: a shape row is policy configuration, not
+    content."""
+    from . import review_shapes
+
+    out = []
+    for name, row in sorted(review_shapes.load_review_shapes().items()):
+        if isinstance(row, review_shapes.ShapeInvalid):
+            logger.error("review shape %s is invalid: %s", name, row)
+            continue
+        out.append(row.model_dump(mode="json"))
     return out
 
 

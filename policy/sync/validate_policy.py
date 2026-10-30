@@ -368,6 +368,87 @@ def domain_consumption_required_fields(raw: dict, known_domains: set[str]) -> li
     return out
 
 
+#: A FORK of iagent_mesh ReviewShapeRow's required fields, restated because this gate runs
+#: without the SDK. tests/test_review_shapes_are_one_registry.py holds it equal to the model.
+REVIEW_SHAPE_REQUIRED = ("review_shape", "item_kind", "rules_version")
+
+
+def _read_review_shapes(d: Path) -> tuple[dict[str, Path], list[str]]:
+    """{review_shape: file} for every VALID `*.yaml` row in `d`, and the errors for the rest.
+    This gate runs where the SDK is not importable, so the row's shape (iagent_mesh
+    ReviewShapeRow: review_shape, item_kind and rules_version strings; params a mapping; rules a
+    list of {id: str, params: mapping}) is checked here, and the file stem must equal the row's
+    `review_shape` (src/iagent/review_shapes.py applies the same rule)."""
+    shapes: dict[str, Path] = {}
+    errors: list[str] = []
+    if not d.is_dir():
+        return shapes, errors
+    for f in sorted(d.glob("*.yaml")):
+        try:
+            doc = yaml.safe_load(f.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            errors.append(f"{f.as_posix()}: unreadable ({type(exc).__name__})")
+            continue
+        if not isinstance(doc, dict):
+            errors.append(f"{f.as_posix()}: a review-shape row is a mapping")
+            continue
+        problems: list[str] = []
+        bad = [k for k in REVIEW_SHAPE_REQUIRED
+               if not (isinstance(doc.get(k), str) and doc[k].strip())]
+        if bad:
+            problems.append(f"{', '.join(bad)} must be a non-empty string")
+        if not isinstance(doc.get("params", {}), dict):
+            problems.append("params must be a mapping")
+        rules = doc.get("rules", [])
+        if not isinstance(rules, list) or not all(
+                isinstance(r, dict) and isinstance(r.get("id"), str)
+                and isinstance(r.get("params", {}), dict) for r in rules):
+            problems.append("rules must be a list of {id: str, params: mapping}")
+        if problems:
+            errors += [f"{f.as_posix()}: {m}" for m in problems]
+            continue
+        if doc["review_shape"] != f.stem:
+            errors.append(f"{f.as_posix()}: file stem {f.stem!r} must equal review_shape "
+                          f"{doc['review_shape']!r}")
+            continue
+        shapes[doc["review_shape"]] = f
+    return shapes, errors
+
+
+def review_shape_errors(policy_dir: Path, enums_dir: Path) -> tuple[list[str], int]:
+    """(errors, n_shapes). Every `review_shapes/*.yaml` (the seed, and each
+    `overlays/*/review_shapes`) must validate, and every content-kind row that sets `review_shape`
+    (the seed's and each overlay's) must name a row in the registry composed FOR THAT OVERLAY:
+    the seed plus that overlay's own review_shapes. The seed is `<policy_dir>/review_shapes`, else
+    the product's (`<enums_dir>/review_shapes`) for an overlay repo validating its own tree."""
+    errors: list[str] = []
+    seed_dir = policy_dir / "review_shapes"
+    if not seed_dir.is_dir():
+        seed_dir = enums_dir / "review_shapes"
+    seed, errs = _read_review_shapes(seed_dir)
+    errors += errs
+    total = len(seed)
+    layers: list[tuple[Path, dict[str, Path]]] = [(policy_dir / "content_kinds", seed)]
+    overlays = policy_dir / "overlays"
+    for o in sorted(overlays.iterdir()) if overlays.is_dir() else []:
+        shapes, errs = _read_review_shapes(o / "review_shapes")
+        errors += errs
+        total += len(shapes)
+        layers.append((o / "content_kinds", {**seed, **shapes}))
+    for kinds_dir, registry in layers:
+        for f in sorted(kinds_dir.glob("*.yaml")) if kinds_dir.is_dir() else []:
+            try:
+                doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except (OSError, yaml.YAMLError):
+                continue
+            shape = doc.get("review_shape") if isinstance(doc, dict) else None
+            if shape is not None and shape not in registry:
+                errors.append(
+                    f"{f.as_posix()}: review_shape {shape!r} names no row in the review-shape "
+                    f"registry (known: {', '.join(sorted(registry)) or 'none'})")
+    return errors, total
+
+
 def validate(
     policy_dir: Path,
     enums_dir: Path,
@@ -597,6 +678,12 @@ def validate(
         caps, groups_raw.get("groups") or {}, users_raw.get("users") or [],
         file_label="capability_grants.yaml", noun="capability",
         nobody="nobody could invoke the capability"))
+
+    # review_shape: one vocabulary, one registry (ruled 2026-10-30). A row must validate, and a
+    # content kind's `review_shape` must name a row, or the card it asks for is not one we render.
+    _shape_errors, _n_shapes = review_shape_errors(policy_dir, enums_dir)
+    errors.extend(_shape_errors)
+    print(f"  review_shapes: {_n_shapes} shape(s)")
 
     # ── NO SERVICE IDENTITY AS A DISCLOSURE RECIPIENT ───────────────────────────────────────
     #
