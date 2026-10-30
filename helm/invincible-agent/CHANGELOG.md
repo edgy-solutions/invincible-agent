@@ -19,13 +19,17 @@
 
 - **The `can_export:<profile>` convention** (header comment in `policy/capability_grants.yaml`):
   who may export export profile `<profile>`, deny-by-default (no row, nobody). `validate_policy`
-  gains three refusals: a `can_export:` key naming an unknown profile; a profile name in both the
-  review-export and fin CDRL sets; ANY known profile with no row, naming its kind's default
-  (ruled 2026-10-29): review-export `grant_to_groups: [alert-processors]`, fin CDRL
-  `grant_to_groups: [finance-analysts]`. One row gates a single export and a batch alike. A profile
-  can have its group ruled by name, which the refusal names instead: `plan_answers` (fin's #148, in
-  `policy/exports`) goes to `portfolio-leads`, not alert-processors (ruled 2026-10-29; alice holds
-  it in the sandbox already, so no `topaz_sync` precondition).
+  gains three refusals: a `can_export:` key naming an unknown profile; a profile name in two of the
+  review-export, answer-export and fin CDRL sets; ANY known profile with no row, naming its kind's
+  default (ruled 2026-10-29): review-export `grant_to_groups: [alert-processors]`, fin CDRL
+  `grant_to_groups: [finance-analysts]`. One row gates a single export and a batch alike. Each kind
+  is read where its own loader reads it: `INGEST_EXPORT_PROFILE_DIR` or `policy/exports`;
+  `EXPORT_PROFILE_POLICY_DIR` or `policy/exports/answers`, plus `EXPORT_PROFILE_OVERLAY_DIRS`; fin's
+  CDRL seed and overlays. Answer-export profiles (fin's #148) need a row too (ruled 2026-10-30); that
+  kind has no default, so its refusal says none is ruled. A profile can have its group ruled by name,
+  which the refusal names instead: `plan-answers` (#148, `policy/exports/answers`) goes to
+  `portfolio-leads`, not alert-processors (ruled 2026-10-29/30; alice, erin and chris hold it in the
+  sandbox already, so no `topaz_sync` precondition).
 - **Three rows ship**, one per profile the seed knows: `can_export:default-csv` and
   `can_export:default-json` (Lane 1's `policy/exports` profiles), `grant_to_groups:
   [alert-processors]`; `can_export:cdrl_a001_ev_summary`, `grant_to_groups: [finance-analysts]`.

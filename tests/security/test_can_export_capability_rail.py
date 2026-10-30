@@ -6,8 +6,10 @@ relation prune). One row gates a single export and a batch alike (ruled 2026-10-
 met by COMPLETENESS: validate_policy refuses ANY known profile that no row decides, and names its
 kind's default group -- alert-processors for a review-export profile (policy/exports), and
 finance-analysts, the program-finance persona's group, for a fin CDRL profile (ruled 2026-10-29).
-A profile can have its grantee ruled by name: plan_answers (fin's #148) goes to portfolio-leads,
-not alert-processors -- "AP is notices" (ruled 2026-10-29). The seed ships a row for every profile it
+An answer-export profile (fin's #148, policy/exports/answers) needs its row too (ruled 2026-10-30);
+that kind has no default, so its refusal says none is ruled. A profile can have its grantee ruled by
+name: plan-answers goes to portfolio-leads, not alert-processors -- "AP is notices" (ruled
+2026-10-29, re-keyed to the moved profile 2026-10-30). The seed ships a row for every profile it
 knows: one per policy/exports profile at its group, and the CDRL row.
 
 Run:  uv run python -m pytest tests/security/test_can_export_capability_rail.py -q
@@ -56,16 +58,25 @@ def _profile_dir(base: Path, name: str, rows: dict[str, dict]) -> Path:
 
 # -- 1. the seed composition ---------------------------------------------------------------
 
+_ENV = ("INGEST_EXPORT_PROFILE_DIR", "EXPORT_PROFILE_POLICY_DIR", "EXPORT_PROFILE_OVERLAY_DIRS",
+        "FIN_EXPORT_PROFILE_POLICY_DIR", "FIN_EXPORT_PROFILE_OVERLAY_DIRS")
+ANSWERS = ROOT / "policy" / "exports" / "answers"
+
+
 def test_1_the_seed_composition(monkeypatch):
-    monkeypatch.delenv("FIN_EXPORT_PROFILE_POLICY_DIR", raising=False)
-    monkeypatch.delenv("FIN_EXPORT_PROFILE_OVERLAY_DIRS", raising=False)
+    for v in _ENV:
+        monkeypatch.delenv(v, raising=False)
     profiles, notes = vp.known_export_profiles()
     assert profiles.get(CDRL) == "fin_cdrl", profiles
     stems = {p.stem for p in (ROOT / "policy" / "exports").glob("*.yaml")}
     assert stems, "policy/exports ships no profile"
     assert {n for n, k in profiles.items() if k == "review_export"} == stems, (profiles, stems)
-    exports = [n for n in notes if n.startswith((ROOT / "policy" / "exports").as_posix())]
+    exports = [n for n in notes if n.startswith((ROOT / "policy" / "exports").as_posix() + " ")]
     assert exports and exports[0].endswith(f"({len(stems)} profile(s))"), notes
+    # policy/exports/answers is its own kind (#148 ships it; before that it is read as absent).
+    answers = {p.stem for p in ANSWERS.glob("*.yaml")}
+    assert {n for n, k in profiles.items() if k == "answer_export"} == answers, (profiles, answers)
+    assert [n for n in notes if n.startswith(ANSWERS.as_posix() + " ")], notes
 
 
 # -- 2. the join seal with fin's loader ----------------------------------------------------
@@ -97,6 +108,41 @@ def test_2_the_fin_env_vars_move_the_seed_and_add_overlays(tmp_path, monkeypatch
     assert profiles.get("p_seed") == "fin_cdrl", (profiles, notes)
     assert profiles.get("p_ov") == "fin_cdrl", (profiles, notes)
     assert (ROOT / "policy" / "fin_export_profiles").as_posix() not in " ".join(notes), notes
+
+
+def test_2_answer_export_names_equal_what_fins_answer_loader_returns(monkeypatch):
+    """The join seal with #148's loader: the answer-export names this gate demands a row for are
+    the ones the BFF and engine-cost load. Skipped on a tree without #148's loader."""
+    if not (ROOT / "agent_fleet" / "utils" / "answer_exports.py").is_file():
+        pytest.skip("fin's answer-export loader (#148) is not on this tree")
+    from agent_fleet.utils import answer_exports
+
+    for v in _ENV:
+        monkeypatch.delenv(v, raising=False)
+    loaded = set(answer_exports.load_answer_export_profiles())
+    ours = {n for n, k in vp.known_export_profiles()[0].items() if k == "answer_export"}
+    assert loaded and ours == loaded, (ours, loaded)
+
+
+def test_2_the_answer_and_review_env_vars_are_read_as_their_loaders_read_them(tmp_path, monkeypatch):
+    """#148's two variables: EXPORT_PROFILE_POLICY_DIR MOVES the answer seed and each
+    EXPORT_PROFILE_OVERLAY_DIRS dir is ADDED. lane/01's INGEST_EXPORT_PROFILE_DIR MOVES the review
+    directory. Each kind is read from where its own loader reads it."""
+    for v in _ENV:
+        monkeypatch.delenv(v, raising=False)
+    seed = _profile_dir(tmp_path, "aseed", {"a": {"name": "a-seed"}})
+    ov = _profile_dir(tmp_path, "aov", {"b": {"name": "a-ov"}})
+    rev = _profile_dir(tmp_path, "rev", {"c": {"name": "r-moved"}})
+    monkeypatch.setenv("EXPORT_PROFILE_POLICY_DIR", str(seed))
+    monkeypatch.setenv("EXPORT_PROFILE_OVERLAY_DIRS", str(ov))
+    monkeypatch.setenv("INGEST_EXPORT_PROFILE_DIR", str(rev))
+    profiles, notes = vp.known_export_profiles()
+    assert profiles.get("a-seed") == "answer_export", (profiles, notes)
+    assert profiles.get("a-ov") == "answer_export", (profiles, notes)
+    assert {n for n, k in profiles.items() if k == "review_export"} == {"r-moved"}, (profiles, notes)
+    joined = " ".join(notes)
+    assert ANSWERS.as_posix() + " " not in joined, notes
+    assert (ROOT / "policy" / "exports").as_posix() + " " not in joined, notes
 
 
 # -- 3. fin's semantics, on tmp dirs -------------------------------------------------------
@@ -144,14 +190,15 @@ def _add(d, key, row):
 
 
 def _seed_review() -> dict[str, str]:
-    """The seed's review-export profiles (policy/exports), read from the loader, not restated."""
+    """The seed's review- and answer-export profiles (policy/exports, policy/exports/answers), read
+    from the loader, not restated."""
     profiles, _ = vp.known_export_profiles()
-    return {n: k for n, k in profiles.items() if k == "review_export"}
+    return {n: k for n, k in profiles.items() if k in ("review_export", "answer_export")}
 
 
 def _known(monkeypatch, profiles, notes=("n (1 profile(s))",)):
-    """Fake the profile set as the seed's review-export profiles plus `profiles`: the seed ships a
-    row for each of those, and a row naming an unknown profile is refused."""
+    """Fake the profile set as the seed's review- and answer-export profiles plus `profiles`: the
+    seed ships a row for each of those, and a row naming an unknown profile is refused."""
     merged = {**_seed_review(), **profiles}
     monkeypatch.setattr(vp, "known_export_profiles", lambda sources=None: (dict(merged), list(notes)))
 
@@ -226,34 +273,51 @@ def test_5_the_seed_ships_the_cdrl_row_to_the_finance_group():
 
 
 def test_5_the_seed_ships_a_review_export_row_per_profile_to_the_default_group():
-    """Every policy/exports profile ships its row at the review-export default, or at the group
-    ruled for it by name (plan_answers: portfolio-leads, once fin's #148 ships the profile)."""
+    """Every policy/exports and policy/exports/answers profile ships its row at the group ruled for
+    it by name (plan-answers: portfolio-leads, once fin's #148 ships the profile), else at its
+    kind's default (review-export: alert-processors)."""
     caps = yaml.safe_load((ROOT / "policy" / "capability_grants.yaml").read_text(encoding="utf-8"))
     review = _seed_review()
-    assert review, "no review-export profile in the seed"
-    for name in sorted(review):
+    assert "review_export" in review.values(), "no review-export profile in the seed"
+    for name, kind in sorted(review.items()):
         row = caps["capabilities"].get(f"can_export:{name}")
         assert row is not None, name
-        want = vp.EXPORT_PROFILE_GROUPS.get(name, vp.EXPORT_DEFAULT_GROUPS["review_export"])
+        want = vp.EXPORT_PROFILE_GROUPS.get(name, vp.EXPORT_DEFAULT_GROUPS.get(kind))
+        assert want, f"{kind} profile {name!r} has no ruled group and its kind no default"
         assert row.get("grant_to_groups") == [want] and not row.get("grant_to"), (name, row)
 
 
-def test_5_plan_answers_with_no_row_names_portfolio_leads_not_the_kind_default(pol, monkeypatch):
-    """Ruled 2026-10-29: plan_answers sits in policy/exports (review-export kind) but goes to
-    portfolio-leads; "AP is notices". The refusal names the ruled group, not the kind's default.
-    The seed carries the row once #148 and #151 are both on master, so it is removed here."""
-    _known(monkeypatch, {CDRL: "fin_cdrl", "plan_answers": "review_export"})
+def _drop_row(pol, name):
     p = pol / "capability_grants.yaml"
     data = yaml.safe_load(p.read_text(encoding="utf-8"))
-    if data["capabilities"].pop("can_export:plan_answers", None) is not None:
+    if data["capabilities"].pop(f"can_export:{name}", None) is not None:
         p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    hit = _no_row(vp.validate(pol, pol), "plan_answers")
-    assert len(hit) == 1 and "review-export profile" in hit[0], hit
+
+
+def test_5_plan_answers_with_no_row_names_portfolio_leads_not_the_kind_default(pol, monkeypatch):
+    """Ruled 2026-10-29/30: plan-answers (policy/exports/answers, answer-export kind) needs a row,
+    and the refusal names portfolio-leads -- "AP is notices". The seed carries the row once #148 and
+    #151 are both on master, so it is removed here."""
+    _known(monkeypatch, {CDRL: "fin_cdrl", "plan-answers": "answer_export"})
+    _drop_row(pol, "plan-answers")
+    hit = _no_row(vp.validate(pol, pol), "plan-answers")
+    assert len(hit) == 1 and "answer-export profile" in hit[0], hit
     assert "grant_to_groups: [portfolio-leads]" in hit[0] and GROUP not in hit[0], hit
 
 
+def test_5_an_answer_export_profile_with_no_ruled_group_is_refused_and_names_none(pol, monkeypatch):
+    """Answer-export has no kind default (only plan-answers is ruled): another answer profile with
+    no row is still refused, and the refusal invents no group -- neither alert-processors nor the
+    plan-answers group."""
+    _known(monkeypatch, {CDRL: "fin_cdrl", "other-answers": "answer_export"})
+    hit = _no_row(vp.validate(pol, pol), "other-answers")
+    assert len(hit) == 1 and "answer-export profile" in hit[0], hit
+    assert "no default grantee is ruled" in hit[0] and "grant_to_groups" not in hit[0], hit
+    assert GROUP not in hit[0] and "portfolio-leads" not in hit[0], hit
+
+
 def test_5_each_ruled_profile_group_is_a_group_and_plan_answers_is_the_portfolio_lead_cell():
-    """Derive, don't restate: plan_answers' group is the one whose grants carry PORTFOLIO_LEAD, and
+    """Derive, don't restate: plan-answers' group is the one whose grants carry PORTFOLIO_LEAD, and
     alice holds it in the sandbox (the ruling's "alice in sandbox")."""
     groups = yaml.safe_load((ROOT / "policy" / "groups.yaml").read_text(encoding="utf-8"))["groups"]
     for name, g in vp.EXPORT_PROFILE_GROUPS.items():
@@ -261,10 +325,10 @@ def test_5_each_ruled_profile_group_is_a_group_and_plan_answers_is_the_portfolio
     lead = {name for name, body in groups.items()
             if any(isinstance(x, dict) and x.get("persona") == "PORTFOLIO_LEAD"
                    for x in ((body or {}).get("grants") or []))}
-    assert lead == {vp.EXPORT_PROFILE_GROUPS["plan_answers"]}, lead
+    assert lead == {vp.EXPORT_PROFILE_GROUPS["plan-answers"]}, lead
     users = yaml.safe_load((ROOT / "policy" / "users.yaml").read_text(encoding="utf-8"))["users"]
     alice = [u for u in users if u.get("id") == "alice@example.com"]
-    assert len(alice) == 1 and vp.EXPORT_PROFILE_GROUPS["plan_answers"] in (alice[0].get("groups") or [])
+    assert len(alice) == 1 and vp.EXPORT_PROFILE_GROUPS["plan-answers"] in (alice[0].get("groups") or [])
 
 
 def test_5_each_default_group_is_a_group_and_the_cdrl_one_is_program_finance():
@@ -286,6 +350,15 @@ def test_6_the_same_name_in_both_kinds_is_a_collision(tmp_path):
     a = _profile_dir(tmp_path, "rev", {"a": {"name": "dup"}})
     b = _profile_dir(tmp_path, "cdrl", {"b": {"name": "dup"}})
     _, notes = vp.known_export_profiles([(a, "review_export"), (b, "fin_cdrl")])
+    assert any(n.startswith("COLLISION:") and "'dup'" in n for n in notes), notes
+
+
+def test_6_a_review_and_an_answer_profile_of_one_name_collide(tmp_path):
+    """One `can_export:<P>` namespace for every kind: the subdirectory keeps the LOADERS apart, not
+    the capability keys."""
+    a = _profile_dir(tmp_path, "rev", {"a": {"name": "dup"}})
+    b = _profile_dir(tmp_path, "ans", {"b": {"name": "dup"}})
+    _, notes = vp.known_export_profiles([(a, "review_export"), (b, "answer_export")])
     assert any(n.startswith("COLLISION:") and "'dup'" in n for n in notes), notes
 
 

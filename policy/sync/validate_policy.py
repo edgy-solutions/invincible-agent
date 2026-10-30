@@ -21,8 +21,9 @@ definition of "valid", never a parallel re-implementation):
   - capability_grants.yaml        → also: a `grant_to_groups` group exists and has members, and
     a `can_drop:<K>` key names a KNOWN content kind (see known_content_kinds)
   - capability_grants.yaml        → also: a `can_export:<P>` key names a KNOWN export profile
-    (see known_export_profiles), no profile name is in BOTH kinds, and every review-export
-    profile (policy/exports) has a `can_export:<P>` row (deny-by-default: no row, nobody exports)
+    (see known_export_profiles), no profile name is in two kinds, and every known profile --
+    review-export (policy/exports), answer-export (policy/exports/answers) and fin CDRL -- has a
+    `can_export:<P>` row (deny-by-default: no row, nobody exports)
   - recipient_readers.yaml        → recipient_reader_sync.load_readers (WHEN PRESENT; not in
     DATA_FILES -- see the note there)
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
@@ -133,12 +134,17 @@ def known_content_kinds() -> tuple[set[str], list[str]]:
 #: profile must have a `can_export:<P>` row; this is the row to add). review_export: alert-processors
 #: (the 10-28 dispatch). fin_cdrl: the program-finance persona's group (ruled 2026-10-29).
 #: tests/security/test_can_export_capability_rail.py holds each to a group in groups.yaml.
+#: answer_export has NO kind default: only plan-answers is ruled (below), so another answer-export
+#: profile's refusal says no default is ruled rather than inventing one.
 EXPORT_DEFAULT_GROUPS = {"review_export": "alert-processors", "fin_cdrl": "finance-analysts"}
 #: A profile whose grantee is ruled BY NAME, overriding its kind's default in the completeness refusal.
-#: plan_answers (fin's #148, a policy/exports profile): portfolio-leads, NOT alert-processors -- "AP is
-#: notices" (ruled 2026-10-29). The seal holds each to a group in groups.yaml.
-EXPORT_PROFILE_GROUPS = {"plan_answers": "portfolio-leads"}
-_EXPORT_KIND_LABEL = {"review_export": "review-export", "fin_cdrl": "fin CDRL"}
+#: plan-answers (fin's #148, policy/exports/answers/plan-answers.yaml): portfolio-leads, NOT
+#: alert-processors -- "AP is notices" (ruled 2026-10-29; re-keyed to the moved profile and
+#: can_export required for answer-export profiles, ruled 2026-10-30). The seal holds each to a group
+#: in groups.yaml.
+EXPORT_PROFILE_GROUPS = {"plan-answers": "portfolio-leads"}
+_EXPORT_KIND_LABEL = {"review_export": "review-export", "answer_export": "answer-export",
+                      "fin_cdrl": "fin CDRL"}
 
 
 def known_export_profiles(
@@ -146,10 +152,15 @@ def known_export_profiles(
 ) -> tuple[dict[str, str], list[str]]:
     """The export profiles a `can_export:<P>` capability key may name: {name: kind}, and notes.
 
-    kind is "review_export" (lane/01's ingest-review profiles, policy/exports) or "fin_cdrl"
-    (fin's CDRL profiles). `sources` is an ordered [(dir, kind)] for tests; None composes:
-      - review_export: <root>/policy/exports (lane/01 adds its overlay env var here once it
-        defines one; the directory does not exist yet, which is read as absent, not an error);
+    kind is "review_export" (lane/01's ingest-review profiles, policy/exports), "answer_export"
+    (fin's answer-export profiles, policy/exports/answers -- lane/01's glob is not recursive, so the
+    subdirectory keeps them apart) or "fin_cdrl" (fin's CDRL profiles). `sources` is an ordered
+    [(dir, kind)] for tests; None composes each kind from the directories its own loader reads:
+      - review_export: INGEST_EXPORT_PROFILE_DIR if set, else <root>/policy/exports
+        (src/iagent/export_profiles.py; the variable MOVES the directory, it adds none);
+      - answer_export: the seed (EXPORT_PROFILE_POLICY_DIR if set, else
+        <root>/policy/exports/answers), then each dir in EXPORT_PROFILE_OVERLAY_DIRS
+        (agent_fleet/utils/answer_exports.py);
       - fin_cdrl: the seed (FIN_EXPORT_PROFILE_POLICY_DIR if set, else
         <root>/policy/fin_export_profiles), each dir in FIN_EXPORT_PROFILE_OVERLAY_DIRS, then the
         sandbox's overlay (policy/overlays/sample/fin_export_profiles).
@@ -157,11 +168,16 @@ def known_export_profiles(
     applied in order, a later same-`name` row replaces an earlier one, `deleted: true` removes the
     name. Only `name` and `deleted` are read (this gate runs where the engines are not
     importable); unparseable files are ignored, as known_content_kinds does. A name present in
-    both final sets is a COLLISION: a note starting `COLLISION:` which validate() turns into an
+    two kinds' final sets is a COLLISION: a note starting `COLLISION:` which validate() turns into an
     error. Each source's note reads `<dir> (<n> profile(s))` or `<dir> (absent)`."""
     root = Path(__file__).resolve().parents[2]
     if sources is None:
-        sources = [(root / "policy" / "exports", "review_export")]
+        sources = [(Path(os.getenv("INGEST_EXPORT_PROFILE_DIR")
+                         or root / "policy" / "exports"), "review_export")]
+        sources.append((Path(os.getenv("EXPORT_PROFILE_POLICY_DIR")
+                             or root / "policy" / "exports" / "answers"), "answer_export"))
+        raw = (os.getenv("EXPORT_PROFILE_OVERLAY_DIRS") or "").strip()
+        sources += [(Path(p.strip()), "answer_export") for p in raw.split(os.pathsep) if p.strip()]
         sources.append((Path(os.getenv("FIN_EXPORT_PROFILE_POLICY_DIR")
                              or root / "policy" / "fin_export_profiles"), "fin_cdrl"))
         raw = (os.getenv("FIN_EXPORT_PROFILE_OVERLAY_DIRS") or "").strip()
@@ -468,9 +484,9 @@ def validate(
     # `can_export:<P>` (DENY-BY-DEFAULT, unlike can_drop): the door asks can_invoke on
     # `can_export:<P>` and False refuses, so a profile with no row is exportable by NOBODY. There is
     # no generated default (the sync Job's image cannot reliably see every profile overlay), so the
-    # "alert-processors by default" is met by COMPLETENESS here: every review-export profile must
-    # have a row. A fin CDRL row is allowed but NOT required (pending the architect's ruling: a CDRL
-    # is a program-office deliverable, an AP default looks wrong for it).
+    # defaults are met by COMPLETENESS here: every known profile, of every kind, must have a row
+    # (CDRL ruled 2026-10-29, answer-export ruled 2026-10-30), and the refusal names the group to
+    # grant -- the profile's ruled group, else its kind's default, else that none is ruled.
     _profiles, _pnotes = known_export_profiles()
     for _n in _pnotes:
         if _n.startswith("COLLISION:"):
@@ -485,11 +501,13 @@ def validate(
             + "; ".join(_pnotes))
     for _p, _k in sorted(_profiles.items()):
         if _p not in _export_keys:
+            _g = EXPORT_PROFILE_GROUPS.get(_p, EXPORT_DEFAULT_GROUPS.get(_k))
             errors.append(
                 f"capability_grants.yaml: {_EXPORT_KIND_LABEL.get(_k, _k)} profile {_p!r} has no "
-                f"'can_export:{_p}' row, so NOBODY could export it (deny-by-default). Add one; the "
-                f"default is `grant_to_groups: "
-                f"[{EXPORT_PROFILE_GROUPS.get(_p, EXPORT_DEFAULT_GROUPS.get(_k, '?'))}]`")
+                f"'can_export:{_p}' row, so NOBODY could export it (deny-by-default). Add one; "
+                + (f"the default is `grant_to_groups: [{_g}]`" if _g else
+                   f"no default grantee is ruled for {_EXPORT_KIND_LABEL.get(_k, _k)} profiles, so "
+                   f"the row names its own group (ask the architect)"))
 
     # recipient_readers.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note
     # there; required-or-not is open with the architect). Absent = no reader asserted = every
