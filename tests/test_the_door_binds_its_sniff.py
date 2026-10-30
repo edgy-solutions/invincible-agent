@@ -14,6 +14,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from src.iagent import content_kinds as ck  # noqa: E402
 from src.iagent import gateway  # noqa: E402
 from src.iagent import ingest_status as ist  # noqa: E402
+from tests._can_drop_open import can_drop_open  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("can_drop_open")
 
 XML = b'<?xml version="1.0"?><a/>'
 DECL = "<?xml version=\"1.0\"?>"

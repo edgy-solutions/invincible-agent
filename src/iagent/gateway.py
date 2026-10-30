@@ -58,8 +58,9 @@ from .models import BpmnCatalog
 from .auth import get_current_user, User
 from . import frontend_menu_store
 from .ingest_api import (
-    BINARY_200, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse, Entitlements,
-    ExportProfile, Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing, RetriesListing,
+    BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse,
+    Entitlements, ExportProfile, Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing,
+    RetriesListing,
     RetryResponse, StatusBody, TitleLeafResponse,
 )
 from .identity_vault import (
@@ -156,6 +157,48 @@ def _env_int(name: str, default: int) -> int:
 
 
 _LEAF_BACKSTOP_ACTOR = "bff:manifest-leaf-backstop"
+
+
+# No Retry-After value existed in src/; 5 s matches the 5 s Topaz client timeout.
+_CAN_DROP_RETRY_AFTER = "5"
+
+
+def _row_dropper(row: dict) -> str:
+    """The dropper of record for a status row: `on_behalf_of`, the actor `_admit_on_behalf_of`
+    resolved at `record_received` (the PRINCIPAL when a delegate dropped for them). `submitted_by`
+    is the authenticated delegate and never answers a drop question; it is only the fallback for a
+    row that recorded no actor."""
+    return str((row or {}).get("on_behalf_of") or (row or {}).get("submitted_by") or "").strip()
+
+
+async def _can_drop_or_refuse(kind: str, dropper_id: str) -> None:
+    """THE one can_drop check, called by every site that sets a row's kind (the two doors,
+    title_leaf, /leaf, the BFF leaf backstop). A kind is gated iff the Topaz object
+    `capability:can_drop:<kind>` exists; then the dropper must hold `can_invoke`. Returns when the
+    dropper may drop it. Raises 403 `not_entitled_to_drop` (policy refusal) when not, and 503
+    `authorization_unavailable` / `authorization_unconfigured` when the directory cannot say --
+    a failed read is never "not gated"."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+    from .authz.refusal import policy_refusal
+
+    try:
+        refused = await run_in_threadpool(human_tasks.can_drop_refusal, kind, dropper_id)
+    except human_tasks.AuthorizationUnconfigured as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("can_drop gate unavailable for kind=%s: %s", kind, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify whether this kind is restricted"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
+    if refused is not None:
+        raise policy_refusal(
+            "not_entitled_to_drop", policy_id=refused["policy_id"],
+            missing_binding=refused["missing_binding"], message=refused["message"])
 _INGEST_LEAF_BACKSTOP_SECONDS_DEFAULT = 300
 
 # Ruling 2026-10-21 (a leaf set while the run is in flight): a PDF drop whose leaf (pcn|pdn) is set
@@ -259,6 +302,22 @@ async def _apply_manifest_leaf_block(row: dict, key, manifest: dict) -> tuple:
     if title is not None:
         # The sidecar is rewritten to the leaf BEFORE the row is re-opened, so the relaunch
         # runs as the leaf; an S3 error lands in the per-row except (row skipped).
+        try:
+            await _can_drop_or_refuse(title, _row_dropper(row))
+        except HTTPException as exc:
+            code = exc.status_code
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            logger.warning("ingest_leaf_backstop ingest_id=%s kind=%s refused by can_drop: %s (%s)",
+                           rid, title, detail.get("error"), code)
+            if code != 403:
+                # the directory could not answer: leave the row untouched for the next tick
+                return "can_drop_unavailable", False
+            held = await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+                rid, candidates=_backstop_candidates(block.get("candidates")),
+                detail=f"the title read named {title}, which the dropper may not drop; "
+                       "pick another kind",
+                from_statuses=[ingest_status.EXTRACTING]))
+            return ("awaiting_kind" if held else "row_moved"), held
         await run_in_threadpool(lambda: _apply_leaf_to_sidecar(row, title))
         ok = await run_in_threadpool(lambda: ingest_status.set_leaf(
             rid, title, "title", set_by=_LEAF_BACKSTOP_ACTOR,
@@ -1069,14 +1128,40 @@ async def get_mesh_config(current_user: User = Depends(get_current_user)):
 # step 3 wired), `cells` is empty and `source` reflects the JWT-legacy
 # path. The picker (step 5) treats an empty cells list as "no picker
 # — the caller is on the legacy persona-in-JWT posture."
-@app.get("/me/entitlements", tags=[INGEST_V1_TAG], responses={200: {"model": Entitlements}})
+@app.get("/me/entitlements", tags=[INGEST_V1_TAG], responses={200: {"model": Entitlements}, 503: DROP_GATE_RESPONSES[503]})
 async def get_me_entitlements(current_user: User = Depends(get_current_user)):
     """Return the current user's (persona, domain) entitlement matrix.
 
     `authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop
     echoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it
     as `on_behalf_of` is refused `not_a_delegate` (2026-10-21)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, human_tasks
+
     ent = current_user.entitlements
+    # `droppable_kinds`: every registered kind except a GATED kind (Topaz object
+    # `capability:can_drop:<kind>` exists) this caller is not granted. One unreadable object makes
+    # the whole answer 503 -- never a partial or guessed list.
+    def _droppable() -> list[str]:
+        out: list[str] = []
+        for reg in content_kinds.registrations():
+            if human_tasks.can_drop_refusal(reg.kind, current_user.authz_id) is None:
+                out.append(reg.kind)
+        return out
+
+    try:
+        droppable_kinds = await run_in_threadpool(_droppable)
+    except human_tasks.AuthorizationUnconfigured as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("droppable_kinds unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify which kinds are restricted"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
     return {
         "user_id": current_user.id,
         "authz_id": current_user.authz_id,
@@ -1090,6 +1175,7 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
             else None
         ),
         "source": ent.source,
+        "droppable_kinds": droppable_kinds,
     }
 
 
@@ -1376,6 +1462,26 @@ async def register_human_task(
     logger.info("human_task registered: task_id=%s audience=%s recipients=%d",
                 req.task_id, req.audience, len(result.get("recipients", [])))
     return result
+
+
+class HumanTaskExpireRequest(_BaseModel):
+    task_id: str
+    workflow_id: Optional[str] = None
+
+
+@app.post("/internal/human_tasks/expire")
+async def expire_human_task(
+    req: HumanTaskExpireRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Retire the still-`pending` queue row(s) of a task whose human_await TIMED OUT, so neither
+    REST nor the feed offers a task nobody can act on. INTERNAL seam, same gate as register
+    (get_current_user). `expired == 0` is a 200: an already-resolved task stays resolved."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    n = await run_in_threadpool(lambda: human_tasks.expire_open_task(req.task_id, req.workflow_id))
+    logger.info("human_task expired: task_id=%s workflow_id=%s rows=%d", req.task_id, req.workflow_id, n)
+    return {"task_id": req.task_id, "workflow_id": req.workflow_id, "expired": n}
 
 
 @app.post("/access_requests")
@@ -8538,6 +8644,9 @@ async def _generate_dagster_stream_inner(
     _artifact_id = request.artifact_id or (
         f"urn:li:answerArtifact:{session_id}-{uuid.uuid4().hex[:8]}"
     )
+    # True once a ROUTED subtask_slots_decision (non-empty verb_iri) has been captured into
+    # resolved_intent. See the precedence guard at the reader.
+    _resolved_from_routed = False
     _artifact_bundle: dict = {
         "id": _artifact_id,
         "question_text": user_query,
@@ -9012,6 +9121,17 @@ async def _generate_dagster_stream_inner(
                     except (ValueError, TypeError):
                         return fallback
 
+                # PRECEDENCE, order-independent. A run can have several subtasks and every
+                # materialization lands here. (1) A no-verb record (empty verb_iri, an early
+                # exit) must NOT replace a resolved_intent already taken from a routed record:
+                # a routed subtask wins over an early exit. (2) A routed record DOES replace a
+                # no-verb one. Keyed on a local flag, not on the bundle's prior contents: the
+                # ExtractIntent output seeded there first has no verb_iri contract.
+                _is_routed_rec = bool(_slots_md.get("verb_iri"))
+                if not _is_routed_rec and _resolved_from_routed:
+                    continue
+                if _is_routed_rec:
+                    _resolved_from_routed = True
                 _artifact_bundle["resolved_intent"] = {
                     "verb_iri": _slots_md.get("verb_iri") or "",
                     "disposition": _slots_md.get("disposition") or "",
@@ -9034,13 +9154,17 @@ async def _generate_dagster_stream_inner(
                     # row reading the artifact can count it. Classify path only: the direct
                     # path never calls /fill_slots.
                     "fill_slots": _slots_md.get("fill_slots") or "",
+                    "no_verb_reason": _slots_md.get("no_verb_reason") or "",
+                    "fallback_detail": _slots_md.get("fallback_detail") or "",
+                    "rejected_verb_iri": _slots_md.get("rejected_verb_iri") or "",
                 }
                 logger.info(
                     "resolved_intent captured for run %s: verb=%s disposition=%s "
-                    "accepted=%d refused=%d",
+                    "no_verb_reason=%s accepted=%d refused=%d",
                     run_id,
                     _slots_md.get("verb_iri") or "-",
                     _slots_md.get("disposition") or "-",
+                    _slots_md.get("no_verb_reason") or "-",
                     len(_artifact_bundle["resolved_intent"]["accepted_slots"] or {}),
                     len(_artifact_bundle["resolved_intent"]["refused_slots"] or []),
                 )
@@ -11644,7 +11768,21 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
         task_rows = []  # HITL substrate unconfigured: approvals are honestly empty, not a 503 --
                         # the case itself is readable without it.
 
-    return case_projection.project_workflow_case(case, definitions, task_rows)
+    # The released ActionRecord, read ONLY when a definition could have emitted one. A store that
+    # cannot be read is a 503, not a null: null claims "not released", which is false when we
+    # cannot tell. Same detail as `GET /cases/{id}/action`.
+    output_artifact = None
+    if case_projection.has_emit_step(case, definitions):
+        try:
+            records = await run_in_threadpool(_read_action_records, case_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("action record read failed: %s", exc)
+            raise HTTPException(status_code=503,
+                                detail={"error": "artifact_store_unavailable"}) from exc
+        output_artifact = case_projection.release_artifact(case_id, records)
+
+    return case_projection.project_workflow_case(
+        case, definitions, task_rows, output_artifact)
 
 
 from pydantic import ConfigDict as _ConfigDict  # noqa: E402
@@ -11758,7 +11896,7 @@ def _sniff_file_kind(head: bytes) -> Optional[str]:
     return None
 
 
-@app.post("/ingest", tags=[INGEST_V1_TAG], responses={200: {"model": IngestResponse}})
+@app.post("/ingest", tags=[INGEST_V1_TAG], responses={200: {"model": IngestResponse}, **DROP_GATE_RESPONSES})
 async def ingest_document(
     file: UploadFile = File(...),
     kind: str = Form(...),
@@ -11903,6 +12041,12 @@ async def ingest_document(
                 ),
             },
         )
+
+    # can_drop:<kind> (2026-10-28): a gated kind is dropped only by its grantees. The EFFECTIVE kind
+    # is `declared_content_kind` (a `leaf` already replaced it above); the dropper is `actor`, the
+    # principal of record when a delegate drops on their behalf. Before the bounded read, so a
+    # refused drop writes nothing.
+    await _can_drop_or_refuse(declared_content_kind, actor)
 
     # THE PROCESSABLE-KINDS CHECK (owner ruling, F2/F3): behind a flag that ships OFF. Flag off ->
     # the store and cache are never touched. Flag on is deny-by-default: no published list yet ->
@@ -12134,7 +12278,7 @@ def _dotted_get(d: dict[str, Any], path: str) -> Any:
     return cur
 
 
-@app.post("/ingest/events")
+@app.post("/ingest/events", responses=DROP_GATE_RESPONSES)
 async def ingest_event(
     req: IngestEventRequest,
     current_user: User = Depends(get_current_user),
@@ -12183,6 +12327,9 @@ async def ingest_event(
                 ),
             },
         )
+    # can_drop:<kind>: the dropper of record (`actor`) must hold it when the kind is gated.
+    # Before the trigger load, the runner and any write, so a refusal records nothing.
+    await _can_drop_or_refuse(req.content_kind, actor)
 
     try:
         from agent_fleet.restate_analyst.case_routing import (  # noqa: PLC0415
@@ -14654,7 +14801,7 @@ class IngestTitleLeafRequest(_BaseModel):
     run_id: Optional[str] = None
 
 
-@app.post("/ingest/{ingest_id}/title_leaf", tags=[INGEST_V1_TAG], responses={200: {"model": TitleLeafResponse}})
+@app.post("/ingest/{ingest_id}/title_leaf", tags=[INGEST_V1_TAG], responses={200: {"model": TitleLeafResponse}, **DROP_GATE_RESPONSES})
 async def ingest_title_leaf_route(
     ingest_id: str, req: IngestTitleLeafRequest, current_user: User = Depends(get_current_user),
 ):
@@ -14719,6 +14866,20 @@ async def ingest_title_leaf_route(
             return _answer(row, True)
         # 3. a confident title
         if title is not None:
+            # can_drop:<title>, against the row's DROPPER (not doc-tools): a service identity must
+            # not launder a non-grantee's drop into a restricted kind. Refused: the leaf is NOT set
+            # and the row waits for a kind (the hold in step 4), then the 403 is answered.
+            try:
+                await _can_drop_or_refuse(title, _row_dropper(row))
+            except HTTPException as exc:
+                if exc.status_code == 403:
+                    await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+                        ingest_id,
+                        candidates=[c.model_dump() for c in (req.candidates or [])],
+                        detail=(f"the title named {title}, which the dropper may not drop; "
+                                "pick another kind"),
+                        run_id=req.run_id, from_statuses=[stage]))
+                raise
             written = await run_in_threadpool(lambda: ingest_status.set_leaf(
                 ingest_id, title, "title", set_by=caller, from_statuses=[stage]))
             if written is not None:
@@ -14750,7 +14911,7 @@ class IngestLeafRequest(_BaseModel):
     leaf: str
 
 
-@app.post("/ingest/{ingest_id}/leaf", tags=[INGEST_V1_TAG], responses={200: {"model": LeafResponse}})
+@app.post("/ingest/{ingest_id}/leaf", tags=[INGEST_V1_TAG], responses={200: {"model": LeafResponse}, **DROP_GATE_RESPONSES})
 async def ingest_leaf_route(
     ingest_id: str, req: IngestLeafRequest, current_user: User = Depends(get_current_user),
 ):
@@ -14833,6 +14994,17 @@ async def ingest_leaf_route(
                       "message": "the document moved on while the kind was being set; "
                                  "reload it and try again"}, "row_moved")
 
+    # can_drop:<leaf>, against the row's DROPPER, never the caller (a granted steward or the BFF must
+    # not move a non-grantee's document into a restricted kind). No steward exemption: deny by
+    # default until the architect rules. Once, before any write (the sidecar rewrite included); the
+    # dropper of record does not change across the rounds below.
+    try:
+        await _can_drop_or_refuse(leaf, _row_dropper(row))
+    except HTTPException as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny",
+                             "not_entitled_to_drop" if exc.status_code == 403
+                             else "authorization_unavailable")
+        raise
     old_kind = row.get("content_kind")
     same = _same_passes(old_kind, leaf)
     for _round in range(3):
@@ -15783,15 +15955,12 @@ async def electric_shape_proxy(
     # server-side WHERE; there is no branch that serves a table UNFILTERED.
     if table == "human_task_projection":
         escaped_id = _escape_identity_literal(current_user.authz_id)
-        # Scope the inbox stream to PENDING rows only, so it agrees with the REST
-        # snapshot (/me/human_tasks filters status='pending'). Without this the shape
-        # streamed EVERY row for the recipient incl. resolved ones; a resolved task
-        # could linger client-side as a stale 'pending' (the badge showing N, then
-        # dropping to the real count when the inbox opened and replacePending ran the
-        # REST reconcile). With status in the WHERE, resolving a task moves it OUT of
-        # the shape -> Electric emits a delete -> it drops cleanly, no flicker. status
-        # is a plain column (Electric's WHERE subset handles column = literal + AND).
-        server_where = f"recipient_id = '{escaped_id}' AND status = 'pending'"
+        # Scope the inbox stream to PENDING rows only, so it agrees with the REST snapshot
+        # (/me/human_tasks): resolving a task moves it OUT of the shape -> Electric emits a delete.
+        # The predicate's definition now lives in human_tasks (inbox_where_literal), shared with
+        # list_tasks_for; this site only supplies the validated, escaped identity.
+        from . import human_tasks as _human_tasks
+        server_where = _human_tasks.inbox_where_literal(escaped_id)
     elif table == "ingest_status_projection":
         # ADR-0041 §8: the ingestion seam's status stream. Same authz_id-keyed discipline
         # as human_task_projection above (submitted_by/on_behalf_of are authz identities,

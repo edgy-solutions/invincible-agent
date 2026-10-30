@@ -552,6 +552,43 @@
         "title": "ArtifactResponse",
         "type": "object"
       },
+      "AuthorizationUnavailableBody": {
+        "additionalProperties": false,
+        "description": "The 503 body when the authorization directory cannot say whether a kind is gated.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/AuthorizationUnavailableDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "AuthorizationUnavailableBody",
+        "type": "object"
+      },
+      "AuthorizationUnavailableDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "enum": [
+              "authorization_unavailable",
+              "authorization_unconfigured"
+            ],
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "AuthorizationUnavailableDetail",
+        "type": "object"
+      },
       "BPMNGateway": {
         "properties": {
           "id": {
@@ -1774,6 +1811,13 @@
               }
             ]
           },
+          "droppable_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Droppable Kinds",
+            "type": "array"
+          },
           "email": {
             "anyOf": [
               {
@@ -1814,7 +1858,8 @@
           "email",
           "cells",
           "default",
-          "source"
+          "source",
+          "droppable_kinds"
         ],
         "title": "Entitlements",
         "type": "object"
@@ -2716,6 +2761,30 @@
           "decision"
         ],
         "title": "HumanTaskActRequest",
+        "type": "object"
+      },
+      "HumanTaskExpireRequest": {
+        "properties": {
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "HumanTaskExpireRequest",
         "type": "object"
       },
       "HumanTaskRegisterRequest": {
@@ -3698,6 +3767,50 @@
         "title": "MineListing",
         "type": "object"
       },
+      "NotEntitledToDrop": {
+        "additionalProperties": false,
+        "description": "The 403 body of a door that refused a kind the dropper is not granted.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/NotEntitledToDropDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "NotEntitledToDrop",
+        "type": "object"
+      },
+      "NotEntitledToDropDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "const": "not_entitled_to_drop",
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "refusal": {
+            "$ref": "#/components/schemas/RefusalEnvelope"
+          }
+        },
+        "required": [
+          "error",
+          "refusal"
+        ],
+        "title": "NotEntitledToDropDetail",
+        "type": "object"
+      },
       "Notice": {
         "additionalProperties": false,
         "description": "The notice header read from review.json; the values are LLM-extracted, so unconstrained.",
@@ -4037,6 +4150,39 @@
           "run_id"
         ],
         "title": "RedeemIdentityBody",
+        "type": "object"
+      },
+      "RefusalEnvelope": {
+        "additionalProperties": false,
+        "description": "`authz.refusal.refusal`'s envelope: what the caller lacks and who can grant it.",
+        "properties": {
+          "candidates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "grantable_by": {
+            "title": "Grantable By",
+            "type": "string"
+          },
+          "missing_binding": {
+            "title": "Missing Binding",
+            "type": "string"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "missing_binding",
+          "grantable_by",
+          "candidates"
+        ],
+        "title": "RefusalEnvelope",
         "type": "object"
       },
       "RegisterFrontendCapabilitiesRequest": {
@@ -6512,6 +6658,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6521,6 +6677,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6557,6 +6731,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6566,6 +6750,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -7065,6 +7267,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -7074,6 +7286,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -7346,6 +7576,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -7355,6 +7595,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -7569,6 +7827,48 @@
           }
         ],
         "summary": "Write Case Summary Route"
+      }
+    },
+    "/internal/human_tasks/expire": {
+      "post": {
+        "description": "Retire the still-`pending` queue row(s) of a task whose human_await TIMED OUT, so neither\nREST nor the feed offers a task nobody can act on. INTERNAL seam, same gate as register\n(get_current_user). `expired == 0` is a 200: an already-resolved task stays resolved.",
+        "operationId": "expire_human_task_internal_human_tasks_expire_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanTaskExpireRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Expire Human Task"
       }
     },
     "/internal/human_tasks/register": {
@@ -7815,6 +8115,24 @@
               }
             },
             "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [

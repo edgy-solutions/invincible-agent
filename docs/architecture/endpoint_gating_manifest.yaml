@@ -1699,7 +1699,7 @@ services:
       - method: POST
         path: /ingest
         identity: keycloak-jwt
-        gate: "get_current_user + on_behalf_of must equal the caller's own authz_id (no delegation in v1)"
+        gate: "get_current_user + on_behalf_of must equal the caller's own authz_id (no delegation in v1) + can_drop:<effective kind> for the dropper of record when the kind is gated (Topaz object capability:can_drop:<kind> exists): 403 not_entitled_to_drop, 503 when the directory cannot say; nothing is written"
         exposes: object-store-write
         consumers: [ingestion seam UI (ADR-0041 §8), non-technical document drop]
         class: gated
@@ -1757,7 +1757,7 @@ services:
       - method: POST
         path: /ingest/{ingest_id}/title_leaf
         identity: keycloak-jwt
-        gate: "get_current_user + caller authz_id must equal DOC_TOOLS_SERVICE_IDENTITY (default svc:doc-tools); every other caller 403 not_doc_tools; svc:doc-tools only. An absent or event row is 404 ingest_not_found; a row not at received/extracting is 409 not_extracting"
+        gate: "get_current_user + caller authz_id must equal DOC_TOOLS_SERVICE_IDENTITY (default svc:doc-tools); every other caller 403 not_doc_tools; svc:doc-tools only. An absent or event row is 404 ingest_not_found; a row not at received/extracting is 409 not_extracting. A title leaf is also checked can_drop:<leaf> against the row's DROPPER (on_behalf_of), not doc-tools: refused, the leaf is not set, the row is held at awaiting_kind and the answer is 403 not_entitled_to_drop (503 if the directory cannot say)"
         exposes: action
         consumers: [doc-tools title-read dispatch (lane 7f)]
         class: gated
@@ -1771,7 +1771,7 @@ services:
       - method: POST
         path: /ingest/{ingest_id}/leaf
         identity: keycloak-jwt
-        gate: "get_current_user + _ingest_review_access (dropper / open-task holder / seeding delegate); an absent or event row is 404, anyone else 403 not_entitled; every decision is audited on iagent.audit.ingest_access. A leaf outside pcn|pdn is 422 unknown_leaf; a row that is not leaf-capable is 409 no_leaf_for_kind"
+        gate: "get_current_user + _ingest_review_access (dropper / open-task holder / seeding delegate); an absent or event row is 404, anyone else 403 not_entitled; every decision is audited on iagent.audit.ingest_access. A leaf outside pcn|pdn is 422 unknown_leaf; a row that is not leaf-capable is 409 no_leaf_for_kind. The new leaf is also checked can_drop:<leaf> against the row's DROPPER (on_behalf_of), never the caller and with no steward exemption: 403 not_entitled_to_drop, row unchanged (503 if the directory cannot say)"
         exposes: action
         consumers: [cortex-ui leaf chip]
         class: gated
@@ -1915,7 +1915,7 @@ services:
       - method: POST
         path: /ingest/events
         identity: keycloak-jwt
-        gate: "get_current_user + on_behalf_of must equal the caller's own authz_id; content_kind must be registered with branch == event (else 422)"
+        gate: "get_current_user + on_behalf_of must equal the caller's own authz_id; content_kind must be registered with branch == event (else 422); can_drop:<content_kind> for the dropper of record when the kind is gated: 403 not_entitled_to_drop, 503 when the directory cannot say; nothing is recorded"
         exposes: action
         consumers: [OpenDDIL maintenance bridge (event-branch content kinds), ingestion seam]
         class: gated
@@ -2208,11 +2208,11 @@ services:
       - method: GET
         path: /me/entitlements
         identity: get_current_user
-        gate: "auth + self-scoped"
+        gate: "auth + self-scoped; droppable_kinds is computed per caller from can_drop:<kind> (503 for the whole response if the directory cannot say)"
         exposes: ui-state
         consumers: [cortex-ui]
         class: releasable_by_design
-        justification: "returns the caller's OWN (persona,domain) matrix"
+        justification: "returns the caller's OWN (persona,domain) matrix and the kinds the caller may drop"
       - method: GET
         path: /me/human_tasks
         identity: get_current_user
@@ -2469,6 +2469,14 @@ services:
         consumers: [workflow/service seam]
         class: gated
         justification: "auth-gated. FINDING (over-permissioned): caller is any authenticated user, not restricted to a service identity (docstring says it should be). Tighten to a service principal."
+      - method: POST
+        path: /internal/human_tasks/expire
+        identity: get_current_user
+        gate: auth-only
+        exposes: action
+        consumers: [workflow/service seam]
+        class: gated
+        justification: "auth-gated, same gate as register (same over-permission FINDING: any authenticated user, not a service principal). Retires only still-pending rows of a timed-out await; a resolved task is untouched, so the write cannot reopen or decide anything."
       - method: POST
         path: /canvas/lineage_edges
         identity: "get_current_user -> caller_email + entitled_domains"

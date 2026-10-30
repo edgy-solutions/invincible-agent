@@ -72,6 +72,16 @@ class _Declared(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class _Step(_Declared):
+    """Every step kind. ``stage`` is the ONE optional field they share: the ``domain_stages``
+    entry this step's beginning puts the instance in. It is declared, never inferred, and the
+    definition validator admits it only where a read-only observer can SEE the step begin (the
+    first step, or a non-grouped ``human_await`` whose task row exists) -- see
+    ``WorkflowDefinition._a_stage_is_declared_only_where_it_is_observable``."""
+
+    stage: Optional[str] = None
+
+
 class CompletionPolicy(_Declared):
     """HOW a ``human_await`` settles — declared, so the executor SELECTS its
     resolution semantics rather than inferring them (M3.2 build 1).
@@ -111,7 +121,7 @@ class CompletionPolicy(_Declared):
         return self
 
 
-class HumanAwaitStep(_Declared):
+class HumanAwaitStep(_Step):
     """A designed await on an authorized human (Situation B). Carries the sealed
     HITL fields verbatim; ``audience`` is the Topaz ``task_audience`` gated by
     ``can_act``. Multi-approval = N of these JOINED (ADR-0027), not a parallel
@@ -228,7 +238,7 @@ class HumanAwaitStep(_Declared):
         return self.promise_name or f"approval_{self.id}"
 
 
-class SpoOperationStep(_Declared):
+class SpoOperationStep(_Step):
     """A pre-resolved SPO operation. ``subject``/``verb`` are RESOLVED
     identifiers (instance/class URI + verb IRI), NOT natural language — the
     executor verifies the declared verb against the caller's eligibility set
@@ -241,7 +251,7 @@ class SpoOperationStep(_Declared):
     expected_output: Optional[str] = None  # declared output_uri (contract)
 
 
-class DirectCallStep(_Declared):
+class DirectCallStep(_Step):
     """TRANSITIONAL escape hatch for an infrastructural action not (yet) a mesh
     verb. MUST stay inside the single decider: ``capability`` is REQUIRED and
     Topaz gates it (``can_invoke(caller, capability)``). Promotion candidate —
@@ -280,7 +290,7 @@ class DirectCallStep(_Declared):
     )
 
 
-class DispatchFanoutStep(_Declared):
+class DispatchFanoutStep(_Step):
     """Dispatch the review's batch WITHOUT a human — the autonomous counterpart of ``human_await``.
 
     A STEP KIND WHOSE SEMANTICS ARE EXECUTOR-OWNED, and that is the whole design. The YAML declares
@@ -319,7 +329,7 @@ class DispatchFanoutStep(_Declared):
     )
 
 
-class RenderStep(_Declared):
+class RenderStep(_Step):
     """Render a YAML template against the run's context and record it as this step's output.
 
     THE OPTION TEMPLATES LIVE HERE, not in Python: a domain's proposals are data a reviewer reads
@@ -333,7 +343,7 @@ class RenderStep(_Declared):
     template: Any
 
 
-class SignalAwaitStep(_Declared):
+class SignalAwaitStep(_Step):
     """Await a SYSTEM's answer -- an acknowledgement, not a human decision.
 
     Distinct from ``human_await`` because it registers NO human task: a machine's ack in a human
@@ -360,7 +370,7 @@ class SignalAwaitStep(_Declared):
         return self
 
 
-class WaitStep(_Declared):
+class WaitStep(_Step):
     """A durable timer. Its disposition is ``elapsed``, so a chaining row can say what a parked
     case does when it comes back -- a deferral that never revisits is a deletion."""
 
@@ -369,7 +379,7 @@ class WaitStep(_Declared):
     seconds: int = Field(..., gt=0)
 
 
-class EmitStep(_Declared):
+class EmitStep(_Step):
     """Render a template and append it to this instance's ``outbox:{channel}``.
 
     THE TRANSPORT IS NOT DECIDED HERE, and that is deliberate: the record is durable in the
@@ -420,6 +430,24 @@ class WorkflowDefinition(_Declared):
         shared = sorted({n for n in names if names.count(n) > 1})
         if shared:
             raise ValueError(f"definition {self.id}: promise names awaited twice {shared}")
+        return self
+
+    @model_validator(mode="after")
+    def _a_stage_is_declared_only_where_it_is_observable(self) -> "WorkflowDefinition":
+        for i, s in enumerate(self.steps):
+            if s.stage is None:
+                continue
+            if s.stage not in self.domain_stages:
+                raise ValueError(
+                    f"definition {self.id}: step {s.id} declares stage {s.stage!r}, which is not "
+                    f"in domain_stages {self.domain_stages}")
+            observable = i == 0 or (s.kind == "human_await" and s.completion.mode != "grouped")
+            if not observable:
+                raise ValueError(
+                    f"definition {self.id}: step {s.id} declares a stage but its beginning cannot "
+                    "be observed -- a stage may be declared only on the first step (it begins when "
+                    "the instance opens) or on a non-grouped human_await (it begins when its task "
+                    "row exists)")
         return self
 
 

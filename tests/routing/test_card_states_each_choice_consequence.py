@@ -166,6 +166,6 @@ async def test_F_THE_REGISTERED_TASK_CARRIES_THE_DERIVED_TEXT(tasks, me):
     summary = task["summary"]
     assert STALE not in summary, summary
     assert "Reject sends it back" in summary, summary           # the bound constant survives
-    assert "evacuate_for_depot" in summary and _name(SUPERVISOR) in summary, summary
-    rn = next(s for s in summary.split(".") if "replace_now" in s)
+    assert "Evacuate for depot" in summary and _name(SUPERVISOR) in summary, summary
+    rn = next(s for s in summary.split(".") if "Replace now" in s)
     assert (_name(SUPERVISOR) if me else _name(RELEASE)) in rn, rn
