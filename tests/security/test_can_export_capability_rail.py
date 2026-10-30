@@ -240,8 +240,13 @@ def test_5_the_seed_ships_a_review_export_row_per_profile_to_the_default_group()
 
 def test_5_plan_answers_with_no_row_names_portfolio_leads_not_the_kind_default(pol, monkeypatch):
     """Ruled 2026-10-29: plan_answers sits in policy/exports (review-export kind) but goes to
-    portfolio-leads; "AP is notices". The refusal names the ruled group, not the kind's default."""
+    portfolio-leads; "AP is notices". The refusal names the ruled group, not the kind's default.
+    The seed carries the row once #148 and #151 are both on master, so it is removed here."""
     _known(monkeypatch, {CDRL: "fin_cdrl", "plan_answers": "review_export"})
+    p = pol / "capability_grants.yaml"
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    if data["capabilities"].pop("can_export:plan_answers", None) is not None:
+        p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     hit = _no_row(vp.validate(pol, pol), "plan_answers")
     assert len(hit) == 1 and "review-export profile" in hit[0], hit
     assert "grant_to_groups: [portfolio-leads]" in hit[0] and GROUP not in hit[0], hit
