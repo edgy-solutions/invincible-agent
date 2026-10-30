@@ -194,8 +194,7 @@ def _options(c, key="EV-1"):
     return c.ctx(key).state["instance:2"]["outputs"]["maint_fault_propose"]["options"]
 
 
-DECIDE, REVIEW, ESCALATION, ACK = ("approval_decide", "approval_review", "approval_escalation",
-                                   "tier_ack")
+DECIDE, REVIEW, ESCALATION = "approval_decide", "approval_review", "approval_escalation"
 
 
 # ── INTAKE ──────────────────────────────────────────────────────────────────────────────────
@@ -289,7 +288,7 @@ def test_A_TRIGGER_THAT_CARRIES_IS_REFUSED_WITHOUT_ITS_EVENT():
 @pytest.mark.asyncio
 async def test_EXACTLY_FOUR_OPTIONS_IN_ORDER_EACH_CITING_THE_MANUAL_AND_THE_SPARES(registered):
     ev = _event()
-    _, c = await _run(ev, [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    _, c = await _run(ev, [(DECIDE, "replace_after_resupply")])
     opts = _options(c)
     assert [o["verb"] for o in opts] == OPTION_VERBS, opts
     assert [o["readiness"] for o in opts] == ["FMC", "PMC", "PMC", "NMC"], opts
@@ -335,7 +334,7 @@ def walk_cites_a_figure(monkeypatch):
 async def test_A_PART_CARRIES_THE_WALKS_FIGURE_TO_THE_ACTION_RECORD(registered, walk_cites_a_figure):
     """icn and hotspot_id come from the walk's IPD citation, ride the option, and reach the
     emitted ActionRecord's work_order.parts[] -- the chosen option's parts, cited whole."""
-    _, c = await _run(_event(), [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    _, c = await _run(_event(), [(DECIDE, "replace_after_resupply")])
     parts = [p for o in _options(c) for p in o["parts"]]
     assert parts and all({k: p.get(k) for k in _FIGURE} == _FIGURE for p in parts), parts
     [rec] = _emitted(c)
@@ -349,7 +348,7 @@ async def test_THE_WALK_NAMES_NO_HOTSPOT_AND_THE_CASE_STILL_CLOSES(registered):
     patched-in one): `icn` is the real walk's own citation off the graph, never invented, while
     `hotspot_id` is PRESENT and null -- "the manual did not say", not a crash, and the case still
     releases."""
-    out, c = await _run(_event(), [(DECIDE, "replace_now"), (ACK, "released", "tier@x")])
+    out, c = await _run(_event(), [(DECIDE, "replace_now")])
     assert (out["status"], out["terminal"]) == ("CLOSED", "closed"), out
     [rec] = _emitted(c)
     for p in [*(p for o in _options(c) for p in o["parts"]), *rec["work_order"]["parts"]]:
@@ -364,7 +363,7 @@ async def test_NO_SITE_HAS_STOCK_RENDERS_THE_NULL_AND_THE_CASE_STILL_CLOSES(regi
     """The events this case exists for: nothing anywhere to resupply from. The resupply option
     cites the null -- the card says "no site has stock", no lead time -- and is still a choice."""
     ev = _event(nearest=None)
-    out, c = await _run(ev, [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    out, c = await _run(ev, [(DECIDE, "replace_after_resupply")])
     assert (out["status"], out["terminal"]) == ("CLOSED", "closed"), out
     opts = _options(c)
     assert "nearest_spare" in opts[1] and opts[1]["nearest_spare"] is None, opts[1]
@@ -385,7 +384,7 @@ _SOURCED = ("source_site", "lead_time_days", "lead_time_source")
 async def test_A_RESUPPLY_PART_CARRIES_ITS_SITE_AND_LEAD_TIME_TO_THE_ACTION_RECORD(registered):
     """The nearest row's site and lead time, copied per part as the contract's
     ``work_order.parts[]`` carries them, on the option and on the emitted record."""
-    _, c = await _run(_event(), [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    _, c = await _run(_event(), [(DECIDE, "replace_after_resupply")])
     want = {"source_site": "SITE-B", "lead_time_days": 5, "lead_time_source": "stand-in"}
     [rec] = _emitted(c)
     parts = [*_options(c)[1]["parts"], *rec["work_order"]["parts"]]
@@ -429,9 +428,9 @@ def test_ONLY_THE_RENDERER_HONOURS_THE_NULL_SAFE_STEP():
 
 
 @pytest.mark.asyncio
-async def test_A_RESUPPLY_IS_RELEASED_AND_CLOSED_ON_THE_TIER_ACK(registered):
+async def test_A_RESUPPLY_IS_RELEASED_AND_CLOSED_ON_THE_APPROVAL(registered):
     ev = _event()
-    out, c = await _run(ev, [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    out, c = await _run(ev, [(DECIDE, "replace_after_resupply")])
     assert (out["status"], out["terminal"]) == ("CLOSED", "closed"), out
     assert _path(out) == [("triaged", "selected", "maint_fault_propose"),
                           ("maint_fault_propose", "replace_after_resupply", "maint_release"),
@@ -457,8 +456,7 @@ async def test_A_RESUPPLY_IS_RELEASED_AND_CLOSED_ON_THE_TIER_ACK(registered):
 @pytest.mark.asyncio
 async def test_A_DEPOT_EVACUATION_NEEDS_THE_SUPERVISOR(registered):
     out, c = await _run(_event(me=False), [(DECIDE, "evacuate_for_depot"),
-                                           (REVIEW, "approved", "s@x"),
-                                           (ACK, "released", "tier@x")])
+                                           (REVIEW, "approved", "s@x")])
     assert [h[2] for h in _path(out)] == [
         "maint_fault_propose", "maint_supervisor_review", "maint_release", "closed"], _path(out)
     assert registered[1] == ("EV-1~2", "maint_supervisor_approval:ORG",
@@ -475,7 +473,6 @@ async def test_REPLACE_NOW_NEEDS_THE_SUPERVISOR_ONLY_ON_A_MISSION_ESSENTIAL_ASSE
     answers = [(DECIDE, "replace_now")]
     if via_supervisor:
         answers.append((REVIEW, "approved", "s@x"))
-    answers.append((ACK, "released", "tier@x"))
     out, _ = await _run(_event(me=me), answers)
     assert out["terminal"] == "closed", out
     assert ("maint_supervisor_review" in [h[2] for h in _path(out)]) is via_supervisor, _path(out)
@@ -484,8 +481,7 @@ async def test_REPLACE_NOW_NEEDS_THE_SUPERVISOR_ONLY_ON_A_MISSION_ESSENTIAL_ASSE
 @pytest.mark.asyncio
 async def test_A_SUPERVISOR_REFUSAL_RETURNS_TO_PROPOSED_AND_CLEARS_THE_CHAIN(registered):
     out, c = await _run(_event(), [(DECIDE, "evacuate_for_depot"), (REVIEW, "rejected", "s@x"),
-                                   (DECIDE, "replace_after_resupply", "m2@x"),
-                                   (ACK, "released", "tier@x")])
+                                   (DECIDE, "replace_after_resupply", "m2@x")])
     assert [h[2] for h in _path(out)] == [
         "maint_fault_propose", "maint_supervisor_review", "maint_fault_propose", "maint_release",
         "closed"], _path(out)
@@ -495,8 +491,7 @@ async def test_A_SUPERVISOR_REFUSAL_RETURNS_TO_PROPOSED_AND_CLEARS_THE_CHAIN(reg
 
 @pytest.mark.asyncio
 async def test_A_REJECTION_RETURNS_TO_PROPOSED_WITH_ITS_REASON(registered):
-    out, c = await _run(_event(), [(DECIDE, "rejected"), (DECIDE, "replace_after_resupply"),
-                                   (ACK, "released", "tier@x")])
+    out, c = await _run(_event(), [(DECIDE, "rejected"), (DECIDE, "replace_after_resupply")])
     hops = out["transitions"][2:]
     assert [(h["from"], h["outcome"], h["to"]) for h in hops][:2] == [
         ("triaged", "selected", "maint_fault_propose"),
@@ -510,8 +505,7 @@ async def test_A_REJECTION_RETURNS_TO_PROPOSED_WITH_ITS_REASON(registered):
 @pytest.mark.asyncio
 async def test_A_DEFERRAL_PARKS_AND_COMES_BACK_AS_A_NEW_PROPOSAL(registered):
     out, _ = await _run(_event(), [(DECIDE, "deferred"), None,
-                                   (DECIDE, "defer_with_restriction"),
-                                   (ACK, "released", "tier@x")])
+                                   (DECIDE, "defer_with_restriction")])
     assert _path(out) == [("triaged", "selected", "maint_fault_propose"),
                           ("maint_fault_propose", "deferred", "maint_fault_park"),
                           ("maint_fault_park", "elapsed", "maint_fault_propose"),
@@ -537,24 +531,11 @@ async def test_A_REOPENED_CASE_STARTS_A_NEW_APPROVAL_CHAIN(registered):
     maintainer's approval of an abandoned proposal rode into the second proposal's release."""
     out, c = await _run(_event(me=True), [(DECIDE, "replace_now", "m1@x"), (REVIEW, EXPIRE),
                                           (ESCALATION, "reopen", "e@x"),
-                                          (DECIDE, "replace_after_resupply", "m2@x"),
-                                          (ACK, "released", "tier@x")])
+                                          (DECIDE, "replace_after_resupply", "m2@x")])
     assert [h[1] for h in _path(out)][1:] == [
         "replace_now", "timed_out", "reopen", "replace_after_resupply", "released"], _path(out)
     [rec] = _emitted(c)
     assert [e["approver_sub"] for e in rec["approval_chain"]] == ["m2@x"], rec["approval_chain"]
-
-
-@pytest.mark.asyncio
-async def test_A_TIER_REFUSAL_IS_NOT_A_RELEASE(registered):
-    """What follows a refusal is ruled and sealed in
-    tests/test_a_tier_refusal_returns_to_proposal_and_a_second_parks.py; here, only that it is not
-    a close."""
-    out, _ = await _run(_event(), [(DECIDE, "replace_after_resupply"),
-                                   (ACK, "tier_refused", "tier@x"),
-                                   (DECIDE, "defer_with_restriction"),
-                                   (ACK, "released", "tier@x")])
-    assert _path(out)[2] == ("maint_release", "tier_refused", "maint_fault_propose"), _path(out)
 
 
 # ── THE TABLES AGAINST THE TEMPLATE ─────────────────────────────────────────────────────────

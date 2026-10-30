@@ -11885,7 +11885,7 @@ async def answer_case_signal(
     current_user: User = Depends(get_current_user),
 ):
     """POST /cases/{case_id}/signals/{signal} -- a person answers a case's human-audience
-    signal (a `signal_await` step, e.g. maint_release's `tier_ack`). A human acknowledgment is
+    signal (a `signal_await` step; no committed definition declares one since 2026-10-28, when the supervisor's approval became the release). A human acknowledgment is
     a cortex action (architect ruling 2026-10-10).
 
     GENERIC over the signal name, GATED by the journalled audience: this route names no signal.

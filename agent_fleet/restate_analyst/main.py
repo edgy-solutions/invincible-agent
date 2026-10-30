@@ -2881,6 +2881,10 @@ async def _run_definition(
             outputs[wf.id][step.id] = _record
             results.append({"step_id": step.id, "kind": "emit", "status": "EMITTED",
                             "channel": step.channel})
+            # An emit that IS the decision declares its disposition (ruled 2026-10-28); undeclared,
+            # it disposes nothing.
+            if step.disposes is not None:
+                results[-1]["disposition"] = step.disposes
 
     # ── THE TERMINAL OUTCOME, AND WHY IT IS NOT `status` ──────────────────────────────────────
     #

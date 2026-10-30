@@ -135,6 +135,8 @@ groups:
 
   # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-11 ruling). Grants NO persona.domain cell; named in
   # task_grants.yaml `grant_to_groups` for maint_tier_ack:edge-01.
+  # UNUSED BY ANY DEFINITION since 2026-10-28 (the supervisor's approval is the release; no tier
+  # ack step exists). Membership kept by ruling: no grant changes.
   # alice is the sandbox maint persona; erin and chris mirror her groups (the walker rule)
   maint-tier-ack-edge-01: {}
 

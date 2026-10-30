@@ -1,7 +1,8 @@
 # SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
 #
-# RELEASE: emit the ActionRecord the bridge contract names, then wait for the owning tier to
-# acknowledge it. The case closes on the tier's ack.
+# RELEASE: emit the ActionRecord the bridge contract names. The supervisor's approval (or a choice
+# that needs none) IS the release, ruled 2026-10-28: there is no acknowledgement step, and the
+# emit disposes `released`, which closes the case.
 #
 # THE APPROVAL CHAIN IS THE EXECUTOR'S, NEVER THE TEMPLATE'S: `{case.approval_chain}` is what the
 # executor wrote from the identities `approve` verified. A template that spelled an approver would
@@ -24,6 +25,7 @@ steps:
     id: action
     stage: released
     channel: maintenance_action
+    disposes: released
     template:
       action_id: "{case.instance_id}"
       event_id: "{trigger.event_id}"
@@ -54,12 +56,3 @@ steps:
           - "{outputs.maint_fault_propose.walk.citations.remove_install.dmc}"
           - "{outputs.maint_fault_propose.walk.citations.ipd.dmc}"
           - "{outputs.maint_fault_propose.walk.citations.planning_interval.dmc}"
-
-  # A SYSTEM'S ANSWER, not a human's: no task row. Resolved through the same authority gate.
-  - kind: signal_await
-    id: tier_ack
-    signal: tier_ack
-    audience: "maint_tier_ack:{trigger.owning_tier}"
-    accepts: [released, tier_refused]
-    # A REFUSAL GOES BACK TO A MAINTAINER, so it must say why; the reason rides the hop.
-    reason_required: [tier_refused]

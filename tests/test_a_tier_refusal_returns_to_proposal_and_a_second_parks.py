@@ -1,14 +1,14 @@
-"""A TIER'S REFUSAL RETURNS THE CASE TO PROPOSED WITH ITS REASON; A SECOND ONE PARKS IT.
+"""THE GENERIC PIECES A TIER'S REFUSAL ONCE NEEDED: `outcome_repeated` and `reason_required`.
 
-Ruled by the architect on 2026-10-02 (item 6): ``tier_refused`` -> proposed, with the refusal's
-reason; a second refusal -> deferred, with a revisit time, as a decision row.
-
-Three generic pieces carry it, and nothing in Python names maintenance:
+HISTORY. Ruled by the architect on 2026-10-02 (item 6): `tier_refused` -> proposed, with the
+refusal's reason; a second refusal -> deferred, as a decision row. RETIRED 2026-10-28: the
+supervisor's approval is the release, so `maint_release` waits for no tier and nothing is refused
+(the paths and rows that proved it are gone; see tests/routing/
+test_the_supervisor_approval_is_the_release.py). The mechanisms are generic and stay sealed here,
+on definitions of their own, because the runner still supplies them to any table:
 * ``outcome_repeated`` -- the runner MEASURES whether this definition has ended with this outcome
-  before in the case. A table matches by equality only (ADR-0039), so "second" must be a fact; it
-  is a bool, so the second refusal and every later one read the same.
-* ``reason_required`` on ``signal_await`` -- a refusal that goes back to a maintainer must say why,
-  and the case carries the reason onto the hop.
+  before in the case. A table matches by equality only (ADR-0039), so "second" must be a fact.
+* ``reason_required`` on ``signal_await`` -- a refusal must say why; the case carries the reason.
 * a join seal: every attribute a chaining table matches is one the runner supplies, ``chosen.*``,
   or a fact some trigger requires. A table keyed on anything else refuses every case ending there.
 """
@@ -20,57 +20,9 @@ from pydantic import ValidationError
 from tests.test_a_case_runs_from_trigger_to_terminal import (
     R, _answer, _body, _Cluster, _dump, _refused, main, wd, wr)
 from tests.test_the_maintenance_fault_runs_as_a_case import (  # noqa: F401 -- fixture
-    ACK, DECIDE, _declared_walk_double, _event, _path, _real_policy, _run, registered)
+    _declared_walk_double, _real_policy, registered)
 
 TIER = "tier@x"
-
-
-# ── THE PATHS ───────────────────────────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_A_FIRST_REFUSAL_RETURNS_TO_PROPOSED_AND_THE_HOP_CARRIES_ITS_REASON(registered):
-    out, _ = await _run(_event(), [(DECIDE, "replace_after_resupply"), (ACK, "tier_refused", TIER),
-                                   (DECIDE, "defer_with_restriction"), (ACK, "released", TIER)])
-    assert _path(out) == [("triaged", "selected", "maint_fault_propose"),
-                          ("maint_fault_propose", "replace_after_resupply", "maint_release"),
-                          ("maint_release", "tier_refused", "maint_fault_propose"),
-                          ("maint_fault_propose", "defer_with_restriction", "maint_release"),
-                          ("maint_release", "released", "closed")], _path(out)
-    hop = out["transitions"][4]
-    assert (hop["outcome"], hop["by"], hop["reason"]) == ("tier_refused", TIER, "because 2"), hop
-    assert out["terminal"] == "closed", out
-
-
-@pytest.mark.asyncio
-async def test_A_SECOND_REFUSAL_PARKS_THE_CASE_AND_IT_COMES_BACK_PROPOSED(registered):
-    out, _ = await _run(_event(), [(DECIDE, "replace_after_resupply"), (ACK, "tier_refused", TIER),
-                                   (DECIDE, "replace_after_resupply"), (ACK, "tier_refused", TIER),
-                                   None,
-                                   (DECIDE, "defer_with_restriction"), (ACK, "released", TIER)])
-    assert _path(out)[2:5] == [("maint_release", "tier_refused", "maint_fault_propose"),
-                               ("maint_fault_propose", "replace_after_resupply", "maint_release"),
-                               ("maint_release", "tier_refused", "maint_fault_park")], _path(out)
-    assert _path(out)[5] == ("maint_fault_park", "elapsed", "maint_fault_propose"), _path(out)
-    assert out["terminal"] == "closed", out
-
-
-@pytest.mark.asyncio
-async def test_A_THIRD_REFUSAL_PARKS_AGAIN_RATHER_THAN_RETURNING_TO_THE_MAINTAINER(registered):
-    refuse = [(DECIDE, "replace_after_resupply"), (ACK, "tier_refused", TIER)]
-    out, _ = await _run(_event(), [*refuse, *refuse, None, *refuse, None,
-                                   (DECIDE, "defer_with_restriction"), (ACK, "released", TIER)])
-    refusals = [to for frm, oc, to in _path(out) if oc == "tier_refused"]
-    assert refusals == ["maint_fault_propose", "maint_fault_park", "maint_fault_park"], _path(out)
-
-
-def test_THE_REFUSAL_ROWS_ARE_TOTAL_AND_NONE_IS_A_TERMINAL():
-    """A refusal never closes the case: it was the dead end the ruling replaced."""
-    table = R.chaining_index()["maint_release"]
-    assert "tier_refused" not in (table.get("terminals") or []), table
-    got = {rep: R._dt.decide(table, {"outcome": "tier_refused", "outcome_repeated": rep})
-           for rep in (False, True)}
-    assert {k: (d.then, d.terminal) for k, d in got.items()} == {
-        False: ("maint_fault_propose", False), True: ("maint_fault_park", False)}, got
 
 
 # ── THE MEASURED FACT ───────────────────────────────────────────────────────────────────────
@@ -94,16 +46,24 @@ def test_A_TRIGGER_FACT_NAMED_OUTCOME_REPEATED_IS_REFUSED_AT_INTAKE():
 
 # ── THE JOIN: what a chaining table matches must reach it ───────────────────────────────────
 
-def test_EVERY_ATTRIBUTE_A_CHAINING_TABLE_MATCHES_IS_ONE_SOMETHING_SUPPLIES():
+def _stray(idx):
     required = {f for t in R.load_triggers().values() for f in t.requires}
     supplied = set(R.TERMINATION_FACTS) | required
+    return {(name, a) for name, t in idx.items() for a in (t.get("matches") or [])
+            if a not in supplied and not a.startswith("chosen.")}
+
+
+def test_EVERY_ATTRIBUTE_A_CHAINING_TABLE_MATCHES_IS_ONE_SOMETHING_SUPPLIES():
     idx = R.chaining_index()
     assert idx, "no chaining tables -- the seal would pass on nothing"
-    stray = {(name, a) for name, t in idx.items() for a in (t.get("matches") or [])
-             if a not in supplied and not a.startswith("chosen.")}
+    stray = _stray(idx)
     assert not stray, f"matched by a table, supplied by nothing: {sorted(stray)}"
-    # POSITIVE CONTROL: the runner's measured fact is in use, so the seal reaches it.
-    assert any("outcome_repeated" in (t.get("matches") or []) for t in idx.values()), idx
+    # POSITIVE CONTROLS. No committed table matches `outcome_repeated` since 2026-10-28, so the
+    # control is synthetic: the runner's measured fact is supplied (not stray), and a fact
+    # nothing supplies is caught.
+    assert _stray({"t": {"matches": ["outcome", "outcome_repeated"]}}) == set()
+    assert _stray({"t": {"matches": ["outcome", "nobody_supplies_this"]}}) == {
+        ("t", "nobody_supplies_this")}
 
 
 # ── THE REASON ON A SIGNAL ──────────────────────────────────────────────────────────────────
@@ -142,13 +102,6 @@ async def test_CONTROL_A_RELEASE_NEEDS_NO_REASON_AND_A_REASONED_REFUSAL_PASSES(m
     assert [p["status"] for _, p in ctx.resolved] == ["released", "tier_refused"], ctx.resolved
 
 
-def test_THE_RELEASE_DEFINITION_REQUIRES_A_REASON_ON_REFUSAL_ONLY():
-    import workflow_definition as wdm
-    [ack] = [s for s in wdm.get_workflow_definition("maint_release").steps
-             if s.kind == "signal_await"]
-    assert ack.reason_required == ["tier_refused"], ack
-
-
 def test_A_REASON_FOR_A_STATUS_THE_SIGNAL_DOES_NOT_ACCEPT_IS_REFUSED_AT_LOAD():
     with pytest.raises(ValidationError, match="reason_required"):
         wd.SignalAwaitStep(kind="signal_await", id="s", signal="s", audience="a:b",
@@ -158,32 +111,44 @@ def test_A_REASON_FOR_A_STATUS_THE_SIGNAL_DOES_NOT_ACCEPT_IS_REFUSED_AT_LOAD():
 @pytest.mark.asyncio
 async def test_ONLY_A_SIGNAL_THAT_DECLARES_REASONS_JOURNALS_THEM(registered, monkeypatch,
                                                                 tmp_path):
-    """Replay-unchanged for every signal that declares nothing. The release's `tier_ack` declares
-    a reason and journals it; a signal declaring none, answered WITH one, journals no key.
+    """Replay-unchanged for every signal that declares nothing. A signal declaring a reason
+    journals it; a signal declaring none, answered WITH one, journals no key.
 
-    The control was the origin case's `origin_written` until its `written` step became a
-    direct_call (item B, 2026-10-03). No committed signal is left that declares nothing, so the
-    control is a definition of its own -- differing from `tier_ack` only in declaring no reason."""
-    out, c = await _run(_event(), [(DECIDE, "replace_after_resupply"), (ACK, "released", TIER)])
-    assert out["terminal"] == "closed", out
-    keys = {k: v for ctx in c.ctxs.values() for k, v in ctx.state.items()
-            if k.startswith("signal_reason_")}
-    assert keys == {main._signal_reason_key("tier_ack"): ["tier_refused"]}, keys
-
+    No committed definition declares a signal since 2026-10-28, so both arms are definitions of
+    their own, differing only in whether the signal declares a reason."""
     monkeypatch.setenv("CASE_TRIGGER_DIR", str(_dump(tmp_path / "triggers", {
-        "acks": {"trigger": "acks", "selection": "sel_ack", "key": "event_id"}})))
+        "acks": {"trigger": "acks", "selection": "sel_ack", "key": "event_id"},
+        "reasons": {"trigger": "reasons", "selection": "sel_reason", "key": "event_id"}})))
     monkeypatch.setenv("DECISION_TABLE_DIR", str(_dump(tmp_path / "decisions", {
         "sel_ack": {"decision": "sel_ack", "matches": ["level"], "domain": {"level": ["hi"]},
                     "rows": [{"then": "plain"}]},
+        "sel_reason": {"decision": "sel_reason", "matches": ["level"],
+                       "domain": {"level": ["hi"]}, "rows": [{"then": "reasoned"}]},
+        "reasoned_chain": {"decision": "reasoned_chain", "after": "reasoned",
+                           "matches": ["outcome"],
+                           "domain": {"outcome": ["fine", "tier_refused"]},
+                           "terminals": ["done", "refused"],
+                           "rows": [{"when": {"outcome": "fine"}, "then": "done"},
+                                    {"when": {"outcome": "tier_refused"}, "then": "refused"}]},
         "plain_chain": {"decision": "plain_chain", "after": "plain", "matches": ["outcome"],
                         "domain": {"outcome": ["fine", "tier_refused"]},
                         "terminals": ["done", "refused"],
                         "rows": [{"when": {"outcome": "fine"}, "then": "done"},
                                  {"when": {"outcome": "tier_refused"}, "then": "refused"}]}})))
     monkeypatch.setenv("WORKFLOW_DEFINITIONS_DIR", str(_dump(tmp_path / "workflows", {
+        "reasoned": {"id": "reasoned", "name": "reasoned", "steps": [
+            {"kind": "signal_await", "id": "ack", "signal": "reasoned_ack", "audience": "ops:ORG",
+             "accepts": ["fine", "tier_refused"], "reason_required": ["tier_refused"]}]},
         "plain": {"id": "plain", "name": "plain", "steps": [
             {"kind": "signal_await", "id": "ack", "signal": "plain_ack", "audience": "ops:ORG",
              "accepts": ["fine", "tier_refused"]}]}})))
+    c = _Cluster({("R-1~1", "reasoned_ack"): _answer("tier_refused", TIER, "no hangar slot")})
+    out = await c.start("R-1", "reasons", {"event_id": "R-1", "level": "hi"})
+    assert out["terminal"] == "refused", out
+    keys = {k: v for ctx in c.ctxs.values() for k, v in ctx.state.items()
+            if k.startswith("signal_reason_")}
+    assert keys == {main._signal_reason_key("reasoned_ack"): ["tier_refused"]}, keys
+
     c = _Cluster({("E-1~1", "plain_ack"): _answer("tier_refused", TIER, "a reason nobody asked for")})
     out = await c.start("E-1", "acks", {"event_id": "E-1", "level": "hi"})
     assert out["terminal"] == "refused", out

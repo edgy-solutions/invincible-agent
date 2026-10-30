@@ -391,6 +391,15 @@ class EmitStep(_Step):
     id: str
     channel: str = Field(..., pattern=r"^[a-z][a-z0-9_]*$")
     template: Any
+    disposes: Optional[str] = Field(
+        None,
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description=(
+            "The disposition this emit makes, so a chaining table can match it. An emit that IS "
+            "the decision declares it (the supervisor's approval is the release, ruled "
+            "2026-10-28); undeclared, an emit disposes nothing."
+        ),
+    )
 
 
 # Discriminated union on `kind` — an unknown/absent kind fails validation loudly.
