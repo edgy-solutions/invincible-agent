@@ -2554,6 +2554,10 @@ def _log_subtask_review_request_asset(
     rr = acceptance_request.review_request_of(engine_response)
     if not rr:
         return False
+    # I3: stamp the minted case key in place, so the asset below AND the engine response the
+    # caller goes on to render both carry it.
+    rr = acceptance_request.with_minted_ids(rr)
+    engine_response["review_request"] = rr
     context.log_event(
         AssetMaterialization(
             asset_key=["subtask_review_request"],

@@ -7,6 +7,8 @@
 # setup/ontologies/training_extension.ttl.
 kind: course
 domain: training
+# review_shape names the card that renders this kind's reviews (ruled 2026-10-30; platform-owned).
+review_shape: course
 passes:
   - core.baml::ExtractOutline
   - training.baml::ExtractConcepts

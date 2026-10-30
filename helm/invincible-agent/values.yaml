@@ -856,7 +856,7 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.9.10"
+  meshSdkVersion: "v0.9.12"
   # CLOSED NETWORK (no route to github.com / pypi.org): point the install at a mirror.
   # The SDK is fetched from <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz, so the mirror holds the
   # GitHub tag tarball under that same file name (e.g. an Artifactory generic repo holding

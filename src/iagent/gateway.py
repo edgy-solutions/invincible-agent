@@ -56,6 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
+from iagent_mesh.review_coverage import ReviewShapeRow
 from . import frontend_menu_store
 from .ingest_api import (
     BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, MCP_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse,
@@ -2623,6 +2624,159 @@ def _fin_export_recipients_for(user: "User") -> list[str]:
     )
 
 
+# -- PLAN ANSWERS EXPORT (policy/exports) ----------------------------------------------------
+#
+# A plan recipient is named by an answer-export profile (`agent_fleet/utils/answer_exports.py`,
+# seed `policy/exports/`), not by cost's `RECIPIENT_SCOPES`. Its READERS are the
+# `recipient_readers` rail under owner "plan": `can_read_recipient("plan", scope, authz_id)`.
+# Deny-by-default; until that owner exists on the rail nobody can export to one, which is intended.
+# PRODUCING one also needs `can_export:<profile name>` (ruled (b) 10-30, deny by default, the row is
+# policy's): "exportable" = reader AND can_export. The download stays reader-only.
+_PLAN_OWNER = "plan"
+_NOT_A_KIND = "not_a_kind_this_recipient_takes"
+_SCENARIO_ANSWER = "scenario_answer"
+
+
+def _cost_profiles_get(url: str) -> "httpx.Response":
+    """The one GET to engine-cost for its profile set (a seam: the tests serve cost's real app
+    through it). It carries NO person and so no bearer: the set is policy, not a person's data."""
+    return httpx.get(url, timeout=10.0)
+
+
+def _plan_profiles() -> dict:
+    """The answer-export profiles engine-cost SERVES (`GET /answers_export/profiles`), validated by
+    `answer_exports.profiles_from_wire`, the loader's own validator. The BFF holds no copy and
+    reads no profile from disk: the registry this code reads is the one the server serves, so an
+    overlay mounted on cost alone reaches the picker with no code change. Nothing is cached (a
+    cached set is a copy); callers that need it more than once hold the dict they were given.
+    Raises `AnswerProfilesUnavailable` when cost cannot be asked or serves a set that does not
+    validate: each caller decides what an outage means for it."""
+    from agent_fleet.utils import answer_exports as _ae
+    try:
+        rr = _cost_profiles_get(f"{_ENGINE_COST_URL}/answers_export/profiles")
+    except Exception as exc:  # noqa: BLE001 -- transport failure of the ask itself
+        logger.error("answer export profiles: engine-cost unreachable: %s", exc)
+        raise _ae.AnswerProfilesUnavailable(f"engine-cost unreachable: {exc}") from exc
+    if rr.status_code != 200:
+        logger.error("answer export profiles: engine-cost answered %s", rr.status_code)
+        raise _ae.AnswerProfilesUnavailable(f"engine-cost answered {rr.status_code}")
+    try:
+        return _ae.profiles_from_wire(rr.json())
+    except (_ae.AnswerExportError, ValueError) as exc:
+        logger.error("answer export profiles served by engine-cost do not validate: %s", exc)
+        raise _ae.AnswerProfilesUnavailable(f"served set does not validate: {exc}") from exc
+
+
+def _plan_profiles_unavailable() -> HTTPException:
+    return HTTPException(status_code=503, detail={"reason": "answer_profiles_unavailable"})
+
+
+def _plan_scope_names(profiles: Optional[dict] = None) -> list[str]:
+    profiles = _plan_profiles() if profiles is None else profiles
+    return sorted({s for p in profiles.values() for s in p.recipients})
+
+
+def _plan_reader(scope: str, authz_id: Optional[str]) -> bool:
+    """`can_read_recipient("plan", ...)`; a transport/HTTP failure is a 503, never a deny."""
+    from agent_fleet.utils.recipient_readers import can_read_recipient
+    try:
+        return bool(authz_id) and bool(can_read_recipient(_PLAN_OWNER, scope, authz_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("recipient_readers check failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail={"reason": "recipient_readers_unavailable"}
+        ) from exc
+
+
+def _plan_may_export(profile_name: str, authz_id: Optional[str]) -> bool:
+    """`can_export:<profile>` (Topaz `can_invoke` on the capability). A blank authz_id is False;
+    a transport/HTTP failure is a 503, never a deny. The same question as the review export's
+    `_may_export_profile` (#163); the two fold together at iagent-mesh v0.9.12."""
+    from agent_fleet.utils.export_capability import can_export
+    try:
+        return bool(authz_id) and bool(can_export(profile_name, authz_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("can_export check failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail={"reason": "can_export_unavailable"}
+        ) from exc
+
+
+def _plan_recipients_for(user: "User", profiles: Optional[dict] = None) -> list[str]:
+    """Every plan recipient scope `user` may export to: named by a served profile and admitted by
+    the `recipient_readers` rail. A blank `authz_id` is []. `AnswerProfilesUnavailable` escapes."""
+    if not user.authz_id:
+        return []
+    return [s for s in _plan_scope_names(profiles) if _plan_reader(s, user.authz_id)]
+
+
+def _answer_profiles_unavailable_type() -> type:
+    from agent_fleet.utils import answer_exports as _ae
+    return _ae.AnswerProfilesUnavailable
+
+
+def _plan_recipients_or_none(user: "User") -> list[str]:
+    """For the pickers only: a rail that cannot be asked omits the plan recipients rather than
+    taking cost's own list down. The export and the download still answer 503. The same holds
+    when engine-cost's profile set cannot be had."""
+    try:
+        return _plan_recipients_for(user)
+    except (HTTPException, _answer_profiles_unavailable_type()):
+        return []
+
+
+def _plan_profile_name(scope: str, profiles: Optional[dict] = None) -> Optional[str]:
+    from agent_fleet.utils import answer_exports as _ae
+    profile = _ae.profile_for_recipient(_plan_profiles() if profiles is None else profiles, scope)
+    return profile.name if profile is not None else None
+
+
+def _plan_exportable_for(
+    user: "User", readers: Optional[list[str]] = None, profiles: Optional[dict] = None,
+) -> list[str]:
+    """The plan recipient scopes `user` may EXPORT to: a reader AND `can_export` on the scope's
+    profile. Nobody is offered a recipient the export would refuse. `readers` is
+    `_plan_recipients_for(user)` when the caller already has it."""
+    profiles = _plan_profiles() if profiles is None else profiles
+    if readers is None:
+        readers = _plan_recipients_for(user, profiles)
+    out = []
+    for s in readers:
+        name = _plan_profile_name(s, profiles)
+        if name is not None and _plan_may_export(name, user.authz_id):
+            out.append(s)
+    return out
+
+
+def _plan_exportable_or_none(user: "User", profiles: Optional[dict] = None) -> list[str]:
+    """`_plan_recipients_or_none`'s twin for the pickers: a rail that cannot be asked omits the
+    plan recipients."""
+    try:
+        return _plan_exportable_for(user, None, profiles)
+    except (HTTPException, _answer_profiles_unavailable_type()):
+        return []
+
+
+def _plan_export_refusal_403(profile_name: str, scope: str) -> HTTPException:
+    """The compliant refusal for a reader who lacks `can_export:<profile>`."""
+    from .authz.refusal import policy_refusal
+    return policy_refusal(
+        "not_entitled_to_export", policy_id=f"capability_grants:can_export:{profile_name}",
+        missing_binding=f"can_invoke can_export:{profile_name}",
+        message=f"You are not entitled to export {profile_name} answers.",
+        extra={"recipient_scope": scope})
+
+
+def _plan_refusal_403(scope: str) -> HTTPException:
+    """The compliant refusal for a plan recipient the caller is not a reader of: the family
+    `recipient_readers` is object-scoped, so it names the family and no key."""
+    from .authz.refusal import policy_refusal
+    return policy_refusal(
+        "not_a_recipient_you_may_export_to", policy_id="recipient_readers",
+        missing_binding="can_read_recipient(recipient_scope)",
+        message="You are not a reader of this recipient.", extra={"recipient_scope": scope})
+
+
 def _user_bearer(request: Request) -> str:
     """The caller's raw bearer, exactly as the disposition route reads it above."""
     return (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
@@ -2744,7 +2898,13 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
     `no_verb` stays the true refusal for those. `subject_instance_id` is read from the intent
     alone. An old or malformed routing record yields None, never an error.
     """
-    resolved: list[dict] = []
+    return [_resolve_export_record(r) for r in _read_export_records(artifact_ids, user_id)]
+
+
+def _read_export_records(artifact_ids: list[str], user_id: str) -> list:
+    """The `_ARTIFACT_BY_ID_CYPHER` record of each id, owner-checked: 404 for one that does not
+    resolve (refused, never dropped), 503 when the store is down."""
+    records: list = []
     for artifact_id in artifact_ids:
         try:
             with neo4j_driver.session() as session:
@@ -2760,32 +2920,125 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
                 status_code=404,
                 detail={"reason": "answer_not_found", "artifact_id": artifact_id},
             )
+        records.append(rec)
+    return records
 
-        intent: dict = {}
-        if rec.get("resolved_intent"):
-            try:
-                intent = json.loads(rec["resolved_intent"]) or {}
-            except (ValueError, TypeError):
-                intent = {}
 
-        def _or_none(v):
-            v = str(v or "").strip()
-            return None if not v or v == "UNKNOWN" else v
+def _resolve_export_record(rec) -> dict:
+    """One record as the engines' `{id, verb_iri, subject_instance_id}` (the two homes of the
+    verb are explained on `_resolve_export_answers`). Widens nothing."""
+    intent: dict = {}
+    if rec.get("resolved_intent"):
+        try:
+            intent = json.loads(rec["resolved_intent"]) or {}
+        except (ValueError, TypeError):
+            intent = {}
 
-        verb = _or_none(intent.get("verb_iri"))
-        if verb is None:
-            try:
-                _routing = json.loads(rec.get("routing_inline") or "null")
-                verb = _or_none(_routing["action"]["iri"])
-            except (ValueError, TypeError, KeyError):
-                verb = None
+    def _or_none(v):
+        v = str(v or "").strip()
+        return None if not v or v == "UNKNOWN" else v
 
-        resolved.append({
-            "id": str(rec["id"]),
-            "verb_iri": verb,
-            "subject_instance_id": _or_none(intent.get("subject_instance_id")),
+    verb = _or_none(intent.get("verb_iri"))
+    if verb is None:
+        try:
+            _routing = json.loads(rec.get("routing_inline") or "null")
+            verb = _or_none(_routing["action"]["iri"])
+        except (ValueError, TypeError, KeyError):
+            verb = None
+
+    return {
+        "id": str(rec["id"]),
+        "verb_iri": verb,
+        "subject_instance_id": _or_none(intent.get("subject_instance_id")),
+        "state_refs": _answer_state_refs(rec),
+    }
+
+
+def _answer_state_refs(rec) -> list[str]:
+    """The sorted distinct non-empty `state_ref` values on the answer's
+    `rendered_output.components[*]` (Engine P echoes the state it computed against; the
+    presentation agent copies it onto every component). Never raises: any parse or shape problem
+    is `[]`, and `[]` reads as BASELINE downstream (Engine P's default; pre-passthrough artifacts
+    never carried the key)."""
+    try:
+        out = json.loads(rec.get("rendered_output") or "null")
+        comps = out.get("components") if isinstance(out, dict) else None
+        if not isinstance(comps, list):
+            return []
+        refs = {c["state_ref"].strip() for c in comps
+                if isinstance(c, dict) and isinstance(c.get("state_ref"), str)}
+        return sorted(r for r in refs if r)
+    except (ValueError, TypeError, AttributeError):
+        return []
+
+
+def _plan_partition(resolved: list[dict], profile) -> tuple[list[dict], list[dict]]:
+    """THE ONE DECISION a plan recipient makes about a board, used by the export and the offer
+    alike: (taken answers, refused items). Taken = verb in `profile.kinds` and computed against
+    baseline, in board order. Refused = `{answer_id, kind, reason_code, reason}`, one refusal per
+    answer, in this order: `no_verb` when the answer has none; `not_a_kind_this_recipient_takes`
+    when its verb is not in `profile.kinds`; `scenario_answer` (ruled 10-29: only baseline
+    answers export) when a taken verb was computed against a scenario, the item also carrying
+    `scenario_id`. The state is the answer's `state_refs`; none present reads as baseline."""
+    from agent_fleet.cost_agent.canvas import REFUSAL_REASONS, NO_VERB, _verb_local
+    kinds = {_verb_local(k) for k in profile.kinds} - {None}
+    taken: list[dict] = []
+    refused: list[dict] = []
+    for ans in resolved:
+        local = _verb_local(ans.get("verb_iri"))
+        if local is not None and local in kinds:
+            scenarios = [r for r in ans.get("state_refs") or [] if r != "baseline"]
+            if not scenarios:
+                taken.append(ans)
+                continue
+            sid = ", ".join(sorted(scenarios))
+            refused.append({
+                "answer_id": ans["id"], "kind": local, "reason_code": _SCENARIO_ANSWER,
+                "scenario_id": sid,
+                "reason": f"computed against scenario {sid}; the {profile.name} export "
+                          f"takes baseline answers only",
+            })
+        elif local is None:
+            refused.append({"answer_id": ans["id"], "kind": None, "reason_code": NO_VERB,
+                            "reason": REFUSAL_REASONS[NO_VERB]})
+        else:
+            refused.append({
+                "answer_id": ans["id"], "kind": local, "reason_code": _NOT_A_KIND,
+                "reason": f"not a kind the {profile.name} export takes "
+                          f"({len(profile.kinds)} kinds)",
+            })
+    return taken, refused
+
+
+def _plan_rows(records: list, taken_ids: set[str]) -> list[dict]:
+    """The rows of the taken answers, in board order, read from the SAME records the board was
+    resolved from (no second query). Keys are `answer_exports.ANSWER_FIELDS`."""
+    rows: list[dict] = []
+    for rec in records:
+        resolved = _resolve_export_record(rec)
+        if resolved["id"] not in taken_ids:
+            continue
+        subject = None
+        try:
+            intent = json.loads(rec.get("resolved_intent") or "null")
+            if isinstance(intent, dict):
+                subject = intent.get("subject_uri") or None
+        except (ValueError, TypeError):
+            subject = None
+        valid = rec.get("valid_as_of")
+        if valid is not None and hasattr(valid, "isoformat"):
+            valid = valid.isoformat()
+        rows.append({
+            "answer_id": resolved["id"],
+            "question": rec.get("question_text"),
+            "summary": rec.get("summary"),
+            "verb": resolved["verb_iri"],
+            "subject": subject,
+            "program": rec.get("origin_program"),
+            "status": rec.get("status"),
+            "valid_as_of": None if valid is None else str(valid),
         })
-    return resolved
+    return rows
 
 
 def _partition_export_answers(resolved: list[dict]) -> list[tuple[str, list[dict]]]:
@@ -2806,7 +3059,9 @@ def _partition_export_answers(resolved: list[dict]) -> list[tuple[str, list[dict
     for ans in resolved:
         local = _verb_local(ans.get("verb_iri"))
         engine = "fin" if local in fin_verbs else "cost"
-        parts.setdefault(engine, []).append(ans)
+        # `state_refs` is the plan recipient's alone: it never reaches an engine payload.
+        parts.setdefault(engine, []).append(
+            {k: v for k, v in ans.items() if k != "state_refs"})
     return list(parts.items())
 
 
@@ -2841,15 +3096,18 @@ def _refused_entries(engine: str, refused_answers: list[dict], recipient_scope: 
 
     Items are grouped by `reason_code`, in order of each code's first appearance; a group's
     `answers` are its ids in board order. Every item of one code carries the same constant
-    reason, so the group's reason is the first item's. Only ever `status: "failed"`: cortex's
+    reason, so the group's reason is the first item's -- EXCEPT `scenario_answer`, whose reason
+    names its scenario: it groups by (code, reason) and the entry carries `scenario_id`. Only ever `status: "failed"`: cortex's
     reader drops the whole response on any other status. Never rendered on the customer page.
     """
     groups: dict[str, dict] = {}
     for item in refused_answers:
         code = item.get("reason_code")
-        g = groups.get(code)
+        # a scenario refusal names its scenario in the reason, so it groups by that reason
+        key = (code, item.get("reason")) if code == _SCENARIO_ANSWER else code
+        g = groups.get(key)
         if g is None:
-            g = groups[code] = {
+            g = groups[key] = {
                 "engine": engine,
                 "answers": [],
                 "export_id": None,
@@ -2859,6 +3117,8 @@ def _refused_entries(engine: str, refused_answers: list[dict], recipient_scope: 
                 "reason_code": code,
                 "reason": item.get("reason"),
             }
+            if item.get("scenario_id") is not None:
+                g["scenario_id"] = item["scenario_id"]
         g["answers"].append(item.get("answer_id"))
     return list(groups.values())
 
@@ -2930,7 +3190,8 @@ async def export_package_recipients(current_user: User = Depends(get_current_use
     sees are exactly the scopes their `authz_id` reads, never the full recipient catalogue."""
     return {
         "recipients": [
-            {"value": s, "label": s} for s in _export_recipients_for(current_user)
+            {"value": s, "label": s}
+            for s in _export_recipients_for(current_user) + _plan_exportable_or_none(current_user)
         ]
     }
 
@@ -3017,6 +3278,22 @@ def _offer_for_recipient(resolved: list[dict], scope: str) -> dict:
     }
 
 
+def _plan_offer_for_recipient(resolved: list[dict], scope: str, profiles: dict) -> dict:
+    """`_offer_for_recipient`'s shape for a plan recipient, decided by `_plan_partition` -- the
+    function the export takes its own decision from. `profiles` is the set the caller was given."""
+    from agent_fleet.utils import answer_exports as _ae
+    profile = _ae.profile_for_recipient(profiles, scope)
+    taken, refused = _plan_partition(resolved, profile)
+    exports = list(dict.fromkeys(a["id"] for a in taken))
+    return {
+        "offered": bool(exports),
+        "reason_code": None if exports else _OFFER_TAKES_NONE,
+        "reason": None if exports else _OFFER_TAKES_NONE_REASON,
+        "exports": exports,
+        "refused": refused,
+    }
+
+
 @app.post("/export/package/recipients")
 async def export_package_offer(
     body: ExportOfferRequest, current_user: User = Depends(get_current_user),
@@ -3037,12 +3314,21 @@ async def export_package_offer(
     resolved = _resolve_export_answers(
         [a.artifact_id for a in body.answers], current_user.id
     )
+    plan_offers: list[dict] = []
+    try:
+        profiles = _plan_profiles()
+        plan_offers = [
+            {"value": s, "label": s, **_plan_offer_for_recipient(resolved, s, profiles)}
+            for s in _plan_exportable_or_none(current_user, profiles)
+        ]
+    except _answer_profiles_unavailable_type():
+        pass  # logged by `_plan_profiles`; the plan recipients are omitted, cost's are not
     return {
         "answers": len(body.answers),
         "recipients": [
             {"value": s, "label": s, **_offer_for_recipient(resolved, s)}
             for s in _export_recipients_for(current_user)
-        ],
+        ] + plan_offers,
     }
 
 
@@ -3173,6 +3459,86 @@ async def _export_package_from_template(
     )
 
 
+async def _call_engine_cost_answers_export(payload: dict, bearer: str) -> dict:
+    """POST engine-cost's `/answers_export`. Its 403 is the engine's policy refusal completed by
+    `relay_refusal`; its 503 (`recipient_readers_unavailable`) stays a 503."""
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            rr = await client.post(
+                f"{_ENGINE_COST_URL}/answers_export", json=payload,
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "cost_engine_unreachable", "message": str(exc),
+        })
+    if rr.status_code >= 400:
+        if rr.status_code == 403:
+            raise _engine_failure("cost", rr)
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+    return rr.json()
+
+
+async def _export_plan_answers(
+    body: "ExportPackageRequest", request: Request, current_user: User, recipient_scope: str,
+    profiles: Optional[dict] = None,
+) -> dict:
+    """A board exported to a plan recipient: no cost or fin call is made.
+
+    The answers whose verb is in the profile's `kinds` are rendered by engine-cost's
+    `/answers_export`; the rest are refused by name, as `_refused_entries` shapes them. The
+    rows come from the same `_ARTIFACT_BY_ID_CYPHER` records the board resolved from.
+    """
+    from agent_fleet.utils import answer_exports as _ae
+    try:
+        profiles = _plan_profiles() if profiles is None else profiles
+    except _ae.AnswerProfilesUnavailable as exc:
+        raise _plan_profiles_unavailable() from exc
+    profile = _ae.profile_for_recipient(profiles, recipient_scope)
+    records = _read_export_records([a.artifact_id for a in body.answers], current_user.id)
+    resolved = [_resolve_export_record(r) for r in records]
+    taken, refused_items = _plan_partition(resolved, profile)
+
+    documents: list[dict] = []
+    if taken:
+        taken_ids = [a["id"] for a in taken]
+        rows = _plan_rows(records, set(taken_ids))
+        # CONTENT-ADDRESSED, as cost's: the same inputs name the same export.
+        export_id = hashlib.sha256(json.dumps(
+            {"recipient_scope": recipient_scope, "rows": rows},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str,
+        ).encode("utf-8")).hexdigest()
+        out = await _call_engine_cost_answers_export(
+            {"recipient_scope": recipient_scope, "export_id": export_id,
+             "user_email": current_user.authz_id, "rows": rows},
+            _user_bearer(request),
+        )
+        section = _shape_export_package_response(
+            out, recipient_scope=recipient_scope, template_id=None,
+            extra={"profile": out.get("profile")},
+        )
+        documents.append({"engine": "cost", "answers": taken_ids, **section})
+    documents.extend(_refused_entries("cost", refused_items, recipient_scope))
+
+    ok = [d["status"] == "exists" for d in documents]
+    status = "exists" if all(ok) else ("partial" if any(ok) else "failed")
+    refused = sum(len(d["answers"]) for d in documents if d["status"] != "exists")
+    export_id = next((d["export_id"] for d in documents if d["status"] == "exists"), None)
+    return {
+        "export_id": export_id,
+        "status": status,
+        "recipient_scope": recipient_scope,
+        "reason": None if not refused else f"{refused} of {len(body.answers)} answers refused",
+        "template_id": None,
+        "documents": documents,
+    }
+
+
 @app.post("/export/package", tags=[MCP_TAG])
 async def export_package(
     body: ExportPackageRequest,
@@ -3236,9 +3602,27 @@ async def export_package(
     if not body.answers:
         raise HTTPException(status_code=400, detail={"reason": "no_answers"})
 
-    options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
-
     recipient_scope = (body.recipient_scope or "").strip()
+    # THE PLAN REGISTRY IS ENGINE-COST'S, READ OVER THE WIRE. When it cannot be had the plan scopes
+    # are omitted from the options (the picker's posture) and a request for anything that is not a
+    # cost or fin recipient is a 503 -- never a 403: an outage must not read as "not your recipient".
+    from agent_fleet.cost_agent import seed as _cost_seed
+    from agent_fleet.finance_agent import export as _fin_export
+    try:
+        plan_profiles: Optional[dict] = _plan_profiles()
+    except _answer_profiles_unavailable_type():
+        plan_profiles = None
+    if (plan_profiles is None and recipient_scope
+            and recipient_scope not in _cost_seed.RECIPIENT_SCOPES
+            and recipient_scope not in _fin_export.RECIPIENT_SCOPES):
+        raise _plan_profiles_unavailable()
+    is_plan_scope = plan_profiles is not None and recipient_scope in _plan_scope_names(plan_profiles)
+    plan_recipients = _plan_recipients_for(current_user, plan_profiles) if is_plan_scope else []
+    options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
+    if plan_profiles is not None:
+        options += [{"value": s, "label": s} for s in (
+            _plan_exportable_for(current_user, plan_recipients, plan_profiles) if is_plan_scope
+            else _plan_exportable_or_none(current_user, plan_profiles))]
     if not recipient_scope:
         raise HTTPException(
             status_code=409,
@@ -3246,6 +3630,15 @@ async def export_package(
                     "message": "name the recipient this package is for (recipient_scope); "
                                "the options are listed."},
         )
+
+    if is_plan_scope:
+        if recipient_scope not in plan_recipients:
+            raise _plan_refusal_403(recipient_scope)
+        plan_profile = _plan_profile_name(recipient_scope, plan_profiles)
+        if not _plan_may_export(plan_profile, current_user.authz_id):
+            raise _plan_export_refusal_403(plan_profile, recipient_scope)
+        return await _export_plan_answers(
+            body, request, current_user, recipient_scope, plan_profiles)
 
     if recipient_scope not in _export_recipients_for(current_user):
         # WHY PRODUCTION IS GATED HERE, NOT ONLY THE DOWNLOAD: every recipient's package
@@ -3361,10 +3754,27 @@ async def export_package_artifact(
     # first, then finance — which is safe only because the two engines' filename sets are
     # DISJOINT (sealed in tests/finance/test_fin_package_export.py): were a name ever claimed
     # by both, this order would silently prefer cost's scope and recipients_fn over finance's.
+    from agent_fleet.utils import answer_exports as _ae
     scope = _cost_seed.scope_of_artifact(filename)
+    plan_hit = None
+    plan_profiles: Optional[dict] = None
+    plan_unavailable = False
+    if scope is None and filename.startswith(_ae.ARTIFACT_PREFIX):
+        try:
+            plan_profiles = _plan_profiles()
+            plan_hit = _ae.match_artifact(plan_profiles, filename)
+        except _ae.AnswerProfilesUnavailable:
+            plan_unavailable = True
     if scope is not None:
         engine_url = _ENGINE_COST_URL
         recipients_fn = _export_recipients_for
+        engine_label = "cost"
+    elif plan_hit is not None:
+        # A plan answers export: produced by engine-cost, read on the `recipient_readers` rail.
+        scope = plan_hit[1]
+        engine_url = _ENGINE_COST_URL
+        # can_export gates PRODUCTION; reading a produced package is a reader's act.
+        recipients_fn = lambda u: _plan_recipients_for(u, plan_profiles)  # noqa: E731
         engine_label = "cost"
     else:
         scope = _fin_export.scope_of_artifact(filename)
@@ -3373,6 +3783,10 @@ async def export_package_artifact(
             recipients_fn = _fin_export_recipients_for
             engine_label = "fin"
         else:
+            if plan_unavailable:
+                # An `ia-answers-*` name the cost and fin matchers do not claim may be a plan
+                # package whose registry could not be read: unknown, not absent.
+                raise _plan_profiles_unavailable()
             # Same structural traversal defence as either engine's own route: a filename
             # neither engine could have produced is refused outright rather than sanitized
             # and forwarded.
@@ -3432,8 +3846,15 @@ async def export_package_artifact(
 # program visibility (its 403 is relayed here with `grantable_by` filled by `relay_refusal`), and
 # the bytes are fetched back through the engine's own /artifact route.
 
-_CDRL_XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-_CDRL_FILENAME_RE = re.compile(r"^fin-cdrl-[A-Za-z0-9_.-]+\.xlsx$")
+#: The closed map from a CDRL file's extension to its media type (mirrors the engine's
+#: `cdrl.MEDIA_TYPES`); the filename regex admits exactly its keys.
+_CDRL_MEDIA = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "csv": "text/csv; charset=utf-8",
+    "json": "application/json",
+}
+_CDRL_FILENAME_RE = re.compile(r"^fin-cdrl-[A-Za-z0-9_.-]+\.(" + "|".join(_CDRL_MEDIA) + r")$")
 
 
 def _engine_failure(label: str, rr) -> HTTPException:
@@ -3477,7 +3898,7 @@ async def export_cdrl(
     program_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    """One program's CDRL as an xlsx. `X-Cells-Sha256` is the hash of every cell the producer
+    """One program's CDRL in the profile's format (xlsx, docx, csv or json). `X-Cells-Sha256` is the hash of every cell the producer
     wrote (the reproducibility claim; the file's own bytes are not claimed reproducible).
 
     Refusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with
@@ -3531,7 +3952,7 @@ async def export_cdrl(
 
     return Response(
         content=fr.content,
-        media_type=_CDRL_XLSX_MEDIA,
+        media_type=_CDRL_MEDIA[filename.rpartition(".")[2]],
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Cells-Sha256": str(cells_sha256),
@@ -9969,6 +10390,10 @@ async def _stream_direct_outcome(
     if _expert:
         _rr = acceptance_request.review_request_of(_expert)
         if _rr:
+            # I3: stamp the minted case key onto the block the render reads (`_expert` is
+            # `expert_response` below), before anything downstream sees the engine's own copy.
+            _rr = acceptance_request.with_minted_ids(_rr)
+            _expert["review_request"] = _rr
             _err = await _open_safety_acceptance(
                 bundle, _rr, path="direct", stage_kind=direct_dispatch.STAGE_CALLING,
             )
@@ -13132,6 +13557,7 @@ async def _extraction_body(ingest_id: str, row: dict) -> dict:
 
 
 _EXPORT_BATCH_CAPABILITY = "ingest:exportBatch"
+_EXPORT_PROFILE_CAPABILITY_PREFIX = "can_export:"
 _EXPORT_MAX_DAYS = 92
 _EXPORT_MAX_NOTICES = 500
 _EXPORT_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
@@ -13174,6 +13600,32 @@ async def _may_export_batch(caller: str, route: str, ingest_id: str = "-") -> bo
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unavailable",
             "message": "could not verify the caller against the export capability"}) from exc
+
+
+async def _may_export_profile(caller: str, profile_name: str, route: str,
+                              ingest_id: str = "-") -> bool:
+    """The `can_export:<profile>` capability for `caller`. DENY BY DEFAULT: a profile with no
+    `can_export:` row is exportable by nobody (gov's #151 convention, the opposite of `can_drop`).
+    A Topaz failure is 503, never a deny (same bodies as `_may_export_batch`)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    capability = f"{_EXPORT_PROFILE_CAPABILITY_PREFIX}{profile_name}"
+    try:
+        return bool(await run_in_threadpool(
+            lambda: human_tasks.can_invoke_or_unavailable(capability, caller)))
+    except human_tasks.AuthorizationUnconfigured as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unconfigured")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("export profile capability check unavailable: %s", type(exc).__name__)
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unavailable")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify the caller against the export profile capability"}) from exc
 
 
 def _export_decision_record(ingest_id: str):
@@ -13254,6 +13706,24 @@ async def ingest_export_profiles_route(current_user: User = Depends(get_current_
     return out
 
 
+@app.get("/review-shapes", tags=["ingest-export"],
+         responses={200: {"model": list[ReviewShapeRow]}})
+async def review_shapes_route(current_user: User = Depends(get_current_user)):
+    """GET /review-shapes -- the valid review-shape registry rows (`policy/review_shapes`, the
+    seed plus the deployment overlays), sorted by `review_shape`. An invalid row is logged at
+    ERROR and left out. Any authenticated caller: a shape row is policy configuration, not
+    content."""
+    from . import review_shapes
+
+    out = []
+    for name, row in sorted(review_shapes.load_review_shapes().items()):
+        if isinstance(row, review_shapes.ShapeInvalid):
+            logger.error("review shape %s is invalid: %s", name, row)
+            continue
+        out.append(row.model_dump(mode="json"))
+    return out
+
+
 @app.get("/ingest/export", tags=["ingest-export", MCP_TAG])
 async def ingest_export_batch_route(
         profile: Optional[str] = _Query(None), from_: Optional[str] = _Query(None, alias="from"),
@@ -13265,7 +13735,9 @@ async def ingest_export_batch_route(
     one of the caller's entitlement-cell domains are in the set, filtered before the loud-not-
     partial checks and before the 500 cap; a caller with no cells gets the empty export.
     Gate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy
-    refusal; Topaz down is 503). At most 92 days (both ends counted) and 500 notices. LOUD, NOT
+    refusal; Topaz down is 503), AND, in addition, `can_export:<profile>` for the named profile
+    (403 `not_entitled_to_export`, a policy refusal; DENY BY DEFAULT: a profile with no row is
+    exportable by nobody), checked after the profile resolves (an unknown one stays 422). At most 92 days (both ends counted) and 500 notices. LOUD, NOT
     PARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,
     extraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks
     on is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`)."""
@@ -13284,6 +13756,13 @@ async def ingest_export_batch_route(
             message="exporting the promoted notices of a date range needs the ingest:exportBatch "
                     "capability")
     prof = _export_profile_or_422(profile)
+    if not await _may_export_profile(caller, prof.name, "export_batch", "-"):
+        _audit_ingest_access("export_batch", "-", caller, "deny", "not_entitled_to_profile")
+        raise policy_refusal(
+            "not_entitled_to_export", policy_id=f"capability_grants:can_export:{prof.name}",
+            missing_binding=f"can_invoke can_export:{prof.name}",
+            message=f"exporting through the {prof.name!r} profile needs the "
+                    f"can_export:{prof.name} capability")
 
     def _day(v):
         if not isinstance(v, str) or not _EXPORT_DATE_RE.fullmatch(v):
@@ -13356,13 +13835,17 @@ async def ingest_export_route(ingest_id: str, profile: Optional[str] = _Query(No
     dropper, or a holder of the open task), and a caller it would 403 is admitted when they hold
     the `ingest:exportBatch` capability (reason `export_capability`); a Topaz failure while that
     is consulted is 503, a False re-raises the ORIGINAL 403. 422 `export_profile_unknown` /
-    `export_profile_invalid`; 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the
+    `export_profile_invalid`. IN ADDITION to the gates above, for EVERY caller who reaches it (the
+    review-access path and the exportBatch path alike, a service caller that passed review access
+    too): the `can_export:<profile>` capability, checked after the profile resolves; 403
+    `not_entitled_to_export` (a policy refusal, DENY BY DEFAULT), Topaz down is 503. 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the
     export serves review.json's values, so a promotion carrying steward row or header edits would
     export the uncorrected ones; refused until a later slice applies corrections); 503
     `decision_ledger_unreachable`; 422 `export_blocked` (naming notice, part, column)."""
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status
+    from .authz.refusal import policy_refusal
 
     caller = (current_user.authz_id or "").strip()
     try:
@@ -13385,6 +13868,13 @@ async def ingest_export_route(ingest_id: str, profile: Optional[str] = _Query(No
             raise
         _audit_ingest_access("export", ingest_id, caller, "allow", "export_capability")
     prof = _export_profile_or_422(profile)
+    if not await _may_export_profile(caller, prof.name, "export", ingest_id):
+        _audit_ingest_access("export", ingest_id, caller, "deny", "not_entitled_to_profile")
+        raise policy_refusal(
+            "not_entitled_to_export", policy_id=f"capability_grants:can_export:{prof.name}",
+            missing_binding=f"can_invoke can_export:{prof.name}",
+            message=f"exporting through the {prof.name!r} profile needs the "
+                    f"can_export:{prof.name} capability")
     body = await _export_notice_extraction(ingest_id, row)
     rows = _export_render(prof, [body])
     return _export_response(prof, rows, f"{ingest_id}.{prof.name}.{prof.format}")

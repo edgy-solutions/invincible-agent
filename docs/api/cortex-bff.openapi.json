@@ -4628,6 +4628,61 @@
         "title": "ReviewCoverage",
         "type": "object"
       },
+      "ReviewShapeRow": {
+        "description": "One ``policy/review_shapes/<shape>.yaml`` registry row, as served by ``GET /review-shapes``\n(Lane 1's wire answer, §4) — the registry ``ReviewCoverage.review_shape``/``.item_kind`` are\nvalidated against, server-side. This SDK types the row so a client that reads the served\nregistry has a shape to deserialize into; it does not serve, cache, or validate against the\nregistry itself — same split every registry-adjacent type in this SDK draws between declaring\na shape and arbitrating on it.",
+        "properties": {
+          "item_kind": {
+            "title": "Item Kind",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          },
+          "review_shape": {
+            "title": "Review Shape",
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewShapeRule"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "rules_version": {
+            "title": "Rules Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "review_shape",
+          "item_kind",
+          "rules_version"
+        ],
+        "title": "ReviewShapeRow",
+        "type": "object"
+      },
+      "ReviewShapeRule": {
+        "description": "One rule a review-shape row admits — a MECHANISM id cortex (or any consumer) implements,\nwith config-carried parameters. \"A rule id names a mechanism that [the consumer] implements\n... Config: which rules apply to a shape, and with what parameters\" (Lane 1's wire answer,\n§4).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ReviewShapeRule",
+        "type": "object"
+      },
       "ReviewStartRequest": {
         "description": "Start a grouped disposition review for a notice. The extraction-sourced fields\n(`impacted_parts`, `doc_needs_review`, etc.) are PASSED THROUGH from the caller — the\nBFF MUST NOT reconstruct `impacted_parts` from a graph projection: per-part\n`needs_review` lives only in the doc-tools extraction, both graphs drop it, and\nstart_review's `review_state_is_unsourced` tripwire fails a request built from the\nlossy graph. So the BFF forwards the extraction payload verbatim and adds only the\nauthenticated identity (`approver`) — never trusting a client-supplied approver.",
         "properties": {
@@ -6381,7 +6436,7 @@
     },
     "/export/cdrl": {
       "get": {
-        "description": "One program's CDRL as an xlsx. `X-Cells-Sha256` is the hash of every cell the producer\nwrote (the reproducibility claim; the file's own bytes are not claimed reproducible).\n\nRefusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with\n`grantable_by` filled); any other engine failure is a 502 naming the engine's status.",
+        "description": "One program's CDRL in the profile's format (xlsx, docx, csv or json). `X-Cells-Sha256` is the hash of every cell the producer\nwrote (the reproducibility claim; the file's own bytes are not claimed reproducible).\n\nRefusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with\n`grantable_by` filled); any other engine failure is a 502 naming the engine's status.",
         "operationId": "export_cdrl_export_cdrl_get",
         "parameters": [
           {
@@ -6979,7 +7034,7 @@
     },
     "/ingest/export": {
       "get": {
-        "description": "GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the\nrange (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.\nA service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The\ncapability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is\none of the caller's entitlement-cell domains are in the set, filtered before the loud-not-\npartial checks and before the 500 cap; a caller with no cells gets the empty export.\nGate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy\nrefusal; Topaz down is 503). At most 92 days (both ends counted) and 500 notices. LOUD, NOT\nPARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,\nextraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks\non is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`).",
+        "description": "GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the\nrange (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.\nA service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The\ncapability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is\none of the caller's entitlement-cell domains are in the set, filtered before the loud-not-\npartial checks and before the 500 cap; a caller with no cells gets the empty export.\nGate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy\nrefusal; Topaz down is 503), AND, in addition, `can_export:<profile>` for the named profile\n(403 `not_entitled_to_export`, a policy refusal; DENY BY DEFAULT: a profile with no row is\nexportable by nobody), checked after the profile resolves (an unknown one stays 422). At most 92 days (both ends counted) and 500 notices. LOUD, NOT\nPARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,\nextraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks\non is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`).",
         "operationId": "ingest_export_batch_route_ingest_export_get",
         "parameters": [
           {
@@ -7324,7 +7379,7 @@
     },
     "/ingest/{ingest_id}/export": {
       "get": {
-        "description": "GET /ingest/<id>/export?profile=<name> -- one PROMOTED notice rendered through a profile\n(`policy/exports/`, 7f's batch-column-map vocabulary). A service caller never reaches the\ncapability: the original 403 is re-raised and Topaz is not asked. The capability is\nDOMAIN-SCOPED: a notice whose promotion domain (`promotion.recorded_domain`) is not one of the\ncaller's cell domains, or has none, re-raises the original 403 (audit `out_of_domain`). Gate: `_ingest_review_access` (the\ndropper, or a holder of the open task), and a caller it would 403 is admitted when they hold\nthe `ingest:exportBatch` capability (reason `export_capability`); a Topaz failure while that\nis consulted is 503, a False re-raises the ORIGINAL 403. 422 `export_profile_unknown` /\n`export_profile_invalid`; 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the\nexport serves review.json's values, so a promotion carrying steward row or header edits would\nexport the uncorrected ones; refused until a later slice applies corrections); 503\n`decision_ledger_unreachable`; 422 `export_blocked` (naming notice, part, column).",
+        "description": "GET /ingest/<id>/export?profile=<name> -- one PROMOTED notice rendered through a profile\n(`policy/exports/`, 7f's batch-column-map vocabulary). A service caller never reaches the\ncapability: the original 403 is re-raised and Topaz is not asked. The capability is\nDOMAIN-SCOPED: a notice whose promotion domain (`promotion.recorded_domain`) is not one of the\ncaller's cell domains, or has none, re-raises the original 403 (audit `out_of_domain`). Gate: `_ingest_review_access` (the\ndropper, or a holder of the open task), and a caller it would 403 is admitted when they hold\nthe `ingest:exportBatch` capability (reason `export_capability`); a Topaz failure while that\nis consulted is 503, a False re-raises the ORIGINAL 403. 422 `export_profile_unknown` /\n`export_profile_invalid`. IN ADDITION to the gates above, for EVERY caller who reaches it (the\nreview-access path and the exportBatch path alike, a service caller that passed review access\ntoo): the `can_export:<profile>` capability, checked after the profile resolves; 403\n`not_entitled_to_export` (a policy refusal, DENY BY DEFAULT), Topaz down is 503. 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the\nexport serves review.json's values, so a promotion carrying steward row or header edits would\nexport the uncorrected ones; refused until a later slice applies corrections); 503\n`decision_ledger_unreachable`; 422 `export_blocked` (naming notice, part, column).",
         "operationId": "ingest_export_route_ingest__ingest_id__export_get",
         "parameters": [
           {
@@ -8941,6 +8996,37 @@
           }
         ],
         "summary": "Register Frontend Capabilities"
+      }
+    },
+    "/review-shapes": {
+      "get": {
+        "description": "GET /review-shapes -- the valid review-shape registry rows (`policy/review_shapes`, the\nseed plus the deployment overlays), sorted by `review_shape`. An invalid row is logged at\nERROR and left out. Any authenticated caller: a shape row is policy configuration, not\ncontent.",
+        "operationId": "review_shapes_route_review_shapes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReviewShapeRow"
+                  },
+                  "title": "Response 200 Review Shapes Route Review Shapes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Review Shapes Route",
+        "tags": [
+          "ingest-export"
+        ]
       }
     },
     "/reviews": {

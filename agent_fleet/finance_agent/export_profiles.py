@@ -11,9 +11,13 @@ that loaded half is a deliverable that exists for some deployments only, with no
 
 * a key outside the proposal's (a `formula`, `compute` or `expression` key is the same refusal: a
   profile computes NOTHING, every number is a value a verb returned);
-* `format` other than `xlsx`, `scope` other than `program`;
+* `format` outside `FORMATS`, `scope` other than `program`;
+* a key the format does not have (see the table below), or a key it needs and lacks;
 * a template that is missing, or whose bytes do not match `template.sha256`;
-* a `sheet` the template does not hold; a `methods_sheet` / `manifest_sheet` colliding with one;
+* a `sheet` the template does not hold; a docx `T<n>!<A1>` outside the template's tables; a `methods_sheet` / `manifest_sheet` colliding with one;
+* a json pointer that is empty, has an empty segment, an index or a `~`, or collides with or nests
+  under another;
+* a docx/csv column `format` outside `TEXT_FORMATS`; a json column `format`;
 * a `provenance_sheets` that is not a YAML boolean (default true), or false on a row that also
   names `methods_sheet` / `manifest_sheet`: false delivers exactly the template's sheets;
 * a `cells` value outside the closed fact vocabulary `CELL_FACTS`, or a key that is not an A1 cell;
@@ -21,6 +25,17 @@ that loaded half is a deliverable that exists for some deployments only, with no
 * a column naming a verb not in `sources`, or a field outside that verb's FIELD SET: for a declared
   measure `{period}` plus its series keys, for a built-in the `measures.ROW_FIELDS` table (a
   built-in absent from it cannot be a source at all).
+
+── THE FORMATS (one reading each; the architect confirms in the PR) ───────────────────────────
+| key            | xlsx            | docx                   | csv       | json                |
+| template       | required        | required               | refused   | refused             |
+| sheet          | required        | refused                | refused   | refused             |
+| cells keys     | A1              | T<n>!<A1> (1-based)    | refused   | /a/b object pointer |
+| table.start    | A1              | T<n>!<A1>              | refused   | refused             |
+| table.at       | refused         | refused                | refused   | required (pointer)  |
+| column `as`    | refused         | refused                | required  | required            |
+| column format  | Excel format    | TEXT_FORMATS keys only | same      | refused             |
+| provenance_sheets | optional     | refused                | refused   | refused             |
 """
 from __future__ import annotations
 
@@ -73,14 +88,26 @@ CELL_FACTS = frozenset({
 })
 
 _A1 = re.compile(r"^[A-Z]{1,3}[1-9][0-9]*$")
+_TCELL = re.compile(r"^T([1-9][0-9]*)!([A-Z]{1,3}[1-9][0-9]*)$")
+
+#: The formats a profile may name. One producer writer per entry (`cdrl.build_cdrl`).
+FORMATS = ("xlsx", "docx", "csv", "json")
+
+#: How a number is rendered as TEXT in a docx or csv cell: CLOSED, keyed by the Excel number format
+#: the xlsx profile would use. A docx/csv column whose `format` is not a key is a load refusal.
+TEXT_FORMATS: Mapping[str, str] = {
+    "#,##0": "{:,.0f}", "#,##0.00": "{:,.2f}", "0": "{:.0f}", "0.0": "{:.1f}",
+    "0.00": "{:.2f}", "0.000": "{:.3f}", "0.0%": "{:.1%}",
+}
+
 _TOP_KEYS = frozenset({
     "name", "format", "scope", "label", "audience", "cdrl", "template", "sheet", "cells",
     "sources", "table", "methods_sheet", "manifest_sheet", "provenance_sheets",
 })
 _CDRL_KEYS = frozenset({"item", "title", "data_item", "frequency"})
 _TEMPLATE_KEYS = frozenset({"file", "sha256"})
-_TABLE_KEYS = frozenset({"start", "key", "columns"})
-_COLUMN_KEYS = frozenset({"from", "format"})
+_TABLE_KEYS = frozenset({"start", "at", "key", "columns"})
+_COLUMN_KEYS = frozenset({"from", "format", "as"})
 _SOURCE_KEYS = frozenset({"fn"})
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -93,7 +120,8 @@ class ExportProfileError(DeclarationError):
 class Column:
     source: str                 # the verb ("period" for the key column)
     field: str
-    format: Optional[str]       # the cell's number format
+    format: Optional[str]       # the cell's number format (xlsx) / TEXT_FORMATS key (docx, csv)
+    as_: Optional[str] = None   # csv header text / json row-object key (YAML `as`)
 
 
 @dataclass(frozen=True)
@@ -104,17 +132,18 @@ class ExportProfile:
     label: str
     audience: Optional[str]
     cdrl: Mapping[str, str]
-    template_path: Path         # resolved beside the row's own file
-    template_sha256: str
-    sheet: str
-    cells: Mapping[str, str]    # A1 -> fact name
+    template_path: Optional[Path]   # resolved beside the row's own file; None for csv / json
+    template_sha256: Optional[str]
+    sheet: Optional[str]            # xlsx only
+    cells: Mapping[str, str]    # coordinate -> fact name: A1 (xlsx), T<n>!<A1> (docx), /a/b (json)
     sources: tuple[str, ...]
-    table_start: str
+    table_start: Optional[str]      # xlsx A1 / docx T<n>!<A1>; None for csv / json
     table_key: str
     columns: tuple[Column, ...]
     methods_sheet: str
     manifest_sheet: str
-    provenance_sheets: bool = True
+    provenance_sheets: bool = True  # always False outside xlsx: only an xlsx has sheets
+    table_at: Optional[str] = None  # json: the pointer of the row array
 
     def header(self) -> dict[str, str]:
         """The shared header, and nothing else: no template path, no sha, no sources."""
@@ -164,68 +193,183 @@ def _template_sheets(path: Path) -> list[str]:
         wb.close()
 
 
+def _tcell(coord: Any) -> Optional[tuple[int, str]]:
+    """`T<n>!<A1>` -> (n, "A1"), else None."""
+    m = _TCELL.match(coord) if isinstance(coord, str) else None
+    return (int(m.group(1)), m.group(2)) if m else None
+
+
+def _a1_parts(coord: str) -> tuple[int, int]:
+    """`B7` -> (column 2, row 7), both 1-based."""
+    m = re.match(r"^([A-Z]{1,3})([1-9][0-9]*)$", coord)
+    col = 0
+    for ch in m.group(1):
+        col = col * 26 + ord(ch) - 64
+    return col, int(m.group(2))
+
+
+def _docx_grids(path: Path) -> list[tuple[int, int]]:
+    """(rows, columns) of each body table of the document, in `document.tables` order."""
+    import docx
+    return [(len(t.rows), len(t.columns)) for t in docx.Document(str(path)).tables]
+
+
+def _check_tcell(coord: Any, where: str, grids: list[tuple[int, int]], file: str) -> None:
+    parsed = _tcell(coord)
+    if parsed is None:
+        raise ValueError(f"{where} {coord!r} is not a T<n>!<A1> coordinate (n 1-based, e.g. T1!B2)")
+    n, a1 = parsed
+    if n > len(grids):
+        raise ValueError(
+            f"{where} {coord!r} names table {n}, but template {file!r} holds {len(grids)} table(s)")
+    col, row = _a1_parts(a1)
+    rows, cols = grids[n - 1]
+    if row > rows or col > cols:
+        raise ValueError(
+            f"{where} {coord!r} is outside table {n} of template {file!r}, "
+            f"whose grid is {rows} row(s) x {cols} column(s)")
+
+
+def _pointer_segments(ptr: Any, where: str) -> tuple[str, ...]:
+    if not isinstance(ptr, str) or ptr == "":
+        raise ValueError(f"{where} pointer {ptr!r} is empty")
+    if not ptr.startswith("/"):
+        raise ValueError(f"{where} pointer {ptr!r} must start with '/' (a /a/b object path)")
+    if "~" in ptr:
+        raise ValueError(f"{where} pointer {ptr!r} carries '~'; no escapes are supported")
+    segs = tuple(ptr[1:].split("/"))
+    if any(s == "" for s in segs):
+        raise ValueError(f"{where} pointer {ptr!r} has an empty segment")
+    if any(s.isdigit() for s in segs):
+        raise ValueError(f"{where} pointer {ptr!r} has an array index; only object keys are supported")
+    return segs
+
+
 def _build(raw: dict, directory: Path, declared: Mapping[str, Any]) -> ExportProfile:
     # Raises ValueError: `compose_rows` re-raises it as ExportProfileError WITH THE FILE NAMED.
-    for path in ("name", "format", "scope", "label", "cdrl.item", "template.file",
-                 "template.sha256", "sheet", "cells", "sources", "table.start", "table.key",
+    for path in ("name", "format", "scope", "label", "cdrl.item", "sources", "table.key",
                  "table.columns"):
         _need(raw, path)
     _only(raw, _TOP_KEYS, "the profile")
     _only(raw["cdrl"], _CDRL_KEYS, "cdrl")
-    _only(raw["template"], _TEMPLATE_KEYS, "template")
     _only(raw["table"], _TABLE_KEYS, "table")
-    if raw["format"] != "xlsx":
-        raise ValueError(f"format {raw['format']!r}; only 'xlsx' is supported")
+    fmt = raw["format"]
+    if fmt not in FORMATS:
+        raise ValueError(f"format {fmt!r}; the formats are {list(FORMATS)}")
     if raw["scope"] != "program":
         raise ValueError(f"scope {raw['scope']!r}; only 'program' is supported (one file per program)")
+    templated = fmt in ("xlsx", "docx")
+
+    # ── per-format keys: required where the format has the thing, refused where it has not ──
+    def refuse(key: str, why: str) -> None:
+        raise ValueError(f"{key} is not allowed on a {fmt} profile: {why}")
+
+    if not templated:
+        if "template" in raw:
+            refuse("template", f"a {fmt} profile has no template; the producer writes the whole file")
+    else:
+        _need(raw, "template.file")
+        _need(raw, "template.sha256")
+        _only(raw["template"], _TEMPLATE_KEYS, "template")
+    if fmt != "xlsx":
+        if "sheet" in raw:
+            refuse("sheet", "only an xlsx has sheets")
+        gone = [k for k in ("provenance_sheets", "methods_sheet", "manifest_sheet") if k in raw]
+        if gone:
+            raise ValueError(
+                f"{' and '.join(gone)} is not allowed on a {fmt} profile: only an xlsx has sheets, "
+                f"so the delivered file is exactly the form and the provenance travels in the "
+                f"envelope and the X-Cells-Sha256 header")
+    else:
+        _need(raw, "sheet")
+    if fmt == "csv":
+        if "cells" in raw:
+            refuse("cells", "a CSV has no title block")
+    else:
+        _need(raw, "cells")
+    if fmt in ("xlsx", "docx"):
+        _need(raw, "table.start")
+        if "at" in raw["table"]:
+            refuse("table.at", f"it names the row array of a json file, not a {fmt} table")
+    elif "start" in raw["table"]:
+        refuse("table.start", f"a {fmt} file has no grid to start in")
+    if fmt == "json":
+        _need(raw, "table.at")
 
     # ── the template: present, beside the row, and the bytes the row pins ──────────────────
-    file = str(raw["template"]["file"])
-    if file != Path(file).name or file in (".", ".."):
-        raise ValueError(f"template.file {file!r} must be a file beside the row, not a path")
-    pinned = str(raw["template"]["sha256"])
-    if not _SHA256.match(pinned):
-        raise ValueError(f"template.sha256 {pinned!r} is not 64 lowercase hex digits")
-    template = directory / file
-    if not template.is_file():
-        raise ValueError(f"template {file!r} is missing from {directory.name!r}")
-    actual = hashlib.sha256(template.read_bytes()).hexdigest()
-    if actual != pinned:
-        raise ValueError(
-            f"template {file!r} has sha256 {actual}, the row pins {pinned}; the bytes the row "
-            f"was reviewed against are not the bytes on disk")
-    sheets = _template_sheets(template)
-    sheet = str(raw["sheet"])
-    if sheet not in sheets:
-        raise ValueError(f"sheet {sheet!r} is not a sheet of template {file!r} ({sheets})")
-    prov = raw.get("provenance_sheets", True)
-    if not isinstance(prov, bool):
-        raise ValueError(f"provenance_sheets {prov!r} must be a YAML boolean (true or false)")
+    template: Optional[Path] = None
+    pinned: Optional[str] = None
+    sheet: Optional[str] = None
+    sheets: list[str] = []
+    grids: list[tuple[int, int]] = []
+    file = ""
+    if templated:
+        file = str(raw["template"]["file"])
+        if file != Path(file).name or file in (".", ".."):
+            raise ValueError(f"template.file {file!r} must be a file beside the row, not a path")
+        pinned = str(raw["template"]["sha256"])
+        if not _SHA256.match(pinned):
+            raise ValueError(f"template.sha256 {pinned!r} is not 64 lowercase hex digits")
+        template = directory / file
+        if not template.is_file():
+            raise ValueError(f"template {file!r} is missing from {directory.name!r}")
+        actual = hashlib.sha256(template.read_bytes()).hexdigest()
+        if actual != pinned:
+            raise ValueError(
+                f"template {file!r} has sha256 {actual}, the row pins {pinned}; the bytes the row "
+                f"was reviewed against are not the bytes on disk")
+        if fmt == "xlsx":
+            sheets = _template_sheets(template)
+        else:
+            grids = _docx_grids(template)
+    if fmt == "xlsx":
+        sheet = str(raw["sheet"])
+        if sheet not in sheets:
+            raise ValueError(f"sheet {sheet!r} is not a sheet of template {file!r} ({sheets})")
+    prov = raw.get("provenance_sheets", True) if fmt == "xlsx" else False
     methods = str(raw.get("methods_sheet") or "Methods")
     manifest = str(raw.get("manifest_sheet") or "_manifest")
-    if not prov:
-        named = [k for k in ("methods_sheet", "manifest_sheet") if k in raw]
-        if named:
-            raise ValueError(
-                f"{' and '.join(named)} names a provenance sheet but provenance_sheets is false")
-    else:
-        for label, name in (("methods_sheet", methods), ("manifest_sheet", manifest)):
-            if name in sheets:
-                raise ValueError(f"{label} {name!r} collides with a sheet of template {file!r}")
-        if methods == manifest:
-            raise ValueError(f"methods_sheet and manifest_sheet are both {methods!r}")
+    if fmt == "xlsx":
+        if not isinstance(prov, bool):
+            raise ValueError(f"provenance_sheets {prov!r} must be a YAML boolean (true or false)")
+        if not prov:
+            named = [k for k in ("methods_sheet", "manifest_sheet") if k in raw]
+            if named:
+                raise ValueError(
+                    f"{' and '.join(named)} names a provenance sheet but provenance_sheets is false")
+        else:
+            for label, name in (("methods_sheet", methods), ("manifest_sheet", manifest)):
+                if name in sheets:
+                    raise ValueError(f"{label} {name!r} collides with a sheet of template {file!r}")
+            if methods == manifest:
+                raise ValueError(f"methods_sheet and manifest_sheet are both {methods!r}")
 
-    # ── the title block: A1 cells, closed fact vocabulary ──────────────────────────────────
+    # ── the title block: closed fact vocabulary, coordinates in the format's own addressing ──
     cdrl = {k: str(v) for k, v in raw["cdrl"].items()}
-    cells = dict(raw["cells"])
+    cells = dict(raw["cells"]) if fmt != "csv" else {}
+    pointers: list[tuple[str, tuple[str, ...]]] = []
     for coord, fact in cells.items():
-        if not isinstance(coord, str) or not _A1.match(coord):
-            raise ValueError(f"cells key {coord!r} is not an A1 coordinate")
+        if fmt == "xlsx":
+            if not isinstance(coord, str) or not _A1.match(coord):
+                raise ValueError(f"cells key {coord!r} is not an A1 coordinate")
+        elif fmt == "docx":
+            _check_tcell(coord, "cells key", grids, file)
+        else:
+            pointers.append((coord, _pointer_segments(coord, "cells key")))
         if fact not in CELL_FACTS:
             raise ValueError(
                 f"cells {coord} names {fact!r}, outside the fact vocabulary {sorted(CELL_FACTS)}")
         if fact.startswith("cdrl.") and fact.split(".", 1)[1] not in cdrl:
             raise ValueError(f"cells {coord} names {fact!r}, which the row's cdrl block does not give")
+    at: Optional[str] = None
+    if fmt == "json":
+        at = str(raw["table"]["at"])
+        pointers.append((at, _pointer_segments(at, "table.at")))
+        for i, (p, ps) in enumerate(pointers):
+            for q, qs in pointers[i + 1:]:
+                short = min(len(ps), len(qs))
+                if ps[:short] == qs[:short]:
+                    raise ValueError(f"pointer {p!r} collides with or nests under pointer {q!r}")
 
     # ── the sources and the columns ────────────────────────────────────────────────────────
     sources: list[str] = []
@@ -238,9 +382,14 @@ def _build(raw: dict, directory: Path, declared: Mapping[str, Any]) -> ExportPro
         raise ValueError("sources is empty")
     fields = {fn: field_set(fn, declared) for fn in sources}
 
-    start = str(raw["table"]["start"])
-    if not _A1.match(start):
-        raise ValueError(f"table.start {start!r} is not an A1 coordinate")
+    start: Optional[str] = None
+    if fmt == "xlsx":
+        start = str(raw["table"]["start"])
+        if not _A1.match(start):
+            raise ValueError(f"table.start {start!r} is not an A1 coordinate")
+    elif fmt == "docx":
+        start = str(raw["table"]["start"])
+        _check_tcell(start, "table.start", grids, file)
     key = str(raw["table"]["key"])
     for fn in sources:
         if key not in fields[fn]:
@@ -251,9 +400,26 @@ def _build(raw: dict, directory: Path, declared: Mapping[str, Any]) -> ExportPro
             raise ValueError(f"table column {col!r} is not {{from: ...}}")
         _only(col, _COLUMN_KEYS, "a table column")
         ref = str(col["from"])
-        fmt = str(col["format"]) if col.get("format") is not None else None
+        cfmt = str(col["format"]) if col.get("format") is not None else None
+        as_ = col.get("as")
+        if fmt in ("csv", "json"):
+            if not (isinstance(as_, str) and as_):
+                raise ValueError(
+                    f"table column from {ref!r} has no 'as': a {fmt} column needs its "
+                    f"{'header text' if fmt == 'csv' else 'row object key'}")
+        elif "as" in col:
+            raise ValueError(
+                f"table column from {ref!r} carries 'as', which only a csv or json column takes")
+        if "format" in col:
+            if fmt == "json":
+                raise ValueError(
+                    f"table column from {ref!r} carries 'format': a json number is a number")
+            if fmt in ("docx", "csv") and cfmt not in TEXT_FORMATS:
+                raise ValueError(
+                    f"table column from {ref!r} has format {cfmt!r}, outside the text formats "
+                    f"{list(TEXT_FORMATS)} a {fmt} cell may use")
         if ref == key:
-            columns.append(Column("", key, fmt))
+            columns.append(Column("", key, cfmt, as_))
             continue
         fn, dot, fld = ref.rpartition(".")
         if not dot:
@@ -265,16 +431,28 @@ def _build(raw: dict, directory: Path, declared: Mapping[str, Any]) -> ExportPro
             raise ValueError(
                 f"column from {ref!r}: {fn!r} does not return a field {fld!r} "
                 f"(it returns {sorted(fields[fn])})")
-        columns.append(Column(fn, fld, fmt))
+        columns.append(Column(fn, fld, cfmt, as_))
     if not columns:
         raise ValueError("table.columns is empty")
+    if fmt in ("csv", "json"):
+        names = [c.as_ for c in columns]
+        dup = sorted({n for n in names if names.count(n) > 1})
+        if dup:
+            raise ValueError(f"table columns repeat 'as' {dup}")
+    if fmt == "docx":
+        n, a1 = _tcell(start)  # type: ignore[misc]
+        col0, _row0 = _a1_parts(a1)
+        if col0 + len(columns) - 1 > grids[n - 1][1]:
+            raise ValueError(
+                f"table.start {start!r} with {len(columns)} column(s) runs past table {n} of "
+                f"template {file!r}, whose grid is {grids[n - 1][0]} row(s) x {grids[n - 1][1]} column(s)")
 
     return ExportProfile(
-        name=str(raw["name"]), format="xlsx", scope="program", label=str(raw["label"]),
+        name=str(raw["name"]), format=fmt, scope="program", label=str(raw["label"]),
         audience=str(raw["audience"]) if raw.get("audience") is not None else None,
         cdrl=cdrl, template_path=template, template_sha256=pinned, sheet=sheet, cells=cells,
         sources=tuple(sources), table_start=start, table_key=key, columns=tuple(columns),
-        methods_sheet=methods, manifest_sheet=manifest, provenance_sheets=prov,
+        methods_sheet=methods, manifest_sheet=manifest, provenance_sheets=prov, table_at=at,
     )
 
 
