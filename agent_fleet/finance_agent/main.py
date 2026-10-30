@@ -1205,7 +1205,7 @@ def _cdrl_artifact_program(filename: str) -> Optional[str]:
     for packages)."""
     for profile in PROFILES.values():
         for program in STATE.programs:
-            if filename == cdrl.artifact_filename(profile.name, program.program_id):
+            if filename == cdrl.artifact_filename(profile.name, program.program_id, profile.format):
                 return program.program_id
     return None
 
@@ -1246,8 +1246,7 @@ def get_artifact(filename: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="no such artifact")
 
     media = ("text/html" if filename.endswith(".html")
-             else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-             if filename.endswith(".xlsx") else "application/octet-stream")
+             else cdrl.MEDIA_TYPES.get(filename.rpartition(".")[2], "application/octet-stream"))
     # NO STARLETTE FALLBACK: `FileResponse` comes from `fastapi.responses` (imported at the
     # top of this module), never from `starlette.responses` directly — the same dependency
     # seal cost's route holds, because the two classes are not guaranteed interchangeable

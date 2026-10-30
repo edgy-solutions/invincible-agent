@@ -14,6 +14,7 @@ dependencies = [
     "httpx",
     "python-dotenv",
     "openpyxl>=3.1.5",
+    "python-docx>=1.1.2",
 ]
 
 # DELIBERATELY THIN, and copied from Engine P's list rather than from a fuller engine's.
