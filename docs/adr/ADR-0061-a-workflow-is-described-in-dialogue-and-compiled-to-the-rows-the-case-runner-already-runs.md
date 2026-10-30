@@ -112,10 +112,13 @@ default for each of these, and the default is a decision nobody made:
 - what the trigger requires;
 - whether anything is recorded.
 
-**(c) Required slots, asked by name** (ruled 2026-10-25). Two slots are asked of every definition
-in the draft, whether or not a selection table reaches it yet:
+**(c) Required slots, asked by name** (ruled 2026-10-25, widened 10-27 and 10-30). These slots
+are asked of every definition in the draft, whether or not a selection table reaches it yet:
 - the task kind of each approval step;
-- the routing table after each stage that can end.
+- who is barred from answering each approval step (`excludes`, §10);
+- the routing table after each stage that can end;
+- that table's values: each input it matches with no domain (10-30, §10);
+- that table's rows: each declared value no row decides (10-30, §10).
 
 The model omitted these more often than anything else (§8). A slot asked by name ("Required: the
 task kind for the approval ...") is asked before the stage is wired in, not after.
@@ -643,6 +646,69 @@ The standing rule of 2026-10-30 says config names the case. The model's system p
 - **After the fix, 0 of 3 runs are runnable.** All three fail on chaining tables with no domain or
   row for `outcome`. The planted contradiction and the planted deferral were missed in every run.
 
+#### 2026-10-30: a chaining table's values and rows are required slots; runs 13 to 15
+
+Ruling (architect, 10-30): the model never supplies a chaining table's allowed values or an outcome
+row, so these are required slots that the loop asks for by name. The planted contradiction and the
+planted deferral are a separate build item, and come after this one.
+
+- **Built** (`dcbffff4`). `required_slots` asks two things of the routing table after each
+  definition, reachable or not:
+  - **values:** `<facet>.<wid>.next.domain.<input>` for each input in the table's `matches` with no
+    domain. The input is `outcome` when the table declares no `matches`.
+  - **rows:** `<facet>.<wid>.next.<value>` for each combination of declared values that no row
+    decides.
+- **How "no row" is decided.** The slot fires only when the runner's own `decide` refuses the value
+  and one more row for exactly that value would make it choose. Two matching rows, or a row with
+  no `then`, stay a contradiction.
+- **The vague question is dropped while a slot covers it.** The whole-table contradiction is not
+  asked while a slot names what is missing.
+- **Like the other required slots,** these may not be deferred. The grammar's REQUIRED list states
+  them too.
+- **The scripted user** answers a chaining slot from the bank entry that sets that path in the
+  expected table. It finds the table by its `after`, not by file name.
+- **Seals:**
+  - six new; `tests/socratic` gives 70 passed;
+  - against the unfixed code, the four slot seals are red and the two controls green;
+  - the two-rows control is red against the rejected rule (every refusal by `decide` is a missing
+    row).
+
+Three runs on PCN at `dcbffff4`, same model and harness as runs 10 to 12, with no walk or roll in
+flight:
+
+| run | questions / bank | runnable errors | semantic diffs | open | answered by path | model errors | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 13 | 4/12 | 0 | 5 | 0 | 0 | 0 | **runnable** | 169 |
+| 14 | 5/12 | 1 | 6 | 0 | 1 | 1 | cannot_run | 179 |
+| 15 | 4/12 | 2 | 7 | 1 | 0 | 0 | cannot_run | 129 |
+
+- **The chaining errors are gone in 2 of 3 runs, and none of the new slots was ever asked.**
+  - Runs 10 to 12: every chaining table had either no values or no rows.
+  - Runs 13 and 14: every chaining table has `matches`, a domain and rows.
+  - Run 15: the impact review's table is complete. The acknowledge table is empty: no `matches`, no
+    domain, no rows.
+  - No chaining slot key appears in any run's question list. Two things changed at `dcbffff4`: the
+    slots, and a REQUIRED line in the grammar. These runs can only credit the line. The slots
+    themselves are measured only by the seals.
+- **Run 15 shows a hole in the slots.** The acknowledge stage has no disposing step, so `_emits`
+  finds no last step, and `required_slots` binds no chaining slot to a stage that cannot end. The
+  loop asked `outputs.acknowledge.ends` twice instead. The scripted user had no answer for it, so it
+  was left open. The table's values and rows were never asked about.
+  - Owed: bind the value and row slots to every table with an `after`, whether or not the stage
+    before it can end yet. Not done here, because the ruling asked for three runs at this build.
+- **Run 13 is runnable, and it is not the workflow described**, like run 7 (§10). Of the four
+  stages, the program approval and the record were never drafted. Runs 10 to 15 all drafted the
+  same two of the four. The model never drafted the stages after `impact_review` and `acknowledge`.
+  That is now the largest semantic diff, and nothing asks for it: in each run the routing names a
+  terminal where the transcript names a further stage.
+- **Run 14 refused a selection table.** The model gave it an `after:` that names no definition, so
+  the runner's loader refused it. This is a new refusal class in these runs.
+- **The restate arm ran live once,** in run 14. At turn 3 the model sent the positional path
+  `steps[0].deadline_seconds`. The refusal was charged to that turn, and the restated patch was applied: 1 refused patch,
+  no second refusal. 1 of 1 restated.
+- **The planted contradiction and deferral** were missed again in all three runs. That is the
+  separate build item.
+
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a
@@ -655,7 +721,7 @@ The standing rule of 2026-10-30 says config names the case. The model's system p
 - **The question list mostly cannot drift from the runtime.** Most runtime refusals come from the
   runner's own models, so a new loader refusal becomes a new question with no dialogue change. Two
   lists are kept by hand:
-  - the five completeness questions in §3(b), and the two required slots in §3(c);
+  - the five completeness questions in §3(b), and the required slots in §3(c);
   - the three restated checks named in §8. Each should become a call into the runner's code.
 
 Proposed units of work. This document assigns nobody:
