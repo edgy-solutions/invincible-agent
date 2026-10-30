@@ -190,10 +190,11 @@ def _add(d, key, row):
 
 
 def _seed_review() -> dict[str, str]:
-    """The seed's review- and answer-export profiles (policy/exports, policy/exports/answers), read
-    from the loader, not restated."""
+    """The seed's review-, answer-export and fin CDRL profiles, read from the loader, not restated:
+    the seed ships a row for each, so a fin profile left out here (a second format, #144) reads
+    as a row naming an unknown profile."""
     profiles, _ = vp.known_export_profiles()
-    return {n: k for n, k in profiles.items() if k in ("review_export", "answer_export")}
+    return {n: k for n, k in profiles.items() if k in ("review_export", "answer_export", "fin_cdrl")}
 
 
 def _known(monkeypatch, profiles, notes=("n (1 profile(s))",)):
