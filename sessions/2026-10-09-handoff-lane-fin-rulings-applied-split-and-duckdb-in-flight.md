@@ -19,6 +19,60 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-30: three 10-29 rulings applied to #148; #144 mergeable; #147 rebased. Read this first
+
+### PRs
+
+| PR | branch @ sha | state |
+|---|---|---|
+| #139, #143, #145, #150 | | MERGED |
+| **#144** CDRL formats | `fin/cdrl-formats` `48b36094` | master merged in: the criss-cross had two bases (`47502b35` and `5930da98`) and now has one. GitHub MERGEABLE; CI pending at writing |
+| **#147** overlay contract doc | `fin/overlay-contract-doc` `bd718bd0` | rebased onto `48b36094`, both patches unchanged. **Still stacked, so NO CI.** Retarget it to master when #144 merges |
+| **#148** plan answers export | `fin/plan-answers-export` `bac1408f` | master merged in at `2c9f37dc`. MERGEABLE; CI pending at writing; body rewritten |
+
+### The rulings on #148, each in its own commit
+
+1. **Report verbs only** (`4f77a021`).
+   - 11 kinds, listed explicitly.
+   - A classification seal partitions all of Engine P's verbs into REPORT and SESSION_STATE.
+2. **`scenario_answer`** (`f3c6d394`, plus a docstring fix `5eb268ee`).
+   - A non-baseline `state_ref` on `rendered_output.components[*]` is refused, naming the scenario id.
+   - An absent `state_ref` reads as baseline.
+   - The canvas dispatch never sends `state_ref` today. The refusal guards the record.
+3. **Subdir + lane/01's vocabulary** (`bac1408f`).
+   - The profile is `policy/exports/answers/plan-answers.yaml`: `column_map_version, name, label,
+     format, granularity: answer`, plus `kinds`, `recipients` and `columns[{output, source: {field}}]`.
+   - The convergence is one loader, when the SDK header type lands (iagent-mesh v0.9.12).
+   - A join seal keeps the two loaders apart.
+   - Hop 22 kept; #145's 18–21 are under it.
+
+### Packets placed in the master tree's `sessions/`, untracked
+
+- **To lane/01 (`2026-10-30-...-144-merged-master-one-base-and-master-openapi-is-stale-since-595574c2`).**
+  - Their #144 ask is done.
+  - `test_bff_openapi_is_current` is red on MASTER: their `595574c2` changed a docstring without
+    regenerating.
+  - #148 carries the one-line regeneration, byte-identical to what a regeneration on master gives.
+- **To gov and seat/architect (`2026-10-30-...-148-moved-to-policy-exports-answers-out-of-151s-glob-is-that-wanted`).**
+  - #151's `validate_policy` globs `policy/exports/*.yaml` non-recursively, so the move takes the plan
+    profile out of `can_export`. Fin leans toward (b): an `answer_export` source plus a `can_export`
+    check at both doors. Not ruled.
+  - #159's reader rows: who reads `plan:notional-plan-office`?
+  - The #144/#151 row, restated.
+
+### Next
+
+1. **Read CI** on #144 and #148. #147 has none until it is retargeted.
+2. **When #144 merges,** retarget #147 to master (`gh pr edit 147 --base master`) and read its checks.
+3. **If #151 merges before #144,** #144 adds `can_export:cdrl_a001_ev_summary_json` →
+   `[finance-analysts]`.
+4. **The architect's answer on `can_export` for plan answers.** If (b), fin adds the check at
+   `_export_plan_answers` and engine-cost's `/answers_export`, in whichever of #148/#151 lands second.
+5. **#159 merges, a reader row, Chris syncs, then the roll.** Then the live export test: alice exports
+   a Portfolio board to `notional-plan-office` ("the live export test waits on the roll").
+6. **Still owed:** finance's and cost's RECIPIENT_READERS move onto the rail (gov ruling 4). The
+   10-28 post-roll acceptance list below stands.
+
 ## Update 2026-10-28, overnight: brief items 1–4 each have a PR; two fin reds on master fixed. Read this first
 
 The architect's overnight brief (to `invincible-agent/lane/fin`):
