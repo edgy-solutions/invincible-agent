@@ -4248,7 +4248,7 @@ class CanvasSeedConflict(_BaseModel):
     detail: CanvasSeedConflictDetail
 
 
-def _canvas_seed_enumerator(user_email: str, entitled_domains: list):
+def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list):
     """A SYNC `(class_uri, bound_slots=) -> {outcome, members, ...}` against engine-o's
     `/enumerate_instances`, with the body `dynamic_supervisor._make_enumerator` sends. Sync
     because `decide_disposition` calls it synchronously; the caller runs the whole disposition
@@ -4306,7 +4306,7 @@ async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user:
 
     ent = current_user.entitlements
     domains = _canvas_seed_domains(request, ent) or sorted({c.domain for c in ent.cells})
-    enum = _canvas_seed_enumerator(current_user.authz_id, domains)
+    enum = _canvas_seed_enumerator(user_email=current_user.authz_id, entitled_domains=domains)
 
     def _build():
         disp = decide_disposition(accepted=accepted, declared=declared, enumerate_class=enum)
