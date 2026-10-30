@@ -27,6 +27,26 @@ the docstring of `POST /cases/{case_id}/signals/{signal}` without regenerating i
 - **Before that roll, a human `topaz_sync` must create `group:alert-processors`** (new group in
   `policy/groups.yaml`, alice in `policy/users.yaml`), or the capability leg exits 5.
 
+- **The `can_export:<profile>` convention** (header comment in `policy/capability_grants.yaml`):
+  who may export export profile `<profile>`, deny-by-default (no row, nobody). `validate_policy`
+  gains three refusals: a `can_export:` key naming an unknown profile; a profile name in two of the
+  review-export, answer-export and fin CDRL sets; ANY known profile with no row. That refusal's
+  advice is derived from the rows deciding other profiles of the same kind; no group is named in
+  code (architect's standing rule, 2026-10-30). The ruled grantees are rows: review-export
+  `[alert-processors]`, fin CDRL `[finance-analysts]` (ruled 2026-10-29), and `plan-answers`
+  `[portfolio-leads]` (ruled 2026-10-29/30; alice, erin and chris hold it already, so no
+  `topaz_sync` precondition), which ships with whichever of #148 and this change merges second.
+  One row gates a single export and a batch alike. Each kind is read where its own loader reads it:
+  `INGEST_EXPORT_PROFILE_DIR` or `policy/exports`; `EXPORT_PROFILE_POLICY_DIR` or
+  `policy/exports/answers`, plus `EXPORT_PROFILE_OVERLAY_DIRS`; fin's CDRL seed and overlays.
+  Answer-export profiles (fin's #148) need a row too (ruled 2026-10-30).
+- **Three rows ship**, one per profile the seed knows: `can_export:default-csv` and
+  `can_export:default-json` (Lane 1's `policy/exports` profiles), `grant_to_groups:
+  [alert-processors]`; `can_export:cdrl_a001_ev_summary`, `grant_to_groups: [finance-analysts]`.
+  Both groups already exist, so no `topaz_sync` precondition; the capability leg writes them at
+  the next roll. They are inert until the export door checks `can_export:<P>` (today it gates the
+  batch on `ingest:exportBatch` only).
+
 **Chart changes**
 
 - **A `recipient_readers` policy rail.** Who may download a recipient's disclosure package, from

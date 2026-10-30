@@ -43,6 +43,20 @@
 # gate: deleting a `can_drop:` row REOPENS the kind to every caller, and
 # capability_grant_sync.py (prune=True) deletes the orphan `can_drop:` objects to make that so.
 # validate_policy.py refuses a `can_drop:<K>` key whose K is not a known content kind.
+#
+# THE `can_export:<profile>` CONVENTION. A capability keyed `can_export:<P>` decides who may
+# export export profile P, by the profile's `name`. DENY-BY-DEFAULT, unlike `can_drop`: the door
+# asks can_invoke on `can_export:<P>` and False refuses, so a profile with NO row is exportable by
+# NOBODY; object existence decides nothing, there is no object prune, and deleting a row revokes
+# through the invoker-relation prune. One row gates a single export and a batch alike (ruled
+# 2026-10-29). The defaults are met by COMPLETENESS, not a generated default (the sync Job's image
+# cannot reliably see every profile overlay): validate_policy.py refuses ANY known profile that no
+# `can_export:<P>` row decides, of every kind: review-export (policy/exports), answer-export
+# (policy/exports/answers) and fin CDRL. Its advice is the groups the rows of the same kind already
+# grant; no grantee is held in code (standing rule, 2026-10-30), so the ruled grantees are the ROWS
+# below: review-export `[alert-processors]`, fin CDRL `[finance-analysts]`, the program-finance
+# persona's group (ruled 2026-10-29). validate_policy also refuses a `can_export:<P>` key naming no
+# known profile, and a name in two kinds.
 capabilities:
   # ADR-0029 Slice-1 demo fixture: the promotion workflow's publish emit. alice
   # (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) is the initiator authorized to
@@ -319,3 +333,33 @@ capabilities:
       alert-processors group. DOMAIN-SCOPED (architect 2026-10-29): the capability admits a notice
       only when its promotion domain is one of the caller's entitlement-cell domains.
     grant_to_groups: [alert-processors]
+
+  # can_export:<profile> (2026-10-29 ruling) -- see the convention in the header. One row per
+  # known export profile; validate_policy refuses a profile with none. These rows ARE the ruled
+  # grantees: review-export to alert-processors, CDRL to the program-finance persona's group.
+  can_export:default-csv:
+    granted_by: cnogradi
+    reason: >-
+      2026-10-29 ruling: the review-export profile policy/exports/default-csv.yaml is exportable,
+      single or in a batch, by alert-processors (the review-export default). Deny-by-default:
+      deleting this row leaves the profile exportable by NOBODY. A deployment configures this in
+      its own policy repository.
+    grant_to_groups: [alert-processors]
+
+  can_export:default-json:
+    granted_by: cnogradi
+    reason: >-
+      2026-10-29 ruling: the review-export profile policy/exports/default-json.yaml is exportable,
+      single or in a batch, by alert-processors (the review-export default). Deny-by-default:
+      deleting this row leaves the profile exportable by NOBODY. A deployment configures this in
+      its own policy repository.
+    grant_to_groups: [alert-processors]
+
+  can_export:cdrl_a001_ev_summary:
+    granted_by: cnogradi
+    reason: >-
+      2026-10-29 ruling: a fin CDRL profile is exportable, single or in a batch, by the
+      program-finance persona's group (finance-analysts) by default. Deny-by-default: deleting
+      this row leaves the profile exportable by NOBODY. A deployment configures this in its own
+      policy repository.
+    grant_to_groups: [finance-analysts]
