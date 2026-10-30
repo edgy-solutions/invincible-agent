@@ -1,8 +1,10 @@
 # ADR-0060 — Consumers read through the mesh, never the stores
 
-**Status:** Proposed. This is a draft for the architect's ruling. **Nobody builds against it until
-it is ruled.** ca reviewed the SDK types on 2026-10-24. §5 records the answers, and §6 items 5–8
-carry the parts that are behaviour.
+**Status:** Proposed, and merged to master as Proposed on the architect's 2026-10-30 directive.
+It is not ruled. **No behaviour builds against it until it is ruled.** The one exception is the
+same directive's: the four §5 shapes are built inert, as SDK types only, in v0.9.12 (ca). ca
+reviewed the SDK types on 2026-10-24 and again on 2026-10-30. §5 records the answers, and §6
+items 5–9 carry the parts that are behaviour.
 **Date:** 2026-10-24
 **Deciders:** architect (decision); Chris (review); ca (SDK types); Lane 1 (draft)
 **Related:**
@@ -249,7 +251,10 @@ narrows what `limit` means. (ca's review, §5.)
 
 These are proposals. Names and fields are ca's to change. The behaviour stated in §1–§3 is the
 architect's to rule. ca reviewed them on 2026-10-24, against this draft at `a4d396fe` and the SDK
-at `26b1238`. Nothing is built, and no SDK release is cut for this.
+at `26b1238`. On 2026-10-30 ca began building the four shapes as inert types on
+`lane/ca-0.9.12`. They are not wired into `MeshArtifacts.get`, and they generate no verb and
+change no origin rule. `ArtifactRef` ships with `id` only, because nothing in this text grounds
+more fields.
 
 - **`PersistenceDescriptor`**: a new optional field `persists` on `ContentKindRegistration`, one
   `PersistedClass` per output class, with `store`, `identity_field`, `readable_fields`,
@@ -298,3 +303,11 @@ at `26b1238`. Nothing is built, and no SDK release is cut for this.
    - a sibling registration that `providers_for` sees and `verbs_for` does not.
 7. The origin rule runs inside `nominate`, before `limit` (§3). Proposed yes.
 8. `visible_by_origin` moves to the SDK, and the platform re-exports it (§5). Proposed yes.
+9. The routes that §1–§3's remote clients would call do not exist yet (ca, 2026-10-30). The
+   gateway holds its own Neo4j driver and business-specific Cypher, and it has no generic route
+   for `MeshGraph`, `MeshVectors` or `MeshOntology`. Each protocol is implemented in-process by
+   its owning engine today. Rule who designs the routes:
+   - (a) ca designs them and hands them to Lane 1 to build; or
+   - (b) Lane 1 builds them, and ca names the client-side shape once they exist.
+
+   `is_safety_critical` waits on the same gap, because its only honest body is a graph read.
