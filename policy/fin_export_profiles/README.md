@@ -31,3 +31,23 @@ for a customer form that accepts no extra sheets. A `false` row that also names 
 outside the file: `/cdrl_export`'s JSON `envelope` carries every source's method, and the BFF's
 `X-Cells-Sha256` header carries `envelope.cells_sha256`. With `false` that hash covers only the
 cells written, the title block and the table.
+
+**`format: xlsx | docx | csv | json`.** One contract (computes nothing, refused at load naming the
+file, `cells_sha256` over what the producer wrote, one `fin-cdrl-<name>-<program_id>.<format>` per
+program); the layout differs. csv and json need no template: a profile alone is a deliverable.
+
+| key | xlsx | docx | csv | json |
+|---|---|---|---|---|
+| `template` (file + sha256) | required | required | refused | refused |
+| `sheet` | required | refused | refused | refused |
+| `cells` keys | `A1` | `T<n>!<A1>` (n-th body table, 1-based) | refused | `/a/b` object pointer |
+| `table.start` | `A1` | `T<n>!<A1>` | refused | refused |
+| `table.at` | refused | refused | refused | required (pointer to the row array) |
+| column `as` | refused | refused | required (header) | required (row key) |
+| column `format` | Excel number format | `TEXT_FORMATS` keys only | `TEXT_FORMATS` keys only | refused |
+| `provenance_sheets` | optional | refused | refused | refused |
+
+`TEXT_FORMATS` (docx and csv write numbers as text): `#,##0` `#,##0.00` `0` `0.0` `0.00` `0.000`
+`0.0%`. A json absent value is an omitted key, never `null`; keys keep declaration order. Outside
+xlsx the file is exactly the form: the provenance travels in the envelope and `X-Cells-Sha256`.
+Sample: `policy/overlays/sample/fin_export_profiles/cdrl_a001_ev_summary_json.yaml`.
