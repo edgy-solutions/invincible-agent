@@ -121,6 +121,10 @@ class _World:
         self.exporters = {(self.profile_name, ALICE)}
         self.export_down = False
         self.export_calls: list[tuple] = []
+        # the BFF reads the profile set engine-cost SERVES: "ok" asks cost's real app; "down" is a
+        # transport error; "bad" is a 200 whose set does not validate; "500" a non-2xx
+        self.profiles_mode = "ok"
+        self.profiles_calls = 0
 
 
 @pytest.fixture
@@ -150,7 +154,6 @@ def world(monkeypatch, tmp_path):
     monkeypatch.setattr(cost_main, "can_export", fake_can_export)
     monkeypatch.setattr(cost_main, "_current_caller", lambda: _Caller(w.user_id))
     monkeypatch.setattr(cost_main, "_ANSWER_PROFILES", None)
-    monkeypatch.setattr(gateway, "_PLAN_PROFILES", None)
 
     gateway.app.dependency_overrides[gateway.get_current_user] = lambda: type("U", (), {
         "authz_id": w.user_id, "id": "sub-" + w.user_id, "email": w.user_id, "roles": [],
@@ -176,6 +179,20 @@ def world(monkeypatch, tmp_path):
                 return engine.get(url[url.index("/artifact/"):])
 
         monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
+
+        def profiles_get(url):
+            import httpx
+            w.profiles_calls += 1
+            assert url.endswith("/answers_export/profiles"), url
+            if w.profiles_mode == "down":
+                raise ConnectionError("engine-cost is down")
+            if w.profiles_mode == "500":
+                return httpx.Response(500, json={"detail": "boom"})
+            if w.profiles_mode == "bad":
+                return httpx.Response(200, json={"profiles": [{"name": "x"}]})
+            return engine.get("/answers_export/profiles")
+
+        monkeypatch.setattr(gateway, "_cost_profiles_get", profiles_get)
 
         def bff(method, path, cards=None, **body):
             if cards is not None:
@@ -565,9 +582,12 @@ def test_the_shipped_rail_has_no_plan_owner_and_the_feature_is_dark(monkeypatch)
                             .read_text(encoding="utf-8"))["recipient_readers"]
     assert "plan" not in owners
     monkeypatch.delenv("TOPAZ_DIRECTORY_URL", raising=False)
-    monkeypatch.setattr(gateway, "_PLAN_PROFILES", None)
-    alice = type("U", (), {"authz_id": ALICE})()
-    assert gateway._plan_recipients_for(alice) == []  # the REAL can_read_recipient: deny
+    monkeypatch.setattr(cost_main, "_ANSWER_PROFILES", None)
+    with TestClient(cost_main.app) as engine:
+        monkeypatch.setattr(gateway, "_cost_profiles_get",
+                            lambda url: engine.get("/answers_export/profiles"))
+        alice = type("U", (), {"authz_id": ALICE})()
+        assert gateway._plan_recipients_for(alice) == []  # the REAL can_read_recipient: deny
 
 
 def test_the_flattened_image_layout_loads_the_seed_profile(tmp_path):
@@ -878,3 +898,186 @@ def test_export_capability_without_a_url_is_false_and_sends_nothing(monkeypatch)
     assert EC.can_export("", ALICE, directory_url="http://t") is False
     assert EC.can_export("p", "", directory_url="http://t") is False
     assert sent == []
+
+
+# ── E6. the BFF reads the profile set engine-cost SERVES, not its own copy ───────────────────────
+# The rule: the registry your code reads is the one the server serves. Cost loads seed + overlays;
+# the BFF asks it (`GET /answers_export/profiles`) and validates with the loader's own validator.
+def _wire(profiles):
+    return {"profiles": [AE.profile_to_wire(profiles[n]) for n in sorted(profiles)]}
+
+
+def test_the_wire_round_trip_is_the_loaded_set():
+    loaded = AE.load_answer_export_profiles()
+    assert loaded
+    assert AE.profiles_from_wire(_wire(loaded)) == loaded
+
+
+def test_a_wire_profile_is_the_profile_files_vocabulary_with_nothing_extra():
+    p = AE.load_answer_export_profiles()["plan-answers"]
+    wire = AE.profile_to_wire(p)
+    assert set(wire) == set(AE._TOP_KEYS)
+    assert all(set(c) == set(AE._COLUMN_KEYS) and set(c["source"]) == set(AE._SOURCE_KEYS)
+               for c in wire["columns"])
+    assert wire["kinds"] == list(p.kinds)  # the verbs a profile takes travel
+
+
+def test_the_wire_reader_runs_the_loaders_validator_and_set_rule():
+    good = AE.profile_to_wire(AE.load_answer_export_profiles()["plan-answers"])
+    for bad_doc, fragment in (
+        ({"profiles": [dict(good, format="xml")]}, "format"),
+        ({"profiles": [dict(good, surprise=1)]}, "unknown key"),
+        ({"profiles": [good, dict(good, name="other")]}, "exactly one profile"),
+        ({"nope": []}, "profiles"),
+    ):
+        with pytest.raises(AE.AnswerExportError) as exc:
+            AE.profiles_from_wire(bad_doc)
+        assert fragment in str(exc.value)
+
+
+def _cost_serves(monkeypatch, tmp_path, *rows, overlay=()):
+    """Point COST's loader at tmp dirs through the environment (the BFF is never told)."""
+    import os
+    import yaml
+    seed = tmp_path / "cost-seed"
+    seed.mkdir(parents=True, exist_ok=True)
+    for r in rows:
+        r = dict(r)
+        stem = r.pop("_stem", r.get("name"))
+        (seed / f"{stem}.yaml").write_text(yaml.safe_dump(r), encoding="utf-8")
+    ov = []
+    for j, r in enumerate(overlay):
+        d = tmp_path / f"cost-ov{j}"
+        d.mkdir(exist_ok=True)
+        (d / f"{r['name']}.yaml").write_text(yaml.safe_dump(r), encoding="utf-8")
+        ov.append(str(d))
+    monkeypatch.setenv(AE._SEED_ENV, str(seed))
+    monkeypatch.setenv(AE._OVERLAY_ENV, os.pathsep.join(ov))
+    monkeypatch.setattr(cost_main, "_ANSWER_PROFILES", None)
+
+
+def _picker(w):
+    r = w.get("/export/package/recipients")
+    assert r.status_code == 200, r.text
+    return [x["value"] for x in r.json()["recipients"]]
+
+
+def test_cost_serves_its_set_sorted_and_a_failed_load_is_a_503_that_is_not_cached(
+        world, monkeypatch, tmp_path):
+    doc = world.engine.get("/answers_export/profiles").json()
+    names = [p["name"] for p in doc["profiles"]]
+    assert names and names == sorted(names)
+    assert AE.profiles_from_wire(doc) == AE.load_answer_export_profiles()
+    _cost_serves(monkeypatch, tmp_path, dict(_GOOD, _stem="not-the-name"))
+    r = world.engine.get("/answers_export/profiles")
+    assert r.status_code == 503 and r.json()["detail"] == {"reason": "answer_profiles_unavailable"}
+    _cost_serves(monkeypatch, tmp_path / "fixed", _GOOD)
+    assert world.engine.get("/answers_export/profiles").status_code == 200
+
+
+def test_the_bff_reads_what_engine_cost_serves_not_the_repo_seed(world, monkeypatch, tmp_path):
+    """Test 4a. Cost's profile dir holds a recipient the repo seed does not name."""
+    other = dict(_GOOD, name="elsewhere", recipients=["notional-elsewhere"])
+    # set on COST's module, not through the environment: the BFF shares this process and would
+    # see an env var, which is exactly the copy this arm exists to catch
+    monkeypatch.setattr(cost_main, "_ANSWER_PROFILES", _load(tmp_path, other))
+    world.readers.add(("plan", "notional-elsewhere", ALICE))
+    world.exporters.add(("elsewhere", ALICE))
+    got = _picker(world)
+    assert "notional-elsewhere" in got
+    assert PLAN not in got  # the repo seed's recipient is not in what cost serves
+
+
+def _hits(path, tree=None):
+    """Every way a module reaches the profile loader or its two environment variables. The names
+    are read from `answer_exports`, never typed here."""
+    fn = {AE.load_answer_export_profiles.__name__}
+    fns = fn | {AE.EXPORT_PROFILE_POLICY_DIR.__name__, AE.EXPORT_PROFILE_OVERLAY_DIRS.__name__}
+    envs = {AE._SEED_ENV, AE._OVERLAY_ENV}
+    tree = tree or ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+    found = []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name) and n.id in fns:
+            found.append((n.lineno, n.id))
+        elif isinstance(n, ast.Attribute) and n.attr in fns:
+            found.append((n.lineno, n.attr))
+        elif isinstance(n, ast.alias) and n.name in fns:
+            found.append((0, n.name))
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in envs:
+            found.append((n.lineno, n.value))
+    return found
+
+
+def test_the_gateway_never_loads_a_profile_nor_reads_the_loaders_env():
+    """Test 4b, with its controls: the same census FINDS the call in engine-cost and the env
+    names in the loader, so a silent census cannot pass for a clean gateway."""
+    assert _hits(ROOT / "src" / "iagent" / "gateway.py") == []
+    cost = _hits(ROOT / "agent_fleet" / "cost_agent" / "main.py")
+    assert any(name == AE.load_answer_export_profiles.__name__ for _, name in cost), cost
+    loader = _hits(ROOT / "agent_fleet" / "utils" / "answer_exports.py")
+    assert {AE._SEED_ENV, AE._OVERLAY_ENV} <= {name for _, name in loader}, loader
+
+
+def test_an_overlay_set_on_cost_alone_reaches_the_offer_with_no_code_change(
+        world, monkeypatch, tmp_path):
+    """Test 3. The overlay dir is set ONLY on cost's side (the BFF has no such setting)."""
+    import os
+    extra = dict(_GOOD, name="overlay-plan", recipients=["notional-overlay"])
+    d = tmp_path / "only-on-cost"
+    d.mkdir()
+    import yaml
+    (d / "overlay-plan.yaml").write_text(yaml.safe_dump(extra), encoding="utf-8")
+    monkeypatch.setenv(AE._OVERLAY_ENV, str(d))
+    monkeypatch.setattr(cost_main, "_ANSWER_PROFILES", None)
+    world.readers.add(("plan", "notional-overlay", ALICE))
+    world.exporters.add(("overlay-plan", ALICE))
+    r = world.offer(BOARD_PLAN)
+    assert r.status_code == 200, r.text
+    offered = {x["value"]: x for x in r.json()["recipients"]}
+    assert "notional-overlay" in offered and offered["notional-overlay"]["offered"] is True
+    assert PLAN in offered  # the seed rides along
+    assert os.environ[AE._OVERLAY_ENV] == str(d)
+
+
+# ── cost unreachable: omit at the pickers, 503 at the doors, never a 403 ─────────────────────────
+def _down(world, mode="down"):
+    world.profiles_mode = mode
+
+
+@pytest.mark.parametrize("mode", ["down", "500", "bad"])
+def test_without_the_served_set_the_pickers_omit_plan_and_keep_cost(world, mode):
+    assert PLAN in _picker(world)
+    _down(world, mode)
+    assert PLAN not in _picker(world) and ALPHA in _picker(world)
+    offered = [x["value"] for x in world.offer(BOARD_COST).json()["recipients"]]
+    assert PLAN not in offered and ALPHA in offered
+    r = world.export(BOARD_PLAN, scope="")
+    assert r.status_code == 409
+    options = [o["value"] for o in r.json()["detail"]["options"]]
+    assert PLAN not in options and ALPHA in options
+
+
+@pytest.mark.parametrize("mode", ["down", "500", "bad"])
+def test_without_the_served_set_a_plan_export_is_a_503_never_a_403(world, mode):
+    _down(world, mode)
+    r = world.export(BOARD_PLAN)
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"] == {"reason": "answer_profiles_unavailable"}
+    assert world.answers_export_calls == 0 and world.cost_package_calls == 0
+
+
+def test_without_the_served_set_a_cost_export_is_unaffected(world):
+    _down(world)
+    assert world.export(BOARD_COST, scope=ALPHA).status_code == 200
+    assert world.cost_package_calls == 1
+
+
+@pytest.mark.parametrize("mode", ["down", "500", "bad"])
+def test_without_the_served_set_an_answers_download_is_a_503_and_other_names_stay_404(
+        world, mode):
+    name = _plan_section(world.export(BOARD_PLAN).json())["artifact_filename"]
+    assert name.startswith(AE.ARTIFACT_PREFIX)
+    _down(world, mode)
+    r = world.get(f"/export/package/artifact/{name}")
+    assert r.status_code == 503 and r.json()["detail"] == {"reason": "answer_profiles_unavailable"}
+    assert world.get("/export/package/artifact/not-an-export.csv").status_code == 404

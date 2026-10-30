@@ -774,6 +774,20 @@ class AnswersExportRequest(BaseModel):
     rows: list[dict[str, Any]] = []
 
 
+@app.get("/answers_export/profiles")
+async def answers_export_profiles() -> dict[str, Any]:
+    """The answer-export profile set THIS engine serves (seed plus overlays), in the profile
+    file's own vocabulary, sorted by name. The cortex-bff reads it from here and holds no copy:
+    the registry a consumer reads is the one the server serves. A set that does not load is 503
+    `answer_profiles_unavailable` (not cached; the next ask retries)."""
+    try:
+        profiles = _answer_profiles()
+    except answer_exports.AnswerExportError as exc:
+        log.error("answer export profiles do not load: %s", exc)
+        raise HTTPException(status_code=503, detail={"reason": "answer_profiles_unavailable"}) from exc
+    return {"profiles": [answer_exports.profile_to_wire(profiles[n]) for n in sorted(profiles)]}
+
+
 @app.post("/answers_export")
 async def answers_export(req: AnswersExportRequest) -> dict[str, Any]:
     """Render the rows a plan recipient takes with its profile and write the file.

@@ -112,6 +112,11 @@ class AnswerExportError(DeclarationError):
     """An answer-export profile is invalid. Names the FILE and the key."""
 
 
+class AnswerProfilesUnavailable(Exception):
+    """The profile set engine-cost serves could not be had (unreachable, non-2xx, or a set that
+    does not validate). One class, in this one module: callers decide what an outage means."""
+
+
 @dataclass(frozen=True)
 class Column:
     field: str      # source.field
@@ -248,6 +253,14 @@ def load_answer_export_profiles(
             if not raw.get("deleted") and key != f.stem:
                 errors.append(f"{f.name}: name {key!r} is not the file stem {f.stem!r}")
 
+    rows = compose_rows(d, ov, key_field="name", builder=_row_builder(errors),
+                        label="answer export profile", error=AnswerExportError)
+    return _finish([r for r in rows if r is not None], errors)
+
+
+def _row_builder(errors: list[str]):
+    """The ONE validator of a raw profile mapping: `_build`, with its refusals collected into
+    `errors`. The file loader hands it to the composer; the wire reader calls it per profile."""
     def _builder(raw: dict) -> Optional[AnswerExportProfile]:
         name = raw.get("name")
         try:
@@ -255,11 +268,12 @@ def load_answer_export_profiles(
         except ValueError as exc:
             errors.append(f"export profile {name!r}: {exc}")
             return None
+    return _builder
 
-    rows = compose_rows(d, ov, key_field="name", builder=_builder,
-                        label="answer export profile", error=AnswerExportError)
-    built = [r for r in rows if r is not None]
 
+def _finish(built: list[AnswerExportProfile], errors: list[str]) -> dict[str, AnswerExportProfile]:
+    """The set-level rule (a recipient receives exactly one profile), then ONE error listing every
+    refusal. Shared by the file loader and the wire reader."""
     owner: dict[str, str] = {}
     for p in built:
         for scope in p.recipients:
@@ -272,6 +286,47 @@ def load_answer_export_profiles(
     if errors:
         raise AnswerExportError("answer export profiles refused:\n  " + "\n  ".join(errors))
     return {p.name: p for p in built}
+
+
+# -- THE WIRE FORM (engine-cost's GET /answers_export/profiles) --------------------------------
+def profile_to_wire(profile: AnswerExportProfile) -> dict[str, Any]:
+    """A profile in exactly the profile file's vocabulary: no extra and no renamed key."""
+    return {
+        "column_map_version": COLUMN_MAP_VERSION,
+        "name": profile.name,
+        "label": profile.label,
+        "format": profile.format,
+        "granularity": profile.granularity,
+        "kinds": list(profile.kinds),
+        "recipients": list(profile.recipients),
+        "columns": [{"output": c.output, "source": {"field": c.field}} for c in profile.columns],
+    }
+
+
+def profiles_from_wire(doc: Any) -> dict[str, AnswerExportProfile]:
+    """The set a server serves, validated by the SAME `_build` and set rule as the file loader.
+    Raises `AnswerExportError` listing every refusal."""
+    errors: list[str] = []
+    rows = doc.get("profiles") if isinstance(doc, dict) else None
+    if not isinstance(rows, list):
+        raise AnswerExportError("answer export profiles refused:\n  the wire document is not "
+                                "{'profiles': [...]}")
+    builder = _row_builder(errors)
+    built: list[AnswerExportProfile] = []
+    seen: set[str] = set()
+    for raw in rows:
+        if not isinstance(raw, dict):
+            errors.append(f"a wire profile is not a mapping: {type(raw).__name__}")
+            continue
+        p = builder(raw)
+        if p is None:
+            continue
+        if p.name in seen:
+            errors.append(f"export profile {p.name!r} is served twice")
+            continue
+        seen.add(p.name)
+        built.append(p)
+    return _finish(built, errors)
 
 
 def profile_for_recipient(
@@ -311,6 +366,7 @@ def render(profile: AnswerExportProfile, rows: list[dict]) -> bytes:
 #: `export_id` and a recipient scope are composed into a filename, so both are held to this.
 SAFE_PART = re.compile(r"^[A-Za-z0-9_.-]+$")
 _PREFIX = "ia-answers-"
+ARTIFACT_PREFIX = _PREFIX
 
 
 def artifact_filename(profile: AnswerExportProfile, scope: str, export_id: str) -> str:

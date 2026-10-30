@@ -2632,28 +2632,47 @@ def _fin_export_recipients_for(user: "User") -> list[str]:
 # PRODUCING one also needs `can_export:<profile name>` (ruled (b) 10-30, deny by default, the row is
 # policy's): "exportable" = reader AND can_export. The download stays reader-only.
 _PLAN_OWNER = "plan"
-_PLAN_PROFILES: Optional[dict] = None
 _NOT_A_KIND = "not_a_kind_this_recipient_takes"
 _SCENARIO_ANSWER = "scenario_answer"
 
 
+def _cost_profiles_get(url: str) -> "httpx.Response":
+    """The one GET to engine-cost for its profile set (a seam: the tests serve cost's real app
+    through it). It carries NO person and so no bearer: the set is policy, not a person's data."""
+    return httpx.get(url, timeout=10.0)
+
+
 def _plan_profiles() -> dict:
-    """The loaded profiles, once per process. A profile set that does not load is logged and
-    answers {} (not cached, so it retries): a bad plan profile must not take cost's picker or
-    export down with it."""
-    global _PLAN_PROFILES
-    if _PLAN_PROFILES is None:
-        from agent_fleet.utils import answer_exports as _ae
-        try:
-            _PLAN_PROFILES = _ae.load_answer_export_profiles()
-        except _ae.AnswerExportError as exc:
-            logger.error("answer export profiles do not load: %s", exc)
-            return {}
-    return _PLAN_PROFILES
+    """The answer-export profiles engine-cost SERVES (`GET /answers_export/profiles`), validated by
+    `answer_exports.profiles_from_wire`, the loader's own validator. The BFF holds no copy and
+    reads no profile from disk: the registry this code reads is the one the server serves, so an
+    overlay mounted on cost alone reaches the picker with no code change. Nothing is cached (a
+    cached set is a copy); callers that need it more than once hold the dict they were given.
+    Raises `AnswerProfilesUnavailable` when cost cannot be asked or serves a set that does not
+    validate: each caller decides what an outage means for it."""
+    from agent_fleet.utils import answer_exports as _ae
+    try:
+        rr = _cost_profiles_get(f"{_ENGINE_COST_URL}/answers_export/profiles")
+    except Exception as exc:  # noqa: BLE001 -- transport failure of the ask itself
+        logger.error("answer export profiles: engine-cost unreachable: %s", exc)
+        raise _ae.AnswerProfilesUnavailable(f"engine-cost unreachable: {exc}") from exc
+    if rr.status_code != 200:
+        logger.error("answer export profiles: engine-cost answered %s", rr.status_code)
+        raise _ae.AnswerProfilesUnavailable(f"engine-cost answered {rr.status_code}")
+    try:
+        return _ae.profiles_from_wire(rr.json())
+    except (_ae.AnswerExportError, ValueError) as exc:
+        logger.error("answer export profiles served by engine-cost do not validate: %s", exc)
+        raise _ae.AnswerProfilesUnavailable(f"served set does not validate: {exc}") from exc
 
 
-def _plan_scope_names() -> list[str]:
-    return sorted({s for p in _plan_profiles().values() for s in p.recipients})
+def _plan_profiles_unavailable() -> HTTPException:
+    return HTTPException(status_code=503, detail={"reason": "answer_profiles_unavailable"})
+
+
+def _plan_scope_names(profiles: Optional[dict] = None) -> list[str]:
+    profiles = _plan_profiles() if profiles is None else profiles
+    return sorted({s for p in profiles.values() for s in p.recipients})
 
 
 def _plan_reader(scope: str, authz_id: Optional[str]) -> bool:
@@ -2682,49 +2701,58 @@ def _plan_may_export(profile_name: str, authz_id: Optional[str]) -> bool:
         ) from exc
 
 
-def _plan_recipients_for(user: "User") -> list[str]:
-    """Every plan recipient scope `user` may export to: named by a loaded profile and admitted by
-    the `recipient_readers` rail. A blank `authz_id` is []."""
+def _plan_recipients_for(user: "User", profiles: Optional[dict] = None) -> list[str]:
+    """Every plan recipient scope `user` may export to: named by a served profile and admitted by
+    the `recipient_readers` rail. A blank `authz_id` is []. `AnswerProfilesUnavailable` escapes."""
     if not user.authz_id:
         return []
-    return [s for s in _plan_scope_names() if _plan_reader(s, user.authz_id)]
+    return [s for s in _plan_scope_names(profiles) if _plan_reader(s, user.authz_id)]
+
+
+def _answer_profiles_unavailable_type() -> type:
+    from agent_fleet.utils import answer_exports as _ae
+    return _ae.AnswerProfilesUnavailable
 
 
 def _plan_recipients_or_none(user: "User") -> list[str]:
     """For the pickers only: a rail that cannot be asked omits the plan recipients rather than
-    taking cost's own list down. The export and the download still answer 503."""
+    taking cost's own list down. The export and the download still answer 503. The same holds
+    when engine-cost's profile set cannot be had."""
     try:
         return _plan_recipients_for(user)
-    except HTTPException:
+    except (HTTPException, _answer_profiles_unavailable_type()):
         return []
 
 
-def _plan_profile_name(scope: str) -> Optional[str]:
+def _plan_profile_name(scope: str, profiles: Optional[dict] = None) -> Optional[str]:
     from agent_fleet.utils import answer_exports as _ae
-    profile = _ae.profile_for_recipient(_plan_profiles(), scope)
+    profile = _ae.profile_for_recipient(_plan_profiles() if profiles is None else profiles, scope)
     return profile.name if profile is not None else None
 
 
-def _plan_exportable_for(user: "User", readers: Optional[list[str]] = None) -> list[str]:
+def _plan_exportable_for(
+    user: "User", readers: Optional[list[str]] = None, profiles: Optional[dict] = None,
+) -> list[str]:
     """The plan recipient scopes `user` may EXPORT to: a reader AND `can_export` on the scope's
     profile. Nobody is offered a recipient the export would refuse. `readers` is
     `_plan_recipients_for(user)` when the caller already has it."""
+    profiles = _plan_profiles() if profiles is None else profiles
     if readers is None:
-        readers = _plan_recipients_for(user)
+        readers = _plan_recipients_for(user, profiles)
     out = []
     for s in readers:
-        name = _plan_profile_name(s)
+        name = _plan_profile_name(s, profiles)
         if name is not None and _plan_may_export(name, user.authz_id):
             out.append(s)
     return out
 
 
-def _plan_exportable_or_none(user: "User") -> list[str]:
+def _plan_exportable_or_none(user: "User", profiles: Optional[dict] = None) -> list[str]:
     """`_plan_recipients_or_none`'s twin for the pickers: a rail that cannot be asked omits the
     plan recipients."""
     try:
-        return _plan_exportable_for(user)
-    except HTTPException:
+        return _plan_exportable_for(user, None, profiles)
+    except (HTTPException, _answer_profiles_unavailable_type()):
         return []
 
 
@@ -3249,11 +3277,11 @@ def _offer_for_recipient(resolved: list[dict], scope: str) -> dict:
     }
 
 
-def _plan_offer_for_recipient(resolved: list[dict], scope: str) -> dict:
+def _plan_offer_for_recipient(resolved: list[dict], scope: str, profiles: dict) -> dict:
     """`_offer_for_recipient`'s shape for a plan recipient, decided by `_plan_partition` -- the
-    function the export takes its own decision from."""
+    function the export takes its own decision from. `profiles` is the set the caller was given."""
     from agent_fleet.utils import answer_exports as _ae
-    profile = _ae.profile_for_recipient(_plan_profiles(), scope)
+    profile = _ae.profile_for_recipient(profiles, scope)
     taken, refused = _plan_partition(resolved, profile)
     exports = list(dict.fromkeys(a["id"] for a in taken))
     return {
@@ -3285,15 +3313,21 @@ async def export_package_offer(
     resolved = _resolve_export_answers(
         [a.artifact_id for a in body.answers], current_user.id
     )
+    plan_offers: list[dict] = []
+    try:
+        profiles = _plan_profiles()
+        plan_offers = [
+            {"value": s, "label": s, **_plan_offer_for_recipient(resolved, s, profiles)}
+            for s in _plan_exportable_or_none(current_user, profiles)
+        ]
+    except _answer_profiles_unavailable_type():
+        pass  # logged by `_plan_profiles`; the plan recipients are omitted, cost's are not
     return {
         "answers": len(body.answers),
         "recipients": [
             {"value": s, "label": s, **_offer_for_recipient(resolved, s)}
             for s in _export_recipients_for(current_user)
-        ] + [
-            {"value": s, "label": s, **_plan_offer_for_recipient(resolved, s)}
-            for s in _plan_exportable_or_none(current_user)
-        ],
+        ] + plan_offers,
     }
 
 
@@ -3451,6 +3485,7 @@ async def _call_engine_cost_answers_export(payload: dict, bearer: str) -> dict:
 
 async def _export_plan_answers(
     body: "ExportPackageRequest", request: Request, current_user: User, recipient_scope: str,
+    profiles: Optional[dict] = None,
 ) -> dict:
     """A board exported to a plan recipient: no cost or fin call is made.
 
@@ -3459,7 +3494,11 @@ async def _export_plan_answers(
     rows come from the same `_ARTIFACT_BY_ID_CYPHER` records the board resolved from.
     """
     from agent_fleet.utils import answer_exports as _ae
-    profile = _ae.profile_for_recipient(_plan_profiles(), recipient_scope)
+    try:
+        profiles = _plan_profiles() if profiles is None else profiles
+    except _ae.AnswerProfilesUnavailable as exc:
+        raise _plan_profiles_unavailable() from exc
+    profile = _ae.profile_for_recipient(profiles, recipient_scope)
     records = _read_export_records([a.artifact_id for a in body.answers], current_user.id)
     resolved = [_resolve_export_record(r) for r in records]
     taken, refused_items = _plan_partition(resolved, profile)
@@ -3563,12 +3602,26 @@ async def export_package(
         raise HTTPException(status_code=400, detail={"reason": "no_answers"})
 
     recipient_scope = (body.recipient_scope or "").strip()
-    is_plan_scope = recipient_scope in _plan_scope_names()
-    plan_recipients = _plan_recipients_for(current_user) if is_plan_scope else []
+    # THE PLAN REGISTRY IS ENGINE-COST'S, READ OVER THE WIRE. When it cannot be had the plan scopes
+    # are omitted from the options (the picker's posture) and a request for anything that is not a
+    # cost or fin recipient is a 503 -- never a 403: an outage must not read as "not your recipient".
+    from agent_fleet.cost_agent import seed as _cost_seed
+    from agent_fleet.finance_agent import export as _fin_export
+    try:
+        plan_profiles: Optional[dict] = _plan_profiles()
+    except _answer_profiles_unavailable_type():
+        plan_profiles = None
+    if (plan_profiles is None and recipient_scope
+            and recipient_scope not in _cost_seed.RECIPIENT_SCOPES
+            and recipient_scope not in _fin_export.RECIPIENT_SCOPES):
+        raise _plan_profiles_unavailable()
+    is_plan_scope = plan_profiles is not None and recipient_scope in _plan_scope_names(plan_profiles)
+    plan_recipients = _plan_recipients_for(current_user, plan_profiles) if is_plan_scope else []
     options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
-    options += [{"value": s, "label": s} for s in (
-        _plan_exportable_for(current_user, plan_recipients) if is_plan_scope
-        else _plan_exportable_or_none(current_user))]
+    if plan_profiles is not None:
+        options += [{"value": s, "label": s} for s in (
+            _plan_exportable_for(current_user, plan_recipients, plan_profiles) if is_plan_scope
+            else _plan_exportable_or_none(current_user, plan_profiles))]
     if not recipient_scope:
         raise HTTPException(
             status_code=409,
@@ -3580,10 +3633,11 @@ async def export_package(
     if is_plan_scope:
         if recipient_scope not in plan_recipients:
             raise _plan_refusal_403(recipient_scope)
-        plan_profile = _plan_profile_name(recipient_scope)
+        plan_profile = _plan_profile_name(recipient_scope, plan_profiles)
         if not _plan_may_export(plan_profile, current_user.authz_id):
             raise _plan_export_refusal_403(plan_profile, recipient_scope)
-        return await _export_plan_answers(body, request, current_user, recipient_scope)
+        return await _export_plan_answers(
+            body, request, current_user, recipient_scope, plan_profiles)
 
     if recipient_scope not in _export_recipients_for(current_user):
         # WHY PRODUCTION IS GATED HERE, NOT ONLY THE DOWNLOAD: every recipient's package
@@ -3701,7 +3755,15 @@ async def export_package_artifact(
     # by both, this order would silently prefer cost's scope and recipients_fn over finance's.
     from agent_fleet.utils import answer_exports as _ae
     scope = _cost_seed.scope_of_artifact(filename)
-    plan_hit = None if scope is not None else _ae.match_artifact(_plan_profiles(), filename)
+    plan_hit = None
+    plan_profiles: Optional[dict] = None
+    plan_unavailable = False
+    if scope is None and filename.startswith(_ae.ARTIFACT_PREFIX):
+        try:
+            plan_profiles = _plan_profiles()
+            plan_hit = _ae.match_artifact(plan_profiles, filename)
+        except _ae.AnswerProfilesUnavailable:
+            plan_unavailable = True
     if scope is not None:
         engine_url = _ENGINE_COST_URL
         recipients_fn = _export_recipients_for
@@ -3711,7 +3773,7 @@ async def export_package_artifact(
         scope = plan_hit[1]
         engine_url = _ENGINE_COST_URL
         # can_export gates PRODUCTION; reading a produced package is a reader's act.
-        recipients_fn = _plan_recipients_for
+        recipients_fn = lambda u: _plan_recipients_for(u, plan_profiles)  # noqa: E731
         engine_label = "cost"
     else:
         scope = _fin_export.scope_of_artifact(filename)
@@ -3720,6 +3782,10 @@ async def export_package_artifact(
             recipients_fn = _fin_export_recipients_for
             engine_label = "fin"
         else:
+            if plan_unavailable:
+                # An `ia-answers-*` name the cost and fin matchers do not claim may be a plan
+                # package whose registry could not be read: unknown, not absent.
+                raise _plan_profiles_unavailable()
             # Same structural traversal defence as either engine's own route: a filename
             # neither engine could have produced is refused outright rather than sanitized
             # and forwarded.

@@ -1130,6 +1130,22 @@ services:
           SEED DATA (`seed.RECIPIENT_READERS`), not policy. A real deployment reads that
           relation from the grant rail where it can be reviewed and revoked; a mapping in a
           seed can be changed by anyone who can change the engine."
+      - method: GET
+        path: /answers_export/profiles
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: capability-catalogue
+        consumers: ["cortex-bff (the plan recipients' picker, offer, export and download)"]
+        class: releasable_by_design
+        justification: >-
+          The answer-export profile set this engine serves (seed plus deployment overlays), in the
+          profile file's own vocabulary: names, labels, formats, the verbs a profile takes, the
+          recipient scopes it names and its column map. Policy declarations, never an answer, a
+          row or a person: the sibling of /verbs, the engine's own view of what it registered. It
+          is read by the cortex-bff with no person attached, so the BFF holds no copy of the
+          registry (the registry a consumer reads is the one the server serves). Who may READ or
+          EXPORT to a recipient is decided elsewhere, on the recipient_readers and can_export
+          rails; this names no reader. 503 answer_profiles_unavailable when the set does not load.
       - method: POST
         path: /answers_export
         identity: "caller authz_id (body user_email, as the BFF names it), checked on the recipient_readers rail under owner plan"
