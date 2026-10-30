@@ -1192,6 +1192,7 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
 from pydantic import BaseModel as _BaseModel  # noqa: E402
 from pydantic import BeforeValidator as _BeforeValidator, StrictFloat as _StrictFloat  # noqa: E402
 from pydantic import StrictInt as _StrictInt  # noqa: E402
+from pydantic import StrictBool as _StrictBool, StrictStr as _StrictStr  # noqa: E402
 from typing import Annotated as _Annotated  # noqa: E402
 
 
@@ -1361,6 +1362,41 @@ class HeaderEdit(_RowEditsModel):
         return self
 
 
+class CoverageGroup(_RowEditsModel):
+    """One group of parts a steward folded without opening: the grouping rule, its key, and the
+    members NOT opened (part_index values)."""
+    rule: _Annotated[str, Field(min_length=1)]
+    key: _Annotated[str, Field(min_length=1)]
+    parts: list[_StrictInt]
+
+
+_UnitFloat = _Annotated[_StrictFloat, Field(ge=0, le=1, allow_inf_nan=False)]
+_UnitInt = _Annotated[_StrictInt, Field(ge=0, le=1)]
+
+
+class CoverageShared(_RowEditsModel):
+    """One evidence crop that many parts cite (recorded, not re-derived)."""
+    rule: _Annotated[str, Field(min_length=1)]
+    page: _StrictInt = Field(ge=1)
+    bbox: _Annotated[list[_UnitFloat | _UnitInt], Field(min_length=4, max_length=4)]
+    parts: list[_StrictInt]
+    confirmed: _StrictBool
+
+
+class ReviewCoverage(_RowEditsModel):
+    """What the steward looked at on a document promotion (ruled 2026-10-29: a sampled promote is
+    legal if it is recorded). Ids are the extraction's integer `part_index`. The route checks every
+    part was opened or folded into a group (`review_coverage_invalid`); `sampled`, `flagged`,
+    `shared` and `sample` are recorded as sent."""
+    rules_version: _Annotated[str, Field(min_length=1)]
+    looked_at: list[_StrictInt]
+    sampled: list[_StrictInt]
+    flagged: list[_StrictInt]
+    groups: list[CoverageGroup]
+    shared: list[CoverageShared]
+    sample: Optional[dict[str, _StrictStr | _StrictInt | _StrictFloat | _StrictBool]] = None
+
+
 def _promotion_row_edits_enabled() -> bool:
     """IAGENT_PROMOTION_ROW_EDITS: ON only for the exact string "true" (after strip, lowercased).
     Default OFF (architect ruling 2026-10-18: server-flagged off until one live correction is proved)."""
@@ -1378,6 +1414,8 @@ class HumanTaskActRequest(_BaseModel):
     row_edits: Optional[RowEdits] = None
     # Document promotion `promoted` only (same flag as row_edits): header-field corrections.
     header_edits: Optional[list[HeaderEdit]] = None
+    # Document promotion `promoted` only: what the steward opened vs folded (provenance).
+    review_coverage: Optional[ReviewCoverage] = None
     # document_empty_confirm `has_parts` only (spec 208): the page the steward points at.
     page: Optional[_StrictInt] = None
 
@@ -1390,6 +1428,9 @@ class HumanTaskActRequest(_BaseModel):
         if self.row_edits is not None and self.decision not in ("approved", "promoted"):
             raise ValueError("row_edits is only valid with decision='approved' (grouped review) "
                              "or 'promoted' (document promotion)")
+        if self.review_coverage is not None and self.decision != "promoted":
+            raise ValueError("review_coverage is only valid with decision='promoted' "
+                             "(document promotion)")
         if self.header_edits is not None and not self.header_edits:
             self.header_edits = None
         if self.header_edits is not None:
@@ -5150,6 +5191,14 @@ async def act_on_human_task(
             "message": "header edits on a document promotion are off on this deployment "
                        "(IAGENT_PROMOTION_ROW_EDITS); sent here they would be lost"})
 
+    # review_coverage: document_promotion only. Sent elsewhere it would be dropped, which is a
+    # provenance claim that is not true.
+    if req.review_coverage is not None and match.get("kind") != "document_promotion":
+        raise HTTPException(status_code=422, detail={
+            "error": "review_coverage_not_for_kind", "kind": match.get("kind"),
+            "message": "review coverage is read only on a document promotion; sent here it "
+                       "would be lost"})
+
     if req.page is not None and match.get("kind") != EMPTY_CONFIRM_KIND:
         raise HTTPException(status_code=422, detail={
             "error": "page_not_for_kind", "kind": match.get("kind"),
@@ -5347,6 +5396,32 @@ async def act_on_human_task(
                                                 r["evidence_ref"])),
                                         "evidence_ref": r["evidence_ref"]})
 
+        # REVIEW COVERAGE (ruling 10-29): every part opened or folded into a named group. Asked
+        # before any write; an unreadable extraction is a 503, never a skipped check.
+        coverage = None
+        if req.review_coverage is not None:
+            try:
+                _cov_subject = promotion.subject_from_payload(match.get("payload"))
+                _parts = await run_in_threadpool(
+                    lambda: _review_parts_for_payload(_cov_subject))
+            except HTTPException as exc:
+                if exc.status_code < 500:
+                    raise  # e.g. 422 extraction_unbound: the binding said no, a retry will not help
+                raise HTTPException(status_code=503, detail={
+                    "error": "review_coverage_unverifiable", "task_id": task_id,
+                    "message": f"the extraction's parts could not be read "
+                               f"({type(exc).__name__}); nothing was written"})
+            except Exception as exc:  # noqa: BLE001 -- cannot-know is a refusal, nothing written
+                raise HTTPException(status_code=503, detail={
+                    "error": "review_coverage_unverifiable", "task_id": task_id,
+                    "message": f"the extraction's parts could not be read "
+                               f"({type(exc).__name__}); nothing was written"})
+            _bad = _review_coverage_problem(req.review_coverage, set(_parts))
+            if _bad is not None:
+                raise HTTPException(status_code=422, detail={
+                    "error": "review_coverage_invalid", "check": _bad[0], "message": _bad[1]})
+            coverage = req.review_coverage.model_dump()
+
         if req.decision == promotion.PROMOTED:
             # The notice's SUBJECT_TO set is reconciled to the reviewed rows (ruled 2026-10-20),
             # so the act needs the reviewed set. No extraction_ref: None (the act refuses 409 if a
@@ -5386,7 +5461,7 @@ async def act_on_human_task(
                 },
                 era=DECISION_RECORD_ERA, now_ms=int(time.time() * 1000),
                 row_edits=corrections, reviewed_mpns=_reviewed, earlier_ingests=_earlier,
-                leaf=_leaf_rec))
+                leaf=_leaf_rec, review_coverage=coverage))
         except promotion.PromotionRefused as exc:
             raise HTTPException(status_code=exc.status, detail={
                 "error": exc.error, "task_id": task_id, "message": str(exc)})
@@ -13667,6 +13742,38 @@ def _bound_review_for_payload(subject) -> dict:
             "error": "extraction_unbound",
             "message": f"the review rows are not under this document's directory {prefix!r}"})
     return _read_review_json(key)
+
+
+def _review_parts_for_payload(subject) -> list:
+    """The distinct `part_index` of the extraction a promotion task points at (sync; threadpool),
+    read through the reader behind `GET /ingest/{id}/extraction`."""
+    return sorted({int(m.group(1)) for it in _review_items(_bound_review_for_payload(subject))
+                   if (m := _PART_FIELD_RE.match(str(it.get("field_path") or "")))})
+
+
+def _review_coverage_problem(cov, parts: set) -> Optional[tuple]:
+    """`(check, message)` for the first failing coverage check, else None. Checks: unknown_part,
+    duplicate_part, overlap, uncovered. `sampled`, `flagged`, `shared`, `sample` are recorded only."""
+    lists = [("looked_at", cov.looked_at), ("sampled", cov.sampled), ("flagged", cov.flagged)]
+    lists += [(f"groups[{i}].parts", g.parts) for i, g in enumerate(cov.groups)]
+    lists += [(f"shared[{i}].parts", s.parts) for i, s in enumerate(cov.shared)]
+    for name, ids in lists:
+        extra = sorted(set(ids) - parts)
+        if extra:
+            return ("unknown_part", f"{name} names parts not in the extraction: {extra[:10]}")
+    for name, ids in lists:
+        if len(ids) != len(set(ids)):
+            return ("duplicate_part", f"{name} repeats a part id")
+    opened = set(cov.looked_at)
+    for i, g in enumerate(cov.groups):
+        both = opened & set(g.parts)
+        if both:
+            return ("overlap", f"groups[{i}] shares parts with looked_at or an earlier group: "
+                               f"{sorted(both)[:10]}")
+        opened |= set(g.parts)
+    if opened != parts:
+        return ("uncovered", f"parts neither opened nor grouped: {sorted(parts - opened)[:10]}")
+    return None
 
 
 def _review_header_for_payload(subject) -> dict:
