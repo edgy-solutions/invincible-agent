@@ -2865,7 +2865,8 @@ def _refused_entries(engine: str, refused_answers: list[dict], recipient_scope: 
 
     Items are grouped by `reason_code`, in order of each code's first appearance; a group's
     `answers` are its ids in board order. Every item of one code carries the same constant
-    reason, so the group's reason is the first item's. Only ever `status: "failed"`: cortex's
+    reason, so the group's reason is the first item's -- EXCEPT `scenario_answer`, whose reason
+    names its scenario: it groups by (code, reason) and the entry carries `scenario_id`. Only ever `status: "failed"`: cortex's
     reader drops the whole response on any other status. Never rendered on the customer page.
     """
     groups: dict[str, dict] = {}
