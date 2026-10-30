@@ -436,16 +436,48 @@ does not.
 | path or tag | review audience | approvers |
 | --- | --- | --- |
 | `policy/` (overlays included) | `repo_review:POLICY` | **2** |
-| `policy/asset_grants.yaml` | `access_grant:<DOMAIN>`, taken from each row the diff changes | **2** (the slice's access request uses `program_members.yaml` instead, so this row's count is not exercised by §7) |
+| `policy/asset_grants.yaml` | `access_grant:<DOMAIN>`, taken from each row the diff changes; a changed row with no domain, or whose domain has no such audience, goes to `repo_review:POLICY` (ratified 2026-10-29) | **2** (the slice's access request uses `program_members.yaml` instead, so this row's count is not exercised by §7) |
 | `policy/program_members.yaml` | `repo_review:POLICY` (the family has no audience of its own yet) | **1**: one Grant (ruled 2026-10-28) |
 | `policy/groups.yaml` | `repo_review:POLICY` (the family has no audience of its own yet) | **2** |
 | `policy/repository_paths.yaml`, `policy/task_grants.yaml`, `policy/grantors/` | `repo_review:POLICY` | **2** |
 | `policy/leak_terms.yaml` | `repo_review:POLICY` | **2**; exempt from check 4 (§2, ruled 2026-10-28) |
-| workflow specs (§4) | §4 names the audience | **2**: they live under `policy/workflows/`, so they are `policy/` paths unless the architect carves them out |
+| a workflow bundle (§4): its bundle file `policy/overlays/<deployment>/bundles/<trigger key>.yaml` and the rows it carries under that deployment's `triggers/`, `decisions/`, `workflows/` and `task_kinds/` | `repo_review:POLICY` **and** `workflow_steward:<DOMAIN>`, the domain read from the bundle file's `domain:` (the domain-steward carve-out, ruled 2026-10-29; below) | **2**: one from each audience |
 | `docs/adr/` | `repo_review:ADR` | 1 |
 | `tests/fixtures/` (no goldens directory exists at `93ea39af`) | `repo_review:FIXTURES` | 1 |
 | `sessions/` | the owning lane (below) | 0 when the exception applies, otherwise 1 |
 | release tags `invincible-agent-*` | `repo_release:invincible-agent` | **2** |
+
+**The workflow-bundle row: §4's domain-steward carve-out (ruled 2026-10-29).**
+
+- **What selects the row.** A proposal that adds or modifies a bundle file. The row covers that
+  file and every path the proposal touches under the **same deployment's** four row directories.
+  `<DOMAIN>` is the bundle file's `domain:` at the proposal head.
+  - This is the one row that is not matched by path prefix or tag pattern alone: the bundle file
+    in the diff selects it, and its `domain:` selects the audience.
+  - It is more specific than `policy/`, so it wins for the paths it covers. Every other path in the
+    proposal still takes its own row ("several rows means all of them").
+  - An edit under the row directories with **no** bundle file in the proposal takes the `policy/`
+    row. So do the seed directories, such as `policy/workflows/`: a dialogue never targets them
+    (§4).
+- **How the two audiences combine: one approval from each.**
+  - The steward's approval is the reason the carve-out exists. ADR-0061 asks for "the owning
+    domain's workflow stewards". If either audience could supply either approval, two
+    `repo_review:POLICY` approvals would merge a domain's workflow with no steward, and the
+    carve-out would change nothing.
+  - The policy reviewers' approval stays because a bundle's rows are policy rows: triggers,
+    decisions and task kinds.
+  - **The two approvers are distinct** (rules 2 and 6). A person in both audiences supplies one of
+    the two, never both.
+  - **Rule 7 per audience.** If either audience, less the proposer and the pending approver, is
+    empty, the proposal closes with that reason.
+- **The steward audience is `workflow_steward:<DOMAIN>`**, a task audience in
+  `policy/task_grants.yaml`.
+  - None exists yet. Who stewards a domain's workflows is each deployment's grant.
+  - A bundle whose domain has no such audience can never complete. It closes under rule 7 and
+    names the missing audience. There is no fallback, because the domain is a required slot (§4)
+    and a fallback would drop the steward.
+  - The row lands in `policy/repository_paths.yaml` in the PR that adds the first steward
+    audience. Rule 8 already refuses a `<DOMAIN>` template that resolves to no audience.
 
 **The second approver: saf's rule, in the same shape.** saf built it for the delete of a
 safety-critical part in #114 (`409b5344`) and #115 (`a7f5995c`). Its arms are in
@@ -475,6 +507,11 @@ engine-r adds what a part delete does not need:
 8. **`validate_policy` refuses a row whose audience has fewer distinct users than `approvers`.**
    Groups are expanded one level, as the queue expands them. Rule 7 is then a runtime event (a
    member left, or the proposer is a member), never a configuration.
+   - Two audiences are held to one more user than any row naming them requires: `repo_review:POLICY`
+     and `repo_release:invincible-agent` (ruled 2026-10-29). So a two-approver `policy/` change, or
+     a release tag, still has two eligible approvers after the proposer is excluded. In the sandbox
+     both audiences hold alice, bob and carol.
+   - A `<DOMAIN>` template is checked for every audience it can resolve to, and for its fallback.
 
 §5 fixes the **observable** rule, which is these arms. It does not fix where completeness is
 decided. ADR-0027 Decision 4 makes that a Topaz evaluation, but saf's rule decides in the engine.
