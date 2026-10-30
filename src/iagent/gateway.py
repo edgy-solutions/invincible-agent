@@ -10880,45 +10880,45 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
             # INSIDE the keepalive: `_keepalive_wrap` turns a producer exception into an error
             # event, so only here can the audit line say `outcome=error`.
             _audit_orchestrate_wrap(
-              generate_dagster_stream(
-                request,
-                trace_id=_trace_id,
-                user_id=current_user.id,
-                # ADR-0025 hop 2 + identity consolidation (2026-07-09): the
-                # caller's AUTHORIZATION IDENTITY (authz_id — the
-                # USER_ENTITLEMENT_CLAIM key policy/users.yaml + the seeded Topaz
-                # `user` objects key on; NOT the sub in user_id, NOT necessarily
-                # email). In sandbox authz_id == email (transparent); at
-                # work-deploy USER_ENTITLEMENT_CLAIM=<employee-id claim> re-keys
-                # this and the entitlement lookup TOGETHER with one knob. Threaded
-                # so Engine D's query_metadata + Engine O's resolve ASK Topaz
-                # about the SAME subject the matrix was looked up by (no
-                # email-vs-employee-id divergence). The downstream param name is
-                # still `user_email` but it CARRIES authz_id — a full param rename
-                # (user_email→authz_id through supervisor/Engine D/Engine O) is the
-                # honesty follow-up; the VALUE is the load-bearing fix. "" when
-                # absent → Topaz denies (least-privileged).
-                user_email=current_user.authz_id,
-                user_persona=effective_persona,
-                entitled_domains=effective_domains,
-                # The caller's own credential, for the vault only. Read from the header
-                # rather than re-minted: the whole point of the ruled design is that what
-                # reaches /canvas/seed is ALICE'S OWN Ping-rooted token — the same one the
-                # browser sends on the button path — never a new one minted on some
-                # broker's authority.
-                caller_token=(
-                    (http_request.headers.get("authorization") or "")
-                    .removeprefix("Bearer ")
-                    .strip()
+                generate_dagster_stream(
+                    request,
+                    trace_id=_trace_id,
+                    user_id=current_user.id,
+                    # ADR-0025 hop 2 + identity consolidation (2026-07-09): the
+                    # caller's AUTHORIZATION IDENTITY (authz_id — the
+                    # USER_ENTITLEMENT_CLAIM key policy/users.yaml + the seeded Topaz
+                    # `user` objects key on; NOT the sub in user_id, NOT necessarily
+                    # email). In sandbox authz_id == email (transparent); at
+                    # work-deploy USER_ENTITLEMENT_CLAIM=<employee-id claim> re-keys
+                    # this and the entitlement lookup TOGETHER with one knob. Threaded
+                    # so Engine D's query_metadata + Engine O's resolve ASK Topaz
+                    # about the SAME subject the matrix was looked up by (no
+                    # email-vs-employee-id divergence). The downstream param name is
+                    # still `user_email` but it CARRIES authz_id — a full param rename
+                    # (user_email→authz_id through supervisor/Engine D/Engine O) is the
+                    # honesty follow-up; the VALUE is the load-bearing fix. "" when
+                    # absent → Topaz denies (least-privileged).
+                    user_email=current_user.authz_id,
+                    user_persona=effective_persona,
+                    entitled_domains=effective_domains,
+                    # The caller's own credential, for the vault only. Read from the header
+                    # rather than re-minted: the whole point of the ruled design is that what
+                    # reaches /canvas/seed is ALICE'S OWN Ping-rooted token — the same one the
+                    # browser sends on the button path — never a new one minted on some
+                    # broker's authority.
+                    caller_token=(
+                        (http_request.headers.get("authorization") or "")
+                        .removeprefix("Bearer ")
+                        .strip()
+                    ),
+                    # Capture A per ADR-0025: thread the JWT-read-time
+                    # origin flag from auth.User down to the produced_for
+                    # dict construction inside generate_dagster_stream.
+                    entitlement_source=current_user.entitlement_source,
                 ),
-                # Capture A per ADR-0025: thread the JWT-read-time
-                # origin flag from auth.User down to the produced_for
-                # dict construction inside generate_dagster_stream.
-                entitlement_source=current_user.entitlement_source,
-              ),
-              who=current_user.authz_id,
-              via=getattr(current_user, "azp", None) or "",
-              session_id=request.session_id,
+                who=current_user.authz_id,
+                via=getattr(current_user, "azp", None) or "",
+                session_id=request.session_id,
             ),
             interval_s=10.0,
         ),

@@ -9,6 +9,7 @@ Run: uv run pytest tests/routing/test_orchestrate_writes_one_audit_line.py -q
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
@@ -18,12 +19,14 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-_SRC = Path(__file__).resolve().parents[2] / "src"
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
+_REPO = Path(__file__).resolve().parents[2]
+_RA = _REPO / "agent_fleet" / "restate_analyst"
+for _p in (str(_RA), str(_REPO)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-import iagent.gateway as gw  # noqa: E402
-from iagent.auth import User  # noqa: E402
+from src.iagent import gateway as gw  # noqa: E402
+from src.iagent.auth import User  # noqa: E402
 
 LOGGER = "iagent.audit.orchestrate"
 VERB = "mesh:planCapabilityPath"
@@ -139,3 +142,35 @@ async def test_pre_stream_refusal_logs_refused_status(arrive, monkeypatch):
     (line,) = _lines(arrive)
     assert ("who=alice@example.com via=mcp-client session_id=s-refused verb= case= " in line
             and "outcome=refused:422" in line), line
+
+
+# ── through the REAL keepalive: why the wrapper sits inside it ────────────────────────────────
+
+async def _hang_after(chunks):
+    for c in chunks:
+        yield c
+    await asyncio.sleep(3600)
+
+
+@pytest.mark.asyncio
+async def test_close_through_the_keepalive_is_closed(arrive):
+    ka = gw._keepalive_wrap(_wrap(_hang_after(FULL)), interval_s=5)
+    first = await ka.__anext__()
+    assert first == FULL[0]
+    await ka.aclose()
+    for _ in range(5):  # the producer task is cancelled, not awaited inline
+        if _lines(arrive):
+            break
+        await asyncio.sleep(0)
+    (line,) = _lines(arrive)
+    assert "outcome=closed" in line, line
+
+
+@pytest.mark.asyncio
+async def test_error_through_the_keepalive_is_error_and_stream_ends_with_pipeline_error(arrive):
+    ka = gw._keepalive_wrap(_wrap(_gen(FULL[:3], then=RuntimeError("boom"))), interval_s=5)
+    out = [c async for c in ka]  # does not raise: the keepalive converts the error to an event
+    assert out[:3] == FULL[:3]
+    assert "pipeline_error" in out[-1], out[-1]
+    (line,) = _lines(arrive)
+    assert "outcome=error" in line and f"verb={VERB}" in line, line
