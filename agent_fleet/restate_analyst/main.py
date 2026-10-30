@@ -1775,6 +1775,30 @@ def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack
     return resp.json()
 
 
+def _expire_human_task(workflow_id: str, task: dict) -> Optional[dict]:
+    """Retire the queue row(s) `_register_human_task` materialized for `task`, after its await
+    TIMED OUT -- otherwise the row stays `pending` for ever and REST and the feed both offer a task
+    nobody can act on. Runs inside ctx.run(). The ids are the ones the register used
+    (`task["id"]`, `workflow_id`). Mint-at-use bearer, like the register.
+
+    HYGIENE, NOT A GATE: a 401/403 is logged and swallowed (the terminal stays `timed_out`; a
+    denied hygiene write must not park or fail the workflow). 5xx / network stay RETRYABLE."""
+    task_id = task["id"]
+    headers = {"Authorization": f"Bearer {mint_service_token()}"}
+    resp = requests.post(
+        f"{CORTEX_BFF_URL}/internal/human_tasks/expire",
+        json={"task_id": task_id, "workflow_id": workflow_id},
+        headers=headers, timeout=AGENT_HTTP_TIMEOUT,
+    )
+    if resp.status_code in (401, 403):
+        logger.warning(
+            "expire of timed-out HumanTask %r (workflow %r) denied (%s); the row stays pending, "
+            "the terminal stays timed_out", task_id, workflow_id, resp.status_code)
+        return None
+    resp.raise_for_status()  # 5xx / network stay RETRYABLE
+    return resp.json()
+
+
 # A placeholder is a bare name (a top-level TRIGGER scalar, the original form) or a DOTTED PATH
 # into the run's context (`trigger.fault.item`, `outputs.<definition>.<step>.chosen`). The dotted
 # form used to fall outside this pattern and pass through LITERALLY, with no error, strict or not --
@@ -2498,6 +2522,13 @@ async def _run_definition(
                     "terminal": "timed_out",
                     "deadline_seconds": step.deadline_seconds,
                 })
+                # RETIRE THE QUEUE ROW. Nothing else writes the projection on a timeout, so
+                # without this the row stays `pending` and both REST and the feed keep offering
+                # a task nobody can act on. Same ids the register for this step used.
+                await ctx.run(
+                    f"expire_{step.id}",
+                    lambda t=task: _expire_human_task(workflow_id, t),
+                )
                 # The definition ENDS here. Continuing would run later steps as though the
                 # human had acted, which is the §4.3.7 defect in general form: proceeding
                 # past an await that was never satisfied.

@@ -1378,6 +1378,26 @@ async def register_human_task(
     return result
 
 
+class HumanTaskExpireRequest(_BaseModel):
+    task_id: str
+    workflow_id: Optional[str] = None
+
+
+@app.post("/internal/human_tasks/expire")
+async def expire_human_task(
+    req: HumanTaskExpireRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Retire the still-`pending` queue row(s) of a task whose human_await TIMED OUT, so neither
+    REST nor the feed offers a task nobody can act on. INTERNAL seam, same gate as register
+    (get_current_user). `expired == 0` is a 200: an already-resolved task stays resolved."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    n = await run_in_threadpool(lambda: human_tasks.expire_open_task(req.task_id, req.workflow_id))
+    logger.info("human_task expired: task_id=%s workflow_id=%s rows=%d", req.task_id, req.workflow_id, n)
+    return {"task_id": req.task_id, "workflow_id": req.workflow_id, "expired": n}
+
+
 @app.post("/access_requests")
 async def create_access_request(
     req: AccessRequestRequest,
@@ -15536,15 +15556,12 @@ async def electric_shape_proxy(
     # server-side WHERE; there is no branch that serves a table UNFILTERED.
     if table == "human_task_projection":
         escaped_id = _escape_identity_literal(current_user.authz_id)
-        # Scope the inbox stream to PENDING rows only, so it agrees with the REST
-        # snapshot (/me/human_tasks filters status='pending'). Without this the shape
-        # streamed EVERY row for the recipient incl. resolved ones; a resolved task
-        # could linger client-side as a stale 'pending' (the badge showing N, then
-        # dropping to the real count when the inbox opened and replacePending ran the
-        # REST reconcile). With status in the WHERE, resolving a task moves it OUT of
-        # the shape -> Electric emits a delete -> it drops cleanly, no flicker. status
-        # is a plain column (Electric's WHERE subset handles column = literal + AND).
-        server_where = f"recipient_id = '{escaped_id}' AND status = 'pending'"
+        # Scope the inbox stream to PENDING rows only, so it agrees with the REST snapshot
+        # (/me/human_tasks): resolving a task moves it OUT of the shape -> Electric emits a delete.
+        # The predicate's definition now lives in human_tasks (inbox_where_literal), shared with
+        # list_tasks_for; this site only supplies the validated, escaped identity.
+        from . import human_tasks as _human_tasks
+        server_where = _human_tasks.inbox_where_literal(escaped_id)
     elif table == "ingest_status_projection":
         # ADR-0041 §8: the ingestion seam's status stream. Same authz_id-keyed discipline
         # as human_task_projection above (submitted_by/on_behalf_of are authz identities,

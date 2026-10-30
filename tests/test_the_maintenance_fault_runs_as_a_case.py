@@ -122,6 +122,8 @@ def registered(monkeypatch):
     monkeypatch.setattr(main, "_register_human_task",
                         lambda wf, task, kind="workflow_ack", case_id=None: rows.append(
                             (wf, task["audience"], kind)) or {})
+    # An expired await now retires its queue row over HTTP; this file is not about that leg.
+    monkeypatch.setattr(main, "_expire_human_task", lambda wf, task: None)
     return rows
 
 
