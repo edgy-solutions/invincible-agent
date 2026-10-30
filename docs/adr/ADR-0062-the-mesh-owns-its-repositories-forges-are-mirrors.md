@@ -261,7 +261,8 @@ policy, no review decision and no audit that engine-r does not also hold.
 
 ### 4. Workflows through the repository
 
-Written by lane/74, against ADR-0061 at `3495ba5f`. ADR-0061 describes a workflow in dialogue
+Written by lane/74, against ADR-0061 at `3495ba5f`. The architect accepted it on 2026-10-29 and
+ruled the domain-steward carve-out, which is folded in below. ADR-0061 describes a workflow in dialogue
 and compiles it to the rows the case runner already runs. This section says where those rows go
 when the dialogue ends: **a Socratic workflow spec is a proposal in engine-r, its approval is the
 review task, and the runnable spec is the merged file.**
@@ -273,7 +274,7 @@ review task, and the runnable spec is the merged file.**
 - The proposal's diff is the bundle and nothing else:
   - rows in the four row directories (`triggers/`, `decisions/`, `workflows/`, `task_kinds/`)
     under the deployment's overlay, `policy/overlays/<deployment>/`;
-  - the bundle's deferral file (below).
+  - the bundle file, which declares the bundle's `domain:` and its deferrals (below).
 
   A dialogue never targets the seed directories (`policy/workflows/` and its siblings), and its
   proposal touches no path outside its overlay.
@@ -298,13 +299,17 @@ review task, and the runnable spec is the merged file.**
 
 **Who reviews.**
 
-- Every path in the bundle is a `policy/` path, so §5's `policy/` row decides:
-  `repo_review:POLICY`, **two approvers**, neither of them the proposer.
-- §4 adds no audience of its own. ADR-0061 asks for "the owning domain's workflow stewards", but
+- **The domain-steward carve-out (ruled 2026-10-29).** A workflow bundle declares `domain:`. Its
+  review audience is `repo_review:POLICY` **plus** that domain's steward group. There are two
+  approvers, and neither is the proposer.
+- **Why the bundle declares it.** ADR-0061 asks for "the owning domain's workflow stewards", but
   §5 matches rows by path. A workflow row carries no domain, and the overlay path names a
-  deployment, not a domain, so no path row can select a domain's stewards.
-- A steward audience would be a carve-out of `policy/`, which is the architect's to make (§5's
-  table). Until then, the workflow stewards are `repo_review:POLICY`.
+  deployment, not a domain. So the domain has to be declared in the bundle itself.
+- **gov adds the row** to `policy/repository_paths.yaml`, keyed on overlay path and domain (§5).
+  The row says how the two audiences combine within its two approvers: either audience may
+  supply either approval, or one approval must come from each.
+- **The domain is a required slot** (ADR-0061 §3c). Without it, a bundle cannot select its row,
+  so the dialogue cannot end `runnable`. The prototype has no such slot yet (`3495ba5f`).
 
 **What the card shows.**
 
@@ -313,18 +318,22 @@ review task, and the runnable spec is the merged file.**
   the diff.** ADR-0061 §5 requires the ratifier to see what was deferred rather than decided,
   because the runtime reads some absences as answers: a deferred deadline runs as no deadline.
 
-**Deferrals merge with the rows.** This answers ADR-0061's open question on where a deferral is
-stored once merged.
+**The bundle file: its domain and its deferrals.** This answers ADR-0061's open question on
+where a deferral is stored once merged.
 
-- Each bundle carries a deferral file, `policy/overlays/<deployment>/deferrals/<trigger key>.yaml`.
-  It maps each gap key to its reason, in the shape of the prototype fixtures'
-  `expected/deferrals.yaml`. No runtime reads it.
-- It merges in the same proposal as the rows. The deferral therefore outlives the review task and
-  mirrors with the rows (§3).
+- Each bundle carries one file, `policy/overlays/<deployment>/bundles/<trigger key>.yaml`. It holds
+  two things:
+  - `domain:`, which selects the review row (above);
+  - `deferrals:`, which maps each gap key to its reason, in the shape of the prototype fixtures'
+    `expected/deferrals.yaml`.
+
+  No runtime reads it.
+- It merges in the same proposal as the rows. The domain and the deferrals therefore outlive the
+  review task and mirror with the rows (§3).
 - Answering a deferral later is a new proposal that changes the row and removes the line.
 - **Not measured.** The prototype keeps deferrals in the dialogue's state and writes no file. The
   fixtures' `deferrals.yaml` is the measurement's expected value, not the prototype's output. The
-  building PR owes an arm proving the case runner's loaders ignore a `deferrals/` directory in an
+  building PR owes an arm proving the case runner's loaders ignore a `bundles/` directory in an
   overlay.
 
 **The checks at merge include the runner's loaders.**
@@ -337,6 +346,8 @@ stored once merged.
 - So any proposal that touches a row directory runs the case runner's own loaders (triggers,
   decision tables, workflow definitions, task kinds) **over the composed policy at the merge
   result**, as a pre-receive check. A loader refusal carries the envelope and moves no ref.
+- The same check refuses a bundle file whose `domain:` is absent or is not a domain in
+  `policy/domains.yaml`. Without a domain, there is no row to select.
 - §5's `validate_policy` check does not stand in for this one. At `c346e782`,
   `policy/sync/validate_policy.py` loads none of the four row kinds.
 - As with §5's check, §4 names this one, and adding it to §2's list is §2's job.
