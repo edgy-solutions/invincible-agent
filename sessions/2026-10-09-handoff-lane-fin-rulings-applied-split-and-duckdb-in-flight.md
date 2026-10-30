@@ -19,6 +19,45 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-30 (later): can_export ruled (b); #148 reads the served registry. Read this first
+
+### Where each PR is
+
+- **#148** `fin/plan-answers-export` @ `03f164ac`: CLEAN; 21 pass and 3 skipped.
+  - `c27a6dbf`: both doors check `can_export:<profile>` (ruled (b) 10-30). The download stays
+    reader-only.
+  - `169aa99d`: master merged in. Lane/01's openapi regeneration is byte-identical to ours.
+  - `03f164ac`: the architect's standing rule, test 4. The BFF reads cost's
+    `GET /answers_export/profiles`, and never the disk.
+  - **#148 must merge BEFORE #151.** #151's validator refuses a `can_export:` key naming an unknown
+    profile, and `plan-answers` arrives with #148. A packet is with gov.
+- **#144** `fin/cdrl-formats` @ `48b36094`: mergeable. If #151 merges first, add
+  `can_export:cdrl_a001_ev_summary_json` -> `[finance-analysts]`.
+- **#147** `fin/overlay-contract-doc` @ `bd718bd0`: stacked on #144. After #144 merges, run
+  `gh pr edit 147 --base master` and read its checks.
+
+### Open
+
+- **Gov's half of the ruling:**
+  - #151 re-keyed to `plan-answers` -> `portfolio-leads`;
+  - #159 adds alice as a reader of `plan:notional-plan-office`.
+- **The live export test:** #148 -> #151/#159 merge -> Chris syncs -> roll -> alice exports a
+  Portfolio board to `notional-plan-office`.
+- **Owed:** move finance's and cost's `RECIPIENT_READERS` onto the rail (gov ruling 4).
+- **The 10-28 post-roll acceptance list is unchanged.**
+
+### Packets placed this session (master tree `sessions/`, untracked)
+
+- `2026-10-30-packet-to-gov-from-fin-151-rekeyed-to-plan-answers-must-land-after-148.md`: the merge
+  order, `EXPORT_*_GROUPS` under the standing rule, and `_PLAN_OWNER` read as mechanism.
+- `2026-10-30-packet-to-gov-and-architect-from-fin-148-moved-...` and
+  `2026-10-30-packet-to-lane-01-from-fin-144-merged-master-...`, both from earlier today.
+
+### Specs (scratchpad, this session)
+
+- `spec-plan-can-export.md` (E5)
+- `spec-plan-served-registry.md` (E6)
+
 ## Update 2026-10-30: three 10-29 rulings applied to #148; #144 mergeable; #147 rebased. Read this first
 
 ### PRs
