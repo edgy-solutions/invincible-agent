@@ -50,8 +50,13 @@ PR bodies for #151 and #159 now open with a "2026-10-30 standing rule" section. 
 
 ## Open forks (new; the old file's 1–6 still stand)
 
-7. **Test 4 on #151.** `known_export_profiles` composes each kind's directories as its loader does: a copy, held equal by the `test_2` arms. Gov recommends the SDK loader convergence (v0.9.12) as the fix, not a #151 blocker. The architect's call.
-8. **Test 4 on #149.** `GOVERNED_ROOTS` restates engine-r's; it is repository scope. The architect's call.
+7. **RULED 10-30: converge the loaders in the SDK (v0.9.13); the two copies are queue items, not blockers.**
+   - Requested from `iagent-mesh-sdk/lane/ca` by a packet placed untracked in the SDK's `sessions/`: `2026-10-30-packet-to-ca-from-gov-v0-9-13-one-export-profile-loader-the-validator-and-engines-share.md`.
+   - When v0.9.13 ships, gov:
+     - deletes `known_export_profiles`' composition and `_EXPORT_KIND_LABEL` from `validate_policy.py`;
+     - calls the SDK instead;
+     - ports the `test_2` arms.
+8. **The same ruling covers #149's `GOVERNED_ROOTS`** (a restatement of engine-r's constant). It is queued in the same packet. It needs one declaration that engine-r and the validator both read.
 
 ## Next (in order)
 
