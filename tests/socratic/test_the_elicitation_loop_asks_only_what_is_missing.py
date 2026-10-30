@@ -583,3 +583,44 @@ def test_no_example_to_show_is_a_refusal_not_an_empty_prompt(tmp_path, monkeypat
 def test_the_model_extractor_names_no_policy_file():
     src = Path(se.__file__).read_text(encoding="utf-8")
     assert "policy/overlays/" not in src
+
+
+# ── a patch the loop cannot apply is a model error charged to its turn (architect, 2026-10-30) ──
+
+GOOD = {"file": "decisions/probe.yaml", "path": "note", "value": "kept"}
+POSITIONAL = {"file": "decisions/probe.yaml", "path": "steps[0].deadline_seconds", "value": 60}
+
+
+class _Restating:
+    """Sends a positional path first; sends ``GOOD`` once it is told the patch was refused."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, entry, draft, gap):
+        self.calls.append(dict(entry))
+        return {"set": [GOOD] if entry.get("refused") else [POSITIONAL]}
+
+
+def test_an_unparseable_path_is_charged_to_its_turn_and_the_restatement_lands():
+    ex = _Restating()
+    r = se.run({"opening": {"says": "probe"}}, ex)
+    assert [e["turn"] for e in r["model_errors"]] == [0]
+    assert "steps[0]" in r["model_errors"][0]["error"]
+    assert len(ex.calls) == 2 and "refused" not in ex.calls[0]
+    assert "steps[0]" in ex.calls[1]["refused"]
+    assert r["files"]["decisions/probe.yaml"]["note"] == "kept"
+
+
+def test_a_refused_patch_lands_nothing_and_the_run_continues():
+    calls = []
+
+    def stubborn(entry, draft, gap):
+        calls.append(entry)
+        return {"set": [GOOD, POSITIONAL]}
+
+    r = se.run({"opening": {"says": "probe"}}, stubborn)
+    assert len(calls) == 1 + se.PATCH_RESTATES
+    assert [e["turn"] for e in r["model_errors"]] == [0] * (1 + se.PATCH_RESTATES)
+    assert "decisions/probe.yaml" not in r["files"]
+    assert r["status"] in ("runnable", "cannot_run")

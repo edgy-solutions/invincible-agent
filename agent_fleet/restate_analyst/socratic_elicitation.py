@@ -1097,6 +1097,9 @@ class ModelExtractor:
             f"CURRENT DRAFT (files)\n{yaml.safe_dump(draft.files, sort_keys=False)}\n"
             f"QUESTION\n{('OPENING' if gap is None else gap.key + ': ' + gap.question)}\n\n"
             f"STATEMENT\n{utterance_entry.get('says', '')}\n")
+        if utterance_entry.get("refused"):
+            user += (f"\nREFUSED\nYour previous patch for this statement was refused: "
+                     f"{utterance_entry['refused']}\nRestate the whole patch in the path grammar.\n")
         body = {"model": self.model, "stream": False, "format": "json", "options": {"temperature": 0},
                 "messages": [{"role": "system", "content": self._system_prompt()},
                              {"role": "user", "content": user}]}
@@ -1137,6 +1140,28 @@ class ModelExtractor:
 # THE LOOP
 # ═════════════════════════════════════════════════════════════════════════════════════════════
 
+PATCH_RESTATES = 1  # times the model is asked to restate a refused patch before the turn moves on
+
+
+def _apply_or_charge(draft: Draft, extractor: Callable[[dict, Draft, Optional[Gap]], dict],
+                     entry: dict, gap: Optional[Gap], turn: int, charged: List[dict]) -> None:
+    """Apply the extractor's patch for one turn. A patch the loop cannot apply is a model error
+    charged to that turn (architect, 2026-10-30): it is recorded, the model is asked to restate it
+    with the refusal in hand, and the loop continues. A run never crashes on model output. The
+    patch is tried on a copy, so nothing of a refused patch lands in the draft."""
+    ask = entry
+    for _ in range(1 + PATCH_RESTATES):
+        trial = copy.deepcopy(draft)
+        try:
+            apply_patch(trial, extractor(ask, draft, gap), turn, answering=gap)
+        except PatchError as exc:
+            charged.append({"turn": turn, "error": str(exc)})
+            ask = {**entry, "refused": str(exc)}
+            continue
+        draft.__dict__.update(trial.__dict__)
+        return
+
+
 def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict],
         max_turns: int = 40,
         answer: Optional[Callable[[Gap, Draft], Optional[dict]]] = None) -> dict:
@@ -1145,7 +1170,8 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
     if hasattr(extractor, "with_context"):
         extractor.with_context(transcript.get("context") or {})  # type: ignore[attr-defined]
     opening = transcript["opening"]
-    apply_patch(draft, extractor(opening, draft, None), 0, None)
+    model_errors: List[dict] = []
+    _apply_or_charge(draft, extractor, opening, None, 0, model_errors)
     questions: List[dict] = []
     messages: List[dict] = []
     contradictions_asked: List[str] = []
@@ -1197,7 +1223,7 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
             if any(p.key == g.key for p in draft.pending):
                 draft.pending = [p for p in draft.pending if p.key != g.key]
             continue
-        apply_patch(draft, extractor(entry, draft, g), turn, answering=g)
+        _apply_or_charge(draft, extractor, entry, g, turn, model_errors)
         if (g.key not in draft.deferrals and g.key not in draft.open
                 and any(x.key == g.key for x in _all_gaps(draft))):
             unresolved += 1
@@ -1227,4 +1253,5 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
         "open": dict(draft.open),
         "turns": turn,
         "deferred_refusals": sorted(refused),
+        "model_errors": model_errors,
     }
