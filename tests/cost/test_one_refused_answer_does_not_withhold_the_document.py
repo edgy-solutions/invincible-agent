@@ -155,12 +155,32 @@ def test_gateway_passes_refused_answers_through_on_a_cost_only_board(world):
 
 
 def test_gateway_passes_an_in_band_refusal_list_through(world):
-    """Defends: an in-band engine refusal's refused_answers becomes documents[] entries."""
+    """Defends: an in-band engine refusal's refused_answers becomes documents[] entries; an
+    answer the refusal list does not name is still accounted for, as one not_in_model entry
+    carrying the engine's reason (RULED in #137)."""
     items = _items()
+    named = {i["answer_id"] for i in items}
+    rest_ids = [a["id"] for a in [COST1] if a["id"] not in named]
+    assert rest_ids, "the fixture must leave an answer unnamed, or this test defends nothing"
     world.reply = _Resp(200, {"refused": True, "outcome": "not_in_model", "reason": "x",
                               "refused_answers": items})
-    r = world.post([COST1])
-    assert _got(_entries(r.json())) == _expected(items)
+    entries = _entries(world.post([COST1]).json())
+    rest = [d for d in entries if d["reason_code"] == "not_in_model" and d["answers"] == rest_ids]
+    assert len(rest) == 1, entries
+    assert rest[0]["reason"] == "x"
+    want = sorted(_expected(items) + [("not_in_model", "x", i) for i in rest_ids])
+    assert _got(entries) == want
+
+
+def test_gateway_adds_no_rest_entry_when_the_refusal_list_names_every_answer(world):
+    """Defends: the rest entry is "the answers the list leaves unnamed", not "always one extra":
+    when refused_answers names every board answer the documents equal the list exactly."""
+    items = _items() + [{"answer_id": COST1["id"], "reason_code": C.NO_VERB,
+                         "reason": C.REFUSAL_REASONS[C.NO_VERB]}]
+    world.reply = _Resp(200, {"refused": True, "outcome": "not_in_model", "reason": "x",
+                              "refused_answers": items})
+    entries = _entries(world.post([COST1]).json())
+    assert _got(entries) == _expected(items)
 
 
 def test_gateway_cost_section_of_a_mixed_board_carries_refused_answers(world):
