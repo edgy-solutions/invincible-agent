@@ -157,12 +157,14 @@ added).**
   - `confirmed` (the ruled "accept"; not spelled `accepted`, which in
     `risk_acceptance_*` means residual risk accepted and must keep meaning only that);
   - `dismissed`, reason-required;
-  - `new_hazard` (the "open hazard" outcome; the verb name and its reason requirement already
-    exist on `hazard_link_review`). It opens the hazard for the human's later draft; the task
-    drafts no level.
+  - `new_hazard` (the "open hazard" outcome), **reason-required, matching `hazard_link_review`
+    (ruled 2026-10-30)**; the verb name and its reason requirement already exist there. It opens
+    the hazard for the human's later draft; the task drafts no level. The opening itself is a
+    §5 prerequisite.
   There is no risk-level verb, so the task cannot accept risk.
 - **Audience.** A role-and-domain string, `safety_finding_review:SUSTAINMENT`: the safety
-  steward, SUSTAINMENT. It follows the `<audience>:<scope>` keys of `policy/task_grants.yaml`
+  steward, SUSTAINMENT. **The audience is granted to the existing `safety-engineers` group
+  (ruled 2026-10-30); no new group is added.** It follows the `<audience>:<scope>` keys of `policy/task_grants.yaml`
   (compare `hazard_link_review:SUSTAINMENT`, `:306`). It is a new grant row, so: merge, Chris runs topaz_sync, then roll.
 - **Requester.** A service raising a task with `on_behalf_of` is ruled admissible; Lane 1 confirms
   `register_task` (`src/iagent/human_tasks.py:407`) accepts it and adds the test (a §5 prerequisite).
@@ -280,6 +282,13 @@ overrun is the seed-row wiring, because doc-tools cannot yet project an event ro
   shows it, so the card waits on that mirror. There is no `review_shape` prerequisite: an
   event-branch kind is never promoted (F1, §1 decision 2).
 - A part on the `safety_critical` list (F5), for any later promotion; the slice itself needs none.
+- A `new_hazard` outcome opens a hazard via the existing `hazard_link_review` path: one step, saf
+  builds it, inside the slice's 7.5 days (ruled 2026-10-30; no re-size, the days stay as
+  tabled). What exists today is the declaration only: the `hazard_link_review` task kind, its
+  verbs and reason requirement, and its grant. No code raises that task or acts on
+  `new_hazard`: `human_tasks.py` stores the verb and nothing creates a hazard from it, and
+  `classifyWriteUp` has no code either. So the step to build is "on `new_hazard`, create the
+  hazard".
 
 ## §6 — Alignment by concept name
 
