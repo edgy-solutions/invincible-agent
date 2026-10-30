@@ -31,7 +31,7 @@ from tests.test_a_case_runs_from_trigger_to_terminal import (  # noqa: E402
 from tests.test_cases_route import (  # noqa: E402,F401
     _FakeRestate, _user, client_for)
 from tests.test_the_maintenance_fault_runs_as_a_case import (  # noqa: E402,F401
-    ACK, DECIDE, OPTION_VERBS, REVIEW, _declared_walk_double, _event, _options, _real_policy,
+    DECIDE, OPTION_VERBS, REVIEW, _declared_walk_double, _event, _options, _real_policy,
     _run)
 
 from src.iagent import case_projection, gateway  # noqa: E402
@@ -147,7 +147,7 @@ def test_s6_the_model_refuses_a_stage_it_cannot_honour():
             {"kind": "wait", "id": "w", "seconds": 5, "stagee": "a"}]))
     # the overlay definitions load, with the declarations the panel reads
     assert [s.stage for s in PROPOSE.steps] == ["proposed", None, "awaiting_approval"]
-    assert [s.stage for s in RELEASE.steps] == ["released", None]
+    assert [s.stage for s in RELEASE.steps] == ["released"]
     assert SUPERVISOR.domain_stages == ["awaiting_supervisor"]
 
 
@@ -234,8 +234,7 @@ def tasks(monkeypatch):
 @pytest.mark.asyncio
 async def test_o4_registration_carries_the_resolved_options_only_when_declared(tasks):
     _, c = await _run(_event(), [(DECIDE, "evacuate_for_depot"), (REVIEW, "rejected", "s@x"),
-                                 (DECIDE, "replace_after_resupply", "m2@x"),
-                                 (ACK, "released", "tier@x")])
+                                 (DECIDE, "replace_after_resupply", "m2@x")])
     decide = [t for wf, t in tasks if t["id"].endswith(":decide")]
     review = [t for wf, t in tasks if t["id"].endswith(":review")]
     assert decide and review

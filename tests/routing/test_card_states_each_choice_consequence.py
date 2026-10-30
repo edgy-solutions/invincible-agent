@@ -161,7 +161,7 @@ def tasks(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("me", [True, False])
 async def test_F_THE_REGISTERED_TASK_CARRIES_THE_DERIVED_TEXT(tasks, me):
-    await _run(_event(me=me), [(DECIDE, "replace_after_resupply"), ("tier_ack", "released", "t@x")])
+    await _run(_event(me=me), [(DECIDE, "replace_after_resupply")])
     [(wf, task, kind)] = [t for t in tasks if t[2] == "maint_fault_approval"][:1]
     summary = task["summary"]
     assert STALE not in summary, summary
