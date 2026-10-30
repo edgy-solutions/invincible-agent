@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 INGEST_V1_TAG = "ingest-v1"
-# The `mcp` surface: the twelve BFF operations an MCP server wraps. Spec:
+# The `mcp` surface: the thirteen BFF operations an MCP server wraps. Spec:
 # sessions/2026-10-30-packet-to-architect-cc-ca-saf-from-lane-01-mcp-server-over-the-bff-one-page-spec.md
 # (sections 1, 2, 5). Tagged ADDITIVELY on the routes (existing tags kept); /interview/stream shares
 # the /orchestrate handler but is NOT in this set.
@@ -53,6 +53,7 @@ MCP_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/export/package/artifact/{filename}"),
     ("GET", "/export/cdrl"),
     ("GET", "/export/cdrl/profiles"),
+    ("POST", "/finance/measure/{fn}"),
 })
 
 PREVIEW_ROUTES: frozenset[tuple[str, str]] = frozenset({("POST", "/ingest/{ingest_id}/empty")})

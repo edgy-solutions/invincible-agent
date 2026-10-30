@@ -2327,6 +2327,17 @@ services:
           payload against the caller's registered menu (ADR-0042 §2). Plan state is portfolio
           read-model, entitlement-scoped where the verb runs; the BFF adds no scoping of its
           own and must not, or there would be two places deciding what a caller may see."
+      - method: POST
+        path: /finance/measure/{fn}
+        identity: get_current_user
+        gate: "delegates:finance_agent /measure/{fn} _require_visible(program_id, caller) — the BFF forwards the caller's bearer and authz_id as user_email"
+        exposes: finance-measure-rows
+        consumers: [cortex-ui, MCP server (mcp tag)]
+        class: delegates
+        justification: "thin relay (architect ruling 10-30: no engine route exposed directly).
+          Unlike /plan/measure it forwards the REAL caller, so the engine's program-visibility
+          check decides for them; the BFF adds no scoping of its own. An engine 422 needs_slots
+          is relayed unchanged; every other refusal goes through relay_refusal."
       # THE PLAN WRITE SEAM. Five MUTATING routes, and not one of them may borrow
       # /plan/measure's row above. That route is releasable_by_design because "plan state is
       # portfolio read-model, entitlement-scoped where the verb runs; the BFF adds no scoping

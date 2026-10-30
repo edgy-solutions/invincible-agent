@@ -2447,6 +2447,19 @@
         "title": "Failure",
         "type": "object"
       },
+      "FinanceMeasureBody": {
+        "description": "Only `params`. There is no `state_ref`, deliberately: finance_agent's `MeasureRequest`\n(agent_fleet/finance_agent/main.py) carries `params` and `user_email` and nothing else, so a\n`state_ref` here would be accepted and silently dropped.",
+        "properties": {
+          "params": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Params",
+            "type": "object"
+          }
+        },
+        "title": "FinanceMeasureBody",
+        "type": "object"
+      },
       "FrontendCapability": {
         "description": "One presentation capability advertised by a frontend.\n\nShape mirrors the existing register_presentation_to_mesh helper in\nagent_fleet/utils/mesh_registration.py so cortex-bff can route this\ninto the same SPO-triple substrate later.",
         "properties": {
@@ -6710,6 +6723,63 @@
           }
         ],
         "summary": "Federated Image"
+      }
+    },
+    "/finance/measure/{fn}": {
+      "post": {
+        "description": "A thin relay to finance_agent `/measure/{fn}` (architect ruling 10-30, ruling 1: \"add a\nthin BFF relay for /measure/{fn} (it's what cortex calls anyway). No engine route is exposed\ndirectly.\").\n\nUnlike `plan_measure`, this relay forwards the caller's bearer and `authz_id`, so the engine's\nprogram-visibility check (`_require_visible`) decides for the real caller. The engine's 422\n`needs_slots` is relayed unchanged (it is the declared refusal for a missing slot, not a\npolicy refusal); every other >= 400 goes through `relay_refusal` as `export_package` does.\nA 200 is the engine's envelope, untouched.",
+        "operationId": "finance_measure_finance_measure__fn__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fn",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]*$",
+              "title": "Fn",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinanceMeasureBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Finance Measure",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/fleet/version": {

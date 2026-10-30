@@ -46,6 +46,7 @@ from fastapi import (
     Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status,
 )
 from fastapi import Query as _Query
+from fastapi import Path as _Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
@@ -2535,6 +2536,61 @@ async def plan_measure(
         "frontend_id": x_frontend_id,
         "frontend_version": x_frontend_version,
     }
+
+
+class FinanceMeasureBody(_BaseModel):
+    """Only `params`. There is no `state_ref`, deliberately: finance_agent's `MeasureRequest`
+    (agent_fleet/finance_agent/main.py) carries `params` and `user_email` and nothing else, so a
+    `state_ref` here would be accepted and silently dropped."""
+    params: dict = {}
+
+
+# A measure name is one plain path segment. Without this, `..` or a decoded `?`/`#` in `fn` would
+# send the caller's bearer to some other engine path; the ruling exposes no engine route directly.
+_MEASURE_NAME = r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$"
+
+
+@app.post("/finance/measure/{fn}", tags=[MCP_TAG])
+async def finance_measure(
+    fn: _Annotated[str, _Path(pattern=_MEASURE_NAME)],
+    body: FinanceMeasureBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """A thin relay to finance_agent `/measure/{fn}` (architect ruling 10-30, ruling 1: "add a
+    thin BFF relay for /measure/{fn} (it's what cortex calls anyway). No engine route is exposed
+    directly.").
+
+    Unlike `plan_measure`, this relay forwards the caller's bearer and `authz_id`, so the engine's
+    program-visibility check (`_require_visible`) decides for the real caller. The engine's 422
+    `needs_slots` is relayed unchanged (it is the declared refusal for a missing slot, not a
+    policy refusal); every other >= 400 goes through `relay_refusal` as `export_package` does.
+    A 200 is the engine's envelope, untouched."""
+    bearer = _user_bearer(request)
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            rr = await client.post(
+                f"{_ENGINE_FIN_URL}/measure/{fn}",
+                json={"params": body.params, "user_email": current_user.authz_id},
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_unreachable", "message": str(exc),
+        })
+
+    if rr.status_code == 422:
+        raise HTTPException(status_code=422, detail=rr.json().get("detail"))
+    if rr.status_code >= 400:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, relay_refusal(detail)))
+
+    return rr.json()
 
 
 @app.get("/plan/state_version")

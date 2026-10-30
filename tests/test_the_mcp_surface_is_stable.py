@@ -42,7 +42,7 @@ def _tagged(full):
 
 def test_tagged_operations_are_exactly_mcp_routes(full):
     assert _tagged(full) == set(MCP_ROUTES), _tagged(full) ^ set(MCP_ROUTES)
-    assert len(MCP_ROUTES) == 12
+    assert len(MCP_ROUTES) == 13
 
 
 def test_committed_document_matches_generator(full):
