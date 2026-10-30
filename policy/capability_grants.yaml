@@ -51,11 +51,12 @@
 # through the invoker-relation prune. One row gates a single export and a batch alike (ruled
 # 2026-10-29). The defaults are met by COMPLETENESS, not a generated default (the sync Job's image
 # cannot reliably see every profile overlay): validate_policy.py refuses ANY known profile that no
-# `can_export:<P>` row decides, and names the default row for its kind (validate_policy
-# EXPORT_DEFAULT_GROUPS): a review-export profile (policy/exports) `grant_to_groups:
-# [alert-processors]`; a fin CDRL profile `grant_to_groups: [finance-analysts]`, the program-finance
+# `can_export:<P>` row decides, of every kind: review-export (policy/exports), answer-export
+# (policy/exports/answers) and fin CDRL. Its advice is the groups the rows of the same kind already
+# grant; no grantee is held in code (standing rule, 2026-10-30), so the ruled grantees are the ROWS
+# below: review-export `[alert-processors]`, fin CDRL `[finance-analysts]`, the program-finance
 # persona's group (ruled 2026-10-29). validate_policy also refuses a `can_export:<P>` key naming no
-# known profile, and a name in both kinds.
+# known profile, and a name in two kinds.
 capabilities:
   # ADR-0029 Slice-1 demo fixture: the promotion workflow's publish emit. alice
   # (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) is the initiator authorized to
@@ -334,8 +335,8 @@ capabilities:
     grant_to_groups: [alert-processors]
 
   # can_export:<profile> (2026-10-29 ruling) -- see the convention in the header. One row per
-  # known export profile; validate_policy refuses a profile with none. The review-export default
-  # is alert-processors; the CDRL default is the program-finance persona's group.
+  # known export profile; validate_policy refuses a profile with none. These rows ARE the ruled
+  # grantees: review-export to alert-processors, CDRL to the program-finance persona's group.
   can_export:default-csv:
     granted_by: cnogradi
     reason: >-

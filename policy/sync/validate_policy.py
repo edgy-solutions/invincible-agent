@@ -130,19 +130,11 @@ def known_content_kinds() -> tuple[set[str], list[str]]:
     return kinds, sources
 
 
-#: The default grantee of each export-profile kind, named in the completeness refusal (every known
-#: profile must have a `can_export:<P>` row; this is the row to add). review_export: alert-processors
-#: (the 10-28 dispatch). fin_cdrl: the program-finance persona's group (ruled 2026-10-29).
-#: tests/security/test_can_export_capability_rail.py holds each to a group in groups.yaml.
-#: answer_export has NO kind default: only plan-answers is ruled (below), so another answer-export
-#: profile's refusal says no default is ruled rather than inventing one.
-EXPORT_DEFAULT_GROUPS = {"review_export": "alert-processors", "fin_cdrl": "finance-analysts"}
-#: A profile whose grantee is ruled BY NAME, overriding its kind's default in the completeness refusal.
-#: plan-answers (fin's #148, policy/exports/answers/plan-answers.yaml): portfolio-leads, NOT
-#: alert-processors -- "AP is notices" (ruled 2026-10-29; re-keyed to the moved profile and
-#: can_export required for answer-export profiles, ruled 2026-10-30). The seal holds each to a group
-#: in groups.yaml.
-EXPORT_PROFILE_GROUPS = {"plan-answers": "portfolio-leads"}
+#: No grantee is named in code (architect's standing rule, 2026-10-30: a group is configuration).
+#: Each ruled grantee is a ROW in policy/capability_grants.yaml -- the review-export default rows
+#: (alert-processors), the CDRL row (the program-finance persona's group), the plan-answers row
+#: (portfolio-leads) -- and the completeness refusal derives its advice from the rows that already
+#: decide profiles of the same kind.
 _EXPORT_KIND_LABEL = {"review_export": "review-export", "answer_export": "answer-export",
                       "fin_cdrl": "fin CDRL"}
 
@@ -485,8 +477,8 @@ def validate(
     # `can_export:<P>` and False refuses, so a profile with no row is exportable by NOBODY. There is
     # no generated default (the sync Job's image cannot reliably see every profile overlay), so the
     # defaults are met by COMPLETENESS here: every known profile, of every kind, must have a row
-    # (CDRL ruled 2026-10-29, answer-export ruled 2026-10-30), and the refusal names the group to
-    # grant -- the profile's ruled group, else its kind's default, else that none is ruled.
+    # (CDRL ruled 2026-10-29, answer-export ruled 2026-10-30). The refusal's advice is DERIVED from
+    # the rows that decide other profiles of the same kind -- never a group held in code.
     _profiles, _pnotes = known_export_profiles()
     for _n in _pnotes:
         if _n.startswith("COLLISION:"):
@@ -499,15 +491,21 @@ def validate(
             f"profile -- a misspelt key gates nothing and the real profile stays unexportable. "
             f"Known profiles ({len(_profiles)}) were composed from the `name` field of: "
             + "; ".join(_pnotes))
+    _kind_groups: dict[str, set[str]] = {}
+    for c in caps:
+        _cp = c.key[len("can_export:"):] if c.key.startswith("can_export:") else None
+        if _cp in _profiles:
+            _kind_groups.setdefault(_profiles[_cp], set()).update(c.grant_to_groups)
     for _p, _k in sorted(_profiles.items()):
         if _p not in _export_keys:
-            _g = EXPORT_PROFILE_GROUPS.get(_p, EXPORT_DEFAULT_GROUPS.get(_k))
+            _l = _EXPORT_KIND_LABEL.get(_k, _k)
+            _g = sorted(_kind_groups.get(_k, ()))
             errors.append(
-                f"capability_grants.yaml: {_EXPORT_KIND_LABEL.get(_k, _k)} profile {_p!r} has no "
-                f"'can_export:{_p}' row, so NOBODY could export it (deny-by-default). Add one; "
-                + (f"the default is `grant_to_groups: [{_g}]`" if _g else
-                   f"no default grantee is ruled for {_EXPORT_KIND_LABEL.get(_k, _k)} profiles, so "
-                   f"the row names its own group (ask the architect)"))
+                f"capability_grants.yaml: {_l} profile {_p!r} has no 'can_export:{_p}' row, so "
+                f"NOBODY could export it (deny-by-default). Add one; "
+                + (f"the other {_l} rows grant `grant_to_groups: [{', '.join(_g)}]`" if _g else
+                   f"no other {_l} profile has a row to follow, so the row names its own group "
+                   f"(ask the architect)"))
 
     # recipient_readers.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note
     # there; required-or-not is open with the architect). Absent = no reader asserted = every

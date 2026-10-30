@@ -246,9 +246,17 @@ def test_5_with_the_row_present_it_passes(pol, monkeypatch):
     assert vp.validate(pol, pol) == []
 
 
+def _drop_row(pol, name):
+    p = pol / "capability_grants.yaml"
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    if data["capabilities"].pop(f"can_export:{name}", None) is not None:
+        p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
 def test_5_a_cdrl_profile_with_no_row_is_refused_and_names_the_finance_group(pol, monkeypatch):
-    """Ruled 2026-10-29: completeness covers CDRL profiles too, and their default is the
-    program-finance persona's group, NOT alert-processors (the rejected single default)."""
+    """Ruled 2026-10-29: completeness covers CDRL profiles too. The advice is the group the seed's
+    CDRL row grants (the program-finance persona's group), drawn from that ROW, never the
+    review-export rows' alert-processors (the rejected single default)."""
     _known(monkeypatch, {CDRL: "fin_cdrl", "cdrl_b": "fin_cdrl"})
     hit = _no_row(vp.validate(pol, pol), "cdrl_b")
     assert len(hit) == 1 and "fin CDRL profile" in hit[0], hit
@@ -259,89 +267,109 @@ def test_5_the_seed_cdrl_row_is_what_keeps_the_seed_green(pol, monkeypatch):
     """CONTROL for the arm above on the real seed: delete the shipped row and the seed's own
     profile is refused."""
     _known(monkeypatch, {CDRL: "fin_cdrl"})
-    p = pol / "capability_grants.yaml"
-    data = yaml.safe_load(p.read_text(encoding="utf-8"))
-    del data["capabilities"][f"can_export:{CDRL}"]
-    p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    _drop_row(pol, CDRL)
     assert len(_no_row(vp.validate(pol, pol), CDRL)) == 1
 
 
-def test_5_the_seed_ships_the_cdrl_row_to_the_finance_group():
-    caps = yaml.safe_load((ROOT / "policy" / "capability_grants.yaml").read_text(encoding="utf-8"))
-    row = caps["capabilities"][f"can_export:{CDRL}"]
-    assert row.get("grant_to_groups") == [FIN_GROUP] and not row.get("grant_to"), row
-
-
-def test_5_the_seed_ships_a_review_export_row_per_profile_to_the_default_group():
-    """Every policy/exports and policy/exports/answers profile ships its row at the group ruled for
-    it by name (plan-answers: portfolio-leads, once fin's #148 ships the profile), else at its
-    kind's default (review-export: alert-processors)."""
-    caps = yaml.safe_load((ROOT / "policy" / "capability_grants.yaml").read_text(encoding="utf-8"))
-    review = _seed_review()
-    assert "review_export" in review.values(), "no review-export profile in the seed"
-    for name, kind in sorted(review.items()):
-        row = caps["capabilities"].get(f"can_export:{name}")
-        assert row is not None, name
-        want = vp.EXPORT_PROFILE_GROUPS.get(name, vp.EXPORT_DEFAULT_GROUPS.get(kind))
-        assert want, f"{kind} profile {name!r} has no ruled group and its kind no default"
-        assert row.get("grant_to_groups") == [want] and not row.get("grant_to"), (name, row)
-
-
-def _drop_row(pol, name):
+def _set_groups(pol, names, groups):
     p = pol / "capability_grants.yaml"
     data = yaml.safe_load(p.read_text(encoding="utf-8"))
-    if data["capabilities"].pop(f"can_export:{name}", None) is not None:
-        p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    for n in names:
+        data["capabilities"][f"can_export:{n}"]["grant_to_groups"] = list(groups)
+    p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 
-def test_5_plan_answers_with_no_row_names_portfolio_leads_not_the_kind_default(pol, monkeypatch):
-    """Ruled 2026-10-29/30: plan-answers (policy/exports/answers, answer-export kind) needs a row,
-    and the refusal names portfolio-leads -- "AP is notices". The seed carries the row once #148 and
-    #151 are both on master, so it is removed here."""
+def test_5_the_advice_follows_the_rows_not_a_constant(pol, monkeypatch):
+    """Standing rule (2026-10-30): no grantee is held in code. Re-grant every seed review-export
+    row to another real group and the refusal's advice for a new review profile moves with them."""
+    seed = [n for n, k in _seed_review().items() if k == "review_export"]
+    assert seed, "no review-export profile in the seed"
+    _set_groups(pol, seed, ["portfolio-leads"])
+    _known(monkeypatch, {CDRL: "fin_cdrl", "ingest_review": "review_export"})
+    hit = _no_row(vp.validate(pol, pol), "ingest_review")
+    assert len(hit) == 1 and "grant_to_groups: [portfolio-leads]" in hit[0], hit
+    assert GROUP not in hit[0], hit
+
+
+def test_5_a_lone_kind_profile_with_no_row_is_refused_and_names_no_group(pol, monkeypatch):
+    """Ruled 2026-10-30: answer-export profiles need a row. With no other answer-export row to
+    follow, the refusal invents no group -- neither another kind's group nor a ruled one held in
+    code; the ruled grantee arrives as the first ROW."""
     _known(monkeypatch, {CDRL: "fin_cdrl", "plan-answers": "answer_export"})
     _drop_row(pol, "plan-answers")
     hit = _no_row(vp.validate(pol, pol), "plan-answers")
     assert len(hit) == 1 and "answer-export profile" in hit[0], hit
-    assert "grant_to_groups: [portfolio-leads]" in hit[0] and GROUP not in hit[0], hit
+    assert "no other answer-export profile has a row" in hit[0] and "grant_to_groups" not in hit[0], hit
+    assert GROUP not in hit[0] and FIN_GROUP not in hit[0] and "portfolio-leads" not in hit[0], hit
 
 
-def test_5_an_answer_export_profile_with_no_ruled_group_is_refused_and_names_none(pol, monkeypatch):
-    """Answer-export has no kind default (only plan-answers is ruled): another answer profile with
-    no row is still refused, and the refusal invents no group -- neither alert-processors nor the
-    plan-answers group."""
-    _known(monkeypatch, {CDRL: "fin_cdrl", "other-answers": "answer_export"})
-    hit = _no_row(vp.validate(pol, pol), "other-answers")
-    assert len(hit) == 1 and "answer-export profile" in hit[0], hit
-    assert "no default grantee is ruled" in hit[0] and "grant_to_groups" not in hit[0], hit
-    assert GROUP not in hit[0] and "portfolio-leads" not in hit[0], hit
+def test_5_the_ruled_plan_answers_row_is_what_the_next_answer_profile_is_told(pol, monkeypatch):
+    """Ruled 2026-10-29/30: `can_export:plan-answers` -> [portfolio-leads] is a ROW (it ships with
+    whichever of #148 and #151 merges second). Once it is there, another answer-export profile with
+    no row is pointed at portfolio-leads -- by the row, not by code."""
+    _known(monkeypatch, {CDRL: "fin_cdrl", "plan-answers": "answer_export",
+                         "other-answers": "answer_export"})
+    _drop_row(pol, "plan-answers")
+    _add(pol, "can_export:plan-answers", _row(group=("portfolio-leads",)))
+    errs = vp.validate(pol, pol)
+    assert _no_row(errs, "plan-answers") == [], errs
+    hit = _no_row(errs, "other-answers")
+    assert len(hit) == 1 and "grant_to_groups: [portfolio-leads]" in hit[0], hit
+    assert GROUP not in hit[0] and FIN_GROUP not in hit[0], hit
 
 
-def test_5_each_ruled_profile_group_is_a_group_and_plan_answers_is_the_portfolio_lead_cell():
-    """Derive, don't restate: plan-answers' group is the one whose grants carry PORTFOLIO_LEAD, and
-    alice holds it in the sandbox (the ruling's "alice in sandbox")."""
+def test_5_no_grantee_is_held_in_code():
+    """Standing rule (2026-10-30): the validator names no group. The retired constants are gone,
+    and no group policy/groups.yaml declares appears as a quoted literal in validate_policy.py."""
+    assert not hasattr(vp, "EXPORT_DEFAULT_GROUPS") and not hasattr(vp, "EXPORT_PROFILE_GROUPS")
     groups = yaml.safe_load((ROOT / "policy" / "groups.yaml").read_text(encoding="utf-8"))["groups"]
-    for name, g in vp.EXPORT_PROFILE_GROUPS.items():
-        assert g in groups and g not in vp.EXPORT_DEFAULT_GROUPS.values(), (name, g)
-    lead = {name for name, body in groups.items()
-            if any(isinstance(x, dict) and x.get("persona") == "PORTFOLIO_LEAD"
+    src = Path(vp.__file__).read_text(encoding="utf-8")
+    held = sorted(g for g in groups if f'"{g}"' in src or f"'{g}'" in src)
+    assert held == [], held
+
+
+def _persona_groups(persona):
+    groups = yaml.safe_load((ROOT / "policy" / "groups.yaml").read_text(encoding="utf-8"))["groups"]
+    return {name for name, body in groups.items()
+            if any(isinstance(x, dict) and x.get("persona") == persona
                    for x in ((body or {}).get("grants") or []))}
-    assert lead == {vp.EXPORT_PROFILE_GROUPS["plan-answers"]}, lead
+
+
+def test_5_the_seed_ships_the_cdrl_row_to_the_program_finance_group():
+    """Ruled 2026-10-29, carried by the ROW: the seed CDRL row grants the group whose grants carry
+    the PROGRAM_FINANCE_ANALYST persona (read from groups.yaml, not restated)."""
+    caps = yaml.safe_load((ROOT / "policy" / "capability_grants.yaml").read_text(encoding="utf-8"))
+    row = caps["capabilities"][f"can_export:{CDRL}"]
+    assert row.get("grant_to_groups") == [FIN_GROUP] and not row.get("grant_to"), row
+    assert _persona_groups("PROGRAM_FINANCE_ANALYST") == {FIN_GROUP}
+
+
+def test_5_the_seed_ships_a_row_per_review_and_answer_profile():
+    """Every policy/exports and policy/exports/answers profile ships its row. The ruled grantees are
+    those rows: review-export to alert-processors (2026-10-29); plan-answers, when #148's profile is
+    on the tree, to the PORTFOLIO_LEAD group (2026-10-29/30)."""
+    caps = yaml.safe_load((ROOT / "policy" / "capability_grants.yaml").read_text(encoding="utf-8"))
+    review = _seed_review()
+    assert "review_export" in review.values(), "no review-export profile in the seed"
+    lead = _persona_groups("PORTFOLIO_LEAD")
+    for name, kind in sorted(review.items()):
+        row = caps["capabilities"].get(f"can_export:{name}")
+        assert row is not None, name
+        assert not row.get("grant_to"), (name, row)
+        if kind == "review_export":
+            assert row.get("grant_to_groups") == [GROUP], (name, row)
+        elif name == "plan-answers":
+            assert set(row.get("grant_to_groups") or []) == lead and len(lead) == 1, (name, row, lead)
+
+
+def test_5_the_plan_answers_group_is_the_portfolio_lead_cell_and_alice_holds_it():
+    """The ruling's precondition, read from config: exactly one group carries PORTFOLIO_LEAD, it is
+    the group the plan-answers row names, and alice holds it in the sandbox (no topaz_sync owed)."""
+    lead = _persona_groups("PORTFOLIO_LEAD")
+    assert lead == {"portfolio-leads"}, lead
     users = yaml.safe_load((ROOT / "policy" / "users.yaml").read_text(encoding="utf-8"))["users"]
     alice = [u for u in users if u.get("id") == "alice@example.com"]
-    assert len(alice) == 1 and vp.EXPORT_PROFILE_GROUPS["plan-answers"] in (alice[0].get("groups") or [])
-
-
-def test_5_each_default_group_is_a_group_and_the_cdrl_one_is_program_finance():
-    """Derive, don't restate: the CDRL default is the group whose grants carry the
-    PROGRAM_FINANCE_ANALYST persona, read from groups.yaml."""
-    groups = yaml.safe_load((ROOT / "policy" / "groups.yaml").read_text(encoding="utf-8"))["groups"]
-    assert set(vp.EXPORT_DEFAULT_GROUPS) == {"review_export", "fin_cdrl"}
-    for kind, g in vp.EXPORT_DEFAULT_GROUPS.items():
-        assert g in groups, (kind, g)
-    fin = {name for name, body in groups.items()
-           if any(isinstance(x, dict) and x.get("persona") == "PROGRAM_FINANCE_ANALYST"
-                  for x in ((body or {}).get("grants") or []))}
-    assert fin == {vp.EXPORT_DEFAULT_GROUPS["fin_cdrl"]}, fin
+    assert len(alice) == 1 and "portfolio-leads" in (alice[0].get("groups") or []), alice
 
 
 # -- 6. a collision ------------------------------------------------------------------------
