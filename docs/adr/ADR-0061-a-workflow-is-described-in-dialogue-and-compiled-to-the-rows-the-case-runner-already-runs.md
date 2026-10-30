@@ -599,6 +599,7 @@ The standing rule of 2026-10-30 says config names the case. The model's system p
 | 10 | 8/12 | 2 | 6 | 3 | 0 | cannot_run | 106 |
 | 11 | 8/12 | 2 | 6 | 3 | 0 | cannot_run | 116 |
 | 12 | — | — | — | — | — | **crashed** | 160 |
+| 12 again | 14/12 | 3 | 6 | 4 | 1 | cannot_run | 137 |
 
 - **Runs 10 and 11 fail the same way.** Both runnable errors are the two chaining tables.
   - Run 10: neither table declares a domain for `outcome`.
@@ -620,10 +621,27 @@ The standing rule of 2026-10-30 says config names the case. The model's system p
     to 9 ranged from 0 to 6 runnable errors and from 0 to 5 open items.
   - In all five runs the planted contradiction went undetected (0 of 1) and the planted deferral
     went unrecorded (0 of 1).
-- **Owed:**
-  - a ruling on what an unparseable patch path is: a refused turn, or a `model_errors` count
-    against the turn. Today it is a crash.
-  - Run 12 again once that is ruled.
+- **Ruled (architect, 10-30): an unparseable path is a model error charged to that turn.** The
+  loop records it, asks the model to restate, and continues. A run never crashes on model output.
+  - `_apply_or_charge` tries each turn's patch on a copy of the draft.
+  - A `PatchError` is recorded as `{turn, error}` in the run's `model_errors`.
+  - The model is asked again `PATCH_RESTATES` (1) times, with the refusal in a `REFUSED` section.
+  - A patch that is still refused moves the turn on, and nothing of it lands in the draft.
+  - `socratic_measure` adds the refusals to `model_errors` and lists them as `refused_patches`.
+  - Two new seals: a restatement lands, and a stubborn patch lands nothing while the run goes on.
+    Against the unfixed loop, both are red with run 12's `PatchError`.
+- **Run 12 again, at the fix.**
+  - `cannot_run`: 3 runnable errors, all three of them tables that declare no domain for an input.
+    The two chaining tables have no domain for `outcome`; the selection table has none for
+    `change_class`.
+  - 4 open: the two chaining contradictions, `trigger.routing` and `outputs.end`.
+  - The semantic diffs are the same six as runs 10 and 11.
+  - It asked 14 questions. 4 keys were asked more than once, and 11 questions were unanswerable.
+  - The model made no unparseable patch this time: 0 refused patches, 0 model errors. So this run
+    does not exercise the new arm; the seals do. Whether a live model's refused patch is restated
+    usefully is still unmeasured.
+- **After the fix, 0 of 3 runs are runnable.** All three fail on chaining tables with no domain or
+  row for `outcome`. The planted contradiction and the planted deferral were missed in every run.
 
 ## Consequences
 
