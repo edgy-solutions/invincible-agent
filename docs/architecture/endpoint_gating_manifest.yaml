@@ -1809,6 +1809,42 @@ services:
           steward's access. The review.json key is checked against the row's object_prefix
           before the read.
       - method: GET
+        path: /ingest/export/profiles
+        identity: keycloak-jwt
+        gate: "get_current_user only; lists the valid policy/exports profiles (name, format, granularity, label)"
+        exposes: ui-state
+        consumers: [cortex-ui export picker]
+        class: releasable_by_design
+        justification: >-
+          A profile's name, format, granularity and label are policy configuration, not notice
+          content; the same shape as the finance CDRL profile listing. Nothing per-document is
+          read, so authentication is the whole gate.
+      - method: GET
+        path: /ingest/export
+        identity: keycloak-jwt
+        gate: "get_current_user + can_invoke(ingest:exportBatch) via human_tasks.can_invoke_or_unavailable; an ungranted caller is a 403 policy refusal (not_entitled_to_export_batch), Topaz down is 503"
+        exposes: gated-content
+        consumers: [cortex-ui batch export]
+        class: gated
+        justification: >-
+          The batch export renders the promoted notices of a date range, up to 92 days and 500
+          notices. It reads other people's notices, so it is held to the ingest:exportBatch
+          capability (policy/capability_grants.yaml, the alert-processors group), not to the
+          dropper rule. Loud, not partial: a notice that cannot be exported refuses the whole
+          export.
+      - method: GET
+        path: /ingest/{ingest_id}/export
+        identity: keycloak-jwt
+        gate: "get_current_user + _ingest_review_access (the dropper, or a holder of the open promotion task), or a caller holding can_invoke(ingest:exportBatch); every decision is audited on iagent.audit.ingest_access; a promoted notice only (409 ingest_not_promoted), uncorrected only (409 export_corrections_not_applied)"
+        exposes: gated-content
+        consumers: [cortex-ui export]
+        class: gated
+        justification: >-
+          One notice rendered through an export profile. The values are the extraction route's,
+          so the gate is the extraction route's, widened only for a holder of the batch
+          capability; a caller the review gate refuses and the capability does not admit gets
+          the original 403 not_entitled.
+      - method: GET
         path: /ingest/{ingest_id}/source
         identity: keycloak-jwt
         gate: "get_current_user + _ingest_review_access (same gate and audit as GET /ingest/{ingest_id}/extraction); the source key comes from the drop manifest and must be a seam key under the row's object_prefix (422 source_unbound)"

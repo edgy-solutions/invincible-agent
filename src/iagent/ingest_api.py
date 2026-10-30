@@ -221,6 +221,14 @@ class Extraction(_Strict):
     relocated_to: str | None
 
 
+class ExportProfile(_Strict):
+    """One row of GET /ingest/export/profiles (a valid `policy/exports/<name>.yaml`)."""
+    name: str
+    format: Literal["csv", "json"]
+    granularity: Literal["notice_part", "notice"]
+    label: str
+
+
 class RetryReopened(_Strict):
     """POST /ingest/{id}/retry, a failed document re-opened (doc-tools relaunches on its poll)."""
     ingest_id: str

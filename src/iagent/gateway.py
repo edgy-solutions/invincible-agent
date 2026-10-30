@@ -58,8 +58,9 @@ from .models import BpmnCatalog
 from .auth import get_current_user, User
 from . import frontend_menu_store
 from .ingest_api import (
-    BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse, Entitlements,
-    Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing, RetriesListing,
+    BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse,
+    Entitlements, ExportProfile, Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing,
+    RetriesListing,
     RetryResponse, StatusBody, TitleLeafResponse,
 )
 from .identity_vault import (
@@ -12877,9 +12878,15 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
     A REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the
     rejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404
     `rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`."""
+    row, _why = await _ingest_review_access(ingest_id, current_user, "extraction")
+    return await _extraction_body(ingest_id, row)
+
+
+async def _extraction_body(ingest_id: str, row: dict) -> dict:
+    """The body of GET /ingest/<id>/extraction for an already-gated `row` (the route and the
+    review export share it). Raises the same HTTPExceptions the route documents."""
     from starlette.concurrency import run_in_threadpool
 
-    row, _why = await _ingest_review_access(ingest_id, current_user, "extraction")
     ref = str(row.get("extraction_ref") or "").strip()
     if not ref:
         raise HTTPException(status_code=422, detail={
@@ -12944,6 +12951,265 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
         "part_count": summ["part_count"],
         "rows": rows_out, "rows_without_evidence": without, "review_ref": key,
         "relocated_to": reloc[1] if reloc else None}
+
+
+_EXPORT_BATCH_CAPABILITY = "ingest:exportBatch"
+_EXPORT_MAX_DAYS = 92
+_EXPORT_MAX_NOTICES = 500
+_EXPORT_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def _export_profile_or_422(name: Optional[str]):
+    """The named valid export profile, else 422 `export_profile_unknown` / `export_profile_invalid`."""
+    from . import export_profiles
+
+    p = export_profiles.load_profiles().get(name or "")
+    if p is None:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_profile_unknown",
+            "message": f"no export profile {name!r}; GET /ingest/export/profiles lists them"})
+    if isinstance(p, export_profiles.ProfileInvalid):
+        raise HTTPException(status_code=422, detail={
+            "error": "export_profile_invalid", "reason": p.reason,
+            "message": f"export profile {name!r} is invalid ({p.reason})"})
+    return p
+
+
+async def _may_export_batch(caller: str, route: str, ingest_id: str = "-") -> bool:
+    """The `ingest:exportBatch` capability for `caller`. A Topaz failure is 503, never a deny
+    (same bodies as `_ingest_review_access`); an ungranted capability is False."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    try:
+        return bool(await run_in_threadpool(
+            lambda: human_tasks.can_invoke_or_unavailable(_EXPORT_BATCH_CAPABILITY, caller)))
+    except human_tasks.AuthorizationUnconfigured as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unconfigured")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("export capability check unavailable: %s", type(exc).__name__)
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unavailable")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify the caller against the export capability"}) from exc
+
+
+def _export_decision_record(ingest_id: str):
+    """Sync (threadpool): the stored decision record, 503 `decision_ledger_unreachable` on a fault."""
+    from . import promotion_stores
+
+    try:
+        return promotion_stores.PgDecisionLedger().record_for(ingest_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decision ledger read failed for %s: %s", ingest_id, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "decision_ledger_unreachable",
+            "message": f"the decision ledger did not answer: {type(exc).__name__}"})
+
+
+async def _export_notice_extraction(ingest_id: str, row: dict) -> dict:
+    """The extraction body of a PROMOTED, uncorrected notice, for the export; else the refusal.
+    409 `ingest_not_promoted` (body carries `status`); 409 `export_corrections_not_applied`; 503
+    `decision_ledger_unreachable`; then whatever `_extraction_body` refuses."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status, promotion
+
+    if row.get("status") != ingest_status.PROMOTED:
+        raise HTTPException(status_code=409, detail={
+            "error": "ingest_not_promoted", "status": row.get("status"),
+            "message": "only a promoted notice can be exported"})
+    rec = await run_in_threadpool(lambda: _export_decision_record(ingest_id))
+    if promotion._recorded_row_edits(rec):
+        raise HTTPException(status_code=409, detail={
+            "error": "export_corrections_not_applied",
+            "message": "the promotion carries steward corrections (row or header edits) and the "
+                       "export serves review.json's uncorrected values; refused until "
+                       "corrections are applied to the export"})
+    return await _extraction_body(ingest_id, row)
+
+
+def _export_render(profile, bodies: list) -> list:
+    from . import export_profiles
+
+    out: list = []
+    try:
+        for b in bodies:
+            out += export_profiles.render_rows(profile, b)
+    except export_profiles.ExportBlocked as exc:
+        raise HTTPException(status_code=422, detail={"error": "export_blocked", **exc.body()})
+    return out
+
+
+def _export_response(profile, rows: list, filename: str, **extra) -> Response:
+    from . import export_profiles
+
+    disp = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    if profile.format == "csv":
+        return Response(export_profiles.to_csv(profile.outputs, rows),
+                        media_type="text/csv; charset=utf-8", headers=disp)
+    return JSONResponse(export_profiles.to_json(profile, rows, **extra), headers=disp)
+
+
+# The export routes carry their own tag, not ingest-v1: a v1 entry needs a JSON response model per
+# route and the CSV body is not JSON. They enter v1 as PREVIEW routes (like /empty) when Lane 1
+# regenerates the v1 doc and shapes lock (overnight item 5).
+@app.get("/ingest/export/profiles", tags=["ingest-export"],
+         responses={200: {"model": list[ExportProfile]}})
+async def ingest_export_profiles_route(current_user: User = Depends(get_current_user)):
+    """GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:
+    `[{name, format, granularity, label}]`. An invalid profile is logged at ERROR and left out.
+    Any authenticated caller (a name and a label are not notice content)."""
+    from . import export_profiles
+
+    out = []
+    for name, p in sorted(export_profiles.load_profiles().items()):
+        if isinstance(p, export_profiles.ProfileInvalid):
+            logger.error("export profile %s is invalid: %s", name, p)
+            continue
+        out.append({"name": p.name, "format": p.format, "granularity": p.granularity,
+                    "label": p.label})
+    return out
+
+
+@app.get("/ingest/export", tags=["ingest-export"])
+async def ingest_export_batch_route(
+        profile: Optional[str] = _Query(None), from_: Optional[str] = _Query(None, alias="from"),
+        to: Optional[str] = _Query(None), current_user: User = Depends(get_current_user)):
+    """GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the
+    range (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.
+    A service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The
+    capability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is
+    one of the caller's entitlement-cell domains are in the set, filtered before the loud-not-
+    partial checks and before the 500 cap; a caller with no cells gets the empty export.
+    Gate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy
+    refusal; Topaz down is 503). At most 92 days (both ends counted) and 500 notices. LOUD, NOT
+    PARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,
+    extraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks
+    on is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`)."""
+    from datetime import timedelta
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status, promotion_stores
+    from .authz.refusal import policy_refusal
+
+    caller = (current_user.authz_id or "").strip()
+    if _is_service_caller(caller) or not await _may_export_batch(caller, "export_batch"):
+        _audit_ingest_access("export_batch", "-", caller, "deny", "not_entitled")
+        raise policy_refusal(
+            "not_entitled_to_export_batch", policy_id="capability_grants:ingest:exportBatch",
+            missing_binding="can_invoke ingest:exportBatch",
+            message="exporting the promoted notices of a date range needs the ingest:exportBatch "
+                    "capability")
+    prof = _export_profile_or_422(profile)
+
+    def _day(v):
+        if not isinstance(v, str) or not _EXPORT_DATE_RE.fullmatch(v):
+            return None
+        try:
+            return _date.fromisoformat(v)
+        except ValueError:
+            return None
+
+    d0, d1 = _day(from_), _day(to)
+    if d0 is None or d1 is None or d0 > d1:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_invalid",
+            "message": "from and to are required, YYYY-MM-DD (UTC days), and from <= to"})
+    if (d1 - d0).days + 1 > _EXPORT_MAX_DAYS:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_too_large",
+            "message": f"at most {_EXPORT_MAX_DAYS} days (both ends counted); narrow the range"})
+
+    def _ms(d):
+        return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
+
+    start_ms, end_ms = _ms(d0), _ms(d1 + timedelta(days=1))
+    try:
+        domains = {c.domain for c in current_user.entitlements.cells}
+        hits = [] if not domains else await run_in_threadpool(
+            lambda: promotion_stores.PgDecisionLedger().promoted_between(
+                start_ms, end_ms, _EXPORT_MAX_NOTICES + 1, domains))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decision ledger range read failed: %s", exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "decision_ledger_unreachable",
+            "message": f"the decision ledger did not answer: {type(exc).__name__}"})
+    if len(hits) > _EXPORT_MAX_NOTICES:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_too_large",
+            "message": f"more than {_EXPORT_MAX_NOTICES} notices were promoted in the range; "
+                       "narrow the range"})
+    bodies = []
+    for ingest_id, _at in hits:
+        row = await run_in_threadpool(lambda i=ingest_id: ingest_status.get_row(i))
+        try:
+            if row is None or row.get("kind") == ingest_status.EVENT:
+                raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+            bodies.append(await _export_notice_extraction(ingest_id, row))
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                raise
+            d = exc.detail if isinstance(exc.detail, dict) else {}
+            raise HTTPException(status_code=422, detail={
+                "error": "export_notice_unreadable", "ingest_id": ingest_id,
+                "reason": d.get("error"), "message": d.get("message") or str(exc.detail)})
+    rows = _export_render(prof, bodies)
+    _ingest_access_log.info(
+        "ingest_export_batch caller=%s profile=%s from=%s to=%s n=%d",
+        caller, prof.name, d0.isoformat(), d1.isoformat(), len(bodies))
+    return _export_response(
+        prof, rows, f"ingest-export.{prof.name}.{d0.isoformat()}_{d1.isoformat()}.{prof.format}",
+        **{"from": d0.isoformat(), "to": d1.isoformat(), "notices": len(bodies)})
+
+
+@app.get("/ingest/{ingest_id}/export", tags=["ingest-export"])
+async def ingest_export_route(ingest_id: str, profile: Optional[str] = _Query(None),
+                              current_user: User = Depends(get_current_user)):
+    """GET /ingest/<id>/export?profile=<name> -- one PROMOTED notice rendered through a profile
+    (`policy/exports/`, 7f's batch-column-map vocabulary). A service caller never reaches the
+    capability: the original 403 is re-raised and Topaz is not asked. The capability is
+    DOMAIN-SCOPED: a notice whose promotion domain (`promotion.recorded_domain`) is not one of the
+    caller's cell domains, or has none, re-raises the original 403 (audit `out_of_domain`). Gate: `_ingest_review_access` (the
+    dropper, or a holder of the open task), and a caller it would 403 is admitted when they hold
+    the `ingest:exportBatch` capability (reason `export_capability`); a Topaz failure while that
+    is consulted is 503, a False re-raises the ORIGINAL 403. 422 `export_profile_unknown` /
+    `export_profile_invalid`; 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the
+    export serves review.json's values, so a promotion carrying steward row or header edits would
+    export the uncorrected ones; refused until a later slice applies corrections); 503
+    `decision_ledger_unreachable`; 422 `export_blocked` (naming notice, part, column)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    caller = (current_user.authz_id or "").strip()
+    try:
+        row, _why = await _ingest_review_access(ingest_id, current_user, "export")
+    except HTTPException as exc:
+        if exc.status_code != 403:
+            raise
+        if _is_service_caller(caller):
+            raise
+        if not await _may_export_batch(caller, "export", ingest_id):
+            raise
+        row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+        if row is None or row.get("kind") == ingest_status.EVENT:
+            raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+        from . import promotion
+
+        rec = await run_in_threadpool(lambda: _export_decision_record(ingest_id))
+        if promotion.recorded_domain(rec) not in {c.domain for c in current_user.entitlements.cells}:
+            _audit_ingest_access("export", ingest_id, caller, "deny", "out_of_domain")
+            raise
+        _audit_ingest_access("export", ingest_id, caller, "allow", "export_capability")
+    prof = _export_profile_or_422(profile)
+    body = await _export_notice_extraction(ingest_id, row)
+    rows = _export_render(prof, [body])
+    return _export_response(prof, rows, f"{ingest_id}.{prof.name}.{prof.format}")
 
 
 _SOURCE_MEDIA_TYPES = {"pdf": "application/pdf", "xml": "application/xml"}
