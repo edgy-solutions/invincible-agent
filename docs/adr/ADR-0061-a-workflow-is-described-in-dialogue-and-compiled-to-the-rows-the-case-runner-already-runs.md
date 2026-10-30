@@ -116,8 +116,11 @@ default for each of these, and the default is a decision nobody made:
 are asked of every definition in the draft, whether or not a selection table reaches it yet:
 - the task kind of each approval step;
 - who is barred from answering each approval step (`excludes`, §10);
+- the trigger's stages: every stage a case can pass through, in the person's order (10-30, §10);
+- each declared stage that is not drafted yet (10-30, §10);
 - the routing table after each stage that can end;
-- that table's values: each input it matches with no domain (10-30, §10);
+- the values of every routing table whose `after` names a drafted stage, whether or not that
+  stage can end yet: each input it matches with no domain (10-30, §10);
 - that table's rows: each declared value no row decides (10-30, §10).
 
 The model omitted these more often than anything else (§8). A slot asked by name ("Required: the
@@ -708,6 +711,94 @@ flight:
   no second refusal. 1 of 1 restated.
 - **The planted contradiction and deferral** were missed again in all three runs. That is the
   separate build item.
+
+#### 2026-10-30: the trigger declares its stages, and the chaining slots bind to the table; runs 16 to 18
+
+Ruling (architect, 10-30), in order:
+1. bind the chaining slots to every routing table that names an earlier stage;
+2. have the trigger declare its stages, and have the loop ask for each stage not yet drafted;
+3. then the contradiction and the deferral.
+
+Three runs after (1) and (2).
+
+- **Built** (`63148f22`).
+  - **(1)** The value and row slots bind to every table whose `after` names a drafted definition,
+    whether or not that stage has a disposing step yet. Run 15's acknowledge table is now asked its
+    values.
+  - **(2)** The trigger carries `stages`: the definition ids a case can pass through, in the
+    person's order.
+    - A trigger with no `stages` is a required slot, `trigger.stages`.
+    - Each declared stage with no definition is a required slot, `steps.<stage>`.
+    - The grammar's REQUIRED list states both.
+  - **`stages` is draft-only.** The runner's `Trigger` refuses an unknown field, so `finalize` drops
+    `stages` from the served bundle, and `problems` validates the trigger without it. Carrying
+    `stages` into the served bundle would be a runner change. That is not ruled here.
+- **The scripted user.**
+  - Each fixture transcript answers `trigger.stages` with the expected definition ids. The expected
+    bundles are unchanged.
+  - The scripted user pairs a draft stage with an expected one by position in the two `stages`
+    lists. It does this only when the lists are the same length, and never over a pairing the
+    selection-table walk already made. This lets it answer about a stage that no routing row names
+    yet.
+- **Seals:**
+  - five new; `tests/socratic` gives 75 passed;
+  - against the unfixed module, the four slot seals are red, and so are t6 and the three t7 counts
+    (which now include `trigger.stages`);
+  - the `stages`-dropped seal has a control: the runner's `Trigger` refuses `stages`;
+  - with positional pairing switched off, the pairing seal and the aligned-oracle seal are red.
+
+Three runs on PCN at `63148f22`, same model and harness, with no walk or roll in flight. The bank is
+now 13: it includes the stages answer.
+
+| run | questions / bank | runnable errors | semantic diffs | open | answered by path | model errors | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 16 | 18/13 | 0 | 5 | 2 | 7 | 0 | cannot_run | 429 |
+| 17 | 9/13 | 0 | 6 | 0 | 1 | 0 | **runnable** | 267 |
+| 18 | 32/13 | 4 | 8 | 10 | 13 | 1 | cannot_run | 661 |
+
+- **The stages gap is closed in 2 of 3 runs.**
+  - Runs 16 and 17 asked `trigger.stages` first. Both then asked `steps.<stage>` for the program
+    approval and the record, and drafted all four stages. Runs 10 to 15 never drafted more than two.
+  - Run 18 stated `stages` without being asked. It drafted three of the four stages, plus a
+    `needs_information_wait` stage that the transcript does not describe. The record was never
+    drafted. The loop raised a contradiction on the trigger's `stages`. The scripted user could not
+    answer it, and it was deferred. The scripted user also could not answer `outputs.record`.
+- **Chaining slots were asked live for the first time,** in runs 16 and 18:
+  - run 16: `approvals.impact_review.next.{approved,rejected,needs_info}`,
+    `approvals.acknowledge.next.acknowledged` and `approvals.program_approval.next.timed_out`;
+  - run 18: also the values slots, `approvals.{impact_review,acknowledge}.next.domain.outcome`.
+  - Run 17 asked none. The model wrote every table whole, unasked, as in runs 13 and 14.
+- **Run 16: no runnable errors, and 3 of 4 chains match the expected chains.** Its status is
+  `cannot_run` because two contradictions the loop raised are still open:
+  - the routing after the impact review decides `needs_info`;
+  - the routing after the acknowledgement decides `escalated`;
+  - neither is an answer that stage's task kind accepts.
+  The scripted user has no bank entry for a contradiction the loop raises about the model's own
+  draft. Each was asked twice and left open.
+- **Run 18 shows a new class: an outcome put in `terminals` instead of given a row.**
+  - Each chaining table lists the outcome that ends the case (`rejected`, `acknowledged`,
+    `approved`, `elapsed`) in `terminals`, with no row for it.
+  - In the runner, a terminal is a state a row's `then` names, not an outcome. So `decide` still
+    has no row for it. The 4 runnable errors are all of this kind.
+  - The row slot was asked for each of these outcomes. Every answer put the value into `terminals`
+    again, so the slot never closed and was asked again. Of the 32 questions, 22 are distinct;
+    the other 10 are repeats.
+  - Owed:
+    - the grammar should say that a terminal is a `then` target, and that an outcome which ends the
+      case still needs a row naming the terminal;
+    - a slot asked twice with no change in the draft is a stall the loop could report instead of
+      asking it a third time.
+  - Neither is built here. Both wait for the ruling on order.
+- **The restate arm.** Run 18 sent the positional path `steps[0].deadline_seconds` again, at turn
+  18. It was refused once, with no second refusal.
+- **The planted deferral was recorded live in all three runs, and the counter reads 0 of 1.**
+  - Each run deferred the impact review's deadline with the planted reason, "We have not agreed a
+    turnaround for the engineering disposition yet."
+  - It was recorded under the draft's own step names (`step1`, `impact_review`,
+    `impact_review_step`). The counter is an exact match on the expected key,
+    `approvals.pcn_impact_review.engineering_disposition.deadline`.
+  - The planted contradiction was detected in none of the three runs.
+  - Both belong to item 3, which is next.
 
 ## Consequences
 
