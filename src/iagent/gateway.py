@@ -6984,6 +6984,101 @@ def _perror(
     return _sse("pipeline_error", json.dumps(payload))
 
 
+_orchestrate_audit_log = logging.getLogger("iagent.audit.orchestrate")
+# THE LINE MUST ARRIVE, NOT MERELY BE CALLED (see the note on `logger` above).
+_ensure_the_audit_line_actually_ARRIVES(_orchestrate_audit_log)
+
+
+def _orchestrate_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _orchestrate_audit_line(*, who: str, via: str, session_id: str, verb: str, case: str,
+                            when: str, outcome: str) -> None:
+    """ONE line per /orchestrate call: who, through which client, which verb and case, when, how
+    it ended. Never message text, tokens or payload bodies."""
+    _orchestrate_audit_log.info(
+        "orchestrate_access who=%s via=%s session_id=%s verb=%s case=%s when=%s outcome=%s",
+        who, via, session_id, verb, case, when, outcome,
+    )
+
+
+def _note_orchestrate_event(chunk, seen: dict) -> None:
+    """Read the routed verb and any case id off an SSE chunk; leave `seen` alone otherwise.
+
+    verb: the `route_decision` event's `action.iri` (both the Dagster path and
+    `_stream_direct_outcome` emit it); "UNKNOWN" is the router's no-verb value, recorded as "".
+    case: a `case_id` key at the top of an event's data object or one level under it.
+    Honest-absent: "" when never seen."""
+    if not isinstance(chunk, str) or not chunk.startswith("event: "):
+        return
+    head, _, rest = chunk.partition("\n")
+    name = head[len("event: "):].strip()
+    if name != "route_decision" and '"case_id"' not in rest:
+        return
+    try:
+        data = json.loads(rest[len("data: "):].strip()) if rest.startswith("data: ") else None
+    except ValueError:
+        return
+    if not isinstance(data, dict):
+        return
+    if name == "route_decision" and not seen["verb"]:
+        iri = (data.get("action") or {}).get("iri") if isinstance(data.get("action"), dict) else None
+        if isinstance(iri, str) and iri and iri != "UNKNOWN":
+            seen["verb"] = iri
+    if not seen["case"]:
+        for node in (data, *[v for v in data.values() if isinstance(v, dict)]):
+            cid = node.get("case_id")
+            if isinstance(cid, str) and cid:
+                seen["case"] = cid
+                break
+
+
+def _audit_orchestrate_refusals(fn):
+    """A refusal raised BEFORE the stream opens leaves its one audit line (`outcome=refused:<status>`),
+    then re-raises the SAME exception unchanged (not a new refusal site). The stream's own line is
+    written by `_audit_orchestrate_wrap`, wired inside the handler. `wraps` keeps the name, the
+    docstring (the OpenAPI description) and the signature FastAPI reads."""
+    @functools.wraps(fn)
+    async def door(request, http_request, current_user):
+        when = _orchestrate_now()
+        try:
+            return await fn(request, http_request, current_user)
+        except HTTPException as exc:
+            _orchestrate_audit_line(
+                who=current_user.authz_id, via=getattr(current_user, "azp", None) or "",
+                session_id=request.session_id, verb="", case="", when=when,
+                outcome=f"refused:{exc.status_code}",
+            )
+            raise
+    return door
+
+
+async def _audit_orchestrate_wrap(gen, *, who: str, via: str, session_id: str):
+    """Pass `gen` through unchanged and in order; write ONE `orchestrate_access` line when it ends.
+
+    outcome: completed | closed (GeneratorExit / CancelledError: the client went away) | error
+    (anything else, re-raised)."""
+    when = _orchestrate_now()
+    seen = {"verb": "", "case": ""}
+    outcome = "completed"
+    try:
+        async for chunk in gen:
+            _note_orchestrate_event(chunk, seen)
+            yield chunk
+    except (GeneratorExit, asyncio.CancelledError):
+        outcome = "closed"
+        raise
+    except BaseException:
+        outcome = "error"
+        raise
+    finally:
+        _orchestrate_audit_line(
+            who=who, via=via, session_id=session_id, verb=seen["verb"], case=seen["case"],
+            when=when, outcome=outcome,
+        )
+
+
 async def _keepalive_wrap(stream, interval_s: float = 10.0):
     """Wrap an SSE generator so it emits `: keepalive\\n\\n` comments
     during quiet stretches.
@@ -10535,6 +10630,7 @@ async def register_frontend_capabilities(
 
 @app.post("/orchestrate", tags=[MCP_TAG])
 @app.post("/interview/stream")
+@_audit_orchestrate_refusals
 async def orchestrate(request: InterviewRequest, http_request: Request,
                       current_user: User = Depends(get_current_user)):
     """
@@ -10781,7 +10877,10 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
 
     return StreamingResponse(
         _keepalive_wrap(
-            generate_dagster_stream(
+            # INSIDE the keepalive: `_keepalive_wrap` turns a producer exception into an error
+            # event, so only here can the audit line say `outcome=error`.
+            _audit_orchestrate_wrap(
+              generate_dagster_stream(
                 request,
                 trace_id=_trace_id,
                 user_id=current_user.id,
@@ -10816,6 +10915,10 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                 # origin flag from auth.User down to the produced_for
                 # dict construction inside generate_dagster_stream.
                 entitlement_source=current_user.entitlement_source,
+              ),
+              who=current_user.authz_id,
+              via=getattr(current_user, "azp", None) or "",
+              session_id=request.session_id,
             ),
             interval_s=10.0,
         ),
