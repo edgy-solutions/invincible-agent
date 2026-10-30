@@ -331,6 +331,7 @@ NOT_POLICY: dict[str, str] = {
     'src/iagent/promotion.py::act::promotion_already_decided': CONFLICT,
     'src/iagent/promotion.py::act::promotion_reviewed_set_unknown': CONFLICT,
     'src/iagent/promotion.py::act::row_edits_differ_from_the_record': CONFLICT,
+    'src/iagent/promotion.py::act::review_coverage_differs_from_the_record': CONFLICT,
     'src/iagent/gateway.py::_decide_empty::add_missed_part_not_built | <_ADD_MISSED_PART_MSG>': NOT_BUILT,
     'src/iagent/gateway.py::_decide_empty::no_open_empty_task | no open confirmation for this do': CONFLICT,
     'src/iagent/gateway.py::_decide_empty::no_open_empty_task | the document moved while the dec': CONFLICT,
