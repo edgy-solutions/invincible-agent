@@ -134,6 +134,10 @@ def known_content_kinds() -> tuple[set[str], list[str]]:
 #: (the 10-28 dispatch). fin_cdrl: the program-finance persona's group (ruled 2026-10-29).
 #: tests/security/test_can_export_capability_rail.py holds each to a group in groups.yaml.
 EXPORT_DEFAULT_GROUPS = {"review_export": "alert-processors", "fin_cdrl": "finance-analysts"}
+#: A profile whose grantee is ruled BY NAME, overriding its kind's default in the completeness refusal.
+#: plan_answers (fin's #148, a policy/exports profile): portfolio-leads, NOT alert-processors -- "AP is
+#: notices" (ruled 2026-10-29). The seal holds each to a group in groups.yaml.
+EXPORT_PROFILE_GROUPS = {"plan_answers": "portfolio-leads"}
 _EXPORT_KIND_LABEL = {"review_export": "review-export", "fin_cdrl": "fin CDRL"}
 
 
@@ -484,7 +488,8 @@ def validate(
             errors.append(
                 f"capability_grants.yaml: {_EXPORT_KIND_LABEL.get(_k, _k)} profile {_p!r} has no "
                 f"'can_export:{_p}' row, so NOBODY could export it (deny-by-default). Add one; the "
-                f"default is `grant_to_groups: [{EXPORT_DEFAULT_GROUPS.get(_k, '?')}]`")
+                f"default is `grant_to_groups: "
+                f"[{EXPORT_PROFILE_GROUPS.get(_p, EXPORT_DEFAULT_GROUPS.get(_k, '?'))}]`")
 
     # recipient_readers.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note
     # there; required-or-not is open with the architect). Absent = no reader asserted = every

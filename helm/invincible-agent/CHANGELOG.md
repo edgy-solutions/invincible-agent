@@ -22,7 +22,10 @@
   gains three refusals: a `can_export:` key naming an unknown profile; a profile name in both the
   review-export and fin CDRL sets; ANY known profile with no row, naming its kind's default
   (ruled 2026-10-29): review-export `grant_to_groups: [alert-processors]`, fin CDRL
-  `grant_to_groups: [finance-analysts]`. One row gates a single export and a batch alike.
+  `grant_to_groups: [finance-analysts]`. One row gates a single export and a batch alike. A profile
+  can have its group ruled by name, which the refusal names instead: `plan_answers` (fin's #148, in
+  `policy/exports`) goes to `portfolio-leads`, not alert-processors (ruled 2026-10-29; alice holds
+  it in the sandbox already, so no `topaz_sync` precondition).
 - **Three rows ship**, one per profile the seed knows: `can_export:default-csv` and
   `can_export:default-json` (Lane 1's `policy/exports` profiles), `grant_to_groups:
   [alert-processors]`; `can_export:cdrl_a001_ev_summary`, `grant_to_groups: [finance-analysts]`.

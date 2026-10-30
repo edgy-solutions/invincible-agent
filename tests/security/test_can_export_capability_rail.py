@@ -6,8 +6,9 @@ relation prune). One row gates a single export and a batch alike (ruled 2026-10-
 met by COMPLETENESS: validate_policy refuses ANY known profile that no row decides, and names its
 kind's default group -- alert-processors for a review-export profile (policy/exports), and
 finance-analysts, the program-finance persona's group, for a fin CDRL profile (ruled 2026-10-29).
-The seed ships a row for every profile it knows: one per policy/exports profile at the
-review-export default, and the CDRL row.
+A profile can have its grantee ruled by name: plan_answers (fin's #148) goes to portfolio-leads,
+not alert-processors -- "AP is notices" (ruled 2026-10-29). The seed ships a row for every profile it
+knows: one per policy/exports profile at its group, and the CDRL row.
 
 Run:  uv run python -m pytest tests/security/test_can_export_capability_rail.py -q
 """
@@ -225,15 +226,40 @@ def test_5_the_seed_ships_the_cdrl_row_to_the_finance_group():
 
 
 def test_5_the_seed_ships_a_review_export_row_per_profile_to_the_default_group():
-    """Every policy/exports profile ships its row at the review-export default."""
+    """Every policy/exports profile ships its row at the review-export default, or at the group
+    ruled for it by name (plan_answers: portfolio-leads, once fin's #148 ships the profile)."""
     caps = yaml.safe_load((ROOT / "policy" / "capability_grants.yaml").read_text(encoding="utf-8"))
     review = _seed_review()
     assert review, "no review-export profile in the seed"
     for name in sorted(review):
         row = caps["capabilities"].get(f"can_export:{name}")
         assert row is not None, name
-        assert row.get("grant_to_groups") == [vp.EXPORT_DEFAULT_GROUPS["review_export"]] \
-            and not row.get("grant_to"), (name, row)
+        want = vp.EXPORT_PROFILE_GROUPS.get(name, vp.EXPORT_DEFAULT_GROUPS["review_export"])
+        assert row.get("grant_to_groups") == [want] and not row.get("grant_to"), (name, row)
+
+
+def test_5_plan_answers_with_no_row_names_portfolio_leads_not_the_kind_default(pol, monkeypatch):
+    """Ruled 2026-10-29: plan_answers sits in policy/exports (review-export kind) but goes to
+    portfolio-leads; "AP is notices". The refusal names the ruled group, not the kind's default."""
+    _known(monkeypatch, {CDRL: "fin_cdrl", "plan_answers": "review_export"})
+    hit = _no_row(vp.validate(pol, pol), "plan_answers")
+    assert len(hit) == 1 and "review-export profile" in hit[0], hit
+    assert "grant_to_groups: [portfolio-leads]" in hit[0] and GROUP not in hit[0], hit
+
+
+def test_5_each_ruled_profile_group_is_a_group_and_plan_answers_is_the_portfolio_lead_cell():
+    """Derive, don't restate: plan_answers' group is the one whose grants carry PORTFOLIO_LEAD, and
+    alice holds it in the sandbox (the ruling's "alice in sandbox")."""
+    groups = yaml.safe_load((ROOT / "policy" / "groups.yaml").read_text(encoding="utf-8"))["groups"]
+    for name, g in vp.EXPORT_PROFILE_GROUPS.items():
+        assert g in groups and g not in vp.EXPORT_DEFAULT_GROUPS.values(), (name, g)
+    lead = {name for name, body in groups.items()
+            if any(isinstance(x, dict) and x.get("persona") == "PORTFOLIO_LEAD"
+                   for x in ((body or {}).get("grants") or []))}
+    assert lead == {vp.EXPORT_PROFILE_GROUPS["plan_answers"]}, lead
+    users = yaml.safe_load((ROOT / "policy" / "users.yaml").read_text(encoding="utf-8"))["users"]
+    alice = [u for u in users if u.get("id") == "alice@example.com"]
+    assert len(alice) == 1 and vp.EXPORT_PROFILE_GROUPS["plan_answers"] in (alice[0].get("groups") or [])
 
 
 def test_5_each_default_group_is_a_group_and_the_cdrl_one_is_program_finance():
