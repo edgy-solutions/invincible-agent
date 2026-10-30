@@ -243,7 +243,10 @@ overrun is the seed-row wiring, because doc-tools cannot yet project an event ro
 - Lane 1, ruling 3: `register_task` accepts a service with `on_behalf_of`, with its test.
 - The broker in the delegate map (F10).
 - OpenDDIL emits one precomputed episode key (7f's change 3); else the row cannot be finished.
-- ca's `review_shape` widening and `source_class`, if the card needs them (F1).
+- `source_class` in the provenance block (§4's decision): it lands in ca's SDK first
+  (`iagent_mesh.provenance`) and is mirrored in `provenance.py`, per §4's Owners line. The card
+  shows it, so the card waits on that mirror. There is no `review_shape` prerequisite: an
+  event-branch kind is never promoted (F1, §1 decision 2).
 - A part on the `safety_critical` list (F5), for any later promotion; the slice itself needs none.
 
 ## §6 — Alignment by concept name
