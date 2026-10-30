@@ -129,6 +129,14 @@ def known_content_kinds() -> tuple[set[str], list[str]]:
     return kinds, sources
 
 
+#: The default grantee of each export-profile kind, named in the completeness refusal (every known
+#: profile must have a `can_export:<P>` row; this is the row to add). review_export: alert-processors
+#: (the 10-28 dispatch). fin_cdrl: the program-finance persona's group (ruled 2026-10-29).
+#: tests/security/test_can_export_capability_rail.py holds each to a group in groups.yaml.
+EXPORT_DEFAULT_GROUPS = {"review_export": "alert-processors", "fin_cdrl": "finance-analysts"}
+_EXPORT_KIND_LABEL = {"review_export": "review-export", "fin_cdrl": "fin CDRL"}
+
+
 def known_export_profiles(
     sources: list[tuple[Path, str]] | None = None,
 ) -> tuple[dict[str, str], list[str]]:
@@ -472,11 +480,11 @@ def validate(
             f"Known profiles ({len(_profiles)}) were composed from the `name` field of: "
             + "; ".join(_pnotes))
     for _p, _k in sorted(_profiles.items()):
-        if _k == "review_export" and _p not in _export_keys:
+        if _p not in _export_keys:
             errors.append(
-                f"capability_grants.yaml: review-export profile {_p!r} has no 'can_export:{_p}' "
-                f"row, so NOBODY could export it (deny-by-default). Add one; the default is "
-                f"`grant_to_groups: [alert-processors]`")
+                f"capability_grants.yaml: {_EXPORT_KIND_LABEL.get(_k, _k)} profile {_p!r} has no "
+                f"'can_export:{_p}' row, so NOBODY could export it (deny-by-default). Add one; the "
+                f"default is `grant_to_groups: [{EXPORT_DEFAULT_GROUPS.get(_k, '?')}]`")
 
     # recipient_readers.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note
     # there; required-or-not is open with the architect). Absent = no reader asserted = every

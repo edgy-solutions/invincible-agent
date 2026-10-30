@@ -20,9 +20,12 @@
 - **The `can_export:<profile>` convention** (header comment in `policy/capability_grants.yaml`):
   who may export export profile `<profile>`, deny-by-default (no row, nobody). `validate_policy`
   gains three refusals: a `can_export:` key naming an unknown profile; a profile name in both the
-  review-export and fin CDRL sets; a review-export profile with no row (default row
-  `grant_to_groups: [alert-processors]`). A CDRL row is allowed, not required, pending a ruling.
-  **No rows ship**, so nothing to sync and no roll precondition.
+  review-export and fin CDRL sets; ANY known profile with no row, naming its kind's default
+  (ruled 2026-10-29): review-export `grant_to_groups: [alert-processors]`, fin CDRL
+  `grant_to_groups: [finance-analysts]`. One row gates a single export and a batch alike.
+- **One row ships**: `can_export:cdrl_a001_ev_summary`, `grant_to_groups: [finance-analysts]`.
+  `finance-analysts` already exists, so no `topaz_sync` precondition; the capability leg writes it
+  at the next roll. It is inert until Lane 1's export door checks it.
 
 **Chart changes**
 

@@ -48,13 +48,14 @@
 # export export profile P, by the profile's `name`. DENY-BY-DEFAULT, unlike `can_drop`: the door
 # asks can_invoke on `can_export:<P>` and False refuses, so a profile with NO row is exportable by
 # NOBODY; object existence decides nothing, there is no object prune, and deleting a row revokes
-# through the invoker-relation prune. "alert-processors by default" is met by COMPLETENESS, not a
-# generated default (the sync Job's image cannot reliably see every profile overlay):
-# validate_policy.py refuses a review-export profile (policy/exports) that no `can_export:<P>` row
-# decides; the default row is `grant_to_groups: [alert-processors]`. A row for a fin CDRL profile
-# is ALLOWED (its name must be known) but NOT REQUIRED, pending the architect's ruling: a CDRL is
-# a program-office deliverable, and an alert-processors default looks wrong for it. validate_policy
-# also refuses a `can_export:<P>` key naming no known profile, and a name in both kinds.
+# through the invoker-relation prune. One row gates a single export and a batch alike (ruled
+# 2026-10-29). The defaults are met by COMPLETENESS, not a generated default (the sync Job's image
+# cannot reliably see every profile overlay): validate_policy.py refuses ANY known profile that no
+# `can_export:<P>` row decides, and names the default row for its kind (validate_policy
+# EXPORT_DEFAULT_GROUPS): a review-export profile (policy/exports) `grant_to_groups:
+# [alert-processors]`; a fin CDRL profile `grant_to_groups: [finance-analysts]`, the program-finance
+# persona's group (ruled 2026-10-29). validate_policy also refuses a `can_export:<P>` key naming no
+# known profile, and a name in both kinds.
 capabilities:
   # ADR-0029 Slice-1 demo fixture: the promotion workflow's publish emit. alice
   # (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) is the initiator authorized to
@@ -321,3 +322,15 @@ capabilities:
       row's EXISTENCE gates the kind: deleting the row reopens `pdn` to every caller. A deployment
       configures this in its own policy repository.
     grant_to_groups: [alert-processors]
+
+  # can_export:<profile> (2026-10-29 ruling) -- see the convention in the header. One row per
+  # known export profile; validate_policy refuses a profile with none. The CDRL default is the
+  # program-finance persona's group.
+  can_export:cdrl_a001_ev_summary:
+    granted_by: cnogradi
+    reason: >-
+      2026-10-29 ruling: a fin CDRL profile is exportable, single or in a batch, by the
+      program-finance persona's group (finance-analysts) by default. Deny-by-default: deleting
+      this row leaves the profile exportable by NOBODY. A deployment configures this in its own
+      policy repository.
+    grant_to_groups: [finance-analysts]

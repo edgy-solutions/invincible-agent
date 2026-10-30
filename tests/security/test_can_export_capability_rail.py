@@ -2,10 +2,11 @@
 
 A profile with no `can_export:<P>` row is exportable by nobody; object existence decides nothing, so
 the sync has no existence read and no object prune (deleting a row revokes through the invoker
-relation prune). "alert-processors by default" is met by COMPLETENESS: validate_policy refuses a
-review-export profile (policy/exports) that no row decides. A fin CDRL profile's row is allowed but
-NOT required -- the deliberate asymmetry, pending the architect's ruling (a CDRL is a program-office
-deliverable; an alert-processors default looks wrong for it).
+relation prune). One row gates a single export and a batch alike (ruled 2026-10-29). The defaults are
+met by COMPLETENESS: validate_policy refuses ANY known profile that no row decides, and names its
+kind's default group -- alert-processors for a review-export profile (policy/exports), and
+finance-analysts, the program-finance persona's group, for a fin CDRL profile (ruled 2026-10-29).
+The seed ships the CDRL row.
 
 Run:  uv run python -m pytest tests/security/test_can_export_capability_rail.py -q
 """
@@ -31,6 +32,7 @@ from topaz_sync import DirObject, DirRelation  # noqa: E402
 SAMPLE = ROOT / "policy" / "overlays" / "sample" / "fin_export_profiles"
 CDRL = "cdrl_a001_ev_summary"
 GROUP = "alert-processors"
+FIN_GROUP = "finance-analysts"
 
 
 def _row(group=(GROUP,), users=()):
@@ -159,31 +161,67 @@ def test_4_a_known_cdrl_name_passes(pol, monkeypatch):
 
 
 def test_4_a_known_review_export_name_passes(pol, monkeypatch):
-    _known(monkeypatch, {"ingest_review": "review_export"})
+    _known(monkeypatch, {CDRL: "fin_cdrl", "ingest_review": "review_export"})
     _add(pol, "can_export:ingest_review", _row())
     assert vp.validate(pol, pol) == []
 
 
 # -- 5. completeness -----------------------------------------------------------------------
 
+def _no_row(errs, name):
+    return [e for e in errs if f"profile {name!r} has no" in e and "NOBODY could export it" in e]
+
+
 def test_5_a_review_export_profile_with_no_row_is_refused(pol, monkeypatch):
-    _known(monkeypatch, {"ingest_review": "review_export"})
-    errs = vp.validate(pol, pol)
-    assert any("ingest_review" in e and "NOBODY could export it" in e and GROUP in e
-               for e in errs), errs
+    _known(monkeypatch, {CDRL: "fin_cdrl", "ingest_review": "review_export"})
+    hit = _no_row(vp.validate(pol, pol), "ingest_review")
+    assert len(hit) == 1 and "review-export profile" in hit[0], hit
+    assert f"grant_to_groups: [{GROUP}]" in hit[0] and FIN_GROUP not in hit[0], hit
 
 
 def test_5_with_the_row_present_it_passes(pol, monkeypatch):
-    _known(monkeypatch, {"ingest_review": "review_export"})
+    _known(monkeypatch, {CDRL: "fin_cdrl", "ingest_review": "review_export"})
     _add(pol, "can_export:ingest_review", _row())
     assert vp.validate(pol, pol) == []
 
 
-def test_5_a_cdrl_profile_with_no_row_passes_the_deliberate_asymmetry(pol, monkeypatch):
-    # Pending the architect's ruling: a CDRL is a program-office deliverable, so an
-    # alert-processors default looks wrong; a row is allowed, not required.
+def test_5_a_cdrl_profile_with_no_row_is_refused_and_names_the_finance_group(pol, monkeypatch):
+    """Ruled 2026-10-29: completeness covers CDRL profiles too, and their default is the
+    program-finance persona's group, NOT alert-processors (the rejected single default)."""
+    _known(monkeypatch, {CDRL: "fin_cdrl", "cdrl_b": "fin_cdrl"})
+    hit = _no_row(vp.validate(pol, pol), "cdrl_b")
+    assert len(hit) == 1 and "fin CDRL profile" in hit[0], hit
+    assert f"grant_to_groups: [{FIN_GROUP}]" in hit[0] and GROUP not in hit[0], hit
+
+
+def test_5_the_seed_cdrl_row_is_what_keeps_the_seed_green(pol, monkeypatch):
+    """CONTROL for the arm above on the real seed: delete the shipped row and the seed's own
+    profile is refused."""
     _known(monkeypatch, {CDRL: "fin_cdrl"})
-    assert vp.validate(pol, pol) == []
+    p = pol / "capability_grants.yaml"
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    del data["capabilities"][f"can_export:{CDRL}"]
+    p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    assert len(_no_row(vp.validate(pol, pol), CDRL)) == 1
+
+
+def test_5_the_seed_ships_the_cdrl_row_to_the_finance_group():
+    caps = yaml.safe_load((ROOT / "policy" / "capability_grants.yaml").read_text(encoding="utf-8"))
+    row = caps["capabilities"][f"can_export:{CDRL}"]
+    assert row.get("grant_to_groups") == [FIN_GROUP] and not row.get("grant_to"), row
+
+
+def test_5_each_default_group_is_a_group_and_the_cdrl_one_is_program_finance():
+    """Derive, don't restate: the CDRL default is the group whose grants carry the
+    PROGRAM_FINANCE_ANALYST persona, read from groups.yaml."""
+    groups = yaml.safe_load((ROOT / "policy" / "groups.yaml").read_text(encoding="utf-8"))["groups"]
+    assert set(vp.EXPORT_DEFAULT_GROUPS) == {"review_export", "fin_cdrl"}
+    for kind, g in vp.EXPORT_DEFAULT_GROUPS.items():
+        assert g in groups, (kind, g)
+    fin = {name for name, body in groups.items()
+           if any(isinstance(x, dict) and x.get("persona") == "PROGRAM_FINANCE_ANALYST"
+                  for x in ((body or {}).get("grants") or []))}
+    assert fin == {vp.EXPORT_DEFAULT_GROUPS["fin_cdrl"]}, fin
 
 
 # -- 6. a collision ------------------------------------------------------------------------
