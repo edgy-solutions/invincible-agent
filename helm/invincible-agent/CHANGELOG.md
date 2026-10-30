@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**Policy changes (2026-10-29 ruling: a `plan` owner on the recipient_readers rail)**
+
+- **`recipient_readers` gains the owner `plan`** (`policy/recipient_readers.yaml`, shipped empty;
+  `recipient_reader_sync.OWNERS`). It is the owner fin's #148 asks for plan recipients
+  (`can_read_recipient("plan", scope, caller)`). With no rows every plan caller is refused. No
+  sync precondition: the `recipient_scope` type exists, and an empty owner writes nothing.
+
 **Policy changes (2026-10-28 ruling: pcn and pdn droppable by the alert-processors group only)**
 
 - **`capability_grant_sync` learns `grant_to_groups`** and prunes orphan `can_drop:` objects. A

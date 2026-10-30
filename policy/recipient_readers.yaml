@@ -6,11 +6,15 @@
 # tables (agent_fleet/finance_agent/export.py, agent_fleet/cost_agent/seed.py) remain the
 # authority and tests/security/test_recipient_readers_rail.py ratchets them down.
 #
-# SHAPE: KEY 1 = OWNER, a CLOSED set {finance, cost}. KEY 2 = the recipient scope as that
-# owner's engine names it. A row is `<scope>: {granted_by, reason, grant_to: [emails]}`. The
-# owner is part of the key because the two engines' disclosures are entitled INDEPENDENTLY: a
-# reader of one engine's scope is never a reader of the other's, even when the scope string
-# collides. The Topaz object is `recipient_scope` with id `<owner>:<scope>`.
+# SHAPE: KEY 1 = OWNER, a CLOSED set {finance, cost, plan}. KEY 2 = the recipient scope as that
+# owner names it. A row is `<scope>: {granted_by, reason, grant_to: [emails]}`. The owner is part
+# of the key because each owner's disclosures are entitled INDEPENDENTLY: a reader of one owner's
+# scope is never a reader of another's, even when the scope string collides. The Topaz object is
+# `recipient_scope` with id `<owner>:<scope>`.
+#
+# `plan` (architect, 2026-10-29): the plan recipients named by policy/exports answer-export
+# profiles (fin's #148 asks `can_read_recipient("plan", scope, caller)`). It has no code-held
+# table to move; it ships EMPTY, so every plan caller is refused until a row grants a reader.
 #
 # `granted_by` / `reason` / `grant_to` are REQUIRED per row -- an unexplained or targetless row
 # is refused by validate_policy.py / recipient_reader_sync.py, never silently dropped. An owner
@@ -23,7 +27,7 @@
 # to a service identity entitles every caller that service serves (the confused-deputy shape
 # `service_identity_recipients` already refuses on the other disclosure namespaces).
 #
-# Row shape (owners add their own under finance / cost):
+# Row shape (owners add their own under finance / cost / plan):
 #   <scope>:
 #     granted_by: <accountable human>
 #     reason: >-
@@ -33,3 +37,4 @@
 recipient_readers:
   finance: {}
   cost: {}
+  plan: {}

@@ -7,9 +7,11 @@ package (finance_agent/export.py and cost_agent/seed.py, each `RECIPIENT_READERS
 check ("is this caller a reader of this scope?"), which is exactly a Topaz `reader` relation
 (deny-by-default, git-asserted) on a `recipient_scope` object.
 
-THE OBJECT ID IS `<owner>:<scope>`. The OWNER (a closed set, `finance` | `cost`) is part of the
-id because the two engines' disclosures are entitled independently: a reader of one engine's
-scope is never a reader of the other's, even when the scope string collides.
+THE OBJECT ID IS `<owner>:<scope>`. The OWNER (a closed set, `finance` | `cost` | `plan`) is part
+of the id because each owner's disclosures are entitled independently: a reader of one owner's
+scope is never a reader of another's, even when the scope string collides. `plan` (2026-10-29
+ruling) owns the plan recipients that policy/exports answer-export profiles name (fin's #148:
+`can_read_recipient("plan", scope, caller)`); it has no code-held table to move.
 
 EIGHT SYNCS, ONE DIRECTORY, DISJOINT SCOPE (no two prune the same relation):
   - topaz_sync.py                 -- persona/cell/group/member/user
@@ -27,7 +29,7 @@ relations not asserted in git (removing a row REVOKES can_read_recipient).
 
 PROVE-THE-NEGATIVE ON THE GRANT PATH, same discipline as program_member_sync.py: a row is
 REFUSED (nothing applied, non-zero exit) when MALFORMED -- missing `granted_by` (accountable
-human), `reason`, or `grant_to`; an owner outside {finance, cost}; an owner block or row that
+human), `reason`, or `grant_to`; an owner outside {finance, cost, plan}; an owner block or row that
 is not a mapping; or a `svc:` grantee (ADR-0047 section 5.1: a disclosure to a service identity
 entitles every caller it serves).
 
@@ -52,8 +54,8 @@ PERMISSION = "can_read_recipient"
 # Disjoint prune scope: recipient_scope reader relations only.
 MANAGED_RECIPIENT_RELATIONS = [(OBJECT_TYPE, RELATION)]
 
-# CLOSED set: the engines that own a recipient scope.
-OWNERS = frozenset({"finance", "cost"})
+# CLOSED set: the owners of a recipient scope. `plan` added 2026-10-29 (architect's ruling).
+OWNERS = frozenset({"finance", "cost", "plan"})
 
 
 @dataclass(frozen=True)

@@ -145,11 +145,37 @@ def test_the_same_scope_under_both_owners_is_two_objects():
 
 # -- the shipped file -----------------------------------------------------------------------
 
-def test_shipped_rail_file_loads_clean_with_exactly_the_two_owners():
+def test_shipped_rail_file_loads_clean_with_exactly_the_three_owners():
+    """`plan` joined 2026-10-29 (architect's ruling) for fin's #148 plan recipient. A NEW owner
+    needs a ruling, not an edit."""
     raw = yaml.safe_load(_RAIL.read_text(encoding="utf-8"))
     _rows, errors = load_readers(raw)
     assert errors == []
-    assert set(raw["recipient_readers"]) == {"finance", "cost"} == set(rrs.OWNERS)
+    assert set(raw["recipient_readers"]) == {"finance", "cost", "plan"} == set(rrs.OWNERS)
+
+
+def test_a_plan_row_loads_and_derives_a_plan_object():
+    rows, errors = load_readers(_raw(owner="plan", scope="notional-plan-office"))
+    assert errors == [] and [r.object_id for r in rows] == ["plan:notional-plan-office"]
+    ids = {r.object_id for r in derive_desired(rows).relations}
+    assert ids == {"plan:notional-plan-office"}
+
+
+def test_the_plan_owner_is_the_one_every_consumer_asks_for():
+    """Join: the owner string fin's consumers pass (#148: engine-cost and the BFF each declare
+    `_PLAN_OWNER`) is a member of the closed set. Found by FORM, so a third consumer is held too.
+    Skips until a consumer is on this tree; then a renamed constant on either side reds."""
+    form = re.compile(r'^_PLAN_OWNER\s*=\s*"([^"]*)"', re.M)
+    found = {}
+    for top in ("agent_fleet", "src"):
+        for f in (_REPO / top).rglob("*.py"):
+            if ".venv" in f.parts or "__pycache__" in f.parts:
+                continue
+            for m in form.finditer(f.read_text(encoding="utf-8", errors="replace")):
+                found[f.relative_to(_REPO).as_posix()] = m.group(1)
+    if not found:
+        pytest.skip("no consumer declares _PLAN_OWNER on this tree (fin's #148 has not landed)")
+    assert {k: v for k, v in found.items() if v not in rrs.OWNERS} == {}, found
 
 
 # -- grantor --------------------------------------------------------------------------------
