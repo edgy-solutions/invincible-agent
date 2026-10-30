@@ -6,7 +6,8 @@ first measurement is Lane 74's model-call census from engine logs (§4, "The mea
 was taken on 2026-10-29 at `4a5ff6b6`
 ([`adr-0058-model-call-census-2026-10-30.md`](../measurements/adr-0058-model-call-census-2026-10-30.md)).
 It found routing at 4–8 calls per question, median 5. No walked question reached an agent loop, so
-the loop term is still unmeasured. The budget numbers are the architect's.
+the loop term is still unmeasured. The architect set the budget numbers on 10-30: routing ≤ 8,
+agent loop ≤ 12 steps, case total ≤ 40 (§4).
 **Date:** 2026-10-22; revised 2026-10-27; proposed 2026-10-28
 **Deciders:** architect (decision); Chris (review); Lane 74 (draft)
 **Related:**
@@ -136,6 +137,7 @@ something, the parent must bind it as an input, where review can see it.
 | `parent_case_key`, `spawn_step_id`, `depth` | linkage; written by the executor, never by the child |
 | `definition_id` | what ran |
 | `outcome` | closed set: `completed`, `refused`, `escalated`, `budget_exhausted`, `timed_out` |
+| `exhausted_budget` | which budget ended the case: `routing`, `agent_loop` or `case_total` (§4); absent unless `budget_exhausted` |
 | `output` | typed by the child definition's declared output; absent unless `completed` |
 | `provenance` | the child's own provenance floor (ADR-0025), intact |
 | `model_calls_used`, `wall_s_used` | measured by the executor (§4) |
@@ -213,14 +215,38 @@ spawns from depth 3 and is refused.
     `docs/proposals/bounding-the-answer-not-just-the-source.md` §4, still a hypothesis. It can only
     be measured live, and until it is, the seal records it as unconfirmed rather than asserting
     either answer.
-- **The measured unit.** Q1 cost 4 Engine O calls plus the agent loop. The loop is unbounded today
-  (default 20, and 10–15 calls were observed on one question under the 199 repeat). A first
-  per-level budget is therefore about 4 plus the loop cap. The number is the architect's to set.
-  It comes from a census over the walk sheet, not from Q1 alone. Lane 74 runs that census, counting
-  from engine logs (architect, 10-27).
-  - A log count covers only what each engine chooses to log. So the census also records, per
-    engine, which call sites it could count and which it could not.
-  - A number from it is a floor, not a measurement of what a budget would count.
+- **The numbers** (architect, 2026-10-30). There are three budgets, and each is a cap:
+
+  | budget | cap | what it counts | evidence |
+  | --- | --- | --- | --- |
+  | `routing` | **≤ 8** model calls per question | Engine O's routing calls for one question, before any agent loop | the census's measured maximum |
+  | `agent_loop` | **≤ 12** steps | the steps of one agent run; this is the "definition cap" in `max_steps` above | the architect's, not measured (the census reached no loop) |
+  | `case_total` | **≤ 40** model calls | every completion the case makes, counted as above; this is `budget.model_calls` | the architect's |
+
+  - **A step over budget ends the case, and the case names the budget.** The step that would make
+    a call past any one of the three caps makes no call. The level ends `budget_exhausted`, and
+    its record says which of `routing`, `agent_loop` or `case_total` it exceeded. A parent's
+    `on_exhausted` then applies as above.
+  - **The numbers are declared values, not constants.** They are each definition's declared
+    budget, and these are the values the first definitions declare. No code holds 8, 12 or 40.
+  - **The case total bounds the tree.** Because reservations come out of the root's remainder,
+    40 at the root bounds the root plus every descendant. A child's declaration is carved out of
+    its parent's 40, so a child declared below 8 + 12 = 20 cannot run both a full routing pass and
+    a full agent loop. The §2 example's `model_calls: 12` is one such child.
+- **The evidence: the census** (Lane 74,
+  [`adr-0058-model-call-census-2026-10-30.md`](../measurements/adr-0058-model-call-census-2026-10-30.md)).
+  It fired the walk sheet's 32 rows one at a time at `4a5ff6b6` and counted calls from BAML's own
+  log and the loop counters.
+  - **Routing:** 4–8 calls per question, median 5, 158 in total.
+    - `safety-deferral-risk-refusal` made 8, because of a second routing pass. That row is at the
+      `routing` cap; a ninth call would have ended its case.
+    - Q1's 4 calls are the lower end of that range, not the typical cost.
+  - **No row reached an agent loop**, so the `agent_loop` cap has no measurement behind it.
+    - A log count covers only what each engine logs. Engine-a's loop writes no per-step or per-run
+      line, so no log can count it.
+    - Engine E's loop and data-analyst's are countable, but no row reached either.
+  - **The census is a floor.** It is not a measurement of what a budget would count. What a budget
+    counts is per-case reporting (§Consequences), which does not exist yet.
 
 ## Consequences
 
@@ -309,7 +335,9 @@ The five open questions of the second revision, as decided, and where each lande
 
 ## Still open
 
-- **The budget numbers:** from Lane 74's census, the ADR's first measurement (architect, 10-28).
+- **The budget numbers:** closed (architect, 10-30). They are in §4.
+- **The `agent_loop` cap has no measurement.** Measuring it needs walk rows that reach an agent
+  loop, and a per-step or per-run line in engine-a.
 - **Who builds per-case `model_calls` reporting** in the five engines (§Consequences).
 - **Who builds the retry seal** (§4). It is not assigned.
 - **Who owns the nine model-calling steps** (§Consequences). They are not assigned.
