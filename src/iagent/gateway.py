@@ -12935,7 +12935,10 @@ async def ingest_export_batch_route(
         to: Optional[str] = _Query(None), current_user: User = Depends(get_current_user)):
     """GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the
     range (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.
-    A service caller (`_is_service_caller`) gets the same 403 before Topaz is asked.
+    A service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The
+    capability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is
+    one of the caller's entitlement-cell domains are in the set, filtered before the loud-not-
+    partial checks and before the 500 cap; a caller with no cells gets the empty export.
     Gate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy
     refusal; Topaz down is 503). At most 92 days (both ends counted) and 500 notices. LOUD, NOT
     PARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,
@@ -12980,9 +12983,10 @@ async def ingest_export_batch_route(
 
     start_ms, end_ms = _ms(d0), _ms(d1 + timedelta(days=1))
     try:
-        hits = await run_in_threadpool(
+        domains = {c.domain for c in current_user.entitlements.cells}
+        hits = [] if not domains else await run_in_threadpool(
             lambda: promotion_stores.PgDecisionLedger().promoted_between(
-                start_ms, end_ms, _EXPORT_MAX_NOTICES + 1))
+                start_ms, end_ms, _EXPORT_MAX_NOTICES + 1, domains))
     except Exception as exc:  # noqa: BLE001
         logger.warning("decision ledger range read failed: %s", exc)
         raise HTTPException(status_code=503, detail={
@@ -13021,7 +13025,9 @@ async def ingest_export_route(ingest_id: str, profile: Optional[str] = _Query(No
                               current_user: User = Depends(get_current_user)):
     """GET /ingest/<id>/export?profile=<name> -- one PROMOTED notice rendered through a profile
     (`policy/exports/`, 7f's batch-column-map vocabulary). A service caller never reaches the
-    capability: the original 403 is re-raised and Topaz is not asked. Gate: `_ingest_review_access` (the
+    capability: the original 403 is re-raised and Topaz is not asked. The capability is
+    DOMAIN-SCOPED: a notice whose promotion domain (`promotion.recorded_domain`) is not one of the
+    caller's cell domains, or has none, re-raises the original 403 (audit `out_of_domain`). Gate: `_ingest_review_access` (the
     dropper, or a holder of the open task), and a caller it would 403 is admitted when they hold
     the `ingest:exportBatch` capability (reason `export_capability`); a Topaz failure while that
     is consulted is 503, a False re-raises the ORIGINAL 403. 422 `export_profile_unknown` /
@@ -13046,6 +13052,12 @@ async def ingest_export_route(ingest_id: str, profile: Optional[str] = _Query(No
         row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
         if row is None or row.get("kind") == ingest_status.EVENT:
             raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+        from . import promotion
+
+        rec = await run_in_threadpool(lambda: _export_decision_record(ingest_id))
+        if promotion.recorded_domain(rec) not in {c.domain for c in current_user.entitlements.cells}:
+            _audit_ingest_access("export", ingest_id, caller, "deny", "out_of_domain")
+            raise
         _audit_ingest_access("export", ingest_id, caller, "allow", "export_capability")
     prof = _export_profile_or_422(profile)
     body = await _export_notice_extraction(ingest_id, row)

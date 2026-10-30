@@ -46,6 +46,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DROPPER = "alice@example.com"
 STRANGER = "mallory@example.com"
 CAP = "capability_grants:ingest:exportBatch"
+DOM_A, DOM_B = "maintenance", "supply"
 
 
 # ── doubles: the same targets tests/test_ingest_review_card_routes.py patches ────────────────────
@@ -126,18 +127,26 @@ class Ledger:
     between: list = []          # [(ingest_id, acted_at_ms)]
     calls: list = []            # the params promoted_between received
     fail = False
+    domains: dict = {}          # ingest_id -> promotion domain; unlisted notices are in DOM_A
+
+    @staticmethod
+    def domain(ingest_id):
+        return Ledger.domains.get(ingest_id, DOM_A)
 
     def record_for(self, ingest_id):
         if Ledger.fail:
             raise RuntimeError("ledger down")
-        return Ledger.records.get(ingest_id)
+        if ingest_id in Ledger.records:
+            return Ledger.records[ingest_id]
+        return {"checks": [{"name": "human_review", "inputs": {
+            "audience": f"document_promotion:{Ledger.domain(ingest_id)}"}}]}
 
-    def promoted_between(self, start_ms, end_ms, limit):
+    def promoted_between(self, start_ms, end_ms, limit, domains):
         if Ledger.fail:
             raise RuntimeError("ledger down")
-        Ledger.calls.append((start_ms, end_ms, limit))
+        Ledger.calls.append((start_ms, end_ms, limit, frozenset(domains)))
         return [(i, at) for i, at in sorted(Ledger.between, key=lambda t: (t[1], t[0]))
-                if start_ms <= at < end_ms][:limit]
+                if start_ms <= at < end_ms and Ledger.domain(i) in domains][:limit]
 
 
 def _install(monkeypatch, worlds, *, topaz=None, holders=()):
@@ -153,6 +162,7 @@ def _install(monkeypatch, worlds, *, topaz=None, holders=()):
     monkeypatch.setattr(ht, "get_task_open_state", lambda t: None)
     monkeypatch.setattr(ht, "can_act_or_unavailable", lambda aud, who: who in holders)
     Ledger.records, Ledger.between, Ledger.calls, Ledger.fail = {}, [], [], False
+    Ledger.domains = {}
     monkeypatch.setattr(promotion_stores, "PgDecisionLedger", Ledger)
     asked = []
     if topaz is not None:
@@ -179,9 +189,11 @@ def _install(monkeypatch, worlds, *, topaz=None, holders=()):
     return fake, asked
 
 
-def _as(who):
+def _as(who, domains=(DOM_A,)):
+    cells = [SimpleNamespace(persona="p", domain=d) for d in domains]
     user = type("U", (), {"authz_id": who, "id": who, "sub": who, "email": who, "persona": None,
-                          "entitled_domains": [], "is_authenticated": True})()
+                          "entitled_domains": [], "is_authenticated": True,
+                          "entitlements": SimpleNamespace(cells=cells)})()
     gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
 
 
@@ -607,7 +619,7 @@ def test_g_the_range_is_utc_days_inclusive_at_both_ends(monkeypatch, tmp_path):
     worlds = [_world(n, _review({0: {"affected_mpn": f"M{n}"}})) for n in ins]
     r = _batch(monkeypatch, tmp_path, worlds, [(_iid(n), at) for n, at in ins.items()])
     assert r.status_code == 200, r.text
-    assert Ledger.calls == [(_ms(2026, 10, 1), _ms(2026, 10, 3), 501)]
+    assert Ledger.calls == [(_ms(2026, 10, 1), _ms(2026, 10, 3), 501, frozenset({DOM_A}))]
     b = r.json()
     assert (b["from"], b["to"], b["notices"]) == ("2026-10-01", "2026-10-02", 2)
     assert [x["Affected"] for x in b["rows"]] == ["M1", "M2"]            # acted_at order
@@ -633,7 +645,7 @@ def test_g_501_notices_is_too_large_not_a_truncated_export(monkeypatch, tmp_path
     many = [(_iid(n), _ms(2026, 10, 1) + n) for n in range(1, 502)]
     r = _batch(monkeypatch, tmp_path, [], many)
     assert r.status_code == 422 and r.json()["detail"]["error"] == "export_range_too_large"
-    assert Ledger.calls == [(_ms(2026, 10, 1), _ms(2026, 10, 3), 501)]
+    assert Ledger.calls == [(_ms(2026, 10, 1), _ms(2026, 10, 3), 501, frozenset({DOM_A}))]
 
 
 def test_g_a_notice_that_is_no_longer_promoted_refuses_the_whole_export(monkeypatch, tmp_path):
@@ -774,3 +786,62 @@ def test_s3_control_a_human_with_the_capability_is_admitted_on_both_routes(monke
     _as(STRANGER)
     assert not gateway._is_service_caller(STRANGER)
     assert _get(f"/ingest/{_iid(1)}/export?profile=t").status_code == 200
+
+
+# ── d. the capability is domain-scoped (architect 2026-10-29) ───────────────────────────────────
+
+def test_d1_a_granted_human_exports_an_in_domain_notice_it_did_not_drop_and_not_another_domains(
+        monkeypatch, tmp_path):
+    _use_profiles(monkeypatch, tmp_path, t=SIMPLE)
+    _, asked = _install(monkeypatch, [_world(1, REV_C), _world(2, REV_C)], topaz=(200, True))
+    Ledger.domains = {_iid(1): DOM_A, _iid(2): DOM_B}
+    _as(STRANGER, domains=(DOM_A,))
+    assert _get(f"/ingest/{_iid(1)}/export?profile=t").status_code == 200
+    r = _get(f"/ingest/{_iid(2)}/export?profile=t")
+    assert r.status_code == 403 and r.json()["detail"]["error"] == "not_entitled"
+    assert len(asked) == 2           # the capability WAS consulted; the domain decided
+
+
+def test_d1_a_record_with_no_readable_domain_is_out_of_domain(monkeypatch, tmp_path):
+    _use_profiles(monkeypatch, tmp_path, t=SIMPLE)
+    _install(monkeypatch, [_world(1, REV_C)], topaz=(200, True))
+    for rec in ({"checks": []}, {"checks": [{"name": "human_review", "inputs": {"audience": "x"}}]}):
+        Ledger.records[_iid(1)] = rec
+        _as(STRANGER)
+        assert _get(f"/ingest/{_iid(1)}/export?profile=t").status_code == 403
+
+
+def test_d2_the_batch_exports_only_the_callers_domains_and_reports_no_failure(monkeypatch, tmp_path):
+    worlds = [_world(n, _review({0: {"affected_mpn": f"M{n}"}})) for n in (1, 2, 3)]
+    # notice 2 (domain B) is not promoted any more: out of the caller's set, so NOT a failure
+    worlds[1][0]["status"] = ist.REVIEW
+    between = [(_iid(n), _ms(2026, 10, 1, n)) for n in (1, 2, 3)]
+    Ledger.domains = {_iid(2): DOM_B}
+    r = _batch(monkeypatch, tmp_path, worlds, between)
+    Ledger.domains = {_iid(2): DOM_B}
+    r = _get("/ingest/export?profile=t&from=2026-10-01&to=2026-10-02")
+    assert r.status_code == 200, r.text
+    assert [x["Affected"] for x in r.json()["rows"]] == ["M1", "M3"] and r.json()["notices"] == 2
+
+
+def test_d3_a_granted_caller_with_no_cells_gets_a_single_403_and_an_empty_batch(monkeypatch, tmp_path):
+    _use_profiles(monkeypatch, tmp_path, t=SIMPLE)
+    _install(monkeypatch, [_world(1, REV_C)], topaz=(200, True))
+    Ledger.between = [(_iid(1), _ms(2026, 10, 1, 1))]
+    _as(STRANGER, domains=())
+    r = _get(f"/ingest/{_iid(1)}/export?profile=t")
+    assert r.status_code == 403 and r.json()["detail"]["error"] == "not_entitled"
+    r = _get("/ingest/export?profile=t&from=2026-10-01&to=2026-10-02")
+    assert r.status_code == 200 and r.json()["rows"] == [] and r.json()["notices"] == 0
+
+
+def test_d4_the_cap_counts_in_domain_notices_only(monkeypatch, tmp_path):
+    ins = [_iid(n) for n in range(1, 502)]                 # 501 in total, one over the cap
+    Ledger.domains = {ins[0]: DOM_B}                       # ... of which 500 are in the caller's
+    worlds = [_world(n, _review({0: {"affected_mpn": f"M{n}"}})) for n in range(2, 502)]
+    r = _batch(monkeypatch, tmp_path, worlds,
+               [(i, _ms(2026, 10, 1) + k) for k, i in enumerate(ins)])
+    Ledger.domains = {ins[0]: DOM_B}
+    r = _get("/ingest/export?profile=t&from=2026-10-01&to=2026-10-02")
+    assert r.status_code == 200, r.text[:300]
+    assert r.json()["notices"] == 500

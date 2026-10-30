@@ -316,5 +316,6 @@ capabilities:
     granted_by: cnogradi
     reason: >-
       2026-10-28 overnight ruling: batch export of promoted notices over a date range, for the
-      alert-processors group.
+      alert-processors group. DOMAIN-SCOPED (architect 2026-10-29): the capability admits a notice
+      only when its promotion domain is one of the caller's entitlement-cell domains.
     grant_to_groups: [alert-processors]

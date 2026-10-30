@@ -100,9 +100,9 @@ SELECT record FROM document_decision_record WHERE ingest_id = %s
 """
 
 _PROMOTED_BETWEEN_SQL = """
-SELECT ingest_id, acted_at FROM document_decision_record
+SELECT ingest_id, acted_at, record FROM document_decision_record
 WHERE decision = %s AND acted_at >= %s AND acted_at < %s
-ORDER BY acted_at, ingest_id LIMIT %s
+ORDER BY acted_at, ingest_id
 """
 
 
@@ -181,17 +181,28 @@ class PgDecisionLedger:
         return rec if isinstance(rec, dict) else None
 
 
-    def promoted_between(self, start_ms: int, end_ms: int, limit: int) -> list:
+    def promoted_between(self, start_ms: int, end_ms: int, limit: int, domains) -> list:
         """`[(ingest_id, acted_at_ms)]` of the promotions with `start_ms <= acted_at < end_ms`
-        (epoch ms, as `append` writes them), oldest first, at most `limit`. `decision` is
+        (epoch ms, as `append` writes them), oldest first, whose record's domain
+        (`promotion.recorded_domain`) is in `domains`, at most `limit` -- the domain filter runs
+        BEFORE the limit, so the limit counts in-domain promotions only. `decision` is
         `promotion.PROMOTED`, the value `append` stores from `record["outcome"]`. A READ: a store
         fault RAISES (the caller turns it into a 503)."""
-        from .promotion import PROMOTED
+        from .promotion import PROMOTED, recorded_domain
 
+        wanted = set(domains or ())
+        out: list = []
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(_PROMOTED_BETWEEN_SQL, (PROMOTED, start_ms, end_ms, limit))
-                return [(r[0], int(r[1])) for r in cur.fetchall()]
+                cur.execute(_PROMOTED_BETWEEN_SQL, (PROMOTED, start_ms, end_ms))
+                for ingest_id, acted_at, rec in cur:
+                    if isinstance(rec, (bytes, bytearray, memoryview)):
+                        rec = bytes(rec).decode("utf-8")
+                    if recorded_domain(rec) in wanted:
+                        out.append((ingest_id, int(acted_at)))
+                        if len(out) >= limit:
+                            break
+        return out
 
 
 class S3Quarantine:

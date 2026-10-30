@@ -529,6 +529,25 @@ def _apply(decision: str, subject: PromotionSubject, stores: PromotionStores, *,
             f"acting again completes it", status=503) from exc
 
 
+def recorded_domain(stored: Any) -> Optional[str]:
+    """The domain a stored decision record's promotion attested: `domain_of` of the human_review
+    check's `audience` (the mapping `act` uses). None when the record, the check, the audience or
+    the domain is missing or unreadable -- a record with no readable domain is in no domain."""
+    if isinstance(stored, str):
+        try:
+            stored = json.loads(stored)
+        except ValueError:
+            return None
+    checks = stored.get("checks") if isinstance(stored, dict) else None
+    for c in checks if isinstance(checks, list) else []:
+        if isinstance(c, dict) and c.get("name") == "human_review":
+            try:
+                return domain_of((c.get("inputs") or {}).get("audience") or "")
+            except PromotionRefused:
+                return None
+    return None
+
+
 def _recorded_row_edits(stored: Any) -> Optional[list]:
     """The `row_edits` on a stored record's human_review check, or None (none, or unreadable)."""
     if isinstance(stored, str):
