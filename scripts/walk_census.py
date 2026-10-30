@@ -203,6 +203,9 @@ async def _fire(client: httpx.AsyncClient, token: str, row: CensusRow,
         # (`live_view_requires_registration`) and every archetype assertion scores a default
         # menu the walk sheet never describes.
         "frontend_id": row.frontend_id,
+        # CLIENT-SUPPLIED ANSWER ID (gateway.py `request.artifact_id`, ~8719): the gateway keeps it
+        # as the answer record's id, so the census can read the record back after the stream.
+        "artifact_id": f"urn:li:answerArtifact:census-{uuid.uuid4().hex[:12]}",
     }
     final: dict[str, Any] | None = None
     events: list[dict] = []
@@ -234,7 +237,36 @@ async def _fire(client: httpx.AsyncClient, token: str, row: CensusRow,
                         final = payload
     except httpx.HTTPError as exc:
         raise Unreachable(f"cortex-bff at {BFF_URL} unreachable: {exc}") from exc
-    return {"final": final, "events": events}
+    result: dict[str, Any] = {"final": final, "events": events}
+    result.update(await _read_record(client, token, body["artifact_id"]))
+    return result
+
+
+async def _read_record(client: httpx.AsyncClient, token: str, artifact_id: str) -> dict[str, Any]:
+    """GET the answer record: `resolved_intent` carries `acceptance_dispatched` / `_not_opened`.
+
+    The gateway persists after stream_end on a separate task, so a 404 is retried briefly. A
+    failure is RECORDED as `resolved_intent_error`, never swallowed: judge treats it as a fail.
+    """
+    err = "no attempt"
+    for _ in range(8):
+        try:
+            r = await client.get(f"{BFF_URL}/answers/{artifact_id}/body",
+                                 headers={"Authorization": f"Bearer {token}"}, timeout=15.0)
+        except httpx.HTTPError as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            await asyncio.sleep(1.5)
+            continue
+        if r.status_code == 200:
+            try:
+                return {"resolved_intent": r.json().get("resolved_intent") or {}}
+            except ValueError as exc:
+                return {"resolved_intent_error": f"unparseable body: {exc}"}
+        err = f"HTTP {r.status_code}"
+        if r.status_code != 404:
+            break
+        await asyncio.sleep(1.5)
+    return {"resolved_intent_error": err}
 
 
 async def _run(rows: list[CensusRow], timeout_s: float) -> list[dict]:

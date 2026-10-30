@@ -99,6 +99,9 @@ ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS promise_name TEXT;
 -- case_id: the case a task belongs to (architect ruling 2026-10-17); NULLABLE, honest-absent for
 -- tasks not filed from a case. Lets a task holder read the case the task is about.
 ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS case_id TEXT;
+-- on_behalf_of: who the task acts for, recorded apart from who requested it (ADR-0063 /
+-- OpenDDIL ADR-0052 s5). '' = service-origin finding; never NULL.
+ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS on_behalf_of TEXT NOT NULL DEFAULT '';
 """
 
 
@@ -563,6 +566,7 @@ def register_task(
     promise_name: Optional[str] = None,
     excludes: Optional[list[str]] = None,
     case_id: Optional[str] = None,
+    on_behalf_of: str = "",
 ) -> dict[str, Any]:
     """Register a HumanTask: resolve the audience's authorized actors from Topaz
     and materialize ONE projection row per actor. Returns {task_id, recipients}.
@@ -584,6 +588,9 @@ def register_task(
     Restate ingress URL (defense in depth: a bad value is refused at the EARLIER of the two
     places that could catch it, same discipline as `check_can_act` re-checking at resolve time
     over trusting the replication filter alone).
+
+    `on_behalf_of` -- who the task acts for, recorded SEPARATELY from `requested_by` (ADR-0063).
+    "" is legal and means a service-origin finding; it is never a refusal.
 
     `requested_by` must name someone (`NoRequester` otherwise), checked FIRST: before the audience
     is resolved and before any DB touch, so no other refusal can stand in front of it.
@@ -619,13 +626,14 @@ def register_task(
             "task no one may act on (grant another actor the audience, then re-drive)"
         )
     now = int(time.time() * 1000)
+    on_behalf_of = str(on_behalf_of or "").strip()
     payload_json = json.dumps(payload or {})
     rows = []
     for actor_id in actors:
         rows.append((
             str(uuid.uuid4()), kind, task_id, workflow_id, audience, actor_id,
             "pending", title, summary, requested_by, subject_ref, payload_json,
-            None, None, None, None, now, now, workflow_service, promise_name, case_id,
+            None, None, None, None, now, now, workflow_service, promise_name, case_id, on_behalf_of,
         ))
     if rows:
         with _pg_connect() as conn:
@@ -636,7 +644,7 @@ def register_task(
                        (id, kind, task_id, workflow_id, audience, recipient_id,
                         status, title, summary, requested_by, subject_ref, payload,
                         acted_by, acted_at, decision, comment, created_at, updated_at,
-                        workflow_service, promise_name, case_id)
+                        workflow_service, promise_name, case_id, on_behalf_of)
                        VALUES %s""",
                     rows,
                 )

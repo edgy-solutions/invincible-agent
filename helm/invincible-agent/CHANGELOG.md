@@ -10,6 +10,19 @@ and #143. The release branch also regenerates `docs/api/cortex-bff.openapi.json`
 the docstring of `POST /cases/{case_id}/signals/{signal}` without regenerating it, which left
 `tests/test_bff_openapi_is_current.py` red on master. The fix is one line of generator output.
 
+**Policy changes (2026-10-29 ruling: a `plan` owner on the recipient_readers rail)**
+
+- **`recipient_readers` gains the owner `plan`** (`policy/recipient_readers.yaml`). It is the owner fin's #148 asks for plan recipients
+  (`can_read_recipient("plan", scope, caller)`). One row ships (ruled 2026-10-30): alice reads
+  `plan:notional-plan-office`, the recipient #148's `plan-answers` profile names. Any other plan
+  scope is refused. No sync precondition: the `recipient_scope` type exists and alice is a seeded
+  user; the recipient-readers leg writes the object and its one relation at the next roll.
+- **The owners are configuration, not code** (architect's standing rule, 2026-10-30). The rail's
+  owners are the keys the file declares; `recipient_reader_sync.OWNERS`, a closed set that made a new
+  owner a code edit, is gone. A deployment's overlay may declare its own owner. An owner key must be
+  a name (`OWNER_NAME_RE`, no `:`, which would make `<owner>:<scope>` ambiguous) or the overlay is
+  refused whole.
+
 **Policy changes (2026-10-28 ruling: pcn and pdn droppable by the alert-processors group only)**
 
 - **`capability_grant_sync` learns `grant_to_groups`** and prunes orphan `can_drop:` objects. A
@@ -26,6 +39,26 @@ the docstring of `POST /cases/{case_id}/signals/{signal}` without regenerating i
   the overlay lacks `capability_grants.yaml`.
 - **Before that roll, a human `topaz_sync` must create `group:alert-processors`** (new group in
   `policy/groups.yaml`, alice in `policy/users.yaml`), or the capability leg exits 5.
+
+- **The `can_export:<profile>` convention** (header comment in `policy/capability_grants.yaml`):
+  who may export export profile `<profile>`, deny-by-default (no row, nobody). `validate_policy`
+  gains three refusals: a `can_export:` key naming an unknown profile; a profile name in two of the
+  review-export, answer-export and fin CDRL sets; ANY known profile with no row. That refusal's
+  advice is derived from the rows deciding other profiles of the same kind; no group is named in
+  code (architect's standing rule, 2026-10-30). The ruled grantees are rows: review-export
+  `[alert-processors]`, fin CDRL `[finance-analysts]` (ruled 2026-10-29), and `plan-answers`
+  `[portfolio-leads]` (ruled 2026-10-29/30; alice, erin and chris hold it already, so no
+  `topaz_sync` precondition), which ships with whichever of #148 and this change merges second.
+  One row gates a single export and a batch alike. Each kind is read where its own loader reads it:
+  `INGEST_EXPORT_PROFILE_DIR` or `policy/exports`; `EXPORT_PROFILE_POLICY_DIR` or
+  `policy/exports/answers`, plus `EXPORT_PROFILE_OVERLAY_DIRS`; fin's CDRL seed and overlays.
+  Answer-export profiles (fin's #148) need a row too (ruled 2026-10-30).
+- **Three rows ship**, one per profile the seed knows: `can_export:default-csv` and
+  `can_export:default-json` (Lane 1's `policy/exports` profiles), `grant_to_groups:
+  [alert-processors]`; `can_export:cdrl_a001_ev_summary`, `grant_to_groups: [finance-analysts]`.
+  Both groups already exist, so no `topaz_sync` precondition; the capability leg writes them at
+  the next roll. They are inert until the export door checks `can_export:<P>` (today it gates the
+  batch on `ingest:exportBatch` only).
 
 **Chart changes**
 

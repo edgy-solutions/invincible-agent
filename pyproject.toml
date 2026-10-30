@@ -63,7 +63,7 @@ dependencies = [
     # TODO(0.9.6): re-pin to the v0.9.6 TAG once it is cut. Pinned past v0.9.5 to lane/ca's
     # c5fec43 (branch only, no tag yet) for write_node on MeshGraphWriter — the ingest node's
     # move off raw Cypher MERGE needs it now.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.10",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.12",
     "mcp",
     # boto3 for cortex-bff's /federated_image endpoint: proxies MinIO image
     # reads through the same JWT + entitled_domains gate the rest of the bff
@@ -112,6 +112,7 @@ agent-fleet = [
     # never writes. Before this line the importorskip("duckdb") sites skipped in every lane venv.
     "duckdb==1.5.2",
     "openpyxl>=3.1.5",
+    "python-docx>=1.1.2",
     # engine-r core (ADR-0062 section 2): libgit2, in-process, no git binary.
     "pygit2",
 ]
@@ -142,7 +143,7 @@ dev = [
     # every engine's security behaviour at rebuild — the library-bump outage class with
     # credentials attached (cf. the doc-tools floating-@rev finding).
     # TODO(0.9.6): re-pin to the v0.9.6 TAG once it is cut — see the matching pin above.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.10",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.12",
     "provenance-telemetry==0.1.0",
 ]
 

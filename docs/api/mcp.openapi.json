@@ -2430,7 +2430,7 @@
     },
     "/export/cdrl": {
       "get": {
-        "description": "One program's CDRL as an xlsx. `X-Cells-Sha256` is the hash of every cell the producer\nwrote (the reproducibility claim; the file's own bytes are not claimed reproducible).\n\nRefusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with\n`grantable_by` filled); any other engine failure is a 502 naming the engine's status.",
+        "description": "One program's CDRL in the profile's format (xlsx, docx, csv or json). `X-Cells-Sha256` is the hash of every cell the producer\nwrote (the reproducibility claim; the file's own bytes are not claimed reproducible).\n\nRefusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with\n`grantable_by` filled); any other engine failure is a 502 naming the engine's status.",
         "operationId": "export_cdrl_export_cdrl_get",
         "parameters": [
           {
@@ -2824,7 +2824,7 @@
     },
     "/ingest/export": {
       "get": {
-        "description": "GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the\nrange (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.\nA service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The\ncapability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is\none of the caller's entitlement-cell domains are in the set, filtered before the loud-not-\npartial checks and before the 500 cap; a caller with no cells gets the empty export.\nGate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy\nrefusal; Topaz down is 503). At most 92 days (both ends counted) and 500 notices. LOUD, NOT\nPARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,\nextraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks\non is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`).",
+        "description": "GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the\nrange (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.\nA service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The\ncapability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is\none of the caller's entitlement-cell domains are in the set, filtered before the loud-not-\npartial checks and before the 500 cap; a caller with no cells gets the empty export.\nGate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy\nrefusal; Topaz down is 503), AND, in addition, `can_export:<profile>` for the named profile\n(403 `not_entitled_to_export`, a policy refusal; DENY BY DEFAULT: a profile with no row is\nexportable by nobody), checked after the profile resolves (an unknown one stays 422). At most 92 days (both ends counted) and 500 notices. LOUD, NOT\nPARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,\nextraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks\non is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`).",
         "operationId": "ingest_export_batch_route_ingest_export_get",
         "parameters": [
           {
