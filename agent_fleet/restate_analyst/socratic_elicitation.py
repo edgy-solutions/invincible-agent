@@ -949,9 +949,39 @@ def runnable(files: Dict[str, dict]) -> List[str]:
     return errors
 
 
-def _task_compose(directory: Path):
+def _task_compose(directory: Path, overlays: Optional[List[Path]] = None):
     from iagent_mesh.task_kinds import compose
-    return compose(directory, [])
+    return compose(directory, overlays or [])
+
+
+_TASK_KIND_OVERLAY_ENV = "TASK_KIND_OVERLAY_DIRS"  # the variable human_tasks composes over
+
+
+def served_examples() -> Tuple[str, str]:
+    """One chaining table and one task kind, as YAML, for the prompt. They are there for FORMAT ONLY.
+
+    They come from the policy this runtime composes: the decision tables through ``load_tables``,
+    and the task kinds through the seed beside them plus ``TASK_KIND_OVERLAY_DIRS``. So no code
+    names a workflow's file, and a deployment's own rows can be the examples.
+
+    The choice is the first by sorted name, so the prompt is stable for a given policy. When the
+    composed policy has no chaining table or no task kind, this raises. A prompt with no examples
+    would be a different prompt that nobody chose.
+    """
+    tables = _dt.load_tables()
+    chaining = sorted(k for k, v in tables.items() if v.get("after"))
+    seeds = [r / "task_kinds" for r in _dt.candidate_decision_dirs(Path(_dt.__file__))
+             if (r / "task_kinds").is_dir()]
+    overlays = [Path(p.strip()) for p in (os.environ.get(_TASK_KIND_OVERLAY_ENV) or "").split(os.pathsep)
+                if p.strip()]
+    kinds = sorted(_task_compose(seeds[0], overlays), key=lambda k: k.kind) if seeds else []
+    if not chaining or not kinds:
+        raise ValueError(
+            "the composed policy has no chaining table or no task kind to show the model as an "
+            f"example (chaining tables: {len(chaining)}, task kinds: {len(kinds)}); configure "
+            f"DECISION_TABLE_DIR and {_TASK_KIND_OVERLAY_ENV}")
+    dump = lambda body: yaml.safe_dump(body, sort_keys=False, allow_unicode=True)  # noqa: E731
+    return dump(tables[chaining[0]]), dump(kinds[0].model_dump(mode="json", exclude_none=True))
 
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -1042,9 +1072,7 @@ class ModelExtractor:
 
     def _system_prompt(self) -> str:
         if self._system is None:
-            repo = Path(__file__).resolve().parents[2]
-            ex_chain = (repo / "policy/overlays/sample/decisions/safety_acceptance_chaining.yaml").read_text(encoding="utf-8")
-            ex_kind = (repo / "policy/overlays/sample/task_kinds/risk_acceptance_low.yaml").read_text(encoding="utf-8")
+            ex_chain, ex_kind = served_examples()
             wf = json.dumps(_wd.WorkflowDefinition.model_json_schema(), separators=(",", ":"))
             tr = json.dumps(_cr.Trigger.model_json_schema(), separators=(",", ":"))
             self._system = (f"{_GRAMMAR}\nWorkflowDefinition schema: {wf}\n\nTrigger schema: {tr}\n\n"

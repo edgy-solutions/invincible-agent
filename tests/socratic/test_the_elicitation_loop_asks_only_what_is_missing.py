@@ -14,7 +14,8 @@ from agent_fleet.restate_analyst import socratic_elicitation as se
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURES = REPO / "tests" / "fixtures" / "socratic"
-NAMES = ("pcn_review", "maint_case_release", "training_course_approval")
+NAMES = tuple(sorted(p.name for p in FIXTURES.iterdir() if (p / "transcript.yaml").is_file()))
+assert NAMES, f"no fixture with a transcript.yaml under {FIXTURES}"  # an empty bank skips, never passes
 FOLDERS = ("triggers", "decisions", "workflows", "task_kinds")
 
 
@@ -546,3 +547,39 @@ def test_an_explicit_empty_excludes_is_set():
 def test_the_grammar_requires_excludes():
     lines = [ln for ln in se._GRAMMAR.replace("\n  ", " ").splitlines() if ln.startswith("- REQUIRED:")]
     assert any("excludes" in ln and "[]" in ln for ln in lines)
+
+
+def _a_chaining_table() -> dict:
+    """A chaining table the shipped policy already composes, so its shape is one the loader takes."""
+    tables = se._dt.load_tables()
+    return copy.deepcopy(tables[sorted(k for k, v in tables.items() if v.get("after"))[0]])
+
+
+def test_the_prompt_examples_are_the_deployments_own_rows(tmp_path, monkeypatch):
+    """Config names the case: a deployment's rows become the examples, with no code change."""
+    table = _a_chaining_table()
+    table["decision"] = "aaa_deployment_chaining"
+    (tmp_path / "decisions").mkdir()
+    (tmp_path / "decisions" / "aaa_deployment_chaining.yaml").write_text(yaml.safe_dump(table), encoding="utf-8")
+    (tmp_path / "task_kinds").mkdir()
+    (tmp_path / "task_kinds" / "aaa_deployment_kind.yaml").write_text(yaml.safe_dump({
+        "kind": "aaa_deployment_kind",
+        "renders_as": {"badge": "DEPLOY", "title": "A deployment's kind", "archetype": "APPROVAL_TASK"},
+        "accepts": ["approved", "rejected"]}), encoding="utf-8")
+    monkeypatch.setenv("DECISION_TABLE_DIR", str(tmp_path / "decisions"))
+    monkeypatch.setenv("TASK_KIND_OVERLAY_DIRS", str(tmp_path / "task_kinds"))
+    chain, kind = se.served_examples()
+    assert yaml.safe_load(chain)["decision"] == "aaa_deployment_chaining"
+    assert yaml.safe_load(kind)["kind"] == "aaa_deployment_kind"
+
+
+def test_no_example_to_show_is_a_refusal_not_an_empty_prompt(tmp_path, monkeypatch):
+    (tmp_path / "decisions").mkdir()
+    monkeypatch.setenv("DECISION_TABLE_DIR", str(tmp_path / "decisions"))
+    with pytest.raises(ValueError, match="no chaining table"):
+        se.served_examples()
+
+
+def test_the_model_extractor_names_no_policy_file():
+    src = Path(se.__file__).read_text(encoding="utf-8")
+    assert "policy/overlays/" not in src

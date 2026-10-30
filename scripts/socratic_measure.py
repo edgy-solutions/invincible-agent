@@ -28,7 +28,7 @@ if str(REPO) not in sys.path:
 from agent_fleet.restate_analyst import socratic_elicitation as se  # noqa: E402
 
 FIXTURES = REPO / "tests" / "fixtures" / "socratic"
-NAMES = ("pcn_review", "maint_case_release", "training_course_approval")
+NAMES = tuple(sorted(p.name for p in FIXTURES.iterdir() if (p / "transcript.yaml").is_file()))
 _FOLDERS = ("triggers", "decisions", "workflows", "task_kinds")
 
 

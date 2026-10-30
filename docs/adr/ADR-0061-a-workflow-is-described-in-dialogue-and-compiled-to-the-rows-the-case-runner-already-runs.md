@@ -563,6 +563,36 @@ Mutants, applied on disk and restored with `cmp`:
 | the `excludes` slot removed | T6 |
 | an explicit `[]` read as unset | the explicit-empty seal |
 
+#### 2026-10-30: runs 7 to 9 were taken before the example files were fixed
+
+The standing rule of 2026-10-30 says config names the case. The model's system prompt broke it.
+- **What was wrong.** The prompt shows the model one chaining table and one task kind, as format
+  only. The extractor named both by file: `safety_acceptance_chaining.yaml` and
+  `risk_acceptance_low.yaml` in the `sample` overlay. They were read from the repo checkout, so a
+  deployment could not show its own rows without a code change.
+- **What runs 7 to 9 measured.** They ran with those two files as the examples. Their numbers stand
+  as a measurement of that prompt. They are not a measurement of the prompt the code builds now.
+- **Fixed.** `served_examples()` takes the examples from the policy the runtime composes.
+  - The decision tables come through `load_tables`, so `DECISION_TABLE_DIR` applies.
+  - The task kinds come from the seed beside them plus `TASK_KIND_OVERLAY_DIRS`.
+  - The first by sorted name is chosen, so the prompt is stable for a given policy.
+  - With this tree's policy and neither variable set, the examples are
+    `maint_fault_escalate_chaining` and `access_request`.
+  - A policy with no chaining table or no task kind is refused. The prompt is never built
+    without examples.
+- **Fixture list.** The test and `scripts/socratic_measure.py` used to name the three fixtures in
+  code. They now derive the list from `tests/fixtures/socratic/*/transcript.yaml`, and the test
+  refuses an empty bank.
+- **Seals:**
+  - `tests/socratic` gives 62 passed.
+  - Three seals are new:
+    - a deployment's own table and kind become the examples;
+    - no example is a refusal;
+    - the extractor names no overlay file.
+  - Run against the unfixed module (restored by copy and `cmp`), all three are red.
+- **Owed: runs 7 to 9 again, on PCN, against this prompt** (architect, 10-30). They run when no
+  walk is in flight, and they are not done yet.
+
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a
