@@ -59,9 +59,14 @@ and excludes the 3 session/scenario-state verbs, whose subject IS a scenario or 
 `planSessionChanges` (a scenario's accumulated ops). A new Engine P verb is classified in
 `tests/test_a_portfolio_board_exports_to_a_plan_recipient.py`, which fails until someone does.
 
-A report verb computed against a scenario (`state_ref` other than baseline) is still the same
-verb: this profile decides by verb, not by state. Whether it should is an open question with the
-architect.
+Only baseline answers export (ruled 10-29). A report verb computed against a scenario
+(`state_ref` other than `baseline`) is refused `scenario_answer`; the item carries `scenario_id`
+and the reason names it (several distinct scenario ids are sorted and joined with `, `). The
+state is read from the answer's `rendered_output` components' `state_ref` (Engine P echoes it, the
+presentation agent copies it onto every component). Absent reads as baseline: a null or
+unparseable `rendered_output`, or no component carrying `state_ref`, because baseline is Engine
+P's default and pre-passthrough artifacts never carried the key. One refusal per answer, in the
+order `no_verb`, `not_a_kind_this_recipient_takes`, `scenario_answer`.
 
 ## Kinds are disjoint
 

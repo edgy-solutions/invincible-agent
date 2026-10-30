@@ -44,12 +44,13 @@ GOOD = "sha256:" + "a" * 64
 
 # ── the board ────────────────────────────────────────────────────────────────────────────────
 def _rec(aid, *, intent=None, routing=None, question="q?", summary="s", program="PGM-1",
-         status="SUCCESS", valid="2026-10-01T00:00:00+00:00"):
+         status="SUCCESS", valid="2026-10-01T00:00:00+00:00", rendered=None):
     return {
         "id": aid, "is_owner": True, "question_text": question, "summary": summary,
         "status": status, "valid_as_of": valid, "origin_program": program,
         "resolved_intent": None if intent is None else json.dumps(intent),
         "routing_inline": None if routing is None else json.dumps(routing),
+        "rendered_output": rendered,
     }
 
 
@@ -560,3 +561,76 @@ def test_a_board_of_only_session_state_answers_is_not_offered_to_the_plan_recipi
     assert offer["offered"] is False and offer["reason_code"] == "takes_none_of_these_answers"
     assert offer["exports"] == []
     assert [i["reason_code"] for i in offer["refused"]] == ["not_a_kind_this_recipient_takes"] * 2
+
+
+# ── ruled 10-29: only baseline answers export; a scenario-computed one is refused ────────────────
+def _scen(aid, *refs, verb="mesh:planCostCurve", raw=None):
+    comps = [{"type": "card", **({} if r is None else {"state_ref": r})} for r in refs]
+    return _rec(aid, intent={"verb_iri": verb, "subject_uri": "mesh:Portfolio/PGM-1"},
+                rendered=raw if raw is not None else json.dumps({"components": comps}))
+
+
+def _refused_items(w, cards):
+    return {i["answer_id"]: i for i in _plan_offer(w, cards)["refused"]}
+
+
+def test_a_scenario_computed_answer_is_refused_naming_the_scenario(world):
+    scen = _scen("a-scen", "SC-ALPHA")
+    body = world.export([SCHEDULE, scen]).json()
+    assert _refused_ids(body) == {"a-scen": "scenario_answer"}
+    entry = next(d for d in body["documents"] if d["status"] == "failed")
+    assert entry["scenario_id"] == "SC-ALPHA" and "SC-ALPHA" in entry["reason"]
+    item = _refused_items(world, [SCHEDULE, scen])["a-scen"]
+    assert item["reason_code"] == "scenario_answer" and item["scenario_id"] == "SC-ALPHA"
+    assert "SC-ALPHA" in item["reason"]
+    assert [x["Answer"] for x in _file_rows(world, _plan_section(body))] == ["a-sched"]
+
+
+def test_the_same_verb_against_baseline_exports(world):
+    base = _scen("a-base", "baseline")
+    body = world.export([_scen("a-scen", "SC-ALPHA"), base]).json()
+    assert _plan_section(body)["answers"] == ["a-base"]
+    assert [x["Answer"] for x in _file_rows(world, _plan_section(body))] == ["a-base"]
+
+
+@pytest.mark.parametrize("card", [
+    _scen("a-null", raw="null"),
+    _scen("a-nokey", None, None),
+    _scen("a-junk", raw="{not json"),
+], ids=["null", "no_state_ref", "unparseable"])
+def test_an_absent_state_reads_as_baseline(world, card):
+    body = world.export([card]).json()
+    assert _plan_section(body)["answers"] == [card["id"]]
+    assert _refused_ids(body) == {}
+
+
+def test_the_kind_refusal_precedes_the_scenario_refusal(world):
+    diff = _scen("a-sdiff", "SC-ALPHA", verb="mesh:planDiff")
+    body = world.export([SCHEDULE, diff]).json()
+    assert _refused_ids(body) == {"a-sdiff": "not_a_kind_this_recipient_takes"}
+    assert "scenario_id" not in _refused_items(world, [SCHEDULE, diff])["a-sdiff"]
+
+
+def test_the_offer_agrees_on_scenario_answers(world):
+    only = [_scen("s1", "SC-A"), _scen("s2", "SC-B")]
+    offer = _plan_offer(world, only)
+    assert offer["offered"] is False and offer["reason_code"] == "takes_none_of_these_answers"
+    assert [i["reason_code"] for i in offer["refused"]] == ["scenario_answer"] * 2
+    mixed = [_scen("s1", "SC-A"), _scen("b1", "baseline")]
+    offer = _plan_offer(world, mixed)
+    assert offer["offered"] is True and offer["exports"] == ["b1"]
+    assert [i["answer_id"] for i in offer["refused"]] == ["s1"]
+
+
+def test_two_scenarios_on_one_answer_are_both_named_sorted(world):
+    two = _scen("a-two", "SC-B", "SC-A")
+    item = _refused_items(world, [two])["a-two"]
+    assert item["scenario_id"] == "SC-A, SC-B" and "SC-A, SC-B" in item["reason"]
+
+
+def test_state_refs_never_reach_an_engine_payload():
+    resolved = [gateway._resolve_export_record(c) for c in
+                (COST, _scen("a-scen", "SC-ALPHA", verb="mesh:costTrendAnalysis"))]
+    assert resolved[1]["state_refs"] == ["SC-ALPHA"]
+    for _engine, answers in gateway._partition_export_answers(resolved):
+        assert all("state_refs" not in a for a in answers)

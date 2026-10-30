@@ -2485,6 +2485,7 @@ def _fin_export_recipients_for(user: "User") -> list[str]:
 _PLAN_OWNER = "plan"
 _PLAN_PROFILES: Optional[dict] = None
 _NOT_A_KIND = "not_a_kind_this_recipient_takes"
+_SCENARIO_ANSWER = "scenario_answer"
 
 
 def _plan_profiles() -> dict:
@@ -2718,14 +2719,36 @@ def _resolve_export_record(rec) -> dict:
         "id": str(rec["id"]),
         "verb_iri": verb,
         "subject_instance_id": _or_none(intent.get("subject_instance_id")),
+        "state_refs": _answer_state_refs(rec),
     }
+
+
+def _answer_state_refs(rec) -> list[str]:
+    """The sorted distinct non-empty `state_ref` values on the answer's
+    `rendered_output.components[*]` (Engine P echoes the state it computed against; the
+    presentation agent copies it onto every component). Never raises: any parse or shape problem
+    is `[]`, and `[]` reads as BASELINE downstream (Engine P's default; pre-passthrough artifacts
+    never carried the key)."""
+    try:
+        out = json.loads(rec.get("rendered_output") or "null")
+        comps = out.get("components") if isinstance(out, dict) else None
+        if not isinstance(comps, list):
+            return []
+        refs = {c["state_ref"].strip() for c in comps
+                if isinstance(c, dict) and isinstance(c.get("state_ref"), str)}
+        return sorted(r for r in refs if r)
+    except (ValueError, TypeError, AttributeError):
+        return []
 
 
 def _plan_partition(resolved: list[dict], profile) -> tuple[list[dict], list[dict]]:
     """THE ONE DECISION a plan recipient makes about a board, used by the export and the offer
-    alike: (taken answers, refused items). Taken = verb in `profile.kinds`, in board order.
-    Refused = `{answer_id, kind, reason_code, reason}`: `no_verb` when the answer has none,
-    `not_a_kind_this_recipient_takes` otherwise."""
+    alike: (taken answers, refused items). Taken = verb in `profile.kinds` and computed against
+    baseline, in board order. Refused = `{answer_id, kind, reason_code, reason}`, one refusal per
+    answer, in this order: `no_verb` when the answer has none; `not_a_kind_this_recipient_takes`
+    when its verb is not in `profile.kinds`; `scenario_answer` (ruled 10-29: only baseline
+    answers export) when a taken verb was computed against a scenario, the item also carrying
+    `scenario_id`. The state is the answer's `state_refs`; none present reads as baseline."""
     from agent_fleet.cost_agent.canvas import REFUSAL_REASONS, NO_VERB, _verb_local
     kinds = {_verb_local(k) for k in profile.kinds} - {None}
     taken: list[dict] = []
@@ -2733,7 +2756,17 @@ def _plan_partition(resolved: list[dict], profile) -> tuple[list[dict], list[dic
     for ans in resolved:
         local = _verb_local(ans.get("verb_iri"))
         if local is not None and local in kinds:
-            taken.append(ans)
+            scenarios = [r for r in ans.get("state_refs") or [] if r != "baseline"]
+            if not scenarios:
+                taken.append(ans)
+                continue
+            sid = ", ".join(sorted(scenarios))
+            refused.append({
+                "answer_id": ans["id"], "kind": local, "reason_code": _SCENARIO_ANSWER,
+                "scenario_id": sid,
+                "reason": f"computed against scenario {sid}; the {profile.name} export "
+                          f"takes baseline answers only",
+            })
         elif local is None:
             refused.append({"answer_id": ans["id"], "kind": None, "reason_code": NO_VERB,
                             "reason": REFUSAL_REASONS[NO_VERB]})
@@ -2795,7 +2828,9 @@ def _partition_export_answers(resolved: list[dict]) -> list[tuple[str, list[dict
     for ans in resolved:
         local = _verb_local(ans.get("verb_iri"))
         engine = "fin" if local in fin_verbs else "cost"
-        parts.setdefault(engine, []).append(ans)
+        # `state_refs` is the plan recipient's alone: it never reaches an engine payload.
+        parts.setdefault(engine, []).append(
+            {k: v for k, v in ans.items() if k != "state_refs"})
     return list(parts.items())
 
 
@@ -2836,9 +2871,11 @@ def _refused_entries(engine: str, refused_answers: list[dict], recipient_scope: 
     groups: dict[str, dict] = {}
     for item in refused_answers:
         code = item.get("reason_code")
-        g = groups.get(code)
+        # a scenario refusal names its scenario in the reason, so it groups by that reason
+        key = (code, item.get("reason")) if code == _SCENARIO_ANSWER else code
+        g = groups.get(key)
         if g is None:
-            g = groups[code] = {
+            g = groups[key] = {
                 "engine": engine,
                 "answers": [],
                 "export_id": None,
@@ -2848,6 +2885,8 @@ def _refused_entries(engine: str, refused_answers: list[dict], recipient_scope: 
                 "reason_code": code,
                 "reason": item.get("reason"),
             }
+            if item.get("scenario_id") is not None:
+                g["scenario_id"] = item["scenario_id"]
         g["answers"].append(item.get("answer_id"))
     return list(groups.values())
 
