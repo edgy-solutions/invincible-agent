@@ -11644,7 +11644,21 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
         task_rows = []  # HITL substrate unconfigured: approvals are honestly empty, not a 503 --
                         # the case itself is readable without it.
 
-    return case_projection.project_workflow_case(case, definitions, task_rows)
+    # The released ActionRecord, read ONLY when a definition could have emitted one. A store that
+    # cannot be read is a 503, not a null: null claims "not released", which is false when we
+    # cannot tell. Same detail as `GET /cases/{id}/action`.
+    output_artifact = None
+    if case_projection.has_emit_step(case, definitions):
+        try:
+            records = await run_in_threadpool(_read_action_records, case_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("action record read failed: %s", exc)
+            raise HTTPException(status_code=503,
+                                detail={"error": "artifact_store_unavailable"}) from exc
+        output_artifact = case_projection.release_artifact(case_id, records)
+
+    return case_projection.project_workflow_case(
+        case, definitions, task_rows, output_artifact)
 
 
 from pydantic import ConfigDict as _ConfigDict  # noqa: E402

@@ -34,6 +34,7 @@ steps:
   # STUBBED until 7f Phase 2(e): see verbs/s1000d_fault_walk.yaml.
   - kind: spo_operation
     id: walk
+    stage: proposed
     subject: "s1000d:fault_isolation"
     verb: s1000d_fault_walk
 
@@ -119,6 +120,7 @@ steps:
 
   - kind: human_await
     id: decide
+    stage: awaiting_approval
     audience: "maint_fault_approval:{trigger.owning_tier}"
     task_kind: maint_fault_approval
     subject_ref: "{asset_id}"

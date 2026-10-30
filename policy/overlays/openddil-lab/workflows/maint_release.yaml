@@ -22,6 +22,7 @@ domain_stages: [released, closed]
 steps:
   - kind: emit
     id: action
+    stage: released
     channel: maintenance_action
     template:
       action_id: "{case.instance_id}"
