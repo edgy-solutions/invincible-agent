@@ -3,8 +3,8 @@
 Asks Topaz whether a caller may download a recipient's disclosure package: the
 `recipient_scope` object `<owner>:<scope>`, permission `can_read_recipient`
 (policy/sync/recipient_reader_sync.py writes the `reader` relations; the chart's Topaz manifest
-declares the type). `owner` owns the scope ("finance" | "cost" | "plan") -- part of the object
-id so a scope string shared by two owners never shares readers.
+declares the type). `owner` owns the scope (an owner key policy/recipient_readers.yaml declares) -- part
+of the object id so a scope string shared by two owners never shares readers.
 
 Same posture as `program_membership.py`: missing arguments or an unconfigured directory are a
 DENY (False); a transport or HTTP failure RAISES, so the caller can tell "Topaz is down" (503)
