@@ -15,7 +15,10 @@ drifts until a hazard's acceptance opens under a key one of them no longer build
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 
 class AcceptanceRequestError(Exception):
@@ -52,6 +55,49 @@ def review_request_of(engine_response: Any) -> Dict[str, Any]:
 #: The WorkflowRunner trigger a safety `review_request` opens (policy/overlays/*/triggers/). The
 #: route after it -- concurrence or direct, and what follows each outcome -- is decision-table rows.
 SAFETY_TRIGGER = "safety_review_request"
+
+
+def _key_inputs(review_request: Dict[str, Any]) -> tuple:
+    """``(hazard_id, level, level_slug)`` as the acceptance trigger reads them off the block.
+
+    ONE DERIVATION for `acceptance_trigger` (which mints `acceptance_id`) and `with_minted_ids`
+    (which stamps `case_id`), so the card's key and the minted key cannot drift apart.
+    """
+    payload = review_request.get("payload") or {}
+    if not isinstance(payload, dict):
+        payload = {}
+    hazard_id = payload.get("hazard_id") or review_request.get("subject_ref") or ""
+    level = payload.get("risk_level") or ""
+    level_slug = payload.get("risk_level_slug") or (level.lower() if level else "")
+    return hazard_id, level, level_slug
+
+
+def with_minted_ids(review_request: Dict[str, Any]) -> Dict[str, Any]:
+    """A COPY of the block with `case_id` set to the key `acceptance_trigger` mints.
+
+    Stamped where the engine response is READ, before the render, because the engine image
+    cannot import this module and the UI opens the case from the card's `case_id` before any
+    task exists. The minted value wins over whatever the engine sent (a WARNING names both).
+    Inputs absent -> the block is returned unchanged (never an invented key).
+
+    `task_id` is NOT stamped: the real task id is `{workflow_id}:{step.id}` minted by the
+    workflow runner (restate_analyst/main.py, human_await), and `step.id` depends on the route
+    the decision table picks at run time (`acceptance` vs `concurrence`), so it is not
+    computable from the request.
+    """
+    if not isinstance(review_request, dict) or not review_request:
+        return review_request
+    hazard_id, _level, level_slug = _key_inputs(review_request)
+    if not (hazard_id and level_slug):
+        return review_request
+    minted = acceptance_workflow_id(str(hazard_id), str(level_slug))
+    out = dict(review_request)
+    sent = out.get("case_id")
+    if sent and sent != minted:
+        logger.warning("review_request case_id %r overridden by the minted case key %r",
+                       sent, minted)
+    out["case_id"] = minted
+    return out
 
 
 def acceptance_trigger(review_request: Dict[str, Any], *, authz_id: str) -> Dict[str, Any]:
@@ -95,9 +141,7 @@ def acceptance_trigger(review_request: Dict[str, Any], *, authz_id: str) -> Dict
     if not isinstance(payload, dict):
         payload = {}
 
-    hazard_id = payload.get("hazard_id") or review_request.get("subject_ref") or ""
-    level = payload.get("risk_level") or ""
-    level_slug = payload.get("risk_level_slug") or (level.lower() if level else "")
+    hazard_id, level, level_slug = _key_inputs(review_request)
 
     missing = [n for n, v in (("hazard_id", hazard_id), ("risk_level", level),
                               ("risk_level_slug", level_slug)) if not v]

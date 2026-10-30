@@ -9874,6 +9874,10 @@ async def _stream_direct_outcome(
     if _expert:
         _rr = acceptance_request.review_request_of(_expert)
         if _rr:
+            # I3: stamp the minted case key onto the block the render reads (`_expert` is
+            # `expert_response` below), before anything downstream sees the engine's own copy.
+            _rr = acceptance_request.with_minted_ids(_rr)
+            _expert["review_request"] = _rr
             _err = await _open_safety_acceptance(
                 bundle, _rr, path="direct", stage_kind=direct_dispatch.STAGE_CALLING,
             )
