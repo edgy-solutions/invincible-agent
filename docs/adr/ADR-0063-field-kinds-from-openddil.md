@@ -255,6 +255,23 @@ state `review_pending`.
   open work), which is what OpenDDIL can send. It computes no deferral and needs no interval:
   `WorkOrder` (`agent_fleet/safety_agent/entities.py:110`) and `Hazard` (`:82`) carry none, and
   `assess_deferral_risk` (`measures.py:217`) is not called.
+- **Where the predicate lives (ruled 2026-10-30, standing rule: config names the case).**
+  `service_due_unreleased` is the **first row** of the `safety_finding` selection table, not a
+  constant or a branch in slice code. The existing form is an ADR-0039 selection table
+  (`policy/decisions/<name>.yaml`; a domain row composes from
+  `policy/overlays/<deployment>/decisions/`, full replacement by key), named by the
+  `safety_finding` trigger row (`policy/triggers/`, which also lists the facts the event must
+  carry in `requires`). Its row has the shape `when: {kind: safety_finding, ...}  then:
+  safety_finding_review`, the same shape as `origin_suggestion_selection.yaml`. The slice
+  computes nothing, so the row matches on a fact the event already carries; a second predicate
+  is a second row.
+  - **What does not exist.** There is no rule registry for a predicate that is *computed over
+    data* (due, with no open work). The selection table matches on facts the event carries and
+    the measures registry holds computation methods; neither is that. None is invented here:
+    the slice stays within what OpenDDIL sends, and a computing rule is a later question that
+    needs its own registry.
+  - **Days.** The row is part of the existing "seed-row check" (0.5) and the workflow's "seed
+    wiring" (in the 2.0). **The 9.0 does not change.**
 
 | piece | days | note |
 | --- | --- | --- |
