@@ -191,8 +191,8 @@ async def test_arm5_domains_without_a_persona_is_a_400_naming_the_field_and_post
 async def test_arm6_the_ask_and_the_seed_derive_the_same_domains(panels, monkeypatch):
     asked: list = []
 
-    def _spy(user, domains):
-        asked.append(list(domains))
+    def _spy(*, user_email, entitled_domains):
+        asked.append(list(entitled_domains))
         return lambda *a, **k: []
 
     monkeypatch.setattr(gw, "_canvas_seed_enumerator", _spy)
@@ -271,8 +271,8 @@ async def test_arm11_mixed_400_and_500_is_a_502_whose_causes_name_the_400(panels
 async def test_arm3b_the_ask_also_takes_explicit_active_domains_unchanged(monkeypatch):
     asked: list = []
 
-    def _spy(user, domains):
-        asked.append(list(domains))
+    def _spy(*, user_email, entitled_domains):
+        asked.append(list(entitled_domains))
         return lambda *a, **k: []
 
     monkeypatch.setattr(gw, "_canvas_seed_enumerator", _spy)

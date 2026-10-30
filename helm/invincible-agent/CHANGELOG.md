@@ -23,9 +23,12 @@
   review-export and fin CDRL sets; ANY known profile with no row, naming its kind's default
   (ruled 2026-10-29): review-export `grant_to_groups: [alert-processors]`, fin CDRL
   `grant_to_groups: [finance-analysts]`. One row gates a single export and a batch alike.
-- **One row ships**: `can_export:cdrl_a001_ev_summary`, `grant_to_groups: [finance-analysts]`.
-  `finance-analysts` already exists, so no `topaz_sync` precondition; the capability leg writes it
-  at the next roll. It is inert until Lane 1's export door checks it.
+- **Three rows ship**, one per profile the seed knows: `can_export:default-csv` and
+  `can_export:default-json` (Lane 1's `policy/exports` profiles), `grant_to_groups:
+  [alert-processors]`; `can_export:cdrl_a001_ev_summary`, `grant_to_groups: [finance-analysts]`.
+  Both groups already exist, so no `topaz_sync` precondition; the capability leg writes them at
+  the next roll. They are inert until the export door checks `can_export:<P>` (today it gates the
+  batch on `ingest:exportBatch` only).
 
 **Chart changes**
 

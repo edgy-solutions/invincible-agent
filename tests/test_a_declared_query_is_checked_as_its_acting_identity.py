@@ -15,7 +15,7 @@ import copy
 import pytest
 
 from tests.test_a_declared_query_walks_the_manual import (  # noqa: F401 -- fixtures by name
-    ACK, DECIDE, KNOWN, WALK_VERB, _event, _real_policy, _run, ex, registered, wd, wire,
+    DECIDE, KNOWN, WALK_VERB, _event, _real_policy, _run, ex, registered, wd, wire,
 )
 
 ERIN = "erin@example.com"
@@ -35,7 +35,7 @@ async def test_A_AN_EVENT_CASES_WALK_IS_CHECKED_AS_ITS_DROPPER(registered, wire)
     """END TO END: the trigger carries `dropped_by` and no user_jwt; the walk's capability is
     asked about the dropper, exactly once, and never about the runner."""
     declared = wd.load_query_verbs()[WALK_VERB].capability
-    await _run(_dropped(_event(), ERIN), [(DECIDE, "replace_now"), (ACK, "released", "tier@x")])
+    await _run(_dropped(_event(), ERIN), [(DECIDE, "replace_now")])
     assert wire["asked"] == [(declared, ERIN)], wire["asked"]
 
 

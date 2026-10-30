@@ -2625,6 +2625,55 @@ def _refusal_from_engine_4xx(context, endpoint, response) -> Optional[Dict[str, 
     return data
 
 
+def _log_no_verb_decision(
+    context,
+    *,
+    disposition: str,
+    no_verb_reason: str,
+    telemetry,
+    rejected_verb_iri: str = "",
+) -> None:
+    """Record that a subtask ended with NO verb, and why.
+
+    `execute_subtask` returns early at four points before the `subtask_slots_decision`
+    materialization, so the gateway's `resolved_intent` kept /route_intent's extraction and an
+    answer with no verb carried neither a verb nor any record of why. `verb_iri` is "" here:
+    the rejected verb (exit 4) travels in `rejected_verb_iri`, never in `verb_iri`.
+    """
+    tel = telemetry or {}
+    try:
+        context.log_event(
+            AssetMaterialization(
+                asset_key=["subtask_slots_decision"],
+                metadata={
+                    "verb_iri": MetadataValue.text(""),
+                    "disposition": MetadataValue.text(str(disposition or "")),
+                    "no_verb_reason": MetadataValue.text(str(no_verb_reason or "")),
+                    "fallback_detail": MetadataValue.text(
+                        str(tel.get("fallback_reason") or "")
+                    ),
+                    "rejected_verb_iri": MetadataValue.text(str(rejected_verb_iri or "")),
+                    "owner_persona": MetadataValue.text(""),
+                    "subject_uri": MetadataValue.text(str(tel.get("subject_uri") or "")),
+                    "subject_instance_id": MetadataValue.text(
+                        str(tel.get("subject_instance_id") or "")
+                    ),
+                    "subject_instance_label": MetadataValue.text(
+                        str(tel.get("subject_instance_label") or "")
+                    ),
+                    "accepted_slots": MetadataValue.text("{}"),
+                    "bound_slot_sources": MetadataValue.text("{}"),
+                    "refused_slots": MetadataValue.text("[]"),
+                    "slot_resolution": MetadataValue.text("{}"),
+                    "fill_slots": MetadataValue.text(""),
+                },
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        # NON-FATAL: provenance must not take an answer down.
+        context.log.warning("subtask_slots_decision (no verb) materialization failed: %s", exc)
+
+
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
 def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -2735,6 +2784,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     #   no_match                          → Engine A fallback (no_predicate_matched)
     #   infra_error                       → abort with INFRA_ERROR signal
     if status == _ROUTING_INFRA_ERROR:
+        _log_no_verb_decision(
+            context, disposition="infra_error", no_verb_reason="routing_infra_error",
+            telemetry=telemetry,
+        )
         # Infrastructure outage — must surface, NOT mask via fallback.
         # Same reasoning that drove the ADR-0009 Cypher-fallback removal:
         # silent degradation hides the signal ops needs to fix the outage.
@@ -2793,6 +2846,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             if c and c != "UNKNOWN"
         ]
         if _fb_reason == "no_verb_classified":
+            _log_no_verb_decision(
+                context, disposition="abstain", no_verb_reason="no_verb_classified",
+                telemetry=telemetry,
+            )
             context.log.info(
                 "routing_abstain_rendered sub_query=%r considered=%s — NOT falling through to "
                 "the generalist; the classifier declined among real candidates.",
@@ -2830,6 +2887,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             }
 
         # Per ADR-0008: registry coverage gap → generalist fallback.
+        _log_no_verb_decision(
+            context, disposition="fallback", no_verb_reason="no_predicate_matched",
+            telemetry=telemetry,
+        )
         return _call_engine_a_fallback(
             context,
             sub_query=sub_query,
@@ -2857,6 +2918,11 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     )
 
     if score is None or score < threshold:
+        _log_no_verb_decision(
+            context, disposition="fallback", no_verb_reason="low_confidence",
+            telemetry=telemetry,
+            rejected_verb_iri=str(predicate.get("verb_iri") or ""),
+        )
         return _call_engine_a_fallback(
             context,
             sub_query=sub_query,
@@ -3110,6 +3176,11 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 metadata={
                     "verb_iri": MetadataValue.text(str(predicate.get("verb_iri") or "")),
                     "disposition": MetadataValue.text(str(disposition.action or "")),
+                    "no_verb_reason": MetadataValue.text(""),
+                    "fallback_detail": MetadataValue.text(
+                        str((telemetry or {}).get("fallback_reason") or "")
+                    ),
+                    "rejected_verb_iri": MetadataValue.text(""),
                     # THE SUBJECT, BESIDE THE VERB IT WAS CHOSEN FOR. `resolved_intent`
                     # recorded the verb alone, which makes the pair unreconstructible: an
                     # answered ask carries `mesh:planCapabilityPath` and no record of the

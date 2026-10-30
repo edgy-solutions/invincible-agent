@@ -31,7 +31,7 @@ from src.iagent import gateway  # noqa: E402
 from tests.test_a_case_runs_from_trigger_to_terminal import (  # noqa: E402
     DOOR_BLOCK, _answer, _body, _Cluster, wr)
 from tests.test_the_maintenance_fault_runs_as_a_case import (  # noqa: E402,F401
-    ACK, DECIDE, TRIGGER, _declared_walk_double, _event, _real_policy, registered)
+    DECIDE, TRIGGER, _declared_walk_double, _event, _real_policy, registered)
 
 import spo_step_executor as ex  # noqa: E402 -- on sys.path once the harness above is imported
 
@@ -273,9 +273,8 @@ def _kinds(posts):
     return [u.rsplit("/", 1)[1] for u, _j, _h in posts]
 
 
-RELEASED = [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")]
-REFUSED_THEN_RELEASED = [(DECIDE, "replace_after_resupply"), (ACK, "tier_refused", "tier@x"),
-                         (DECIDE, "defer_with_restriction"), (ACK, "released", "tier@x")]
+RELEASED = [(DECIDE, "replace_after_resupply")]
+
 
 
 @pytest.mark.asyncio
@@ -293,18 +292,8 @@ async def test_a_released_case_posts_its_record_before_the_stamp(registered, pos
 
 
 @pytest.mark.asyncio
-async def test_a_tier_refusal_writes_no_record(registered, posts):
-    await _drive(REFUSED_THEN_RELEASED, seeded_by=DELEGATE)
-    records = [j for u, j, _h in posts if u.endswith("/action-record")]
-    assert len(records) == 1, [r["record"]["action_id"] for r in records]
-    # the refused instance emitted a record too (the emit precedes the ack); it is not written
-    assert records[0]["record"]["action_id"] == "EV-1~4", records[0]["record"]["action_id"]
-    assert _kinds(posts) == ["action-record", "seeded-by"]
-
-
-@pytest.mark.asyncio
 async def test_a_person_seeded_case_is_written_on_behalf_of_the_last_approver(registered, posts):
-    await _drive([(DECIDE, "replace_after_resupply", "boss@x"), (ACK, "released", "tier@x")])
+    await _drive([(DECIDE, "replace_after_resupply", "boss@x")])
     assert _kinds(posts) == ["action-record"], "no seeded_by, so no stamp"
     body = posts[0][1]
     assert body["seeded_by"] is None and body["on_behalf_of"] == "boss@x", body

@@ -6,7 +6,8 @@ relation prune). One row gates a single export and a batch alike (ruled 2026-10-
 met by COMPLETENESS: validate_policy refuses ANY known profile that no row decides, and names its
 kind's default group -- alert-processors for a review-export profile (policy/exports), and
 finance-analysts, the program-finance persona's group, for a fin CDRL profile (ruled 2026-10-29).
-The seed ships the CDRL row.
+The seed ships a row for every profile it knows: one per policy/exports profile at the
+review-export default, and the CDRL row.
 
 Run:  uv run python -m pytest tests/security/test_can_export_capability_rail.py -q
 """
@@ -59,8 +60,11 @@ def test_1_the_seed_composition(monkeypatch):
     monkeypatch.delenv("FIN_EXPORT_PROFILE_OVERLAY_DIRS", raising=False)
     profiles, notes = vp.known_export_profiles()
     assert profiles.get(CDRL) == "fin_cdrl", profiles
+    stems = {p.stem for p in (ROOT / "policy" / "exports").glob("*.yaml")}
+    assert stems, "policy/exports ships no profile"
+    assert {n for n, k in profiles.items() if k == "review_export"} == stems, (profiles, stems)
     exports = [n for n in notes if n.startswith((ROOT / "policy" / "exports").as_posix())]
-    assert exports and exports[0].endswith("(absent)"), notes
+    assert exports and exports[0].endswith(f"({len(stems)} profile(s))"), notes
 
 
 # -- 2. the join seal with fin's loader ----------------------------------------------------
@@ -138,8 +142,17 @@ def _add(d, key, row):
     p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 
+def _seed_review() -> dict[str, str]:
+    """The seed's review-export profiles (policy/exports), read from the loader, not restated."""
+    profiles, _ = vp.known_export_profiles()
+    return {n: k for n, k in profiles.items() if k == "review_export"}
+
+
 def _known(monkeypatch, profiles, notes=("n (1 profile(s))",)):
-    monkeypatch.setattr(vp, "known_export_profiles", lambda sources=None: (dict(profiles), list(notes)))
+    """Fake the profile set as the seed's review-export profiles plus `profiles`: the seed ships a
+    row for each of those, and a row naming an unknown profile is refused."""
+    merged = {**_seed_review(), **profiles}
+    monkeypatch.setattr(vp, "known_export_profiles", lambda sources=None: (dict(merged), list(notes)))
 
 
 def test_4_baseline_passes(pol, monkeypatch):
@@ -209,6 +222,18 @@ def test_5_the_seed_ships_the_cdrl_row_to_the_finance_group():
     caps = yaml.safe_load((ROOT / "policy" / "capability_grants.yaml").read_text(encoding="utf-8"))
     row = caps["capabilities"][f"can_export:{CDRL}"]
     assert row.get("grant_to_groups") == [FIN_GROUP] and not row.get("grant_to"), row
+
+
+def test_5_the_seed_ships_a_review_export_row_per_profile_to_the_default_group():
+    """Every policy/exports profile ships its row at the review-export default."""
+    caps = yaml.safe_load((ROOT / "policy" / "capability_grants.yaml").read_text(encoding="utf-8"))
+    review = _seed_review()
+    assert review, "no review-export profile in the seed"
+    for name in sorted(review):
+        row = caps["capabilities"].get(f"can_export:{name}")
+        assert row is not None, name
+        assert row.get("grant_to_groups") == [vp.EXPORT_DEFAULT_GROUPS["review_export"]] \
+            and not row.get("grant_to"), (name, row)
 
 
 def test_5_each_default_group_is_a_group_and_the_cdrl_one_is_program_finance():

@@ -65,7 +65,8 @@ def test_payload_keys_are_exactly_the_contract_fields():
     )
     defs = {"def-a": _definition("def-a")}
     payload = cp.project_workflow_case(case, defs, task_rows=[])
-    assert set(payload.keys()) == _WORKFLOW_CASE_PAYLOAD_FIELDS
+    # `options` is optional in the contract and ABSENT when no task row carries any.
+    assert set(payload.keys()) == _WORKFLOW_CASE_PAYLOAD_FIELDS - {"options"}
     assert payload["instances"], "need at least one instance to check its keys"
     inst = payload["instances"][0]
     assert set(inst.keys()) == _CASE_INSTANCE_FIELDS
@@ -288,12 +289,12 @@ def test_RED_CHECK_approvals_scoped_to_the_right_workflow_id():
 
 # ── OPTIONS / OUTPUT_ARTIFACT: ALWAYS EMPTY (NOT SOURCED FROM THE RUNNER) ───────────────────
 
-def test_options_and_output_artifact_are_always_empty():
+def test_options_are_absent_and_output_artifact_none_when_nothing_sources_them():
     case = _case(instances=[{"n": 1, "instance_id": "wf-1", "definition_id": "def-a"}],
                 terminal="x")
     defs = {"def-a": _definition("def-a")}
     payload = cp.project_workflow_case(case, defs, task_rows=[{"task_id": "wf-1:s1",
                                                                 "workflow_id": "wf-1",
                                                                 "status": "pending"}])
-    assert payload["options"] == []
+    assert "options" not in payload
     assert payload["output_artifact"] is None
