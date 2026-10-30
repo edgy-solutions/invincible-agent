@@ -3,21 +3,20 @@ name: plan_answers
 format: csv
 scope: answer
 label: Plan answers (synthetic)
+# Report verbs only, listed explicitly (ruled 10-29): no wildcard, no "all". The session/scenario-state
+# verbs mesh:planCommitScenario, mesh:planDiff and mesh:planSessionChanges are excluded.
 kinds:
   - mesh:planCostCurve
   - mesh:planFundingGap
   - mesh:planSiteLoad
   - mesh:planDependencyViolations
   - mesh:planDependencyNeighborhood
-  - mesh:planCommitScenario
   - mesh:planMaturityGrid
   - mesh:planCapabilityPath
   - mesh:planProcessEvolution
   - mesh:planTechFootprint
   - mesh:planSchedule
   - mesh:planCoverageGap
-  - mesh:planDiff
-  - mesh:planSessionChanges
 recipients: [notional-plan-office]
 columns:
   - {field: answer_id, as: Answer}

@@ -130,11 +130,12 @@ def _build(raw: Mapping[str, Any], source: str) -> AnswerExportProfile:
 
     kinds = raw.get("kinds")
     if kinds not in (None, [], "") and not isinstance(kinds, list):
-        problems.append("kinds is not a list")
+        problems.append("kinds is not a list; kinds are listed explicitly, there is no 'all'")
         kinds = None
     for k in kinds or []:
         if not isinstance(k, str) or not _VERB.match(k):
-            problems.append(f"kinds entry {k!r} is not a verb IRI like 'mesh:planSchedule'")
+            problems.append(f"kinds entry {k!r} is not a verb IRI like 'mesh:planSchedule'; "
+                            "kinds are listed explicitly, no wildcard or 'all'")
     if kinds and len(set(map(str, kinds))) != len(kinds):
         dup = sorted({str(k) for k in kinds if [str(x) for x in kinds].count(str(k)) > 1})
         problems.append(f"kinds repeats {dup}")

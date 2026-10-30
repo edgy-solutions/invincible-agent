@@ -66,6 +66,11 @@ COST = _rec("a-cost", intent={"verb_iri": "mesh:costTrendAnalysis", "subject_ins
 BOARD_PLAN = [SCHEDULE, PREHOP, ABSTAIN]
 BOARD_MIXED = [COST, SCHEDULE]
 BOARD_COST = [COST]
+DIFF = _rec("a-diff", intent={"verb_iri": "mesh:planDiff", "subject_uri": "mesh:Portfolio/PGM-1"})
+SESSION = _rec("a-session", intent={"verb_iri": "mesh:planSessionChanges",
+                                    "subject_uri": "mesh:Portfolio/PGM-1"})
+BOARD_SESSION = [DIFF, SESSION]
+BOARD_REPORT_AND_SESSION = [SCHEDULE, DIFF, SESSION]
 
 
 class _Rec:
@@ -223,6 +228,10 @@ def _load(tmp_path, *rows, overlay=()):
      "outside the answer fields"),
     ("bad format", lambda r: r.update(format="xlsx"), "format 'xlsx'"),
     ("bad scope", lambda r: r.update(scope="row"), "scope 'row'"),
+    ("kinds all in a list", lambda r: r.update(kinds=["all"]), "listed explicitly"),
+    ("kinds star", lambda r: r.update(kinds=["*"]), "listed explicitly"),
+    ("kinds mesh star", lambda r: r.update(kinds=["mesh:*"]), "listed explicitly"),
+    ("kinds bare string all", lambda r: r.update(kinds="all"), "listed explicitly"),
 ])
 def test_the_loader_refuses_by_name(tmp_path, label, edit, fragment):
     row = json.loads(json.dumps(_GOOD))
@@ -248,11 +257,43 @@ def test_an_overlay_replaces_the_row_whole_and_a_tombstone_removes_it(tmp_path):
 
 
 # ── 2. kinds are true ────────────────────────────────────────────────────────────────────────
-def test_plan_answers_kinds_are_exactly_engine_ps_declared_verbs():
+#: The plan recipient takes REPORT verbs only (ruled 10-29, #148). Engine P declares no marker for
+#: a session/scenario-state verb, so the classification is a decision and THIS is where it is
+#: recorded: the one place a list is typed. Each SESSION_STATE verb's subject IS a scenario or
+#: session; REPORT is everything else Engine P declares.
+REPORT = {
+    "mesh:planCostCurve", "mesh:planFundingGap", "mesh:planSiteLoad",
+    "mesh:planDependencyViolations", "mesh:planDependencyNeighborhood", "mesh:planMaturityGrid",
+    "mesh:planCapabilityPath", "mesh:planProcessEvolution", "mesh:planTechFootprint",
+    "mesh:planSchedule", "mesh:planCoverageGap",
+}
+SESSION_STATE = {"mesh:planCommitScenario", "mesh:planDiff", "mesh:planSessionChanges"}
+
+
+def _engine_p():
     from agent_fleet.planning_agent import main as planning
-    declared = {v["verb"] for v in planning.VERBS}
+    return planning
+
+
+def test_every_engine_p_verb_is_classified_report_or_session_state():
+    declared = {v["verb"] for v in _engine_p().VERBS}
+    assert not (REPORT & SESSION_STATE), sorted(REPORT & SESSION_STATE)
+    assert REPORT | SESSION_STATE == declared, (
+        "Engine P's verbs and this classification disagree; a NEW Engine P verb must be classified "
+        "as REPORT or SESSION_STATE here (and added to plan_answers.yaml if REPORT): "
+        f"{sorted((REPORT | SESSION_STATE) ^ declared)}")
+
+
+def test_a_writing_verb_is_never_classified_as_a_report():
+    planning = _engine_p()
+    verb_of = {v["fn"]: v["verb"] for v in planning.VERBS}
+    mutating = {verb_of[fn] for fn in planning.MUTATING_VERBS}
+    assert mutating and mutating <= SESSION_STATE, sorted(mutating - SESSION_STATE)
+
+
+def test_plan_answers_kinds_are_exactly_the_report_verbs():
     kinds = set(AE.load_answer_export_profiles()["plan_answers"].kinds)
-    assert kinds == declared, (sorted(kinds ^ declared))
+    assert kinds == REPORT, sorted(kinds ^ REPORT)
 
 
 def test_every_profiles_kinds_are_disjoint_from_cost_and_fin():
@@ -260,6 +301,7 @@ def test_every_profiles_kinds_are_disjoint_from_cost_and_fin():
     taken = {"mesh:" + v for v in C.EXPORTABLE} | set(VERB_TO_FN)
     for p in AE.load_answer_export_profiles().values():
         assert not (set(p.kinds) & taken), (p.name, sorted(set(p.kinds) & taken))
+        assert not (set(p.kinds) & SESSION_STATE), (p.name, sorted(set(p.kinds) & SESSION_STATE))
 
 
 # ── 3. render ────────────────────────────────────────────────────────────────────────────────
@@ -502,3 +544,19 @@ def test_the_gateway_hop_is_sealed_in_the_identity_census():
     hops = next(n.value for n in tree.body if isinstance(n, ast.AnnAssign)
                 and getattr(n.target, "id", "") == "HOPS")
     assert any('"_export_plan_answers"' in ast.get_source_segment(src, e) for e in hops.elts)
+
+
+# ── ruled 10-29: session/scenario-state answers are not exported to the plan recipient ──────────
+def test_session_state_answers_on_a_plan_board_are_refused_and_report_answers_still_export(world):
+    body = world.export(BOARD_REPORT_AND_SESSION).json()
+    assert _refused_ids(body) == {"a-diff": "not_a_kind_this_recipient_takes",
+                                  "a-session": "not_a_kind_this_recipient_takes"}
+    assert _plan_section(body)["answers"] == ["a-sched"]
+    assert [x["Answer"] for x in _file_rows(world, _plan_section(body))] == ["a-sched"]
+
+
+def test_a_board_of_only_session_state_answers_is_not_offered_to_the_plan_recipient(world):
+    offer = _plan_offer(world, BOARD_SESSION)
+    assert offer["offered"] is False and offer["reason_code"] == "takes_none_of_these_answers"
+    assert offer["exports"] == []
+    assert [i["reason_code"] for i in offer["refused"]] == ["not_a_kind_this_recipient_takes"] * 2

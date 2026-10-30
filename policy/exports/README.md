@@ -43,12 +43,33 @@ deployment replaces it, or adds its own, in an overlay directory:
 row replaces the row of the same `name` whole. A malformed row set refuses to load, listing every
 refusal.
 
+## Kinds are an explicit list
+
+`kinds` is an explicit list of verb IRIs. No wildcard (`*`, `mesh:*`) and no `all` exists; the
+loader refuses each, and a bare string instead of a list.
+
+**The plan recipient takes report verbs only** (ruled 10-29). `plan_answers.kinds` is these 11:
+
+    planCostCurve, planFundingGap, planSiteLoad, planDependencyViolations,
+    planDependencyNeighborhood, planMaturityGrid, planCapabilityPath, planProcessEvolution,
+    planTechFootprint, planSchedule, planCoverageGap
+
+and excludes the 3 session/scenario-state verbs, whose subject IS a scenario or session:
+`planCommitScenario` (it writes baseline), `planDiff` (one plan state versus another),
+`planSessionChanges` (a scenario's accumulated ops). A new Engine P verb is classified in
+`tests/test_a_portfolio_board_exports_to_a_plan_recipient.py`, which fails until someone does.
+
+A report verb computed against a scenario (`state_ref` other than baseline) is still the same
+verb: this profile decides by verb, not by state. Whether it should is an open question with the
+architect.
+
 ## Kinds are disjoint
 
 `kinds` must not name a verb engine-cost exports (`cost_agent.canvas.EXPORTABLE`) or a verb
 engine-fin serves (`VERB_TO_FN`): those answers belong to their own engines' exports. Sealed by
-`tests/test_a_portfolio_board_exports_to_a_plan_recipient.py`, which also holds
-`plan_answers.kinds` equal to the verbs Engine P declares.
+`tests/test_a_portfolio_board_exports_to_a_plan_recipient.py`, which also classifies
+every verb Engine P declares as report or session-state and holds `plan_answers.kinds` equal to
+the report set.
 
 ## Who may read a recipient's file
 
