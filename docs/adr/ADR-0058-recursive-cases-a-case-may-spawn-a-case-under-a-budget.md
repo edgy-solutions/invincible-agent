@@ -2,8 +2,11 @@
 
 **Status:** Proposed (architect, 2026-10-28). Nothing is built. The architect decided the five
 open questions of the second revision on 10-27, and §Decisions of 2026-10-27 records them. The
-first measurement is Lane 74's model-call census from engine logs (§4, "The measured unit"). The
-budget numbers wait on it.
+first measurement is Lane 74's model-call census from engine logs (§4, "The measured unit"). It
+was taken on 2026-10-29 at `4a5ff6b6`
+([`adr-0058-model-call-census-2026-10-30.md`](../measurements/adr-0058-model-call-census-2026-10-30.md)).
+It found routing at 4–8 calls per question, median 5. No walked question reached an agent loop, so
+the loop term is still unmeasured. The budget numbers are the architect's.
 **Date:** 2026-10-22; revised 2026-10-27; proposed 2026-10-28
 **Deciders:** architect (decision); Chris (review); Lane 74 (draft)
 **Related:**
