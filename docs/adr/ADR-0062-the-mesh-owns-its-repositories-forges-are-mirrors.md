@@ -21,7 +21,7 @@ lane/gov (§5)
     change is ratified by review, and approval produces "a PR". In engine-r, that step becomes a
     proposal (§6).
   - ADR-0061 (a workflow is described in dialogue and compiled to rows). It is on
-    `lane/74-socratic-workflow`, **not on master**. §4 is written against it.
+    `lane/74-socratic-workflow`, **not on master**. §4 is written against it at `3495ba5f`.
 
 ## Context
 
@@ -261,12 +261,106 @@ policy, no review decision and no audit that engine-r does not also hold.
 
 ### 4. Workflows through the repository
 
-> **Owned by lane/74. To be written in this PR.**
->
-> The brief: a Socratic workflow spec is a proposal in engine-r. Its approval is the review task,
-> and the runnable spec is the merged file. ADR-0061's loop ends in a `propose` verb, not a file
-> write. (As drafted on `lane/74-socratic-workflow`, ADR-0061 ends in ratification and then a PR
-> of the YAML bundle.)
+Written by lane/74, against ADR-0061 at `3495ba5f`. ADR-0061 describes a workflow in dialogue
+and compiles it to the rows the case runner already runs. This section says where those rows go
+when the dialogue ends: **a Socratic workflow spec is a proposal in engine-r, its approval is the
+review task, and the runnable spec is the merged file.**
+
+**The loop ends in `propose`, not a file write.**
+
+- Only a dialogue that ends `runnable` (ADR-0061 §5) proposes. One that ends `cannot_run` stays
+  a draft in the dialogue's own state. It creates no proposal ref and files no task.
+- The proposal's diff is the bundle and nothing else:
+  - rows in the four row directories (`triggers/`, `decisions/`, `workflows/`, `task_kinds/`)
+    under the deployment's overlay, `policy/overlays/<deployment>/`;
+  - the bundle's deferral file (below).
+
+  A dialogue never targets the seed directories (`policy/workflows/` and its siblings), and its
+  proposal touches no path outside its overlay.
+- The proposal's stated intent (§2) is the last restatement the person confirmed (ADR-0061 §3).
+- ADR-0061 §6 changes. Its ratification task **is** the review task, and its "PR of the bundle"
+  **is** the proposal. There is one task and one record, not a task followed by a PR.
+
+**The proposer is the person who described the workflow.**
+
+- The dialogue's host (ADR-0061's `proposeWorkflow`, in the case runner's engine) calls `propose`
+  **with the person's identity**, forwarded as the fleet forwards it today. `On-Behalf-Of` names
+  the person, and `Auth-Via` is how that person authenticated.
+- **It never proposes under its own service identity.** §5 excludes the proposer from the review
+  audience. With the host as proposer, the exclusion would remove a service identity, which can
+  never approve anyway (§5), and leave the person who described the workflow free to approve it.
+  ADR-0041's rule would hold on paper and fail in fact.
+- **A dialogue has one describer.** The host refuses a turn from a second `authz_id`. §2's
+  `propose` records one proposer, so a dialogue with several describers would need `propose` to
+  carry an exclusion list. This section does not ask for that shape (Open questions).
+- The forwarding is a new hop in the identity chain (`HOPS` in
+  `tests/test_the_person_reaches_the_migrated_route.py`). The PR that builds it adds the hop.
+
+**Who reviews.**
+
+- Every path in the bundle is a `policy/` path, so §5's `policy/` row decides:
+  `repo_review:POLICY`, **two approvers**, neither of them the proposer.
+- §4 adds no audience of its own. ADR-0061 asks for "the owning domain's workflow stewards", but
+  §5 matches rows by path. A workflow row carries no domain, and the overlay path names a
+  deployment, not a domain, so no path row can select a domain's stewards.
+- A steward audience would be a carve-out of `policy/`, which is the architect's to make (§5's
+  table). Until then, the workflow stewards are `repo_review:POLICY`.
+
+**What the card shows.**
+
+- The review card is cortex's review card spec (§2), showing the diff.
+- A workflow proposal adds one requirement: **deferrals are rows on the card, not only lines in
+  the diff.** ADR-0061 §5 requires the ratifier to see what was deferred rather than decided,
+  because the runtime reads some absences as answers: a deferred deadline runs as no deadline.
+
+**Deferrals merge with the rows.** This answers ADR-0061's open question on where a deferral is
+stored once merged.
+
+- Each bundle carries a deferral file, `policy/overlays/<deployment>/deferrals/<trigger key>.yaml`.
+  It maps each gap key to its reason, in the shape of the prototype fixtures'
+  `expected/deferrals.yaml`. No runtime reads it.
+- It merges in the same proposal as the rows. The deferral therefore outlives the review task and
+  mirrors with the rows (§3).
+- Answering a deferral later is a new proposal that changes the row and removes the line.
+- **Not measured.** The prototype keeps deferrals in the dialogue's state and writes no file. The
+  fixtures' `deferrals.yaml` is the measurement's expected value, not the prototype's output. The
+  building PR owes an arm proving the case runner's loaders ignore a `deferrals/` directory in an
+  overlay.
+
+**The checks at merge include the runner's loaders.**
+
+- `runnable` at the end of the dialogue is not enough, for two reasons:
+  - the prototype's `runnable()` loads the bundle **alone**, as its own seed in a temporary
+    directory (`socratic_elicitation.py` at `3495ba5f`), never composed with the deployment's seed
+    and its other overlays;
+  - the target ref can move between the end of the dialogue and the merge.
+- So any proposal that touches a row directory runs the case runner's own loaders (triggers,
+  decision tables, workflow definitions, task kinds) **over the composed policy at the merge
+  result**, as a pre-receive check. A loader refusal carries the envelope and moves no ref.
+- §5's `validate_policy` check does not stand in for this one. At `c346e782`,
+  `policy/sync/validate_policy.py` loads none of the four row kinds.
+- As with §5's check, §4 names this one, and adding it to §2's list is §2's job.
+
+**A change after review comes back through the dialogue.**
+
+- A reviewer who wants a change says so on the task. The person reopens the dialogue, and its
+  next `runnable` end pushes a new head to the **same** proposal.
+- The head moves, so every pending approval is void (§5, rule 5). Review starts again at the new
+  head.
+- A refusal on the review task closes the proposal. The draft stays in the dialogue's state.
+
+**Merged is not running.**
+
+- The runnable spec is the merged file, but the merge does not run it.
+- A merge to `policy/` opens a pin-bump proposal (§6). The workflow runs from the engine's baked
+  copy after that roll. Runtime reads from engine-r are a follow-on ADR (§6).
+- The person is told the difference. A merge sha says what was approved. The workflow runs from
+  the first roll whose build contains that sha.
+
+**What the dialogue never bundles.** A workflow that needs an audience nobody has declared needs
+a grant change, which is a human's act (ADR-0061, Open questions). The dialogue does not answer
+it, and a workflow proposal never carries a `policy/task_grants.yaml` row. The audience is its
+own proposal, merged and applied first.
 
 ### 5. Merge policy
 
@@ -594,6 +688,17 @@ On 2026-10-28 the architect ruled on the draft's open questions, then on the fou
 rulings raised. All the rulings are folded in above. These remain open:
 
 - **ADR-0061 is not on master.** §4 depends on it landing.
+- **A deployment whose overlay is held in another repository.**
+  - engine-r holds the invincible-agent repository (§1). Under this ADR, a deployment whose
+    overlay lives elsewhere has no engine-r target for its dialogue's proposal.
+  - Check 4 meets the same question. A deployment's own terms are in its uncommitted leak-terms
+    overlay (§2), and its own workflows name its own systems and audiences. (§4)
+- **Several describers.** §2's `propose` records one proposer, so §4 allows one describer per
+  dialogue. A shared description needs `propose` to carry every describer as excluded. (§4)
+- **A second author on an open proposal.** §2 does not say whether a caller other than the
+  proposer can add a commit to `refs/proposals/<id>`. If one can, §5 must say whether that
+  caller is excluded from review. §4 routes every change through the dialogue, so workflows do
+  not raise the question, but nothing in §2 stops a hand commit. (§4)
 - **Cutover of the real repository** is its own decision, made after the slice has measured.
   Part of that decision: the forge remains the writer of application paths (§1) while engine-r
   writes the governed ones, and both live in one repository with one master. The slice avoids
