@@ -8,6 +8,7 @@ it into Persona-specific sub-tasks, fans those out concurrently to Engine E
 
 import os
 import json
+import re
 import requests
 import sys
 import time
@@ -283,6 +284,14 @@ _RESOLVE_LOCK_WAIT_S = float(os.getenv("RESOLVE_LOCK_WAIT_S", "150"))
 #: whose calls took 33.6 s and 34.5 s. Architect ruling 2026-10-20: "Supervisor limit 60s
 #: interim, measured against the model's p100, not guessed."
 RESOLVE_SUBJECT_TIMEOUT_S = 60
+
+#: THE SUPERVISOR'S /classify_predicate BUDGET, IN SECONDS. INTERIM, on the same terms as
+#: RESOLVE_SUBJECT_TIMEOUT_S. MEASURED 2026-10-24 (sandbox revision 215, Engine O log, walks
+#: 05:19-05:52Z): 5 `ClassifyPredicate` calls, max 55,196 ms. The 30 s budget missed all five,
+#: and each picked the expected verb after the supervisor had given up. Architect ruling
+#: 2026-10-24: "raise to 60s now, same interim as resolution. It's a symptom; 74's call-count
+#: cut is the cure."
+CLASSIFY_PREDICATE_TIMEOUT_S = 60
 
 #: The reasoning prefix `_resolve_subject` writes when /resolve could not be reached. The
 #: generalist fallback reads it to tell "unreachable" from "Engine O answered UNKNOWN".
@@ -1193,7 +1202,7 @@ def _classify_route(
                 # attribution loss. Threaded the same way /resolve already receives it.
                 "user_email": user_email,
             },
-            timeout=30,  # LLM call inside; longer than /search_predicates.
+            timeout=CLASSIFY_PREDICATE_TIMEOUT_S,  # LLM call inside; see the constant.
         )
         resp.raise_for_status()
         data = resp.json()
@@ -1720,6 +1729,23 @@ def _redeem_caller_token(context, config) -> str:
             "no_run_id", "this op has no run id, so there is no reference to redeem"
         )
 
+    # THE SLOT. The BFF holds one single-use reference per fan-out slot, and this subtask's
+    # slot is its Dagster mapping key (`task_<n>`) -- Dagster's own record, like the run id.
+    # A missing or unparseable key is refused, NEVER defaulted to 0: defaulting would make
+    # every subtask contend for slot 0, which is exactly the replay this exists to remove.
+    _mk = None
+    try:
+        _mk = context.get_mapping_key()
+    except Exception:  # noqa: BLE001 -- a context without a mapping key has no slot
+        _mk = None
+    _m = re.match(r"^task_(\d+)$", str(_mk or ""))
+    if not _m:
+        raise CallerIdentityUnavailable(
+            "no_slot",
+            f"this op's mapping key {_mk!r} is not task_<n>, so it has no vault slot to redeem",
+        )
+    slot = int(_m.group(1))
+
     # ── STEP ONE: AUTHENTICATE OURSELVES. A DISTINCT FAILURE FROM A VAULT REFUSAL ──
     #
     # The supervisor authenticates AS ITSELF to redeem — invariant 1 at the far end checks
@@ -1753,6 +1779,7 @@ def _redeem_caller_token(context, config) -> str:
             # Invariant 4: the launcher THIS RUN records, cross-checked at the BFF
             # against the subject of the token that was stashed.
             "claimed_launcher": getattr(config, "user_email", "") or "",
+            "slot": slot,
         },
         headers={"Authorization": f"Bearer {_svc_token}"},
         timeout=15,
@@ -2128,6 +2155,7 @@ from iagent_pure.slot_acceptance import (
 # second copy. Aliased to their old private names: every call site and seal below reads
 # unchanged, and the diff stays about the move rather than about renaming.
 from iagent.verb_lookup import find_compatible_verbs as _lookup_compatible_verbs
+from iagent.authz.refusal import relay_refusal
 from iagent_pure.verb_eligibility import (
     filter_verbs_by_arity as _filter_verbs_by_arity,
     predicate_from_compat_record as _predicate_from_compat_record,
@@ -2542,6 +2570,110 @@ def _log_subtask_review_request_asset(
     return True
 
 
+_RELAYED_REFUSAL_STATUSES = (401, 403, 409)
+
+
+def _refusal_from_engine_4xx(context, endpoint, response) -> Optional[Dict[str, Any]]:
+    """The 200-style refusal dict for an engine's refusal-bearing 401/403/409, else None.
+
+    None means "not a refusal": a status outside the three, a body that is not JSON, or JSON
+    that carries no refusal. The caller then takes today's `raise_for_status()` path. Never
+    raises -- this runs ahead of the transport handler.
+    """
+    status = getattr(response, "status_code", None)
+    if status not in _RELAYED_REFUSAL_STATUSES:
+        return None
+    try:
+        body = response.json()
+    except Exception:  # noqa: BLE001 -- not JSON means not a refusal
+        return None
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if not isinstance(detail, dict):
+        detail = body
+    if not isinstance(detail, dict):
+        return None
+    r = detail.get("refusal")
+    r_ok = isinstance(r, dict) and bool(r.get("policy_id")) and bool(r.get("missing_binding"))
+    if not (r_ok or detail.get("refused") is True):
+        return None
+    err = detail.get("error")
+    outcome = err if isinstance(err, str) and err else (detail.get("outcome") or "refused")
+    data: Dict[str, Any] = {
+        "refused": True,
+        "outcome": outcome,
+        "reason": detail.get("message") or detail.get("reason"),
+        "status_code": status,
+    }
+    if r_ok:
+        # The grantor map is LOADED here, on the deny path, from this image's policy rail. A
+        # load failure or a malformed engine field must not turn a refusal back into a crashed
+        # op, so it degrades to the engine's two names WITHOUT `grantable_by` -- an engine
+        # never speaks for the deployment's grantor, even by default.
+        try:
+            data["refusal"] = relay_refusal({"refusal": r})["refusal"]
+        except Exception:  # noqa: BLE001 -- the refusal still travels
+            context.log.error("execute_subtask: could not fill the grantor for %s's refusal",
+                              endpoint, exc_info=True)
+            data["refusal"] = {"policy_id": str(r["policy_id"]),
+                               "missing_binding": str(r["missing_binding"])}
+    for k in ("connector", "fn", "hazard_id", "gap", "ask"):
+        if k in detail:
+            data[k] = detail[k]
+    context.log.info(
+        "execute_subtask: engine at %s refused with %s %s", endpoint, status, outcome
+    )
+    return data
+
+
+def _log_no_verb_decision(
+    context,
+    *,
+    disposition: str,
+    no_verb_reason: str,
+    telemetry,
+    rejected_verb_iri: str = "",
+) -> None:
+    """Record that a subtask ended with NO verb, and why.
+
+    `execute_subtask` returns early at four points before the `subtask_slots_decision`
+    materialization, so the gateway's `resolved_intent` kept /route_intent's extraction and an
+    answer with no verb carried neither a verb nor any record of why. `verb_iri` is "" here:
+    the rejected verb (exit 4) travels in `rejected_verb_iri`, never in `verb_iri`.
+    """
+    tel = telemetry or {}
+    try:
+        context.log_event(
+            AssetMaterialization(
+                asset_key=["subtask_slots_decision"],
+                metadata={
+                    "verb_iri": MetadataValue.text(""),
+                    "disposition": MetadataValue.text(str(disposition or "")),
+                    "no_verb_reason": MetadataValue.text(str(no_verb_reason or "")),
+                    "fallback_detail": MetadataValue.text(
+                        str(tel.get("fallback_reason") or "")
+                    ),
+                    "rejected_verb_iri": MetadataValue.text(str(rejected_verb_iri or "")),
+                    "owner_persona": MetadataValue.text(""),
+                    "subject_uri": MetadataValue.text(str(tel.get("subject_uri") or "")),
+                    "subject_instance_id": MetadataValue.text(
+                        str(tel.get("subject_instance_id") or "")
+                    ),
+                    "subject_instance_label": MetadataValue.text(
+                        str(tel.get("subject_instance_label") or "")
+                    ),
+                    "accepted_slots": MetadataValue.text("{}"),
+                    "bound_slot_sources": MetadataValue.text("{}"),
+                    "refused_slots": MetadataValue.text("[]"),
+                    "slot_resolution": MetadataValue.text("{}"),
+                    "fill_slots": MetadataValue.text(""),
+                },
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        # NON-FATAL: provenance must not take an answer down.
+        context.log.warning("subtask_slots_decision (no verb) materialization failed: %s", exc)
+
+
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
 def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -2652,6 +2784,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     #   no_match                          → Engine A fallback (no_predicate_matched)
     #   infra_error                       → abort with INFRA_ERROR signal
     if status == _ROUTING_INFRA_ERROR:
+        _log_no_verb_decision(
+            context, disposition="infra_error", no_verb_reason="routing_infra_error",
+            telemetry=telemetry,
+        )
         # Infrastructure outage — must surface, NOT mask via fallback.
         # Same reasoning that drove the ADR-0009 Cypher-fallback removal:
         # silent degradation hides the signal ops needs to fix the outage.
@@ -2710,6 +2846,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             if c and c != "UNKNOWN"
         ]
         if _fb_reason == "no_verb_classified":
+            _log_no_verb_decision(
+                context, disposition="abstain", no_verb_reason="no_verb_classified",
+                telemetry=telemetry,
+            )
             context.log.info(
                 "routing_abstain_rendered sub_query=%r considered=%s — NOT falling through to "
                 "the generalist; the classifier declined among real candidates.",
@@ -2747,6 +2887,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             }
 
         # Per ADR-0008: registry coverage gap → generalist fallback.
+        _log_no_verb_decision(
+            context, disposition="fallback", no_verb_reason="no_predicate_matched",
+            telemetry=telemetry,
+        )
         return _call_engine_a_fallback(
             context,
             sub_query=sub_query,
@@ -2774,6 +2918,11 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     )
 
     if score is None or score < threshold:
+        _log_no_verb_decision(
+            context, disposition="fallback", no_verb_reason="low_confidence",
+            telemetry=telemetry,
+            rejected_verb_iri=str(predicate.get("verb_iri") or ""),
+        )
         return _call_engine_a_fallback(
             context,
             sub_query=sub_query,
@@ -3027,6 +3176,11 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 metadata={
                     "verb_iri": MetadataValue.text(str(predicate.get("verb_iri") or "")),
                     "disposition": MetadataValue.text(str(disposition.action or "")),
+                    "no_verb_reason": MetadataValue.text(""),
+                    "fallback_detail": MetadataValue.text(
+                        str((telemetry or {}).get("fallback_reason") or "")
+                    ),
+                    "rejected_verb_iri": MetadataValue.text(""),
                     # THE SUBJECT, BESIDE THE VERB IT WAS CHOSEN FOR. `resolved_intent`
                     # recorded the verb alone, which makes the pair unreconstructible: an
                     # answered ask carries `mesh:planCapabilityPath` and no record of the
@@ -3414,8 +3568,14 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             headers=_telemetry_headers(config, caller_token=_caller_token) or None,
             timeout=1800,
         )
-        response.raise_for_status()
-        data = response.json()
+        # A REFUSAL IS AN ANSWER. An engine that says "this caller lacks the grant" has
+        # answered correctly; reading its 401/403/409 as an outage tells the user the system
+        # is broken when it is the grant that is missing. So a refusal-bearing body travels
+        # the success path as the same `{refused: true, ...}` dict a 200-refusal does.
+        data = _refusal_from_engine_4xx(context, endpoint, response)
+        if data is None:
+            response.raise_for_status()
+            data = response.json()
     except (requests.exceptions.RequestException, ValueError) as exc:
         # ValueError covers a 200 with an unparseable body — the engine answered with
         # something that is not JSON, which is a failure to answer, not a successful answer.

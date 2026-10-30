@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from iagent_mesh.interfaces import Initiator
 
-from src.iagent import promotion
+from src.iagent import promotion, provenance
 from src.iagent.promotion_stores import Neo4jIngestGraph
 
 HEX = "ab" * 32
@@ -221,3 +221,50 @@ def test_no_matching_notice_raises_rather_than_succeeding_silently():
 
 def test_zero_matched_edges_is_a_converged_no_op():
     assert _apply(Rec(deleted=0), DELETED)["deleted"] == 0
+
+
+# ── THE EDGE CARRIES THE EDIT'S OWN RUNG (architect 2026-10-23, item 2) ─────────────────────────
+# The write used to stamp the literal "steward-corrected" on every edge it wrote, so a hand-entered
+# part (steward-entered) would have landed indistinguishable from a corrected one. Every case
+# below uses a rung OTHER than steward-corrected, or the old literal would pass it.
+
+def _writes(rec):
+    return [p for c, p in rec.statements if "MERGE" in c]
+
+
+def test_an_ADDED_edit_lands_as_its_own_rung_not_as_steward_corrected():
+    rung = provenance.USER_DROP
+    assert rung in provenance.OBTAINED_VIA and rung != provenance.STEWARD_CORRECTED
+    rec = Rec()
+    _apply(rec, [{**ADDED, "obtained_via": rung}])
+    assert [p["obtained_via"] for p in _writes(rec)] == [rung]
+
+
+@pytest.mark.parametrize("rung", provenance.OBTAINED_VIA)
+@pytest.mark.parametrize("edit", [ADDED, CORRECTED], ids=["added", "corrected"])
+def test_every_rung_on_the_ladder_is_written_as_itself(edit, rung):
+    rec = Rec()
+    _apply(rec, [{**edit, "obtained_via": rung}])
+    assert [p["obtained_via"] for p in _writes(rec)] == [rung]
+
+
+@pytest.mark.parametrize("bad", [None, "", "Steward-Corrected", "steward_corrected", "hand"])
+@pytest.mark.parametrize("edit", [ADDED, CORRECTED], ids=["added", "corrected"])
+def test_a_written_edit_off_the_ladder_is_refused_before_any_statement(edit, bad):
+    rec = Rec()
+    with pytest.raises(ValueError, match="obtained_via"):
+        _apply(rec, DELETED + [{**edit, "obtained_via": bad}])
+    assert rec.statements == []          # not even the deletes ahead of it in the batch
+
+
+def test_a_written_edit_with_no_obtained_via_key_is_refused():
+    rec = Rec()
+    edit = {k: v for k, v in ADDED.items() if k != "obtained_via"}
+    with pytest.raises(ValueError, match="obtained_via"):
+        _apply(rec, [edit])
+    assert rec.statements == []
+
+
+def test_a_DELETED_edit_needs_no_rung():
+    assert all("obtained_via" not in e for e in DELETED)       # the control's premise
+    assert _apply(Rec(), DELETED)["deleted"] == 2

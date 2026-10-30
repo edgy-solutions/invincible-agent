@@ -12,6 +12,9 @@ Supported (the paths realm-reconcile-job.yaml's broker / retired-user segments u
          identity-provider/instances | identity-provider/instances/{alias}/mappers
   PUT    authentication/flows/{alias}/executions | identity-provider/instances/{alias}
   DELETE users/{id}
+  clients (state key "clients", default []): GET clients?clientId= | clients/{id} (no mappers) |
+         clients/{id}/protocol-mappers/models; POST clients | clients/{id}/protocol-mappers/models; PUT clients/{id}
+         (a client's redirectUris / webOrigins are served REVERSED: Keycloak holds them as sets)
 Anything else is logged as "UNHANDLED" and fails (curl exit 22).
 
 ASSUMED (not verified against a live Keycloak): a copied flow's sub-flows are renamed
@@ -95,10 +98,37 @@ def _mask(idp: dict) -> dict:
     return out
 
 
+def _client(st: dict, cid: str) -> dict | None:
+    return next((c for c in st.get("clients", []) if c["id"] == cid), None)
+
+
+#: Keycloak holds these as SETS and serves them in its own order, not the order they were PUT
+#: (measured on the live realm, 0.4.69: a two-literal PUT read back reversed). The double serves
+#: them reversed, so a compare that depends on PUT order fails here as it did live.
+_SET_FIELDS = ("redirectUris", "webOrigins")
+
+
+def _as_served(c: dict) -> dict:
+    out = {k: v for k, v in c.items() if k != "protocolMappers"}
+    for k in _SET_FIELDS:
+        if isinstance(out.get(k), list):
+            out[k] = list(reversed(out[k]))
+    return out
+
+
 def handle(method: str, path: str, query: dict, body: object) -> tuple[int, object]:
     st = _load()
     seg = [urllib.parse.unquote(p) for p in path.strip("/").split("/")]
     if method == "GET":
+        if seg == ["clients"]:
+            want = query.get("clientId", [""])[0]
+            return 200, [c for c in st.get("clients", []) if c["clientId"] == want]
+        if seg[0] == "clients" and len(seg) == 2:
+            c = _client(st, seg[1])
+            return (200, _as_served(c)) if c else (404, None)
+        if seg[0] == "clients" and len(seg) == 4 and seg[2:] == ["protocol-mappers", "models"]:
+            c = _client(st, seg[1])
+            return (200, c.get("protocolMappers", [])) if c else (404, None)
         if seg == ["authentication", "flows"]:
             return 200, [{"alias": f["alias"], "id": _id("flow", f["alias"]), "builtIn": f["builtIn"], "topLevel": True}
                          for f in st["authenticationFlows"] if f["topLevel"]]
@@ -124,6 +154,23 @@ def handle(method: str, path: str, query: dict, body: object) -> tuple[int, obje
             u = next((u for u in st["users"] if u["id"] == seg[1]), None)
             return (200, u) if u else (404, None)
     elif method == "POST":
+        if seg == ["clients"]:
+            if any(c["clientId"] == body["clientId"] for c in st.get("clients", [])):
+                return 409, None
+            cid = _id("client", body["clientId"])
+            mappers = [{**m, "id": _id("cmapper", cid, m["name"])} for m in body.get("protocolMappers", [])]
+            st.setdefault("clients", []).append({**body, "id": cid, "protocolMappers": mappers})
+            _save(st)
+            return 201, None
+        if seg[0] == "clients" and len(seg) == 4 and seg[2:] == ["protocol-mappers", "models"]:
+            c = _client(st, seg[1])
+            if c is None:
+                return 404, None
+            if any(m["name"] == body["name"] for m in c.setdefault("protocolMappers", [])):
+                return 409, None
+            c["protocolMappers"].append({**body, "id": _id("cmapper", c["id"], body["name"])})
+            _save(st)
+            return 201, None
         if seg[:2] == ["authentication", "flows"] and len(seg) == 4 and seg[3] == "copy":
             if _flow(st, seg[2]) is None:
                 return 404, None
@@ -150,6 +197,13 @@ def handle(method: str, path: str, query: dict, body: object) -> tuple[int, obje
             _save(st)
             return 201, None
     elif method == "PUT":
+        if seg[0] == "clients" and len(seg) == 2:
+            for i, c in enumerate(st.get("clients", [])):
+                if c["id"] == seg[1]:
+                    st["clients"][i] = {**body, "id": c["id"], "protocolMappers": c.get("protocolMappers", [])}
+                    _save(st)
+                    return 204, None
+            return 404, None
         if seg[:2] == ["authentication", "flows"] and len(seg) == 4 and seg[3] == "executions":
             ex = _find_exec(st, body["id"])
             if ex is None:

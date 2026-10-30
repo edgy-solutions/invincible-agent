@@ -42,7 +42,7 @@ from rdflib.namespace import RDF, RDFS
 
 from tests.test_a_case_runs_from_trigger_to_terminal import wd
 from tests.test_the_maintenance_fault_runs_as_a_case import (  # noqa: F401 -- fixtures by name
-    ACK, DECIDE, _MRAD_TTL, _NEAREST, _Resp, _event, _options, _real_policy, _run, _shaped_walk,
+    DECIDE, _MRAD_TTL, _NEAREST, _Resp, _event, _options, _real_policy, _run, _shaped_walk,
     registered,
 )
 import spo_step_executor as ex  # noqa: E402 -- the SAME module object main imports the call from
@@ -110,7 +110,7 @@ def _offered(rows):
 
 @pytest.mark.asyncio
 async def test_A_THE_WALK_CITES_WHAT_GROUND_TRUTH_CITES(registered):
-    _, c = await _run(_event(), [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    _, c = await _run(_event(), [(DECIDE, "replace_after_resupply")])
     walk = _walk(c)
     assert walk["citations"] == _strip(GT["citations"]), walk
     assert walk["bit_code"] == KNOWN, walk
@@ -134,7 +134,7 @@ _SLOT_KIND = {
 
 @pytest.mark.asyncio
 async def test_B_EVERY_CITED_DMC_IS_ONE_MODULE_OF_ITS_SLOTS_KIND_IN_THE_GRAPH(registered):
-    _, c = await _run(_event(), [(DECIDE, "replace_now"), (ACK, "released", "tier@x")])
+    _, c = await _run(_event(), [(DECIDE, "replace_now")])
     walk, opts, g = _walk(c), _options(c), _graph()
 
     def _one(label):
@@ -165,7 +165,7 @@ async def test_B_EVERY_CITED_DMC_IS_ONE_MODULE_OF_ITS_SLOTS_KIND_IN_THE_GRAPH(re
 @pytest.mark.asyncio
 async def test_C_FOUR_OPTIONS_CARRY_THE_IPD_PART_AND_THE_RESUPPLY_CARRIES_THE_SPARES_ROW(registered):
     ev = _event()
-    _, c = await _run(ev, [(DECIDE, "replace_after_resupply"), (ACK, "released", "tier@x")])
+    _, c = await _run(ev, [(DECIDE, "replace_after_resupply")])
     opts, ipd = _options(c), _strip(GT["citations"]["ipd"])
     assert len(opts) == 4, opts
     parts = [p for o in opts for p in o["parts"]]
@@ -182,7 +182,7 @@ async def test_C_FOUR_OPTIONS_CARRY_THE_IPD_PART_AND_THE_RESUPPLY_CARRIES_THE_SP
 
 @pytest.mark.asyncio
 async def test_D_THE_WIRE_CARRIES_THE_VERBS_NAME_AND_VALUES_NEVER_A_QUERY(registered, wire):
-    await _run(_event(), [(DECIDE, "replace_now"), (ACK, "released", "tier@x")])
+    await _run(_event(), [(DECIDE, "replace_now")])
     [post] = wire["posts"]
     assert post["url"].endswith("/declared_query"), post["url"]
     assert post["json"] == {"verb": WALK_VERB, "params": {"fault_code": KNOWN}}, post["json"]
@@ -197,7 +197,7 @@ async def test_E_THE_DECLARED_CAPABILITY_IS_ASKED_AND_A_REFUSAL_POSTS_AND_OFFERS
         registered, wire):
     declared = wd.load_query_verbs()[WALK_VERB].capability
     assert declared == "mesh:s1000dFaultWalk"
-    await _run(_event(), [(DECIDE, "replace_now"), (ACK, "released", "tier@x")])
+    await _run(_event(), [(DECIDE, "replace_now")])
     assert [cap for cap, _ in wire["asked"]] == [declared], wire["asked"]
 
     wire.update(asked=[], posts=[], allow=False)

@@ -1,0 +1,35 @@
+# RECIPIENT READERS -- who may download a recipient's disclosure package, from the engine that
+# OWNS that recipient scope. Architect, 2026-10-27 ruling 4, refined 2026-10-28: "gov writes the
+# rail shape (a recipient_readers family with grantors); fin and cost each move their own
+# RECIPIENT_READERS onto it." This file is that shape. It ships EMPTY for both owners: each owning
+# lane moves its own rows here and switches its call sites to the rail; until then the code-held
+# tables (agent_fleet/finance_agent/export.py, agent_fleet/cost_agent/seed.py) remain the
+# authority and tests/security/test_recipient_readers_rail.py ratchets them down.
+#
+# SHAPE: KEY 1 = OWNER, a CLOSED set {finance, cost}. KEY 2 = the recipient scope as that
+# owner's engine names it. A row is `<scope>: {granted_by, reason, grant_to: [emails]}`. The
+# owner is part of the key because the two engines' disclosures are entitled INDEPENDENTLY: a
+# reader of one engine's scope is never a reader of the other's, even when the scope string
+# collides. The Topaz object is `recipient_scope` with id `<owner>:<scope>`.
+#
+# `granted_by` / `reason` / `grant_to` are REQUIRED per row -- an unexplained or targetless row
+# is refused by validate_policy.py / recipient_reader_sync.py, never silently dropped. An owner
+# with no rows is written `{}` explicitly: empty is a statement, not an omission.
+#
+# USERS ONLY, same posture as every other grant family: grant_to is user entitlement keys
+# (emails, matching seeded `user` objects in policy/users.yaml); a group name is NOT resolved.
+#
+# PER ADR-0047 section 5.1: a `svc:` principal must NEVER be a recipient reader -- a disclosure
+# to a service identity entitles every caller that service serves (the confused-deputy shape
+# `service_identity_recipients` already refuses on the other disclosure namespaces).
+#
+# Row shape (owners add their own under finance / cost):
+#   <scope>:
+#     granted_by: <accountable human>
+#     reason: >-
+#       <why these readers>
+#     grant_to:
+#       - someone@example.com
+recipient_readers:
+  finance: {}
+  cost: {}

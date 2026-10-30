@@ -265,6 +265,98 @@ Emits nothing on success; `fail`s the render on the first violation.
 {{- end }}
 
 {{/*
+Validates keycloak.publicClients (PKCE browser clients; see values.yaml). A public client has no
+secret, so its redirect URIs are its only protection: the render `fail`s on
+  - an empty or repeated clientId;
+  - a clientId that is cortex-ui or any serviceClients/extraServiceClients clientId;
+  - empty redirectUris, a redirectUri that is "*" or does not start with https://;
+  - a webOrigin that is "*".
+Emits nothing on success.
+*/}}
+{{- define "invincible-agent.validatePublicClients" -}}
+{{- $seen := dict }}
+{{- $svc := dict }}
+{{- range $s := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
+{{- $_ := set $svc $s.clientId true }}
+{{- end }}
+{{- range $c := (.Values.keycloak.publicClients | default list) }}
+{{- if not $c.clientId }}
+{{- fail "keycloak.publicClients: an entry has an empty clientId" }}
+{{- end }}
+{{- if hasKey $seen $c.clientId }}
+{{- fail (printf "keycloak.publicClients: clientId %q is declared more than once" $c.clientId) }}
+{{- end }}
+{{- $_ := set $seen $c.clientId true }}
+{{- if or (eq $c.clientId "cortex-ui") (hasKey $svc $c.clientId) }}
+{{- fail (printf "keycloak.publicClients: clientId %q collides with cortex-ui or a serviceClients/extraServiceClients client" $c.clientId) }}
+{{- end }}
+{{- if not $c.redirectUris }}
+{{- fail (printf "keycloak.publicClients: client %q has no redirectUris" $c.clientId) }}
+{{- end }}
+{{- range $r := $c.redirectUris }}
+{{- /* https, and a literal host: "https://*" passes a prefix test and is still a wildcard */}}
+{{- if not (regexMatch "^https://[^/*]+(/.*)?$" (toString $r)) }}
+{{- fail (printf "keycloak.publicClients: client %q redirectUri %q must be https:// with a literal host (no \"*\" before the path)" $c.clientId (toString $r)) }}
+{{- end }}
+{{- end }}
+{{- range $w := ($c.webOrigins | default list) }}
+{{- if eq (toString $w) "*" }}
+{{- fail (printf "keycloak.publicClients: client %q webOrigin %q may not be \"*\"" $c.clientId (toString $w)) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+The cortex-ui client's redirect set (see keycloak.cortexUiClient in values.yaml). Renders a JSON
+object with keys redirectUris, webOrigins, postLogoutRedirectUris; call sites use `fromJson`.
+Each key is the declared list when non-empty, else derived from cortexUi.ingress (only when the
+ingress is enabled): for each TLS host h, "https://h" then "https://h/" (origin: "https://h";
+post-logout: "https://h/"), else []. The RESULT is validated: a redirect or post-logout URI must be
+https with a literal host and carry no "*" anywhere; a web origin must be https://host with no path.
+Call: include "invincible-agent.cortexUiRedirects" . | fromJson
+*/}}
+{{- define "invincible-agent.cortexUiRedirects" -}}
+{{- $d := (.Values.keycloak.cortexUiClient | default dict) }}
+{{- $ing := (.Values.cortexUi.ingress | default dict) }}
+{{- $hosts := list }}
+{{- if $ing.enabled }}
+{{- range $t := ($ing.tls | default list) }}
+{{- range $h := ($t.hosts | default list) }}
+{{- if not (has $h $hosts) }}{{- $hosts = append $hosts $h }}{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $redir := list }}
+{{- $orig := list }}
+{{- $logout := list }}
+{{- range $h := $hosts }}
+{{- $redir = concat $redir (list (printf "https://%s" $h) (printf "https://%s/" $h)) }}
+{{- $orig = append $orig (printf "https://%s" $h) }}
+{{- $logout = append $logout (printf "https://%s/" $h) }}
+{{- end }}
+{{- if $d.redirectUris }}{{- $redir = $d.redirectUris }}{{- end }}
+{{- if $d.webOrigins }}{{- $orig = $d.webOrigins }}{{- end }}
+{{- if $d.postLogoutRedirectUris }}{{- $logout = $d.postLogoutRedirectUris }}{{- end }}
+{{- range $r := $redir }}
+{{- if or (not (regexMatch "^https://[^/*]+(/.*)?$" (toString $r))) (contains "*" (toString $r)) }}
+{{- fail (printf "keycloak.cortexUiClient.redirectUris: cortex-ui redirect %q must be https:// with a literal host and no \"*\" anywhere" (toString $r)) }}
+{{- end }}
+{{- end }}
+{{- range $r := $logout }}
+{{- if or (not (regexMatch "^https://[^/*]+(/.*)?$" (toString $r))) (contains "*" (toString $r)) }}
+{{- fail (printf "keycloak.cortexUiClient.postLogoutRedirectUris: cortex-ui post-logout redirect %q must be https:// with a literal host and no \"*\" anywhere" (toString $r)) }}
+{{- end }}
+{{- end }}
+{{- range $w := $orig }}
+{{- if not (regexMatch "^https://[^/*]+$" (toString $w)) }}
+{{- fail (printf "keycloak.cortexUiClient.webOrigins: cortex-ui web origin %q must be https://host with a literal host and no path or \"*\"" (toString $w)) }}
+{{- end }}
+{{- end }}
+{{- dict "redirectUris" $redir "webOrigins" $orig "postLogoutRedirectUris" $logout | toJson }}
+{{- end }}
+
+{{/*
 A broker is RENDERED only when enabled AND its client secret has a source: an existingSecret, or a
 clientSecret value (set only in a gitignored *.secret.yaml; secrets.yaml puts it in the release
 Secret). Enabled with neither renders nothing (the reconcile job carries a NOTE) and never fails.

@@ -29,6 +29,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_fleet.finance_agent import measures as m
+from agent_fleet.finance_agent import main as fmain
 from agent_fleet.finance_agent.main import app
 from agent_fleet.finance_agent.seed import build_seed
 
@@ -39,13 +40,15 @@ EXTRA = {"fin_eac_calculation": {"method": "CPI"}}
 
 @pytest.fixture(scope="module")
 def client():
-    with TestClient(app) as c:
+    with pytest.MonkeyPatch.context() as mp, TestClient(app) as c:
+        mp.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
         yield c
 
 
 def _payload(client, fn):
     return client.post(f"/measure/{fn}",
-                       json={"params": {**PARAMS, **EXTRA.get(fn, {})}}).json()
+                       json={"params": {**PARAMS, **EXTRA.get(fn, {})},
+                             "user_email": "alice@example.com"}).json()
 
 
 @pytest.mark.parametrize("fn", sorted(m.OUTPUT_URI))
@@ -178,3 +181,23 @@ def test_the_drivers_verdict_reads_the_RANKING_rather_than_re_sorting():
     rows = m.fin_variance_drivers(STATE, program_id="NP-MERIDIAN")
     assert rows[0].get("rank") == 1
     assert str(rows[0]["entity_name"]) in m.VERDICT["fin_variance_drivers"](rows)
+
+
+def test_EVERY_declared_verb_leads_with_a_figure_and_not_with_a_pointer(monkeypatch):
+    """The overlay-declared verbs (sample overlay) are verbs too: the brief reads their verdict by
+    the same `_headline`, and a declared row without one would lead with the pointer."""
+    from pathlib import Path
+
+    from agent_fleet.graph_host.graphs.fin_program_brief import _headline
+
+    sample = Path(__file__).resolve().parents[2] / "policy" / "overlays" / "sample" / "measure_verbs"
+    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(sample))
+    declared = fmain._load_declared()
+    assert declared
+    monkeypatch.setattr(fmain, "DECLARED", declared)
+    monkeypatch.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
+    with TestClient(app) as c:
+        for fn in sorted(declared):
+            headline = _headline(_payload(c, fn))
+            assert headline != "reported (see artifact)", f"{fn} leads the brief with a pointer"
+            assert headline.strip(), fn

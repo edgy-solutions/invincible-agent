@@ -558,13 +558,17 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
     # KNOWLEDGE_DOCUMENT treatment - the same registered-and-routable-and-drawable-by-nothing
     # gap the OrphanedHazardSet note above records. The producers shape their payloads to these
     # archetypes (`rows` + the envelope fields) in agent_fleet/safety_agent/measures.py.
+    # FLIPPED 2026-10-21 (202) to match cortex-ui's DERIVED_BINDINGS (cortex 26bce42 packet section 4):
+    # the CONTRIBUTION_RANKING projection kept no part, no count and no records, which is the
+    # whole of what was asked ("part, count, records by date with source refs"). The flat
+    # measure reply is fenced whole by the document path, so these fields arrive one level up.
     {
         "subject_uri": "safety:FailureRecordSet",
-        "object_uri": "mesh:ContributionRanking",
-        "archetype": "CONTRIBUTION_RANKING",
-        "expected_fields": ["rank", "entity_id", "entity_name", "contribution",
-                            "share_of_total", "value_label", "value_unit", "scope_label"],
-        "description": "Renders safety:FailureRecordSet as a CONTRIBUTION_RANKING - the failure modes recorded for one safety-critical item across every program and system of record the caller may view, most frequent first, each row carrying the platforms and the connector:record_id citations behind its count. Order and magnitude are the SAME quantity (occurrence count). `favourable` is deliberately absent - a failure has no good direction",
+        "object_uri": "mesh:KnowledgeDocument",
+        "archetype": "KNOWLEDGE_DOCUMENT",
+        "expected_fields": ["part_number", "failure_count", "failures", "platforms",
+                            "systems_of_record_cited"],
+        "description": "Renders safety:FailureRecordSet as a KNOWLEDGE_DOCUMENT - the failures recorded for one safety-critical part across every program and system of record the caller may view: the part, the count, and each record by observed date with its connector:record_id citation. Cortex draws it with the record-set render keyed by output_uri; the ranking it replaced dropped all three",
     },
     {
         "subject_uri": "safety:FailureTrend",

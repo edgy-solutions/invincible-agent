@@ -112,7 +112,7 @@ def test_an_unextracted_notice_id_writes_none_not_the_key_nor_an_empty_string(
 
 # (c) the status route: key always present -----------------------------------------------------
 def _row(status="review", **extra):
-    return {"id": ID, "status": status, "kind": "pdf", "submitted_by": "alice@example.com",
+    return {"id": ID, "status": status, "kind": "pdf", "sha256": "a" * 64, "submitted_by": "alice@example.com",
             "on_behalf_of": "alice@example.com", "content_kind": "pcn", "failure": None,
             "attempt": 1, "created_at": 1, "updated_at": 2, **extra}
 

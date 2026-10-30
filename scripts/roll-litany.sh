@@ -82,6 +82,15 @@ probe_path() {
   esac
 }
 
+# THE ROLL LOCK (ruled 2026-10-24). A rollout restart is a roll: it must not start while another
+# lane holds sandbox/roll-lock, and another lane's roll must not start under it -- so it takes
+# the lock itself. Held already by this lane (an upgrade's gates running the litany), acquire is
+# a no-op, so it then RENEWS for its own 30 minutes -- never shorter than what the upgrade
+# declared. Release it once the gates pass:  scripts/roll-lock.sh release
+_lock="$(dirname "${BASH_SOURCE[0]}")/roll-lock.sh"
+bash "${_lock}" acquire --minutes 30 || exit 3
+bash "${_lock}" renew --minutes 30 || exit 3
+
 fail=0
 for DEP in "$@"; do
   echo "=================== $DEP ==================="

@@ -110,9 +110,18 @@ def test_doc_tools_gets_each_entry_with_an_attempt_keyed_run_key(doc_tools_clien
     assert [e["ingest_id"] for e in out] == [_A, _B]
     assert out[0] == {"ingest_id": _A, "attempt": 2, "run_key": f"{_A}-a2", "kind": "pdf",
                       "content_kind": "pcn", "object_prefix": f"ingress-user/pdf/{_A}/",
-                      "sha256": _A, "run_id": None, "updated_at": 1002, "reason": None}
+                      "sha256": _A, "run_id": None, "updated_at": 1002, "reason": None,
+                      "force_text_fallback": False}
     for e in out:
         assert e["run_key"] == f"{e['ingest_id']}-a{e['attempt']}"
+
+
+def test_a_has_parts_relaunch_is_listed_with_force_text_fallback(doc_tools_client, monkeypatch):
+    # The has_parts answer is the only writer of force_text_fallback; doc-tools reads it here to
+    # re-run the parts pass on the text layer. A row that carries it must say so in the listing.
+    _rig(monkeypatch, [{**_entry(_A, 3), "force_text_fallback": True}, _entry(_B, 2)])
+    out = doc_tools_client.get("/ingest/retries").json()["retries"]
+    assert [(e["ingest_id"], e["force_text_fallback"]) for e in out] == [(_A, True), (_B, False)]
 
 
 def test_limit_default_is_50_and_is_passed_through(doc_tools_client, monkeypatch):

@@ -109,6 +109,15 @@ agentFleet:
     # Telemetry (ADR-0038): tags every trace with the cluster it ran in. The LANGFUSE_*
     # creds ride in via agentFleet.secrets (values-sandbox.secret.yaml, gitignored).
     DEPLOY_ENV: "sandbox"
+    # A MEASURE IS AN OVERLAY ROW (proposal docs/proposals/a-measure-is-an-overlay-row-...md).
+    # SANDBOX ONLY, not the chart's default configmap: the sample TCPI row and its board are
+    # invented to prove the contract. engine-fin reads the first, cortex-bff the second; the
+    # shared agentFleet configmap carries both and each service reads only its own.
+    MEASURE_VERB_OVERLAY_DIRS: "/app/policy/overlays/sample/measure_verbs"
+    CANVAS_OVERLAY_DIRS: "/app/policy/overlays/sample/canvases"
+    # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
+    # and its template are invented. engine-fin reads it.
+    FIN_EXPORT_PROFILE_OVERLAY_DIRS: "/app/policy/overlays/sample/fin_export_profiles"
 
     # MinIO / S3 — the SHARED config (iagent-config) the prime-substrate Job reads
     # (it bridges these to S3_ENDPOINT_URL / AWS_* via optional configMapKeyRefs).
@@ -450,6 +459,11 @@ keycloak:
   # cortex-ui client emits, brokered humans through the broker's sub mapper (= upstream sub).
   # USER_ENTITLEMENT_CLAIM is rendered from this same key.
   authzClaim: "authz_id"
+  # The training workbench's login (the architect, 2026-10-24). Its UI and API share this host.
+  publicClients:
+    - clientId: training-workbench
+      redirectUris: ["https://training.edgy-solutions.com/*"]
+      webOrigins: ["https://training.edgy-solutions.com"]
   # A1, ruled 2026-09-30: the person the mesh-registrar delegate acts for. No credentials.
   nonInteractiveUsers:
     - username: platform-registrar
@@ -986,7 +1000,16 @@ cortexUi:
     # e0c3c6d descends from c390a03, and Dockerfile, docker-entrypoint.sh, nginx.conf, package
     # files and the src's import.meta.env reads are unchanged; helm/ (chart 0.3.0) and .github/
     # (retag-image.yml) moved, neither of them a build input.
-    digest: "sha256:c02ee0d262d64a04aa5f201224af6ac9351944c0b0f9735d5d3c4949b3a2f533"
+    # 2026-10-28, chart 0.4.71 (architect: "cortex pinned at e09e2ac (image 57e40789…)"; P0:
+    # "both clusters get the same image"): cortex-ui e09e2ac re-pins PRODUCER_REF to 4a5ff6b6,
+    # platform #121, the ruled evidence_ref {page, bbox, note?} -> 57e40789, the same digest
+    # values.yaml now carries by default. Measured before pinning: the FULL tag resolves to this
+    # digest, an OCI index with amd64 and arm64; the abbreviated tag and the full sha with its last
+    # hex altered both answer 404. e09e2ac descends from e0c3c6d. Dockerfile, docker-entrypoint.sh,
+    # nginx.conf and helm/ are unchanged, and the src gains no import.meta.env read (one comment
+    # naming it is removed). package.json gains a `gen:api` script, and .github/ moves only the CI
+    # PRODUCER_REF; neither is a build input.
+    digest: "sha256:57e4078925d3b1fe44724c207c262c0fb3e8315a718bba20eb564b67f8eea43a"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -1072,6 +1095,12 @@ cortexBff:
     # 2026-10-20, ON for 198 with cortex's flag still off (step 2 of the order in the 10-19
     # morning report): the server takes row_edits on a promotion, no UI sends them yet.
     IAGENT_PROMOTION_ROW_EDITS: "true"
+    # Who a policy refusal names as the grantor (src/iagent/authz/refusal.py). The seed
+    # (policy/grantors/) is deployment-neutral; this overlay names the sandbox's own approver
+    # (architect, 2026-10-27, ruling 5). Sandbox only: the chart sets no default, so a deployment
+    # without this key reads the seed. A path that does not exist composes NOTHING, silently --
+    # tests/security/test_the_sandbox_names_its_grantor.py holds it to a directory with rows.
+    GRANTOR_OVERLAY_DIRS: "/app/policy/overlays/sample/grantors"
   ingress:
     enabled: true
     className: traefik

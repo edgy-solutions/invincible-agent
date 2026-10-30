@@ -1733,6 +1733,10 @@ def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack
     # Only when declared: every other register's body is unchanged.
     if task.get("excludes"):
         body["excludes"] = list(task["excludes"])
+    # The options the approver chooses from (`chooses_from`), resolved at registration so the
+    # case panel can read them off the task row. Only when the step declared them.
+    if task.get("payload") is not None:
+        body["payload"] = task["payload"]
     # The case the task belongs to (architect ruling 2026-10-17): a holder may read it. Only when
     # the caller is a case run; a standalone run's body is unchanged.
     if case_id:
@@ -1772,6 +1776,30 @@ def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack
     _fail_terminal_on_4xx(
         resp, f"cortex-bff register of HumanTask {task_id!r} (audience {audience!r})")
     resp.raise_for_status()  # 5xx / 429 / network stay RETRYABLE (transient, should retry)
+    return resp.json()
+
+
+def _expire_human_task(workflow_id: str, task: dict) -> Optional[dict]:
+    """Retire the queue row(s) `_register_human_task` materialized for `task`, after its await
+    TIMED OUT -- otherwise the row stays `pending` for ever and REST and the feed both offer a task
+    nobody can act on. Runs inside ctx.run(). The ids are the ones the register used
+    (`task["id"]`, `workflow_id`). Mint-at-use bearer, like the register.
+
+    HYGIENE, NOT A GATE: a 401/403 is logged and swallowed (the terminal stays `timed_out`; a
+    denied hygiene write must not park or fail the workflow). 5xx / network stay RETRYABLE."""
+    task_id = task["id"]
+    headers = {"Authorization": f"Bearer {mint_service_token()}"}
+    resp = requests.post(
+        f"{CORTEX_BFF_URL}/internal/human_tasks/expire",
+        json={"task_id": task_id, "workflow_id": workflow_id},
+        headers=headers, timeout=AGENT_HTTP_TIMEOUT,
+    )
+    if resp.status_code in (401, 403):
+        logger.warning(
+            "expire of timed-out HumanTask %r (workflow %r) denied (%s); the row stays pending, "
+            "the terminal stays timed_out", task_id, workflow_id, resp.status_code)
+        return None
+    resp.raise_for_status()  # 5xx / network stay RETRYABLE
     return resp.json()
 
 
@@ -1902,6 +1930,100 @@ async def _race_deadline(ctx, promise, deadline_seconds: Optional[int]) -> "tupl
     return False, await promise.value()
 
 
+def _cr_flatten(request: Any) -> dict:
+    """The case's flattened trigger facts -- the base `chain` reads at the end of the definition."""
+    try:
+        import case_routing as _cr  # type: ignore[no-redef]
+    except ImportError:  # pragma: no cover
+        from agent_fleet.restate_analyst import case_routing as _cr
+    return _cr.flatten(request) if isinstance(request, dict) else {}
+
+
+def _kind_accepts(kind: Optional[str]) -> Optional[tuple]:
+    """The verbs a task kind accepts, from the SDK's declarations (seed, then every overlay's
+    ``task_kinds/``), or None when the kind is not loadable here. None means "could not tell", never
+    "accepts nothing": the renderer then trusts the step's own ``approves``."""
+    if not kind:
+        return None
+    try:
+        from iagent_mesh.task_kinds import compose  # noqa: PLC0415
+        seed = Path(__file__).resolve().parents[2] / "policy" / "task_kinds"
+        raw = (os.getenv("TASK_KIND_OVERLAY_DIRS") or "").strip()
+        overlays = ([p for p in (x.strip() for x in raw.split(os.pathsep)) if p] if raw
+                    else sorted(str(d) for d in (seed.parent / "overlays").glob("*/task_kinds")))
+        for k in compose(seed, overlays):
+            if str(getattr(k, "kind", "")) == kind:
+                return tuple(getattr(k, "accepts", None) or ())
+    except Exception:  # noqa: BLE001 -- unreadable declarations are "unknown", not "empty"
+        return None
+    return None
+
+
+def _choice_consequence_text(definition_id: str, step, facts: Optional[dict],
+                             labels: Optional[dict] = None) -> Optional[str]:
+    """What each approving choice leads to, DERIVED from the chaining table (never restated).
+
+    The routing rule (e.g. the supervisor rule) has one home, the table; a constant on the card
+    claiming "choosing one approves it" contradicts a table that routes a verb to a second approval.
+    A verb the table does not route is a declaration defect and is refused, not hidden.
+
+    ``labels`` (verb -> label) names a verb as its button reads; a verb with no label is spelled
+    as its id. Pure: a lookup, nothing journalled."""
+    try:
+        import case_routing as _cr  # type: ignore[no-redef]
+        from workflow_definition import get_workflow_definition  # type: ignore[no-redef]
+    except ImportError:  # pragma: no cover -- import path differs by runtime
+        from agent_fleet.restate_analyst import case_routing as _cr
+        from agent_fleet.restate_analyst.workflow_definition import get_workflow_definition
+
+    verbs = list(step.approves or [])
+    accepts = _kind_accepts(getattr(step, "task_kind", None))
+    if accepts is not None:
+        verbs = [v for v in verbs if v in accepts]
+    if not verbs:
+        return None
+    rows = _cr.verb_consequences(definition_id, verbs, facts or {})
+    if not rows:
+        return None
+    unrouted = [r["verb"] for r in rows if not r["then"]]
+    if unrouted:
+        raise restate.TerminalError(
+            f"step {step.id}: approved verb(s) {unrouted} are routed by no row of the chaining table "
+            f"after {definition_id!r}; a card cannot say what they lead to", status_code=422)
+
+    def _v(verb: str) -> str:
+        return (labels or {}).get(verb, verb)
+
+    def _name(did: str) -> str:
+        try:
+            return get_workflow_definition(did).name
+        except Exception:  # noqa: BLE001
+            return did
+
+    def _cond(when: dict) -> str:
+        return " and ".join(f"{k} is {str(v).lower() if isinstance(v, bool) else v}"
+                            for k, v in when.items()) or "otherwise"
+
+    groups: dict = {}
+    sentences: list = []
+    for r in rows:
+        if r["conditional"]:
+            legs = ", ".join(f"to {_name(leg['then'])} when {_cond(leg['when'])}" for leg in r["then"])
+            sentences.append((r["verb"], f"Choosing {_v(r['verb'])} leads {legs}."))
+        else:
+            groups.setdefault(r["then"][0], []).append(r["verb"])
+    out = [f"Choosing {' or '.join(_v(v) for v in vs)} leads to {_name(t)}."
+           for t, vs in groups.items()]
+    out += [text for _, text in sentences]
+    return " ".join(out)
+
+
+def _compose_summary(bound: Optional[str], derived: Optional[str]) -> Optional[str]:
+    """The bound step summary and the derived consequence text, either alone if the other is empty."""
+    parts = [x for x in (bound, derived) if x]
+    return " ".join(parts) if parts else bound
+
+
 def _bind_placeholders(
     value: Optional[str], bindings: dict, *, where: str, strict: bool = False,
     context: Optional[dict] = None,
@@ -1959,7 +2081,7 @@ def _bind_placeholders(
 
 async def _run_grouped_human_await(
     ctx: WorkflowContext, workflow_id: str, step, promise_name: str,
-    request: dict, bindings: dict, user_jwt: str,
+    request: dict, bindings: dict, user_jwt: str, definition_id: Optional[str] = None,
 ) -> dict:
     """``completion.mode == "grouped"`` — one approval settles a SERVER-AUTHORED
     batch of N items. The sealed ``GroupedReview`` mechanics, lifted into the
@@ -2028,7 +2150,9 @@ async def _run_grouped_human_await(
         "disposition": "grouped_review",
         "title": _bind_placeholders(step.title, bindings, where=f"step {step.id} title")
         or f"Review {len(batch_items)} affected part(s) — notice {notice_id or notice_fingerprint}",
-        "summary": _bind_placeholders(step.summary, bindings, where=f"step {step.id} summary")
+        "summary": _compose_summary(
+            _bind_placeholders(step.summary, bindings, where=f"step {step.id} summary"),
+            _choice_consequence_text(definition_id, step, _cr_flatten(request)) if definition_id else None)
         or f"{len(batch_items)} affected part(s) need a disposition review",
         "mpn": "",
         "notice_fingerprint": notice_fingerprint,
@@ -2298,9 +2422,18 @@ async def _run_definition(
 
             if step.completion.mode == "grouped":
                 results.append(await _run_grouped_human_await(
-                    ctx, workflow_id, step, promise_name, request, bindings, user_jwt,
+                    ctx, workflow_id, step, promise_name, request, bindings, user_jwt, wf.id,
                 ))
                 continue
+
+            # The step's options, resolved ONCE (pure: `_resolve_path` writes nothing). They go on
+            # the task row as `payload.options` and name the verbs in the derived summary.
+            _opt_found, _opt_list = (
+                _resolve_path(context, step.chooses_from) if step.chooses_from else (False, None))
+            _opt_labels = {
+                o["verb"]: o["label"] for o in (_opt_list if isinstance(_opt_list, list) else [])
+                if isinstance(o, dict) and isinstance(o.get("verb"), str)
+                and isinstance(o.get("label"), str)} or None
 
             task = {
                 # COMPOSITE, not bare `step.id`: the bare form is shared by every INSTANCE of
@@ -2315,8 +2448,10 @@ async def _run_definition(
                     step.audience, bindings, where=f"step {step.id} audience", strict=True, context=context),
                 "title": _bind_placeholders(
                     step.title, bindings, where=f"step {step.id} title", context=context),
-                "summary": _bind_placeholders(
-                    step.summary, bindings, where=f"step {step.id} summary", context=context),
+                "summary": _compose_summary(
+                    _bind_placeholders(
+                        step.summary, bindings, where=f"step {step.id} summary", context=context),
+                    _choice_consequence_text(wf.id, step, _cr_flatten(request), _opt_labels)),
                 "subject_ref": _bind_placeholders(
                     step.subject_ref, bindings, where=f"step {step.id} subject_ref", context=context),
                 "requested_by": step.requested_by or identity["authz_id"],
@@ -2350,6 +2485,15 @@ async def _run_definition(
                 # ...AND NEVER ROUTED (ruled 2026-10-02): the register drops them from the
                 # audience's actors before any row exists. The gate above stays the backstop.
                 task["excludes"] = [x.strip() for x in _excluded]
+            # THE OPTIONS, carried on the task row so a read-only observer (the case panel) can show
+            # what the approver chooses from. PURE: `_resolve_path` reads the run's context and
+            # writes nothing, and `task` is only the INPUT of the `ctx.run` below -- Restate
+            # journals that run's RESULT, so an instance in flight replays unchanged. No
+            # `ctx.set` / `ctx.run` here, deliberately. Unresolved -> nothing added; the post-await
+            # check still raises exactly as before.
+            if step.chooses_from:
+                if _opt_found and isinstance(_opt_list, list):
+                    task["payload"] = {"options": copy.deepcopy(_opt_list)}
             # THE KIND: declared on the step when the definition came from the registry, else the
             # caller's argument. A DECLARED kind on a definition the CALLER supplied is refused,
             # not ignored -- ignoring it would register a kind other than the one the YAML reads
@@ -2408,6 +2552,13 @@ async def _run_definition(
                     "terminal": "timed_out",
                     "deadline_seconds": step.deadline_seconds,
                 })
+                # RETIRE THE QUEUE ROW. Nothing else writes the projection on a timeout, so
+                # without this the row stays `pending` and both REST and the feed keep offering
+                # a task nobody can act on. Same ids the register for this step used.
+                await ctx.run(
+                    f"expire_{step.id}",
+                    lambda t=task: _expire_human_task(workflow_id, t),
+                )
                 # The definition ENDS here. Continuing would run later steps as though the
                 # human had acted, which is the §4.3.7 defect in general form: proceeding
                 # past an await that was never satisfied.
@@ -2730,6 +2881,10 @@ async def _run_definition(
             outputs[wf.id][step.id] = _record
             results.append({"step_id": step.id, "kind": "emit", "status": "EMITTED",
                             "channel": step.channel})
+            # An emit that IS the decision declares its disposition (ruled 2026-10-28); undeclared,
+            # it disposes nothing.
+            if step.disposes is not None:
+                results[-1]["disposition"] = step.disposes
 
     # ── THE TERMINAL OUTCOME, AND WHY IT IS NOT `status` ──────────────────────────────────────
     #

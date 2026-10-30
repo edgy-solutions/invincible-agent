@@ -295,7 +295,11 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             entitlement_source=entitlement_source,
             entitlements=entitlements,
         )
-        
+
+    except HTTPException:
+        # A refusal raised above (503 authorization_unavailable, 401 no identity) is already
+        # the answer; the catch-all below would re-wrap it as a 401 and hide the outage.
+        raise
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

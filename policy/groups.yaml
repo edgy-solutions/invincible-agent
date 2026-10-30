@@ -135,12 +135,26 @@ groups:
 
   # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-11 ruling). Grants NO persona.domain cell; named in
   # task_grants.yaml `grant_to_groups` for maint_tier_ack:edge-01.
+  # UNUSED BY ANY DEFINITION since 2026-10-28 (the supervisor's approval is the release; no tier
+  # ack step exists). Membership kept by ruling: no grant changes.
   # alice is the sandbox maint persona; erin and chris mirror her groups (the walker rule)
   maint-tier-ack-edge-01: {}
+
+  # DROP-GRANT GROUP ONLY (2026-10-28 ruling). Grants NO persona.domain cell; named in
+  # policy/capability_grants.yaml `grant_to_groups` for `can_drop:pcn` and `can_drop:pdn`.
+  alert-processors: {}
 
   # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-11 ruling). Grants NO persona.domain cell; named in
   # task_grants.yaml `grant_to_groups` for maint_supervisor_approval:edge-01.
   maint-supervisors-edge-01: {}
+
+  # TASK-AUDIENCE ACTOR GROUPS ONLY (2026-10-27, architect directive item 1). Grant NO
+  # persona.domain cell. The sandbox tier edge-02 mirror of the three edge-01 groups above, same
+  # members: OpenDDIL filed 1010 at edge-02, and with no edge-02 audience its `decide` task
+  # registered to nobody and the case failed on arrival (da479c74, 2026-10-25).
+  maint-approvers-edge-02: {}
+  maint-tier-ack-edge-02: {}
+  maint-supervisors-edge-02: {}
 
   # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-14 ruling). Grants NO persona.domain cell; named in
   # task_grants.yaml `grant_to_groups` for document_promotion:MANUFACTURING, the reviewers who

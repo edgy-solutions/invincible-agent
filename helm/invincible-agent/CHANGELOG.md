@@ -1,5 +1,183 @@
 # invincible-agent helm chart — changelog
 
+## Unreleased
+
+**Policy changes (2026-10-28 ruling: pcn and pdn droppable by the alert-processors group only)**
+
+- **`capability_grant_sync` learns `grant_to_groups`** and prunes orphan `can_drop:` objects. A
+  group is written as `group:<G>#member` on `invoker`; the sync never creates the group and exits 5,
+  before any write, when it is absent from live Topaz. With prune on, it deletes live `capability`
+  objects named `can_drop:*` that no row names (never any other capability object).
+- **Two `can_drop:` rows** in `policy/capability_grants.yaml`: `can_drop:pcn` and `can_drop:pdn`,
+  both `grant_to_groups: [alert-processors]`. A kind is gated iff `capability:can_drop:<kind>`
+  exists, so deleting a row reopens the kind to every caller.
+- **Nothing gates a drop until Lane 1's door lands.** These rows are inert data until it does.
+- **The sync must also run in the task-grant-sync hook Job** (Lane 1's change); this entry does not
+  wire it.
+- **Before that roll, a human `topaz_sync` must create `group:alert-processors`** (new group in
+  `policy/groups.yaml`, alice in `policy/users.yaml`), or the capability leg exits 5.
+
+**Chart changes**
+
+- **A `recipient_readers` policy rail.** Who may download a recipient's disclosure package, from
+  the engine that owns the scope, becomes a git-asserted Topaz relation (architect, 2026-10-27
+  ruling 4, refined 2026-10-28). The Topaz manifest gains a `recipient_scope` type
+  (`reader: user`, `can_read_recipient`; object id `<owner>:<scope>`, owner `finance` | `cost`),
+  and the `task-grant-sync` Job gains a last leg, `recipient_reader_sync`. In the configMap/git
+  overlay modes `recipient_readers.yaml` is optional: absent logs a `WARN:` and skips the leg
+  (no reader asserted, every recipient check denies); whether absence becomes FATAL is open.
+  `policy/recipient_readers.yaml` ships with both owners empty; the finance and cost lanes move
+  their own rows. No engine reads the rail yet. Loading the new manifest type is done by the
+  existing `topaz-manifest-load` Job.
+
+## 0.4.71 — 2026-10-28
+
+Cut from master `4a5ff6b6` (architect, 2026-10-28), so that the work cluster installs a version
+and never a master sha. Sandbox has run these images since roll 221, by `global.imageTag`. It
+carries every master merge since 0.4.70 (`b59e4a0f`): #112, #95, #108, #101, #107, #113, #118,
+#120 and #121.
+
+**Chart changes**
+
+- **The default values pin the frontend.** `cortexUi.image.digest` in `values.yaml` →
+  `sha256:57e40789…`, cortex-ui `e09e2ac`, which re-pins its producer to `4a5ff6b6`'s published
+  contract. Until 0.4.70 the default was empty and fell through to `:latest`. An environment's
+  own values still override it. `values-sandbox.yaml` moves to the same digest, from `c02ee0d2…`
+  (cortex-ui `e0c3c6d`).
+
+**Images.** A chart bump restarts every pod.
+- **cortex-bff (`src/iagent`):**
+  - `GET /ingest/{id}/extraction` serves doc-tools' `wire_evidence_ref` unchanged, and the
+    published `EvidenceRef` is exactly `{page, bbox, note?}` with `additionalProperties: false`
+    (#121, PCN-2683). A row with no ref, or with a ref that fails the contract, is served
+    `evidence_ref: null` and counted. A failing ref also logs one WARNING naming the check. The
+    old synthesized keys (`page_dims`, `bboxes`, `units`, `quality`) are gone; a review.json
+    written before doc-tools v0.2.2 now reads `null` on every row.
+  - a 409 that asks is declared as a refusal, with its grantor (#107).
+- **finance-agent:** program enumeration and resolve return only the programs the caller
+  `can_view_program` (#113).
+- **Policy baked into the images:**
+  - edge-02 task audiences mirror edge-01's, and the OpenDDIL maintenance-fault event kind's
+    domain is MAINTENANCE (#118);
+  - the openddil-lab course row mirrors doc-tools' third pass, `render.pages` (#120).
+
+**⚠ Before installing on a cluster that has not synced Topaz since #118:** `task_grants.yaml`
+names three new groups (`maint-approvers-edge-02`, `maint-tier-ack-edge-02`,
+`maint-supervisors-edge-02`). Sync Topaz first, or `task-grant-sync` exits 5 and the release
+reads failed. Sandbox was synced before roll 220.
+
+**No deploy effect:** #95 (tests), #101, #108 and #112 (docs and sessions).
+
+## 0.4.70 — 2026-10-26
+
+Roll 208. It carries every master merge since 0.4.69 (`7a45a3cb`): #93, #100, #97, #99, #96,
+#106, #105, #104, #109, #102, #103 and #110.
+
+**Chart changes**
+
+- **A public client puts itself in its access token's `aud` (#110).** The architect ruled on
+  2026-10-26 that the `training-workbench` client emits `authz_id` and `aud`. wb's api accepts a
+  token only when `aud` names `training-workbench`.
+  - Every `keycloak.publicClients` entry gets an `audience-self` mapper: `oidc-audience-mapper`,
+    with `included.client.audience` set to the client's own id, on the access token only.
+  - It ships in the realm import, in the reconcile's create, and in the reconcile's repair of a
+    live client. The repair keys on what a mapper emits, not on its name, and never rewrites an
+    existing mapper.
+  - The readback judges the audience and its access-token flag on one mapper's config, in any
+    key order. The ok line becomes
+    `ok   training-workbench public, pkce S256, emits authz_id, aud training-workbench`.
+- **cortex-ui's redirect readback compares sets (#100).** 0.4.69's readback compared the
+  redirect lists in order. Keycloak serves them in its own order, so revision 217 failed a
+  correct realm. The readback now compares them as sets.
+
+**Release pipeline (#93).** The chart release now needs the image build, and a missing image is
+fatal. 0.4.66, 0.4.68 and 0.4.69 each published a manifest with 0 of 19 images tagged, because
+the retag ran before the build finished.
+
+**Images.** A chart bump restarts every pod, so all of these land on this roll.
+- **cortex-bff (`src/iagent`):**
+  - a seeded canvas answer names its template, and a finance canvas asks which program (#97);
+  - ingest-v1, a published contract with a shape lock, and the status row that names the task a
+    steward acts on; a zero-row notice is asked about, not failed (#99);
+  - a has-parts defect filing with no requester is a terminal 422 (#104);
+  - `/canvas/seed` declares its 200 and 409 bodies (#103);
+  - a policy refusal names its policy, the missing binding, and who can grant it (#96).
+  - **One schema change:** `ingest_status_projection` gains `force_text_fallback BOOLEAN NOT NULL
+    DEFAULT FALSE` (#99). cortex-bff adds it on startup with `ADD COLUMN IF NOT EXISTS` and logs
+    `ingest_status_projection migration applied`; a failure logs a warning and leaves the
+    ingestion seam dormant.
+- **presentation-agent:** `safety:FailureRecordSet` binds `KNOWLEDGE_DOCUMENT`, matching cortex
+  (#105).
+
+**No deploy effect:** the lane-trailer hook (#106), and the test-only #109 and #102.
+
+## 0.4.69 — 2026-10-25
+
+**Finding: the `cortex-ui` client accepted any redirect.** Its realm import carried
+`redirectUris: ["*"]` and `webOrigins: ["*"]`. cortex-ui is a public client. Anyone who got a
+signed-in user to click a crafted login link could name their own redirect and collect the user's
+authorization code, and with it a token. The architect raised it on 2026-10-24 (PR #91). It is the
+shape `keycloak.publicClients` already refuses.
+
+**The fix: the redirect set is cortex-ui's literal origin.**
+- cortex-ui sends one redirect, `window.location.origin`. Its `/case/<id>` and `/ask` deep links
+  ride in OIDC state, never in the redirect. So the set is `https://<host>` and
+  `https://<host>/`, with no paths.
+- The web origin is `https://<host>`, and the post-logout redirect is `https://<host>/`, held
+  separately.
+- **New `keycloak.cortexUiClient` keys:** `redirectUris`, `webOrigins` and
+  `postLogoutRedirectUris`. When they are empty, the set derives from the TLS hosts of
+  `cortexUi.ingress`.
+- **When there is no set**, neither declared nor derivable:
+  - the import emits no redirect, so it fails closed;
+  - the reconcile job leaves the live client alone, and prints
+    `WARN cortex-ui: live redirectUris holds a wildcard` when it has one.
+- The render fails on any `*`, on a non-https URI, and on a web origin with a path.
+
+**The realm reconcile job converges a live realm.** This is the job's one declared exception to
+additive-only.
+- It reads the full client and replaces exactly those three fields. It PUTs the client back only
+  when they differ.
+- The readback fails unless all three are the rendered literals and the client is still public.
+- The success line is `ok   cortex-ui redirects <n> literal, no wildcard`.
+
+**Every deployment's realm has the same hole.**
+- A deployment whose `cortexUi.ingress` lists its TLS hosts is fixed by this roll.
+- **Work's realm needs the same fix.** If work serves cortex-ui through its own ingress, or through
+  none of the chart's, it must declare `keycloak.cortexUiClient`. Until then the job only warns,
+  and the wildcard stays.
+
+**Related, unchanged: cortex-ui keeps `directAccessGrantsEnabled: true`.** The sandbox walks and
+the e2e harness sign in with the password grant. A public client with the password grant takes a
+user's password directly. It is recorded here and is not changed by this release.
+
+
+## 0.4.68 — 2026-10-24
+
+A declared list of public PKCE clients, `keycloak.publicClients` (PR #90, on the architect's 10-24
+ruling). Its first member is `training-workbench`, the training workbench's login.
+- Each client is public, standard flow with PKCE S256 required, no implicit flow, no password
+  grant, no service account, `fullScopeAllowed`. When the identity claim is not `email`, it gets
+  the `authz-id-user` mapper.
+- The render fails on an empty or duplicate clientId, a clientId that collides with a client the
+  chart already defines, an empty redirect set, a redirect that is not https with a literal host,
+  and a `*` web origin.
+- The realm reconcile job creates a missing client and repairs a missing mapper. It never rewrites
+  an existing client. Its readback fails unless the live client is public, PKCE S256, has no
+  password grant, carries every declared redirect, and emits the claim.
+- The default is `[]`, which renders nothing new. `values-sandbox.yaml` declares
+  `training-workbench`.
+- The version also moves past 0.4.67, whose roll (rev 216) failed in its post-upgrade hooks.
+
+## 0.4.67 — 2026-10-24
+
+The supervisor's `/classify_predicate` budget goes from a literal 30 s to `CLASSIFY_PREDICATE_TIMEOUT_S = 60`.
+This is an interim, on the architect's 10-24 ruling, on the same terms as the resolve budget.
+- No template, `values.yaml` default or `values-sandbox.yaml` key changed.
+- The only code change is `src/iagent/defs/dynamic_supervisor.py`, which is Dagster user code. Every
+  image is still re-tagged at the merge sha.
+- cortex-ui stays `e0c3c6d`.
+
 ## 0.4.66 — 2026-10-24
 
 Roll 207. No template or `values.yaml` default changed. The release carries 207's engines and one

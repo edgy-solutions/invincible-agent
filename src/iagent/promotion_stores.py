@@ -59,6 +59,7 @@ import psycopg2
 from iagent_mesh.interfaces import EdgeIdentity, EdgeIdentityFilter, Initiator
 
 from .decision_record import canonical_json
+from .provenance import OBTAINED_VIA
 from .promotion import (INGEST_ID_RE, REJECTED_PREFIX, correction_key,  # noqa: F401
                         object_prefix_for, quarantine_prefix_for)
 
@@ -96,6 +97,12 @@ WHERE record_id = %s OR ingest_id = %s
 
 _RECORD_FOR_SQL = """
 SELECT record FROM document_decision_record WHERE ingest_id = %s
+"""
+
+_PROMOTED_BETWEEN_SQL = """
+SELECT ingest_id, acted_at, record FROM document_decision_record
+WHERE decision = %s AND acted_at >= %s AND acted_at < %s
+ORDER BY acted_at, ingest_id
 """
 
 
@@ -172,6 +179,30 @@ class PgDecisionLedger:
         if isinstance(rec, str):
             rec = json.loads(rec)
         return rec if isinstance(rec, dict) else None
+
+
+    def promoted_between(self, start_ms: int, end_ms: int, limit: int, domains) -> list:
+        """`[(ingest_id, acted_at_ms)]` of the promotions with `start_ms <= acted_at < end_ms`
+        (epoch ms, as `append` writes them), oldest first, whose record's domain
+        (`promotion.recorded_domain`) is in `domains`, at most `limit` -- the domain filter runs
+        BEFORE the limit, so the limit counts in-domain promotions only. `decision` is
+        `promotion.PROMOTED`, the value `append` stores from `record["outcome"]`. A READ: a store
+        fault RAISES (the caller turns it into a 503)."""
+        from .promotion import PROMOTED, recorded_domain
+
+        wanted = set(domains or ())
+        out: list = []
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_PROMOTED_BETWEEN_SQL, (PROMOTED, start_ms, end_ms))
+                for ingest_id, acted_at, rec in cur:
+                    if isinstance(rec, (bytes, bytearray, memoryview)):
+                        rec = bytes(rec).decode("utf-8")
+                    if recorded_domain(rec) in wanted:
+                        out.append((ingest_id, int(acted_at)))
+                        if len(out) >= limit:
+                            break
+        return out
 
 
 class S3Quarantine:
@@ -467,9 +498,14 @@ class Neo4jIngestGraph:
                         record_id: str) -> dict:
         """Apply a steward's row edits to THIS notice's SUBJECT_TO edges (the graph must be true
         on its own, not filtered at read). deleted: remove the part's edge. corrected: remove the
-        extracted part's edge, write the corrected part's with obtained_via=steward-corrected.
-        added: write the part's edge. header_corrected is NOT applied (named in `not_applied`).
-        Every statement is a MERGE or a DELETE of a matched edge, so a re-run converges."""
+        extracted part's edge, write the corrected part's. added: write the part's edge.
+        header_corrected is NOT applied (named in `not_applied`).
+        Every statement is a MERGE or a DELETE of a matched edge, so a re-run converges.
+
+        A written edge carries the EDIT's own `obtained_via` (architect 2026-10-23: a hand-entered
+        part is `steward-entered`, a corrected one `steward-corrected`, and the graph tells them
+        apart by nothing else). It is never defaulted: a corrected or added edit whose
+        `obtained_via` is absent or off the ladder is refused before any statement runs."""
         if not isinstance(domain, str) or not _DOMAIN_RE.match(domain):
             raise ValueError(f"domain {domain!r} does not match {_DOMAIN_RE.pattern}")
         out = {"deleted": 0, "corrected": 0, "added": 0, "not_applied": []}
@@ -478,6 +514,12 @@ class Neo4jIngestGraph:
         out["not_applied"] = [e.get("field") for e in edits if e.get("op") == "header_corrected"]
         if not applicable:
             return out
+        for e in applicable:
+            if e["op"] != "deleted" and e.get("obtained_via") not in OBTAINED_VIA:
+                raise ValueError(
+                    f"a {e['op']} edit for {e.get('mpn')!r} carries obtained_via "
+                    f"{e.get('obtained_via')!r}, not a rung of {OBTAINED_VIA}; the edge is not "
+                    f"written with an invented one")
         fmt = {"domain": domain}
         with self._driver.session() as session:
             row = session.run(_NOTICE_COUNT_CYPHER.format(**fmt), ingest_id=ingest_id).single()
@@ -496,7 +538,7 @@ class Neo4jIngestGraph:
                     target = e["corrected_value"] if op == "corrected" else e["mpn"]
                     session.run(
                         _WRITE_EDGE_CYPHER.format(**fmt), ingest_id=ingest_id, mpn=target,
-                        obtained_via="steward-corrected",
+                        obtained_via=e["obtained_via"],
                         corrected_by=e.get("corrected_by"),
                         extracted_value=e.get("extracted_value"),
                         evidence=e.get("evidence"), record_id=record_id,

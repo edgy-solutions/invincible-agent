@@ -19,6 +19,9 @@ from src.iagent import ingest_status as ist  # noqa: E402
 from tests.test_a_promotion_takes_row_edits_behind_its_flag import (  # noqa: E402,F401
     INGEST_ID as WORLD_ID, PAYLOAD, world,
 )
+from tests._can_drop_open import can_drop_open  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("can_drop_open")
 from tests.test_the_leaf_is_on_the_row_and_the_dropper_can_correct_it import (  # noqa: E402,F401
     ALICE, BOB, DOCTOOLS, ID, PREFIX, REF, _as, _by_kind_pdn_reruns, _leaf, _title, db,
 )
@@ -36,6 +39,9 @@ def _filer(db, monkeypatch, error=None):
         return gateway._promotion_task_id(ingest_id, kw.get("generation") or 0), "FILED"
 
     monkeypatch.setattr(gateway, "_file_or_find_document_promotion_task", file_task)
+    # 208: at review the row reads the empty-confirm task (none here) and the newest defect (none)
+    monkeypatch.setattr(ht, "get_open_task_payload", lambda task_id: None)
+    monkeypatch.setattr(ht, "latest_task_for_subject", lambda subject_ref, kind: None)
 
 
 def _review(db, **kw):

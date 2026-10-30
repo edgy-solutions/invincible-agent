@@ -367,6 +367,32 @@ _DRIVER_MONEY_FIELDS = ("contribution", "bcws", "bcwp", "acwp", "withheld_contri
 _INDEX_MONEY_FIELDS = ("bcws", "bcwp", "acwp", "cum_bcws", "cum_bcwp", "cum_acwp",
                        "cost_variance", "schedule_variance")
 
+#: The ratio fields `fin_performance_indices` passes to `_emit_money` (read at its call below, so
+#: the row-field table cannot name a ratio the call does not quantize).
+_INDEX_RATIO_FIELDS = ("cpi", "spi", "cum_cpi", "cum_spi")
+
+#: The literal keys `index_series.build` puts on a row beside the money and ratio fields.
+_INDEX_LITERAL_FIELDS = ("period", "scope_label", "amount_unit")
+
+
+def _emitted_fields(money: tuple[str, ...], ratio: tuple[str, ...],
+                    literal: tuple[str, ...]) -> frozenset[str]:
+    """The keys a row carries after `_emit_money`: every literal key, every money and ratio field,
+    and the `<field>_exact` string `_emit_money` writes beside each of those two kinds."""
+    return frozenset(literal) | frozenset(money) | frozenset(ratio) | frozenset(
+        f"{k}_exact" for k in (*money, *ratio))
+
+
+#: THE FIELDS A CDRL EXPORT PROFILE MAY NAME ON A BUILT-IN VERB, per verb. Derived statically from
+#: the code that emits the row (the money tuple, the `ratio_fields` and the row's literal keys), so a
+#: profile naming a field the verb never returns is refused at LOAD. A verb absent here cannot be a
+#: CDRL source. `tests/finance/test_a_cdrl_is_an_export_profile.py` runs each verb on the seed state
+#: and asserts its rows carry every declared field, so this table cannot drift from the code.
+ROW_FIELDS: dict[str, frozenset[str]] = {
+    "fin_performance_indices": _emitted_fields(
+        _INDEX_MONEY_FIELDS, _INDEX_RATIO_FIELDS, _INDEX_LITERAL_FIELDS),
+}
+
 #: The money fields `fin_burn_rate` computes. `trailing_rate` IS money -- an amount per period,
 #: not a ratio -- so it quantizes with the rest; `runway_periods` is a count of periods and is
 #: handled as a ratio. The two sit beside each other and are different kinds, which is the
@@ -1049,7 +1075,7 @@ def fin_performance_indices(
         # THE INDICES ARE RATIOS AND ARE NOT QUANTIZED -- a factor, not an amount. Carried
         # exact beside the float so a consumer COMPARING two indices reads the authority,
         # while the card takes the float at the edge.
-        ratio_fields=("cpi", "spi", "cum_cpi", "cum_spi"),
+        ratio_fields=_INDEX_RATIO_FIELDS,
     )
 
 

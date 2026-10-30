@@ -59,7 +59,9 @@ users:
                             # fixture status as the finance grant below -- it makes the
                             # demo path reachable, it is not a claim about who should
                             # hold production cost data.
-      - maint-tier-ack-edge-01   # 2026-10-11 ruling: actor-only (no cell); see groups.yaml
+      - maint-tier-ack-edge-01   # 2026-10-11 ruling: actor-only (no cell); see groups.yaml. No step waits on a tier ack since 2026-10-28; kept by ruling
+      - maint-tier-ack-edge-02   # 2026-10-27: the edge-02 mirror, actor-only (no cell)
+      - alert-processors         # FIXTURE grant, 2026-10-28: alice is the sandbox alert processor (PCN/PDN drops); not a claim about who drops notices in production.
       - finance-analysts    # FIXTURE grant, 2026-08-31: alice is the
                             # Engine F demo actor, so the persona/domain picker offers
                             # her the PROGRAM_FINANCE_ANALYST cell and a finance question
@@ -123,6 +125,9 @@ users:
       # 2026-10-11 ruling: sandbox tier edge-01 task audiences. Actor-only (no cell).
       - maint-approvers-edge-01
       - maint-supervisors-edge-01
+      # 2026-10-27: the sandbox tier edge-02 mirror of the two groups above. Actor-only (no cell).
+      - maint-approvers-edge-02
+      - maint-supervisors-edge-02
       # 2026-10-14 ruling: document_promotion:MANUFACTURING. Actor-only (no cell).
       - manufacturing-stewards
     default:
@@ -149,6 +154,7 @@ users:
       - enterprise-architects
       - cost-analysts
       - maint-tier-ack-edge-01
+      - maint-tier-ack-edge-02
       - finance-analysts
       - portfolio-leads
       - data-engineers
@@ -167,6 +173,7 @@ users:
       - enterprise-architects
       - cost-analysts
       - maint-tier-ack-edge-01
+      - maint-tier-ack-edge-02
       - finance-analysts
       - portfolio-leads
       - data-engineers
@@ -183,9 +190,11 @@ users:
   # validate_policy refuses a grant_to that is not in this file. It carries no `default`
   # persona/domain cell -- no persona is a supervisor's, and the architect ruled "the supervisor
   # grant, not a mechanic one" (2026-10-17). It holds the document_promotion:MAINTENANCE audience
-  # (task_grants.yaml) and, from 2026-10-17, maint-supervisors-edge-01: the OpenDDIL dry run is
-  # "atlantia chooses, liaison.coalition approves, alice releases", and approving is the
-  # maint_supervisor_review step. bob stays in that group as the fallback.
+  # (task_grants.yaml) and, from 2026-10-17, maint-supervisors-edge-01: in the OpenDDIL dry run
+  # atlantia chooses and liaison.coalition approves, and approving is the maint_supervisor_review
+  # step. The 10-17 script read "... alice releases"; the architect ruled 2026-10-28 (case
+  # 9062f943) that the supervisor's approval IS the release, so the dry run has two actors and no
+  # alice step. bob stays in that group as the fallback.
   #
   # From 2026-10-20 (architect directive item 1) it is also in maint-approvers-edge-01, the
   # maint_fault_approval:edge-01 audience: the dry run needs liaison to hold the fault-approval
@@ -196,6 +205,8 @@ users:
     groups:
       - maint-approvers-edge-01     # 2026-10-20: actor-only (no cell); see groups.yaml
       - maint-supervisors-edge-01   # 2026-10-17: actor-only (no cell); see groups.yaml
+      - maint-approvers-edge-02     # 2026-10-27: the edge-02 mirror, actor-only (no cell)
+      - maint-supervisors-edge-02   # 2026-10-27: the edge-02 mirror, actor-only (no cell)
 
   # operator.atlantia's fixed id in OpenDDIL's realm (2026-10-16, Chris's directive item 5). It
   # holds one cell, MECHANIC·MAINTENANCE, through openddil-maintainers -- the group path, because
@@ -209,13 +220,15 @@ users:
     groups:
       - openddil-maintainers
       - maint-approvers-edge-01   # 2026-10-17: actor-only (no cell); see groups.yaml
+      - maint-approvers-edge-02   # 2026-10-27: the edge-02 mirror, actor-only (no cell)
     default:
       persona: MECHANIC
       domains: [MAINTENANCE]
 
   # operator.borduria's fixed id in OpenDDIL's realm (2026-10-17 addendum: map all four brokered
   # users the way atlantia was). A mechanic, so the same one cell through openddil-maintainers. It
-  # holds no task audience; the dry run's chain is atlantia, liaison.coalition, alice.
+  # holds no task audience; the dry run's chain is atlantia, then liaison.coalition (two actors,
+  # ruled 2026-10-28).
   - id: 22222222-2222-4222-8222-222222222222
     display_name: Operator (OpenDDIL brokered principal operator.borduria - MAINTENANCE mechanic)
     groups:

@@ -145,8 +145,8 @@ def wire(eo, monkeypatch, *, graph_down=False, eo_rows=(EO_PART,)):
 
 def two(monkeypatch, a, b):
     """saf's tie recipe: two critical items, CSI-7001 and CSI-7002, with part numbers `a` and `b`."""
-    base = entities.CRITICAL_ITEMS[0]
-    monkeypatch.setattr(instances, "CRITICAL_ITEMS", (
+    base = entities.SAFETY_ITEMS[0]
+    monkeypatch.setattr(instances, "SAFETY_ITEMS", (
         replace(base, csi_id="CSI-7001", part_number=a), replace(base, csi_id="CSI-7002", part_number=b)))
 
 

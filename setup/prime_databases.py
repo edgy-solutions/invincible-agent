@@ -520,7 +520,8 @@ def get_base_url(url: str) -> str:
 # Step 1: Neo4j constraints + indexes
 # ============================================================================
 
-def prime_neo4j() -> None:
+def prime_neo4j() -> "list":
+    """Prime the constraints and seed `safety_critical`; returns the seed's unmatched part numbers."""
     print("--- Priming Neo4j (constraints + indexes) ---")
     uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
     user = os.environ.get("NEO4J_USERNAME", "neo4j")
@@ -550,8 +551,21 @@ def prime_neo4j() -> None:
                 session.run(cmd)
                 label = cmd.split("CONSTRAINT")[-1].split("IF NOT EXISTS")[0].strip().split()[0]
                 print(f"  [OK] {label}")
+            # safety_critical lives on the Component node and is set here by the bootstrap,
+            # never hand-run. MATCH-only: a part with no node yet, or spelled differently,
+            # matches 0 and is reported rather than created.
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import safety_critical_seed
+            seeded = safety_critical_seed.seed(session)
+            for pn, n in seeded["matched"].items():
+                print(f"  [OK] safety_critical on {pn}: {n} node(s)" if n else
+                      f"  [WARN] safety_critical on {pn}: matched 0 Component nodes")
+            # A 0-match never fails setup (a fresh install has no Components yet) and is never
+            # silent: the list goes to the :PrimeRun row, which version_census already reads.
+            unmatched = list(seeded["unmatched"])
         driver.close()
         print("[SUCCESS] Neo4j primed.")
+        return unmatched
     except Exception as e:
         print(f"  [ERROR] {e}")
         raise
@@ -595,7 +609,7 @@ def prime_jena() -> None:
 # Step 3: Upload canonical TTLs to MinIO so the dagster pipeline can ingest
 # ============================================================================
 
-def record_prime_run(wiped: bool = False) -> None:
+def record_prime_run(wiped: bool = False, safety_seed_unmatched: "list | None" = None) -> None:
     """Write this prime's own row: when it finished, what code ran it, what it seeded.
 
     Read by `scripts/version_census.py` to answer REGISTRATION RECENCY — an engine whose
@@ -635,7 +649,9 @@ def record_prime_run(wiped: bool = False) -> None:
         helm_revision:      $helm_revision,
         ontologies:         $ontologies,
         ontology_count:     $n,
-        wiped:              $wiped
+        wiped:              $wiped,
+        safety_seed_unmatched:       $unmatched,
+        safety_seed_unmatched_count: $unmatched_n
     })
     RETURN p.completed_at AS at
     """
@@ -652,6 +668,10 @@ def record_prime_run(wiped: bool = False) -> None:
                 ontologies=ontologies,
                 n=len(ontologies),
                 wiped=wiped,
+                # None (the seed did not run) stores nothing, so "unknown" is not read as "0".
+                unmatched=safety_seed_unmatched,
+                unmatched_n=(len(safety_seed_unmatched)
+                             if safety_seed_unmatched is not None else None),
             ).consume()
         driver.close()
         print(f"  [PrimeRun] recorded {now.isoformat()} sha={sha[:12] or 'unstamped'} "
@@ -1839,7 +1859,7 @@ def main() -> None:
                                 wait_timeout=args.ingest_timeout)
         return
 
-    prime_neo4j()
+    safety_seed_unmatched = prime_neo4j()
     prime_jena()
 
     if not args.skip_uploads:
@@ -1868,7 +1888,8 @@ def main() -> None:
     # (OntologyClass and its edges, Weaviate collections, Jena graphs, MinIO TTLs) and
     # preserves durability data. A prime's own history belongs with the second group — erasing
     # the record of the last prime as part of priming would be self-defeating.
-    record_prime_run(wiped=bool(getattr(args, "wipe", False)))
+    record_prime_run(wiped=bool(getattr(args, "wipe", False)),
+                     safety_seed_unmatched=safety_seed_unmatched)
 
     print("=== Prime complete ===")
     print(

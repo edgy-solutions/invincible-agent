@@ -28,11 +28,21 @@
 #
 # capability KEY = the capability IRI (the Topaz `capability` object_id), e.g.
 # "mesh:publishArtifact". `grant_to` = entitlement keys (emails/employee-ids,
-# matching seeded `user` objects) — USERS ONLY. Group names are NOT resolved here
-# (the sync writes user subjects unconditionally; a group name would seed a phantom
-# `user:<group>` object that passes readback while granting nothing to the group's
-# actual members — a silent wrong-grant). Group-based capability audiences would
-# need `invoker: user | group#member` in the manifest + sync support first.
+# matching seeded `user` objects). `grant_to` is USERS ONLY: a group name there would seed
+# a phantom `user:<group>` object that passes readback while granting nothing to the
+# group's actual members — a silent wrong-grant. A GROUP is granted through its own list,
+# `grant_to_groups: [<group in groups.yaml>]` (2026-10-28), written as `group:<G>#member`
+# (the manifest already declares `invoker: user | group#member`); membership lives in
+# users.yaml, never here. A row needs `grant_to` OR `grant_to_groups`, at least one non-empty.
+#
+# THE `can_drop:<content_kind>` CONVENTION (2026-10-28 ruling: pcn and pdn droppable by the
+# alert-processors group only; every other kind unchanged). The key is a REGISTERED CONTENT-KIND
+# ID, and the door checks the EFFECTIVE kind (the leaf if set, else content_kind). A kind K is
+# GATED iff the Topaz object `capability:can_drop:K` EXISTS -- the gated set is not a field on
+# the content kind (the SDK registration forbids extra fields). So a row's EXISTENCE is the
+# gate: deleting a `can_drop:` row REOPENS the kind to every caller, and
+# capability_grant_sync.py (prune=True) deletes the orphan `can_drop:` objects to make that so.
+# validate_policy.py refuses a `can_drop:<K>` key whose K is not a known content kind.
 capabilities:
   # ADR-0029 Slice-1 demo fixture: the promotion workflow's publish emit. alice
   # (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) is the initiator authorized to
@@ -176,7 +186,9 @@ capabilities:
     reason: >-
       Docs page gate prerequisite. Owner cell PORTFOLIO_LEAD in PORTFOLIO_PLANNING (gateway's
       seed verb registration), granted by portfolio-leads; alice, erin and chris are its members (erin and chris by
-      the group path, rows derived from membership, not chosen).
+      the group path, rows derived from membership, not chosen). It has a second owner cell,
+      PROGRAM_FINANCE_ANALYST in PROGRAM_FINANCE (the gateway's program-finance registration,
+      granted by finance-analysts); the grant list below is unchanged.
     grant_to:
       - alice@example.com
       - chris@example.com
@@ -279,3 +291,31 @@ capabilities:
       authz_id is recorded as on_behalf_of on the write instead.
     grant_to:
       - svc:case-runner
+
+  # can_drop:<content_kind> (2026-10-28 ruling) -- see the convention in the header. These two
+  # rows are the shipped default; a deployment configures its own in its policy repository.
+  can_drop:pcn:
+    granted_by: cnogradi
+    reason: >-
+      2026-10-28 ruling: drops of the `pcn` kind are restricted to the alert-processors group. This
+      row's EXISTENCE gates the kind: deleting the row reopens `pcn` to every caller. A deployment
+      configures this in its own policy repository.
+    grant_to_groups: [alert-processors]
+
+  can_drop:pdn:
+    granted_by: cnogradi
+    reason: >-
+      2026-10-28 ruling: drops of the `pdn` kind are restricted to the alert-processors group. This
+      row's EXISTENCE gates the kind: deleting the row reopens `pdn` to every caller. A deployment
+      configures this in its own policy repository.
+    grant_to_groups: [alert-processors]
+
+  # ingest:exportBatch (2026-10-28 overnight ruling): GET /ingest/export (the batch) and the
+  # export of a notice the caller did not drop. See src/iagent/export_profiles.py.
+  ingest:exportBatch:
+    granted_by: cnogradi
+    reason: >-
+      2026-10-28 overnight ruling: batch export of promoted notices over a date range, for the
+      alert-processors group. DOMAIN-SCOPED (architect 2026-10-29): the capability admits a notice
+      only when its promotion domain is one of the caller's entitlement-cell domains.
+    grant_to_groups: [alert-processors]

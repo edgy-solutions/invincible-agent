@@ -1005,6 +1005,7 @@ from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 from iagent_mesh import Initiator
+from iagent_mesh import ResolveInstanceRequest
 _announce_transport_auth(component="engine-o")
 app = FastAPI(
     **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
@@ -4796,6 +4797,18 @@ def _decode_declarations(raw: Any) -> list[dict]:
     return [d for d in raw if isinstance(d, dict) and d.get("name")]
 
 
+def _is_empty_slot_value(value: Any) -> bool:
+    """Mirror of iagent_pure.slot_acceptance.is_empty_value, for the reason above: None, a
+    blank string, or an empty collection names nothing; `0` and `False` are answers."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set, frozenset, dict)):
+        return not value
+    return False
+
+
 def _bound_value(decl: dict, cand: dict) -> str:
     """What a slot receives for a resolved candidate. Mirror of iagent_pure.slot_disposition.bound_value.
 
@@ -4939,6 +4952,13 @@ async def fill_slots(request: FillSlotsRequest):
         decl = by_name.get(name)
         if decl is None:
             refused.append(f"{name} (not declared by {request.verb_iri})")
+            continue
+        if decl.get("kind") == "spoken-mandatory" and _is_empty_slot_value(value):
+            # A REQUIRED SLOT NEVER TAKES THE SAFE-EMPTY VALUE. Accepted, `""` is PRESENT, and
+            # the supervisor's `ask` fires only on an ABSENT mandatory slot; on a referent slot
+            # it would go on to `resolveInstance("")`, whose `empty` is an ABSTAIN, not an ask.
+            # Left absent with no resolution, the disposition asks for it (`slot-unfilled`).
+            refused.append(f"{name}={value!r} (required; empty is never its answer, so it is asked)")
             continue
         values = decl.get("values")
         if values:
@@ -5528,17 +5548,6 @@ async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubject
 # mild smell accepted because engine-o owns the Jena instances; if a dedicated
 # sustainment engine appears, move this route to it and re-point the registration.
 # ---------------------------------------------------------------------------
-class ResolveInstanceRequest(BaseModel):
-    identifier: str
-    query: str = ""
-    #: Supervisor-derived (architect Q3), never user-supplied: `_call_resolver` forwards the verified
-    #: caller identity and entitled domains; same names as `/notice_parts`. Empty = no identity, so
-    #: only seeded content is visible. GATED ON by `_filter_sustainment_candidates` below: the same
-    #: origin verdict `/notice_parts` applies (`notice_parts.notice_visible`).
-    user_email: str = ""
-    entitled_domains: list[str] = Field(default_factory=list)
-
-
 _NOTICE_IRI_PREFIX = "http://internal/sustainment/doc/"
 _COMPONENT_IRI_PREFIX = "http://internal/components/"
 _SUBJECT_TO_NOTICE = "http://internal/sustainment/pcn#subjectToNotice"

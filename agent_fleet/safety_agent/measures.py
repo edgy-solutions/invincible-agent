@@ -22,8 +22,7 @@ from typing import Any, Dict, List, Optional
 try:  # flat in the image (/app), packaged in the repo — runbook §5, flat FIRST
     from entities import (
         BY_HAZARD_ID,
-        CRITICAL_ITEMS,
-        CRITICAL_PART_NUMBERS,
+        SAFETY_ITEMS,
         PLATFORM_IDS,
         HAZARDS,
         WORK_ORDERS,
@@ -37,8 +36,7 @@ try:  # flat in the image (/app), packaged in the repo — runbook §5, flat FIR
 except ImportError:
     from agent_fleet.safety_agent.entities import (  # type: ignore[no-redef]
         BY_HAZARD_ID,
-        CRITICAL_ITEMS,
-        CRITICAL_PART_NUMBERS,
+        SAFETY_ITEMS,
         PLATFORM_IDS,
         HAZARDS,
         WORK_ORDERS,
@@ -238,7 +236,7 @@ def assess_deferral_risk(state: Any = None, *, work_order_id: str) -> Dict[str, 
         # NOT the same as "not critical", and reported differently on purpose.
         return {"refused": True, "reason": f"unknown work order '{work_order_id}'"}
 
-    csi = next((c for c in CRITICAL_ITEMS if c.part_number == wo.part_number), None)
+    csi = next((c for c in SAFETY_ITEMS if c.part_number == wo.part_number), None)
     out: Dict[str, Any] = {
         "refused": False,
         "work_order_id": wo.work_order_id,
@@ -247,7 +245,7 @@ def assess_deferral_risk(state: Any = None, *, work_order_id: str) -> Dict[str, 
         "deferred_reason": wo.deferred_reason,
         "tail": wo.tail,
         "safety_critical": csi is not None,
-        "critical_items_checked": len(CRITICAL_ITEMS),
+        "critical_items_checked": len(SAFETY_ITEMS),
     }
     if csi is None:
         out["assessment"] = "not_applicable"
@@ -747,7 +745,7 @@ def what_failed_on_this_part(state: Any = None, *, part_number: str) -> Dict[str
         "value_unit": "failures",
         "scope_label": part_number,
         "part_number": part_number,
-        "critical_items_checked": len(CRITICAL_ITEMS),
+        "critical_items_checked": len(SAFETY_ITEMS),
         "failure_count": len(records),
         "platforms": platforms,
         "systems_of_record_cited": systems,
