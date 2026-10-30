@@ -96,3 +96,20 @@ granted on the `recipient_readers` rail under owner `plan`; the shipped
 `can_read_recipient` is False for everyone. The feature is dark by default, and that is
 intended. It lights when governance widens the rail's `OWNERS` to include `plan`, adds the
 reader rows, and the sync is run.
+
+## can_export: who may produce the file
+
+Producing a plan answers export needs Topaz `can_invoke` on the capability
+`can_export:<profile name>` (`capability_grants`), on top of being a reader. It is **deny by
+default**: a profile with no row is exportable by nobody.
+
+- The row is governance's, not this directory's: `can_export:plan-answers` -> `portfolio-leads`
+  (gov's #151). The export-door change adds no policy row.
+- **Both doors check it**: the BFF's `POST /export/package` (403 `not_entitled_to_export`, after
+  the reader check) and engine-cost's `POST /answers_export` (same refusal, before anything is
+  written). A rail that cannot be asked is a 503 `can_export_unavailable`, never a deny. The
+  picker and the offer list only recipients the caller is both a reader of and may export to.
+- **The download does not check it.** can_export gates production; reading a produced package is
+  a reader's act, so the download stays on `can_read_recipient`.
+- One shared check: `agent_fleet/utils/export_capability.py`. It is the same question as the
+  review export's `_may_export_profile`; the two fold together at iagent-mesh v0.9.12.

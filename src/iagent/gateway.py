@@ -2629,6 +2629,8 @@ def _fin_export_recipients_for(user: "User") -> list[str]:
 # seed `policy/exports/`), not by cost's `RECIPIENT_SCOPES`. Its READERS are the
 # `recipient_readers` rail under owner "plan": `can_read_recipient("plan", scope, authz_id)`.
 # Deny-by-default; until that owner exists on the rail nobody can export to one, which is intended.
+# PRODUCING one also needs `can_export:<profile name>` (ruled (b) 10-30, deny by default, the row is
+# policy's): "exportable" = reader AND can_export. The download stays reader-only.
 _PLAN_OWNER = "plan"
 _PLAN_PROFILES: Optional[dict] = None
 _NOT_A_KIND = "not_a_kind_this_recipient_takes"
@@ -2666,6 +2668,20 @@ def _plan_reader(scope: str, authz_id: Optional[str]) -> bool:
         ) from exc
 
 
+def _plan_may_export(profile_name: str, authz_id: Optional[str]) -> bool:
+    """`can_export:<profile>` (Topaz `can_invoke` on the capability). A blank authz_id is False;
+    a transport/HTTP failure is a 503, never a deny. The same question as the review export's
+    `_may_export_profile` (#163); the two fold together at iagent-mesh v0.9.12."""
+    from agent_fleet.utils.export_capability import can_export
+    try:
+        return bool(authz_id) and bool(can_export(profile_name, authz_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("can_export check failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail={"reason": "can_export_unavailable"}
+        ) from exc
+
+
 def _plan_recipients_for(user: "User") -> list[str]:
     """Every plan recipient scope `user` may export to: named by a loaded profile and admitted by
     the `recipient_readers` rail. A blank `authz_id` is []."""
@@ -2681,6 +2697,45 @@ def _plan_recipients_or_none(user: "User") -> list[str]:
         return _plan_recipients_for(user)
     except HTTPException:
         return []
+
+
+def _plan_profile_name(scope: str) -> Optional[str]:
+    from agent_fleet.utils import answer_exports as _ae
+    profile = _ae.profile_for_recipient(_plan_profiles(), scope)
+    return profile.name if profile is not None else None
+
+
+def _plan_exportable_for(user: "User", readers: Optional[list[str]] = None) -> list[str]:
+    """The plan recipient scopes `user` may EXPORT to: a reader AND `can_export` on the scope's
+    profile. Nobody is offered a recipient the export would refuse. `readers` is
+    `_plan_recipients_for(user)` when the caller already has it."""
+    if readers is None:
+        readers = _plan_recipients_for(user)
+    out = []
+    for s in readers:
+        name = _plan_profile_name(s)
+        if name is not None and _plan_may_export(name, user.authz_id):
+            out.append(s)
+    return out
+
+
+def _plan_exportable_or_none(user: "User") -> list[str]:
+    """`_plan_recipients_or_none`'s twin for the pickers: a rail that cannot be asked omits the
+    plan recipients."""
+    try:
+        return _plan_exportable_for(user)
+    except HTTPException:
+        return []
+
+
+def _plan_export_refusal_403(profile_name: str, scope: str) -> HTTPException:
+    """The compliant refusal for a reader who lacks `can_export:<profile>`."""
+    from .authz.refusal import policy_refusal
+    return policy_refusal(
+        "not_entitled_to_export", policy_id=f"capability_grants:can_export:{profile_name}",
+        missing_binding=f"can_invoke can_export:{profile_name}",
+        message=f"You are not entitled to export {profile_name} answers.",
+        extra={"recipient_scope": scope})
 
 
 def _plan_refusal_403(scope: str) -> HTTPException:
@@ -3107,7 +3162,7 @@ async def export_package_recipients(current_user: User = Depends(get_current_use
     return {
         "recipients": [
             {"value": s, "label": s}
-            for s in _export_recipients_for(current_user) + _plan_recipients_or_none(current_user)
+            for s in _export_recipients_for(current_user) + _plan_exportable_or_none(current_user)
         ]
     }
 
@@ -3237,7 +3292,7 @@ async def export_package_offer(
             for s in _export_recipients_for(current_user)
         ] + [
             {"value": s, "label": s, **_plan_offer_for_recipient(resolved, s)}
-            for s in _plan_recipients_or_none(current_user)
+            for s in _plan_exportable_or_none(current_user)
         ],
     }
 
@@ -3512,7 +3567,8 @@ async def export_package(
     plan_recipients = _plan_recipients_for(current_user) if is_plan_scope else []
     options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
     options += [{"value": s, "label": s} for s in (
-        plan_recipients if is_plan_scope else _plan_recipients_or_none(current_user))]
+        _plan_exportable_for(current_user, plan_recipients) if is_plan_scope
+        else _plan_exportable_or_none(current_user))]
     if not recipient_scope:
         raise HTTPException(
             status_code=409,
@@ -3524,6 +3580,9 @@ async def export_package(
     if is_plan_scope:
         if recipient_scope not in plan_recipients:
             raise _plan_refusal_403(recipient_scope)
+        plan_profile = _plan_profile_name(recipient_scope)
+        if not _plan_may_export(plan_profile, current_user.authz_id):
+            raise _plan_export_refusal_403(plan_profile, recipient_scope)
         return await _export_plan_answers(body, request, current_user, recipient_scope)
 
     if recipient_scope not in _export_recipients_for(current_user):
@@ -3651,6 +3710,7 @@ async def export_package_artifact(
         # A plan answers export: produced by engine-cost, read on the `recipient_readers` rail.
         scope = plan_hit[1]
         engine_url = _ENGINE_COST_URL
+        # can_export gates PRODUCTION; reading a produced package is a reader's act.
         recipients_fn = _plan_recipients_for
         engine_label = "cost"
     else:

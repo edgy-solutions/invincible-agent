@@ -109,10 +109,18 @@ class _World:
     def __init__(self):
         self.user_id = ALICE
         self.cost_package_calls = 0
+        self.answers_export_calls = 0
         self.rail_down = False
         # (owner, scope, caller) triples the fake rail admits
         self.readers = {("plan", PLAN, ALICE)}
         self.rail_calls: list[tuple] = []
+        # can_export (profile name, caller) pairs the fake rail admits; the name is READ from the
+        # loaded profile, never typed
+        self.profile_name = AE.profile_for_recipient(
+            AE.load_answer_export_profiles(), PLAN).name
+        self.exporters = {(self.profile_name, ALICE)}
+        self.export_down = False
+        self.export_calls: list[tuple] = []
 
 
 @pytest.fixture
@@ -130,6 +138,16 @@ def world(monkeypatch, tmp_path):
 
     monkeypatch.setattr("agent_fleet.utils.recipient_readers.can_read_recipient", fake_can_read)
     monkeypatch.setattr(cost_main, "can_read_recipient", fake_can_read)
+
+    def fake_can_export(profile_name, caller_id, **_k):
+        w.export_calls.append((profile_name, caller_id))
+        if w.export_down:
+            raise ConnectionError("topaz is down")
+        return (profile_name, caller_id) in w.exporters
+
+    # the BFF imports the module function at call time; cost bound the name at import
+    monkeypatch.setattr("agent_fleet.utils.export_capability.can_export", fake_can_export)
+    monkeypatch.setattr(cost_main, "can_export", fake_can_export)
     monkeypatch.setattr(cost_main, "_current_caller", lambda: _Caller(w.user_id))
     monkeypatch.setattr(cost_main, "_ANSWER_PROFILES", None)
     monkeypatch.setattr(gateway, "_PLAN_PROFILES", None)
@@ -151,6 +169,7 @@ def world(monkeypatch, tmp_path):
                     w.cost_package_calls += 1
                     return _CostPackage()
                 assert url.endswith("/answers_export"), url
+                w.answers_export_calls += 1
                 return engine.post("/answers_export", json=json)
 
             async def get(self, url, headers=None, **k):
@@ -501,6 +520,7 @@ def test_a_json_profile_is_served_as_json(world, monkeypatch, tmp_path):
         recipients=("notional-plan-json",), columns=(AE.Column("answer_id", "Answer"),))
     monkeypatch.setattr(cost_main, "_ANSWER_PROFILES", {"plan-json": prof})
     world.readers.add(("plan", "notional-plan-json", ALICE))
+    world.exporters.add(("plan-json", ALICE))
     r = world.engine.post("/answers_export", json={
         "recipient_scope": "notional-plan-json", "export_id": "e1", "user_email": ALICE,
         "rows": [{"answer_id": "z"}]})
@@ -734,3 +754,127 @@ def test_the_join_seal_can_fire_each_loader_refuses_the_others_file(monkeypatch,
     with pytest.raises(AE.AnswerExportError) as exc:
         AE.load_answer_export_profiles()
     assert "default-csv" in str(exc.value)
+
+
+# ── can_export gates both doors (ruled (b) 10-30) ────────────────────────────────────────────
+def _no_file(w):
+    return not w.dist.exists() or not any(w.dist.iterdir())
+
+
+def test_can_export_gates_both_doors_bff_refuses_a_reader_without_it(world):
+    world.exporters = set()
+    r = world.export(BOARD_PLAN)
+    assert r.status_code == 403, r.text
+    detail = r.json()["detail"]
+    assert detail["error"] == "not_entitled_to_export"
+    assert detail["refusal"]["policy_id"] == f"capability_grants:can_export:{world.profile_name}"
+    assert detail["refusal"]["missing_binding"] == f"can_invoke can_export:{world.profile_name}"
+    # engine-cost was not called, on either of its routes
+    assert world.cost_package_calls == 0 and world.answers_export_calls == 0 and _no_file(world)
+
+
+def test_can_export_gates_both_doors_bff_503_when_the_check_raises(world):
+    world.export_down = True
+    r = world.export(BOARD_PLAN)
+    assert r.status_code == 503 and r.json()["detail"] == {"reason": "can_export_unavailable"}
+    assert world.answers_export_calls == 0 and _no_file(world)
+
+
+def test_can_export_gates_both_doors_cost_refuses_a_reader_without_it(world):
+    world.exporters = set()
+    r = world.engine.post("/answers_export", json={
+        "recipient_scope": PLAN, "export_id": "c1", "user_email": ALICE, "rows": []})
+    assert r.status_code == 403, r.text
+    detail = r.json()["detail"]
+    assert detail["error"] == "not_entitled_to_export"
+    assert detail["refusal"] == {
+        "policy_id": f"capability_grants:can_export:{world.profile_name}",
+        "missing_binding": f"can_invoke can_export:{world.profile_name}", "candidates": []}
+    assert detail["message"]
+    assert _no_file(world)
+
+
+def test_can_export_gates_both_doors_cost_503_when_the_check_raises(world):
+    world.export_down = True
+    r = world.engine.post("/answers_export", json={
+        "recipient_scope": PLAN, "export_id": "c2", "user_email": ALICE, "rows": []})
+    assert r.status_code == 503 and r.json()["detail"] == {"reason": "can_export_unavailable"}
+    assert _no_file(world)
+
+
+def test_can_export_gates_both_doors_picker_and_offer_list_only_what_would_export(world):
+    def picker():
+        return [x["value"] for x in world.get("/export/package/recipients").json()["recipients"]]
+
+    assert PLAN in picker()
+    assert PLAN in [x["value"] for x in world.offer(BOARD_PLAN).json()["recipients"]]
+    world.exporters = set()
+    assert PLAN not in picker()
+    assert PLAN not in [x["value"] for x in world.offer(BOARD_PLAN).json()["recipients"]]
+    # the 409 options do not list it either
+    r = world.export(BOARD_PLAN, scope="")
+    assert r.status_code == 409
+    assert PLAN not in [o["value"] for o in r.json()["detail"]["options"]]
+
+
+def test_can_export_gates_both_doors_the_download_stays_reader_only(world):
+    section = _plan_section(world.export(BOARD_PLAN).json())
+    world.exporters = set()
+    r = world.get(section["artifact_uri"])
+    assert r.status_code == 200
+    assert world.engine.get(f"/artifact/{section['artifact_filename']}").status_code == 200
+
+
+# ── the check asks the right question ────────────────────────────────────────────────────────
+def _run(handler):
+    import httpx
+    from agent_fleet.utils import export_capability as EC
+    seen = []
+
+    def wrapped(request):
+        seen.append(request)
+        return handler(request)
+
+    real = httpx.Client
+    mp = pytest.MonkeyPatch()
+    mp.setattr(EC.httpx, "Client", lambda **k: real(transport=httpx.MockTransport(wrapped), **k))
+    try:
+        return seen, EC.can_export("some-profile", ALICE, directory_url="http://topaz.test")
+    finally:
+        mp.undo()
+
+
+def test_export_capability_asks_the_right_question():
+    import httpx
+    seen, got = _run(lambda req: httpx.Response(200, json={"check": True}))
+    assert got is True and len(seen) == 1
+    assert seen[0].url.path == "/api/v3/directory/check"
+    assert json.loads(seen[0].content) == {
+        "object_type": "capability", "object_id": "can_export:some-profile",
+        "relation": "can_invoke", "subject_type": "user", "subject_id": ALICE}
+    assert _run(lambda req: httpx.Response(200, json={"check": False}))[1] is False
+    assert _run(lambda req: httpx.Response(404, json={"msg": "object not found"}))[1] is False
+    with pytest.raises(httpx.HTTPStatusError):
+        _run(lambda req: httpx.Response(500, json={}))
+    with pytest.raises(ValueError):
+        _run(lambda req: httpx.Response(200, content=b"not json"))
+    with pytest.raises(httpx.TransportError):
+        def boom(req):
+            raise httpx.ConnectError("down")
+        _run(boom)
+
+
+def test_export_capability_without_a_url_is_false_and_sends_nothing(monkeypatch):
+    import httpx
+    from agent_fleet.utils import export_capability as EC
+    sent = []
+    real = httpx.Client
+    monkeypatch.setattr(EC.httpx, "Client", lambda **k: real(
+        transport=httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(200, json={"check": True})),
+        **k))
+    monkeypatch.delenv("TOPAZ_DIRECTORY_URL", raising=False)
+    assert EC.can_export("p", ALICE) is False
+    assert EC.can_export("p", ALICE, directory_url="  ") is False
+    assert EC.can_export("", ALICE, directory_url="http://t") is False
+    assert EC.can_export("p", "", directory_url="http://t") is False
+    assert sent == []

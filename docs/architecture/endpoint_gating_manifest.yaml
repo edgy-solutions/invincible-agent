@@ -1133,7 +1133,7 @@ services:
       - method: POST
         path: /answers_export
         identity: "caller authz_id (body user_email, as the BFF names it), checked on the recipient_readers rail under owner plan"
-        gate: "AUTHORIZATION on the caller (can_read_recipient, deny-by-default; a rail that cannot be asked is 503) + a recipient named by an answer-export profile; transport auth (OBSERVE)"
+        gate: "AUTHORIZATION on the caller (can_read_recipient AND can_invoke can_export:<profile>, both deny-by-default; a rail that cannot be asked is 503) + a recipient named by an answer-export profile; transport auth (OBSERVE)"
         exposes: object-store-write
         consumers: ["cortex-bff /export/package (a plan recipient)"]
         class: gated
@@ -1144,6 +1144,8 @@ services:
           recipient BEFORE anything is written, so it does not rest on the gateway being the
           only caller. 404 for a recipient no profile names, 403 (policy_id recipient_readers)
           for a non-reader, 503 recipient_readers_unavailable when the rail cannot be asked.
+          PRODUCING it also needs can_invoke can_export:<profile> (403 not_entitled_to_export,
+          503 can_export_unavailable; ruled (b) 10-30, deny by default).
           The same readers gate GET /artifact/{filename} for an ia-answers-* name.
 
   finance_agent:
@@ -2087,7 +2089,7 @@ services:
       - method: POST
         path: /export/package
         identity: keycloak-jwt
-        gate: "get_current_user + recipient_scope required and must be one authz_id reads (seed.readers_for_recipient); answers refused-not-dropped via the artifact store's own ownership query"
+        gate: "get_current_user + recipient_scope required and must be one authz_id reads (seed.readers_for_recipient); a plan recipient also needs can_invoke can_export:<profile> (403 not_entitled_to_export); answers refused-not-dropped via the artifact store's own ownership query"
         exposes: object-store-write
         consumers: [cortex-ui canvas export (mesh:packageExport)]
         class: gated
@@ -2102,7 +2104,9 @@ services:
           identity (seed.py's RECIPIENT_READERS comment names no svc: reader —
           the confused-deputy argument). Every canvas answer id is resolved through the
           same ownership query /artifacts/{artifact_id} uses; one that does not resolve
-          is a 404, refused rather than silently dropped. artifact_uri on the response
+          is a 404, refused rather than silently dropped. A plan answers recipient adds
+          can_invoke can_export:<profile> after the reader check (two distinct 403s; the
+          picker and offer list only recipients both pass). artifact_uri on the response
           is always the GATEWAY path (/export/package/artifact/{filename}), never the
           engine's own out["artifact_uri"], so a caller cannot be handed a link that
           bypasses this file's own download gate.

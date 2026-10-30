@@ -49,6 +49,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     from utils.subject_coverage import assert_subject_coverage as _assert_coverage
     from utils import answer_exports
     from utils.recipient_readers import can_read_recipient
+    from utils.export_capability import can_export
 except ImportError:
     from agent_fleet.cost_agent import canvas
     from agent_fleet.cost_agent import instances
@@ -63,6 +64,7 @@ except ImportError:
     from agent_fleet.utils.subject_coverage import assert_subject_coverage as _assert_coverage
     from agent_fleet.utils import answer_exports
     from agent_fleet.utils.recipient_readers import can_read_recipient
+    from agent_fleet.utils.export_capability import can_export
 
 # TRANSPORT AUTH (OBSERVE). One implementation, from the mesh membership package: validate
 # whatever arrives, log the caller posture per request, REFUSE NOTHING until
@@ -701,8 +703,10 @@ def _producible_artifact_names() -> set[str]:
 # The BFF decides which answers a plan recipient takes (the profile's `kinds`) and sends the rows;
 # this engine renders them with the profile's columns and writes the file where `package_export`
 # writes its own (`measures._dist_dir(measures._repo_root())`). READERS are the `recipient_readers`
-# rail under owner "plan": `can_read_recipient("plan", scope, caller)`. A transport error is a 503,
-# never a deny (an outage must not read as "no readers").
+# rail under owner "plan": `can_read_recipient("plan", scope, caller)`. PRODUCING the file also
+# needs `can_export:<profile name>` (ruled (b) 10-30; deny by default, the row is policy's). A
+# transport error on either check is a 503, never a deny (an outage must not read as "no readers"
+# or "not entitled"). The download (`/artifact/...`) stays reader-only: can_export gates production.
 
 _PLAN_OWNER = "plan"
 _ANSWER_PROFILES: Optional[dict] = None
@@ -739,6 +743,30 @@ def _plan_reader_or_refuse(scope: str, caller_id: Optional[str]) -> None:
         )
 
 
+def _plan_can_export_or_refuse(profile_name: str, caller_id: Optional[str]) -> None:
+    """Raises 403 (`not_entitled_to_export`, same policy_id / missing_binding forms as the BFF's
+    review-export door) when the caller lacks `can_export:<profile>`, and 503 when the rail could
+    not be asked."""
+    try:
+        ok = bool(caller_id) and can_export(profile_name, caller_id)
+    except Exception as exc:  # noqa: BLE001 -- transport/HTTP failure of the check itself
+        log.warning("can_export check failed: %s", exc)
+        raise HTTPException(status_code=503, detail={"reason": "can_export_unavailable"}) from exc
+    if not ok:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "not_entitled_to_export",
+                "refusal": {
+                    "policy_id": f"capability_grants:can_export:{profile_name}",
+                    "missing_binding": f"can_invoke can_export:{profile_name}",
+                    "candidates": [],
+                },
+                "message": f"You are not entitled to export {profile_name} answers.",
+            },
+        )
+
+
 class AnswersExportRequest(BaseModel):
     recipient_scope: str
     export_id: str
@@ -751,13 +779,15 @@ async def answers_export(req: AnswersExportRequest) -> dict[str, Any]:
     """Render the rows a plan recipient takes with its profile and write the file.
 
     Order: the recipient's profile (404 `no_profile_for_recipient`), then the caller as a reader of
-    that scope (403, or 503 when the rail cannot be asked), then the write. Nothing is written
-    before both pass.
+    that scope (403, or 503 when the rail cannot be asked), then the caller's `can_export:<profile>`
+    (403 `not_entitled_to_export`, or 503), then the filename, then the write. Nothing is written
+    before all three pass.
     """
     profile = answer_exports.profile_for_recipient(_answer_profiles(), req.recipient_scope)
     if profile is None:
         raise HTTPException(status_code=404, detail={"reason": "no_profile_for_recipient"})
     _plan_reader_or_refuse(req.recipient_scope, (req.user_email or "").strip())
+    _plan_can_export_or_refuse(profile.name, (req.user_email or "").strip())
     try:
         filename = answer_exports.artifact_filename(profile, req.recipient_scope, req.export_id)
     except ValueError as exc:
