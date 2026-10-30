@@ -126,7 +126,9 @@ added).**
   is **not** revived. `domain_stages: [received, review_pending, disposed]`; `subject_ref` is the
   hazard id; `completion: single, any_of`.
 - **Task kind `safety_finding_review`** (new overlay row, `policy/overlays/sample/task_kinds/`),
-  archetype `APPROVAL_TASK`, badge `FINDING`. Outcomes:
+  archetype `APPROVAL_TASK`, badge `FINDING`. Outcomes (names approved 2026-10-29: `confirmed`,
+  `dismissed` with a reason, `new_hazard`; the architect ruled the collision with risk acceptance
+  a good reason to change a ruling's wording):
   - `confirmed` (the ruled "accept"; not spelled `accepted`, which in
     `risk_acceptance_*` means residual risk accepted and must keep meaning only that);
   - `dismissed`, reason-required;
@@ -140,8 +142,9 @@ added).**
 - **Requester.** A service raising a task with `on_behalf_of` is ruled admissible; Lane 1 confirms
   `register_task` (`src/iagent/human_tasks.py:407`) accepts it and adds the test (a §5 prerequisite).
 - **The state on the card.** `review_pending` while the task is open; `disposed` once closed. The
-  card is `KNOWLEDGE_DOCUMENT`, as the other safety cards. The finding's observed / declared /
-  derived class is shown from the §4 block and is never folded into a rung.
+  card is `KNOWLEDGE_DOCUMENT`, as the other safety cards. The finding's `source_class`
+  (observed / declared / derived) is shown from the §4 block. It is its own field beside
+  `obtained_via` (ruled 2026-10-29) and is never folded into a rung.
 - **Idempotence.** The case key is derived from the episode `(/asset_id, /hazard, /opened_at)`
   (`openddil:...ADR-0052...md`), so a repeat of one episode lands on the same case and opens no
   second task. Where that key sits on the ledger entry is Lane 1's (Q4).
@@ -214,11 +217,10 @@ state `review_pending`.
 - **1010** is an OpenDDIL lab asset id (`openddil:...ADR-0052...md:223-225`;
   `openddil:...ADR-0053...md:232`), not a port or a build. That OpenDDIL slice sends nothing to
   iagent (`...ADR-0052...md:236`), so the demo hand-posts the finding, and says so.
-- **The predicate.** "Deferred past interval" has no source here: `WorkOrder`
-  (`agent_fleet/safety_agent/entities.py:110`) and `Hazard` (`:82`) carry no interval or due date,
-  and `assess_deferral_risk` (`measures.py:217`) joins WorkOrder × CSI × hazard. What OpenDDIL
-  can send is `service_due_unreleased` (due, no open work). The slice carries whatever the
-  finding says; it computes no deferral (Q2).
+- **The predicate (ruled 2026-10-29, Q6).** The slice carries `service_due_unreleased` (due, no
+  open work), which is what OpenDDIL can send. It computes no deferral and needs no interval:
+  `WorkOrder` (`agent_fleet/safety_agent/entities.py:110`) and `Hazard` (`:82`) carry none, and
+  `assess_deferral_risk` (`measures.py:217`) is not called.
 
 | piece | days | note |
 | --- | --- | --- |
@@ -228,10 +230,10 @@ state `review_pending`.
 | task kind + grant row (`safety_finding_review:SUSTAINMENT`) | 1.5 | topaz_sync before the roll |
 | card and state (`review_pending`) | 1.0 | cortex-ui draws it |
 | tests (refusals, idempotence, no `false`, no risk verb) | 1.5 | |
-| **total** | **7.5** | **2.5 days over the 5.0 first estimate (+50%)** |
+| **total** | **7.5** | **2.5 days over the 5.0 first estimate (+50%); accepted 2026-10-29** |
 
 The overrun is the workflow (+2.0) and the heavier test set (+0.5). The estimate excludes the
-OpenDDIL sender, the interval source and any write to `safety_critical`. The likeliest further
+OpenDDIL sender and any write to `safety_critical`. The likeliest further
 overrun is the seed-row wiring, because doc-tools cannot yet project an event row.
 
 **Prerequisites** from §1–§4 and other lanes:
@@ -260,17 +262,21 @@ Cited, not restated:
    broker grant.
 5. (saf, Q1; agrees with F5) Is a finding only ever a trigger for a part the rule already names?
    Recommend yes: the rule stays a static list, and a finding that would add a part is a separate
-   rule change, not made here.
+   rule change, not made here. **Ruled 2026-10-29: "Q5 agreed".**
 6. (saf, Q2) Which predicate does the slice carry: `service_due_unreleased` (what OpenDDIL can
-   send) or "deferred past interval" (what the order says)? Neither side computes the latter.
-   Recommend the first, and ask OpenDDIL for an interval only if the second is wanted.
-7. (saf, Q3 resolved) Audience of a service-origin task: answered by rulings 1 and 3, a
-   role-and-domain string and `on_behalf_of` on `register_task`. Left only to confirm that the
-   safety steward group needs the new grant row and topaz_sync before the roll.
+   send) or "deferred past interval"? Recommend the first. **Ruled 2026-10-29: "Q6 yes,
+   service_due_unreleased".** §5 applies it.
+7. (saf, Q3 resolved) Audience of a service-origin task: answered by rulings 1 and 3 of
+   2026-10-28 (a role-and-domain string, and `on_behalf_of` on `register_task`). **Ruled
+   2026-10-29: recorded as resolved.** Left only to confirm that the safety steward group needs the
+   new grant row and topaz_sync before the roll.
 8. (saf, Q4, owner Lane 1) Where does the episode key live on the ledger entry? I found no
-   field. Recommend a named field on the case, not the task payload.
+   field. Recommend a named field on the case, not the task payload. **Ruled 2026-10-29: Lane
+   1's; answered in #141.**
 9. (saf, Q5, §4) Does the source class travel as its own per-entry field beside `obtained_via`,
-   never mapped to a rung? Recommend yes (F6).
+   never mapped to a rung? Recommend yes (F6). **Ruled 2026-10-29: "Q9 yes, `source_class` as its
+   own field beside obtained_via".**
 10. (saf, Q6, owner Lane 1) Who owns the asset_id to part (mpn) to WorkOrder join? Without it a
     finding reaches neither `assess_deferral_risk` nor the promotion. Recommend a read-time lookup
-    owned by Engine S's source, not stored on the finding.
+    owned by Engine S's source, not stored on the finding. **Ruled 2026-10-29: Lane 1's;
+    answered in #141.**
