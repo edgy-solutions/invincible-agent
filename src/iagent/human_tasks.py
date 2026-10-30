@@ -792,7 +792,7 @@ def list_tasks_for_workflows(workflow_ids: "list[str]") -> list[dict[str, Any]]:
     with _pg_connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                """SELECT task_id, workflow_id, status, decision, acted_by, acted_at, comment
+                """SELECT task_id, workflow_id, status, decision, acted_by, acted_at, comment, payload, title
                      FROM human_task_projection
                     WHERE workflow_id = ANY(%s)""",
                 (ids,),
