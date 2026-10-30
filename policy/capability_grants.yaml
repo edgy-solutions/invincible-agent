@@ -275,14 +275,15 @@ capabilities:
     reason: >-
       The verb declares domain MAINTENANCE and no persona; the only cell granting MAINTENANCE is
       MECHANIC/MAINTENANCE, granted by maintenance-mechanics and, from 2026-10-16, by
-      openddil-maintainers, whose members are operator.atlantia (OpenDDIL sub 11111111-...) and,
-      from 2026-10-17, operator.borduria (22222222-...); the members are derived from users.yaml,
-      never chosen. svc:openddil is added by ruling (2026-10-11): step 1 runs on_behalf_of the
+      openddil-maintainers, whose members are operator.atlantia (OpenDDIL sub 11111111-...),
+      from 2026-10-17 operator.borduria (22222222-...) and, from 2026-10-20, operator.regioneast
+      (55555555-...); the members are derived from users.yaml, never chosen. svc:openddil is added by ruling (2026-10-11): step 1 runs on_behalf_of the
       event's dropped_by, which for OpenDDIL events is this delegate; a service gets no cell, so it
       is enumerated in the derived-invokers seal rather than derived.
     grant_to:
       - 11111111-1111-4111-8111-111111111111
       - 22222222-2222-4222-8222-222222222222
+      - 55555555-5555-4555-8555-555555555555
       - alice@example.com
       - chris@example.com
       - erin@example.com
