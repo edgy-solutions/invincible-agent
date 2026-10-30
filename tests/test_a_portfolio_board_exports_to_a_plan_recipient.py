@@ -1,7 +1,7 @@
-"""A Portfolio board exports to a plan recipient through a `policy/exports` profile.
+"""A Portfolio board exports to a plan recipient through a `policy/exports/answers` profile.
 
 A plan recipient is named by an answer-export profile (`agent_fleet/utils/answer_exports.py`, seed
-`policy/exports/plan_answers.yaml`): the profile declares the verbs ("kinds") it takes and the
+`policy/exports/answers/plan-answers.yaml`): the profile declares the verbs ("kinds") it takes and the
 columns it writes. The BFF decides which answers of a board the recipient takes, engine-cost renders
 them (`POST /answers_export`) and serves the file (`GET /artifact/{filename}`). Readers are the
 `recipient_readers` rail under owner `plan`; `can_read_recipient` is faked here, keyed on
@@ -193,14 +193,21 @@ def _file_rows(w, section):
 # ── 1. the loader ────────────────────────────────────────────────────────────────────────────
 def test_the_seed_plan_answers_profile_loads():
     profiles = AE.load_answer_export_profiles()
-    p = profiles["plan_answers"]
-    assert p.recipients == (PLAN,) and p.format == "csv"
-    assert [c.as_ for c in p.columns][0] == "Answer"
+    p = profiles["plan-answers"]
+    assert p.recipients == (PLAN,) and p.format == "csv" and p.granularity == "answer"
+    assert [c.output for c in p.columns][0] == "Answer"
+    assert p.header() == {"name": "plan-answers", "format": "csv", "granularity": "answer",
+                          "label": p.label}
+
+
+def _col(output, field):
+    return {"output": output, "source": {"field": field}}
 
 
 _GOOD = {
-    "name": "p", "format": "csv", "scope": "answer", "label": "P", "kinds": ["mesh:planSchedule"],
-    "recipients": ["r-1"], "columns": [{"field": "answer_id", "as": "Answer"}],
+    "column_map_version": 1, "name": "p", "format": "csv", "granularity": "answer", "label": "P",
+    "kinds": ["mesh:planSchedule"], "recipients": ["r-1"],
+    "columns": [{"output": "Answer", "source": {"field": "answer_id"}}],
 }
 
 
@@ -208,13 +215,15 @@ def _load(tmp_path, *rows, overlay=()):
     import yaml
     seed = tmp_path / "seed"
     seed.mkdir(parents=True, exist_ok=True)
-    for i, r in enumerate(rows):
-        (seed / f"{i}.yaml").write_text(yaml.safe_dump(r), encoding="utf-8")
+    for r in rows:
+        r = dict(r)
+        stem = r.pop("_stem", r.get("name"))  # `_stem` writes the file under another name
+        (seed / f"{stem}.yaml").write_text(yaml.safe_dump(r), encoding="utf-8")
     ov = []
     for j, r in enumerate(overlay):
         d = tmp_path / f"ov{j}"
         d.mkdir(exist_ok=True)
-        (d / "x.yaml").write_text(yaml.safe_dump(r), encoding="utf-8")
+        (d / f"{r['name']}.yaml").write_text(yaml.safe_dump(r), encoding="utf-8")
         ov.append(d)
     return AE.load_answer_export_profiles(seed, ov)
 
@@ -223,12 +232,39 @@ def _load(tmp_path, *rows, overlay=()):
     ("unknown key", lambda r: r.update(color="red"), "unknown key"),
     ("missing kinds", lambda r: r.pop("kinds"), "missing required key 'kinds'"),
     ("empty recipients", lambda r: r.update(recipients=[]), "missing required key 'recipients'"),
-    ("duplicate as", lambda r: r.update(columns=[{"field": "answer_id", "as": "X"},
-                                                 {"field": "summary", "as": "X"}]), "used twice"),
-    ("unknown field", lambda r: r.update(columns=[{"field": "nope", "as": "X"}]),
+    ("duplicate output", lambda r: r.update(columns=[_col("X", "answer_id"), _col("X", "summary")]),
+     "used twice"),
+    ("blank output", lambda r: r.update(columns=[_col("  ", "answer_id")]), "non-blank 'output'"),
+    ("unknown field", lambda r: r.update(columns=[_col("X", "nope")]),
      "outside the answer fields"),
+    ("the old `as` key", lambda r: r.update(columns=[{"field": "answer_id", "as": "X"}]),
+     "columns entry carries"),
     ("bad format", lambda r: r.update(format="xlsx"), "format 'xlsx'"),
-    ("bad scope", lambda r: r.update(scope="row"), "scope 'row'"),
+    ("scope given (the old header key)", lambda r: r.update(scope="answer"), "unknown key"),
+    ("granularity notice_part", lambda r: r.update(granularity="notice_part"),
+     "granularity 'notice_part'"),
+    ("granularity row", lambda r: r.update(granularity="row"), "granularity 'row'"),
+    ("column_map_version 2", lambda r: r.update(column_map_version=2), "column_map_version 2"),
+    ("name that is not a stem", lambda r: r.update(_stem="other"), "is not the file stem"),
+    ("name outside lane/01's rule", lambda r: r.update(name="Plan_Answers", _stem="Plan_Answers"),
+     "does not match"),
+    ("column key: format", lambda r: r.update(columns=[{**_col("X", "answer_id"), "format": "iso"}]),
+     "source.field only"),
+    ("column key: on_unresolvable",
+     lambda r: r.update(columns=[{**_col("X", "answer_id"), "on_unresolvable": "blank"}]),
+     "source.field only"),
+    ("column key: landing", lambda r: r.update(columns=[{**_col("X", "answer_id"), "landing": "Y"}]),
+     "source.field only"),
+    ("column key: transforms",
+     lambda r: r.update(columns=[{**_col("X", "answer_id"), "transforms": ["trim"]}]),
+     "source.field only"),
+    ("source key: row_field",
+     lambda r: r.update(columns=[{"output": "X", "source": {"row_field": "affected_mpn"}}]),
+     "source.field only"),
+    ("source key: absent_row",
+     lambda r: r.update(columns=[{"output": "X",
+                                  "source": {"field": "answer_id", "absent_row": "empty_cell"}}]),
+     "source.field only"),
     ("kinds all in a list", lambda r: r.update(kinds=["all"]), "listed explicitly"),
     ("kinds star", lambda r: r.update(kinds=["*"]), "listed explicitly"),
     ("kinds mesh star", lambda r: r.update(kinds=["mesh:*"]), "listed explicitly"),
@@ -281,7 +317,7 @@ def test_every_engine_p_verb_is_classified_report_or_session_state():
     assert not (REPORT & SESSION_STATE), sorted(REPORT & SESSION_STATE)
     assert REPORT | SESSION_STATE == declared, (
         "Engine P's verbs and this classification disagree; a NEW Engine P verb must be classified "
-        "as REPORT or SESSION_STATE here (and added to plan_answers.yaml if REPORT): "
+        "as REPORT or SESSION_STATE here (and added to plan-answers.yaml if REPORT): "
         f"{sorted((REPORT | SESSION_STATE) ^ declared)}")
 
 
@@ -293,7 +329,7 @@ def test_a_writing_verb_is_never_classified_as_a_report():
 
 
 def test_plan_answers_kinds_are_exactly_the_report_verbs():
-    kinds = set(AE.load_answer_export_profiles()["plan_answers"].kinds)
+    kinds = set(AE.load_answer_export_profiles()["plan-answers"].kinds)
     assert kinds == REPORT, sorted(kinds ^ REPORT)
 
 
@@ -308,7 +344,7 @@ def test_every_profiles_kinds_are_disjoint_from_cost_and_fin():
 # ── 3. render ────────────────────────────────────────────────────────────────────────────────
 def _profile(fmt):
     return AE.AnswerExportProfile(
-        name="p", format=fmt, scope="answer", label="P", kinds=("mesh:planSchedule",),
+        name="p", format=fmt, granularity="answer", label="P", kinds=("mesh:planSchedule",),
         recipients=("r",), columns=(AE.Column("answer_id", "Answer"), AE.Column("summary", "Sum"),
                                     AE.Column("subject", "Subj")))
 
@@ -317,7 +353,7 @@ ROWS = [{"answer_id": "1", "summary": "é, \"q\"", "subject": None},
         {"answer_id": "2", "summary": "x", "subject": "mesh:S"}]
 
 
-def test_csv_is_crlf_without_bom_and_the_header_is_the_as_list():
+def test_csv_is_crlf_without_bom_and_the_header_is_the_output_list():
     data = AE.render(_profile("csv"), ROWS)
     assert not data.startswith(b"\xef\xbb\xbf")
     lines = data.decode("utf-8").split("\r\n")
@@ -460,9 +496,10 @@ def test_alice_downloads_her_file(world):
 
 def test_a_json_profile_is_served_as_json(world, monkeypatch, tmp_path):
     prof = AE.AnswerExportProfile(
-        name="plan_json", format="json", scope="answer", label="J", kinds=("mesh:planSchedule",),
+        name="plan-json", format="json", granularity="answer", label="J",
+        kinds=("mesh:planSchedule",),
         recipients=("notional-plan-json",), columns=(AE.Column("answer_id", "Answer"),))
-    monkeypatch.setattr(cost_main, "_ANSWER_PROFILES", {"plan_json": prof})
+    monkeypatch.setattr(cost_main, "_ANSWER_PROFILES", {"plan-json": prof})
     world.readers.add(("plan", "notional-plan-json", ALICE))
     r = world.engine.post("/answers_export", json={
         "recipient_scope": "notional-plan-json", "export_id": "e1", "user_email": ALICE,
@@ -474,10 +511,10 @@ def test_a_json_profile_is_served_as_json(world, monkeypatch, tmp_path):
 
 def test_the_filename_to_scope_match_is_closed_not_a_split_on_dashes():
     profiles = AE.load_answer_export_profiles()
-    name = AE.artifact_filename(profiles["plan_answers"], PLAN, "abc123")
+    name = AE.artifact_filename(profiles["plan-answers"], PLAN, "abc123")
     assert AE.match_artifact(profiles, name)[1] == PLAN
     assert AE.match_artifact(profiles, name.replace(PLAN, "notional-plan")) is None
-    assert AE.match_artifact(profiles, "ia-answers-plan_answers-" + PLAN + "-../x.csv") is None
+    assert AE.match_artifact(profiles, "ia-answers-plan-answers-" + PLAN + "-../x.csv") is None
 
 
 # ── 9. nothing else moved ────────────────────────────────────────────────────────────────────
@@ -514,7 +551,8 @@ def test_the_shipped_rail_has_no_plan_owner_and_the_feature_is_dark(monkeypatch)
 
 
 def test_the_flattened_image_layout_loads_the_seed_profile(tmp_path):
-    """/app/utils/answer_exports.py and /app/policy/exports/ (Dockerfile.agent), no repo around."""
+    """/app/utils/answer_exports.py and /app/policy/exports/answers/ (Dockerfile.agent copies
+    policy/exports/ whole, the subdirectory with it), no repo around."""
     app = tmp_path / "app"
     (app / "utils").mkdir(parents=True)
     (app / "policy").mkdir()
@@ -529,12 +567,14 @@ def test_the_flattened_image_layout_loads_the_seed_profile(tmp_path):
          "from utils import answer_exports as a; print(sorted(a.load_answer_export_profiles()))",
          str(app)], capture_output=True, text=True, cwd=str(tmp_path))
     assert out.returncode == 0, out.stderr[-600:]
-    assert "plan_answers" in out.stdout
+    assert "plan-answers" in out.stdout
 
 
 def test_the_agent_dockerfile_copies_policy_exports():
     text = (ROOT / ".github" / "docker" / "Dockerfile.agent").read_text(encoding="utf-8")
     assert "COPY policy/exports/ /app/policy/exports/" in text
+    # the COPY is of the directory, so `answers/` lands at the loader's default fallback
+    assert (ROOT / "policy" / "exports" / "answers").is_dir()
     assert "agent_fleet/utils/" in text and "/app/utils/" in text
 
 
@@ -634,3 +674,63 @@ def test_state_refs_never_reach_an_engine_payload():
     assert resolved[1]["state_refs"] == ["SC-ALPHA"]
     for _engine, answers in gateway._partition_export_answers(resolved):
         assert all("state_refs" not in a for a in answers)
+
+
+# ── 5. the two loaders are apart (the join seal) ─────────────────────────────────────────────
+#: Fin's `answer_exports` and lane/01's `src/iagent/export_profiles.py` each refuse the other's
+#: files, so they are kept apart by a SUBDIRECTORY until the SDK's export-profile header type
+#: lands (iagent-mesh v0.9.12) and one loader reads both. This arm runs on the REAL tree.
+def _lane01():
+    from src.iagent import export_profiles as EP
+    return EP
+
+
+def test_the_two_loaders_are_apart_on_the_real_tree(monkeypatch):
+    EP = _lane01()
+    for var in ("INGEST_EXPORT_PROFILE_DIR", "EXPORT_PROFILE_POLICY_DIR",
+                "EXPORT_PROFILE_OVERLAY_DIRS"):
+        monkeypatch.delenv(var, raising=False)
+    EP.clear_cache()
+    try:
+        theirs = EP.load_profiles()
+        ours = AE.load_answer_export_profiles()
+    finally:
+        EP.clear_cache()
+    assert ours, "fin's loader found nothing on the real tree"
+    assert theirs, "lane/01's loader found nothing on the real tree"
+    assert not (set(ours) & set(theirs)), sorted(set(ours) & set(theirs))
+    assert all(isinstance(v, EP.Profile) for v in theirs.values()), {
+        k: v for k, v in theirs.items() if not isinstance(v, EP.Profile)}
+    assert all(isinstance(v, AE.AnswerExportProfile) for v in ours.values())
+    # the shared header vocabulary: lane/01's keys are READ from its module, never typed
+    shared = {"name", "label", "format", "granularity", "column_map_version"}
+    assert shared <= set(EP._TOP_KEYS) and shared <= set(AE._TOP_KEYS)
+    assert AE.COLUMN_MAP_VERSION == EP.COLUMN_MAP_VERSION
+    assert AE._NAME_RE.pattern == EP._NAME_RE.pattern
+    assert set(AE.MEDIA_TYPES) == set(EP.FORMATS)
+    assert AE._COLUMN_KEYS <= set(EP._COL_KEYS)
+    assert AE._SOURCE_KEYS <= set(EP._SRC_KEYS)
+
+
+def test_the_join_seal_can_fire_each_loader_refuses_the_others_file(monkeypatch, tmp_path):
+    """POSITIVE CONTROL: fin's yaml beside lane/01's default-csv.yaml in one directory."""
+    EP = _lane01()
+    both = tmp_path / "both"
+    both.mkdir()
+    exports = ROOT / "policy" / "exports"
+    (both / "plan-answers.yaml").write_bytes(
+        (exports / "answers" / "plan-answers.yaml").read_bytes())
+    (both / "default-csv.yaml").write_bytes((exports / "default-csv.yaml").read_bytes())
+    monkeypatch.delenv("EXPORT_PROFILE_OVERLAY_DIRS", raising=False)
+    monkeypatch.setenv("INGEST_EXPORT_PROFILE_DIR", str(both))
+    monkeypatch.setenv("EXPORT_PROFILE_POLICY_DIR", str(both))
+    EP.clear_cache()
+    try:
+        theirs = EP.load_profiles()
+    finally:
+        EP.clear_cache()
+    assert isinstance(theirs["plan-answers"], EP.ProfileInvalid)
+    assert isinstance(theirs["default-csv"], EP.Profile)
+    with pytest.raises(AE.AnswerExportError) as exc:
+        AE.load_answer_export_profiles()
+    assert "default-csv" in str(exc.value)

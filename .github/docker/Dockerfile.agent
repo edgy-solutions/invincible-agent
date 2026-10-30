@@ -150,9 +150,11 @@ COPY policy/measure_verbs/ /app/policy/measure_verbs/
 # reach the image through the `policy/overlays/` COPY above. An absent directory composes to no
 # profiles, so this is not a boot dependency.
 COPY policy/fin_export_profiles/ /app/policy/fin_export_profiles/
-# THE SEVENTH: the answer-export profile seed (`agent_fleet/utils/answer_exports.py`, read by
-# engine-cost's /answers_export). Without it the engine finds no profile for any recipient and
-# answers 404 `no_profile_for_recipient`. The BFF image carries the whole policy/ directory.
+# THE SEVENTH: the answer-export profile seed, `policy/exports/answers/` (a subdirectory of this
+# COPY), read by `agent_fleet/utils/answer_exports.py` for engine-cost's /answers_export. Without
+# it the engine finds no profile for any recipient and answers 404 `no_profile_for_recipient`. The
+# BFF image carries the whole policy/ directory. lane/01's review-export profiles (`policy/exports/*.yaml`)
+# ride the same COPY and are not read by this loader.
 COPY policy/exports/ /app/policy/exports/
 # ── THE COST PACKAGE BUILDER AND ITS PINNED RUNTIME ────────────────────────
 #
