@@ -1,0 +1,368 @@
+# ADR-0063 — Field kinds from OpenDDIL: FRACAS reports, safety findings, cyber indicators
+
+**Status:** Proposed. This is design only: there is no code and no roll. `lane/01` drafted §1–§4
+against `47502b35`. §2's safety half and §5 are `lane/saf`'s. §1's registry rows were assigned to
+`doc-tools/lane/7f`. An event row has no extractor half (F2a), so 7f reviewed the platform's rows instead (§1).
+**Date:** 2026-10-28
+**Deciders:** architect (assigned 2026-10-28); domain owners per section
+**Related:**
+  - openddil: the three ADRs being drafted (FRACAS failure records, safety states and interlocks,
+    logistics cyber detection). Each has a seam: "a <kind> registered through iagent's door".
+    This ADR is the receiving half of that seam.
+  - iagent: `ADR-0056` (FRACAS Phase 1) and `ADR-0054` §3, which defers the corrective-action
+    write-back.
+  - iagent: `ADR-0036` (seed/overlay compose), `ADR-0009` (the domain vocabulary), `ADR-0041` (the
+    `OBTAINED_VIA` ladder), and `ADR-0034` (decision records).
+  - iagent: the ruling of 2026-10-28 that no automated path clears `safety_critical`
+    (`tests/safety/test_no_automated_path_clears_safety_critical.py:3-4`).
+
+---
+
+## Findings first — premises that do not hold as written
+
+Each finding was measured on `47502b35` and changes a section below.
+
+| # | premise | what the tree says |
+| --- | --- | --- |
+| F1 | review_shape is "record / finding / indicator" | **The pinned SDK has no `review_shape`.** At the pin (iagent_mesh v0.9.10), `ContentKindRegistration` is `extra="forbid"` and has eight fields: `kind, branch, passes, outputs, seeds_workflow, identity_field, refresh, domain` (`ingest.py:222-271`). `review_shape` (`Optional[Literal["notice","document"]]`) exists only on ca's untagged `lane/ca-0.9.11`. An earlier draft cited that branch's line numbers as though they were the pin (corrected 2026-10-28, from 7f's §1 packet). **The question is also moot:** an event-branch kind never opens a promotion review, so none of the three needs a `review_shape` (§1 decision 2). |
+| F2 | `arrives_as: json` | **The pin has no `arrives_as` either** (v0.9.11 only). "Event" is already two things at the pin. It is a **`branch`** (`CONTENT_KIND_BRANCHES = ("document", "event")`, `ingest.py:136`). It is also an **arrival shape**: `ingest_status.KINDS` is `(pdf, cad, xml, event)`, and `event` is kept outside `FILE_KINDS` so that a file cannot be dropped as one (`ingest_status.py:128,138`). The existing event kind, `maintenance-fault-event`, uses `branch: event`. |
+| F2a | an event row carries passes and outputs, as a document row does | On `branch: event`, `passes`/`outputs` are **forbidden**, `seeds_workflow`/`identity_field` are **required**, and `refresh` is optional (SDK 0.9.7; 7f's §1 packet). Two consequences. "A kind with no pass is not a kind" applies to the document branch only. And a row with no `seeds_workflow` is refused at compose. |
+| F3 | the FRACAS consumer receives events | It is a **read-time connector**. `agent_fleet/safety_agent/failure_source.py` (`FAILURE_SOURCE_CONNECTORS`, `values.yaml:671`) is queried by `what_failed_on_this_part` (`safety_agent/main.py:224`). There is no event sink to land on. |
+| F4 | "define the return event" for corrective action | iagent `ADR-0054:177` says the FRACAS phase-2 flip (corrective actions writing back) "is therefore its own decision". `ADR-0056` puts it out of scope. §2 can name the event, but building it pulls Phase 2 forward. |
+| F5 | a finding "can set safety_critical by the ruled rule" | The rule is a static part-number list: `safety_critical(mpn, domain)` is `mpn in mpns(domain)`, with `DOMAIN = "SUSTAINMENT"` (`safety_critical.py:36,49`). A finding cannot add a part to it. It can only **trigger** the promotion for a part the rule already names. |
+| F6 | OpenDDIL's source class travels "through our OBTAINED_VIA ladder" | `OBTAINED_VIA` (`src/iagent/provenance.py:44-45`) is a **channel** ranking: direct, etl, warehouse, manual-export, user-drop, steward-corrected. observed / declared / derived is a different axis. Carrying it *through* the ladder is the collapse §4 forbids. See §4. |
+| F7 | domains per kind | `policy/domains.yaml` has no SAFETY, RELIABILITY or CYBER domain. Adding one requires ADR-0009 first (`domains.yaml:1-5`). Engine S is SUSTAINMENT. |
+| F8 | "interlock-rules-as-overlay" and the "false-readiness view" | Neither term appears anywhere in this tree. They are openddil: concepts, and the ADR names them with that prefix and maps them; it does not cite them as ours. |
+| F9 | no safety finding exists to land in | Engine S has acceptance and concurrence workflows and task kinds (hazard_link_review, risk_acceptance_*). "Finding" appears only in comments. |
+| F10 | the delegate map is policy | `on_behalf_of` is admitted by `_admit_on_behalf_of` (`gateway.py:4787`) against `DELEGATE_ON_BEHALF_OF`. That map is rendered from chart values (`helm/.../configmap.yaml:448`), and no `policy/` file declares it. |
+
+Side note, not a premise: `ADR-0035:94` says `snowflake` where `provenance.py` says `warehouse`.
+
+---
+
+## §1 — Three kinds, registered where kinds live
+
+The rows are overlay files under `policy/overlays/openddil-lab/content_kinds/`, the same place as
+`maintenance-fault-event.yaml`. They use the pinned SDK model `ContentKindRegistration` (iagent_mesh
+v0.9.10, `ingest.py:194`).
+
+**The rows are wholly the platform's.** The 2026-10-24 ruling splits a kind between two owners. The
+platform owns what a kind IS. doc-tools owns what it RUNS: `passes`, which the overlay mirrors. An event
+row has no passes (F2a), so it has nothing for doc-tools to own or mirror. doc-tools' drift test compares
+shared kinds only, and `maintenance-fault-event` already exists in iagent alone. So doc-tools' generator
+does not need to learn `branch`/`refresh` for these rows to land. That plumbing is 7f's to build if
+doc-tools ever wants to read event kinds. It does not block this ADR. This corrects a "registry seed
+row" reading of §2.
+
+| kind | branch | domain | identity_field | seeds_workflow | refresh |
+| --- | --- | --- | --- | --- | --- |
+| `fracas-report` | event | §3 | `event_id` | `fracas_record_failure` (Lane 1, PROPOSED; §2) | none (push-only) |
+| `safety-finding` | event | §3 | `event_id` | `safety_finding_review` (saf, §2) | none |
+| `cyber-indicator` | event | §3 | `event_id` | `cyber_indicator_review` (Lane 1, PROPOSED; §2) | none |
+
+**Decisions.**
+1. **`branch: event` carries "not a document". No `arrives_as` is set.** The branch and the `event`
+   arrival shape (F2) already say "this did not arrive as a file". `arrives_as` exists to choose which
+   kinds are *offered as a leaf* for a file drop. An event kind is never offered, so the key would be
+   a fact nothing reads. It is also not on the pin (F2). The earlier `arrives_as: json` is withdrawn.
+2. **No `review_shape`.** It is withdrawn too, and with it the SDK widening this section used to request
+   (F1). `review_shape` picks the card a *promotion* review opens. An event is never promoted: it
+   **seeds a workflow**. The reviewer's card is that workflow's task kind, with one task kind per kind.
+   The card for a failure, a hazard and an indicator differs by its task kind, not by an SDK enum.
+3. **Every row names its workflow.** `seeds_workflow` is required on `branch: event` (F2a).
+   - `safety_finding_review` is saf's (§2).
+   - `fracas_record_failure` is the one-step landing §2 describes. It writes the record to the
+     store the `openddil-events` connector reads, and has no human step.
+   - `cyber_indicator_review` is a single `human_await` addressed to `cyber_watch:<tier>`.
+
+   The last two names are Lane 1's proposals. **There is no per-kind route**: the seam reads
+   `seeds_workflow` off the matched row, which is what the withdrawal of `POST /maintenance/events`
+   chose (SDK 0.9.7). Three new routes would re-introduce it.
+4. **Kind ids are hyphenated.** Every registered kind is (`maintenance-fault-event`, `doors-export`,
+   `work-instruction`), and a later rename is invisible to the registry fingerprint. Workflow and
+   task-kind ids keep the tree's underscore form (`maintenance_fault`, `safety_finding_review`).
+   The two forms name different things, so they do not drift into each other.
+5. **The door is `POST /ingest/events`** (`gateway.py:12137`, `IngestEventRequest` at `:12103`).
+   Each event carries `on_behalf_of`, admitted by `_admit_on_behalf_of`. OpenDDIL's broker
+   identity must be in the delegate map (F10). That is a values change per deployment, not a
+   policy row, and §3 proposes moving it onto the rail.
+6. **The episode key is not `identity_field`.** It is a trigger's `episode: list[str]`, hashed by
+   `episode_key` (`case_routing.py:81,233-238`). For all three kinds it is
+   `[openddil_episode_id, openddil_asset_id]`, plus `fault_code` for fracas-report. These are
+   OpenDDIL's own ids, carried verbatim. The asset id has the DIS form seen on the 1010 walks
+   (`dis:<site>:<app>:<entity>`). OpenDDIL does **not** precompute a compound key. The single
+   `identity_field` names the row, and the trigger's list names the case.
+7. **The event is the record, not a pointer to one.** `identity_field: event_id`, as for
+   `maintenance-fault-event`, so a resend is the same row. Its ingest id is in the event namespace,
+   `^evt-[0-9a-f]{64}$` (`ingest_status.py:147`), and is never a document's id. §4 carries this.
+8. **The return event is not a fourth kind here.** Whether OpenDDIL's return leg is a kind turns on
+   F4's ruling. If it is a kind, it is a fourth `branch: event` row with the same shape. This
+   section does not add it before that ruling.
+
+There are no extractor-side columns. An event row has no passes, outputs or label to fill (F2a). 7f's
+§1 contribution is the review of this table (its 2026-10-28 packet) and not more rows.
+
+---
+
+## §2 — Where each lands
+
+**`fracas-report` → engine-safety's failure source, not a new sink (F3).**
+- The event is admitted, stored as a `safety:FailureRecord` row in the store a new
+  `FAILURE_SOURCE_CONNECTORS` entry reads (name proposed: `openddil-events`), and is then
+  answered by the existing verbs. `what_failed_on_this_part` stays read-time and unchanged.
+- The card is `KNOWLEDGE_DOCUMENT` per #94's seal (`tests/safety/test_fracas_cards_conform.py:116`).
+- Rejected: a sink inside the verb. `what_failed_on_this_part` is a read verb, and making it write changes its
+  contract.
+
+**The return event: named here, not built (F4).**
+- `fracas_corrective_action` is an outbound event from the case that disposes a failure. It
+  carries:
+  - `on_behalf_of`, the approver;
+  - the episode key from §1.4;
+  - `failure_event_id`, the fracas-report's `event_id`;
+  - `action`, the disposing verb;
+  - `mod_record_ref`, the maintenance action record;
+  - the §4 provenance block.
+- **Ruling needed.** Building it is ADR-0054:177's "own decision". Until that decision is made,
+  the name and shape are reserved and nothing emits.
+
+**`safety-finding` → Engine S. saf's half is below.** Two constraints from this side:
+- A finding may **trigger** the `safety_critical = true` promotion. It sets it only where the rule
+  already names the part (F5), and it never clears it (ruled 2026-10-28; the census at
+  `test_no_automated_path_clears_safety_critical.py:66-67` covers any new write path by its form).
+- A finding has no task kind yet (F9). saf names it and its workflow.
+
+**`safety_finding` — saf's half (ruled 2026-10-28: no workflow takes a finding, so a new one is
+added).**
+- **What it is.** A cited occurrence against a `Hazard`, so evidence for the safety pass and not a
+  risk assessment. Severity, probability and acceptance stay iagent's and stay a human act
+  (`docs/adr/ADR-0051-sustainment-safety-the-mesh-drafts-a-risk-and-refuses-to-accept-it.md`).
+  It arrives with `on_behalf_of` = "" (the service itself): `openddil:openddil-contracts/decisions/ADR-0052-safety-states-and-release-interlocks.md:151-175`.
+  Alignment is MIL-STD-882 by concept name (§6).
+- **Registration.** `safety_finding` is a **registry seed row** (7f; the platform owns kinds), not
+  an overlay row. It is an event-branch row whose `seeds_workflow` is **`safety_finding_review`**
+  (`ContentKindRegistration`: `branch: event` requires `seeds_workflow` and `identity_field`,
+  forbids `passes` and `outputs`). The row's spelling (hyphen or underscore) and domain are 7f's
+  and Lane 1's. The workflow id does not depend on them: workflow ids in the tree are
+  underscored (`maintenance_fault`, `safety_acceptance_direct`) whatever the kind's spelling.
+- **Workflow `safety_finding_review`.** New: `policy/workflows/safety_finding_review.yaml`, one
+  `human_await` step modelled on `policy/workflows/safety_acceptance_direct.yaml`, whose header
+  says it is authored and runs only once the event row selects it. `safety_acceptance_direct`
+  is **not** revived. `domain_stages: [received, review_pending, disposed]`; `subject_ref` is the
+  hazard id; `completion: single, any_of`.
+- **Task kind `safety_finding_review`** (new overlay row, `policy/overlays/sample/task_kinds/`),
+  archetype `APPROVAL_TASK`, badge `FINDING`. Outcomes (names approved 2026-10-29: `confirmed`,
+  `dismissed` with a reason, `new_hazard`; the architect ruled the collision with risk acceptance
+  a good reason to change a ruling's wording):
+  - `confirmed` (the ruled "accept"; not spelled `accepted`, which in
+    `risk_acceptance_*` means residual risk accepted and must keep meaning only that);
+  - `dismissed`, reason-required;
+  - `new_hazard` (the "open hazard" outcome), **reason-required, matching `hazard_link_review`
+    (ruled 2026-10-30)**; the verb name and its reason requirement already exist there. In the
+    first version it stores the outcome and raises the `hazard_link_review` task; creating the
+    Hazard node is a follow-on (§5, ruled 2026-10-30). The task drafts no level.
+  There is no risk-level verb, so the task cannot accept risk.
+- **Audience.** A role-and-domain string, `safety_finding_review:SUSTAINMENT`: the safety
+  steward, SUSTAINMENT. **The audience is granted to the existing `safety-engineers` group
+  (ruled 2026-10-30); no new group is added.** It follows the `<audience>:<scope>` keys of `policy/task_grants.yaml`
+  (compare `hazard_link_review:SUSTAINMENT`, `:306`). It is a new grant row, so: merge, Chris runs topaz_sync, then roll.
+- **Requester.** A service raising a task with `on_behalf_of` is ruled admissible; Lane 1 confirms
+  `register_task` (`src/iagent/human_tasks.py:407`) accepts it and adds the test (a §5 prerequisite).
+- **The state on the card.** `review_pending` while the task is open; `disposed` once closed. The
+  card is `KNOWLEDGE_DOCUMENT`, as the other safety cards. The finding's `source_class`
+  (observed / declared / derived) is shown from the §4 block. It is its own field beside
+  `obtained_via` (ruled 2026-10-29) and is never folded into a rung.
+- **Idempotence.** The case key is derived from the episode `(/asset_id, /hazard, /opened_at)`
+  (`openddil:...ADR-0052...md`), so a repeat of one episode lands on the same case and opens no
+  second task. Where that key sits on the ledger entry is Lane 1's (Q4).
+- **Refusals, named.** `unknown_hazard` and `hazard_closed` (`agent_fleet/safety_agent/measures.py:266,371`)
+  create no task. A finding with no resolvable part is `no_asset_part_join` (new).
+- **`safety_critical`.** Agreed with F5: a finding may only trigger the promotion for a part the
+  rule already names, written as a literal `= true` under a condition (the #128 seal), and never
+  `false`. The first slice (§5) sets nothing.
+
+**`cyber-indicator` → audience `cyber_watch` and a card.**
+- Audiences are `task_grants.yaml` rows keyed `<audience>:<scope>`, with `grant_to_groups`
+  (compare `maint_tier_ack:ORG`, `:436`). `cyber_watch:<tier>` follows that form.
+- A new group means: merge, then Chris runs topaz_sync, then roll (the standing order).
+- The card is `KNOWLEDGE_DOCUMENT`, showing the indicator, its provenance (§4) and the STIX id as
+  a citation. There is no new archetype.
+- Outbound STIX is openddil:'s. We store what arrives and show it; we never re-serialise it.
+
+---
+
+## §3 — Domains and audiences per kind, on the policy rail
+
+| kind | domain | audience | deployment overlay carries |
+| --- | --- | --- | --- |
+| fracas-report | SUSTAINMENT (existing; Engine S's `DOMAIN`) | the FRACAS card's existing readers | the connector entry, the tiers |
+| safety-finding | SUSTAINMENT | saf's task kind's audience | the interlock rules (below) |
+| cyber-indicator | **new: `CYBER_DEFENSE`**, ADR-0009 first (F7) | `cyber_watch:<tier>` | the indicator-to-asset scope |
+
+- **The overlay per deployment** is ADR-0036's seed/overlay `compose()`. Deployment rows live
+  under `policy/overlays/<deployment>/`, and `openddil-lab` is the first.
+- **The match, by name.** openddil:'s *interlock-rules-as-overlay* is iagent:'s ADR-0036 overlay:
+  a deployment's own rules composed over a shared seed, refused at compose when unreadable.
+  Neither side restates the other's mechanism (F8).
+- **The delegate map joins the rail.** `DELEGATE_ON_BEHALF_OF` moves from chart values to a
+  `policy/` file with a grantor row, so the broker that may speak for whom is reviewed like
+  any other grant (F10). The chart keeps rendering it. Only the source moves.
+- **CYBER_DEFENSE is the only new domain.** The alternative is ENTERPRISE, which is rejected: its
+  cells grant document reads unrelated to indicators, so every ENTERPRISE holder would see them.
+- **7f proposed maintenance / safety / cyber.** Only one of those three is an existing domain.
+  `MAINTENANCE` and `SUSTAINMENT` both exist (`policy/domain_consumption.yaml:73,105`), and
+  `MAINTENANCE` is `maintenance-fault-event`'s. There is no `SAFETY` domain: `safety#` is a namespace
+  under `sustainment/` (`agent_fleet/safety_agent/main.py:64`). Both FRACAS records and findings land
+  in Engine S, which reads SUSTAINMENT. So the table keeps SUSTAINMENT for both of them, and it adds no
+  SAFETY domain. If a FRACAS record should instead be readable by MAINTENANCE holders, that is a
+  second grant on the existing domain, not a new one.
+
+---
+
+## §4 — Provenance: OpenDDIL's source class, kept unmerged
+
+- **The axis is new, beside the ladder, not on it (F6).** `OBTAINED_VIA` answers *how the value
+  reached us*. OpenDDIL's class answers *what kind of knowing it is*: observed (a sensor or a
+  hand on the asset), declared (a record says so), or derived (computed from others). A value can
+  be `direct` + `derived`, or `user-drop` + `observed`. Either axis read off the other loses the
+  case openddil:'s false-readiness view exists to show: a *declared* ready state with no
+  *observed* one behind it.
+- **Decision.**
+  - The provenance block gains `source_class: observed | declared | derived`. It is required on
+    every field of the three kinds and is optional elsewhere.
+  - It is validated as its own key, next to the block's required keys (`provenance.py:58,153`).
+  - It is never inferred from `obtained_via`, and the ladder never ranks it.
+  - Two values for one field with different classes are **both kept**, and neither supersedes
+    the other.
+- **Owners.** `provenance.py` mirrors `iagent_mesh.provenance` at v0.9.10, so the field lands in
+  ca's SDK first and is mirrored here, the same path as `steward-corrected`.
+- **Rejected:**
+  - adding three rungs to `OBTAINED_VIA` (that is the collapse);
+  - a per-kind payload field (each kind would spell it its own way, and the card could not read
+    it uniformly).
+
+---
+
+## §5 — First demo-able slice
+
+A `safety_finding` for asset 1010 arrives and lands as a `safety_finding_review` task in the
+state `review_pending`.
+
+- **1010** is an OpenDDIL lab asset id (`openddil:...ADR-0052...md:223-225`;
+  `openddil:...ADR-0053...md:232`), not a port or a build. That OpenDDIL slice sends nothing to
+  iagent (`...ADR-0052...md:236`), so the demo hand-posts the finding, and says so.
+- **The predicate (ruled 2026-10-29, Q6).** The slice carries `service_due_unreleased` (due, no
+  open work), which is what OpenDDIL can send. It computes no deferral and needs no interval:
+  `WorkOrder` (`agent_fleet/safety_agent/entities.py:110`) and `Hazard` (`:82`) carry none, and
+  `assess_deferral_risk` (`measures.py:217`) is not called.
+- **Where the predicate lives (ruled 2026-10-30, standing rule: config names the case).**
+  `service_due_unreleased` is the **first row** of the `safety_finding` selection table, not a
+  constant or a branch in slice code. The existing form is an ADR-0039 selection table
+  (`policy/decisions/<name>.yaml`; a domain row composes from
+  `policy/overlays/<deployment>/decisions/`, full replacement by key), named by the
+  `safety_finding` trigger row (`policy/triggers/`, which also lists the facts the event must
+  carry in `requires`). Its row has the shape `when: {kind: safety_finding, ...}  then:
+  safety_finding_review`, the same shape as `origin_suggestion_selection.yaml`. The slice
+  computes nothing, so the row matches on a fact the event already carries; a second predicate
+  is a second row.
+  - **What does not exist.** There is no rule registry for a predicate that is *computed over
+    data* (due, with no open work). The selection table matches on facts the event carries and
+    the measures registry holds computation methods; neither is that. None is invented here:
+    the slice stays within what OpenDDIL sends, and a computing rule is a later question that
+    needs its own registry.
+  - **Days.** The row is part of the existing "seed-row check" (0.5) and the workflow's "seed
+    wiring" (in the 2.0). **The 9.0 does not change.**
+
+| piece | days | note |
+| --- | --- | --- |
+| seed-row check (the `safety_finding` event row selects the workflow) | 0.5 | the row is 7f's |
+| **workflow `safety_finding_review`** (definition, header, stages, seed wiring, its own tests) | **2.0** | **new by ruling; was not in the first estimate** |
+| landing (hazard resolution, named refusals, case key from the episode) | 1.0 | hand-seeded asset-to-hazard fixture |
+| task kind + grant row (`safety_finding_review:SUSTAINMENT`) | 1.5 | topaz_sync before the roll |
+| card and state (`review_pending`) | 1.0 | cortex-ui draws it |
+| tests (refusals, idempotence, no `false`, no risk verb) | 1.5 | |
+| **`new_hazard` raises the `hazard_link_review` task** (chaining table, one definition, their tests) | **1.5** | **measured 2026-10-30; see the prerequisite below** |
+| **total** | **9.0** | **7.5 accepted 2026-10-29, plus 1.5 for the `new_hazard` task; 9.0 total (ruled 2026-10-30)** |
+
+The overrun is the workflow (+2.0), the heavier test set (+0.5) and the `new_hazard` task (+1.5). The estimate excludes the
+OpenDDIL sender and any write to `safety_critical`. The likeliest further
+overrun is the seed-row wiring, because doc-tools cannot yet project an event row.
+
+**Prerequisites** from §1–§4 and other lanes:
+- `safety_finding` as a **registry seed row** (7f; the platform owns kinds). This corrects the
+  earlier "7f's overlay row".
+- doc-tools: event rows projectable (`ContentKindEntry` has no `branch` or `refresh`).
+- Lane 1, ruling 3: `register_task` accepts a service with `on_behalf_of`, with its test.
+- The broker in the delegate map (F10).
+- OpenDDIL emits one precomputed episode key (7f's change 3); else the row cannot be finished.
+- `source_class` in the provenance block (§4's decision): it lands in ca's SDK first
+  (`iagent_mesh.provenance`) and is mirrored in `provenance.py`, per §4's Owners line. The card
+  shows it, so the card waits on that mirror. There is no `review_shape` prerequisite: an
+  event-branch kind is never promoted (F1, §1 decision 2).
+- A part on the `safety_critical` list (F5), for any later promotion; the slice itself needs none.
+- **`new_hazard` (measured 2026-10-30, total 9.0 days, ruled 2026-10-30).** The ruled step is "on
+  `new_hazard`, create the Hazard node and raise the declared `hazard_link_review` task". Nothing
+  of it exists beyond the declaration: the task kind, its verbs and reason requirement, and its
+  grant (`policy/overlays/sample/task_kinds/hazard_link_review.yaml`, `policy/task_grants.yaml`);
+  `human_tasks.py:1059` only stores the verb, and `classifyWriteUp` has no code. Sized in halves:
+  - **(b) raise the task, 1.5 days, in the slice.** The pattern exists: a chaining table maps a
+    definition's outcome to the next definition (`policy/decisions/origin_confirm_chaining.yaml`,
+    `accepted -> origin_record`). Missing: `policy/decisions/safety_finding_review_chaining.yaml`
+    (`new_hazard` chains on, `confirmed` and `dismissed` end), one definition whose
+    `human_await` has `task_kind: hazard_link_review` and audience
+    `hazard_link_review:SUSTAINMENT`, and the censuses that bind a table to its definition
+    (`tests/test_a_chaining_table_is_bound_to_its_definition.py`,
+    `tests/safety/test_the_chaining_domain_matches_the_declared_verbs.py`). About 1.0 for the
+    two files and 0.5 for their tests and a driven chain. Depends on Lane 1: `register_task`
+    (`human_tasks.py:436`) has no `on_behalf_of`, and the service case is Lane 1's ruling-3 item.
+    Those days are not counted here.
+  - **(a) create the Hazard node, about 5 days, over the 2-day threshold, so deferred (ruled
+    2026-10-30); not in the 9.0.** What exists: a parked, inert node shape
+    (`agent_fleet/safety_agent/graph_shape.py:39`, nothing calls it) and a writer that takes any
+    label (`Neo4jGraphWriter.write_node`, `agent_fleet/utils/mesh_writers/neo4j_graph.py:237`,
+    SDK v0.9.6; no SDK change needed). Missing: a driver and writer in `safety_agent` (neither
+    exists; the writer is wired only in `mesh_registrar/v2_substrate.py`), a write route with its
+    Topaz gate and data-class declaration (ADR-0054), a hazard id allocator (none), a uniqueness
+    constraint (`setup/prime_databases.py:541` has an index on `Hazard.class`, no unique id), and
+    making Engine S read the node: it reads the in-code fixture `HAZARDS` (`measures.py:129`), so
+    a created node would be invisible to `unknown_hazard` and every measure. About 1.0 wiring,
+    1.0 route and gate, 0.5 id and constraint, 1.5 reading it back, 1.0 tests. Depends on
+    Lane 1 for the same `on_behalf_of` item.
+  - **The first version therefore stores the outcome and raises the task, without the node. The
+    node is the follow-on, 5 days, scheduled after the slice.**
+
+## §6 — Alignment by concept name
+
+Cited, not restated:
+- **MIL-HDBK-2155** (FRACAS): fracas-report, fracas_corrective_action.
+- **MIL-STD-882** (system safety): safety-finding, safety_critical.
+- **NIST SP 800-82**, **MITRE ATT&CK for ICS** and **STIX**: cyber-indicator, cyber_watch.
+
+## Open questions for the architect
+
+1. §1 decision 3: are the workflow names `fracas_record_failure` and `cyber_indicator_review`
+   accepted? (The `review_shape` widening this question used to ask about is withdrawn; see F1.)
+2. F4: is building `fracas_corrective_action` in scope now, or only reserving its name?
+3. F7: is CYBER_DEFENSE approved, and is the ADR-0009 amendment `lane/01`'s?
+4. F10: is moving the delegate map onto the policy rail approved? It changes who reviews a
+   broker grant.
+5. (saf, Q1; agrees with F5) Is a finding only ever a trigger for a part the rule already names?
+   Recommend yes: the rule stays a static list, and a finding that would add a part is a separate
+   rule change, not made here. **Ruled 2026-10-29: "Q5 agreed".**
+6. (saf, Q2) Which predicate does the slice carry: `service_due_unreleased` (what OpenDDIL can
+   send) or "deferred past interval"? Recommend the first. **Ruled 2026-10-29: "Q6 yes,
+   service_due_unreleased".** §5 applies it.
+7. (saf, Q3 resolved) Audience of a service-origin task: answered by rulings 1 and 3 of
+   2026-10-28 (a role-and-domain string, and `on_behalf_of` on `register_task`). **Ruled
+   2026-10-29: recorded as resolved.** Left only to confirm that the safety steward group needs the
+   new grant row and topaz_sync before the roll.
+8. (saf, Q4, owner Lane 1) Where does the episode key live on the ledger entry? I found no
+   field. Recommend a named field on the case, not the task payload. **Ruled 2026-10-29: Lane
+   1's; answered in #141.**
+9. (saf, Q5, §4) Does the source class travel as its own per-entry field beside `obtained_via`,
+   never mapped to a rung? Recommend yes (F6). **Ruled 2026-10-29: "Q9 yes, `source_class` as its
+   own field beside obtained_via".**
+10. (saf, Q6, owner Lane 1) Who owns the asset_id to part (mpn) to WorkOrder join? Without it a
+    finding reaches neither `assess_deferral_risk` nor the promotion. Recommend a read-time lookup
+    owned by Engine S's source, not stored on the finding. **Ruled 2026-10-29: Lane 1's;
+    answered in #141.**
