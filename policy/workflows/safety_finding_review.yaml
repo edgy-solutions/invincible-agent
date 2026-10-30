@@ -1,0 +1,42 @@
+# The safety finding review -- one human act on an ingested `safety_finding`.
+#
+# STATUS: AUTHORED, NOT YET TRIGGERED. This definition runs nothing until the event-branch
+# registry row for `safety_finding` (7f's seed row, `seeds_workflow: safety_finding_review`)
+# selects it. ADR-0063 section 2. The header says so because ADR-0040 makes these headers the board.
+#
+# ONE STEP, NO RISK VERB. The reviewer confirms, dismisses (with a reason) or opens a new hazard.
+# None of the three accepts residual risk, and none drafts a level: severity, probability and
+# acceptance stay a later human act (ADR-0051). `safety_acceptance_direct` is NOT revived; this
+# file only borrows its shape.
+id: safety_finding_review
+name: "Safety finding review -- confirm, dismiss or open a hazard"
+
+classification: null
+
+participants:
+  - role: initiator
+  - role: finding_reviewer
+
+domain_stages: [received, review_pending, disposed]
+
+steps:
+  - kind: human_await
+    id: review
+    promise_name: review
+    audience: "safety_finding_review:SUSTAINMENT"
+    # The row's kind, declared here: `/act` keys the verbs and the reason requirement on it.
+    task_kind: safety_finding_review
+    subject_ref: "{hazard_id}"
+    title: "Review safety finding -- {hazard_id}"
+    summary: >-
+      A safety finding arrived from the contracts side against this hazard. Confirm it, dismiss it
+      (a reason is required), or open a new hazard. The task drafts no risk level and accepts no
+      risk.
+    completion:
+      mode: single
+      quorum: any_of
+      claiming: false
+
+observable_state:
+  visible: [domain_stages, review.status]
+  internal: []

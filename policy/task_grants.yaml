@@ -313,6 +313,20 @@ audiences:
     grant_to:
       - bob@example.com
 
+  # Safety FINDING review -- a `safety_finding` ingested from the contracts side (ADR-0063 s2).
+  # Confirm, dismiss (reason required) or open a new hazard; there is no risk verb, so this
+  # audience cannot accept risk. Granted to the existing `safety-engineers` group (no group is
+  # named for a "steward"; that group is the SAFETY_ENGINEER, SUSTAINMENT cell). No new group,
+  # so no new membership to sync; the audience row itself is new, so: merge, topaz_sync, roll.
+  safety_finding_review:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0063 section 2. Who may dispose of an ingested safety finding: the safety engineer
+      who knows the fleet, not the authority who accepts residual risk. Confirm, dismiss with a
+      reason, or open a new hazard; none of the three accepts risk.
+    grant_to_groups:
+      - safety-engineers
+
   # NOT GRANTED, DELIBERATELY: carol. She is the third leg of seal 7 — a caller who
   # neither sees nor may act. Recorded here rather than left as an absence, because an
   # absence is indistinguishable from an oversight, and this one is load-bearing.

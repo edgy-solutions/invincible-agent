@@ -157,12 +157,14 @@ added).**
   - `confirmed` (the ruled "accept"; not spelled `accepted`, which in
     `risk_acceptance_*` means residual risk accepted and must keep meaning only that);
   - `dismissed`, reason-required;
-  - `new_hazard` (the "open hazard" outcome; the verb name and its reason requirement already
-    exist on `hazard_link_review`). It opens the hazard for the human's later draft; the task
-    drafts no level.
+  - `new_hazard` (the "open hazard" outcome), **reason-required, matching `hazard_link_review`
+    (ruled 2026-10-30)**; the verb name and its reason requirement already exist there. In the
+    first version it stores the outcome and raises the `hazard_link_review` task; creating the
+    Hazard node is a follow-on (§5, ruled 2026-10-30). The task drafts no level.
   There is no risk-level verb, so the task cannot accept risk.
 - **Audience.** A role-and-domain string, `safety_finding_review:SUSTAINMENT`: the safety
-  steward, SUSTAINMENT. It follows the `<audience>:<scope>` keys of `policy/task_grants.yaml`
+  steward, SUSTAINMENT. **The audience is granted to the existing `safety-engineers` group
+  (ruled 2026-10-30); no new group is added.** It follows the `<audience>:<scope>` keys of `policy/task_grants.yaml`
   (compare `hazard_link_review:SUSTAINMENT`, `:306`). It is a new grant row, so: merge, Chris runs topaz_sync, then roll.
 - **Requester.** A service raising a task with `on_behalf_of` is ruled admissible; Lane 1 confirms
   `register_task` (`src/iagent/human_tasks.py:407`) accepts it and adds the test (a §5 prerequisite).
@@ -253,6 +255,23 @@ state `review_pending`.
   open work), which is what OpenDDIL can send. It computes no deferral and needs no interval:
   `WorkOrder` (`agent_fleet/safety_agent/entities.py:110`) and `Hazard` (`:82`) carry none, and
   `assess_deferral_risk` (`measures.py:217`) is not called.
+- **Where the predicate lives (ruled 2026-10-30, standing rule: config names the case).**
+  `service_due_unreleased` is the **first row** of the `safety_finding` selection table, not a
+  constant or a branch in slice code. The existing form is an ADR-0039 selection table
+  (`policy/decisions/<name>.yaml`; a domain row composes from
+  `policy/overlays/<deployment>/decisions/`, full replacement by key), named by the
+  `safety_finding` trigger row (`policy/triggers/`, which also lists the facts the event must
+  carry in `requires`). Its row has the shape `when: {kind: safety_finding, ...}  then:
+  safety_finding_review`, the same shape as `origin_suggestion_selection.yaml`. The slice
+  computes nothing, so the row matches on a fact the event already carries; a second predicate
+  is a second row.
+  - **What does not exist.** There is no rule registry for a predicate that is *computed over
+    data* (due, with no open work). The selection table matches on facts the event carries and
+    the measures registry holds computation methods; neither is that. None is invented here:
+    the slice stays within what OpenDDIL sends, and a computing rule is a later question that
+    needs its own registry.
+  - **Days.** The row is part of the existing "seed-row check" (0.5) and the workflow's "seed
+    wiring" (in the 2.0). **The 9.0 does not change.**
 
 | piece | days | note |
 | --- | --- | --- |
@@ -262,9 +281,10 @@ state `review_pending`.
 | task kind + grant row (`safety_finding_review:SUSTAINMENT`) | 1.5 | topaz_sync before the roll |
 | card and state (`review_pending`) | 1.0 | cortex-ui draws it |
 | tests (refusals, idempotence, no `false`, no risk verb) | 1.5 | |
-| **total** | **7.5** | **2.5 days over the 5.0 first estimate (+50%); accepted 2026-10-29** |
+| **`new_hazard` raises the `hazard_link_review` task** (chaining table, one definition, their tests) | **1.5** | **measured 2026-10-30; see the prerequisite below** |
+| **total** | **9.0** | **7.5 accepted 2026-10-29, plus 1.5 for the `new_hazard` task; 9.0 total (ruled 2026-10-30)** |
 
-The overrun is the workflow (+2.0) and the heavier test set (+0.5). The estimate excludes the
+The overrun is the workflow (+2.0), the heavier test set (+0.5) and the `new_hazard` task (+1.5). The estimate excludes the
 OpenDDIL sender and any write to `safety_critical`. The likeliest further
 overrun is the seed-row wiring, because doc-tools cannot yet project an event row.
 
@@ -280,6 +300,36 @@ overrun is the seed-row wiring, because doc-tools cannot yet project an event ro
   shows it, so the card waits on that mirror. There is no `review_shape` prerequisite: an
   event-branch kind is never promoted (F1, §1 decision 2).
 - A part on the `safety_critical` list (F5), for any later promotion; the slice itself needs none.
+- **`new_hazard` (measured 2026-10-30, total 9.0 days, ruled 2026-10-30).** The ruled step is "on
+  `new_hazard`, create the Hazard node and raise the declared `hazard_link_review` task". Nothing
+  of it exists beyond the declaration: the task kind, its verbs and reason requirement, and its
+  grant (`policy/overlays/sample/task_kinds/hazard_link_review.yaml`, `policy/task_grants.yaml`);
+  `human_tasks.py:1059` only stores the verb, and `classifyWriteUp` has no code. Sized in halves:
+  - **(b) raise the task, 1.5 days, in the slice.** The pattern exists: a chaining table maps a
+    definition's outcome to the next definition (`policy/decisions/origin_confirm_chaining.yaml`,
+    `accepted -> origin_record`). Missing: `policy/decisions/safety_finding_review_chaining.yaml`
+    (`new_hazard` chains on, `confirmed` and `dismissed` end), one definition whose
+    `human_await` has `task_kind: hazard_link_review` and audience
+    `hazard_link_review:SUSTAINMENT`, and the censuses that bind a table to its definition
+    (`tests/test_a_chaining_table_is_bound_to_its_definition.py`,
+    `tests/safety/test_the_chaining_domain_matches_the_declared_verbs.py`). About 1.0 for the
+    two files and 0.5 for their tests and a driven chain. Depends on Lane 1: `register_task`
+    (`human_tasks.py:436`) has no `on_behalf_of`, and the service case is Lane 1's ruling-3 item.
+    Those days are not counted here.
+  - **(a) create the Hazard node, about 5 days, over the 2-day threshold, so deferred (ruled
+    2026-10-30); not in the 9.0.** What exists: a parked, inert node shape
+    (`agent_fleet/safety_agent/graph_shape.py:39`, nothing calls it) and a writer that takes any
+    label (`Neo4jGraphWriter.write_node`, `agent_fleet/utils/mesh_writers/neo4j_graph.py:237`,
+    SDK v0.9.6; no SDK change needed). Missing: a driver and writer in `safety_agent` (neither
+    exists; the writer is wired only in `mesh_registrar/v2_substrate.py`), a write route with its
+    Topaz gate and data-class declaration (ADR-0054), a hazard id allocator (none), a uniqueness
+    constraint (`setup/prime_databases.py:541` has an index on `Hazard.class`, no unique id), and
+    making Engine S read the node: it reads the in-code fixture `HAZARDS` (`measures.py:129`), so
+    a created node would be invisible to `unknown_hazard` and every measure. About 1.0 wiring,
+    1.0 route and gate, 0.5 id and constraint, 1.5 reading it back, 1.0 tests. Depends on
+    Lane 1 for the same `on_behalf_of` item.
+  - **The first version therefore stores the outcome and raises the task, without the node. The
+    node is the follow-on, 5 days, scheduled after the slice.**
 
 ## §6 — Alignment by concept name
 
