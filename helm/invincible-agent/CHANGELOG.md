@@ -10,6 +10,19 @@ and #143. The release branch also regenerates `docs/api/cortex-bff.openapi.json`
 the docstring of `POST /cases/{case_id}/signals/{signal}` without regenerating it, which left
 `tests/test_bff_openapi_is_current.py` red on master. The fix is one line of generator output.
 
+**Policy changes (2026-10-29 ruling: a `plan` owner on the recipient_readers rail)**
+
+- **`recipient_readers` gains the owner `plan`** (`policy/recipient_readers.yaml`). It is the owner fin's #148 asks for plan recipients
+  (`can_read_recipient("plan", scope, caller)`). One row ships (ruled 2026-10-30): alice reads
+  `plan:notional-plan-office`, the recipient #148's `plan-answers` profile names. Any other plan
+  scope is refused. No sync precondition: the `recipient_scope` type exists and alice is a seeded
+  user; the recipient-readers leg writes the object and its one relation at the next roll.
+- **The owners are configuration, not code** (architect's standing rule, 2026-10-30). The rail's
+  owners are the keys the file declares; `recipient_reader_sync.OWNERS`, a closed set that made a new
+  owner a code edit, is gone. A deployment's overlay may declare its own owner. An owner key must be
+  a name (`OWNER_NAME_RE`, no `:`, which would make `<owner>:<scope>` ambiguous) or the overlay is
+  refused whole.
+
 **Policy changes (2026-10-28 ruling: pcn and pdn droppable by the alert-processors group only)**
 
 - **`capability_grant_sync` learns `grant_to_groups`** and prunes orphan `can_drop:` objects. A
