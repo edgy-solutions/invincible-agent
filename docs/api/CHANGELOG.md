@@ -2,6 +2,16 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.5.0 — 2026-10-30
+
+Additive for a reader. The 1.4.0 request form of `review_coverage` is deprecated but still accepted, in this release only.
+
+- `POST /human_tasks/{task_id}/act`: `review_coverage` accepts the SDK form: `review_shape`, `item_kind`, `rules_version`, and `items` (strings) on each group and shared fact. The 1.4.0 form (`parts`, integer ids) is still accepted for 1.5.0 only and is read as items (`item_kind` `part`, ids as decimal strings, under the content kind's declared `review_shape`). A body that mixes the two forms answers 422.
+- A record stored in the `parts` form is read back as items; nothing is rewritten. A replay compares coverage in the item form, so a legacy record replayed with an item-form body describing the same coverage is not a 409.
+- New 422 `review_coverage_invalid` `check` values, asked only of a body sent in the item form: `review_shape` (not a registry row, or not the content kind's declared shape), `item_kind`, `unknown_rules_version`, `unknown_rule`. A body converted from the 1.4.0 form skips these for this release.
+- The id checks are now named by the item kind: `unknown_<item_kind>` and `duplicate_<item_kind>` (`unknown_part` and `duplicate_part` for parts, unchanged), with `overlap` and `uncovered`. 503 `review_coverage_unverifiable` also answers an `item_kind` the server has no reader for.
+- `GET /ingest/{id}/extraction`: new optional `review_shape` and `item_kind`, from the content kind's declared shape and its registry row (`GET /review-shapes`); null when the kind declares none.
+
 ## 1.4.0 — 2026-10-30
 
 One optional request field is added. Every request that worked before still works.

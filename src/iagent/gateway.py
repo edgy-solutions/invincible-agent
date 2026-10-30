@@ -57,6 +57,8 @@ from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
 from iagent_mesh.review_coverage import ReviewShapeRow
+from . import review_coverage as _rcov
+from .review_coverage import ItemReviewCoverage
 from . import frontend_menu_store
 from .ingest_api import (
     BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse,
@@ -1195,6 +1197,7 @@ from pydantic import BeforeValidator as _BeforeValidator, StrictFloat as _Strict
 from pydantic import StrictInt as _StrictInt  # noqa: E402
 from pydantic import StrictBool as _StrictBool, StrictStr as _StrictStr  # noqa: E402
 from typing import Annotated as _Annotated  # noqa: E402
+from typing import Union as _Union  # noqa: E402
 
 
 class HumanTaskRegisterRequest(_BaseModel):
@@ -1385,7 +1388,10 @@ class CoverageShared(_RowEditsModel):
 
 
 class ReviewCoverage(_RowEditsModel):
-    """What the steward looked at on a document promotion (ruled 2026-10-29: a sampled promote is
+    """DEPRECATED, accepted for 0.4.73 only: the 1.4.0 `parts` form; it is read as items (see
+    `review_coverage.py`). The item form is `ItemReviewCoverage`.
+
+    What the steward looked at on a document promotion (ruled 2026-10-29: a sampled promote is
     legal if it is recorded). Ids are the extraction's integer `part_index`. The route checks every
     part was opened or folded into a group (`review_coverage_invalid`); `sampled`, `flagged`,
     `shared` and `sample` are recorded as sent."""
@@ -1416,7 +1422,8 @@ class HumanTaskActRequest(_BaseModel):
     # Document promotion `promoted` only (same flag as row_edits): header-field corrections.
     header_edits: Optional[list[HeaderEdit]] = None
     # Document promotion `promoted` only: what the steward opened vs folded (provenance).
-    review_coverage: Optional[ReviewCoverage] = None
+    review_coverage: Optional[_Union[ItemReviewCoverage, ReviewCoverage]] = Field(
+        default=None, union_mode="left_to_right")
     # document_empty_confirm `has_parts` only (spec 208): the page the steward points at.
     page: Optional[_StrictInt] = None
 
@@ -5580,16 +5587,17 @@ async def act_on_human_task(
                 "message": "a delegated act is supported only for a workflow-backed resume of "
                            "another kind; act as the principal yourself."})
 
+    from . import promotion
     # row_edits is read ONLY by the grouped_review branch and (flag IAGENT_PROMOTION_ROW_EDITS on)
     # the document_promotion branch below. Sent on any other kind, or on a promotion while the flag
     # is off, it would be accepted and silently dropped, losing the correction (architect rulings
     # 2026-10-17, 2026-10-18). Asked before verb validation so the refusal names the real cause,
     # and before any write.
     if req.row_edits is not None and match.get("kind") != "grouped_review":
-        if match.get("kind") == "document_promotion":
+        if match.get("kind") == promotion.KIND:
             if not _promotion_row_edits_enabled():
                 raise HTTPException(status_code=422, detail={
-                    "error": "row_edits_not_for_kind", "kind": "document_promotion",
+                    "error": "row_edits_not_for_kind", "kind": promotion.KIND,
                     "enabled": False,
                     "message": "row edits on a document promotion are off on this deployment "
                                "(IAGENT_PROMOTION_ROW_EDITS); sent here they would be lost"})
@@ -5600,21 +5608,22 @@ async def act_on_human_task(
                            "promotion; sent here they would be lost"})
 
     # header_edits (ruling 10-20): document_promotion only, behind the SAME flag as row_edits.
-    if req.header_edits and match.get("kind") != "document_promotion":
+    if req.header_edits and match.get("kind") != promotion.KIND:
         raise HTTPException(status_code=422, detail={
             "error": "header_edits_not_for_kind", "kind": match.get("kind"),
             "message": "header edits are read only on a document promotion; sent here they "
                        "would be lost"})
     if req.header_edits and not _promotion_row_edits_enabled():
         raise HTTPException(status_code=422, detail={
-            "error": "header_edits_not_for_kind", "kind": "document_promotion",
+            "error": "header_edits_not_for_kind", "kind": promotion.KIND,
             "enabled": False,
             "message": "header edits on a document promotion are off on this deployment "
                        "(IAGENT_PROMOTION_ROW_EDITS); sent here they would be lost"})
 
     # review_coverage: document_promotion only. Sent elsewhere it would be dropped, which is a
     # provenance claim that is not true.
-    if req.review_coverage is not None and match.get("kind") != "document_promotion":
+    if req.review_coverage is not None and not _handler_consumes(
+            match.get("kind"), "review_coverage"):
         raise HTTPException(status_code=422, detail={
             "error": "review_coverage_not_for_kind", "kind": match.get("kind"),
             "message": "review coverage is read only on a document promotion; sent here it "
@@ -5679,8 +5688,8 @@ async def act_on_human_task(
     # resolves, for grouped_review's reason: a refused act must leave the task PENDING. The
     # decision record is the grant, so it is written fail-closed, and `promotion.act` re-asks
     # can_act itself. Every refusal carries its own status; none resolves the row.
-    if match.get("kind") == "document_promotion":
-        from . import ingest_status, promotion
+    if match.get("kind") == promotion.KIND:
+        from . import ingest_status
         from .decision_record_writer import DECISION_RECORD_ERA
 
         # A reject names one of the ruled codes (architect ruling 2026-10-17): `<code>` or
@@ -5821,10 +5830,29 @@ async def act_on_human_task(
         # before any write; an unreadable extraction is a 503, never a skipped check.
         coverage = None
         if req.review_coverage is not None:
+            from . import content_kinds, review_shapes
             try:
                 _cov_subject = promotion.subject_from_payload(match.get("payload"))
-                _parts = await run_in_threadpool(
-                    lambda: _review_parts_for_payload(_cov_subject))
+                _arrived_new = isinstance(req.review_coverage, ItemReviewCoverage)
+                cov = _rcov.normalise(req.review_coverage.model_dump(mode="json"),
+                                      content_kind=_cov_subject.content_kind)
+                _reg = content_kinds.by_kind(_cov_subject.content_kind)
+                _declared = getattr(_reg, "review_shape", None)
+                _rows = review_shapes.valid_review_shapes()
+                _declared_row = _rows.get(_declared) if _declared else None
+                if _declared and _declared_row is None:
+                    raise LookupError(f"review_shape {_declared!r} has no valid registry row")
+                _bad = (_rcov.row_problem(cov, _rows.get(cov.get("review_shape")), _declared)
+                        if _arrived_new else None)
+                if _bad is None:
+                    # The universe is read by the declared row's item_kind; a legacy body whose
+                    # kind declares no shape is parts.
+                    _kind = _declared_row.item_kind if _declared_row else cov.get("item_kind", "part")
+                    _read = _rcov.universe_for(_kind)
+                    _universe = await run_in_threadpool(lambda: _read(
+                        lambda: _review_parts_for_payload(_cov_subject)))
+                    _bad = _rcov.problem(cov, _universe, _rows.get(cov.get("review_shape")),
+                                         arrived_new=_arrived_new, declared_shape=_declared)
             except HTTPException as exc:
                 if exc.status_code < 500:
                     raise  # e.g. 422 extraction_unbound: the binding said no, a retry will not help
@@ -5837,11 +5865,10 @@ async def act_on_human_task(
                     "error": "review_coverage_unverifiable", "task_id": task_id,
                     "message": f"the extraction's parts could not be read "
                                f"({type(exc).__name__}); nothing was written"})
-            _bad = _review_coverage_problem(req.review_coverage, set(_parts))
             if _bad is not None:
                 raise HTTPException(status_code=422, detail={
                     "error": "review_coverage_invalid", "check": _bad[0], "message": _bad[1]})
-            coverage = req.review_coverage.model_dump()
+            coverage = cov
 
         if req.decision == promotion.PROMOTED:
             # The notice's SUBJECT_TO set is reconciled to the reviewed rows (ruled 2026-10-20),
@@ -13440,8 +13467,14 @@ async def _extraction_body(ingest_id: str, row: dict) -> dict:
             "source_snippet": it.get("source_snippet"), "evidence_ref": ev})
     summ = _review_notice_summary(review)
     leaf, leaf_source, corrected_by = _row_leaf(row)
+    from . import content_kinds, review_shapes
+    _reg = content_kinds.by_kind(row.get("content_kind") or "")
+    _shape = getattr(_reg, "review_shape", None)
+    _shape_row = review_shapes.valid_review_shapes().get(_shape) if _shape else None
     return {
         "ingest_id": ingest_id,
+        "review_shape": _shape if _shape_row is not None else None,
+        "item_kind": _shape_row.item_kind if _shape_row is not None else None,
         "notice_id": summ["notice_id"],
         "content_kind": row.get("content_kind"), "attempt": row.get("attempt"),
         "leaf": leaf, "leaf_source": leaf_source, "corrected_by": corrected_by,
@@ -14234,36 +14267,17 @@ def _bound_review_for_payload(subject) -> dict:
     return _read_review_json(key)
 
 
+def _handler_consumes(kind, field: str) -> bool:
+    """Whether the handler for `kind` reads request field `field`: the gate asks the handler."""
+    from . import promotion
+    return kind == promotion.KIND and field in promotion.CONSUMES
+
+
 def _review_parts_for_payload(subject) -> list:
     """The distinct `part_index` of the extraction a promotion task points at (sync; threadpool),
     read through the reader behind `GET /ingest/{id}/extraction`."""
     return sorted({int(m.group(1)) for it in _review_items(_bound_review_for_payload(subject))
                    if (m := _PART_FIELD_RE.match(str(it.get("field_path") or "")))})
-
-
-def _review_coverage_problem(cov, parts: set) -> Optional[tuple]:
-    """`(check, message)` for the first failing coverage check, else None. Checks: unknown_part,
-    duplicate_part, overlap, uncovered. `sampled`, `flagged`, `shared`, `sample` are recorded only."""
-    lists = [("looked_at", cov.looked_at), ("sampled", cov.sampled), ("flagged", cov.flagged)]
-    lists += [(f"groups[{i}].parts", g.parts) for i, g in enumerate(cov.groups)]
-    lists += [(f"shared[{i}].parts", s.parts) for i, s in enumerate(cov.shared)]
-    for name, ids in lists:
-        extra = sorted(set(ids) - parts)
-        if extra:
-            return ("unknown_part", f"{name} names parts not in the extraction: {extra[:10]}")
-    for name, ids in lists:
-        if len(ids) != len(set(ids)):
-            return ("duplicate_part", f"{name} repeats a part id")
-    opened = set(cov.looked_at)
-    for i, g in enumerate(cov.groups):
-        both = opened & set(g.parts)
-        if both:
-            return ("overlap", f"groups[{i}] shares parts with looked_at or an earlier group: "
-                               f"{sorted(both)[:10]}")
-        opened |= set(g.parts)
-    if opened != parts:
-        return ("uncovered", f"parts neither opened nor grouped: {sorted(parts - opened)[:10]}")
-    return None
 
 
 def _review_header_for_payload(subject) -> dict:

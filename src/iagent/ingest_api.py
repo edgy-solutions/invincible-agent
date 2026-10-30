@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 INGEST_V1_TAG = "ingest-v1"
-INGEST_API_VERSION = "1.4.0"
+INGEST_API_VERSION = "1.5.0"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),
@@ -219,6 +219,11 @@ class Extraction(_Strict):
     rows_without_evidence: int
     review_ref: str
     relocated_to: str | None
+    review_shape: str | None = None
+    """The content kind's declared review shape, a row of the review-shape registry
+    (`GET /review-shapes`); null when the kind declares none or the row is not valid."""
+    item_kind: str | None = None
+    """That shape row's `item_kind` (what the ids in `review_coverage` address); null as above."""
 
 
 class ExportProfile(_Strict):

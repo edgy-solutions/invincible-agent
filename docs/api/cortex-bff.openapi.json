@@ -2155,6 +2155,17 @@
             "title": "Ingest Id",
             "type": "string"
           },
+          "item_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Kind"
+          },
           "leaf": {
             "anyOf": [
               {
@@ -2218,6 +2229,17 @@
           "review_ref": {
             "title": "Review Ref",
             "type": "string"
+          },
+          "review_shape": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Shape"
           },
           "rows": {
             "items": {
@@ -2835,12 +2857,16 @@
           "review_coverage": {
             "anyOf": [
               {
+                "$ref": "#/components/schemas/ItemReviewCoverage"
+              },
+              {
                 "$ref": "#/components/schemas/ReviewCoverage"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Review Coverage"
           },
           "row_edits": {
             "anyOf": [
@@ -3528,6 +3554,161 @@
           "session_id"
         ],
         "title": "InterviewRequest",
+        "type": "object"
+      },
+      "ItemCoverageGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "key": {
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "rule": {
+            "minLength": 1,
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "key"
+        ],
+        "title": "ItemCoverageGroup",
+        "type": "object"
+      },
+      "ItemCoverageShared": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "maxItems": 4,
+            "minItems": 4,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Bbox",
+            "type": "array"
+          },
+          "confirmed": {
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "rule": {
+            "minLength": 1,
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "page",
+          "bbox",
+          "confirmed"
+        ],
+        "title": "ItemCoverageShared",
+        "type": "object"
+      },
+      "ItemReviewCoverage": {
+        "additionalProperties": false,
+        "description": "The SDK form: `review_shape`, `item_kind`, `rules_version`, string item ids.",
+        "properties": {
+          "flagged": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flagged",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/ItemCoverageGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "item_kind": {
+            "title": "Item Kind",
+            "type": "string"
+          },
+          "looked_at": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Looked At",
+            "type": "array"
+          },
+          "review_shape": {
+            "title": "Review Shape",
+            "type": "string"
+          },
+          "rules_version": {
+            "minLength": 1,
+            "title": "Rules Version",
+            "type": "string"
+          },
+          "sample": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample"
+          },
+          "sampled": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sampled",
+            "type": "array"
+          },
+          "shared": {
+            "items": {
+              "$ref": "#/components/schemas/ItemCoverageShared"
+            },
+            "title": "Shared",
+            "type": "array"
+          }
+        },
+        "required": [
+          "review_shape",
+          "item_kind",
+          "rules_version"
+        ],
+        "title": "ItemReviewCoverage",
         "type": "object"
       },
       "LeafResponse": {
@@ -4547,7 +4728,7 @@
       },
       "ReviewCoverage": {
         "additionalProperties": false,
-        "description": "What the steward looked at on a document promotion (ruled 2026-10-29: a sampled promote is\nlegal if it is recorded). Ids are the extraction's integer `part_index`. The route checks every\npart was opened or folded into a group (`review_coverage_invalid`); `sampled`, `flagged`,\n`shared` and `sample` are recorded as sent.",
+        "description": "DEPRECATED, accepted for 0.4.73 only: the 1.4.0 `parts` form; it is read as items (see\n`review_coverage.py`). The item form is `ItemReviewCoverage`.\n\nWhat the steward looked at on a document promotion (ruled 2026-10-29: a sampled promote is\nlegal if it is recorded). Ids are the extraction's integer `part_index`. The route checks every\npart was opened or folded into a group (`review_coverage_invalid`); `sampled`, `flagged`,\n`shared` and `sample` are recorded as sent.",
         "properties": {
           "flagged": {
             "items": {
