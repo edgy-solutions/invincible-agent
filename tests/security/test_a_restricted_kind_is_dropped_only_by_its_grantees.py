@@ -85,6 +85,7 @@ def gate(monkeypatch):
     monkeypatch.setattr(ck, "by_kind", lambda k: next((r for r in _REGISTRY if r.kind == k), None) if k else None)
     monkeypatch.setattr(ht, "capability_object_exists", _exists)
     monkeypatch.setattr(ht, "check_can_invoke", _invoke)
+    monkeypatch.setattr(ht, "can_invoke_or_unavailable", _invoke)
     return g
 
 
@@ -156,6 +157,8 @@ def test_a3b_a_leaf_at_the_drop_is_the_effective_kind(as_user, gate, rig):
 
 
 _REAL_CLIENT = httpx.Client
+_REAL_EXISTS = ht.capability_object_exists
+_REAL_INVOKE = ht.can_invoke_or_unavailable
 
 
 def _real_read(monkeypatch, handler):
@@ -172,7 +175,7 @@ def test_a4_a_failed_object_read_is_503_and_never_accepted(as_user, writes, monk
     rig = writes
     monkeypatch.setattr(ck, "registrations", lambda: _REGISTRY)
     monkeypatch.setattr(ck, "by_kind", lambda k: next((r for r in _REGISTRY if r.kind == k), None) if k else None)
-    monkeypatch.setattr(ht, "check_can_invoke", lambda cap, who: True)   # even a granted dropper
+    monkeypatch.setattr(ht, "can_invoke_or_unavailable", lambda cap, who: True)   # even a granted dropper
 
     def handler(request):
         if failure == "transport":
@@ -191,7 +194,7 @@ def test_a4b_a_404_from_the_real_read_is_open_and_a_200_is_gated(as_user, writes
     monkeypatch.setattr(ck, "registrations", lambda: _REGISTRY)
     monkeypatch.setattr(ck, "by_kind", lambda k: next((r for r in _REGISTRY if r.kind == k), None) if k else None)
     seen = []
-    monkeypatch.setattr(ht, "check_can_invoke", lambda cap, who: seen.append(cap) or False)
+    monkeypatch.setattr(ht, "can_invoke_or_unavailable", lambda cap, who: seen.append(cap) or False)
     _real_read(monkeypatch, lambda req: httpx.Response(404, json={}))
     assert _drop(as_user(NOT_GRANTED), NOT_GRANTED).status_code == 200
     assert seen == []
@@ -370,6 +373,53 @@ def test_f2_an_object_read_error_is_503_for_the_whole_response(as_user, gate, mo
     r = as_user(GRANTED).get("/me/entitlements")
     assert r.status_code == 503, r.text
     assert "droppable_kinds" not in r.text
+
+
+# ---- t: a Topaz failure on the check is "unavailable", never a refusal -------------------------
+
+def _real_both(monkeypatch, check_response):
+    """The REAL object read (answers: exists) and the REAL check, over a transport whose check
+    answers `check_response()`."""
+    monkeypatch.setattr(ht, "capability_object_exists", _REAL_EXISTS)
+    monkeypatch.setattr(ht, "can_invoke_or_unavailable", _REAL_INVOKE)
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"result": {}})
+        return check_response()
+
+    _real_read(monkeypatch, handler)
+
+
+def test_t1_the_check_failing_after_the_object_exists_is_503_with_retry_after_not_403(
+        as_user, rows, monkeypatch):
+    _real_both(monkeypatch, lambda: httpx.Response(500, json={"error": "boom"}))
+    rows.row = _row(GRANTED)
+    r = _title_leaf(as_user("svc:doc-tools"))
+    assert r.status_code == 503, r.text
+    assert _detail(r)["error"] == "authorization_unavailable"
+    assert r.headers.get("Retry-After")
+    assert rows.holds == [] and rows.set_leaf == []      # a transient error does not hold the row
+    d = _drop(as_user(GRANTED), GRANTED)
+    assert d.status_code == 503 and _detail(d)["error"] == "authorization_unavailable"
+    assert d.headers.get("Retry-After")
+
+
+def test_t2_a_404_from_the_check_is_still_a_policy_refusal(as_user, rows, monkeypatch):
+    _real_both(monkeypatch, lambda: httpx.Response(404, json={}))
+    rows.row = _row(NOT_GRANTED)
+    r = _title_leaf(as_user("svc:doc-tools"))
+    assert r.status_code == 403, r.text
+    assert _detail(r)["error"] == "not_entitled_to_drop"
+    assert len(rows.holds) == 1
+
+
+def test_t3_entitlements_with_the_check_failing_is_503_with_retry_after(as_user, gate, monkeypatch):
+    _real_both(monkeypatch, lambda: httpx.Response(503, json={}))
+    r = as_user(GRANTED).get("/me/entitlements")
+    assert r.status_code == 503, r.text
+    assert _detail(r)["error"] == "authorization_unavailable"
+    assert r.headers.get("Retry-After")
 
 
 # ---- g: the Job leg ----------------------------------------------------------------------------

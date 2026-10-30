@@ -3178,7 +3178,15 @@
                 }
               }
             },
-            "description": "the directory could not say whether the kind is gated; nothing was recorded"
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3489,7 +3497,15 @@
                 }
               }
             },
-            "description": "the directory could not say whether the kind is gated; nothing was recorded"
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3737,7 +3753,15 @@
                 }
               }
             },
-            "description": "the directory could not say whether the kind is gated; nothing was recorded"
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3774,7 +3798,15 @@
                 }
               }
             },
-            "description": "the directory could not say whether the kind is gated; nothing was recorded"
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [

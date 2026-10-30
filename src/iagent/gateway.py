@@ -158,6 +158,10 @@ def _env_int(name: str, default: int) -> int:
 _LEAF_BACKSTOP_ACTOR = "bff:manifest-leaf-backstop"
 
 
+# No Retry-After value existed in src/; 5 s matches the 5 s Topaz client timeout.
+_CAN_DROP_RETRY_AFTER = "5"
+
+
 def _row_dropper(row: dict) -> str:
     """The dropper of record for a status row: `on_behalf_of`, the actor `_admit_on_behalf_of`
     resolved at `record_received` (the PRINCIPAL when a delegate dropped for them). `submitted_by`
@@ -188,7 +192,8 @@ async def _can_drop_or_refuse(kind: str, dropper_id: str) -> None:
         logger.warning("can_drop gate unavailable for kind=%s: %s", kind, exc)
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unavailable",
-            "message": "could not verify whether this kind is restricted"}) from exc
+            "message": "could not verify whether this kind is restricted"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
     if refused is not None:
         raise policy_refusal(
             "not_entitled_to_drop", policy_id=refused["policy_id"],
@@ -1154,7 +1159,8 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
         logger.warning("droppable_kinds unavailable: %s", exc)
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unavailable",
-            "message": "could not verify which kinds are restricted"}) from exc
+            "message": "could not verify which kinds are restricted"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
     return {
         "user_id": current_user.id,
         "authz_id": current_user.authz_id,

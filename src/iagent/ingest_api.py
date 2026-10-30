@@ -352,7 +352,11 @@ DROP_GATE_RESPONSES: dict[int | str, dict[str, Any]] = {
     403: {"model": NotEntitledToDrop,
           "description": "the dropper is not granted can_drop:<kind>"},
     503: {"model": AuthorizationUnavailableBody,
-          "description": "the directory could not say whether the kind is gated; nothing was recorded"},
+          "description": "the directory could not say whether the kind is gated; nothing was recorded",
+          "headers": {"Retry-After": {
+              "description": "seconds to wait before retrying; sent with `authorization_unavailable` "
+                             "(a transient directory failure), not with `authorization_unconfigured`",
+              "schema": {"type": "string"}}}},
 }
 
 
