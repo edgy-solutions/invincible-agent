@@ -800,6 +800,54 @@ now 13: it includes the stages answer.
   - The planted contradiction was detected in none of the three runs.
   - Both belong to item 3, which is next.
 
+#### 2026-10-30: item 3, the planted deferral and contradiction; one half is the instrument
+
+The two misses have different causes. One is in the instrument, the other in the subject.
+
+**The deferral: the instrument. Fixed.**
+- The column compared the recorded keys with the planted keys without translating them. A model
+  drafts under its own ids, so a planted deferral recorded live read 0. Run 7 found this; it was
+  not fixed until now.
+- `measure` now translates each recorded deferral and each asked contradiction into the expected
+  bundle's spelling before comparing. It uses the scripted user's own alignment, against the final
+  files. A key that cannot be aligned is compared as recorded.
+- **Seal.** An oracle extractor that renames the impact review and its approval step, as the runs
+  did. The run records the deferral under the renamed key, and both planted columns must read 1.
+  `tests/socratic` gives 76 passed. With the compare left untranslated (a mutant, restored with
+  `cmp`), the seal is red at the deferral column.
+- **Rescored from the saved runs** (no new model run): the planted deferral was recorded in 10 of
+  the 12 PCN runs, 7 to 18. Runs 8 and 10 did not record it.
+
+**The contradiction: the subject. Not fixed; it needs a ruling.**
+- Rescored the same way, the planted contradiction was asked in 0 of 12 runs. It is a real miss.
+- How it is planted:
+  - The opening says anyone may take the engineering disposition, including whoever logged the
+    notice. So that step's `excludes` is `[]`.
+  - The bank entry for the program approval's `excludes` says the submitter "may never sign off
+    either review". That overwrites `[]`, and the overwrite is the contradiction.
+  - The entry is reached only when the loop asks who is barred from the program approval.
+- **What the runs did.** Runs 10 to 18 drafted `excludes: []` on every approval step, and no
+  `excludes` question was ever asked.
+  - That includes the program approval in runs 16 to 18. Its bank answer says nothing about who
+    may answer.
+  - The required slot (§10(b)) was satisfied by a value the model wrote itself. This is cause 1 of
+    run 7 again. The grammar's "never fill a default" line did not stop it.
+- So the contradiction is not missed by the detector: the question that carries it is never asked.
+  Nothing in the loop can tell a slot the person filled from a slot the model filled. Three ways to
+  make that difference visible, none built:
+  1. **Attribution by quote.** Every value set for a required slot carries the person's words it
+     came from. The loop keeps the value only when those words appear in that turn's statement.
+     Otherwise it drops the value, and the slot is asked.
+     - This is "detect and attribute, never insert" applied to the slots.
+     - It changes the patch grammar, and needs the model to quote.
+  2. **Turn binding.** A required slot counts as filled only if it was set in the turn that asked
+     it. Otherwise it is asked once to confirm.
+     - No grammar change.
+     - It also re-asks slots the person did state in passing, such as the opening's `[]` for the
+       disposition. Re-asking that one is exactly what would surface the planted contradiction.
+  3. **A grammar line only,** naming `excludes: []` as a value the statement must say. Runs 10 to
+     18 already ignore the general rule.
+
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a

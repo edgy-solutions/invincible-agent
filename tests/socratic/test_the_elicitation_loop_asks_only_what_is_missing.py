@@ -338,6 +338,46 @@ def test_the_unaligned_test_fails_if_alignment_falls_back_to_file_order():
     assert user.translate("outputs.pcn_record.next", _without_program_approval()) is not None
 
 
+class _RenamingExtractor(se.OracleExtractor):
+    """The oracle's patches under the model's own names, as runs 7 to 18 drafted them. Only ids
+    that are not also a task kind are renamed, so every reference still resolves."""
+
+    MAP = {"pcn_impact_review": "impact_review", "engineering_disposition": "review"}
+
+    def __call__(self, utterance_entry, draft, gap):
+        import re
+        p, m = super().__call__(utterance_entry, draft, gap), self.MAP
+
+        def walk(v):
+            if isinstance(v, dict):
+                return {k: walk(x) for k, x in v.items()}
+            if isinstance(v, list):
+                return [walk(x) for x in v]
+            return m.get(v, v) if isinstance(v, str) else v
+
+        def fname(f):
+            folder, _, n = f.partition("/")
+            return f"{folder}/{m.get(Path(n).stem, Path(n).stem)}.yaml" if folder == "workflows" else f
+
+        return {"set": [{"file": fname(s["file"]),
+                         "path": re.sub(r"\[id=([^\]]*)\]",
+                                        lambda mo: f"[id={m.get(mo.group(1), mo.group(1))}]", s["path"]),
+                         "value": walk(s["value"])} for s in p.get("set") or []],
+                "defer": [dict(d, gap=".".join(m.get(x, x) for x in str(d["gap"]).split(".")))
+                          for d in p.get("defer") or []]}
+
+
+def test_a_planted_item_recorded_under_the_drafts_own_names_is_counted():
+    """ADR-0061 §10, run 7 and runs 16 to 18: the planted deferral was recorded live under the
+    draft's step names and the column read 0/1, because the compare did not translate."""
+    row = sm.measure("pcn_review", _RenamingExtractor(), aligned=True)
+    assert "workflows/impact_review.yaml" in row["files"]
+    assert "approvals.impact_review.review.deadline" in row["deferrals"]
+    assert DEADLINE_KEY not in row["deferrals"]
+    assert row["deferrals_recorded"] == row["deferrals_planted"] == 1
+    assert row["contradictions_detected"] == row["contradictions_planted"] == 1
+
+
 # ── ADR-0061 rulings: a refusal is never deferred; required slots are asked by name ─────────────
 
 def _run_without(*keys):

@@ -374,6 +374,16 @@ class AligningUser:
 
 # ── the measurement ─────────────────────────────────────────────────────────────────────────
 
+def _as_expected(keys, user: Optional[AligningUser], files: dict) -> set:
+    """The recorded ``keys`` in the expected bundle's spelling, aligned against the final ``files``
+    as the scripted user aligns a question. A planted key is named in the expected bundle's ids; a
+    model drafts under its own, so an untranslated compare read run 7's recorded deferral as 0/1
+    (ADR-0061 §10). A key that cannot be aligned stays as recorded and matches only verbatim."""
+    if user is None:
+        return set(keys)
+    return {user.translate(k, files) or k for k in keys}
+
+
 def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) -> dict:
     d = FIXTURES / name
     transcript = yaml.safe_load((d / "transcript.yaml").read_text(encoding="utf-8"))
@@ -386,6 +396,8 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
     bank = list((transcript.get("answers") or {}).keys())
     planted = transcript.get("planted") or {}
     pc, pd = planted.get("contradictions") or [], planted.get("deferrals") or []
+    asked_c, recorded_d = _as_expected(r["contradictions_asked"], user, r["files"]), \
+        _as_expected(r["deferrals"], user, r["files"])
     ld, sd = leaf_diffs(r["files"], expected), semantic_diffs(r["files"], expected)
     return {
         "fixture": name,
@@ -394,9 +406,9 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "unanswerable": r["unanswerable"], "unresolved": r["unresolved"],
         "unused_bank": sorted(set(bank) - set(keys)),
         "contradictions_planted": len(pc),
-        "contradictions_detected": len(set(pc) & set(r["contradictions_asked"])),
+        "contradictions_detected": len(set(pc) & asked_c),
         "deferrals_planted": len(pd),
-        "deferrals_recorded": len(set(pd) & set(r["deferrals"])),
+        "deferrals_recorded": len(set(pd) & recorded_d),
         "gaps_left": r["gaps_left"],
         "status": r["status"],
         "missing": {"count": len(r["missing"]), "first": r["missing"][:10]},
