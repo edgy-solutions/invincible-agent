@@ -17,7 +17,12 @@ from typing import Annotated, Any, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 INGEST_V1_TAG = "ingest-v1"
-INGEST_API_VERSION = "1.4.0"
+# The `mcp` surface: the twelve BFF operations an MCP server wraps. Spec:
+# sessions/2026-10-30-packet-to-architect-cc-ca-saf-from-lane-01-mcp-server-over-the-bff-one-page-spec.md
+# (sections 1, 2, 5). Tagged ADDITIVELY on the routes (existing tags kept); /interview/stream shares
+# the /orchestrate handler but is NOT in this set.
+MCP_TAG = "mcp"
+INGEST_API_VERSION = "1.4.1"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),
@@ -33,6 +38,21 @@ V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/ingest/mine"),
     ("POST", "/ingest/{ingest_id}/title_leaf"),
     ("POST", "/ingest/{ingest_id}/leaf"),
+})
+
+MCP_ROUTES: frozenset[tuple[str, str]] = frozenset({
+    ("POST", "/orchestrate"),
+    ("GET", "/cases/{case_id}"),
+    ("GET", "/me/human_tasks"),
+    ("POST", "/human_tasks/{task_id}/act"),
+    ("POST", "/ingest"),
+    ("GET", "/ingest/export"),
+    ("GET", "/ingest/export/profiles"),
+    ("POST", "/canvas/seed"),
+    ("POST", "/export/package"),
+    ("GET", "/export/package/artifact/{filename}"),
+    ("GET", "/export/cdrl"),
+    ("GET", "/export/cdrl/profiles"),
 })
 
 PREVIEW_ROUTES: frozenset[tuple[str, str]] = frozenset({("POST", "/ingest/{ingest_id}/empty")})
