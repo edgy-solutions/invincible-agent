@@ -8,6 +8,7 @@ no Postgres.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +17,11 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi import HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from src.iagent import gateway, human_tasks, ingest_status, promotion  # noqa: E402
+from src.iagent import content_kinds, gateway, human_tasks, ingest_status, promotion  # noqa: E402
+
+#: `pcn` is an openddil-lab overlay kind; its declared review_shape (`notice`) is what a legacy
+#: `parts` body is read under (0.4.73), so the overlay must be composed.
+_LAB = Path(__file__).resolve().parents[1] / "policy" / "overlays" / "openddil-lab" / "content_kinds"
 
 HEX = "ef" * 32
 INGEST_ID = "sha256:" + HEX
@@ -72,6 +77,8 @@ class _Graph:
 
 @pytest.fixture
 def world(monkeypatch):
+    monkeypatch.setenv("CONTENT_KIND_OVERLAY_DIRS", str(_LAB))
+    monkeypatch.setattr(content_kinds, "_REGISTRATIONS_CACHE", None)
     monkeypatch.setattr(human_tasks, "_SEED_ROWS_CACHE", None, raising=False)
     w = SimpleNamespace(resolved=[], statuses=[], ledger=_Ledger(), kind=promotion.KIND,
                         act_kwargs=[], parts=list(PARTS), part_reads=[], unreadable=False, unbound=False)
@@ -143,7 +150,12 @@ def test_c1_a_valid_coverage_is_recorded_on_the_human_review_inputs(world):
     r = _act(world, _cov())
     assert r.status_code == 200, r.text
     assert world.part_reads == [INGEST_ID]
-    assert _inputs(world)["review_coverage"] == gateway.ReviewCoverage(**_cov()).model_dump()
+    # a legacy `parts` body is stored as items under the kind's shape (read-time conversion)
+    cov = _inputs(world)["review_coverage"]
+    assert (cov["review_shape"], cov["item_kind"]) == ("notice", "part")
+    assert (cov["looked_at"], cov["sampled"], cov["flagged"]) == (["0", "1", "5"], ["1", "3"], ["2"])
+    assert cov["groups"] == [{"rule": "same_shape_run", "key": "FK25->FK25", "items": ["2", "3", "4"]}]
+    assert cov["shared"][0]["items"] == ["2", "3"] and "parts" not in cov["shared"][0]
 
 
 def test_c2_no_coverage_leaves_the_inputs_exactly_as_before(world):

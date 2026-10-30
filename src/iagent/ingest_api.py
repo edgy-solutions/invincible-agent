@@ -22,7 +22,7 @@ INGEST_V1_TAG = "ingest-v1"
 # (sections 1, 2, 5). Tagged ADDITIVELY on the routes (existing tags kept); /interview/stream shares
 # the /orchestrate handler but is NOT in this set.
 MCP_TAG = "mcp"
-INGEST_API_VERSION = "1.4.1"
+INGEST_API_VERSION = "1.5.0"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),
@@ -240,6 +240,11 @@ class Extraction(_Strict):
     rows_without_evidence: int
     review_ref: str
     relocated_to: str | None
+    review_shape: str | None = None
+    """The content kind's declared review shape, a row of the review-shape registry
+    (`GET /review-shapes`); null when the kind declares none or the row is not valid."""
+    item_kind: str | None = None
+    """That shape row's `item_kind` (what the ids in `review_coverage` address); null as above."""
 
 
 class ExportProfile(_Strict):
