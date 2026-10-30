@@ -576,7 +576,10 @@ audiences:
     granted_by: cnogradi
     reason: >-
       ADR-0062 sections 5 and 7: engine-r's approvers of invincible-agent-* release tags.
-      Synthetic sandbox names.
+      carol added 2026-10-29 by the architect's ruling: a release tag takes two approvers and
+      the proposer is excluded, so with alice and bob alone a tag either of them proposed could
+      never close. Synthetic sandbox names.
     grant_to:
       - alice@example.com
       - bob@example.com
+      - carol@example.com

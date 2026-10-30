@@ -8,8 +8,9 @@ Entries merged after the 0.4.73 cut (`e2c03799`). The releaser dates this headin
 
 - **Five new `task_grants.yaml` audiences**: `repo_review:POLICY`, `repo_review:ADR`,
   `repo_review:FIXTURES`, `repo_review:SESSIONS` and `repo_release:invincible-agent`, each
-  `grant_to` alice and bob; `repo_review:POLICY` also carol (ruled 2026-10-29: a two-approver
-  `policy/` change keeps two eligible approvers after the proposer).
+  `grant_to` alice and bob; `repo_review:POLICY` and `repo_release:invincible-agent` also carol
+  (ruled 2026-10-29: a two-approver change or release tag keeps two eligible approvers after the
+  proposer).
 - **`access_grant:DATA_ENGINEERING` gains bob** (ruled 2026-10-29), so the rail's
   `policy/asset_grants.yaml` row (`access_grant:<DOMAIN>`, per changed row, at 2; fallback
   `repo_review:POLICY`) can be satisfied. bob can now approve DATA_ENGINEERING access requests; the

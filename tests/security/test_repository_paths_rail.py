@@ -160,15 +160,19 @@ def test_asset_grants_is_reviewed_per_domain_at_two():
     assert "access_grant:DATA_ENGINEERING" in resolved, resolved
 
 
-def test_policy_review_keeps_two_eligible_after_the_proposer():
+@pytest.mark.parametrize("key,section", [("repo_review:POLICY", "paths"),
+                                         ("repo_release:invincible-agent", "tags")])
+def test_policy_review_keeps_two_eligible_after_the_proposer(key, section):
     """Ruled 2026-10-29: a two-approver `policy/` change always has two eligible approvers after the
     proposer is excluded (rule 6), so repo_review:POLICY holds more users than any row naming it
     requires. Rule 8 alone asks only `>= approvers`; this is the stricter floor for this audience.
+    Ruled again 2026-10-29 for repo_release:invincible-agent (carol the third): a release tag that
+    alice or bob proposed could otherwise never close.
     CONTROL: the 10-28 audience {alice, bob} fails it."""
-    paths = _SEED["repository_paths"][REPO]["paths"]
-    need = max(v["approvers"] for v in paths.values()
-               if "repo_review:POLICY" in (v.get("review"), v.get("unmatched_review")))
-    aud = next(a for a in _AUDIENCES if a.key == "repo_review:POLICY")
+    rows = _SEED["repository_paths"][REPO][section]
+    need = max(v["approvers"] for v in rows.values()
+               if key in (v.get("review"), v.get("unmatched_review")))
+    aud = next(a for a in _AUDIENCES if a.key == key)
     members: dict[str, set[str]] = {}
     for u in _USERS:
         for g in u.get("groups") or []:
