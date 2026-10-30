@@ -552,6 +552,43 @@
         "title": "ArtifactResponse",
         "type": "object"
       },
+      "AuthorizationUnavailableBody": {
+        "additionalProperties": false,
+        "description": "The 503 body when the authorization directory cannot say whether a kind is gated.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/AuthorizationUnavailableDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "AuthorizationUnavailableBody",
+        "type": "object"
+      },
+      "AuthorizationUnavailableDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "enum": [
+              "authorization_unavailable",
+              "authorization_unconfigured"
+            ],
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "AuthorizationUnavailableDetail",
+        "type": "object"
+      },
       "BPMNGateway": {
         "properties": {
           "id": {
@@ -1438,6 +1475,92 @@
         "title": "CorrectedRow",
         "type": "object"
       },
+      "CoverageGroup": {
+        "additionalProperties": false,
+        "description": "One group of parts a steward folded without opening: the grouping rule, its key, and the\nmembers NOT opened (part_index values).",
+        "properties": {
+          "key": {
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "parts": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "rule": {
+            "minLength": 1,
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "key",
+          "parts"
+        ],
+        "title": "CoverageGroup",
+        "type": "object"
+      },
+      "CoverageShared": {
+        "additionalProperties": false,
+        "description": "One evidence crop that many parts cite (recorded, not re-derived).",
+        "properties": {
+          "bbox": {
+            "items": {
+              "anyOf": [
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              ]
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Bbox",
+            "type": "array"
+          },
+          "confirmed": {
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "parts": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "rule": {
+            "minLength": 1,
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "page",
+          "bbox",
+          "parts",
+          "confirmed"
+        ],
+        "title": "CoverageShared",
+        "type": "object"
+      },
       "DecisionSubgraphRequest": {
         "description": "The captured decision's node identities, sent by the frontend. The\nmatch key is IDENTITY (uri/iri) — strict; a renamed/re-URI'd node is a\nDIFFERENT node and must read as gone, never fuzzy-matched to a\nsuccessor (that would conceal a divergence).",
         "properties": {
@@ -1774,6 +1897,13 @@
               }
             ]
           },
+          "droppable_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Droppable Kinds",
+            "type": "array"
+          },
           "email": {
             "anyOf": [
               {
@@ -1814,7 +1944,8 @@
           "email",
           "cells",
           "default",
-          "source"
+          "source",
+          "droppable_kinds"
         ],
         "title": "Entitlements",
         "type": "object"
@@ -1943,6 +2074,44 @@
           }
         },
         "title": "ExportPackageRequest",
+        "type": "object"
+      },
+      "ExportProfile": {
+        "additionalProperties": false,
+        "description": "One row of GET /ingest/export/profiles (a valid `policy/exports/<name>.yaml`).",
+        "properties": {
+          "format": {
+            "enum": [
+              "csv",
+              "json"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "granularity": {
+            "enum": [
+              "notice_part",
+              "notice"
+            ],
+            "title": "Granularity",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "format",
+          "granularity",
+          "label"
+        ],
+        "title": "ExportProfile",
         "type": "object"
       },
       "Extraction": {
@@ -2663,6 +2832,16 @@
             ],
             "title": "Reason Code"
           },
+          "review_coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "row_edits": {
             "anyOf": [
               {
@@ -2678,6 +2857,30 @@
           "decision"
         ],
         "title": "HumanTaskActRequest",
+        "type": "object"
+      },
+      "HumanTaskExpireRequest": {
+        "properties": {
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "HumanTaskExpireRequest",
         "type": "object"
       },
       "HumanTaskRegisterRequest": {
@@ -3660,6 +3863,50 @@
         "title": "MineListing",
         "type": "object"
       },
+      "NotEntitledToDrop": {
+        "additionalProperties": false,
+        "description": "The 403 body of a door that refused a kind the dropper is not granted.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/NotEntitledToDropDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "NotEntitledToDrop",
+        "type": "object"
+      },
+      "NotEntitledToDropDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "const": "not_entitled_to_drop",
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "refusal": {
+            "$ref": "#/components/schemas/RefusalEnvelope"
+          }
+        },
+        "required": [
+          "error",
+          "refusal"
+        ],
+        "title": "NotEntitledToDropDetail",
+        "type": "object"
+      },
       "Notice": {
         "additionalProperties": false,
         "description": "The notice header read from review.json; the values are LLM-extracted, so unconstrained.",
@@ -4001,6 +4248,39 @@
         "title": "RedeemIdentityBody",
         "type": "object"
       },
+      "RefusalEnvelope": {
+        "additionalProperties": false,
+        "description": "`authz.refusal.refusal`'s envelope: what the caller lacks and who can grant it.",
+        "properties": {
+          "candidates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "grantable_by": {
+            "title": "Grantable By",
+            "type": "string"
+          },
+          "missing_binding": {
+            "title": "Missing Binding",
+            "type": "string"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "missing_binding",
+          "grantable_by",
+          "candidates"
+        ],
+        "title": "RefusalEnvelope",
+        "type": "object"
+      },
       "RegisterFrontendCapabilitiesRequest": {
         "description": "Sent by cortex-ui (and any future frontend) after auth completes.\n\n`frontend_id` distinguishes registrations from different surfaces in\nthe predicate graph (cortex-ui-desktop, cortex-ui-mobile, voice-cli,\netc.). `frontend_version` rides along so drift between code that\ndeclared the capability and code that's serving it is detectable.",
         "properties": {
@@ -4263,6 +4543,89 @@
           "attempt"
         ],
         "title": "RetryReopened",
+        "type": "object"
+      },
+      "ReviewCoverage": {
+        "additionalProperties": false,
+        "description": "What the steward looked at on a document promotion (ruled 2026-10-29: a sampled promote is\nlegal if it is recorded). Ids are the extraction's integer `part_index`. The route checks every\npart was opened or folded into a group (`review_coverage_invalid`); `sampled`, `flagged`,\n`shared` and `sample` are recorded as sent.",
+        "properties": {
+          "flagged": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Flagged",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "looked_at": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Looked At",
+            "type": "array"
+          },
+          "rules_version": {
+            "minLength": 1,
+            "title": "Rules Version",
+            "type": "string"
+          },
+          "sample": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample"
+          },
+          "sampled": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Sampled",
+            "type": "array"
+          },
+          "shared": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageShared"
+            },
+            "title": "Shared",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rules_version",
+          "looked_at",
+          "sampled",
+          "flagged",
+          "groups",
+          "shared"
+        ],
+        "title": "ReviewCoverage",
         "type": "object"
       },
       "ReviewStartRequest": {
@@ -6474,6 +6837,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6483,6 +6856,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6519,6 +6910,116 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Event"
+      }
+    },
+    "/ingest/export": {
+      "get": {
+        "description": "GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the\nrange (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.\nA service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The\ncapability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is\none of the caller's entitlement-cell domains are in the set, filtered before the loud-not-\npartial checks and before the 500 cap; a caller with no cells gets the empty export.\nGate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy\nrefusal; Topaz down is 503). At most 92 days (both ends counted) and 500 notices. LOUD, NOT\nPARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,\nextraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks\non is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`).",
+        "operationId": "ingest_export_batch_route_ingest_export_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "profile",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6535,7 +7036,41 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Ingest Event"
+        "summary": "Ingest Export Batch Route",
+        "tags": [
+          "ingest-export"
+        ]
+      }
+    },
+    "/ingest/export/profiles": {
+      "get": {
+        "description": "GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:\n`[{name, format, granularity, label}]`. An invalid profile is logged at ERROR and left out.\nAny authenticated caller (a name and a label are not notice content).",
+        "operationId": "ingest_export_profiles_route_ingest_export_profiles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExportProfile"
+                  },
+                  "title": "Response 200 Ingest Export Profiles Route Ingest Export Profiles Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Export Profiles Route",
+        "tags": [
+          "ingest-export"
+        ]
       }
     },
     "/ingest/mine": {
@@ -6765,6 +7300,68 @@
         "x-stability": "preview"
       }
     },
+    "/ingest/{ingest_id}/export": {
+      "get": {
+        "description": "GET /ingest/<id>/export?profile=<name> -- one PROMOTED notice rendered through a profile\n(`policy/exports/`, 7f's batch-column-map vocabulary). A service caller never reaches the\ncapability: the original 403 is re-raised and Topaz is not asked. The capability is\nDOMAIN-SCOPED: a notice whose promotion domain (`promotion.recorded_domain`) is not one of the\ncaller's cell domains, or has none, re-raises the original 403 (audit `out_of_domain`). Gate: `_ingest_review_access` (the\ndropper, or a holder of the open task), and a caller it would 403 is admitted when they hold\nthe `ingest:exportBatch` capability (reason `export_capability`); a Topaz failure while that\nis consulted is 503, a False re-raises the ORIGINAL 403. 422 `export_profile_unknown` /\n`export_profile_invalid`; 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the\nexport serves review.json's values, so a promotion carrying steward row or header edits would\nexport the uncorrected ones; refused until a later slice applies corrections); 503\n`decision_ledger_unreachable`; 422 `export_blocked` (naming notice, part, column).",
+        "operationId": "ingest_export_route_ingest__ingest_id__export_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ingest_id",
+            "required": true,
+            "schema": {
+              "title": "Ingest Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "profile",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Export Route",
+        "tags": [
+          "ingest-export"
+        ]
+      }
+    },
     "/ingest/{ingest_id}/extraction": {
       "get": {
         "description": "GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the\nevidence reference (7f's `wire_evidence_ref`: page, bbox in page fractions, optional note) the review card draws. Gate: `_ingest_review_access`\n(the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of\nreview.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and\nis counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /\n`extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`.\n`leaf` / `leaf_source` / `corrected_by` are the notice's pcn|pdn and where it came from, read from\nthe ROW only (`_row_leaf`); a row with no leaf shows `leaf: null` whatever review.json says.\nA REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the\nrejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404\n`rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`.",
@@ -6849,6 +7446,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6858,6 +7465,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -7130,6 +7755,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -7139,6 +7774,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -7353,6 +8006,48 @@
           }
         ],
         "summary": "Write Case Summary Route"
+      }
+    },
+    "/internal/human_tasks/expire": {
+      "post": {
+        "description": "Retire the still-`pending` queue row(s) of a task whose human_await TIMED OUT, so neither\nREST nor the feed offers a task nobody can act on. INTERNAL seam, same gate as register\n(get_current_user). `expired == 0` is a 200: an already-resolved task stays resolved.",
+        "operationId": "expire_human_task_internal_human_tasks_expire_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanTaskExpireRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Expire Human Task"
       }
     },
     "/internal/human_tasks/register": {
@@ -7599,6 +8294,24 @@
               }
             },
             "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [

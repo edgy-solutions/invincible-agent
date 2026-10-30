@@ -1,6 +1,6 @@
 # Cortex ingest API, v1
 
-**Version 1.2.0, 2026-10-25.** This is the contract for a team that builds its own UI on the
+**Version 1.4.0, 2026-10-30.** This is the contract for a team that builds its own UI on the
 platform's document ingest: drop a file, follow it through extraction, read what was
 extracted, and act on the review tasks it raises.
 

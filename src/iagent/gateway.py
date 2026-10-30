@@ -58,8 +58,9 @@ from .models import BpmnCatalog
 from .auth import get_current_user, User
 from . import frontend_menu_store
 from .ingest_api import (
-    BINARY_200, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse, Entitlements,
-    Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing, RetriesListing,
+    BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse,
+    Entitlements, ExportProfile, Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing,
+    RetriesListing,
     RetryResponse, StatusBody, TitleLeafResponse,
 )
 from .identity_vault import (
@@ -156,6 +157,48 @@ def _env_int(name: str, default: int) -> int:
 
 
 _LEAF_BACKSTOP_ACTOR = "bff:manifest-leaf-backstop"
+
+
+# No Retry-After value existed in src/; 5 s matches the 5 s Topaz client timeout.
+_CAN_DROP_RETRY_AFTER = "5"
+
+
+def _row_dropper(row: dict) -> str:
+    """The dropper of record for a status row: `on_behalf_of`, the actor `_admit_on_behalf_of`
+    resolved at `record_received` (the PRINCIPAL when a delegate dropped for them). `submitted_by`
+    is the authenticated delegate and never answers a drop question; it is only the fallback for a
+    row that recorded no actor."""
+    return str((row or {}).get("on_behalf_of") or (row or {}).get("submitted_by") or "").strip()
+
+
+async def _can_drop_or_refuse(kind: str, dropper_id: str) -> None:
+    """THE one can_drop check, called by every site that sets a row's kind (the two doors,
+    title_leaf, /leaf, the BFF leaf backstop). A kind is gated iff the Topaz object
+    `capability:can_drop:<kind>` exists; then the dropper must hold `can_invoke`. Returns when the
+    dropper may drop it. Raises 403 `not_entitled_to_drop` (policy refusal) when not, and 503
+    `authorization_unavailable` / `authorization_unconfigured` when the directory cannot say --
+    a failed read is never "not gated"."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+    from .authz.refusal import policy_refusal
+
+    try:
+        refused = await run_in_threadpool(human_tasks.can_drop_refusal, kind, dropper_id)
+    except human_tasks.AuthorizationUnconfigured as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("can_drop gate unavailable for kind=%s: %s", kind, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify whether this kind is restricted"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
+    if refused is not None:
+        raise policy_refusal(
+            "not_entitled_to_drop", policy_id=refused["policy_id"],
+            missing_binding=refused["missing_binding"], message=refused["message"])
 _INGEST_LEAF_BACKSTOP_SECONDS_DEFAULT = 300
 
 # Ruling 2026-10-21 (a leaf set while the run is in flight): a PDF drop whose leaf (pcn|pdn) is set
@@ -259,6 +302,22 @@ async def _apply_manifest_leaf_block(row: dict, key, manifest: dict) -> tuple:
     if title is not None:
         # The sidecar is rewritten to the leaf BEFORE the row is re-opened, so the relaunch
         # runs as the leaf; an S3 error lands in the per-row except (row skipped).
+        try:
+            await _can_drop_or_refuse(title, _row_dropper(row))
+        except HTTPException as exc:
+            code = exc.status_code
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            logger.warning("ingest_leaf_backstop ingest_id=%s kind=%s refused by can_drop: %s (%s)",
+                           rid, title, detail.get("error"), code)
+            if code != 403:
+                # the directory could not answer: leave the row untouched for the next tick
+                return "can_drop_unavailable", False
+            held = await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+                rid, candidates=_backstop_candidates(block.get("candidates")),
+                detail=f"the title read named {title}, which the dropper may not drop; "
+                       "pick another kind",
+                from_statuses=[ingest_status.EXTRACTING]))
+            return ("awaiting_kind" if held else "row_moved"), held
         await run_in_threadpool(lambda: _apply_leaf_to_sidecar(row, title))
         ok = await run_in_threadpool(lambda: ingest_status.set_leaf(
             rid, title, "title", set_by=_LEAF_BACKSTOP_ACTOR,
@@ -1069,14 +1128,40 @@ async def get_mesh_config(current_user: User = Depends(get_current_user)):
 # step 3 wired), `cells` is empty and `source` reflects the JWT-legacy
 # path. The picker (step 5) treats an empty cells list as "no picker
 # — the caller is on the legacy persona-in-JWT posture."
-@app.get("/me/entitlements", tags=[INGEST_V1_TAG], responses={200: {"model": Entitlements}})
+@app.get("/me/entitlements", tags=[INGEST_V1_TAG], responses={200: {"model": Entitlements}, 503: DROP_GATE_RESPONSES[503]})
 async def get_me_entitlements(current_user: User = Depends(get_current_user)):
     """Return the current user's (persona, domain) entitlement matrix.
 
     `authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop
     echoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it
     as `on_behalf_of` is refused `not_a_delegate` (2026-10-21)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, human_tasks
+
     ent = current_user.entitlements
+    # `droppable_kinds`: every registered kind except a GATED kind (Topaz object
+    # `capability:can_drop:<kind>` exists) this caller is not granted. One unreadable object makes
+    # the whole answer 503 -- never a partial or guessed list.
+    def _droppable() -> list[str]:
+        out: list[str] = []
+        for reg in content_kinds.registrations():
+            if human_tasks.can_drop_refusal(reg.kind, current_user.authz_id) is None:
+                out.append(reg.kind)
+        return out
+
+    try:
+        droppable_kinds = await run_in_threadpool(_droppable)
+    except human_tasks.AuthorizationUnconfigured as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("droppable_kinds unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify which kinds are restricted"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
     return {
         "user_id": current_user.id,
         "authz_id": current_user.authz_id,
@@ -1090,6 +1175,7 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
             else None
         ),
         "source": ent.source,
+        "droppable_kinds": droppable_kinds,
     }
 
 
@@ -1106,6 +1192,7 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
 from pydantic import BaseModel as _BaseModel  # noqa: E402
 from pydantic import BeforeValidator as _BeforeValidator, StrictFloat as _StrictFloat  # noqa: E402
 from pydantic import StrictInt as _StrictInt  # noqa: E402
+from pydantic import StrictBool as _StrictBool, StrictStr as _StrictStr  # noqa: E402
 from typing import Annotated as _Annotated  # noqa: E402
 
 
@@ -1275,6 +1362,41 @@ class HeaderEdit(_RowEditsModel):
         return self
 
 
+class CoverageGroup(_RowEditsModel):
+    """One group of parts a steward folded without opening: the grouping rule, its key, and the
+    members NOT opened (part_index values)."""
+    rule: _Annotated[str, Field(min_length=1)]
+    key: _Annotated[str, Field(min_length=1)]
+    parts: list[_StrictInt]
+
+
+_UnitFloat = _Annotated[_StrictFloat, Field(ge=0, le=1, allow_inf_nan=False)]
+_UnitInt = _Annotated[_StrictInt, Field(ge=0, le=1)]
+
+
+class CoverageShared(_RowEditsModel):
+    """One evidence crop that many parts cite (recorded, not re-derived)."""
+    rule: _Annotated[str, Field(min_length=1)]
+    page: _StrictInt = Field(ge=1)
+    bbox: _Annotated[list[_UnitFloat | _UnitInt], Field(min_length=4, max_length=4)]
+    parts: list[_StrictInt]
+    confirmed: _StrictBool
+
+
+class ReviewCoverage(_RowEditsModel):
+    """What the steward looked at on a document promotion (ruled 2026-10-29: a sampled promote is
+    legal if it is recorded). Ids are the extraction's integer `part_index`. The route checks every
+    part was opened or folded into a group (`review_coverage_invalid`); `sampled`, `flagged`,
+    `shared` and `sample` are recorded as sent."""
+    rules_version: _Annotated[str, Field(min_length=1)]
+    looked_at: list[_StrictInt]
+    sampled: list[_StrictInt]
+    flagged: list[_StrictInt]
+    groups: list[CoverageGroup]
+    shared: list[CoverageShared]
+    sample: Optional[dict[str, _StrictStr | _StrictInt | _StrictFloat | _StrictBool]] = None
+
+
 def _promotion_row_edits_enabled() -> bool:
     """IAGENT_PROMOTION_ROW_EDITS: ON only for the exact string "true" (after strip, lowercased).
     Default OFF (architect ruling 2026-10-18: server-flagged off until one live correction is proved)."""
@@ -1292,6 +1414,8 @@ class HumanTaskActRequest(_BaseModel):
     row_edits: Optional[RowEdits] = None
     # Document promotion `promoted` only (same flag as row_edits): header-field corrections.
     header_edits: Optional[list[HeaderEdit]] = None
+    # Document promotion `promoted` only: what the steward opened vs folded (provenance).
+    review_coverage: Optional[ReviewCoverage] = None
     # document_empty_confirm `has_parts` only (spec 208): the page the steward points at.
     page: Optional[_StrictInt] = None
 
@@ -1304,6 +1428,9 @@ class HumanTaskActRequest(_BaseModel):
         if self.row_edits is not None and self.decision not in ("approved", "promoted"):
             raise ValueError("row_edits is only valid with decision='approved' (grouped review) "
                              "or 'promoted' (document promotion)")
+        if self.review_coverage is not None and self.decision != "promoted":
+            raise ValueError("review_coverage is only valid with decision='promoted' "
+                             "(document promotion)")
         if self.header_edits is not None and not self.header_edits:
             self.header_edits = None
         if self.header_edits is not None:
@@ -1376,6 +1503,26 @@ async def register_human_task(
     logger.info("human_task registered: task_id=%s audience=%s recipients=%d",
                 req.task_id, req.audience, len(result.get("recipients", [])))
     return result
+
+
+class HumanTaskExpireRequest(_BaseModel):
+    task_id: str
+    workflow_id: Optional[str] = None
+
+
+@app.post("/internal/human_tasks/expire")
+async def expire_human_task(
+    req: HumanTaskExpireRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Retire the still-`pending` queue row(s) of a task whose human_await TIMED OUT, so neither
+    REST nor the feed offers a task nobody can act on. INTERNAL seam, same gate as register
+    (get_current_user). `expired == 0` is a 200: an already-resolved task stays resolved."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    n = await run_in_threadpool(lambda: human_tasks.expire_open_task(req.task_id, req.workflow_id))
+    logger.info("human_task expired: task_id=%s workflow_id=%s rows=%d", req.task_id, req.workflow_id, n)
+    return {"task_id": req.task_id, "workflow_id": req.workflow_id, "expired": n}
 
 
 @app.post("/access_requests")
@@ -4388,7 +4535,7 @@ class CanvasSeedConflict(_BaseModel):
     detail: CanvasSeedConflictDetail
 
 
-def _canvas_seed_enumerator(user_email: str, entitled_domains: list):
+def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list):
     """A SYNC `(class_uri, bound_slots=) -> {outcome, members, ...}` against engine-o's
     `/enumerate_instances`, with the body `dynamic_supervisor._make_enumerator` sends. Sync
     because `decide_disposition` calls it synchronously; the caller runs the whole disposition
@@ -4446,7 +4593,7 @@ async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user:
 
     ent = current_user.entitlements
     domains = _canvas_seed_domains(request, ent) or sorted({c.domain for c in ent.cells})
-    enum = _canvas_seed_enumerator(current_user.authz_id, domains)
+    enum = _canvas_seed_enumerator(user_email=current_user.authz_id, entitled_domains=domains)
 
     def _build():
         disp = decide_disposition(accepted=accepted, declared=declared, enumerate_class=enum)
@@ -5331,6 +5478,14 @@ async def act_on_human_task(
             "message": "header edits on a document promotion are off on this deployment "
                        "(IAGENT_PROMOTION_ROW_EDITS); sent here they would be lost"})
 
+    # review_coverage: document_promotion only. Sent elsewhere it would be dropped, which is a
+    # provenance claim that is not true.
+    if req.review_coverage is not None and match.get("kind") != "document_promotion":
+        raise HTTPException(status_code=422, detail={
+            "error": "review_coverage_not_for_kind", "kind": match.get("kind"),
+            "message": "review coverage is read only on a document promotion; sent here it "
+                       "would be lost"})
+
     if req.page is not None and match.get("kind") != EMPTY_CONFIRM_KIND:
         raise HTTPException(status_code=422, detail={
             "error": "page_not_for_kind", "kind": match.get("kind"),
@@ -5528,6 +5683,32 @@ async def act_on_human_task(
                                                 r["evidence_ref"])),
                                         "evidence_ref": r["evidence_ref"]})
 
+        # REVIEW COVERAGE (ruling 10-29): every part opened or folded into a named group. Asked
+        # before any write; an unreadable extraction is a 503, never a skipped check.
+        coverage = None
+        if req.review_coverage is not None:
+            try:
+                _cov_subject = promotion.subject_from_payload(match.get("payload"))
+                _parts = await run_in_threadpool(
+                    lambda: _review_parts_for_payload(_cov_subject))
+            except HTTPException as exc:
+                if exc.status_code < 500:
+                    raise  # e.g. 422 extraction_unbound: the binding said no, a retry will not help
+                raise HTTPException(status_code=503, detail={
+                    "error": "review_coverage_unverifiable", "task_id": task_id,
+                    "message": f"the extraction's parts could not be read "
+                               f"({type(exc).__name__}); nothing was written"})
+            except Exception as exc:  # noqa: BLE001 -- cannot-know is a refusal, nothing written
+                raise HTTPException(status_code=503, detail={
+                    "error": "review_coverage_unverifiable", "task_id": task_id,
+                    "message": f"the extraction's parts could not be read "
+                               f"({type(exc).__name__}); nothing was written"})
+            _bad = _review_coverage_problem(req.review_coverage, set(_parts))
+            if _bad is not None:
+                raise HTTPException(status_code=422, detail={
+                    "error": "review_coverage_invalid", "check": _bad[0], "message": _bad[1]})
+            coverage = req.review_coverage.model_dump()
+
         if req.decision == promotion.PROMOTED:
             # The notice's SUBJECT_TO set is reconciled to the reviewed rows (ruled 2026-10-20),
             # so the act needs the reviewed set. No extraction_ref: None (the act refuses 409 if a
@@ -5567,7 +5748,7 @@ async def act_on_human_task(
                 },
                 era=DECISION_RECORD_ERA, now_ms=int(time.time() * 1000),
                 row_edits=corrections, reviewed_mpns=_reviewed, earlier_ingests=_earlier,
-                leaf=_leaf_rec))
+                leaf=_leaf_rec, review_coverage=coverage))
         except promotion.PromotionRefused as exc:
             raise HTTPException(status_code=exc.status, detail={
                 "error": exc.error, "task_id": task_id, "message": str(exc)})
@@ -8825,6 +9006,9 @@ async def _generate_dagster_stream_inner(
     _artifact_id = request.artifact_id or (
         f"urn:li:answerArtifact:{session_id}-{uuid.uuid4().hex[:8]}"
     )
+    # True once a ROUTED subtask_slots_decision (non-empty verb_iri) has been captured into
+    # resolved_intent. See the precedence guard at the reader.
+    _resolved_from_routed = False
     _artifact_bundle: dict = {
         "id": _artifact_id,
         "question_text": user_query,
@@ -9299,6 +9483,17 @@ async def _generate_dagster_stream_inner(
                     except (ValueError, TypeError):
                         return fallback
 
+                # PRECEDENCE, order-independent. A run can have several subtasks and every
+                # materialization lands here. (1) A no-verb record (empty verb_iri, an early
+                # exit) must NOT replace a resolved_intent already taken from a routed record:
+                # a routed subtask wins over an early exit. (2) A routed record DOES replace a
+                # no-verb one. Keyed on a local flag, not on the bundle's prior contents: the
+                # ExtractIntent output seeded there first has no verb_iri contract.
+                _is_routed_rec = bool(_slots_md.get("verb_iri"))
+                if not _is_routed_rec and _resolved_from_routed:
+                    continue
+                if _is_routed_rec:
+                    _resolved_from_routed = True
                 _artifact_bundle["resolved_intent"] = {
                     "verb_iri": _slots_md.get("verb_iri") or "",
                     "disposition": _slots_md.get("disposition") or "",
@@ -9321,13 +9516,17 @@ async def _generate_dagster_stream_inner(
                     # row reading the artifact can count it. Classify path only: the direct
                     # path never calls /fill_slots.
                     "fill_slots": _slots_md.get("fill_slots") or "",
+                    "no_verb_reason": _slots_md.get("no_verb_reason") or "",
+                    "fallback_detail": _slots_md.get("fallback_detail") or "",
+                    "rejected_verb_iri": _slots_md.get("rejected_verb_iri") or "",
                 }
                 logger.info(
                     "resolved_intent captured for run %s: verb=%s disposition=%s "
-                    "accepted=%d refused=%d",
+                    "no_verb_reason=%s accepted=%d refused=%d",
                     run_id,
                     _slots_md.get("verb_iri") or "-",
                     _slots_md.get("disposition") or "-",
+                    _slots_md.get("no_verb_reason") or "-",
                     len(_artifact_bundle["resolved_intent"]["accepted_slots"] or {}),
                     len(_artifact_bundle["resolved_intent"]["refused_slots"] or []),
                 )
@@ -11931,7 +12130,21 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
         task_rows = []  # HITL substrate unconfigured: approvals are honestly empty, not a 503 --
                         # the case itself is readable without it.
 
-    return case_projection.project_workflow_case(case, definitions, task_rows)
+    # The released ActionRecord, read ONLY when a definition could have emitted one. A store that
+    # cannot be read is a 503, not a null: null claims "not released", which is false when we
+    # cannot tell. Same detail as `GET /cases/{id}/action`.
+    output_artifact = None
+    if case_projection.has_emit_step(case, definitions):
+        try:
+            records = await run_in_threadpool(_read_action_records, case_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("action record read failed: %s", exc)
+            raise HTTPException(status_code=503,
+                                detail={"error": "artifact_store_unavailable"}) from exc
+        output_artifact = case_projection.release_artifact(case_id, records)
+
+    return case_projection.project_workflow_case(
+        case, definitions, task_rows, output_artifact)
 
 
 from pydantic import ConfigDict as _ConfigDict  # noqa: E402
@@ -11959,7 +12172,7 @@ async def answer_case_signal(
     current_user: User = Depends(get_current_user),
 ):
     """POST /cases/{case_id}/signals/{signal} -- a person answers a case's human-audience
-    signal (a `signal_await` step, e.g. maint_release's `tier_ack`). A human acknowledgment is
+    signal (a `signal_await` step; no committed definition declares one since 2026-10-28, when the supervisor's approval became the release). A human acknowledgment is
     a cortex action (architect ruling 2026-10-10).
 
     GENERIC over the signal name, GATED by the journalled audience: this route names no signal.
@@ -12045,7 +12258,7 @@ def _sniff_file_kind(head: bytes) -> Optional[str]:
     return None
 
 
-@app.post("/ingest", tags=[INGEST_V1_TAG], responses={200: {"model": IngestResponse}})
+@app.post("/ingest", tags=[INGEST_V1_TAG], responses={200: {"model": IngestResponse}, **DROP_GATE_RESPONSES})
 async def ingest_document(
     file: UploadFile = File(...),
     kind: str = Form(...),
@@ -12190,6 +12403,12 @@ async def ingest_document(
                 ),
             },
         )
+
+    # can_drop:<kind> (2026-10-28): a gated kind is dropped only by its grantees. The EFFECTIVE kind
+    # is `declared_content_kind` (a `leaf` already replaced it above); the dropper is `actor`, the
+    # principal of record when a delegate drops on their behalf. Before the bounded read, so a
+    # refused drop writes nothing.
+    await _can_drop_or_refuse(declared_content_kind, actor)
 
     # THE PROCESSABLE-KINDS CHECK (owner ruling, F2/F3): behind a flag that ships OFF. Flag off ->
     # the store and cache are never touched. Flag on is deny-by-default: no published list yet ->
@@ -12421,7 +12640,7 @@ def _dotted_get(d: dict[str, Any], path: str) -> Any:
     return cur
 
 
-@app.post("/ingest/events")
+@app.post("/ingest/events", responses=DROP_GATE_RESPONSES)
 async def ingest_event(
     req: IngestEventRequest,
     current_user: User = Depends(get_current_user),
@@ -12470,6 +12689,9 @@ async def ingest_event(
                 ),
             },
         )
+    # can_drop:<kind>: the dropper of record (`actor`) must hold it when the kind is gated.
+    # Before the trigger load, the runner and any write, so a refusal records nothing.
+    await _can_drop_or_refuse(req.content_kind, actor)
 
     try:
         from agent_fleet.restate_analyst.case_routing import (  # noqa: PLC0415
@@ -13018,9 +13240,15 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
     A REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the
     rejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404
     `rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`."""
+    row, _why = await _ingest_review_access(ingest_id, current_user, "extraction")
+    return await _extraction_body(ingest_id, row)
+
+
+async def _extraction_body(ingest_id: str, row: dict) -> dict:
+    """The body of GET /ingest/<id>/extraction for an already-gated `row` (the route and the
+    review export share it). Raises the same HTTPExceptions the route documents."""
     from starlette.concurrency import run_in_threadpool
 
-    row, _why = await _ingest_review_access(ingest_id, current_user, "extraction")
     ref = str(row.get("extraction_ref") or "").strip()
     if not ref:
         raise HTTPException(status_code=422, detail={
@@ -13085,6 +13313,265 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
         "part_count": summ["part_count"],
         "rows": rows_out, "rows_without_evidence": without, "review_ref": key,
         "relocated_to": reloc[1] if reloc else None}
+
+
+_EXPORT_BATCH_CAPABILITY = "ingest:exportBatch"
+_EXPORT_MAX_DAYS = 92
+_EXPORT_MAX_NOTICES = 500
+_EXPORT_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def _export_profile_or_422(name: Optional[str]):
+    """The named valid export profile, else 422 `export_profile_unknown` / `export_profile_invalid`."""
+    from . import export_profiles
+
+    p = export_profiles.load_profiles().get(name or "")
+    if p is None:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_profile_unknown",
+            "message": f"no export profile {name!r}; GET /ingest/export/profiles lists them"})
+    if isinstance(p, export_profiles.ProfileInvalid):
+        raise HTTPException(status_code=422, detail={
+            "error": "export_profile_invalid", "reason": p.reason,
+            "message": f"export profile {name!r} is invalid ({p.reason})"})
+    return p
+
+
+async def _may_export_batch(caller: str, route: str, ingest_id: str = "-") -> bool:
+    """The `ingest:exportBatch` capability for `caller`. A Topaz failure is 503, never a deny
+    (same bodies as `_ingest_review_access`); an ungranted capability is False."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    try:
+        return bool(await run_in_threadpool(
+            lambda: human_tasks.can_invoke_or_unavailable(_EXPORT_BATCH_CAPABILITY, caller)))
+    except human_tasks.AuthorizationUnconfigured as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unconfigured")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("export capability check unavailable: %s", type(exc).__name__)
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unavailable")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify the caller against the export capability"}) from exc
+
+
+def _export_decision_record(ingest_id: str):
+    """Sync (threadpool): the stored decision record, 503 `decision_ledger_unreachable` on a fault."""
+    from . import promotion_stores
+
+    try:
+        return promotion_stores.PgDecisionLedger().record_for(ingest_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decision ledger read failed for %s: %s", ingest_id, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "decision_ledger_unreachable",
+            "message": f"the decision ledger did not answer: {type(exc).__name__}"})
+
+
+async def _export_notice_extraction(ingest_id: str, row: dict) -> dict:
+    """The extraction body of a PROMOTED, uncorrected notice, for the export; else the refusal.
+    409 `ingest_not_promoted` (body carries `status`); 409 `export_corrections_not_applied`; 503
+    `decision_ledger_unreachable`; then whatever `_extraction_body` refuses."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status, promotion
+
+    if row.get("status") != ingest_status.PROMOTED:
+        raise HTTPException(status_code=409, detail={
+            "error": "ingest_not_promoted", "status": row.get("status"),
+            "message": "only a promoted notice can be exported"})
+    rec = await run_in_threadpool(lambda: _export_decision_record(ingest_id))
+    if promotion._recorded_row_edits(rec):
+        raise HTTPException(status_code=409, detail={
+            "error": "export_corrections_not_applied",
+            "message": "the promotion carries steward corrections (row or header edits) and the "
+                       "export serves review.json's uncorrected values; refused until "
+                       "corrections are applied to the export"})
+    return await _extraction_body(ingest_id, row)
+
+
+def _export_render(profile, bodies: list) -> list:
+    from . import export_profiles
+
+    out: list = []
+    try:
+        for b in bodies:
+            out += export_profiles.render_rows(profile, b)
+    except export_profiles.ExportBlocked as exc:
+        raise HTTPException(status_code=422, detail={"error": "export_blocked", **exc.body()})
+    return out
+
+
+def _export_response(profile, rows: list, filename: str, **extra) -> Response:
+    from . import export_profiles
+
+    disp = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    if profile.format == "csv":
+        return Response(export_profiles.to_csv(profile.outputs, rows),
+                        media_type="text/csv; charset=utf-8", headers=disp)
+    return JSONResponse(export_profiles.to_json(profile, rows, **extra), headers=disp)
+
+
+# The export routes carry their own tag, not ingest-v1: a v1 entry needs a JSON response model per
+# route and the CSV body is not JSON. They enter v1 as PREVIEW routes (like /empty) when Lane 1
+# regenerates the v1 doc and shapes lock (overnight item 5).
+@app.get("/ingest/export/profiles", tags=["ingest-export"],
+         responses={200: {"model": list[ExportProfile]}})
+async def ingest_export_profiles_route(current_user: User = Depends(get_current_user)):
+    """GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:
+    `[{name, format, granularity, label}]`. An invalid profile is logged at ERROR and left out.
+    Any authenticated caller (a name and a label are not notice content)."""
+    from . import export_profiles
+
+    out = []
+    for name, p in sorted(export_profiles.load_profiles().items()):
+        if isinstance(p, export_profiles.ProfileInvalid):
+            logger.error("export profile %s is invalid: %s", name, p)
+            continue
+        out.append({"name": p.name, "format": p.format, "granularity": p.granularity,
+                    "label": p.label})
+    return out
+
+
+@app.get("/ingest/export", tags=["ingest-export"])
+async def ingest_export_batch_route(
+        profile: Optional[str] = _Query(None), from_: Optional[str] = _Query(None, alias="from"),
+        to: Optional[str] = _Query(None), current_user: User = Depends(get_current_user)):
+    """GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the
+    range (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.
+    A service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The
+    capability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is
+    one of the caller's entitlement-cell domains are in the set, filtered before the loud-not-
+    partial checks and before the 500 cap; a caller with no cells gets the empty export.
+    Gate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy
+    refusal; Topaz down is 503). At most 92 days (both ends counted) and 500 notices. LOUD, NOT
+    PARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,
+    extraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks
+    on is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`)."""
+    from datetime import timedelta
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status, promotion_stores
+    from .authz.refusal import policy_refusal
+
+    caller = (current_user.authz_id or "").strip()
+    if _is_service_caller(caller) or not await _may_export_batch(caller, "export_batch"):
+        _audit_ingest_access("export_batch", "-", caller, "deny", "not_entitled")
+        raise policy_refusal(
+            "not_entitled_to_export_batch", policy_id="capability_grants:ingest:exportBatch",
+            missing_binding="can_invoke ingest:exportBatch",
+            message="exporting the promoted notices of a date range needs the ingest:exportBatch "
+                    "capability")
+    prof = _export_profile_or_422(profile)
+
+    def _day(v):
+        if not isinstance(v, str) or not _EXPORT_DATE_RE.fullmatch(v):
+            return None
+        try:
+            return _date.fromisoformat(v)
+        except ValueError:
+            return None
+
+    d0, d1 = _day(from_), _day(to)
+    if d0 is None or d1 is None or d0 > d1:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_invalid",
+            "message": "from and to are required, YYYY-MM-DD (UTC days), and from <= to"})
+    if (d1 - d0).days + 1 > _EXPORT_MAX_DAYS:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_too_large",
+            "message": f"at most {_EXPORT_MAX_DAYS} days (both ends counted); narrow the range"})
+
+    def _ms(d):
+        return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
+
+    start_ms, end_ms = _ms(d0), _ms(d1 + timedelta(days=1))
+    try:
+        domains = {c.domain for c in current_user.entitlements.cells}
+        hits = [] if not domains else await run_in_threadpool(
+            lambda: promotion_stores.PgDecisionLedger().promoted_between(
+                start_ms, end_ms, _EXPORT_MAX_NOTICES + 1, domains))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decision ledger range read failed: %s", exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "decision_ledger_unreachable",
+            "message": f"the decision ledger did not answer: {type(exc).__name__}"})
+    if len(hits) > _EXPORT_MAX_NOTICES:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_too_large",
+            "message": f"more than {_EXPORT_MAX_NOTICES} notices were promoted in the range; "
+                       "narrow the range"})
+    bodies = []
+    for ingest_id, _at in hits:
+        row = await run_in_threadpool(lambda i=ingest_id: ingest_status.get_row(i))
+        try:
+            if row is None or row.get("kind") == ingest_status.EVENT:
+                raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+            bodies.append(await _export_notice_extraction(ingest_id, row))
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                raise
+            d = exc.detail if isinstance(exc.detail, dict) else {}
+            raise HTTPException(status_code=422, detail={
+                "error": "export_notice_unreadable", "ingest_id": ingest_id,
+                "reason": d.get("error"), "message": d.get("message") or str(exc.detail)})
+    rows = _export_render(prof, bodies)
+    _ingest_access_log.info(
+        "ingest_export_batch caller=%s profile=%s from=%s to=%s n=%d",
+        caller, prof.name, d0.isoformat(), d1.isoformat(), len(bodies))
+    return _export_response(
+        prof, rows, f"ingest-export.{prof.name}.{d0.isoformat()}_{d1.isoformat()}.{prof.format}",
+        **{"from": d0.isoformat(), "to": d1.isoformat(), "notices": len(bodies)})
+
+
+@app.get("/ingest/{ingest_id}/export", tags=["ingest-export"])
+async def ingest_export_route(ingest_id: str, profile: Optional[str] = _Query(None),
+                              current_user: User = Depends(get_current_user)):
+    """GET /ingest/<id>/export?profile=<name> -- one PROMOTED notice rendered through a profile
+    (`policy/exports/`, 7f's batch-column-map vocabulary). A service caller never reaches the
+    capability: the original 403 is re-raised and Topaz is not asked. The capability is
+    DOMAIN-SCOPED: a notice whose promotion domain (`promotion.recorded_domain`) is not one of the
+    caller's cell domains, or has none, re-raises the original 403 (audit `out_of_domain`). Gate: `_ingest_review_access` (the
+    dropper, or a holder of the open task), and a caller it would 403 is admitted when they hold
+    the `ingest:exportBatch` capability (reason `export_capability`); a Topaz failure while that
+    is consulted is 503, a False re-raises the ORIGINAL 403. 422 `export_profile_unknown` /
+    `export_profile_invalid`; 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the
+    export serves review.json's values, so a promotion carrying steward row or header edits would
+    export the uncorrected ones; refused until a later slice applies corrections); 503
+    `decision_ledger_unreachable`; 422 `export_blocked` (naming notice, part, column)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    caller = (current_user.authz_id or "").strip()
+    try:
+        row, _why = await _ingest_review_access(ingest_id, current_user, "export")
+    except HTTPException as exc:
+        if exc.status_code != 403:
+            raise
+        if _is_service_caller(caller):
+            raise
+        if not await _may_export_batch(caller, "export", ingest_id):
+            raise
+        row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+        if row is None or row.get("kind") == ingest_status.EVENT:
+            raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+        from . import promotion
+
+        rec = await run_in_threadpool(lambda: _export_decision_record(ingest_id))
+        if promotion.recorded_domain(rec) not in {c.domain for c in current_user.entitlements.cells}:
+            _audit_ingest_access("export", ingest_id, caller, "deny", "out_of_domain")
+            raise
+        _audit_ingest_access("export", ingest_id, caller, "allow", "export_capability")
+    prof = _export_profile_or_422(profile)
+    body = await _export_notice_extraction(ingest_id, row)
+    rows = _export_render(prof, [body])
+    return _export_response(prof, rows, f"{ingest_id}.{prof.name}.{prof.format}")
 
 
 _SOURCE_MEDIA_TYPES = {"pdf": "application/pdf", "xml": "application/xml"}
@@ -13542,6 +14029,38 @@ def _bound_review_for_payload(subject) -> dict:
             "error": "extraction_unbound",
             "message": f"the review rows are not under this document's directory {prefix!r}"})
     return _read_review_json(key)
+
+
+def _review_parts_for_payload(subject) -> list:
+    """The distinct `part_index` of the extraction a promotion task points at (sync; threadpool),
+    read through the reader behind `GET /ingest/{id}/extraction`."""
+    return sorted({int(m.group(1)) for it in _review_items(_bound_review_for_payload(subject))
+                   if (m := _PART_FIELD_RE.match(str(it.get("field_path") or "")))})
+
+
+def _review_coverage_problem(cov, parts: set) -> Optional[tuple]:
+    """`(check, message)` for the first failing coverage check, else None. Checks: unknown_part,
+    duplicate_part, overlap, uncovered. `sampled`, `flagged`, `shared`, `sample` are recorded only."""
+    lists = [("looked_at", cov.looked_at), ("sampled", cov.sampled), ("flagged", cov.flagged)]
+    lists += [(f"groups[{i}].parts", g.parts) for i, g in enumerate(cov.groups)]
+    lists += [(f"shared[{i}].parts", s.parts) for i, s in enumerate(cov.shared)]
+    for name, ids in lists:
+        extra = sorted(set(ids) - parts)
+        if extra:
+            return ("unknown_part", f"{name} names parts not in the extraction: {extra[:10]}")
+    for name, ids in lists:
+        if len(ids) != len(set(ids)):
+            return ("duplicate_part", f"{name} repeats a part id")
+    opened = set(cov.looked_at)
+    for i, g in enumerate(cov.groups):
+        both = opened & set(g.parts)
+        if both:
+            return ("overlap", f"groups[{i}] shares parts with looked_at or an earlier group: "
+                               f"{sorted(both)[:10]}")
+        opened |= set(g.parts)
+    if opened != parts:
+        return ("uncovered", f"parts neither opened nor grouped: {sorted(parts - opened)[:10]}")
+    return None
 
 
 def _review_header_for_payload(subject) -> dict:
@@ -14676,7 +15195,7 @@ class IngestTitleLeafRequest(_BaseModel):
     run_id: Optional[str] = None
 
 
-@app.post("/ingest/{ingest_id}/title_leaf", tags=[INGEST_V1_TAG], responses={200: {"model": TitleLeafResponse}})
+@app.post("/ingest/{ingest_id}/title_leaf", tags=[INGEST_V1_TAG], responses={200: {"model": TitleLeafResponse}, **DROP_GATE_RESPONSES})
 async def ingest_title_leaf_route(
     ingest_id: str, req: IngestTitleLeafRequest, current_user: User = Depends(get_current_user),
 ):
@@ -14741,6 +15260,20 @@ async def ingest_title_leaf_route(
             return _answer(row, True)
         # 3. a confident title
         if title is not None:
+            # can_drop:<title>, against the row's DROPPER (not doc-tools): a service identity must
+            # not launder a non-grantee's drop into a restricted kind. Refused: the leaf is NOT set
+            # and the row waits for a kind (the hold in step 4), then the 403 is answered.
+            try:
+                await _can_drop_or_refuse(title, _row_dropper(row))
+            except HTTPException as exc:
+                if exc.status_code == 403:
+                    await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+                        ingest_id,
+                        candidates=[c.model_dump() for c in (req.candidates or [])],
+                        detail=(f"the title named {title}, which the dropper may not drop; "
+                                "pick another kind"),
+                        run_id=req.run_id, from_statuses=[stage]))
+                raise
             written = await run_in_threadpool(lambda: ingest_status.set_leaf(
                 ingest_id, title, "title", set_by=caller, from_statuses=[stage]))
             if written is not None:
@@ -14772,7 +15305,7 @@ class IngestLeafRequest(_BaseModel):
     leaf: str
 
 
-@app.post("/ingest/{ingest_id}/leaf", tags=[INGEST_V1_TAG], responses={200: {"model": LeafResponse}})
+@app.post("/ingest/{ingest_id}/leaf", tags=[INGEST_V1_TAG], responses={200: {"model": LeafResponse}, **DROP_GATE_RESPONSES})
 async def ingest_leaf_route(
     ingest_id: str, req: IngestLeafRequest, current_user: User = Depends(get_current_user),
 ):
@@ -14855,6 +15388,17 @@ async def ingest_leaf_route(
                       "message": "the document moved on while the kind was being set; "
                                  "reload it and try again"}, "row_moved")
 
+    # can_drop:<leaf>, against the row's DROPPER, never the caller (a granted steward or the BFF must
+    # not move a non-grantee's document into a restricted kind). No steward exemption: deny by
+    # default until the architect rules. Once, before any write (the sidecar rewrite included); the
+    # dropper of record does not change across the rounds below.
+    try:
+        await _can_drop_or_refuse(leaf, _row_dropper(row))
+    except HTTPException as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny",
+                             "not_entitled_to_drop" if exc.status_code == 403
+                             else "authorization_unavailable")
+        raise
     old_kind = row.get("content_kind")
     same = _same_passes(old_kind, leaf)
     for _round in range(3):
@@ -15805,15 +16349,12 @@ async def electric_shape_proxy(
     # server-side WHERE; there is no branch that serves a table UNFILTERED.
     if table == "human_task_projection":
         escaped_id = _escape_identity_literal(current_user.authz_id)
-        # Scope the inbox stream to PENDING rows only, so it agrees with the REST
-        # snapshot (/me/human_tasks filters status='pending'). Without this the shape
-        # streamed EVERY row for the recipient incl. resolved ones; a resolved task
-        # could linger client-side as a stale 'pending' (the badge showing N, then
-        # dropping to the real count when the inbox opened and replacePending ran the
-        # REST reconcile). With status in the WHERE, resolving a task moves it OUT of
-        # the shape -> Electric emits a delete -> it drops cleanly, no flicker. status
-        # is a plain column (Electric's WHERE subset handles column = literal + AND).
-        server_where = f"recipient_id = '{escaped_id}' AND status = 'pending'"
+        # Scope the inbox stream to PENDING rows only, so it agrees with the REST snapshot
+        # (/me/human_tasks): resolving a task moves it OUT of the shape -> Electric emits a delete.
+        # The predicate's definition now lives in human_tasks (inbox_where_literal), shared with
+        # list_tasks_for; this site only supplies the validated, escaped identity.
+        from . import human_tasks as _human_tasks
+        server_where = _human_tasks.inbox_where_literal(escaped_id)
     elif table == "ingest_status_projection":
         # ADR-0041 §8: the ingestion seam's status stream. Same authz_id-keyed discipline
         # as human_task_projection above (submitted_by/on_behalf_of are authz identities,

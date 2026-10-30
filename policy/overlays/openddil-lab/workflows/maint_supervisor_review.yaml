@@ -25,8 +25,8 @@ steps:
       offline. Approve releases it; reject returns the case for a new proposal.
     role: supervisor
     approves: [approved]
-    # SAMPLE: four hours.
-    deadline_seconds: 14400
+    # SANDBOX: 72 hours (ruled 2026-10-28). An unanswered approval still escalates; silence never approves.
+    deadline_seconds: 259200
 
 observable_state:
   visible: [domain_stages, review.status]

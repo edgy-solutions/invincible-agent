@@ -440,3 +440,104 @@ def test_10_a_non_member_bearer_and_a_service_bearer_are_refused_a_member_is_ser
         assert r.status_code == expect, (who, r.status_code)
         if expect == 403:
             assert r.json()["detail"] == ENVELOPE, who      # and it never served the bytes
+
+
+# -- arm 11: the provenance sheets are optional per profile ------------------------------------
+# `provenance_sheets: false` delivers exactly the template's sheets; the provenance still travels
+# in the envelope and the BFF's X-Cells-Sha256 header.
+
+def _no_provenance(raw):
+    raw["provenance_sheets"] = False
+    raw.pop("methods_sheet", None)
+    raw.pop("manifest_sheet", None)
+
+
+def _plain(declared, tmp_path):
+    """The sample row with `provenance_sheets: false`, loaded."""
+    (tmp_path / "plain").mkdir()
+    return {p.name: p for p in _load(_overlay(tmp_path / "plain", _no_provenance), declared)}
+
+
+def _reader_hash(path):
+    """What a reader holding only the delivered file and the template can recompute: every cell
+    whose value differs from the template's same sheet/coordinate, through the producer's one
+    canonical rule."""
+    tpl = openpyxl.load_workbook(TEMPLATE)
+    out = openpyxl.load_workbook(path)
+    cells = []
+    for ws in out.worksheets:
+        base = tpl[ws.title]
+        for row in ws.iter_rows():
+            for c in row:
+                if c.value is not None and c.value != base[c.coordinate].value:
+                    cells.append([ws.title, c.coordinate, c.value])
+    return cdrl._sha(sorted(cells, key=lambda c: (c[0], c[1])))
+
+
+def test_11_provenance_sheets_not_a_boolean_is_refused_naming_the_key(declared, tmp_path):
+    _refuses(tmp_path, declared, lambda r: r.update(provenance_sheets="no"), "provenance_sheets")
+
+
+@pytest.mark.parametrize("key,val", [("methods_sheet", "Methods"), ("manifest_sheet", "_manifest")])
+def test_11_false_with_a_provenance_sheet_name_is_refused(declared, tmp_path, key, val):
+    def m(r):
+        r["provenance_sheets"] = False
+        r.pop("methods_sheet", None)
+        r.pop("manifest_sheet", None)
+        r[key] = val
+    _refuses(tmp_path, declared, m, "names a provenance sheet but provenance_sheets is false")
+
+
+def test_11_the_default_is_true(declared, tmp_path):
+    def m(r):   # the key AND the sheet names gone, so only the default decides
+        for k in ("provenance_sheets", "methods_sheet", "manifest_sheet"):
+            r.pop(k, None)
+    got = _load(_overlay(tmp_path, m), declared)
+    assert got[0].provenance_sheets is True
+
+
+def test_11_false_delivers_exactly_the_templates_sheets(declared, tmp_path):
+    path, _ = _build(_plain(declared, tmp_path), tmp_path / "out")
+    out, tpl = openpyxl.load_workbook(path), openpyxl.load_workbook(TEMPLATE)
+    assert out.sheetnames == tpl.sheetnames
+    assert [w.sheet_state for w in out.worksheets] == [w.sheet_state for w in tpl.worksheets]
+
+
+def test_11_the_hash_is_recomputable_from_the_delivered_file_and_the_template(declared, tmp_path):
+    path, env = _build(_plain(declared, tmp_path), tmp_path / "out")
+    assert _reader_hash(path) == env["cells_sha256"]
+
+
+def test_11_the_provenance_still_travels_in_the_envelope(profiles, declared, tmp_path):
+    _, off = _build(_plain(declared, tmp_path), tmp_path / "off")
+    path, on = _build(profiles, tmp_path / "on")
+    assert off["provenance_sheets"] is False
+    assert [s["fn"] for s in off["sources"]] == list(profiles[PROFILE].sources)
+    assert all(s["method"] for s in off["sources"])
+    assert on["provenance_sheets"] is True
+    wb = openpyxl.load_workbook(path)
+    assert "Methods" in wb.sheetnames and "_manifest" in wb.sheetnames
+
+
+def test_11_the_false_hash_is_not_a_stale_copy_of_the_true_one(profiles, declared, tmp_path):
+    _, off = _build(_plain(declared, tmp_path), tmp_path / "off")
+    _, on = _build(profiles, tmp_path / "on")
+    assert (off["program_id"], off["as_of"]) == (on["program_id"], on["as_of"])
+    assert off["cells_sha256"] != on["cells_sha256"]   # Methods cells are hashed only when true
+
+
+def test_11_cdrl_export_with_a_false_profile_serves_a_file_the_hash_recomputes_from(
+        served, declared, monkeypatch, tmp_path):
+    c, _, _ = served
+    monkeypatch.setattr(engine, "PROFILES", _plain(declared, tmp_path))
+    r = _post(c)
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["envelope"]["cells_sha256"] and b["envelope"]["provenance_sheets"] is False
+    monkeypatch.setattr(engine, "_current_caller", lambda: SimpleNamespace(authz_id=ALICE))
+    got = c.get(f"/artifact/{b['artifact_filename']}")
+    assert got.status_code == 200
+    served_file = tmp_path / "served.xlsx"
+    served_file.write_bytes(got.content)
+    assert openpyxl.load_workbook(served_file).sheetnames == openpyxl.load_workbook(TEMPLATE).sheetnames
+    assert _reader_hash(served_file) == b["envelope"]["cells_sha256"]

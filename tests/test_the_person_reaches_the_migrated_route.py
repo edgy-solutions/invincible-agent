@@ -120,12 +120,32 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
      SUPERVISOR, "execute_subtask", "_make_enumerator", ("config." + FIELD,)),
     ("17 · onto the wire to /enumerate_instances",
      SUPERVISOR, "_make_enumerator", "<dict>", (FIELD,)),
+    # 18-19: the BFF's OWN enumerator for the canvas seed's ask -- the same destination as 16-17,
+    # a different origin. The caller's identity from the edge is forwarded and nothing is named at
+    # the site, so this is a hop, not an ORIGIN. Introduced by 473f9c40 (#97); found red on master
+    # by lane/01's census on 10-28. Hop 19's parameter is REQUIRED (see REQUIRED_IDENTITY).
+    ("18 · into the canvas seed's enumerator (the BFF's own, for the ask)",
+     GATEWAY, "_canvas_seed_ask", "_canvas_seed_enumerator", ("current_user.authz_id",)),
+    ("19 · onto the wire to /enumerate_instances from the BFF",
+     GATEWAY, "_canvas_seed_enumerator", "<dict>", (FIELD,)),
+    # 20-21: BFF -> engine-fin. The caller's own edge identity (current_user.authz_id) rides to
+    # engine-fin, where it gates program visibility. Nothing is named at the site, so these are
+    # hops, not ORIGINs. Added by 8bcf9fb7 and 3a6d9a36 without registration; found when 18-19
+    # were registered. Not (FIELD,) hops, so the OMIT arm does not apply.
+    ("20 · onto the wire to engine-fin /package_export (the template export)",
+     GATEWAY, "_export_package_from_template", "<dict>", ("current_user.authz_id",)),
+    ("21 · onto the wire to engine-fin /cdrl_export",
+     GATEWAY, "export_cdrl", "<dict>", ("current_user.authz_id",)),
     # Hop 22: the plan answers export. The BFF names the caller to engine-cost's /answers_export,
-    # whose reader check keys on it. Numbered 22 because a parallel branch
-    # (fin/canvas-seed-enumerator-hop) is registering hops 18-21; reconcile on merge.
+    # whose reader check keys on it. Numbered 22 because #145 took hops 18-21.
     ("22 · onto the wire to engine-cost's /answers_export",
      GATEWAY, "_export_plan_answers", "<dict>", ("current_user.authz_id",)),
 ]
+
+#: Hops whose identity parameter has NO default, so omission is a TypeError at the call, which is
+#: strictly stronger than the chain's ``""`` convention. Keyed by hop label; the OMIT arm holds
+#: these to "no default" instead of "defaults to ''".
+REQUIRED_IDENTITY: set[str] = {"19 · onto the wire to /enumerate_instances from the BFF"}
 
 #: Sites that READ the identity without naming it under :data:`FIELD` -- ``getattr`` with a
 #: default. Sealed by name, because ``getattr(config, "user_email", "")`` is strictly worse than
@@ -293,11 +313,24 @@ def test_the_hop_can_OMIT_the_identity_silently_which_is_why_this_file_exists(
     for arg, default in zip(positional[len(positional) - len(args.defaults):], args.defaults):
         defaults[arg.arg] = default
     default = defaults.get(FIELD)
+    if label in REQUIRED_IDENTITY:
+        assert default is None, (
+            f"hop {label!r}: {rel}::{caller} now defaults {FIELD!r} to {ast.unparse(default)} -- "
+            f"this hop's parameter is REQUIRED, and a default makes omission silent again"
+        )
+        return
     assert default is not None and isinstance(default, ast.Constant) and default.value == "", (
         f"hop {label!r}: {rel}::{caller} no longer defaults {FIELD!r} to the empty string "
         f"(found {ast.unparse(default) if default is not None else 'no default'}). If it is now "
         f"REQUIRED, omission at this hop is caught at runtime -- say so here and keep the arms."
     )
+
+
+def test_every_REQUIRED_IDENTITY_label_is_a_real_hop_that_forwards_the_field() -> None:
+    """A stale or typo'd label would exempt nothing, silently."""
+    real = {h[0] for h in HOPS if h[4] == (FIELD,)}
+    stale = sorted(REQUIRED_IDENTITY - real)
+    assert not stale, f"REQUIRED_IDENTITY names no hop that forwards {FIELD!r}: {stale}"
 
 
 # -- the census: no forwarding path outside the sealed chain ------------------------------------

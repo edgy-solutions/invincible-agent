@@ -8,13 +8,15 @@ The e2e step behind "a case renders": the `maint_fault_propose` template's `rend
 the walk) is what builds the options, and only a live case can show a case reaching the
 `decide` task through `walk` and `options`. lane/74's walk of 2026-10-17 (`MRAD-ARR-0417
 walked live to closed`, case 712382d7-00c2-5610-a3cf-0e1c9ef5ea70) is the record of the first
-flip; this step repeats that walk through product routes only, as three people:
+flip; this step repeats that walk through product routes only, as two people:
 
   initiator  POST /ingest/events (cm_discrepancy, MRAD-ARR-0417 on dis:1:1:1008), then reads
              GET /cases/{id}
   decider    POST /human_tasks/{instance}:decide/act  -> replace_now
              POST /human_tasks/{instance}:review/act  -> approved   (the supervisor review)
-  releaser   POST /cases/{case_id}/signals/tier_ack  -> released, BY THE CASE ID (D1)
+
+THE CASE CLOSES ON THE DECIDER'S APPROVAL: the supervisor's approval is the release (ruled
+2026-10-28), so there is no releaser leg and no signal is sent.
 
 WHAT THE PROJECTION CAN SHOW. `GET /cases/{id}` always projects `options: []` (see
 `case_projection`), so the options themselves are not readable here. "A case renders" is
@@ -27,7 +29,7 @@ unit run collects nothing) and is run by hand after a roll:
 
     kubectl -n sandbox port-forward svc/iagent-cortex-bff 18090:8090 &
     uv run tests/sandbox_e2e/test_mrad_case_walks_to_closed.py \\
-        --initiator-token erin.jwt --decider-token bob.jwt --releaser-token alice.jwt
+        --initiator-token erin.jwt --decider-token bob.jwt
 
 Tokens are read from files and never printed (only length and the first 8 hex of the sha256).
 TLS: httpx honours SSL_CERT_FILE; never disable verification.
@@ -153,19 +155,6 @@ def walk(w: Walk, initiator_id: str | None) -> None:
            json={"decision": "approved"})
     print("PASS review -> approved")
 
-    # The release instance journals the awaited signal a moment after the review resumes it, so
-    # a 403 "is awaited" is retried (bounded); any other refusal is a failure.
-    deadline = time.monotonic() + POLL_MAX_S
-    while True:
-        r = w.call("releaser", "POST", f"/cases/{case_id}/signals/tier_ack",
-                   "release by the CASE ID (D1)", ok=(200, 403), json={"status": "released"})
-        if r.status_code == 200:
-            break
-        if "awaited" not in r.text or time.monotonic() > deadline:
-            raise Fail("release by the CASE ID (D1)", r.status_code, r.text)
-        time.sleep(POLL_S)
-    print(f"PASS tier_ack by case id -> 200, instance {r.json().get('instance_id')}")
-
     def closed(x):
         h = x.get("history") or []
         return bool(h) and h[-1].get("stage") == "closed"
@@ -178,13 +167,12 @@ def main() -> int:
     ap.add_argument("--bff-url", default=os.getenv("BFF_URL", "http://localhost:18090"))
     ap.add_argument("--initiator-token", required=True, help="file holding erin's bearer token")
     ap.add_argument("--decider-token", required=True, help="file holding bob's bearer token")
-    ap.add_argument("--releaser-token", required=True, help="file holding alice's bearer token")
     ap.add_argument("--initiator-authz-id", default=None,
                     help="on_behalf_of for the event; default: the initiator's email from "
                          "/me/entitlements (authz_id == email in the sandbox)")
     a = ap.parse_args()
     tokens = {}
-    for who in ("initiator", "decider", "releaser"):
+    for who in ("initiator", "decider"):
         tokens[who], desc = _token(getattr(a, f"{who}_token"))
         print(f"{who} token: {desc}")
     try:

@@ -131,16 +131,17 @@ def build_cdrl(
                 put(ws, coord, value, col.format)
 
     # ── the methods sheet: one row per source, the method that produced its figures ────────
-    ms = wb.create_sheet(profile.methods_sheet)
-    for j, head in enumerate(_METHODS_HEADER, start=1):
-        put(ms, ms.cell(row=1, column=j).coordinate, head)
     methods: dict[str, dict[str, Any]] = {fn: m for fn, (_e, m) in served.items()}
-    for i, fn in enumerate(profile.sources, start=2):
-        m = methods[fn]
-        for j, value in enumerate(
-                (fn, m.get("measure_id", ""), m.get("name", ""), m.get("version", ""),
-                 m.get("module_sha256", "")), start=1):
-            put(ms, ms.cell(row=i, column=j).coordinate, value)
+    if profile.provenance_sheets:
+        ms = wb.create_sheet(profile.methods_sheet)
+        for j, head in enumerate(_METHODS_HEADER, start=1):
+            put(ms, ms.cell(row=1, column=j).coordinate, head)
+        for i, fn in enumerate(profile.sources, start=2):
+            m = methods[fn]
+            for j, value in enumerate(
+                    (fn, m.get("measure_id", ""), m.get("name", ""), m.get("version", ""),
+                     m.get("module_sha256", "")), start=1):
+                put(ms, ms.cell(row=i, column=j).coordinate, value)
 
     cells_sha256 = _sha(sorted(written, key=lambda c: (c[0], c[1])))
     envelope = {
@@ -156,12 +157,16 @@ def build_cdrl(
             for fn in profile.sources
         ],
         "cells_sha256": cells_sha256,
+        "provenance_sheets": profile.provenance_sheets,
     }
 
-    # The manifest is written AFTER the hash and is not part of it.
-    mf = wb.create_sheet(profile.manifest_sheet)
-    mf["A1"] = _canonical(envelope)
-    mf.sheet_state = "hidden"
+    # The manifest is written AFTER the hash and is not part of it. A profile with
+    # `provenance_sheets: false` delivers exactly the template's sheets; the envelope (JSON) and
+    # the BFF's X-Cells-Sha256 header carry the provenance instead.
+    if profile.provenance_sheets:
+        mf = wb.create_sheet(profile.manifest_sheet)
+        mf["A1"] = _canonical(envelope)
+        mf.sheet_state = "hidden"
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

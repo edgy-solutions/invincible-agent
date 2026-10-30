@@ -256,10 +256,10 @@ def test_hitl_unconfigured_is_empty_approvals_not_a_503(client_for):
 
 # ── OPTIONS / OUTPUT_ARTIFACT ─────────────────────────────────────────────────────────────
 
-def test_options_and_output_artifact_are_empty_in_the_response(client_for):
+def test_options_are_absent_and_output_artifact_none_in_the_response(client_for):
     c = client_for(_user("alice"), _FakeRestate(case=_CASE_ONE_INSTANCE, spec1=_SPEC1),
                    get_definition=lambda wf_id: _definition(wf_id, classification="SAFETY"))
     resp = c.get("/cases/c-1")
     body = resp.json()
-    assert body["options"] == []
+    assert "options" not in body
     assert body["output_artifact"] is None
