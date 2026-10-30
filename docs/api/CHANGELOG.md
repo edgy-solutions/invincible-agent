@@ -2,6 +2,29 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.4.0 — 2026-10-30
+
+One optional request field is added. Every request that worked before still works.
+
+- `POST /human_tasks/{task_id}/act`: `review_coverage` records what the steward opened and what was
+  folded into a named group. Valid only with `decision: "promoted"` on a `document_promotion`.
+  Part ids are the extraction's integer `part_index`. A coverage that leaves a part neither opened
+  nor grouped answers 422 `review_coverage_invalid` with `check` (`unknown_part`, `duplicate_part`,
+  `overlap`, `uncovered`). Before this release the key was dropped silently.
+
+## 1.3.0 — 2026-10-28
+
+Additive for a reader: one new key on `GET /me/entitlements`, and a new refusal on the routes that set a kind.
+
+- `GET /me/entitlements`: new required, non-null `droppable_kinds` (list of kind ids): every
+  registered content kind the caller may drop, in registry order. A kind restricted to a group
+  (`can_drop:<kind>`) is omitted for a caller outside it. 503 for the whole response if the
+  authorization directory cannot say.
+- `POST /ingest`, `POST /ingest/{ingest_id}/leaf`, `POST /ingest/{ingest_id}/title_leaf`: 403
+  `not_entitled_to_drop` (with the shared `refusal` envelope) when the kind is restricted and the
+  dropper of record is not granted it, and 503 when the directory cannot say. `/leaf` checks the
+  row's dropper, not the caller.
+
 ## 1.2.0 — 2026-10-25
 
 One request field is loosened. Every request that worked before still works.

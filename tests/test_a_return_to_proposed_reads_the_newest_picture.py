@@ -35,7 +35,7 @@ import pytest
 from tests.test_a_case_runs_from_trigger_to_terminal import (
     DOOR_BLOCK, R, _answer, _body, _Cluster, _Ctx, _Promise, _refused, main, restate, wd, wr)
 from tests.test_the_maintenance_fault_runs_as_a_case import (  # noqa: F401 -- fixtures
-    ACK, DECIDE, REVIEW, TRIGGER, _declared_walk_double, _event, _path, _real_policy, registered)
+    DECIDE, REVIEW, TRIGGER, _declared_walk_double, _event, _path, _real_policy, registered)
 
 import decision_table as dt  # noqa: E402 -- on sys.path via the runner test's import
 import iagent_mesh.ingest as sdk_ingest  # noqa: E402
@@ -163,7 +163,7 @@ async def test_A_REJECTION_REPROPOSES_AGAINST_THE_PUSHED_REVISION(registered):
     reads it: its options cite revision 2 and the new nearest site, and the CHAINING reads it too --
     replace_now on a now mission-essential asset goes to the supervisor."""
     c = _RevCluster(_script("EV-1", [(DECIDE, "rejected"), (DECIDE, "replace_now"),
-                                     (REVIEW, "approved", "s@x"), (ACK, "released", "tier@x")]))
+                                     (REVIEW, "approved", "s@x")]))
     kept = []
     c.before[("EV-1~1", DECIDE)] = lambda: _keep(c, kept)
     out = await _start(c, _event(me=False))
@@ -197,8 +197,7 @@ async def _keep(c, sink, facts=None):
 async def test_CONTROL_WITHOUT_A_REVISION_THE_SAME_ANSWERS_SKIP_THE_SUPERVISOR(registered):
     """The arm above is red only because of the revision: the same answers on the first picture
     release without a supervisor, and the refresh still records which revision it read."""
-    c = _RevCluster(_script("EV-1", [(DECIDE, "rejected"), (DECIDE, "replace_now"),
-                                     (ACK, "released", "tier@x")]))
+    c = _RevCluster(_script("EV-1", [(DECIDE, "rejected"), (DECIDE, "replace_now")]))
     out = await _start(c, _event(me=False))
     assert [h[2] for h in _path(out)] == [
         "maint_fault_propose", "maint_fault_propose", "maint_release", "closed"], _path(out)
@@ -210,8 +209,7 @@ async def test_CONTROL_WITHOUT_A_REVISION_THE_SAME_ANSWERS_SKIP_THE_SUPERVISOR(r
 async def test_A_ROW_WITHOUT_REFRESH_KEEPS_THE_INPUT_IT_HAD(registered):
     """The refresh is the ROW's: approve -> release carries no `refresh_input`, so a revision kept
     while the maintainer decided is not read by the release, and the hop names no revision."""
-    c = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply"),
-                                     (ACK, "released", "tier@x")]))
+    c = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply")]))
     kept = []
     c.before[("EV-1~1", DECIDE)] = lambda: _keep(c, kept)
     out = await _start(c, _event(me=False))
@@ -222,8 +220,7 @@ async def test_A_ROW_WITHOUT_REFRESH_KEEPS_THE_INPUT_IT_HAD(registered):
 
 @pytest.mark.asyncio
 async def test_THE_NEWEST_OF_SEVERAL_PUSHES_IS_READ(registered):
-    c = _RevCluster(_script("EV-1", [(DECIDE, "rejected"), (DECIDE, "replace_after_resupply"),
-                                     (ACK, "released", "tier@x")]))
+    c = _RevCluster(_script("EV-1", [(DECIDE, "rejected"), (DECIDE, "replace_after_resupply")]))
     kept = []
     older = _event(me=False)
     older["picture"]["nearest_spare"]["site"] = "SITE-OLD"
@@ -245,8 +242,7 @@ async def test_A_SECOND_RETURN_SKIPS_WHAT_THE_FIRST_READ_AND_READS_WHAT_CAME_AFT
     """The floor carries forward: a later refresh compares against the revision the last one READ,
     so the same kept revision is not re-read, and a push after it still is."""
     c = _RevCluster(_script("EV-1", [(DECIDE, "rejected"), (DECIDE, "rejected"),
-                                     (DECIDE, "rejected"), (DECIDE, "replace_after_resupply"),
-                                     (ACK, "released", "tier@x")]))
+                                     (DECIDE, "rejected"), (DECIDE, "replace_after_resupply")]))
     kept = []
     third = _newer()
     third["picture"]["nearest_spare"]["site"] = "SITE-D"
@@ -265,8 +261,7 @@ async def test_TWO_PUSHES_IN_ONE_CLOCK_TICK_ARE_BOTH_READ_IN_ORDER(registered, m
     "before", so ``next_revision`` appends both, and ``rev`` -- counted on arrival -- orders them."""
     monkeypatch.setattr(main, "_now_iso", lambda: _at(0))
     c = _RevCluster(_script("EV-1", [(DECIDE, "rejected"), (DECIDE, "rejected"),
-                                     (DECIDE, "rejected"), (DECIDE, "replace_after_resupply"),
-                                     (ACK, "released", "tier@x")]))
+                                     (DECIDE, "rejected"), (DECIDE, "replace_after_resupply")]))
     kept = []
     third = _newer()
     third["picture"]["nearest_spare"]["site"] = "SITE-D"
@@ -419,8 +414,7 @@ async def test_A_REVISION_OF_NO_CASE_IS_REFUSED():
 
 @pytest.mark.asyncio
 async def test_A_REVISION_FOR_A_CLOSED_CASE_KEEPS_NOTHING(registered):
-    c = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply"),
-                                     (ACK, "released", "tier@x")]))
+    c = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply")]))
     await _start(c, _event())
     await _refused(c.revise("EV-1", _newer()), 409)
     assert not any("revision" in o.state for o in c.objs.values()), c.objs
@@ -435,8 +429,7 @@ async def test_A_REVISION_FOR_A_CLOSED_CASE_KEEPS_NOTHING(registered):
 ])
 async def test_A_REVISION_PASSES_THE_SAME_INTAKE_AND_STAYS_IN_ITS_EPISODE(
         registered, mutate, status):
-    c = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply"),
-                                     (ACK, "released", "tier@x")]))
+    c = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply")]))
     bad = _newer()
     mutate(bad)
     seen = []
@@ -460,23 +453,20 @@ async def test_A_CASE_WHOSE_TRIGGER_KEEPS_A_CHAIN_OPENS_ONLY_WITH_ITS_PROVENANCE
     INTAKE, naming the provenance: without the intake check an absent block still ends in a 400,
     but from the first instance's render of ``{input.revision}``, after the case was recorded and
     its episode claimed (measured 2026-10-06) -- the status alone cannot tell the two apart."""
-    c = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply"),
-                                     (ACK, "released", "tier@x")]))
+    c = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply")]))
     why = await _refused(c.start("EV-1", TRIGGER, _event(), provenance=block), 400)
     assert ("keeps a revision chain" if block is None else "carries a `provenance` block") in why, why
     assert c.case("EV-1") is None, c.case("EV-1")
     assert not any(o.state.get("open") for o in c.objs.values()), c.objs
     # CONTROL: the same event with the door's block opens and closes.
-    c2 = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply"),
-                                      (ACK, "released", "tier@x")]))
+    c2 = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply")]))
     assert (await _start(c2, _event()))["status"] == "CLOSED"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("block", _BAD_BLOCKS)
 async def test_A_PUSH_WITHOUT_ITS_OWN_PROVENANCE_IS_REFUSED(registered, block):
-    c = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply"),
-                                     (ACK, "released", "tier@x")]))
+    c = _RevCluster(_script("EV-1", [(DECIDE, "replace_after_resupply")]))
     seen = []
 
     async def _try():
@@ -624,7 +614,8 @@ def test_EVERY_ROW_THAT_RETURNS_TO_PROPOSED_REFRESHES():
     chaining = {t["decision"] for t in R.chaining_index(tables).values()}
     back = [(n, i) for n, t in tables.items() if n in chaining
             for i, r in enumerate(t.get("rows") or []) if r.get("then") == "maint_fault_propose"]
-    assert len(back) >= 5, back
+    # 5 until 2026-10-28: the tier-refusal row left with the refusal (the approval is the release)
+    assert len(back) >= 4, back
     assert [(n, i) for n, i in back if not tables[n]["rows"][i].get("refresh_input")] == []
 
 

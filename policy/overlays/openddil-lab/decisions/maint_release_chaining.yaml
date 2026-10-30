@@ -1,33 +1,20 @@
 # SAMPLE — OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
 #
-# CLOSED ON THE OWNING TIER'S ACK. A refusal is never read as a release.
-#
-# RULED 2026-10-02: a tier's refusal returns the case to PROPOSED, with the refusal's reason on the
-# hop (the signal requires one); a SECOND refusal in the same case parks it -- DEFERRED, with the
-# park's revisit timer -- rather than putting the same choice to the same maintainer a third time.
-# "Second" is the runner's measured `outcome_repeated` (this definition has ended `tier_refused`
-# before in this case), so the second refusal and every later one park.
-# BACK TO PROPOSED RE-READS THE PICTURE (`refresh_input`): a new proposal is made against the
-# newest revision of the event -- pushed again by the bridge, or pulled -- not the one the case
-# opened on. Every option cites the revision it was made from.
+# CLOSED ON THE RELEASE. The supervisor's approval is the release (ruled 2026-10-28): the release
+# definition's emit disposes `released`, and there is no acknowledgement to refuse. A refusal
+# therefore no longer exists, so this table has one row and no return to PROPOSED or park.
 decision: maint_release_chaining
 
 after: maint_release
 
-matches: [outcome, outcome_repeated]
+matches: [outcome]
 
-# `outcome`: the `accepts` of the release definition's `tier_ack` signal.
+# `outcome`: the disposition the release definition's `action` emit declares (`disposes`).
 domain:
-  outcome: [released, tier_refused]
-  outcome_repeated: [true, false]
+  outcome: [released]
 
 terminals: [closed]
 
 rows:
   - when: {outcome: released}
     then: closed
-  - when: {outcome: tier_refused, outcome_repeated: false}
-    then: maint_fault_propose
-    refresh_input: true
-  - when: {outcome: tier_refused, outcome_repeated: true}
-    then: maint_fault_park
