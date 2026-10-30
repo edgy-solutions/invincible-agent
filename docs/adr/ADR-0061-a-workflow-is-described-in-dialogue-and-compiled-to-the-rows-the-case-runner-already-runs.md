@@ -590,8 +590,40 @@ The standing rule of 2026-10-30 says config names the case. The model's system p
     - no example is a refusal;
     - the extractor names no overlay file.
   - Run against the unfixed module (restored by copy and `cmp`), all three are red.
-- **Owed: runs 7 to 9 again, on PCN, against this prompt** (architect, 10-30). They run when no
-  walk is in flight, and they are not done yet.
+- **Runs 7 to 9 again, on PCN, against this prompt** (architect, 10-30). They ran as runs 10 to 12
+  on 2026-10-30, with no walk or roll in flight. Same model, same fixture, same harness as runs 7
+  to 9. The only change was the example files.
+
+| run | questions / bank | runnable errors | semantic diffs | open | answered by path | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 10 | 8/12 | 2 | 6 | 3 | 0 | cannot_run | 106 |
+| 11 | 8/12 | 2 | 6 | 3 | 0 | cannot_run | 116 |
+| 12 | — | — | — | — | — | **crashed** | 160 |
+
+- **Runs 10 and 11 fail the same way.** Both runnable errors are the two chaining tables.
+  - Run 10: neither table declares a domain for `outcome`.
+  - Run 11: neither table has a row for the outcome its step ends on (`acknowledged`, `approved`).
+  - In both runs, the two chaining contradictions are left `open`, along with one outputs key.
+  - The semantic diffs are identical in the two runs: the chain and steps of the first two
+    workflows, and the whole of the other two.
+- **Run 12 never finished.**
+  - The model patched `steps[0].deadline_seconds`, a positional list index.
+  - The path grammar takes only a key or a `name[key=value]` selector, so `parse_path` raised
+    `PatchError`.
+  - `run()` has no handler for that error, so it ended the whole run, not the turn.
+  - This is a defect in the loop, not in the prompt fix. The same code ran under runs 7 to 9; the
+    model just did not emit a positional path there.
+- **Before and after.** Before the fix: 1 runnable out of 3, and run 7 was runnable with half the
+  workflow missing. After the fix: 0 runnable out of 2 completed runs, plus the crash.
+  - Two runs are too few to call the new prompt better or worse.
+  - The new prompt does give a steadier failure: runs 10 and 11 agree on every count, while runs 7
+    to 9 ranged from 0 to 6 runnable errors and from 0 to 5 open items.
+  - In all five runs the planted contradiction went undetected (0 of 1) and the planted deferral
+    went unrecorded (0 of 1).
+- **Owed:**
+  - a ruling on what an unparseable patch path is: a refused turn, or a `model_errors` count
+    against the turn. Today it is a crash.
+  - Run 12 again once that is ruled.
 
 ## Consequences
 
