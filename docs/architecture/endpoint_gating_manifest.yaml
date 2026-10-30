@@ -1853,6 +1853,17 @@ services:
           content; the same shape as the finance CDRL profile listing. Nothing per-document is
           read, so authentication is the whole gate.
       - method: GET
+        path: /review-shapes
+        identity: keycloak-jwt
+        gate: "get_current_user only; lists the valid policy/review_shapes rows (review_shape, item_kind, rules_version, params, rules)"
+        exposes: ui-state
+        consumers: [cortex-ui review cards]
+        class: releasable_by_design
+        justification: >-
+          A review-shape row is policy configuration (which card renders a shape, the item kind it
+          addresses and the rules it declares), not notice content; the same shape as the export
+          profile listing. Nothing per-document is read, so authentication is the whole gate.
+      - method: GET
         path: /ingest/export
         identity: keycloak-jwt
         gate: "get_current_user + can_invoke(ingest:exportBatch) via human_tasks.can_invoke_or_unavailable; an ungranted caller is a 403 policy refusal (not_entitled_to_export_batch), Topaz down is 503; AND can_invoke(can_export:<profile>) once the profile resolves (403 not_entitled_to_export, deny by default, Topaz down is 503)"
