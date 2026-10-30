@@ -13029,6 +13029,7 @@ async def _extraction_body(ingest_id: str, row: dict) -> dict:
 
 
 _EXPORT_BATCH_CAPABILITY = "ingest:exportBatch"
+_EXPORT_PROFILE_CAPABILITY_PREFIX = "can_export:"
 _EXPORT_MAX_DAYS = 92
 _EXPORT_MAX_NOTICES = 500
 _EXPORT_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
@@ -13071,6 +13072,32 @@ async def _may_export_batch(caller: str, route: str, ingest_id: str = "-") -> bo
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unavailable",
             "message": "could not verify the caller against the export capability"}) from exc
+
+
+async def _may_export_profile(caller: str, profile_name: str, route: str,
+                              ingest_id: str = "-") -> bool:
+    """The `can_export:<profile>` capability for `caller`. DENY BY DEFAULT: a profile with no
+    `can_export:` row is exportable by nobody (gov's #151 convention, the opposite of `can_drop`).
+    A Topaz failure is 503, never a deny (same bodies as `_may_export_batch`)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    capability = f"{_EXPORT_PROFILE_CAPABILITY_PREFIX}{profile_name}"
+    try:
+        return bool(await run_in_threadpool(
+            lambda: human_tasks.can_invoke_or_unavailable(capability, caller)))
+    except human_tasks.AuthorizationUnconfigured as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unconfigured")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("export profile capability check unavailable: %s", type(exc).__name__)
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unavailable")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify the caller against the export profile capability"}) from exc
 
 
 def _export_decision_record(ingest_id: str):
@@ -13162,7 +13189,9 @@ async def ingest_export_batch_route(
     one of the caller's entitlement-cell domains are in the set, filtered before the loud-not-
     partial checks and before the 500 cap; a caller with no cells gets the empty export.
     Gate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy
-    refusal; Topaz down is 503). At most 92 days (both ends counted) and 500 notices. LOUD, NOT
+    refusal; Topaz down is 503), AND, in addition, `can_export:<profile>` for the named profile
+    (403 `not_entitled_to_export`, a policy refusal; DENY BY DEFAULT: a profile with no row is
+    exportable by nobody), checked after the profile resolves (an unknown one stays 422). At most 92 days (both ends counted) and 500 notices. LOUD, NOT
     PARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,
     extraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks
     on is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`)."""
@@ -13181,6 +13210,13 @@ async def ingest_export_batch_route(
             message="exporting the promoted notices of a date range needs the ingest:exportBatch "
                     "capability")
     prof = _export_profile_or_422(profile)
+    if not await _may_export_profile(caller, prof.name, "export_batch", "-"):
+        _audit_ingest_access("export_batch", "-", caller, "deny", "not_entitled_to_profile")
+        raise policy_refusal(
+            "not_entitled_to_export", policy_id=f"capability_grants:can_export:{prof.name}",
+            missing_binding=f"can_invoke can_export:{prof.name}",
+            message=f"exporting through the {prof.name!r} profile needs the "
+                    f"can_export:{prof.name} capability")
 
     def _day(v):
         if not isinstance(v, str) or not _EXPORT_DATE_RE.fullmatch(v):
@@ -13253,13 +13289,17 @@ async def ingest_export_route(ingest_id: str, profile: Optional[str] = _Query(No
     dropper, or a holder of the open task), and a caller it would 403 is admitted when they hold
     the `ingest:exportBatch` capability (reason `export_capability`); a Topaz failure while that
     is consulted is 503, a False re-raises the ORIGINAL 403. 422 `export_profile_unknown` /
-    `export_profile_invalid`; 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the
+    `export_profile_invalid`. IN ADDITION to the gates above, for EVERY caller who reaches it (the
+    review-access path and the exportBatch path alike, a service caller that passed review access
+    too): the `can_export:<profile>` capability, checked after the profile resolves; 403
+    `not_entitled_to_export` (a policy refusal, DENY BY DEFAULT), Topaz down is 503. 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the
     export serves review.json's values, so a promotion carrying steward row or header edits would
     export the uncorrected ones; refused until a later slice applies corrections); 503
     `decision_ledger_unreachable`; 422 `export_blocked` (naming notice, part, column)."""
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status
+    from .authz.refusal import policy_refusal
 
     caller = (current_user.authz_id or "").strip()
     try:
@@ -13282,6 +13322,13 @@ async def ingest_export_route(ingest_id: str, profile: Optional[str] = _Query(No
             raise
         _audit_ingest_access("export", ingest_id, caller, "allow", "export_capability")
     prof = _export_profile_or_422(profile)
+    if not await _may_export_profile(caller, prof.name, "export", ingest_id):
+        _audit_ingest_access("export", ingest_id, caller, "deny", "not_entitled_to_profile")
+        raise policy_refusal(
+            "not_entitled_to_export", policy_id=f"capability_grants:can_export:{prof.name}",
+            missing_binding=f"can_invoke can_export:{prof.name}",
+            message=f"exporting through the {prof.name!r} profile needs the "
+                    f"can_export:{prof.name} capability")
     body = await _export_notice_extraction(ingest_id, row)
     rows = _export_render(prof, [body])
     return _export_response(prof, rows, f"{ingest_id}.{prof.name}.{prof.format}")

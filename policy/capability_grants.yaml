@@ -319,3 +319,21 @@ capabilities:
       alert-processors group. DOMAIN-SCOPED (architect 2026-10-29): the capability admits a notice
       only when its promotion domain is one of the caller's entitlement-cell domains.
     grant_to_groups: [alert-processors]
+
+  can_export:default-csv:
+    granted_by: cnogradi
+    reason: >-
+      2026-10-30 ruling: the export door checks can_export:<profile> on single and batch, in
+      addition to ingest:exportBatch. DENY BY DEFAULT: a profile with no row is exportable by
+      nobody, so every profile in policy/exports/ ships its row (gov #151); the default grantee is
+      the alert-processors group.
+    grant_to_groups: [alert-processors]
+
+  can_export:default-json:
+    granted_by: cnogradi
+    reason: >-
+      2026-10-30 ruling: the export door checks can_export:<profile> on single and batch, in
+      addition to ingest:exportBatch. DENY BY DEFAULT: a profile with no row is exportable by
+      nobody, so every profile in policy/exports/ ships its row (gov #151); the default grantee is
+      the alert-processors group.
+    grant_to_groups: [alert-processors]
