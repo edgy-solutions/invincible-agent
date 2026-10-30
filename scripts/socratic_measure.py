@@ -164,6 +164,23 @@ def _fact_target(key: str) -> Optional[Tuple[str, str]]:
     return None
 
 
+_CHAIN_SLOT = re.compile(r"^(?:approvals|outputs)\.([^.]+)\.next\.(.+)$")
+
+
+def _chain_target(key: str, expected: dict) -> Optional[Tuple[str, str]]:
+    """(file, path) a TRANSLATED chaining slot asks about: the expected table whose `after` is the
+    slot's definition, found by `after` and not by file name. A value slot asks `domain.<input>`;
+    a row slot asks `rows`."""
+    m = _CHAIN_SLOT.match(key)
+    if not m:
+        return None
+    f = next((f for f, d in sorted(expected.items()) if f.startswith("decisions/")
+              and isinstance(d, dict) and str(d.get("after")) == m.group(1)), None)
+    if f is None:
+        return None
+    return f, (m.group(2) if m.group(2).startswith("domain.") else "rows")
+
+
 def _sets_path(entry: dict, file: str, path: str) -> bool:
     """True iff one `set` fact of ``entry`` on ``file`` puts ``path`` in a scratch bundle, applied
     by the elicitation module's own setter. Present-with-null counts."""
@@ -326,7 +343,7 @@ class AligningUser:
             return None
         entry = self.bank.get(t)
         if entry is None:
-            tgt = _fact_target(t)
+            tgt = _fact_target(t) or _chain_target(t, self.expected)
             hit = self.entry_for_path(*tgt) if tgt else None
             if hit is not None:
                 self.answered_by_path.append((gap.key, hit[0]))

@@ -649,7 +649,8 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
                                    f"When {_words(wid)} ends '{v}', what happens next?",
                                    revises=tuple(revises)))
         err = _decide_all(table)
-        if err:
+        # a missing value or row is a required slot asked by name; this asks only what is left
+        if err and not _chain_slots(wid, "outputs", tfile, table, verbs):
             out.append(Gap(f"contradiction:chaining.{tname}", "outputs", "contradiction",
                            f"What happens after {_words(wid)} does not work out for every outcome: "
                            f"{_first_line(err)}. What should happen?"))
@@ -665,14 +666,67 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
 # GAPS
 # ═════════════════════════════════════════════════════════════════════════════════════════════
 
+_CHAIN_INPUT = "outcome"  # the fact case_routing hands a chaining table when it reads no `matches`
+
+
+def _no_row(table: dict, facts: dict) -> bool:
+    """True iff the REAL ``decide`` refuses ``facts`` and one more row for exactly them would make
+    it choose: the refusal is a missing row, not two rows or a row with no ``then``."""
+    try:
+        _dt.decide(table, facts)
+        return False
+    except _dt.DecisionError:
+        pass
+    probe = dict(table, rows=list(table.get("rows") or []) + [{"when": dict(facts), "then": "probe"}])
+    try:
+        _dt.decide(probe, facts)
+        return True
+    except _dt.DecisionError:
+        return False
+
+
+def _chain_slots(wid: str, facet: str, tfile: str, table: dict,
+                 verbs: Optional[List[str]]) -> List[Gap]:
+    """The named slots of the routing table after ``wid`` (architect, 2026-10-30): the values of
+    each input it reads, then a row for each combination of them. Runs 10 to 12 (ADR-0061 §10)
+    never had the model supply either unasked."""
+    out: List[Gap] = []
+    attrs = list(table.get("matches") or [])
+    domain = table.get("domain") or {}
+    revises = tuple([(tfile, "matches")] + [(tfile, f"domain.{a}") for a in attrs or [_CHAIN_INPUT]]
+                    + [(tfile, "rows"), (tfile, "terminals")])
+    empty = [a for a in attrs if not list(domain.get(a) or [])] if attrs else [_CHAIN_INPUT]
+    for a in empty:
+        tail = f" It can end: {', '.join(verbs)}." if verbs and a == _CHAIN_INPUT else ""
+        out.append(Gap(f"{facet}.{wid}.next.domain.{a}", facet, "missing",
+                       f"Required: every {_words(a)} the routing after {_words(wid)} decides on.{tail} "
+                       "List them all.", revises=revises))
+    if empty:
+        return out
+    for combo in itertools.product(*[list(domain[a]) for a in attrs]):
+        facts = dict(zip(attrs, combo))
+        if not _no_row(table, facts):
+            continue
+        when = (f"'{combo[0]}'" if len(attrs) == 1
+                else ", ".join(f"{_words(a)} '{c}'" for a, c in facts.items()))
+        out.append(Gap(f"{facet}.{wid}.next.{'+'.join(str(c) for c in combo)}", facet, "missing",
+                       f"Required: when {_words(wid)} ends {when}, what happens next?",
+                       revises=revises))
+    return out
+
+
 def required_slots(files: Dict[str, dict]) -> List[Gap]:
     """Slots asked by name for EVERY definition in the draft, reachable or not (ADR-0061 R4): the
-    task kind of each approval, who is barred from answering each approval (``excludes``), and the
-    routing table after each definition that ends in a verb."""
+    task kind of each approval, who is barred from answering each approval (``excludes``), the
+    routing table after each definition that ends in a verb, and that table's values and rows."""
     out: List[Gap] = []
     wfs = _workflows(files)
     kinds = _kinds(files)
-    chain_by_after = {str(t["after"]) for _, (f, t) in _decisions(files).items() if t.get("after")}
+    decisions = _decisions(files)
+    chain_by_after: Dict[str, Tuple[str, dict]] = {}
+    for name, (tf, t) in decisions.items():
+        if t.get("after"):
+            chain_by_after.setdefault(str(t["after"]), (tf, t))
     for wid, (f, raw) in wfs.items():
         for s in _steps(raw):
             if s.get("kind") != "human_await":
@@ -690,9 +744,12 @@ def required_slots(files: Dict[str, dict]) -> List[Gap]:
                                "one is."))
     for wid, (f, raw) in wfs.items():
         verbs, last = _emits(raw, kinds)
-        if last is None or wid in chain_by_after:
+        if last is None:
             continue
         facet = "approvals" if last.get("kind") == "human_await" else "outputs"
+        if wid in chain_by_after:
+            out += _chain_slots(wid, facet, *chain_by_after[wid], verbs)
+            continue
         tail = f": {', '.join(verbs)}" if verbs else ""
         out.append(Gap(f"{facet}.{wid}.next", facet, "missing",
                        f"Required: the routing table after {_words(wid)} -- for each way it can "
@@ -1038,6 +1095,8 @@ RULES
 - REQUIRED: every human_await step has task_kind naming a task_kinds/<kind>.yaml you also set
   (with accepts).
 - REQUIRED: every workflow has a chaining table (decisions/<x>.yaml with after: <workflow id>).
+- REQUIRED: every chaining table declares matches, a domain listing every value of each input it
+  matches (for outcome: every way the workflow can end), and one row for each of those values.
 - REQUIRED: every human_await step sets excludes: the "{trigger.<field>}" of whoever may not
   answer, or [] when the user says anyone may answer or nobody is barred.
 - A step with a deadline_seconds can also end timed_out (the runner's outcome when the deadline

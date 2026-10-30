@@ -624,3 +624,63 @@ def test_a_refused_patch_lands_nothing_and_the_run_continues():
     assert [e["turn"] for e in r["model_errors"]] == [0] * (1 + se.PATCH_RESTATES)
     assert "decisions/probe.yaml" not in r["files"]
     assert r["status"] in ("runnable", "cannot_run")
+
+
+# ── a chaining table's values and rows are required slots asked by name (architect, 2026-10-30) ──
+
+VALUES_KEY = "approvals.pcn_impact_review.next.domain.outcome"
+
+
+def _slots(files):
+    return {g.key: g for g in se.required_slots(files)}
+
+
+def test_a_chaining_table_with_no_values_is_a_required_slot_for_its_input():
+    f = _good()
+    del f[CH]["domain"]["outcome"]
+    g = _slots(f).get(VALUES_KEY)
+    assert g is not None and g.question.startswith("Required:")
+    assert "approved, rejected, needs_info" in g.question
+    assert (CH, "domain.outcome") in g.revises and (CH, "rows") in g.revises
+    assert se.non_deferrable(se.Draft(files=f), VALUES_KEY) is not None
+    # the vague whole-table contradiction is not asked while a slot names what is missing
+    assert "contradiction:chaining.pcn_impact_review_chaining" not in _keys(f)
+
+
+def test_a_value_with_no_row_is_a_required_slot_for_that_value_only():
+    f = _good()
+    f[CH]["rows"] = [r for r in f[CH]["rows"] if r["when"]["outcome"] != "approved"]
+    rows = [k for k in _slots(f) if k.startswith("approvals.pcn_impact_review.next.")]
+    assert rows == ["approvals.pcn_impact_review.next.approved"]
+
+
+def test_the_slot_names_the_input_the_table_declares():
+    f = _good()
+    f[CH]["matches"] = ["verdict"]
+    f[CH]["domain"] = {"verdict": []}
+    assert "approvals.pcn_impact_review.next.domain.verdict" in _slots(f)
+    assert VALUES_KEY not in _slots(f)
+
+
+def test_control_two_rows_for_one_value_stay_a_contradiction_not_a_slot():
+    f = _good()
+    f[CH]["rows"].append({"when": {"outcome": "approved"}, "then": "pcn_rejected"})
+    assert not [k for k in _slots(f) if k.startswith("approvals.pcn_impact_review.next.")]
+    assert "contradiction:chaining.pcn_impact_review_chaining" in _keys(f)
+
+
+def test_control_the_good_bundle_has_no_chaining_slot():
+    assert not [k for k in _slots(_good()) if ".next." in k]
+
+
+def test_the_scripted_user_answers_a_chaining_slot_from_the_entry_that_sets_the_table():
+    exp = _expected("pcn_review")
+    assert sm._chain_target(VALUES_KEY, exp) == (CH, "domain.outcome")
+    assert sm._chain_target("approvals.pcn_impact_review.next.approved", exp) == (CH, "rows")
+    assert sm._chain_target("approvals.pcn_impact_review.next", exp) is None
+    f = _good()
+    del f[CH]["domain"]["outcome"]
+    u = _pcn_user()
+    got = u(_slots(f)[VALUES_KEY], se.Draft(files=f))
+    assert got == _transcript("pcn_review")["answers"]["approvals.pcn_impact_review.next"]
+    assert u.answered_by_path == [(VALUES_KEY, "approvals.pcn_impact_review.next")]
