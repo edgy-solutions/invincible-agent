@@ -58,7 +58,7 @@ from .models import BpmnCatalog
 from .auth import get_current_user, User
 from . import frontend_menu_store
 from .ingest_api import (
-    BINARY_200, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse, Entitlements,
+    BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse, Entitlements,
     Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing, RetriesListing,
     RetryResponse, StatusBody, TitleLeafResponse,
 )
@@ -156,6 +156,48 @@ def _env_int(name: str, default: int) -> int:
 
 
 _LEAF_BACKSTOP_ACTOR = "bff:manifest-leaf-backstop"
+
+
+# No Retry-After value existed in src/; 5 s matches the 5 s Topaz client timeout.
+_CAN_DROP_RETRY_AFTER = "5"
+
+
+def _row_dropper(row: dict) -> str:
+    """The dropper of record for a status row: `on_behalf_of`, the actor `_admit_on_behalf_of`
+    resolved at `record_received` (the PRINCIPAL when a delegate dropped for them). `submitted_by`
+    is the authenticated delegate and never answers a drop question; it is only the fallback for a
+    row that recorded no actor."""
+    return str((row or {}).get("on_behalf_of") or (row or {}).get("submitted_by") or "").strip()
+
+
+async def _can_drop_or_refuse(kind: str, dropper_id: str) -> None:
+    """THE one can_drop check, called by every site that sets a row's kind (the two doors,
+    title_leaf, /leaf, the BFF leaf backstop). A kind is gated iff the Topaz object
+    `capability:can_drop:<kind>` exists; then the dropper must hold `can_invoke`. Returns when the
+    dropper may drop it. Raises 403 `not_entitled_to_drop` (policy refusal) when not, and 503
+    `authorization_unavailable` / `authorization_unconfigured` when the directory cannot say --
+    a failed read is never "not gated"."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+    from .authz.refusal import policy_refusal
+
+    try:
+        refused = await run_in_threadpool(human_tasks.can_drop_refusal, kind, dropper_id)
+    except human_tasks.AuthorizationUnconfigured as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("can_drop gate unavailable for kind=%s: %s", kind, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify whether this kind is restricted"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
+    if refused is not None:
+        raise policy_refusal(
+            "not_entitled_to_drop", policy_id=refused["policy_id"],
+            missing_binding=refused["missing_binding"], message=refused["message"])
 _INGEST_LEAF_BACKSTOP_SECONDS_DEFAULT = 300
 
 # Ruling 2026-10-21 (a leaf set while the run is in flight): a PDF drop whose leaf (pcn|pdn) is set
@@ -259,6 +301,22 @@ async def _apply_manifest_leaf_block(row: dict, key, manifest: dict) -> tuple:
     if title is not None:
         # The sidecar is rewritten to the leaf BEFORE the row is re-opened, so the relaunch
         # runs as the leaf; an S3 error lands in the per-row except (row skipped).
+        try:
+            await _can_drop_or_refuse(title, _row_dropper(row))
+        except HTTPException as exc:
+            code = exc.status_code
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            logger.warning("ingest_leaf_backstop ingest_id=%s kind=%s refused by can_drop: %s (%s)",
+                           rid, title, detail.get("error"), code)
+            if code != 403:
+                # the directory could not answer: leave the row untouched for the next tick
+                return "can_drop_unavailable", False
+            held = await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+                rid, candidates=_backstop_candidates(block.get("candidates")),
+                detail=f"the title read named {title}, which the dropper may not drop; "
+                       "pick another kind",
+                from_statuses=[ingest_status.EXTRACTING]))
+            return ("awaiting_kind" if held else "row_moved"), held
         await run_in_threadpool(lambda: _apply_leaf_to_sidecar(row, title))
         ok = await run_in_threadpool(lambda: ingest_status.set_leaf(
             rid, title, "title", set_by=_LEAF_BACKSTOP_ACTOR,
@@ -1069,14 +1127,40 @@ async def get_mesh_config(current_user: User = Depends(get_current_user)):
 # step 3 wired), `cells` is empty and `source` reflects the JWT-legacy
 # path. The picker (step 5) treats an empty cells list as "no picker
 # — the caller is on the legacy persona-in-JWT posture."
-@app.get("/me/entitlements", tags=[INGEST_V1_TAG], responses={200: {"model": Entitlements}})
+@app.get("/me/entitlements", tags=[INGEST_V1_TAG], responses={200: {"model": Entitlements}, 503: DROP_GATE_RESPONSES[503]})
 async def get_me_entitlements(current_user: User = Depends(get_current_user)):
     """Return the current user's (persona, domain) entitlement matrix.
 
     `authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop
     echoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it
     as `on_behalf_of` is refused `not_a_delegate` (2026-10-21)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, human_tasks
+
     ent = current_user.entitlements
+    # `droppable_kinds`: every registered kind except a GATED kind (Topaz object
+    # `capability:can_drop:<kind>` exists) this caller is not granted. One unreadable object makes
+    # the whole answer 503 -- never a partial or guessed list.
+    def _droppable() -> list[str]:
+        out: list[str] = []
+        for reg in content_kinds.registrations():
+            if human_tasks.can_drop_refusal(reg.kind, current_user.authz_id) is None:
+                out.append(reg.kind)
+        return out
+
+    try:
+        droppable_kinds = await run_in_threadpool(_droppable)
+    except human_tasks.AuthorizationUnconfigured as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("droppable_kinds unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify which kinds are restricted"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
     return {
         "user_id": current_user.id,
         "authz_id": current_user.authz_id,
@@ -1090,6 +1174,7 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
             else None
         ),
         "source": ent.source,
+        "droppable_kinds": droppable_kinds,
     }
 
 
@@ -11796,7 +11881,7 @@ def _sniff_file_kind(head: bytes) -> Optional[str]:
     return None
 
 
-@app.post("/ingest", tags=[INGEST_V1_TAG], responses={200: {"model": IngestResponse}})
+@app.post("/ingest", tags=[INGEST_V1_TAG], responses={200: {"model": IngestResponse}, **DROP_GATE_RESPONSES})
 async def ingest_document(
     file: UploadFile = File(...),
     kind: str = Form(...),
@@ -11941,6 +12026,12 @@ async def ingest_document(
                 ),
             },
         )
+
+    # can_drop:<kind> (2026-10-28): a gated kind is dropped only by its grantees. The EFFECTIVE kind
+    # is `declared_content_kind` (a `leaf` already replaced it above); the dropper is `actor`, the
+    # principal of record when a delegate drops on their behalf. Before the bounded read, so a
+    # refused drop writes nothing.
+    await _can_drop_or_refuse(declared_content_kind, actor)
 
     # THE PROCESSABLE-KINDS CHECK (owner ruling, F2/F3): behind a flag that ships OFF. Flag off ->
     # the store and cache are never touched. Flag on is deny-by-default: no published list yet ->
@@ -12172,7 +12263,7 @@ def _dotted_get(d: dict[str, Any], path: str) -> Any:
     return cur
 
 
-@app.post("/ingest/events")
+@app.post("/ingest/events", responses=DROP_GATE_RESPONSES)
 async def ingest_event(
     req: IngestEventRequest,
     current_user: User = Depends(get_current_user),
@@ -12221,6 +12312,9 @@ async def ingest_event(
                 ),
             },
         )
+    # can_drop:<kind>: the dropper of record (`actor`) must hold it when the kind is gated.
+    # Before the trigger load, the runner and any write, so a refusal records nothing.
+    await _can_drop_or_refuse(req.content_kind, actor)
 
     try:
         from agent_fleet.restate_analyst.case_routing import (  # noqa: PLC0415
@@ -14427,7 +14521,7 @@ class IngestTitleLeafRequest(_BaseModel):
     run_id: Optional[str] = None
 
 
-@app.post("/ingest/{ingest_id}/title_leaf", tags=[INGEST_V1_TAG], responses={200: {"model": TitleLeafResponse}})
+@app.post("/ingest/{ingest_id}/title_leaf", tags=[INGEST_V1_TAG], responses={200: {"model": TitleLeafResponse}, **DROP_GATE_RESPONSES})
 async def ingest_title_leaf_route(
     ingest_id: str, req: IngestTitleLeafRequest, current_user: User = Depends(get_current_user),
 ):
@@ -14492,6 +14586,20 @@ async def ingest_title_leaf_route(
             return _answer(row, True)
         # 3. a confident title
         if title is not None:
+            # can_drop:<title>, against the row's DROPPER (not doc-tools): a service identity must
+            # not launder a non-grantee's drop into a restricted kind. Refused: the leaf is NOT set
+            # and the row waits for a kind (the hold in step 4), then the 403 is answered.
+            try:
+                await _can_drop_or_refuse(title, _row_dropper(row))
+            except HTTPException as exc:
+                if exc.status_code == 403:
+                    await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+                        ingest_id,
+                        candidates=[c.model_dump() for c in (req.candidates or [])],
+                        detail=(f"the title named {title}, which the dropper may not drop; "
+                                "pick another kind"),
+                        run_id=req.run_id, from_statuses=[stage]))
+                raise
             written = await run_in_threadpool(lambda: ingest_status.set_leaf(
                 ingest_id, title, "title", set_by=caller, from_statuses=[stage]))
             if written is not None:
@@ -14523,7 +14631,7 @@ class IngestLeafRequest(_BaseModel):
     leaf: str
 
 
-@app.post("/ingest/{ingest_id}/leaf", tags=[INGEST_V1_TAG], responses={200: {"model": LeafResponse}})
+@app.post("/ingest/{ingest_id}/leaf", tags=[INGEST_V1_TAG], responses={200: {"model": LeafResponse}, **DROP_GATE_RESPONSES})
 async def ingest_leaf_route(
     ingest_id: str, req: IngestLeafRequest, current_user: User = Depends(get_current_user),
 ):
@@ -14606,6 +14714,17 @@ async def ingest_leaf_route(
                       "message": "the document moved on while the kind was being set; "
                                  "reload it and try again"}, "row_moved")
 
+    # can_drop:<leaf>, against the row's DROPPER, never the caller (a granted steward or the BFF must
+    # not move a non-grantee's document into a restricted kind). No steward exemption: deny by
+    # default until the architect rules. Once, before any write (the sidecar rewrite included); the
+    # dropper of record does not change across the rounds below.
+    try:
+        await _can_drop_or_refuse(leaf, _row_dropper(row))
+    except HTTPException as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny",
+                             "not_entitled_to_drop" if exc.status_code == 403
+                             else "authorization_unavailable")
+        raise
     old_kind = row.get("content_kind")
     same = _same_passes(old_kind, leaf)
     for _round in range(3):

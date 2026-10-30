@@ -370,6 +370,43 @@
         "title": "ArtifactRef",
         "type": "object"
       },
+      "AuthorizationUnavailableBody": {
+        "additionalProperties": false,
+        "description": "The 503 body when the authorization directory cannot say whether a kind is gated.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/AuthorizationUnavailableDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "AuthorizationUnavailableBody",
+        "type": "object"
+      },
+      "AuthorizationUnavailableDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "enum": [
+              "authorization_unavailable",
+              "authorization_unconfigured"
+            ],
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "AuthorizationUnavailableDetail",
+        "type": "object"
+      },
       "Body_ingest_document_ingest_post": {
         "properties": {
           "content_kind": {
@@ -744,6 +781,13 @@
               }
             ]
           },
+          "droppable_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Droppable Kinds",
+            "type": "array"
+          },
           "email": {
             "anyOf": [
               {
@@ -784,70 +828,47 @@
           "email",
           "cells",
           "default",
-          "source"
+          "source",
+          "droppable_kinds"
         ],
         "title": "Entitlements",
         "type": "object"
       },
       "EvidenceRef": {
         "additionalProperties": false,
-        "description": "Where on the page an extracted value was read (units pt for a cell match, else px).",
+        "description": "7f's `wire_evidence_ref`, served as is (architect rulings 2026-10-21 and 2026-10-28).\n\n`bbox` is page fractions `[x0, y0, x1, y1]`, origin top-left, `0 <= x0 < x1 <= 1` and\n`0 <= y0 < y1 <= 1`. A null bbox means \"on this page, no box\" (ruling 205). Nothing else\nis served: no `bboxes`, `page_dims`, `units` or `quality`.",
         "properties": {
           "bbox": {
-            "items": {
-              "type": "number"
-            },
-            "title": "Bbox",
-            "type": "array"
-          },
-          "bboxes": {
-            "items": {
-              "items": {
-                "type": "number"
-              },
-              "type": "array"
-            },
-            "title": "Bboxes",
-            "type": "array"
-          },
-          "page": {
-            "title": "Page",
-            "type": "integer"
-          },
-          "page_dims": {
-            "title": "Page Dims"
-          },
-          "quality": {
             "anyOf": [
               {
-                "enum": [
-                  "cell",
-                  "region"
-                ],
-                "type": "string"
+                "items": {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Quality"
+            "title": "Bbox"
           },
-          "units": {
-            "enum": [
-              "pt",
-              "px"
-            ],
-            "title": "Units",
+          "note": {
+            "pattern": "\\S",
+            "title": "Note",
             "type": "string"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
           }
         },
         "required": [
-          "page",
-          "bbox",
-          "bboxes",
-          "page_dims",
-          "units",
-          "quality"
+          "page"
         ],
         "title": "EvidenceRef",
         "type": "object"
@@ -2064,6 +2085,50 @@
         "title": "MineListing",
         "type": "object"
       },
+      "NotEntitledToDrop": {
+        "additionalProperties": false,
+        "description": "The 403 body of a door that refused a kind the dropper is not granted.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/NotEntitledToDropDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "NotEntitledToDrop",
+        "type": "object"
+      },
+      "NotEntitledToDropDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "const": "not_entitled_to_drop",
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "refusal": {
+            "$ref": "#/components/schemas/RefusalEnvelope"
+          }
+        },
+        "required": [
+          "error",
+          "refusal"
+        ],
+        "title": "NotEntitledToDropDetail",
+        "type": "object"
+      },
       "Notice": {
         "additionalProperties": false,
         "description": "The notice header read from review.json; the values are LLM-extracted, so unconstrained.",
@@ -2100,6 +2165,39 @@
           "notice_date"
         ],
         "title": "Notice",
+        "type": "object"
+      },
+      "RefusalEnvelope": {
+        "additionalProperties": false,
+        "description": "`authz.refusal.refusal`'s envelope: what the caller lacks and who can grant it.",
+        "properties": {
+          "candidates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "grantable_by": {
+            "title": "Grantable By",
+            "type": "string"
+          },
+          "missing_binding": {
+            "title": "Missing Binding",
+            "type": "string"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "missing_binding",
+          "grantable_by",
+          "candidates"
+        ],
+        "title": "RefusalEnvelope",
         "type": "object"
       },
       "RetriesListing": {
@@ -2934,7 +3032,7 @@
   },
   "info": {
     "title": "Cortex ingest API",
-    "version": "1.2.0"
+    "version": "1.3.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -3052,6 +3150,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -3061,6 +3169,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3261,7 +3387,7 @@
     },
     "/ingest/{ingest_id}/extraction": {
       "get": {
-        "description": "GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the\nevidence reference (page, bbox, units, quality cell|region|null) the review card draws. Gate: `_ingest_review_access`\n(the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of\nreview.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and\nis counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /\n`extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`.\n`leaf` / `leaf_source` / `corrected_by` are the notice's pcn|pdn and where it came from, read from\nthe ROW only (`_row_leaf`); a row with no leaf shows `leaf: null` whatever review.json says.\nA REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the\nrejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404\n`rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`.",
+        "description": "GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the\nevidence reference (7f's `wire_evidence_ref`: page, bbox in page fractions, optional note) the review card draws. Gate: `_ingest_review_access`\n(the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of\nreview.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and\nis counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /\n`extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`.\n`leaf` / `leaf_source` / `corrected_by` are the notice's pcn|pdn and where it came from, read from\nthe ROW only (`_row_leaf`); a row with no leaf shows `leaf: null` whatever review.json says.\nA REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the\nrejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404\n`rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`.",
         "operationId": "ingest_extraction_route_ingest__ingest_id__extraction_get",
         "parameters": [
           {
@@ -3343,6 +3469,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -3352,6 +3488,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3571,6 +3725,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -3580,6 +3744,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3607,6 +3789,24 @@
               }
             },
             "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [

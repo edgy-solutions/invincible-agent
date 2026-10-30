@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 INGEST_V1_TAG = "ingest-v1"
-INGEST_API_VERSION = "1.2.0"
+INGEST_API_VERSION = "1.3.0"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),
@@ -315,6 +315,49 @@ class Entitlements(_Strict):
     cells: list[Cell]
     default: Cell | None
     source: str | None
+    droppable_kinds: list[str]
+
+
+class RefusalEnvelope(_Strict):
+    """`authz.refusal.refusal`'s envelope: what the caller lacks and who can grant it."""
+    policy_id: str
+    missing_binding: str
+    grantable_by: str
+    candidates: list[str]
+
+
+class NotEntitledToDropDetail(_Strict):
+    error: Literal["not_entitled_to_drop"]
+    message: str | None = None
+    refusal: RefusalEnvelope
+
+
+class NotEntitledToDrop(_Strict):
+    """The 403 body of a door that refused a kind the dropper is not granted."""
+    detail: NotEntitledToDropDetail
+
+
+class AuthorizationUnavailableDetail(_Strict):
+    error: Literal["authorization_unavailable", "authorization_unconfigured"]
+    message: str
+
+
+class AuthorizationUnavailableBody(_Strict):
+    """The 503 body when the authorization directory cannot say whether a kind is gated."""
+    detail: AuthorizationUnavailableDetail
+
+
+#: `responses=` entries for a route that checks `can_drop:<kind>`.
+DROP_GATE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": NotEntitledToDrop,
+          "description": "the dropper is not granted can_drop:<kind>"},
+    503: {"model": AuthorizationUnavailableBody,
+          "description": "the directory could not say whether the kind is gated; nothing was recorded",
+          "headers": {"Retry-After": {
+              "description": "seconds to wait before retrying; sent with `authorization_unavailable` "
+                             "(a transient directory failure), not with `authorization_unconfigured`",
+              "schema": {"type": "string"}}}},
+}
 
 
 class TaskDeclaration(_Strict):
