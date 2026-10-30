@@ -12,6 +12,10 @@ Additive for a reader. The 1.4.0 request form of `review_coverage` is deprecated
 - The id checks are now named by the item kind: `unknown_<item_kind>` and `duplicate_<item_kind>` (`unknown_part` and `duplicate_part` for parts, unchanged), with `overlap` and `uncovered`. 503 `review_coverage_unverifiable` also answers an `item_kind` the server has no reader for.
 - `GET /ingest/{id}/extraction`: new optional `review_shape` and `item_kind`, from the content kind's declared shape and its registry row (`GET /review-shapes`); null when the kind declares none.
 
+## 1.4.1 — 2026-10-30
+
+Tags only, no wire change. `GET /me/human_tasks`, `POST /human_tasks/{task_id}/act` and `POST /ingest` also carry the `mcp` tag (the MCP server's surface, spec packet 2026-10-30). No path, parameter, body or response schema changed.
+
 ## 1.4.0 — 2026-10-30
 
 One optional request field is added. Every request that worked before still works.

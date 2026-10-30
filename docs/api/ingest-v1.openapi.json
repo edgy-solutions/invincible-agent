@@ -3473,7 +3473,8 @@
         ],
         "summary": "Act On Human Task",
         "tags": [
-          "ingest-v1"
+          "ingest-v1",
+          "mcp"
         ]
       }
     },
@@ -3556,7 +3557,8 @@
         ],
         "summary": "Ingest Document",
         "tags": [
-          "ingest-v1"
+          "ingest-v1",
+          "mcp"
         ]
       }
     },
@@ -4203,7 +4205,8 @@
         ],
         "summary": "Get My Human Tasks",
         "tags": [
-          "ingest-v1"
+          "ingest-v1",
+          "mcp"
         ]
       }
     }
