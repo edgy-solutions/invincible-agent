@@ -165,6 +165,13 @@ def _install(monkeypatch, worlds, *, topaz=None, holders=()):
     Ledger.domains = {}
     monkeypatch.setattr(promotion_stores, "PgDecisionLedger", Ledger)
     asked = []
+    # The 2026-10-30 `can_export:<profile>` gate is its own file's subject
+    # (test_the_export_door_checks_can_export_per_profile.py): here it is granted, so this file's
+    # arms keep defending what they defended and `asked` still records only ingest:exportBatch.
+    _real_can_invoke = ht.can_invoke_or_unavailable
+    monkeypatch.setattr(
+        ht, "can_invoke_or_unavailable",
+        lambda cap, who: True if cap.startswith("can_export:") else _real_can_invoke(cap, who))
     if topaz is not None:
         class _Client:
             def __init__(self, **kw):

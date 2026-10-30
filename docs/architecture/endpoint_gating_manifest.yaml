@@ -1855,7 +1855,7 @@ services:
       - method: GET
         path: /ingest/export
         identity: keycloak-jwt
-        gate: "get_current_user + can_invoke(ingest:exportBatch) via human_tasks.can_invoke_or_unavailable; an ungranted caller is a 403 policy refusal (not_entitled_to_export_batch), Topaz down is 503"
+        gate: "get_current_user + can_invoke(ingest:exportBatch) via human_tasks.can_invoke_or_unavailable; an ungranted caller is a 403 policy refusal (not_entitled_to_export_batch), Topaz down is 503; AND can_invoke(can_export:<profile>) once the profile resolves (403 not_entitled_to_export, deny by default, Topaz down is 503)"
         exposes: gated-content
         consumers: [cortex-ui batch export]
         class: gated
@@ -1868,7 +1868,7 @@ services:
       - method: GET
         path: /ingest/{ingest_id}/export
         identity: keycloak-jwt
-        gate: "get_current_user + _ingest_review_access (the dropper, or a holder of the open promotion task), or a caller holding can_invoke(ingest:exportBatch); every decision is audited on iagent.audit.ingest_access; a promoted notice only (409 ingest_not_promoted), uncorrected only (409 export_corrections_not_applied)"
+        gate: "get_current_user + _ingest_review_access (the dropper, or a holder of the open promotion task), or a caller holding can_invoke(ingest:exportBatch); AND, for every caller, can_invoke(can_export:<profile>) once the profile resolves (403 not_entitled_to_export, deny by default, Topaz down is 503); every decision is audited on iagent.audit.ingest_access; a promoted notice only (409 ingest_not_promoted), uncorrected only (409 export_corrections_not_applied)"
         exposes: gated-content
         consumers: [cortex-ui export]
         class: gated
