@@ -921,6 +921,57 @@ stalled signal on a repeated question whose answer changed nothing.
   stall on the first ask; a stall that ignores a change; no grammar line; no row hint; the
   scripted user not narrowed.
 
+Three runs on PCN at `f218ad2d`, same model and harness, with no walk or roll in flight. The bank is
+now 14: it includes the acknowledgement's `excludes`.
+
+| run | questions / bank | runnable errors | semantic diffs | open | answered by path | model errors | confirms | stalled | contradiction | deferral | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 19 | 27/14 | 0 | 5 | 2 | 5 | 1 | 8 | 0 | **1/1** | 1/1 | cannot_run | 542 |
+| 20 | 22/14 | 0 | 3 | 2 | 6 | 0 | 8 | 0 | **1/1** | 1/1 | cannot_run | 466 |
+| 21 | 34/14 | 0 | 6 | 6 | 5 | 1 | 9 | 0 | **1/1** | 1/1 | cannot_run | 541 |
+
+- **The planted contradiction was asked in all three runs.** It was asked in 0 of the 12 PCN
+  runs before (7 to 18, rescored). In each run the loop:
+  1. confirmed the program approval's `excludes`, which the model had written unasked;
+  2. got the bank answer that the submitter may never sign off either review;
+  3. asked the overwrite contradiction on the impact review's `excludes`, which is the planted one.
+
+  This is the path the seal fixes. The planted deferral was recorded in all three runs too.
+- **All four stages were drafted in all three runs, with no runnable errors.**
+  - Run 18's class (an outcome put in `terminals` with no row) did not recur: 0 runnable errors in
+    each run.
+  - Runs 19 and 21 raised contradictions on a table's `terminals` and `rows`. Each was deferred.
+- **All three are `cannot_run`, for the same reason.** The model drafted the record stage's wait as
+  a human approval. The expected stage is an emit and a `signal_await`: the records group files it
+  and says so.
+  - So the turn check confirms two slots the person never stated, in each run: who is barred from
+    the record step, and the routing after the record.
+  - The scripted user has no answer for either. A confirm may not be deferred, so both stay open.
+  - In runs 19 and 20 those two confirms are the only open keys.
+  - The confirm did its job: it found a value the model invented. A real person would say the
+    record is not an approval. The scripted user can only answer from the bank, so it cannot
+    refute an invention. That is a limit of the instrument, not a fix for the subject.
+- **Run 21 also left a stage undrafted.** The model named the acknowledgement `minor_ack`, so the
+  declared stage `acknowledgement` stayed undrafted. Three chaining tables kept a `timed_out` row
+  the runner refuses, as runtime refusals. Those four keys were each asked twice, and the user could not answer.
+- **The stall did not fire.** An answer the user could not give is already reported as
+  unanswerable, before the stall check. Run 21's four repeats are all of that kind. No run had a
+  second answer that applied and changed nothing.
+- **The confirms ask the model's own spelling.** 8, 8 and 9 confirms per run, against 1 under the
+  oracle. Every unasked `excludes` and task kind the model wrote is asked once. Each costs one
+  turn: questions per run ranged 9 to 32 in runs 16 to 18, and 22 to 34 here.
+- **Another contradiction recurs:** the program approval's bar overwrites the acknowledgement's
+  `excludes` too, in all three runs. The transcript bars the submitter from "either review", not
+  from the acknowledgement. Each time it was asked and deferred.
+- **The restate arm.** A positional path was refused once in run 19 (`steps[0].excludes`). In
+  run 21, a row selector with a dotted key (`rows[when.outcome=...]`) was refused once.
+- **Owed, not built.** A confirm the person cannot answer leaves the draft `cannot_run` for ever.
+  Two ways a person could answer "that is not right", for a ruling:
+  - let the scripted user refute a confirm whose slot is absent from the expected bundle;
+  - let a confirm's answer remove the slot's value.
+
+  Each changes the instrument, the loop, or both.
+
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a
