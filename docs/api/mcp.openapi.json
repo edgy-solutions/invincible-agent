@@ -1,0 +1,2947 @@
+{
+  "components": {
+    "schemas": {
+      "ActGeneric": {
+        "additionalProperties": false,
+        "description": "POST /human_tasks/{id}/act, the generic kinds (access_request, extraction_defect, ...).",
+        "properties": {
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "grant_written": {
+            "title": "Grant Written",
+            "type": "boolean"
+          },
+          "rows_resolved": {
+            "title": "Rows Resolved",
+            "type": "integer"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "workflow_resumed": {
+            "title": "Workflow Resumed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "decision",
+          "rows_resolved",
+          "workflow_resumed",
+          "grant_written"
+        ],
+        "title": "ActGeneric",
+        "type": "object"
+      },
+      "ActGroupedApproved": {
+        "additionalProperties": false,
+        "description": "A grouped_review approval: the workflow resumed and fanned out.",
+        "properties": {
+          "accepted": {
+            "const": true,
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "resolved_count": {
+            "title": "Resolved Count"
+          },
+          "review_dispatched": {
+            "const": true,
+            "title": "Review Dispatched",
+            "type": "boolean"
+          },
+          "rows_resolved": {
+            "title": "Rows Resolved",
+            "type": "integer"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "decision",
+          "accepted",
+          "rows_resolved",
+          "review_dispatched",
+          "resolved_count"
+        ],
+        "title": "ActGroupedApproved",
+        "type": "object"
+      },
+      "ActGroupedPending": {
+        "additionalProperties": false,
+        "description": "A grouped_review act the workflow refused by policy: the task stays pending.",
+        "properties": {
+          "accepted": {
+            "const": false,
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "decision",
+          "accepted",
+          "status",
+          "reason"
+        ],
+        "title": "ActGroupedPending",
+        "type": "object"
+      },
+      "ActGroupedRejected": {
+        "additionalProperties": false,
+        "description": "A grouped_review narrow reject: the task is closed, the ingest row ends review_rejected.",
+        "properties": {
+          "accepted": {
+            "const": true,
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "ingest_row": {
+            "title": "Ingest Row",
+            "type": "string"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "review_dispatched": {
+            "const": false,
+            "title": "Review Dispatched",
+            "type": "boolean"
+          },
+          "rows_resolved": {
+            "title": "Rows Resolved",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "decision",
+          "accepted",
+          "rows_resolved",
+          "review_dispatched",
+          "reason_code",
+          "status",
+          "ingest_row"
+        ],
+        "title": "ActGroupedRejected",
+        "type": "object"
+      },
+      "ActPromotion": {
+        "additionalProperties": false,
+        "description": "POST /human_tasks/{id}/act on a document_promotion; fact/origin only when promoted, swept only\nwhen rejected, the row_edits..extraction_defect keys only when the steward corrected.",
+        "properties": {
+          "correction": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction"
+          },
+          "corrections": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrections"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "extraction_defect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Defect"
+          },
+          "fact": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "origin": {
+            "title": "Origin"
+          },
+          "reconciled": {
+            "title": "Reconciled"
+          },
+          "record_id": {
+            "title": "Record Id",
+            "type": "string"
+          },
+          "reject_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reject Code"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "row_edits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RowEditCounts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "row_edits_applied": {
+            "title": "Row Edits Applied"
+          },
+          "rows_resolved": {
+            "title": "Rows Resolved",
+            "type": "integer"
+          },
+          "swept": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Swept"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "decision",
+          "rows_resolved",
+          "ingest_id",
+          "record_id",
+          "replayed"
+        ],
+        "title": "ActPromotion",
+        "type": "object"
+      },
+      "AddedRow": {
+        "additionalProperties": false,
+        "properties": {
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "evidence": {
+            "title": "Evidence",
+            "type": "string"
+          },
+          "evidence_ref": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Ref"
+          },
+          "mpn": {
+            "title": "Mpn",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mpn",
+          "disposition",
+          "reason",
+          "evidence"
+        ],
+        "title": "AddedRow",
+        "type": "object"
+      },
+      "AuthorizationUnavailableBody": {
+        "additionalProperties": false,
+        "description": "The 503 body when the authorization directory cannot say whether a kind is gated.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/AuthorizationUnavailableDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "AuthorizationUnavailableBody",
+        "type": "object"
+      },
+      "AuthorizationUnavailableDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "enum": [
+              "authorization_unavailable",
+              "authorization_unconfigured"
+            ],
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "AuthorizationUnavailableDetail",
+        "type": "object"
+      },
+      "Body_ingest_document_ingest_post": {
+        "properties": {
+          "content_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Kind"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "leaf": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf"
+          },
+          "on_behalf_of": {
+            "default": "",
+            "title": "On Behalf Of",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "kind"
+        ],
+        "title": "Body_ingest_document_ingest_post",
+        "type": "object"
+      },
+      "CanvasSeedAsk": {
+        "description": "`ask_card(...)` plus `template_id`, `binding_slot` and (abstain on no members) `policy`.",
+        "properties": {
+          "accepted_slots": {
+            "additionalProperties": true,
+            "title": "Accepted Slots",
+            "type": "object"
+          },
+          "binding_slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The shared-slot NAME (not the dispatch param).",
+            "title": "Binding Slot"
+          },
+          "bound_slots_offered": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Bound Slots Offered",
+            "type": "array"
+          },
+          "data": {
+            "title": "Data",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "ask",
+              "abstain"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "found": {
+            "title": "Found",
+            "type": "string"
+          },
+          "free_text_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Text Reason"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "option_source": {
+            "title": "Option Source",
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasSeedAskOption"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "output_uri": {
+            "title": "Output Uri",
+            "type": "string"
+          },
+          "policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanvasSeedPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present only when the caller's enumeration came back empty (an abstain)."
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "scoped_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scoped By",
+            "type": "array"
+          },
+          "slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slot"
+          },
+          "sources": {
+            "items": {},
+            "title": "Sources",
+            "type": "array"
+          },
+          "spoken": {
+            "title": "Spoken",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "slot_elicitation",
+              "slot_abstain"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "structured_data": {
+            "$ref": "#/components/schemas/CanvasSeedAskStructuredData"
+          },
+          "sub_query": {
+            "title": "Sub Query",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "template_id": {
+            "description": "Always set by `_canvas_seed_ask`.",
+            "title": "Template Id",
+            "type": "string"
+          },
+          "total_count": {
+            "title": "Total Count",
+            "type": "integer"
+          },
+          "truncated_from": {
+            "title": "Truncated From",
+            "type": "integer"
+          },
+          "verb_iri": {
+            "title": "Verb Iri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "disposition",
+          "output_uri",
+          "verb_iri",
+          "sub_query",
+          "reason",
+          "spoken",
+          "found",
+          "options",
+          "option_source",
+          "truncated_from",
+          "total_count",
+          "scoped_by",
+          "bound_slots_offered",
+          "accepted_slots",
+          "message",
+          "summary",
+          "structured_data",
+          "data",
+          "sources",
+          "template_id",
+          "binding_slot"
+        ],
+        "title": "CanvasSeedAsk",
+        "type": "object"
+      },
+      "CanvasSeedAskOption": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "label"
+        ],
+        "title": "CanvasSeedAskOption",
+        "type": "object"
+      },
+      "CanvasSeedAskStructuredData": {
+        "properties": {
+          "already_known": {
+            "additionalProperties": true,
+            "title": "Already Known",
+            "type": "object"
+          },
+          "bound_slots_offered": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Bound Slots Offered",
+            "type": "array"
+          },
+          "free_text_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Free Text Reason"
+          },
+          "option_source": {
+            "title": "Option Source",
+            "type": "string"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasSeedAskOption"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "scoped_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scoped By",
+            "type": "array"
+          },
+          "slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slot"
+          },
+          "total_count": {
+            "title": "Total Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "options",
+          "option_source",
+          "total_count",
+          "scoped_by",
+          "bound_slots_offered",
+          "already_known"
+        ],
+        "title": "CanvasSeedAskStructuredData",
+        "type": "object"
+      },
+      "CanvasSeedAskUnavailable": {
+        "properties": {
+          "detail": {
+            "description": "The builder's exception class name.",
+            "title": "Detail",
+            "type": "string"
+          },
+          "error": {
+            "const": "ask_unavailable",
+            "title": "Error",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "detail"
+        ],
+        "title": "CanvasSeedAskUnavailable",
+        "type": "object"
+      },
+      "CanvasSeedConflict": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/CanvasSeedConflictDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "CanvasSeedConflict",
+        "type": "object"
+      },
+      "CanvasSeedConflictDetail": {
+        "properties": {
+          "ask": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanvasSeedAsk"
+              },
+              {
+                "$ref": "#/components/schemas/CanvasSeedAskUnavailable"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent when no unbound slot is askable; best-effort, so it may be the unavailable form.",
+            "title": "Ask"
+          },
+          "error": {
+            "const": "unbound_required_slot",
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "refusal": {
+            "$ref": "#/components/schemas/CanvasSeedRefusal",
+            "description": "Always present: the 409 asks the caller to choose or request something (`slot_refusal`)."
+          }
+        },
+        "required": [
+          "error",
+          "message",
+          "refusal"
+        ],
+        "title": "CanvasSeedConflictDetail",
+        "type": "object"
+      },
+      "CanvasSeedPolicy": {
+        "properties": {
+          "cell": {
+            "$ref": "#/components/schemas/CanvasSeedPolicyCell",
+            "description": "The cell that owns the referent."
+          },
+          "groups": {
+            "description": "Groups in policy/groups.yaml that grant the cell.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "repair": {
+            "enum": [
+              "switch_cell",
+              "grant_member",
+              "join_group",
+              "declare_group"
+            ],
+            "title": "Repair",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cell",
+          "groups",
+          "repair",
+          "message"
+        ],
+        "title": "CanvasSeedPolicy",
+        "type": "object"
+      },
+      "CanvasSeedPolicyCell": {
+        "properties": {
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "persona": {
+            "title": "Persona",
+            "type": "string"
+          }
+        },
+        "required": [
+          "persona",
+          "domain"
+        ],
+        "title": "CanvasSeedPolicyCell",
+        "type": "object"
+      },
+      "CanvasSeedRefusal": {
+        "description": "`authz.refusal.refusal`'s envelope (ca's `iagent_mesh.refusal.Refusal` field names).",
+        "properties": {
+          "candidates": {
+            "description": "The choices that would satisfy it; empty when none is offered.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "grantable_by": {
+            "description": "Who can grant it and how, from policy/grantors/.",
+            "title": "Grantable By",
+            "type": "string"
+          },
+          "missing_binding": {
+            "description": "What the caller lacks, e.g. `can_view_program(program)`.",
+            "title": "Missing Binding",
+            "type": "string"
+          },
+          "policy_id": {
+            "description": "The policy family that refused, e.g. `groups` or `program_members`.",
+            "title": "Policy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "missing_binding",
+          "grantable_by",
+          "candidates"
+        ],
+        "title": "CanvasSeedRefusal",
+        "type": "object"
+      },
+      "CanvasSeedRequest": {
+        "description": "A canvas TYPE or a ratified `template_id`, and nothing else.\n\nIt supplies no session id and no question list, which is the point — the panels and their\nslot order are the TEMPLATE'S declaration, not the caller's.\n\n`template_id` IS THE ONE ADR-0050 SPEAKS, and `canvas_type` is kept because cortex's\n`requestPortfolioCanvasSeed()` sends it today. Removing it in the same change that adds\nthe new field would break the live client for a rename, so both are accepted and the\nresolution below is explicit rather than a silent precedence.\n\n`bindings` IS THE PICKER'S HALF OF ADR-0050 §3's CARRY: shared-slot NAME (never `param`,\nwhich is dispatch vocabulary the caller never sees) -> the value the picker chose. Keyed by\n`name` so one ask serves every panel that consumes it, the same relation `SharedSlot.bind_as`\nexists to resolve on the dispatch side.\n\n`active_persona`/`active_domains` ride through to `/interview/stream` UNCHANGED — `None`\nlets the stream fall back to the caller's own default cell exactly as a hand-typed turn\nwould, rather than this route inventing a cell on the caller's behalf.\n\n`params`, `user_persona` AND `domain` ARE THE SUPERVISOR'S DISPATCH FIELDS. A bound verb is\ndispatched by POSTing its bound slots under `params` plus the caller's chosen cell; this\nmodel declared none of them, so pydantic DROPPED them silently and a chat-routed seedCanvas\nlost its `template_id` and built the portfolio board. `canvas_template.fold_dispatch_params`\nreads them now.",
+        "properties": {
+          "active_domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Domains"
+          },
+          "active_persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Persona"
+          },
+          "bindings": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bindings"
+          },
+          "canvas_type": {
+            "default": "portfolio_planning",
+            "title": "Canvas Type",
+            "type": "string"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Params"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          },
+          "user_persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Persona"
+          }
+        },
+        "title": "CanvasSeedRequest",
+        "type": "object"
+      },
+      "CanvasSeedResponse": {
+        "properties": {
+          "artifact_ids": {
+            "description": "Slot-ordered ids; empty on a partial or empty seed.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Artifact Ids",
+            "type": "array"
+          },
+          "seeded": {
+            "description": "Panels seeded.",
+            "title": "Seeded",
+            "type": "integer"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present on full success only; ABSENT (not null) on a partial or empty seed.",
+            "title": "Template Id"
+          },
+          "total": {
+            "description": "Panels the template declares.",
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "artifact_ids",
+          "seeded",
+          "total"
+        ],
+        "title": "CanvasSeedResponse",
+        "type": "object"
+      },
+      "CorrectedRow": {
+        "additionalProperties": false,
+        "properties": {
+          "corrected_mpn": {
+            "title": "Corrected Mpn",
+            "type": "string"
+          },
+          "evidence": {
+            "title": "Evidence",
+            "type": "string"
+          },
+          "evidence_ref": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Ref"
+          },
+          "mpn": {
+            "title": "Mpn",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mpn",
+          "corrected_mpn",
+          "evidence"
+        ],
+        "title": "CorrectedRow",
+        "type": "object"
+      },
+      "CoverageGroup": {
+        "additionalProperties": false,
+        "description": "One group of parts a steward folded without opening: the grouping rule, its key, and the\nmembers NOT opened (part_index values).",
+        "properties": {
+          "key": {
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "parts": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "rule": {
+            "minLength": 1,
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "key",
+          "parts"
+        ],
+        "title": "CoverageGroup",
+        "type": "object"
+      },
+      "CoverageShared": {
+        "additionalProperties": false,
+        "description": "One evidence crop that many parts cite (recorded, not re-derived).",
+        "properties": {
+          "bbox": {
+            "items": {
+              "anyOf": [
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              ]
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Bbox",
+            "type": "array"
+          },
+          "confirmed": {
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "parts": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "rule": {
+            "minLength": 1,
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "page",
+          "bbox",
+          "parts",
+          "confirmed"
+        ],
+        "title": "CoverageShared",
+        "type": "object"
+      },
+      "DeletedRow": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ref": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Ref"
+          },
+          "mpn": {
+            "title": "Mpn",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mpn",
+          "reason"
+        ],
+        "title": "DeletedRow",
+        "type": "object"
+      },
+      "DuplicateRef": {
+        "additionalProperties": false,
+        "description": "Points a duplicate-arrival row at the original drop it repeats.",
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "of_ingest_id": {
+            "title": "Of Ingest Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "of_ingest_id",
+          "message"
+        ],
+        "title": "DuplicateRef",
+        "type": "object"
+      },
+      "EmptyConfirmed": {
+        "additionalProperties": false,
+        "description": "POST /ingest/{id}/empty, decision confirmed_no_parts: the row ends no_parts.",
+        "properties": {
+          "decision": {
+            "const": "confirmed_no_parts",
+            "title": "Decision",
+            "type": "string"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "rows_resolved": {
+            "title": "Rows Resolved",
+            "type": "integer"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "task_id",
+          "decision",
+          "stage",
+          "rows_resolved"
+        ],
+        "title": "EmptyConfirmed",
+        "type": "object"
+      },
+      "EmptyHasParts": {
+        "additionalProperties": false,
+        "description": "POST /ingest/{id}/empty, decision has_parts: relaunched with the text-layer fallback.",
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "decision": {
+            "const": "has_parts",
+            "title": "Decision",
+            "type": "string"
+          },
+          "extraction_defect": {
+            "title": "Extraction Defect",
+            "type": "string"
+          },
+          "force_text_fallback": {
+            "title": "Force Text Fallback",
+            "type": "boolean"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "rows_resolved": {
+            "title": "Rows Resolved",
+            "type": "integer"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "task_id",
+          "decision",
+          "stage",
+          "attempt",
+          "extraction_defect",
+          "force_text_fallback",
+          "rows_resolved"
+        ],
+        "title": "EmptyHasParts",
+        "type": "object"
+      },
+      "ExportAnswer": {
+        "properties": {
+          "artifact_id": {
+            "title": "Artifact Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id"
+        ],
+        "title": "ExportAnswer",
+        "type": "object"
+      },
+      "ExportPackageRequest": {
+        "properties": {
+          "answers": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExportAnswer"
+            },
+            "title": "Answers",
+            "type": "array"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "bindings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bindings"
+          },
+          "recipient_scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Scope"
+          },
+          "template_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Id"
+          }
+        },
+        "title": "ExportPackageRequest",
+        "type": "object"
+      },
+      "ExportProfile": {
+        "additionalProperties": false,
+        "description": "One row of GET /ingest/export/profiles (a valid `policy/exports/<name>.yaml`).",
+        "properties": {
+          "format": {
+            "enum": [
+              "csv",
+              "json"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "granularity": {
+            "enum": [
+              "notice_part",
+              "notice"
+            ],
+            "title": "Granularity",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "format",
+          "granularity",
+          "label"
+        ],
+        "title": "ExportProfile",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HeaderEdit": {
+        "additionalProperties": false,
+        "description": "A steward correction of one header field of a promotion (ruling 10-20, Q8 amended), on the\nsame wire and flag as row_edits.",
+        "properties": {
+          "evidence_ref": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Ref"
+          },
+          "field": {
+            "enum": [
+              "mfr",
+              "notice_id",
+              "notice_date"
+            ],
+            "title": "Field",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "value",
+          "evidence_ref",
+          "reason"
+        ],
+        "title": "HeaderEdit",
+        "type": "object"
+      },
+      "HumanTask": {
+        "additionalProperties": false,
+        "description": "One pending task row of the caller's queue, with its kind's declaration.",
+        "properties": {
+          "audience": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audience"
+          },
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "created_at": {
+            "title": "Created At"
+          },
+          "declaration": {
+            "$ref": "#/components/schemas/TaskDeclaration"
+          },
+          "id": {
+            "title": "Id"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "payload": {
+            "title": "Payload"
+          },
+          "promise_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promise Name"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Ref"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          },
+          "workflow_service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Service"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "task_id",
+          "workflow_id",
+          "audience",
+          "status",
+          "title",
+          "summary",
+          "requested_by",
+          "subject_ref",
+          "payload",
+          "created_at",
+          "workflow_service",
+          "promise_name",
+          "case_id",
+          "declaration"
+        ],
+        "title": "HumanTask",
+        "type": "object"
+      },
+      "HumanTaskActRequest": {
+        "properties": {
+          "comment": {
+            "default": "",
+            "title": "Comment",
+            "type": "string"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "header_edits": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/HeaderEdit"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Header Edits"
+          },
+          "on_behalf_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Behalf Of"
+          },
+          "overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrides"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "not_a_notice",
+                  "unreadable",
+                  "parts_unusable",
+                  "duplicate"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "review_coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "row_edits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RowEdits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "HumanTaskActRequest",
+        "type": "object"
+      },
+      "HumanTasksListing": {
+        "additionalProperties": false,
+        "description": "GET /me/human_tasks: pending tasks addressed to the caller, newest first.",
+        "properties": {
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/HumanTask"
+            },
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "email",
+          "tasks"
+        ],
+        "title": "HumanTasksListing",
+        "type": "object"
+      },
+      "IngestAccepted": {
+        "additionalProperties": false,
+        "description": "POST /ingest, a new drop.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "null"
+          },
+          "duplicate": {
+            "title": "Duplicate",
+            "type": "null"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "object_prefix": {
+            "title": "Object Prefix",
+            "type": "string"
+          },
+          "origin_suggestion": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin Suggestion"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "workflow": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "stage",
+          "detail",
+          "object_prefix",
+          "duplicate",
+          "workflow",
+          "origin_suggestion"
+        ],
+        "title": "IngestAccepted",
+        "type": "object"
+      },
+      "IngestDuplicate": {
+        "additionalProperties": false,
+        "description": "POST /ingest, bytes already dropped: a new row for the repeat, carrying the original's stage.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "duplicate": {
+            "$ref": "#/components/schemas/DuplicateRef"
+          },
+          "ingest_id": {
+            "title": "Ingest Id",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          }
+        },
+        "required": [
+          "ingest_id",
+          "stage",
+          "detail",
+          "duplicate"
+        ],
+        "title": "IngestDuplicate",
+        "type": "object"
+      },
+      "InterviewRequest": {
+        "properties": {
+          "active_domains": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Domains"
+          },
+          "active_persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Persona"
+          },
+          "answering_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answering Artifact Id"
+          },
+          "artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Id"
+          },
+          "bound_slots": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bound Slots"
+          },
+          "current_graph_json": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Graph Json"
+          },
+          "frontend_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frontend Id"
+          },
+          "frontend_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frontend Version"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "seed_panel": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed Panel"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "spoken_answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spoken Answer"
+          },
+          "spoken_slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spoken Slot"
+          }
+        },
+        "required": [
+          "message",
+          "session_id"
+        ],
+        "title": "InterviewRequest",
+        "type": "object"
+      },
+      "NotEntitledToDrop": {
+        "additionalProperties": false,
+        "description": "The 403 body of a door that refused a kind the dropper is not granted.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/NotEntitledToDropDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "NotEntitledToDrop",
+        "type": "object"
+      },
+      "NotEntitledToDropDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "const": "not_entitled_to_drop",
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "refusal": {
+            "$ref": "#/components/schemas/RefusalEnvelope"
+          }
+        },
+        "required": [
+          "error",
+          "refusal"
+        ],
+        "title": "NotEntitledToDropDetail",
+        "type": "object"
+      },
+      "RefusalEnvelope": {
+        "additionalProperties": false,
+        "description": "`authz.refusal.refusal`'s envelope: what the caller lacks and who can grant it.",
+        "properties": {
+          "candidates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "grantable_by": {
+            "title": "Grantable By",
+            "type": "string"
+          },
+          "missing_binding": {
+            "title": "Missing Binding",
+            "type": "string"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "missing_binding",
+          "grantable_by",
+          "candidates"
+        ],
+        "title": "RefusalEnvelope",
+        "type": "object"
+      },
+      "ReviewCoverage": {
+        "additionalProperties": false,
+        "description": "What the steward looked at on a document promotion (ruled 2026-10-29: a sampled promote is\nlegal if it is recorded). Ids are the extraction's integer `part_index`. The route checks every\npart was opened or folded into a group (`review_coverage_invalid`); `sampled`, `flagged`,\n`shared` and `sample` are recorded as sent.",
+        "properties": {
+          "flagged": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Flagged",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "looked_at": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Looked At",
+            "type": "array"
+          },
+          "rules_version": {
+            "minLength": 1,
+            "title": "Rules Version",
+            "type": "string"
+          },
+          "sample": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample"
+          },
+          "sampled": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Sampled",
+            "type": "array"
+          },
+          "shared": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageShared"
+            },
+            "title": "Shared",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rules_version",
+          "looked_at",
+          "sampled",
+          "flagged",
+          "groups",
+          "shared"
+        ],
+        "title": "ReviewCoverage",
+        "type": "object"
+      },
+      "RowEditCounts": {
+        "additionalProperties": false,
+        "description": "How many of each edit a steward's correction carried.",
+        "properties": {
+          "added": {
+            "title": "Added",
+            "type": "integer"
+          },
+          "corrected": {
+            "title": "Corrected",
+            "type": "integer"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "header": {
+            "title": "Header",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "corrected",
+          "added",
+          "deleted",
+          "header"
+        ],
+        "title": "RowEditCounts",
+        "type": "object"
+      },
+      "RowEdits": {
+        "additionalProperties": false,
+        "description": "Steward row edits on a grouped-review approval (architect ruling 2026-10-10). The workflow's\n`steward_correction.validate_row_edits` restates every rule against the server-authored batch;\nthis is the wire half, so a bad payload is a 422 before it reaches Restate. It is also the\ndocument_promotion wire (carried on a `promoted` decision, server-flagged by\nIAGENT_PROMOTION_ROW_EDITS).",
+        "properties": {
+          "added": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AddedRow"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "corrected": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CorrectedRow"
+            },
+            "title": "Corrected",
+            "type": "array"
+          },
+          "deleted": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DeletedRow"
+            },
+            "title": "Deleted",
+            "type": "array"
+          }
+        },
+        "title": "RowEdits",
+        "type": "object"
+      },
+      "TaskDeclaration": {
+        "additionalProperties": false,
+        "description": "What the task's kind accepts: accepts is ordered, reason_required is a sorted subset of it.",
+        "properties": {
+          "accepts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Accepts",
+            "type": "array"
+          },
+          "archetype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archetype"
+          },
+          "badge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Badge"
+          },
+          "declared": {
+            "title": "Declared",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason_required": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reason Required",
+            "type": "array"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "kind",
+          "declared",
+          "archetype",
+          "badge",
+          "title",
+          "accepts",
+          "reason_required"
+        ],
+        "title": "TaskDeclaration",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "OAuth2PasswordBearer": {
+        "flows": {
+          "password": {
+            "scopes": {},
+            "tokenUrl": "http://localhost:8080/realms/invincible-agent/protocol/openid-connect/token"
+          }
+        },
+        "type": "oauth2"
+      }
+    }
+  },
+  "info": {
+    "title": "Cortex BFF mcp surface",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/canvas/seed": {
+      "post": {
+        "description": "The path cortex calls. A thin alias over /seed/portfolio_canvas.\n\nRESPONSE CONTRACT IS FIXED: `{\"artifact_ids\": [...]}`, slot-ordered, and\nnothing else. cortex reads exactly that field and composes the canvas with\nits own template; the server does not write the canvas, because copying\nstageConstants' coordinates into Python is how the first divergence goes\nsilent.\n\nNULLS ARE STRIPPED HERE, AND THAT IS A REAL TRADE — flagged, not hidden.\nThe underlying route returns a SLOT-ALIGNED array where a failed ask leaves\na null hole, so a partial seed cannot silently shift later cards up a slot.\nBut the client does `for (const id of artifactIds) addItemAuto(...)`, so a\nnull would become a broken item. Stripping is therefore required by the\nreceiver's contract, and it reintroduces the shift for PARTIAL seeds only:\nif the cost curve fails, site load lands in the cost-curve slot, every card\nis real, and nothing reports it.\n\nA complete seed (the normal case; 5/5 in 17.7 min when first measured, and\n5/5 in ~5-7 min re-measured 2026-09-09 on the quiet sandbox)\nis unaffected. A partial seed produces a board that is wrong in a way only a\nhuman notices. Whether a partial seed should compose at all or refuse\noutright is a PRODUCT ruling, not mine to make silently at this layer: the\nclient already has a no-canvas path for an empty array. `seeded` vs `total`\nis logged on every run so a partial is visible in the record even though the\nresponse cannot carry it.",
+        "operationId": "canvas_seed_canvas_seed_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CanvasSeedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasSeedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasSeedConflict"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Canvas Seed",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/cases/{case_id}": {
+      "get": {
+        "description": "GET /cases/{case_id} -- project the case runner's state (WorkflowRunner, ADR-0039) as\ncortex's `WorkflowCasePayload` (cortex-ui `src/archetypes/workflow-case/contract.ts`).\n\nEXISTENCE-ORACLE SAFE: a case that does not exist and a case the caller is not entitled to\nread (see `case_projection.can_view_case`) answer IDENTICALLY -- 404 `{\"detail\": \"case not\nfound\"}` -- same discipline as `GET /ingest/{id}/status`. The runner being unreachable is a\nDIFFERENT fact (not an authz question) and answers 503 `{\"error\": \"runner_unavailable\"}`.\n\nThe pure projection and the entitlement gate live in `case_projection`; this route only\nfetches runner/DB state and calls them.\n\nA DELEGATE IS NOT A SUBMITTER (ruled 2026-10-16): any caller acting under a delegate client\n(a key of `_delegate_principals()`, e.g. svc:openddil) reads the artifacts it seeded\n(GET /artifacts/{id}), never the whole case. Refused 403 BEFORE the fetch, so the answer is\nidentical whether or not the case exists (no existence oracle). R-089: the delegate map\nis asserted by configuration this pass.",
+        "operationId": "get_case_cases__case_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "title": "Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Case",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/export/cdrl": {
+      "get": {
+        "description": "One program's CDRL as an xlsx. `X-Cells-Sha256` is the hash of every cell the producer\nwrote (the reproducibility claim; the file's own bytes are not claimed reproducible).\n\nRefusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with\n`grantable_by` filled); any other engine failure is a 502 naming the engine's status.",
+        "operationId": "export_cdrl_export_cdrl_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "profile",
+            "required": true,
+            "schema": {
+              "title": "Profile",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Cdrl",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/export/cdrl/profiles": {
+      "get": {
+        "description": "The CDRL picker's option list: the engine's `[{name, format, scope, label}]`, relayed. The\nheader keys only; the engine never sends a template path, a hash or a source.",
+        "operationId": "export_cdrl_profiles_export_cdrl_profiles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Cdrl Profiles",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/export/package": {
+      "post": {
+        "description": "Produce a recipient's disclosure package — THE GOVERNED EMIT, run synchronously.\n\nProduction never returns `\"status\": \"producing\"`: `measures.package_export` runs and\nwrites to disk inline, in the same request, so there is no async job to poll. A caller\ngets `\"exists\"` or `\"failed\"` in the same response that asked for the build.\n\n`template_id` and `answers` are MUTUALLY EXCLUSIVE — a canvas template's own panels decide\nwhat is exported, so naming one while also handing over cost `answers` is ambiguous about\nwhich governs, and is refused rather than guessed at (422). Given `template_id`, this\ndispatches to `_export_package_from_template` (ITEM 3's path) and nothing below runs.\n\nAbsent `template_id`, a request naming no answers (`answers` omitted or `[]`) is 400\n`no_answers` (RULED 2026-10-17), BEFORE the recipient checks below: it is a shape fault,\nrefused ahead of entitlement, so a no-answers request with no recipient is a 400, not a 409.\nThe whole-program export through this route is gone.\n\nThen four hard stops, in order, each refusing before the next is even attempted:\n  1. no `recipient_scope` -> 409 (ADR-0047 §1: no default recipient)\n  2. `recipient_scope` the caller may not export to -> 403 (see below)\n  3. any canvas answer id that does not resolve -> 404, refused rather than dropped\n  4. the engine unreachable, or the engine's own refusal, forwarded verbatim\n\nA board that mixes engines' answers is SPLIT per engine (ruled 2026-10-09): `answers` are\npartitioned by `_partition_export_answers` (engine-fin's verbs vs. everything else, which is\nengine-cost's), each engine is given only its own, and when any engine-fin answer is\npresent the response is a 200 carrying `documents`, one section per engine: a refused engine\n(engine-cost's refusal or unreachability, or engine-fin, which exports ratified templates\nonly -- RULED 2026-10-10 Q1, the finance control) renders as a refusal section and the others still export. Hard stop 4 then\napplies to a section, not the response. RULED 2026-10-16: a refused answer is its own\n`failed` entry in `documents[]` with a `reason_code` and the refusal prose (never on the\ncustomer page); a cost-only board switches to `documents[]` only when engine-cost refused\nsomething, and otherwise answers exactly as before. The top-level `reason` counts answers\n(\"r of n answers refused\"), not engines.",
+        "operationId": "export_package_export_package_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportPackageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Package",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/export/package/artifact/{filename}": {
+      "get": {
+        "description": "Download proxy for a produced export package. THE GATEWAY-SIDE CHECK the relay asks\nfor: the engine repeats the same check on the same person's token (main.py's /artifact,\n~line 700), and the two agree because both read `seed.readers_for_recipient`. This is not\nredundant — it is the ONLY check between an unentitled browser and the engine's bytes,\nsince the engine sits behind the mesh and is not itself reachable from a browser.",
+        "operationId": "export_package_artifact_export_package_artifact__filename__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Package Artifact",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/human_tasks/{task_id}/act": {
+      "post": {
+        "description": "Approve/reject a task. Application-layer gate: RE-CHECK Topaz `can_act` for\nthis caller on the task's audience (deny-by-default) BEFORE acting. Slice 1b\nadds the Restate `approve` call that resumes the suspended workflow; the\nfoundation validates the gate + resolution bookkeeping.",
+        "operationId": "act_on_human_task_human_tasks__task_id__act_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanTaskActRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ActGeneric"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ActPromotion"
+                    },
+                    {
+                      "$ref": "#/components/schemas/EmptyConfirmed"
+                    },
+                    {
+                      "$ref": "#/components/schemas/EmptyHasParts"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ActGroupedPending"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ActGroupedRejected"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ActGroupedApproved"
+                    }
+                  ],
+                  "title": "Response 200 Act On Human Task Human Tasks  Task Id  Act Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Act On Human Task",
+        "tags": [
+          "ingest-v1",
+          "mcp"
+        ]
+      }
+    },
+    "/ingest": {
+      "post": {
+        "description": "POST /ingest (ADR-0041 §8) — a non-technical user hand-carries a document in.\n\nDeny-by-default: requires an authenticated caller (Depends(get_current_user) — no\nanonymous upload), and `on_behalf_of` must equal the caller's own authz_id (see the\nmodule-level note above this route for why v1 does not accept delegation).\n\nsha256 is computed AT THE DOOR (ADR-0041 §8's own phrase) — before any write, before\nany classification. Level-1 dedupe keys on it alone (same bytes = same document,\nfull stop); it says nothing about document-IDENTITY dedupe across different bytes of\nthe same logical document (ADR-0041 §6's R3, `(issuer, document_number, revision)`) —\nthat is a classifier-time concern, downstream of this seam, and is NOT implemented\nhere.\n\nFORMAT IS NOT KIND. `kind` (pdf|cad|xml) is the FILE FORMAT — the `ingress-user/{kind}/`\npath segment and the projection's `kind` column — never a registered content kind.\n`content_kind` is the SEPARATE channel for the picker's confirmed registered kind\n(ADR-0041 §4), and it is REQUIRED (architect ruling 2026-10-12: the door refuses a kindless\ndrop where the uploader can still fix it, instead of accepting it and letting it die inside\na Dagster op on the ADR-0041 guard). Refusals, in this order and all BEFORE the bounded read\nso nothing is written: blank-after-strip or malformed -> 422; absent -> 400\n`content_kind_required`; declared but not in the registry (`content_kinds.by_kind` is None)\n-> 400 `kind_unregistered`; an event-branch kind -> 422 `event_kind_requires_json`. Both 400s\ncarry `registered`, the sorted document-branch kind names, so the picker can offer them. Any\nregistered document-branch kind passes, including a deliberately domainless one like `pdf`\n(it lands at `awaiting_origin` later, unchanged). When INGEST_DOOR_READS_PROCESSABLE_KINDS is on\n(default OFF), one more check follows, still before the bounded read: no published list yet ->\n503 `processable_kinds_unknown`; a kind absent from doc-tools' published list -> 400\n`kind_unprocessable` (carrying `processable`). Writing a bare file format into\n`manifest.metadata.content_kind` (the old behaviour) made every user drop HALT as\nContentKindUnregistered(\"pdf\") -- ADR-0021 rule 1 / ADR-0041 §4 reserve that key for a\nREGISTERED kind; ADR-0021's 2026-09-30 amendment disables rule 2 under `ingress-user/`\n(that path segment is a format), so a kindless drop could never be resolved downstream.",
+        "operationId": "ingest_document_ingest_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_ingest_document_ingest_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/IngestAccepted"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IngestDuplicate"
+                    }
+                  ],
+                  "title": "Response 200 Ingest Document Ingest Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Document",
+        "tags": [
+          "ingest-v1",
+          "mcp"
+        ]
+      }
+    },
+    "/ingest/export": {
+      "get": {
+        "description": "GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the\nrange (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.\nA service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The\ncapability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is\none of the caller's entitlement-cell domains are in the set, filtered before the loud-not-\npartial checks and before the 500 cap; a caller with no cells gets the empty export.\nGate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy\nrefusal; Topaz down is 503). At most 92 days (both ends counted) and 500 notices. LOUD, NOT\nPARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,\nextraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks\non is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`).",
+        "operationId": "ingest_export_batch_route_ingest_export_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "profile",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Export Batch Route",
+        "tags": [
+          "ingest-export",
+          "mcp"
+        ]
+      }
+    },
+    "/ingest/export/profiles": {
+      "get": {
+        "description": "GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:\n`[{name, format, granularity, label}]`. An invalid profile is logged at ERROR and left out.\nAny authenticated caller (a name and a label are not notice content).",
+        "operationId": "ingest_export_profiles_route_ingest_export_profiles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExportProfile"
+                  },
+                  "title": "Response 200 Ingest Export Profiles Route Ingest Export Profiles Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Export Profiles Route",
+        "tags": [
+          "ingest-export",
+          "mcp"
+        ]
+      }
+    },
+    "/me/human_tasks": {
+      "get": {
+        "description": "The caller's pending queue (REST initial-load; the live path is the\nElectric subscription). Filtered by recipient_id=caller.authz_id — the SAME key\nthe Electric proxy injects, so REST and streaming agree by construction.",
+        "operationId": "get_my_human_tasks_me_human_tasks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HumanTasksListing"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get My Human Tasks",
+        "tags": [
+          "ingest-v1",
+          "mcp"
+        ]
+      }
+    },
+    "/orchestrate": {
+      "post": {
+        "description": "Entry point for the Agentic Mesh.\nDelegates to Dagster GraphQL and streams step stats as SSE events\nto power Holographic Thinking Cards. Emits final payload when done.\n\nPer ADR-0009 Step F'.2: user_persona + entitled_domains come from the\nauth-resolved User and flow downstream to the supervisor + engines.\n\nADR-0026 step 4: when the request carries `active_persona` /\n`active_domains` (the cortex-ui picker's per-prompt selection), we\nvalidate the cell is in the caller's Topaz-resolved entitlement\nmatrix. Non-entitled → 403 `cell_not_entitled` with the caller's\nentitled cells in the body — the client knows what would work\n(honest denial per ADR-0026, not a silent downgrade). Cell entitled\n→ the picker values override the JWT-claim defaults, and downstream\nrouting sees the picked persona/domains.\n\nPrecedence when a field is absent:\n  1. Explicit picker override (`active_persona` / `active_domains`)\n  2. User's default cell (`entitlements.default`)\n  3. First cell from `entitlements.cells`\n  4. Legacy JWT-claim path (`current_user.persona` /\n     `current_user.entitled_domains`) — kept as a safety net for\n     clients that don't set the picker AND users without seeded\n     entitlements.",
+        "operationId": "orchestrate_orchestrate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Orchestrate",
+        "tags": [
+          "mcp"
+        ]
+      }
+    }
+  }
+}

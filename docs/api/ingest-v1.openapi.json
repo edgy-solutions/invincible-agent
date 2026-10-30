@@ -3211,7 +3211,7 @@
   },
   "info": {
     "title": "Cortex ingest API",
-    "version": "1.4.0"
+    "version": "1.4.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -3292,7 +3292,8 @@
         ],
         "summary": "Act On Human Task",
         "tags": [
-          "ingest-v1"
+          "ingest-v1",
+          "mcp"
         ]
       }
     },
@@ -3375,7 +3376,8 @@
         ],
         "summary": "Ingest Document",
         "tags": [
-          "ingest-v1"
+          "ingest-v1",
+          "mcp"
         ]
       }
     },
@@ -4022,7 +4024,8 @@
         ],
         "summary": "Get My Human Tasks",
         "tags": [
-          "ingest-v1"
+          "ingest-v1",
+          "mcp"
         ]
       }
     }

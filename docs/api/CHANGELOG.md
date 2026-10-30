@@ -2,6 +2,10 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.4.1 — 2026-10-30
+
+Tags only, no wire change. `GET /me/human_tasks`, `POST /human_tasks/{task_id}/act` and `POST /ingest` also carry the `mcp` tag (the MCP server's surface, spec packet 2026-10-30). No path, parameter, body or response schema changed.
+
 ## 1.4.0 — 2026-10-30
 
 One optional request field is added. Every request that worked before still works.

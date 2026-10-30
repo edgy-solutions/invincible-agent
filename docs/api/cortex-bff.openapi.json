@@ -6069,7 +6069,10 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Canvas Seed"
+        "summary": "Canvas Seed",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/cases/{case_id}": {
@@ -6112,7 +6115,10 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Get Case"
+        "summary": "Get Case",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/cases/{case_id}/action": {
@@ -6422,7 +6428,10 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Export Cdrl"
+        "summary": "Export Cdrl",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/export/cdrl/profiles": {
@@ -6444,7 +6453,10 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Export Cdrl Profiles"
+        "summary": "Export Cdrl Profiles",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/export/package": {
@@ -6486,7 +6498,10 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Export Package"
+        "summary": "Export Package",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/export/package/artifact/{filename}": {
@@ -6529,7 +6544,10 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Export Package Artifact"
+        "summary": "Export Package Artifact",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/export/package/recipients": {
@@ -6800,7 +6818,8 @@
         ],
         "summary": "Act On Human Task",
         "tags": [
-          "ingest-v1"
+          "ingest-v1",
+          "mcp"
         ]
       }
     },
@@ -6883,7 +6902,8 @@
         ],
         "summary": "Ingest Document",
         "tags": [
-          "ingest-v1"
+          "ingest-v1",
+          "mcp"
         ]
       }
     },
@@ -7038,7 +7058,8 @@
         ],
         "summary": "Ingest Export Batch Route",
         "tags": [
-          "ingest-export"
+          "ingest-export",
+          "mcp"
         ]
       }
     },
@@ -7069,7 +7090,8 @@
         ],
         "summary": "Ingest Export Profiles Route",
         "tags": [
-          "ingest-export"
+          "ingest-export",
+          "mcp"
         ]
       }
     },
@@ -8348,7 +8370,8 @@
         ],
         "summary": "Get My Human Tasks",
         "tags": [
-          "ingest-v1"
+          "ingest-v1",
+          "mcp"
         ]
       }
     },
@@ -8499,7 +8522,10 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Orchestrate"
+        "summary": "Orchestrate",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/plan/baseline/op": {
