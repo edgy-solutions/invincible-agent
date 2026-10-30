@@ -6,7 +6,8 @@ WHAT EACH GROUP DEFENDS
               `Policy` accept the very same file.
   join        `validate_policy.GOVERNED_ROOTS` equals `repo_core.GOVERNED_ROOTS` (the validator
               restates it because pygit2 is not in every image).
-  ratchets    the floor on `policy/` rows, and the deliberate absence of an asset_grants row.
+  ratchets    the floor on `policy/` rows; the asset_grants row's per-domain audience; and the
+              2026-10-29 ruling that repo_review:POLICY keeps two eligible after the proposer.
   red arms    one per error class (4a-4g), each differing from the valid baseline in exactly one
               thing, each asserting a FRAGMENT of the message.
 
@@ -59,7 +60,8 @@ class _Aud:
         self.key, self.grant_to, self.grant_to_groups = key, tuple(grant_to), tuple(grant_to_groups)
 
 
-_B_AUDS = [_Aud("rv:A", ["u1", "u2"]), _Aud("rv:B", ["u1", "u2"]), _Aud("rv:S", ["u1", "u2"])]
+_B_AUDS = [_Aud("rv:A", ["u1", "u2"]), _Aud("rv:B", ["u1", "u2"]), _Aud("rv:S", ["u1", "u2"]),
+           _Aud("ag:D1", ["u1", "u2"]), _Aud("ag:D2", ["u1", "u2"])]
 _B_USERS = [{"id": "u1"}, {"id": "u2"}]
 
 
@@ -74,6 +76,7 @@ def _base():
         "paths": {
             "policy/": _row(),
             "sessions/": _row(review="owning_lane", unowned_review="rv:S", approvers=1),
+            "policy/x.yaml": _row(review="ag:<DOMAIN>", unmatched_review="rv:A"),
         },
         "tags": {"rel-*": _row(review="rv:B")},
     }}}
@@ -145,12 +148,34 @@ def test_only_program_members_sits_below_the_policy_floor():
     assert below == {"policy/program_members.yaml"}
 
 
-def test_asset_grants_has_no_row_of_its_own_pending_the_ruling():
-    """DELIBERATE: section 5 gives `policy/asset_grants.yaml` the audience `access_grant:<DOMAIN>`
-    at 2, but `access_grant:DATA_ENGINEERING` has one user, so rule 8 would refuse the row. The
-    architect's ruling (a second member, or a different count) is OPEN. When the row is added this
-    arm flips, which is the prompt to re-read that ruling and this docstring."""
-    assert "policy/asset_grants.yaml" not in _SEED["repository_paths"][REPO]["paths"]
+def test_asset_grants_is_reviewed_per_domain_at_two():
+    """Section 5: `policy/asset_grants.yaml` takes `access_grant:<DOMAIN>` from each changed row, at
+    2. Ruled 2026-10-29: access_grant:DATA_ENGINEERING holds two (alice, bob). A changed row with no
+    such audience (another domain, or a document grant, which has no domain) falls back to
+    repo_review:POLICY, the "reviewed change" the sandbox grantor overlay's `how` names."""
+    row = _SEED["repository_paths"][REPO]["paths"]["policy/asset_grants.yaml"]
+    assert (row["review"], row["unmatched_review"], row["approvers"]) == (
+        "access_grant:<DOMAIN>", "repo_review:POLICY", 2)
+    resolved = {a.key for a in _AUDIENCES if a.key.startswith("access_grant:")}
+    assert "access_grant:DATA_ENGINEERING" in resolved, resolved
+
+
+def test_policy_review_keeps_two_eligible_after_the_proposer():
+    """Ruled 2026-10-29: a two-approver `policy/` change always has two eligible approvers after the
+    proposer is excluded (rule 6), so repo_review:POLICY holds more users than any row naming it
+    requires. Rule 8 alone asks only `>= approvers`; this is the stricter floor for this audience.
+    CONTROL: the 10-28 audience {alice, bob} fails it."""
+    paths = _SEED["repository_paths"][REPO]["paths"]
+    need = max(v["approvers"] for v in paths.values()
+               if "repo_review:POLICY" in (v.get("review"), v.get("unmatched_review")))
+    aud = next(a for a in _AUDIENCES if a.key == "repo_review:POLICY")
+    members: dict[str, set[str]] = {}
+    for u in _USERS:
+        for g in u.get("groups") or []:
+            members.setdefault(g, set()).add(u["id"])
+    have = set(aud.grant_to).union(*(members.get(g, set()) for g in aud.grant_to_groups))
+    assert need == 2 and len(have) >= need + 1, (need, sorted(have))
+    assert not len({"alice@example.com", "bob@example.com"}) >= need + 1
 
 
 # ---- 7. one red arm per error class ------------------------------------------------------------
@@ -289,6 +314,48 @@ def test_unowned_review_on_a_non_owning_lane_row():
     _red(_mut(f), "`unowned_review` is allowed only on an `owning_lane` row")
 
 
+def test_domain_row_resolving_to_no_audience():
+    def f(r, raw):
+        r["paths"]["policy/x.yaml"]["review"] = "zz:<DOMAIN>"
+    _red(_mut(f), "`review` 'zz:<DOMAIN>' resolves to no audience in task_grants.yaml (none starts 'zz:')")
+
+
+def test_domain_row_without_unmatched_review():
+    def f(r, raw):
+        del r["paths"]["policy/x.yaml"]["unmatched_review"]
+    _red(_mut(f), "paths: policy/x.yaml: a `<DOMAIN>` row requires `unmatched_review`")
+
+
+def test_unmatched_review_not_an_audience():
+    def f(r, raw):
+        r["paths"]["policy/x.yaml"]["unmatched_review"] = "nope:X"
+    _red(_mut(f), "`unmatched_review` 'nope:X' is not an audience")
+
+
+def test_unmatched_review_on_a_plain_row():
+    def f(r, raw):
+        r["paths"]["policy/"]["unmatched_review"] = "rv:A"
+    _red(_mut(f), "paths: policy/: `unmatched_review` is allowed only on a `<DOMAIN>` row")
+
+
+def test_unmatched_review_on_an_owning_lane_row():
+    def f(r, raw):
+        r["paths"]["sessions/"]["unmatched_review"] = "rv:A"
+    _red(_mut(f), "paths: sessions/: `unmatched_review` is allowed only on a `<DOMAIN>` row")
+
+
+def test_unowned_review_on_a_domain_row():
+    def f(r, raw):
+        r["paths"]["policy/x.yaml"]["unowned_review"] = "rv:S"
+    _red(_mut(f), "paths: policy/x.yaml: `unowned_review` is allowed only on an `owning_lane` row")
+
+
+def test_domain_placeholder_mid_key_is_not_a_template():
+    def f(r, raw):
+        r["paths"]["policy/x.yaml"]["review"] = "ag:<DOMAIN>:x"
+    _red(_mut(f), "`review` 'ag:<DOMAIN>:x' is not an audience")
+
+
 def test_granted_by_missing():
     def f(r, raw):
         del r["paths"]["policy/"]["granted_by"]
@@ -327,8 +394,25 @@ def test_rule_8_checks_unowned_review_too():
          audiences=auds)
 
 
+def test_rule_8_checks_every_audience_a_domain_row_resolves_to():
+    """D1 is fine and D2 is short: the check is per resolved audience, not any-of."""
+    auds = [a for a in _B_AUDS if a.key != "ag:D2"] + [_Aud("ag:D2", ["u1"])]
+    errs = _b(_base(), audiences=auds)
+    assert any("audience 'ag:D2' (review) has 1 distinct user(s) but the row requires 2" in e
+               for e in errs), errs
+    assert not any("'ag:D1'" in e for e in errs), errs
+
+
+def test_rule_8_checks_unmatched_review_too():
+    raw = _mut(lambda r, raw: r["paths"]["policy/x.yaml"].update(unmatched_review="rv:S"))
+    auds = [a for a in _B_AUDS if a.key != "rv:S"] + [_Aud("rv:S", ["u1"])]
+    errs = _b(raw, audiences=auds)
+    assert any("paths: policy/x.yaml: audience 'rv:S' (unmatched_review) has 1 distinct user(s)" in e
+               for e in errs), errs
+
+
 def test_rule_8_counts_group_members():
-    auds = [_Aud("rv:A", [], ["g"]), _Aud("rv:B", ["u1", "u2"]), _Aud("rv:S", ["u1", "u2"])]
+    auds = [_Aud("rv:A", [], ["g"])] + [a for a in _B_AUDS if a.key != "rv:A"]
     users = [{"id": "u1", "groups": ["g"]}, {"id": "u2", "groups": ["g"]}]
     assert _b(_base(), audiences=auds, groups={"g": {}}, users=users) == []
 

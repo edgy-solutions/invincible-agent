@@ -459,7 +459,13 @@ def review_shape_errors(policy_dir: Path, enums_dir: Path) -> tuple[list[str], i
 #: asserts the two are equal.
 GOVERNED_ROOTS = ("policy/", "docs/adr/", "tests/fixtures/", "sessions/")
 
-_RP_ROW_FIELDS = ("review", "approvers", "granted_by", "reason", "unowned_review")
+_RP_ROW_FIELDS = ("review", "approvers", "granted_by", "reason", "unowned_review", "unmatched_review")
+
+#: A `review` ending `:<DOMAIN>` is a per-row audience (section 5: `access_grant:<DOMAIN>`, "taken
+#: from each row the diff changes"). engine-r resolves it per changed row; validate_policy checks
+#: every audience it could resolve to, and the `unmatched_review` a row with no such audience falls
+#: back to.
+_RP_DOMAIN = "<DOMAIN>"
 
 
 def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> list[str]:
@@ -523,6 +529,23 @@ def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> 
                 e.append(f"{where}: `unowned_review` {ur!r} is not an audience in task_grants.yaml")
             else:
                 named.append(("unowned_review", ur))
+        elif review.endswith(":" + _RP_DOMAIN):
+            prefix = review[: -len(_RP_DOMAIN)]
+            matched = sorted(k for k in by_key if k.startswith(prefix))
+            if not matched:
+                e.append(f"{where}: `review` {review!r} resolves to no audience in task_grants.yaml "
+                         f"(none starts {prefix!r})")
+            named.extend(("review", k) for k in matched)
+            mr = row.get("unmatched_review")
+            if not isinstance(mr, str) or not mr.strip():
+                e.append(f"{where}: a `{_RP_DOMAIN}` row requires `unmatched_review` (an audience key) "
+                         f"for a changed row whose domain has no audience")
+            elif mr not in by_key:
+                e.append(f"{where}: `unmatched_review` {mr!r} is not an audience in task_grants.yaml")
+            else:
+                named.append(("unmatched_review", mr))
+            if "unowned_review" in row:
+                e.append(f"{where}: `unowned_review` is allowed only on an `owning_lane` row")
         else:
             if review not in by_key:
                 e.append(f"{where}: `review` {review!r} is not an audience in task_grants.yaml")
@@ -530,6 +553,9 @@ def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> 
                 named.append(("review", review))
             if "unowned_review" in row:
                 e.append(f"{where}: `unowned_review` is allowed only on an `owning_lane` row")
+        if "unmatched_review" in row and not (isinstance(review, str)
+                                              and review.endswith(":" + _RP_DOMAIN)):
+            e.append(f"{where}: `unmatched_review` is allowed only on a `{_RP_DOMAIN}` row")
         if isinstance(ap, int) and not isinstance(ap, bool):
             for field_, aud in named:
                 n = len(distinct_users(by_key[aud]))

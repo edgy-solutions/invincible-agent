@@ -16,8 +16,13 @@
 #     audience is `owning_lane`, legal only on a `sessions/` path row, which then also names
 #     `unowned_review` (the audience used when the file has no owner). Whether the 0-approver
 #     exception applies is decided at runtime by engine-r, never by this file.
+#   * A `review` ENDING `:<DOMAIN>` IS PER CHANGED ROW: engine-r takes the audience from the domain
+#     of each row the diff changes. Such a row also names `unmatched_review`, the audience for a
+#     changed row whose domain has no audience of that prefix (or has no domain at all).
 #   * validate_policy refuses a row whose audience has fewer DISTINCT users than `approvers`
-#     (groups expanded one level), so a row can never be unsatisfiable by configuration.
+#     (groups expanded one level), so a row can never be unsatisfiable by configuration. A
+#     `:<DOMAIN>` row is checked against every audience it can resolve to and its
+#     `unmatched_review`.
 #
 # Grantor row: policy/grantors/repository_paths.yaml.
 
@@ -30,14 +35,20 @@ repository_paths:
         granted_by: cnogradi
         reason: >-
           ADR-0062 section 5: the policy rails, overlays included, take two approvers.
-          policy/asset_grants.yaml deliberately has NO row of its own and falls under this one
-          (see the note below).
+          repo_review:POLICY holds three users (ruled 2026-10-29), so a two-approver change
+          still has two eligible approvers after the proposer is excluded.
 
-      # DELIBERATELY NO `policy/asset_grants.yaml` ROW. Section 5's table gives it the audience
-      # access_grant:<DOMAIN> (taken per changed row) at 2 approvers. But the sandbox's
-      # access_grant:DATA_ENGINEERING audience has ONE user, so rule 8 would refuse the row.
-      # Until the architect rules (a second member, or a different count), asset_grants.yaml
-      # falls under the `policy/` row above (repo_review:POLICY, 2).
+      policy/asset_grants.yaml:
+        review: access_grant:<DOMAIN>
+        unmatched_review: repo_review:POLICY
+        approvers: 2
+        granted_by: cnogradi
+        reason: >-
+          ADR-0062 section 5: a grant row is reviewed by its domain's access-grant approvers,
+          taken from each row the diff changes, at two approvers. access_grant:DATA_ENGINEERING
+          holds alice and bob (ruled 2026-10-29). A changed row in a domain with no access_grant
+          audience, and every document grant (no domain), is reviewed by repo_review:POLICY, as
+          the sandbox grantor overlay's `how` already says ("a reviewed change").
 
       policy/program_members.yaml:
         review: repo_review:POLICY
