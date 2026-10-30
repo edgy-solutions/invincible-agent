@@ -14,6 +14,8 @@ that loaded half is a deliverable that exists for some deployments only, with no
 * `format` other than `xlsx`, `scope` other than `program`;
 * a template that is missing, or whose bytes do not match `template.sha256`;
 * a `sheet` the template does not hold; a `methods_sheet` / `manifest_sheet` colliding with one;
+* a `provenance_sheets` that is not a YAML boolean (default true), or false on a row that also
+  names `methods_sheet` / `manifest_sheet`: false delivers exactly the template's sheets;
 * a `cells` value outside the closed fact vocabulary `CELL_FACTS`, or a key that is not an A1 cell;
 * a source that is neither a built-in verb nor a composed declared measure;
 * a column naming a verb not in `sources`, or a field outside that verb's FIELD SET: for a declared
@@ -73,7 +75,7 @@ CELL_FACTS = frozenset({
 _A1 = re.compile(r"^[A-Z]{1,3}[1-9][0-9]*$")
 _TOP_KEYS = frozenset({
     "name", "format", "scope", "label", "audience", "cdrl", "template", "sheet", "cells",
-    "sources", "table", "methods_sheet", "manifest_sheet",
+    "sources", "table", "methods_sheet", "manifest_sheet", "provenance_sheets",
 })
 _CDRL_KEYS = frozenset({"item", "title", "data_item", "frequency"})
 _TEMPLATE_KEYS = frozenset({"file", "sha256"})
@@ -112,6 +114,7 @@ class ExportProfile:
     columns: tuple[Column, ...]
     methods_sheet: str
     manifest_sheet: str
+    provenance_sheets: bool = True
 
     def header(self) -> dict[str, str]:
         """The shared header, and nothing else: no template path, no sha, no sources."""
@@ -195,13 +198,22 @@ def _build(raw: dict, directory: Path, declared: Mapping[str, Any]) -> ExportPro
     sheet = str(raw["sheet"])
     if sheet not in sheets:
         raise ValueError(f"sheet {sheet!r} is not a sheet of template {file!r} ({sheets})")
+    prov = raw.get("provenance_sheets", True)
+    if not isinstance(prov, bool):
+        raise ValueError(f"provenance_sheets {prov!r} must be a YAML boolean (true or false)")
     methods = str(raw.get("methods_sheet") or "Methods")
     manifest = str(raw.get("manifest_sheet") or "_manifest")
-    for label, name in (("methods_sheet", methods), ("manifest_sheet", manifest)):
-        if name in sheets:
-            raise ValueError(f"{label} {name!r} collides with a sheet of template {file!r}")
-    if methods == manifest:
-        raise ValueError(f"methods_sheet and manifest_sheet are both {methods!r}")
+    if not prov:
+        named = [k for k in ("methods_sheet", "manifest_sheet") if k in raw]
+        if named:
+            raise ValueError(
+                f"{' and '.join(named)} names a provenance sheet but provenance_sheets is false")
+    else:
+        for label, name in (("methods_sheet", methods), ("manifest_sheet", manifest)):
+            if name in sheets:
+                raise ValueError(f"{label} {name!r} collides with a sheet of template {file!r}")
+        if methods == manifest:
+            raise ValueError(f"methods_sheet and manifest_sheet are both {methods!r}")
 
     # ── the title block: A1 cells, closed fact vocabulary ──────────────────────────────────
     cdrl = {k: str(v) for k, v in raw["cdrl"].items()}
@@ -262,7 +274,7 @@ def _build(raw: dict, directory: Path, declared: Mapping[str, Any]) -> ExportPro
         audience=str(raw["audience"]) if raw.get("audience") is not None else None,
         cdrl=cdrl, template_path=template, template_sha256=pinned, sheet=sheet, cells=cells,
         sources=tuple(sources), table_start=start, table_key=key, columns=tuple(columns),
-        methods_sheet=methods, manifest_sheet=manifest,
+        methods_sheet=methods, manifest_sheet=manifest, provenance_sheets=prov,
     )
 
 
