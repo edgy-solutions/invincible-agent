@@ -1,7 +1,7 @@
 # RECIPIENT READERS -- who may download a recipient's disclosure package, from the engine that
 # OWNS that recipient scope. Architect, 2026-10-27 ruling 4, refined 2026-10-28: "gov writes the
 # rail shape (a recipient_readers family with grantors); fin and cost each move their own
-# RECIPIENT_READERS onto it." This file is that shape. It ships EMPTY for both owners: each owning
+# RECIPIENT_READERS onto it." This file is that shape. It ships EMPTY for finance and cost: each owning
 # lane moves its own rows here and switches its call sites to the rail; until then the code-held
 # tables (agent_fleet/finance_agent/export.py, agent_fleet/cost_agent/seed.py) remain the
 # authority and tests/security/test_recipient_readers_rail.py ratchets them down.
@@ -12,9 +12,10 @@
 # scope is never a reader of another's, even when the scope string collides. The Topaz object is
 # `recipient_scope` with id `<owner>:<scope>`.
 #
-# `plan` (architect, 2026-10-29): the plan recipients named by policy/exports answer-export
+# `plan` (architect, 2026-10-29): the plan recipients named by policy/exports/answers answer-export
 # profiles (fin's #148 asks `can_read_recipient("plan", scope, caller)`). It has no code-held
-# table to move; it ships EMPTY, so every plan caller is refused until a row grants a reader.
+# table to move. Its one row, alice on notional-plan-office, was ruled 2026-10-30; any other plan
+# scope is refused until a row grants it a reader.
 #
 # `granted_by` / `reason` / `grant_to` are REQUIRED per row -- an unexplained or targetless row
 # is refused by validate_policy.py / recipient_reader_sync.py, never silently dropped. An owner
@@ -37,4 +38,12 @@
 recipient_readers:
   finance: {}
   cost: {}
-  plan: {}
+  plan:
+    notional-plan-office:
+      granted_by: cnogradi
+      reason: >-
+        2026-10-30 ruling: alice reads the notional plan office's answer exports (fin's #148
+        plan-answers profile names this recipient). She is the live acceptance test: alice exports
+        a Portfolio board to the plan office. Synthetic sandbox names.
+      grant_to:
+        - alice@example.com

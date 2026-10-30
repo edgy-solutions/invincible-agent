@@ -11,7 +11,8 @@ WHAT EACH GROUP DEFENDS
               whole, never partially applies (a silently dropped row is a reader nobody can find).
   derive      the Topaz object id is `<owner>:<scope>`; the same scope string under the two owners
               is two objects (CONTROL), so a reader of one engine is never a reader of the other.
-  shipped     the committed policy/recipient_readers.yaml loads clean with exactly the two owners.
+  shipped     the committed policy/recipient_readers.yaml loads clean with exactly the three owners;
+              its one plan row (ruled 2026-10-30) is alice on a scope an answer profile names.
   grantor     the family resolves in the composed grantor map, object-scoped, pointing at a rail
               file that exists -- so a refusal on this family can name who grants.
   join        the engine's question (object type, permission), the sync's constants and EVERY
@@ -152,6 +153,33 @@ def test_shipped_rail_file_loads_clean_with_exactly_the_three_owners():
     _rows, errors = load_readers(raw)
     assert errors == []
     assert set(raw["recipient_readers"]) == {"finance", "cost", "plan"} == set(rrs.OWNERS)
+
+
+def test_the_shipped_plan_row_is_alice_on_the_notional_plan_office():
+    """Ruled 2026-10-30: "#159 adds alice as a reader of plan:notional-plan-office". Exactly that
+    one object and one reader -- a wider row is a reader nobody ruled."""
+    raw = yaml.safe_load(_RAIL.read_text(encoding="utf-8"))
+    rows, errors = load_readers(raw)
+    assert errors == []
+    plan = [(r.object_id, sorted(r.grant_to)) for r in rows if r.object_id.startswith("plan:")]
+    assert plan == [("plan:notional-plan-office", ["alice@example.com"])], plan
+
+
+def test_every_shipped_plan_scope_is_a_recipient_an_answer_profile_names():
+    """Join: a plan reader row on a scope no answer-export profile names entitles a download that
+    never exists, and the real recipient stays refused. Read from #148's profiles by FORM
+    (policy/exports/answers/*.yaml `recipients`); skips until they are on this tree."""
+    answers = _REPO / "policy" / "exports" / "answers"
+    named = set()
+    for f in sorted(answers.glob("*.yaml")) if answers.is_dir() else []:
+        doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+        if isinstance(doc, dict) and not doc.get("deleted"):
+            named |= set(doc.get("recipients") or [])
+    if not named:
+        pytest.skip("no answer-export profile names a recipient on this tree (fin's #148 has not landed)")
+    raw = yaml.safe_load(_RAIL.read_text(encoding="utf-8"))
+    scopes = set((raw["recipient_readers"].get("plan") or {}))
+    assert scopes and scopes <= named, (scopes, named)
 
 
 def test_a_plan_row_loads_and_derives_a_plan_object():

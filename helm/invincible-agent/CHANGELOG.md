@@ -4,10 +4,12 @@
 
 **Policy changes (2026-10-29 ruling: a `plan` owner on the recipient_readers rail)**
 
-- **`recipient_readers` gains the owner `plan`** (`policy/recipient_readers.yaml`, shipped empty;
+- **`recipient_readers` gains the owner `plan`** (`policy/recipient_readers.yaml`;
   `recipient_reader_sync.OWNERS`). It is the owner fin's #148 asks for plan recipients
-  (`can_read_recipient("plan", scope, caller)`). With no rows every plan caller is refused. No
-  sync precondition: the `recipient_scope` type exists, and an empty owner writes nothing.
+  (`can_read_recipient("plan", scope, caller)`). One row ships (ruled 2026-10-30): alice reads
+  `plan:notional-plan-office`, the recipient #148's `plan-answers` profile names. Any other plan
+  scope is refused. No sync precondition: the `recipient_scope` type exists and alice is a seeded
+  user; the recipient-readers leg writes the object and its one relation at the next roll.
 
 **Policy changes (2026-10-28 ruling: pcn and pdn droppable by the alert-processors group only)**
 
