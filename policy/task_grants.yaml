@@ -65,17 +65,22 @@ audiences:
       - alice@example.com
 
   # Case-1 (access-grants): who may APPROVE per-asset read-access requests in the
-  # DATA_ENGINEERING domain. alice (a DATA_STEWARD for DATA_ENGINEERING) is the
-  # approver; approving writes an asset_grants.yaml reader grant (granted_by=alice)
+  # DATA_ENGINEERING domain. alice (a DATA_STEWARD for DATA_ENGINEERING) and bob are the
+  # approvers; approving writes an asset_grants.yaml reader grant (granted_by=the approver)
   # through the sealed grant_sync. Same fifth-namespace can_act gate as promotions.
+  # bob joined 2026-10-29 (architect's ruling): ADR-0062 section 5 reviews a change to an
+  # asset_grants.yaml row with this audience at 2 approvers, which needs two members.
   access_grant:DATA_ENGINEERING:
     granted_by: cnogradi
     reason: >-
-      Demo fixture: alice (DATA_STEWARD - DATA_ENGINEERING) approves per-asset read
+      Demo fixture: alice (DATA_STEWARD - DATA_ENGINEERING) and bob approve per-asset read
       access requests for DATA_ENGINEERING assets. Approving automates the manual
-      alice->reader->customers_gold rehearsal into a self-service HITL flow.
+      alice->reader->customers_gold rehearsal into a self-service HITL flow. bob added
+      2026-10-29 by the architect's ruling, so policy/repository_paths.yaml's two-approver
+      asset_grants row can be satisfied. Synthetic sandbox names.
     grant_to:
       - alice@example.com
+      - bob@example.com
 
   # The disposition-REVIEW audience for the SUSTAINMENT compartment. The
   # extraction→review sensor (svc:review-starter, capability can_invoke
@@ -528,3 +533,53 @@ audiences:
       maint_escalation:edge-01 (2026-10-27): the approvers, via the maint-approvers-edge-02 group.
     grant_to_groups:
       - maint-approvers-edge-02
+
+  # ── engine-r's review audiences (ADR-0062 sections 5 and 7) ───────────────────────────────
+  # Named by policy/repository_paths.yaml. USERS ONLY, so a service identity never approves.
+  # They ride the next planned fleet release (section 7). No new group, so no topaz_sync
+  # precondition.
+
+  repo_review:POLICY:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0062 sections 5 and 7: engine-r's reviewers of the policy rails (policy/, overlays included); ruled 2026-10-28 in section 7 to hold alice and bob. carol added 2026-10-29 by the architect's ruling, so a two-approver policy/ change still has two eligible approvers after the proposer is excluded. Synthetic sandbox names.
+    grant_to:
+      - alice@example.com
+      - bob@example.com
+      - carol@example.com
+
+  repo_review:ADR:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0062 sections 5 and 7: engine-r's reviewers of docs/adr/ changes. Synthetic sandbox names.
+    grant_to:
+      - alice@example.com
+      - bob@example.com
+
+  repo_review:FIXTURES:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0062 sections 5 and 7: engine-r's reviewers of tests/fixtures/ changes. Synthetic sandbox names.
+    grant_to:
+      - alice@example.com
+      - bob@example.com
+
+  repo_review:SESSIONS:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0062 sections 5 and 7: engine-r's reviewers of sessions/ packets that have no owning lane. Synthetic sandbox names.
+    grant_to:
+      - alice@example.com
+      - bob@example.com
+
+  repo_release:invincible-agent:
+    granted_by: cnogradi
+    reason: >-
+      ADR-0062 sections 5 and 7: engine-r's approvers of invincible-agent-* release tags.
+      carol added 2026-10-29 by the architect's ruling: a release tag takes two approvers and
+      the proposer is excluded, so with alice and bob alone a tag either of them proposed could
+      never close. Synthetic sandbox names.
+    grant_to:
+      - alice@example.com
+      - bob@example.com
+      - carol@example.com

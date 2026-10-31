@@ -26,6 +26,8 @@ definition of "valid", never a parallel re-implementation):
     `can_export:<P>` row (deny-by-default: no row, nobody exports)
   - recipient_readers.yaml        → recipient_reader_sync.load_readers (WHEN PRESENT; not in
     DATA_FILES -- see the note there)
+  - repository_paths.yaml         → repository_paths_errors (WHEN PRESENT; not in
+    DATA_FILES -- see the note there)
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
     no sync of its own — can_consume is evaluated in-process)
   - every DATA file must EXIST — explicit-empty (`grants: []`) is a
@@ -94,6 +96,9 @@ DATA_FILES = (
 # repository lacks it. It is validated WHEN PRESENT (see validate()). Whether it becomes
 # required -- and so whether an absent file is an error here and FATAL in the sync Job -- is an
 # OPEN question with the architect.
+#
+# repository_paths.yaml (ADR-0062 section 5) is likewise NOT in DATA_FILES: only engine-r reads it,
+# and a deployment's policy repository may not run engine-r. Validated WHEN PRESENT.
 
 
 def known_content_kinds() -> tuple[set[str], list[str]]:
@@ -449,6 +454,156 @@ def review_shape_errors(policy_dir: Path, enums_dir: Path) -> tuple[list[str], i
     return errors, total
 
 
+#: Mirrors `agent_fleet.repository_agent.repo_core.GOVERNED_ROOTS` (ADR-0062 section 1). Restated, not
+#: imported: pygit2 is not in every image this gate runs in. tests/security/test_repository_paths_rail.py
+#: asserts the two are equal.
+GOVERNED_ROOTS = ("policy/", "docs/adr/", "tests/fixtures/", "sessions/")
+
+_RP_ROW_FIELDS = ("review", "approvers", "granted_by", "reason", "unowned_review", "unmatched_review")
+
+#: A `review` ending `:<DOMAIN>` is a per-row audience (section 5: `access_grant:<DOMAIN>`, "taken
+#: from each row the diff changes"). engine-r resolves it per changed row; validate_policy checks
+#: every audience it could resolve to, and the `unmatched_review` a row with no such audience falls
+#: back to.
+_RP_DOMAIN = "<DOMAIN>"
+
+
+def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> list[str]:
+    """ADR-0062 section 5: validate policy/repository_paths.yaml. PURE.
+
+    `raw` is the parsed file, `audiences` the records `load_audiences` returned, `groups` the
+    groups.yaml mapping, `users` the users.yaml list. Each error reads
+    `repository_paths.yaml: <repo>: <paths|tags>: <key>: ...`. Unknown keys are refused by name
+    at every level, so a typo (`approver:`) cannot pass silently."""
+    pre = "repository_paths.yaml"
+    out: list[str] = []
+    if not isinstance(raw, dict) or set(raw) != {"repository_paths"}:
+        extra = sorted(map(str, set(raw) - {"repository_paths"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `repository_paths`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    repos = raw["repository_paths"]
+    if not isinstance(repos, dict):
+        return [f"{pre}: `repository_paths` must map repository id -> mapping"]
+
+    by_key = {a.key: a for a in audiences}
+    members: dict[str, set[str]] = {}
+    for u in users or []:
+        if isinstance(u, dict) and u.get("id"):
+            for g in u.get("groups") or []:
+                members.setdefault(g, set()).add(str(u["id"]).strip())
+
+    def distinct_users(a) -> set[str]:
+        s = set(a.grant_to)
+        for g in a.grant_to_groups:
+            s |= members.get(g, set())
+        return s
+
+    def row_errors(where: str, row, *, is_tag: bool, key: str) -> list[str]:
+        e: list[str] = []
+        if not isinstance(row, dict):
+            return [f"{where}: row must be a mapping"]
+        for k in row:
+            if k not in _RP_ROW_FIELDS:
+                e.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_RP_ROW_FIELDS)})")
+        for f in ("granted_by", "reason"):
+            v = row.get(f)
+            if not isinstance(v, str) or not v.strip():
+                e.append(f"{where}: `{f}` is required and must be a non-empty string")
+        ap = row.get("approvers")
+        if "approvers" not in row:
+            e.append(f"{where}: `approvers` is required")
+        elif isinstance(ap, bool) or not isinstance(ap, int) or ap < 1:
+            e.append(f"{where}: `approvers` must be an int >= 1 (got {ap!r})")
+        review = row.get("review")
+        named: list[tuple[str, str]] = []
+        if not isinstance(review, str) or not review.strip():
+            e.append(f"{where}: `review` is required and must be a non-empty string")
+        elif review == "owning_lane":
+            if is_tag or not key.startswith("sessions/"):
+                e.append(f"{where}: `review: owning_lane` is legal only on a `sessions/` path row, "
+                         f"never on a tag or another path")
+            ur = row.get("unowned_review")
+            if not isinstance(ur, str) or not ur.strip():
+                e.append(f"{where}: an `owning_lane` row requires `unowned_review` (an audience key)")
+            elif ur not in by_key:
+                e.append(f"{where}: `unowned_review` {ur!r} is not an audience in task_grants.yaml")
+            else:
+                named.append(("unowned_review", ur))
+        elif review.endswith(":" + _RP_DOMAIN):
+            prefix = review[: -len(_RP_DOMAIN)]
+            matched = sorted(k for k in by_key if k.startswith(prefix))
+            if not matched:
+                e.append(f"{where}: `review` {review!r} resolves to no audience in task_grants.yaml "
+                         f"(none starts {prefix!r})")
+            named.extend(("review", k) for k in matched)
+            mr = row.get("unmatched_review")
+            if not isinstance(mr, str) or not mr.strip():
+                e.append(f"{where}: a `{_RP_DOMAIN}` row requires `unmatched_review` (an audience key) "
+                         f"for a changed row whose domain has no audience")
+            elif mr not in by_key:
+                e.append(f"{where}: `unmatched_review` {mr!r} is not an audience in task_grants.yaml")
+            else:
+                named.append(("unmatched_review", mr))
+            if "unowned_review" in row:
+                e.append(f"{where}: `unowned_review` is allowed only on an `owning_lane` row")
+        else:
+            if review not in by_key:
+                e.append(f"{where}: `review` {review!r} is not an audience in task_grants.yaml")
+            else:
+                named.append(("review", review))
+            if "unowned_review" in row:
+                e.append(f"{where}: `unowned_review` is allowed only on an `owning_lane` row")
+        if "unmatched_review" in row and not (isinstance(review, str)
+                                              and review.endswith(":" + _RP_DOMAIN)):
+            e.append(f"{where}: `unmatched_review` is allowed only on a `{_RP_DOMAIN}` row")
+        if isinstance(ap, int) and not isinstance(ap, bool):
+            for field_, aud in named:
+                n = len(distinct_users(by_key[aud]))
+                if n < ap:
+                    e.append(f"{where}: audience {aud!r} ({field_}) has {n} distinct user(s) but the "
+                             f"row requires {ap} approver(s) -- the row could never be satisfied")
+        return e
+
+    for repo, body in repos.items():
+        rp = f"{pre}: {repo}"
+        if not isinstance(repo, str) or not isinstance(body, dict):
+            out.append(f"{rp}: repository id must be a str mapping to a mapping")
+            continue
+        for k in body:
+            if k not in ("paths", "tags"):
+                out.append(f"{rp}: unknown key {k!r} (a repository carries only `paths` and `tags`)")
+        paths = body.get("paths")
+        if not isinstance(paths, dict):
+            out.append(f"{rp}: `paths` is required and must be a mapping")
+            paths = {}
+        for key, row in paths.items():
+            where = f"{rp}: paths: {key}"
+            if not isinstance(key, str):
+                out.append(f"{where}: path key must be a str")
+                continue
+            if not key.startswith(GOVERNED_ROOTS):
+                out.append(f"{where}: outside the governed roots {GOVERNED_ROOTS} -- the rail cannot "
+                           f"widen check 6")
+            if ".." in key.split("/"):
+                out.append(f"{where}: a `..` segment is not allowed")
+            if key.startswith("/"):
+                out.append(f"{where}: a leading `/` is not allowed")
+            if "*" in key:
+                out.append(f"{where}: `*` is not allowed in a path key (patterns are for tags only)")
+            out.extend(row_errors(where, row, is_tag=False, key=key))
+        tags = body.get("tags", {})
+        if not isinstance(tags, dict):
+            out.append(f"{rp}: `tags` must be a mapping")
+            tags = {}
+        for key, row in tags.items():
+            where = f"{rp}: tags: {key}"
+            if not isinstance(key, str) or not key.strip():
+                out.append(f"{where}: tag pattern must be a non-empty str")
+                continue
+            out.extend(row_errors(where, row, is_tag=True, key=key))
+    return out
+
+
 def validate(
     policy_dir: Path,
     enums_dir: Path,
@@ -598,6 +753,21 @@ def validate(
         readers, reader_errors = load_readers(readers_raw)
         errors.extend(f"recipient_readers.yaml: {e}" for e in reader_errors)
         print(f"  recipient_readers.yaml: {len(readers)} recipient scope(s)")
+
+    # repository_paths.yaml (ADR-0062 section 5): validated WHEN PRESENT only (not in DATA_FILES --
+    # see the note there). Only engine-r reads it, and a deployment may not run engine-r.
+    _rp_path = policy_dir / "repository_paths.yaml"
+    if _rp_path.is_file():
+        rp_raw = _read_yaml(_rp_path, errors)
+        errors.extend(repository_paths_errors(
+            rp_raw, audiences, groups_raw.get("groups") or {}, users_raw.get("users") or []))
+        _repos = rp_raw.get("repository_paths") or {}
+        _repos = _repos if isinstance(_repos, dict) else {}
+        _n_rows = sum(len(b.get(k) or {}) for b in _repos.values() if isinstance(b, dict)
+                      for k in ("paths", "tags") if isinstance(b.get(k), dict))
+        _m = len(_repos)
+        print(f"  repository_paths.yaml: {_n_rows} row(s) across {_m} "
+              f"{'repository' if _m == 1 else 'repositories'}")
 
     # ADMISSION POSTURE (ADR-0034). Validated through the SAME parser the runtime loads with, so
     # there is ONE definition of a well-formed table and this gate cannot drift from the loader.
