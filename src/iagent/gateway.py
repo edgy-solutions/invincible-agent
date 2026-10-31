@@ -58,6 +58,8 @@ from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
 from iagent_mesh.review_coverage import ReviewShapeRow
+from iagent_mesh.provenance import EvidenceRef  # the SDK model; the one EvidenceRef (ruling 2026-10-31)
+from pydantic import ValidationError as _PydanticValidationError
 from . import review_coverage as _rcov
 from .review_coverage import ItemReviewCoverage
 from . import frontend_menu_store
@@ -67,6 +69,7 @@ from .ingest_api import (
     RetriesListing,
     RetryResponse, StatusBody, TitleLeafResponse,
 )
+from .ingest_api import EvidenceRef as _ServedEvidenceRef  # the served contract
 from .identity_vault import (
     _ensure_the_audit_line_actually_ARRIVES,
     VAULT,
@@ -1256,29 +1259,6 @@ class _RowEditsModel(_BaseModel):
     model_config = {"extra": "forbid"}
 
 
-class EvidenceRef(_BaseModel):
-    """Where on the source page a steward's edit is evidenced: the SDK's `EvidenceRef{page, bbox}`
-    (iagent-mesh-sdk lane/ca-0.9.11 provenance.py) plus an optional `note` (architect 2026-10-21;
-    the pre-ruling free string is now `note`). The wire also still takes that bare string until
-    cortex ships the struct; `_wire_evidence_ref` validates both.
-
-    Architect ruling (spec 205): "bbox may be null; page may not. Null bbox means 'stated on this
-    page, no box we can draw'. The card jumps to the page with no outline and labels it 'on page N,
-    no box'. Derived fields carry no evidence_ref at all." So `page` is required and `bbox` is
-    `None` (or omitted, which is the same) or four finite numbers."""
-    model_config = {"extra": "forbid", "frozen": True}
-    page: _StrictInt = Field(ge=1)
-    bbox: Optional[list[_StrictInt | _Annotated[_StrictFloat, Field(allow_inf_nan=False)]]] = Field(
-        default=None, min_length=4, max_length=4)
-    note: Optional[str] = None
-
-    @model_validator(mode="after")
-    def _note(self):
-        if self.note is not None:
-            _nonblank(self.note)
-        return self
-
-
 def _wire_evidence_ref(v):
     """The wire check for an evidence_ref: the struct (validated by `EvidenceRef`) or the legacy
     non-blank string; anything else is a 422. The value is kept in the form it arrived in -- the
@@ -1289,7 +1269,16 @@ def _wire_evidence_ref(v):
     if isinstance(v, str):
         return _nonblank(v)
     if isinstance(v, dict):
-        ref = EvidenceRef.model_validate(v)
+        # Architect ruling 2026-10-31: the SDK's rule wins; a ref it (or the named checks) refuses is
+        # a 422 naming the check. The checks are strict (no bool/str coercion) where the model is lax.
+        _check = _wire_evidence_ref_failure(v)
+        try:
+            ref = EvidenceRef.model_validate(v)
+        except _PydanticValidationError:
+            _check = _check or "invalid"
+        if _check is not None:
+            raise HTTPException(status_code=422, detail={
+                "error": "evidence_ref_invalid", "check": _check})
         return {"page": ref.page, "bbox": list(ref.bbox) if ref.bbox is not None else None,
                 **({"note": ref.note.strip()} if ref.note is not None else {})}
     raise ValueError("an evidence_ref is {page, bbox, note?} or a non-blank string")
@@ -15528,10 +15517,14 @@ def _bbox_is_page_fractions(bbox) -> bool:
     return 0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1
 
 
-class TitleEvidenceRef(EvidenceRef):
-    """A title candidate's crop: `EvidenceRef` plus the page-fraction bounds. A SUBCLASS so the
-    steward row_edits / header_edits evidence_ref (not yet converted) keeps `EvidenceRef` as it was.
-    Cortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422)."""
+class TitleEvidenceRef(_ServedEvidenceRef):
+    """A title candidate's crop: the served `ingest_api.EvidenceRef` (which the equivalence seal holds
+    to the SDK verdict) plus the page-fraction bounds. A SUBCLASS of the served model, not of the SDK's,
+    so the published title-candidate schema keeps its array-of-numbers bbox and `page` minimum. Steward
+    row_edits / header_edits evidence_ref now go through the SDK model (`_wire_evidence_ref`).
+    Cortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422).
+    Strict, as the request model it replaced was: a coordinate sent as a string is refused, not coerced."""
+    model_config = {**_ServedEvidenceRef.model_config, "strict": True}
 
     @model_validator(mode="after")
     def _fractions(self):

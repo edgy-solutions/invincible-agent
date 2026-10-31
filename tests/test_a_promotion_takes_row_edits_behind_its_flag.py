@@ -28,9 +28,9 @@ PAYLOAD = {
 EXTRACTED = ["A-1", "B-2"]
 CORRECT = {"corrected": [{"mpn": "A-1", "corrected_mpn": "A-100", "evidence": "page 2, row 1"}]}
 FLAG = "IAGENT_PROMOTION_ROW_EDITS"
-STRUCT = {"page": 2, "bbox": [10, 20.5, 110, 220], "note": "  the cell  "}
-STRUCT_NORM = {"page": 2, "bbox": [10, 20.5, 110, 220], "note": "the cell"}
-STRUCT_NO_NOTE = {"page": 3, "bbox": [1, 2, 3, 4]}
+STRUCT = {"page": 2, "bbox": [0.1, 0.205, 0.5, 0.9], "note": "  the cell  "}
+STRUCT_NORM = {"page": 2, "bbox": [0.1, 0.205, 0.5, 0.9], "note": "the cell"}
+STRUCT_NO_NOTE = {"page": 3, "bbox": [0.1, 0.2, 0.3, 0.4]}
 
 
 class _Ledger:

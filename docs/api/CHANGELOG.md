@@ -2,6 +2,13 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.6.0 — 2026-10-31
+
+Tightening of one request check, ruled 2026-10-31 (the SDK's `EvidenceRef` rule wins).
+
+- `POST /human_tasks/{task_id}/act`: an evidence_ref whose bbox is not page fractions (or is degenerate) is a 422 `evidence_ref_invalid` naming the check (`not_object`, `extra_key:<key>`, `page`, `bbox_not_fractions`, `bbox_degenerate`, `note_blank`). Before this release the bbox was accepted as any four numbers. The legacy string form is unchanged.
+- `POST /ingest/{ingest_id}/title_leaf`: a title candidate's `evidence_ref` is documented from the served model, so its `bbox` items are numbers bounded 0..1 and `note` is a non-blank string. One check tightens with it: a `note` sent as null is now a 422 (doc-tools omits an empty note, so no sender changes). The bbox check is unchanged: page fractions only, and a coordinate sent as a string is still refused.
+
 ## 1.5.0 — 2026-10-30
 
 Additive for a reader. The 1.4.0 request form of `review_coverage` is deprecated but still accepted, in this release only.
