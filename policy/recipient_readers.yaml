@@ -32,7 +32,7 @@
 #
 # Row shape (each owner adds its own under its key; a new owner is a new key):
 #   <scope>:
-#     granted_by: <accountable human>
+#     granted_by: seed            # a shipped row; a deployment's own row names its approver
 #     reason: >-
 #       <why these readers>
 #     grant_to:
@@ -42,7 +42,7 @@ recipient_readers:
   cost: {}
   plan:
     notional-plan-office:
-      granted_by: cnogradi
+      granted_by: seed
       reason: >-
         2026-10-30 ruling: alice reads the notional plan office's answer exports (fin's #148
         plan-answers profile names this recipient). She is the live acceptance test: alice exports

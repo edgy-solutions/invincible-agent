@@ -57,7 +57,7 @@ _CHART = "helm/invincible-agent"
 
 
 def _row(**over):
-    row = {"granted_by": "cnogradi", "reason": "demo", "grant_to": ["alice@example.com"]}
+    row = {"granted_by": "seed", "reason": "demo", "grant_to": ["alice@example.com"]}
     row.update(over)
     return row
 
