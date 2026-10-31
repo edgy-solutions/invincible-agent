@@ -1,6 +1,6 @@
 # Cortex ingest API, v1
 
-**Version 1.4.0, 2026-10-30.** This is the contract for a team that builds its own UI on the
+**Version 1.5.0, 2026-10-30.** This is the contract for a team that builds its own UI on the
 platform's document ingest: drop a file, follow it through extraction, read what was
 extracted, and act on the review tasks it raises.
 
@@ -324,6 +324,10 @@ do not show.
   - `quality`: `cell`, `region` or null.
   `rows_without_evidence` counts the rows with none.
 - `notice` carries the header: `mfr`, `mfr_source`, `mfr_parent`, `notice_date`.
+- **`review_shape` and `item_kind`** are optional, and null when the content kind declares none.
+  The extraction's `review_shape` names a row of `GET /review-shapes` (a cortex-bff route,
+  documented in `cortex-bff.openapi.json`). That row carries the `rules_version` that
+  `review_coverage` must send (section 6.4).
 - **A rejected drop** is still readable. Its objects were moved, and `relocated_to` says where.
 - **`/source`** streams the original bytes, with `Content-Disposition: inline` and the original
   filename. The media type is `application/pdf`, `application/xml` or `application/octet-stream`
@@ -352,6 +356,21 @@ do not show.
   `header_edits` (`mfr`, `notice_id`, `notice_date`), each with evidence. This is off unless the
   deployment enables it; when off, the route answers 422 `row_edits_not_for_kind` with
   `enabled: false`.
+- **`review_coverage`** records what the steward opened and grouped. It is valid only with
+  `decision: "promoted"` on a `document_promotion`. Send the item form:
+  `review_shape`, `item_kind` and `rules_version` (from the extraction and its `GET /review-shapes`
+  row, section 6.3), then `looked_at`, `sampled` and `flagged` (item ids, as strings), `groups`
+  and `shared` (each with `items`, as strings), and an optional `sample`. Every item must be opened
+  or folded into a group. The simplest valid body opens every item:
+
+  ```json
+  {"decision": "promoted",
+   "review_coverage": {"review_shape": "notice", "item_kind": "part", "rules_version": "notice.v1",
+                       "looked_at": ["0"], "sampled": [], "flagged": [], "groups": [], "shared": []}}
+  ```
+
+  The 1.4.0 form (`parts`, integer ids) is deprecated and is accepted in 1.5.0 only. A body that
+  mixes the two forms is 422.
 
 **Behaviour:**
 - **A decision is recorded once.** A repeat of the same decision replays the stored answer
@@ -491,6 +510,8 @@ do not show.
 | 422 | `promotion_audience_has_no_domain` | empty, act | the drop has no domain yet | – |
 | 404 | `task_not_found` | act | not your task | – |
 | 409 | `task_already_resolved` | act | decided; `decision`, `acted_by`, `acted_at` say how | – |
+| 422 | `review_coverage_invalid` | act | `check` says which: `review_shape`, `item_kind`, `unknown_rules_version`, `unknown_rule`, `unknown_<item_kind>`, `duplicate_<item_kind>`, `overlap`, `uncovered` | fix the coverage |
+| 503 | `review_coverage_unverifiable` | act | the extraction's items could not be read, or the `item_kind` has no reader here; nothing was written | retry later |
 | 409 | `stale_extraction` | act | the drop moved on; `new_task_id` names the current task | act on that one |
 | 403 | `not_authorized_to_act` | act | you no longer hold the task's audience | – |
 | 409 | `delegated_act_unsupported` | act | a delegate cannot act on ingest tasks | act with a person's token |
