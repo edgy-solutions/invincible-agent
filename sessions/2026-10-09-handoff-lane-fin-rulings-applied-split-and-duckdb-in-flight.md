@@ -19,6 +19,35 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-31: relay 2 applied. #147 and #176 merged; the recipient readers are PR #181. Read this first
+
+The relay (10-31) said: "#176's row stays, `granted_by: seed` — a shipped row's grantor is the seed, never a person; Chris is not named in policy. #147 and #176 merge. Recipient readers to the rail next."
+
+- **#147** is merged at `86b00e8a`. It adds the VAC example, the `vac.py` module, and the generic transcription arm.
+- **#176** is merged at `ad4dff59` (head `e8861eb6`; 20 checks passed, 3 skipped).
+  - It adds the docx CDRL sample, A002 / DI-NOTIONAL-0002.
+  - Its `can_export` row now reads `granted_by: seed`.
+- **Ruled (10-31): a shipped policy row's grantor is `seed`, never a person.** I placed a packet for gov, untracked, in the master tree's `sessions/`: `2026-10-31-packet-to-gov-from-fin-shipped-rows-still-name-a-person-as-grantor.md`.
+  - 21 other rows in `capability_grants.yaml` name a person, as does the fixture at `test_can_export_capability_rail.py:43`.
+  - The packet suggests a validator row.
+  - Those rows are not fin's to change. The `plan` row in `recipient_readers.yaml` is gov's too.
+- **PR #181, `fin/recipient-readers-rail`** (head `2a3385f0`, which merges master `ad4dff59`).
+  - **The move:** finance's and cost's `RECIPIENT_READERS` move to `policy/recipient_readers.yaml` with `granted_by: seed`. The tables and `readers_for_recipient` are deleted, and `PENDING` is empty.
+  - **The doors:** they ask `can_read_recipient(_FIN_OWNER | _COST_OWNER, scope, authz_id)`. An outage is a 503 at a door; the pickers omit that owner's recipients.
+  - **Merge:** not authorized. The relay said "next", not "merge". Wait for CI and a ruling.
+  - **The deploy order is open.** The sync hook is `post-upgrade` at weight 3, so the rows land AFTER the engines roll. Finance and cost downloads are refused (fail closed) until the hook finishes. To close that window, Chris runs the sync by hand after the merge and before the roll; the rows are inert to the old code. **Ask before the roll that carries #181.**
+  - **Three reds**, each the same single failure at base `86b00e8a`, so not from #181:
+    - `test_the_shipped_rail_has_no_plan_owner_and_the_feature_is_dark`. This is fin's own test from #148, and it went stale once gov shipped the `plan` row. **Fin's to fix next.**
+    - `test_both_export_routes_shape_through_the_ONE_helper`.
+    - `test_the_ORCHESTRATION_SIDE_forwards_the_identity_only_along_the_sealed_chain`.
+- **Still open from relay 1:** the live sandbox export after 0.4.73 rolls (morning). Alice exports a Portfolio board to `notional-plan-office`. Then run the 10-28 acceptance list:
+  - seed 6/6;
+  - alice's TCPI;
+  - `program_finance_tcpi` 2/2;
+  - the CDRL produced twice gives the same `X-Cells-Sha256`;
+  - bob gets 403.
+  - If #181 rides that roll, apply the deploy order above first.
+
 ## Update 2026-10-30 (evening): the 10-30 relay, three of four items. Read this first
 
 The relay: "retarget #147 to master; the live export test on sandbox after 0.4.73 rolls (morning);
