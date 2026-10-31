@@ -1,14 +1,86 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.72 — 2026-10-30
+## 0.4.73 — 2026-10-30
 
-Cut from master `3ff2235f` for the 2026-10-30 rehearsal, so that the work cluster installs
-a version and never a master sha. It carries every master merge since 0.4.71 (`23db2006`): #114,
-#115, #116, #119, #16, #17, #128, #125, #124, #129, #131, #132, #130, #133, #134, #126, #44, #135,
-#138, #136, #137, #139, #140, #127, #152, #146, #153, #155, #154, #156, #145, #150, #157, #158
-and #143. The release branch also regenerates `docs/api/cortex-bff.openapi.json`: #157 changed
-the docstring of `POST /cases/{case_id}/signals/{signal}` without regenerating it, which left
-`tests/test_bff_openapi_is_current.py` red on master. The fix is one line of generator output.
+Cut from master `e2c03799`. It carries every master merge since 0.4.72 (`77fb1d73`): #148, #151,
+#159, #144, #166, #161, #164, #167, #168, #162, #163, #171, #172, #169, #170 and #173. #149 (gov)
+and #147 (fin) are not in it; they go to 0.4.74 once their lanes act. The three policy blocks
+below were written into the 0.4.72 section by the PRs that landed after that cut; they are moved
+here, where they ship.
+
+**Images.** A chart bump restarts every pod.
+
+- **Every Python image pins iagent-mesh v0.9.12** (#172). The domain broker's
+  `meshSdkVersion` moves `v0.9.10` → `v0.9.12` with it; that is the one values change in this
+  release.
+- **cortex-bff** (`src/iagent`):
+  - #163: the export door checks `can_export:<profile>`, on single and batch exports alike. It is
+    deny-by-default, so a profile with no row cannot be exported by anyone.
+  - #148: the BFF reads the answer-export profiles that engine-cost serves, not its own copy.
+  - #172: `GET /review-shapes` serves one registry (`policy/review_shapes`). The review shapes
+    notice, document, course and finding are rows there, not code.
+  - #173: a promotion's `review_coverage` is accepted in both the legacy and the registry form
+    for this one release. A legacy body is converted on read, and ingest-v1 goes to 1.5.0. The
+    `document_promotion` literals become `promotion.KIND`.
+  - #169: thirteen BFF operations carry the `mcp` tag, the wrapping surface for the MCP server.
+    `docs/api/mcp.openapi.json` is generated and sealed, and ingest-v1 went to 1.4.1. `/orchestrate`
+    leaves one `orchestrate_access` audit line per call.
+  - #170: `POST /finance/measure/{fn}` is a thin relay to finance-agent that forwards the real
+    caller, declared `delegates` in the endpoint-gating manifest.
+  - #167: the minted acceptance case key is stamped where the engine response is read.
+  - #144: the BFF side of the CDRL format change.
+- **Dagster code location**: #167 also changes `dynamic_supervisor.py`. #168 records
+  `human_task_projection.on_behalf_of` apart from `requested_by`. The column is added by the
+  module's own `ADD COLUMN IF NOT EXISTS ... DEFAULT ''`, so no migration Job is needed.
+- **finance-agent**: #144. A CDRL profile names its format: docx tables, csv and json under the
+  xlsx contract. `cdrl_a001_ev_summary_json` ships in the sample overlay.
+- **cost-agent**: #148. It serves the answer-export profiles, including `plan-answers`.
+- **safety-agent**: #166. The draft card reads its task kind and reason verbs from the served
+  declarations.
+- **Policy baked into the images:**
+  - #151, #159 and #171 are described in the policy blocks below.
+  - #161: `mesh:s1000dFaultWalk` grants operator.regioneast, a user that is already in
+    `policy/users.yaml` (since 2026-10-20).
+  - #172 adds `policy/review_shapes/` and the openddil-lab content kinds' `review_shape`.
+
+**⚠ Before installing:** no human `topaz_sync` is expected.
+- `policy/groups.yaml`, `users.yaml`, `task_grants.yaml` and `program_members.yaml` are unchanged
+  since 0.4.72 (`git diff --quiet 77fb1d73 e2c03799` on the four files).
+- Every group a new `can_export:` row names already exists in `policy/groups.yaml`:
+  alert-processors (synced at rev 222), portfolio-leads and finance-analysts.
+- The capability leg of the task-grant-sync hook writes the new rows at the roll.
+
+At work, an overlay that sets `EXPORT_PROFILE_OVERLAY_DIRS` or carries fin CDRL profiles needs a
+`can_export:` row for each profile it adds, or `validate_policy` refuses it.
+
+**No deploy effect:** #162 (an ADR). #164 changes the walk census (`scripts/` and
+`src/iagent_pure/walk_census.py`); it is tooling, and no service reads it.
+
+**Policy changes (2026-10-29/30 rulings: who may export a profile)**
+
+- **The `can_export:<profile>` convention** (header comment in `policy/capability_grants.yaml`):
+  who may export export profile `<profile>`, deny-by-default (no row, nobody). `validate_policy`
+  gains three refusals: a `can_export:` key naming an unknown profile; a profile name in two of the
+  review-export, answer-export and fin CDRL sets; ANY known profile with no row. That refusal's
+  advice is derived from the rows deciding other profiles of the same kind; no group is named in
+  code (architect's standing rule, 2026-10-30). The ruled grantees are rows: review-export
+  `[alert-processors]`, fin CDRL `[finance-analysts]` (ruled 2026-10-29), and `plan-answers`
+  `[portfolio-leads]` (ruled 2026-10-29/30; alice, erin and chris hold it already, so no
+  `topaz_sync` precondition). That row shipped in #171.
+  One row gates a single export and a batch alike. Each kind is read where its own loader reads it:
+  `INGEST_EXPORT_PROFILE_DIR` or `policy/exports`; `EXPORT_PROFILE_POLICY_DIR` or
+  `policy/exports/answers`, plus `EXPORT_PROFILE_OVERLAY_DIRS`; fin's CDRL seed and overlays.
+  Answer-export profiles (fin's #148) need a row too (ruled 2026-10-30).
+- **Five rows ship**, one per profile the seed knows:
+  - `can_export:default-csv` and `can_export:default-json` (Lane 1's `policy/exports`),
+    `grant_to_groups: [alert-processors]`;
+  - `can_export:plan-answers` (#171), `[portfolio-leads]`;
+  - `can_export:cdrl_a001_ev_summary` and, from #171, `can_export:cdrl_a001_ev_summary_json`,
+    `[finance-analysts]`.
+
+  Every group already exists, so there is no `topaz_sync` precondition. The capability leg writes
+  the rows at the roll. They gate from this release on: #163's export door checks
+  `can_export:<P>`, on single and batch exports alike.
 
 **Policy changes (2026-10-29 ruling: a `plan` owner on the recipient_readers rail)**
 
@@ -22,6 +94,16 @@ the docstring of `POST /cases/{case_id}/signals/{signal}` without regenerating i
   owner a code edit, is gone. A deployment's overlay may declare its own owner. An owner key must be
   a name (`OWNER_NAME_RE`, no `:`, which would make `<owner>:<scope>` ambiguous) or the overlay is
   refused whole.
+
+## 0.4.72 — 2026-10-30
+
+Cut from master `3ff2235f` for the 2026-10-30 rehearsal, so that the work cluster installs
+a version and never a master sha. It carries every master merge since 0.4.71 (`23db2006`): #114,
+#115, #116, #119, #16, #17, #128, #125, #124, #129, #131, #132, #130, #133, #134, #126, #44, #135,
+#138, #136, #137, #139, #140, #127, #152, #146, #153, #155, #154, #156, #145, #150, #157, #158
+and #143. The release branch also regenerates `docs/api/cortex-bff.openapi.json`: #157 changed
+the docstring of `POST /cases/{case_id}/signals/{signal}` without regenerating it, which left
+`tests/test_bff_openapi_is_current.py` red on master. The fix is one line of generator output.
 
 **Policy changes (2026-10-28 ruling: pcn and pdn droppable by the alert-processors group only)**
 
@@ -39,26 +121,6 @@ the docstring of `POST /cases/{case_id}/signals/{signal}` without regenerating i
   the overlay lacks `capability_grants.yaml`.
 - **Before that roll, a human `topaz_sync` must create `group:alert-processors`** (new group in
   `policy/groups.yaml`, alice in `policy/users.yaml`), or the capability leg exits 5.
-
-- **The `can_export:<profile>` convention** (header comment in `policy/capability_grants.yaml`):
-  who may export export profile `<profile>`, deny-by-default (no row, nobody). `validate_policy`
-  gains three refusals: a `can_export:` key naming an unknown profile; a profile name in two of the
-  review-export, answer-export and fin CDRL sets; ANY known profile with no row. That refusal's
-  advice is derived from the rows deciding other profiles of the same kind; no group is named in
-  code (architect's standing rule, 2026-10-30). The ruled grantees are rows: review-export
-  `[alert-processors]`, fin CDRL `[finance-analysts]` (ruled 2026-10-29), and `plan-answers`
-  `[portfolio-leads]` (ruled 2026-10-29/30; alice, erin and chris hold it already, so no
-  `topaz_sync` precondition), which ships with whichever of #148 and this change merges second.
-  One row gates a single export and a batch alike. Each kind is read where its own loader reads it:
-  `INGEST_EXPORT_PROFILE_DIR` or `policy/exports`; `EXPORT_PROFILE_POLICY_DIR` or
-  `policy/exports/answers`, plus `EXPORT_PROFILE_OVERLAY_DIRS`; fin's CDRL seed and overlays.
-  Answer-export profiles (fin's #148) need a row too (ruled 2026-10-30).
-- **Three rows ship**, one per profile the seed knows: `can_export:default-csv` and
-  `can_export:default-json` (Lane 1's `policy/exports` profiles), `grant_to_groups:
-  [alert-processors]`; `can_export:cdrl_a001_ev_summary`, `grant_to_groups: [finance-analysts]`.
-  Both groups already exist, so no `topaz_sync` precondition; the capability leg writes them at
-  the next roll. They are inert until the export door checks `can_export:<P>` (today it gates the
-  batch on `ingest:exportBatch` only).
 
 **Chart changes**
 
