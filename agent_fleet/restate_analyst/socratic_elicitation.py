@@ -923,9 +923,14 @@ def confirms(draft: Draft) -> List[Gap]:
     for key, facet, leaves, said, scope in _value_slots(draft.files):
         if _attributed(draft, key, leaves):
             continue
+        # a step's slot names the step, so "that is not right" says which step to redraft
+        # (architect, 2026-10-31)
+        step = next((f"step `{p[len('steps[id='):-1]}` of {f}" for f, p in scope
+                     if p.startswith("steps[id=") and p.endswith("]")), None)
         out.append(Gap(key, facet, "confirm",
                        f"Required, to confirm: the draft says {said}, but you were never asked "
-                       "about it. Is that right? If not, what is it?", revises=leaves,
+                       "about it." + (f" It is about {step}." if step else "")
+                       + " Is that right? If not, what is it?", revises=leaves,
                        rewrites=scope))
     return out
 
@@ -1278,7 +1283,8 @@ RULES
 - When the question is a confirm ("Required, to confirm: ...") and the user says it is not right,
   redraft what the question names from their words: set the new values, and UNSET the fields that
   no longer apply (path "" of task_kinds/<kind>.yaml removes a task kind only that step named).
-  Never unset anything else.
+  Never unset anything else. When the answer carries a CORRECTION, those are the user's own facts
+  in the draft's names: apply them as given.
 - REQUIRED: the trigger lists `stages`: every workflow id a case can pass through, in the user's
   order (a stage already drafted is named by its workflow id). Each stage is drafted as
   workflows/<stage>.yaml with id <stage>.
@@ -1317,6 +1323,7 @@ class ModelExtractor:
         self.context: dict = {}
         self._checked = False
         self._system: Optional[str] = None
+        self.last_raw: Optional[str] = None  # the model's reply to the last call, as it came back
 
     def with_context(self, context: dict) -> "ModelExtractor":
         self.context = dict(context or {})
@@ -1340,8 +1347,9 @@ class ModelExtractor:
             raise ValueError(f"model tag {self.model!r} is not listed by the server")
         self._checked = True
 
-    def __call__(self, utterance_entry: dict, draft: Draft, gap: Optional[Gap]) -> dict:
-        import httpx
+    def _user_message(self, utterance_entry: dict, draft: Draft, gap: Optional[Gap]) -> str:
+        """The turn as the model sees it. Of an answer's facts, only a rejection's correction is
+        shown (ADR-0061 §10, architect 2026-10-31); any other answer reaches the model as words."""
         user = (
             f"CONTEXT\nevent fields: {self.context.get('event_fields')}\n"
             f"audiences: {self.context.get('audiences')}\n"
@@ -1349,9 +1357,18 @@ class ModelExtractor:
             f"CURRENT DRAFT (files)\n{yaml.safe_dump(draft.files, sort_keys=False)}\n"
             f"QUESTION\n{('OPENING' if gap is None else gap.key + ': ' + gap.question)}\n\n"
             f"STATEMENT\n{utterance_entry.get('says', '')}\n")
+        if utterance_entry.get("corrects") and utterance_entry.get("facts"):
+            user += (f"\nCORRECTION\nThe user's own facts, in the draft's names; apply them as given:\n"
+                     f"{json.dumps(utterance_entry['facts'])}\n")
         if utterance_entry.get("refused"):
             user += (f"\nREFUSED\nYour previous patch for this statement was refused: "
                      f"{utterance_entry['refused']}\nRestate the whole patch in the path grammar.\n")
+        return user
+
+    def __call__(self, utterance_entry: dict, draft: Draft, gap: Optional[Gap]) -> dict:
+        import httpx
+        self.last_raw = None
+        user = self._user_message(utterance_entry, draft, gap)
         body = {"model": self.model, "stream": False, "format": "json", "options": {"temperature": 0},
                 "messages": [{"role": "system", "content": self._system_prompt()},
                              {"role": "user", "content": user}]}
@@ -1365,6 +1382,7 @@ class ModelExtractor:
                 r = client.post(f"{self.base_url}/api/chat", json=body)
                 r.raise_for_status()
                 content = r.json().get("message", {}).get("content", "")
+                self.last_raw = content
             except (httpx.HTTPError, ValueError) as exc:
                 self.errors += 1
                 self.transport_errors.append(type(exc).__name__)
@@ -1398,17 +1416,27 @@ PATCH_RESTATES = 1  # times the model is asked to restate a refused patch before
 
 
 def _apply_or_charge(draft: Draft, extractor: Callable[[dict, Draft, Optional[Gap]], dict],
-                     entry: dict, gap: Optional[Gap], turn: int, charged: List[dict]) -> None:
+                     entry: dict, gap: Optional[Gap], turn: int, charged: List[dict],
+                     log: Optional[List[dict]] = None) -> None:
     """Apply the extractor's patch for one turn. A patch the loop cannot apply is a model error
     charged to that turn (architect, 2026-10-30): it is recorded, the model is asked to restate it
     with the refusal in hand, and the loop continues. A run never crashes on model output. The
-    patch is tried on a copy, so nothing of a refused patch lands in the draft."""
+    patch is tried on a copy, so nothing of a refused patch lands in the draft. Each reply goes to
+    ``log``: the patch, the model's own text when it has one, and the refusal if any."""
     ask = entry
     for _ in range(1 + PATCH_RESTATES):
         trial = copy.deepcopy(draft)
+        reply: dict = {}
+        if log is not None:
+            log.append(reply)
         try:
-            apply_patch(trial, extractor(ask, draft, gap), turn, answering=gap)
+            patch = extractor(ask, draft, gap)
+            reply["patch"] = copy.deepcopy(patch)
+            if getattr(extractor, "last_raw", None) is not None:
+                reply["raw"] = extractor.last_raw  # type: ignore[attr-defined]
+            apply_patch(trial, patch, turn, answering=gap)
         except PatchError as exc:
+            reply["refused"] = str(exc)
             charged.append({"turn": turn, "error": str(exc)})
             ask = {**entry, "refused": str(exc)}
             continue
@@ -1425,9 +1453,11 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
         extractor.with_context(transcript.get("context") or {})  # type: ignore[attr-defined]
     opening = transcript["opening"]
     model_errors: List[dict] = []
-    _apply_or_charge(draft, extractor, opening, None, 0, model_errors)
+    # each turn: the question, the user's answer, and every reply to it (architect, 2026-10-31)
+    messages: List[dict] = [{"turn": 0, "key": None, "kind": "opening", "agent": None,
+                             "user": opening.get("says"), "replies": []}]
+    _apply_or_charge(draft, extractor, opening, None, 0, model_errors, messages[0]["replies"])
     questions: List[dict] = []
-    messages: List[dict] = []
     contradictions_asked: List[str] = []
     unanswerable = unresolved = turn = 0
     stalled: List[str] = []
@@ -1470,8 +1500,11 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
         if g.kind == "contradiction":
             contradictions_asked.append(g.key)
         entry = answer(g, draft)
-        messages.append({"turn": turn, "agent": restate(draft) + "\n\n" + g.question,
-                         "user": (entry or {}).get("says")})
+        messages.append({"turn": turn, "key": g.key, "kind": g.kind,
+                         "agent": restate(draft) + "\n\n" + g.question,
+                         "user": (entry or {}).get("says"), "replies": []})
+        if entry is not None and entry.get("corrects"):
+            messages[-1]["correction"] = copy.deepcopy(entry.get("facts") or {})
         if entry is None:
             unanswerable += 1
             leave(g, "user could not answer")
@@ -1479,7 +1512,7 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
                 draft.pending = [p for p in draft.pending if p.key != g.key]
             continue
         before = copy.deepcopy((draft.files, draft.deferrals))
-        _apply_or_charge(draft, extractor, entry, g, turn, model_errors)
+        _apply_or_charge(draft, extractor, entry, g, turn, model_errors, messages[-1]["replies"])
         draft.answered[g.key] = turn
         if g.kind in ("confirm", "contradiction"):
             for leaf in g.revises:

@@ -1094,6 +1094,80 @@ ADR stays a draft, and no PR is opened.
     step to redraft in the confirm's question, or make the rejection's answer carry the stage's
     facts, not only its words. The second changes the instrument again.
 
+#### 2026-10-31: each turn's reply is logged; the confirm names its step; the rejection carries the stage's facts
+
+The architect ruled both of the owed items, and a fix to how the measure names the trigger stage.
+The bar stands: a run that is runnable with the planted contradiction caught.
+
+- **Each turn's reply is logged.**
+  - The loop's message log now has one entry per turn, starting with the opening (turn 0).
+  - Each entry has the question's key and kind, the person's answer, and every reply to it.
+  - A reply holds the patch as returned, the model's own text when the extractor keeps it, and
+    the refusal if the patch was refused. A restated patch is a second reply in the same turn.
+  - A rejection's turn also logs the correction it carried.
+  - The measure row gains `turns`, the whole log.
+- **A step's confirm names the step.** The question adds "It is about step `filed` of
+  workflows/pcn_record.yaml." A confirm of any other slot, such as the trigger's stage list, adds
+  nothing.
+- **The rejection carries the stage's facts.** This changes the instrument.
+  - The scripted user's rejection keeps its words: "No, that is not right.", then the stage in
+    the person's own words.
+  - It now also carries a correction, in the draft's own names, and marks which confirm it
+    corrects.
+  - **The step has a counterpart in the expected stage.** The correction unsets only the
+    rejected slot's value.
+  - **The step has no counterpart.** The expected stage must have exactly one step that nothing
+    in the draft is paired with, and that step must name no task kind. The correction then
+    rewrites the draft's step into it, leaf by leaf, under the draft's step id:
+    - it sets each leaf whose value differs;
+    - it unsets each leaf the new step does not have;
+    - it removes the task kind only that step named.
+  - **Otherwise** the correction is empty, and the rejection is words alone, as before.
+  - For runs 19 to 24's record step, the correction sets `kind: signal_await`,
+    `signal: pcn_filed` and `accepts: [filed]`. It unsets `task_kind` and `excludes`, and removes
+    the filing task kind. The audience already matches, so it is not set.
+  - The model is shown the correction, under CORRECTION, only on a rejection. An ordinary
+    answer's facts still reach it as words only.
+  - The grammar says a CORRECTION is applied as given.
+  - Every correction is a set or unset inside the confirm's rewrite scope, so the rules that
+    govern any answer to a confirm still hold.
+- **The measure names the trigger stage the way run 23 drafted it.** This changes the
+  instrument.
+  - In run 23 the trigger's `selection` named a field, and the selection table named the trigger
+    by `after`.
+  - When the trigger's `selection` names no table, and exactly one table names the trigger by
+    `after`, that table is the trigger stage. Two such tables choose neither.
+  - The semantic diffs are unchanged, so a draft written this way still counts as different.
+  - Rescored with this rule, run 23's stored final files read its overwrite contradiction on
+    the impact review's `excludes` as the planted one: 1/1. Run 23 is still not runnable (two
+    runtime errors), so it does not meet the gate. Runs 22 and 24 stay 0/1.
+- **Seals.** tests/socratic: 108 passed, 9 of them new. The redraft seal and its control were changed:
+  - The scripted user's correction is the stage in the draft's own names, with its exact sets
+    and unsets.
+  - With the record drafted as a human approval, the oracle redrafts it from the correction
+    alone. The run is runnable and exact, and the planted contradiction is asked. The control
+    drops the correction and gets `cannot_run`. The correction was still offered and logged.
+  - A step's confirm names its step. The control: the trigger's stage-list confirm names none.
+  - The model sees CORRECTION for a rejection. The control: an answer by path with the same
+    facts shows none.
+  - The grammar mentions CORRECTION.
+  - Each turn logs its key, kind, answer and every reply. A refused first reply is followed by
+    its restatement in the same turn, and every other turn has one reply.
+  - A reply logs the extractor's own text when it keeps one. The control: the oracle keeps none.
+  - The measure row's `turns` has one entry per question, plus the opening.
+  - The trigger stage falls back to the one table naming the trigger by `after`. The control:
+    with two such tables, neither is chosen.
+- **Mutants.** 13 mutants, each red on an assertion and restored by cmp:
+  - log-missing-reply, refused-dropped, raw-dropped, correction-not-logged;
+  - question-no-step;
+  - correction-shown-always, correction-never-shown, no-grammar-correction;
+  - correction-empty, correction-keeps-kind;
+  - fallback-unguarded, fallback-removed;
+  - turns-missing.
+
+  Three of them were first red on a KeyError, not an assertion: refused-dropped, raw-dropped
+  and correction-empty. Their seals now read with a default, so they fail on the assertion.
+
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a

@@ -10,6 +10,7 @@ message). The model arm never sees ``facts`` or ``expected/`` -- only each answe
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -144,6 +145,12 @@ def _index(files: dict) -> dict:
     terminals = {t for d in decisions.values() for t in (d.get("terminals") or [])}
     trig = triggers[0] if triggers else {}
     sel_name = str(trig.get("selection")) if trig.get("selection") else None
+    if sel_name not in decisions and trig.get("trigger"):
+        # Run 23 (ADR-0061 §10): the trigger's `selection` named a field, and the table named the
+        # trigger by `after`. That reference is structural too, when exactly one table makes it.
+        after = [n for n, x in decisions.items() if str(x.get("after")) == str(trig["trigger"])]
+        if len(after) == 1:
+            sel_name = after[0]
     return {"trigger": trig, "sel": decisions.get(sel_name), "sel_name": sel_name,
             "decisions": decisions, "wfs": wfs, "kinds": kinds, "chain": chain, "terminals": terminals}
 
@@ -382,14 +389,45 @@ class AligningUser:
         w = maps["defs"].get(m.group(1))
         if w is None:
             return None
-        if t is not None and maps["steps"].get((m.group(1), m.group(2))) is not None:
+        counterpart = maps["steps"].get((m.group(1), m.group(2)))
+        if t is not None and counterpart is not None:
             tgt = _fact_target(t)
             if tgt is None or se._get(self.expected, *tgt)[0]:
                 return None
         self.rejected.append(gap.key)
         stage = self.bank.get(f"steps.{w}") or {}
         return {"says": "No, that is not right." + (f" {stage['says']}" if stage.get("says") else ""),
-                "facts": {}}
+                "facts": self._correction(gap, maps, w, m.group(1), m.group(2), counterpart),
+                "corrects": gap.key}
+
+    def _correction(self, gap, maps: dict, w: str, dw: str, sid: str, counterpart) -> dict:
+        """The stage's facts for a rejected step, in the draft's own names (architect 2026-10-31).
+        A step with a counterpart of its kind loses only the slot's value the expected step does
+        not hold. A step with none is replaced, leaf by leaf, by the one expected step of that
+        stage nothing is paired with, and the task kind only it named is removed. Empty when no
+        single expected step is the replacement, or the replacement names a task kind."""
+        wf_file = next((f for f, p in gap.rewrites if p == f"steps[id={sid}]"), None)
+        kind_file = next((f for f, p in gap.rewrites if p == ""), None)
+        dstep = next((s for s in _steps_of(maps["d"]["wfs"].get(dw) or {}) if str(s.get("id")) == sid),
+                     None)
+        if wf_file is None or dstep is None:
+            return {}
+        base = f"steps[id={sid}]"
+        if counterpart is not None:
+            leaf = gap.key.rsplit(".", 1)[1]
+            return {"unset": [{"file": wf_file, "path": f"{base}.{leaf}"}]} if leaf in dstep else {}
+        paired = {v for (a, _), v in maps["steps"].items() if a == dw}
+        spare = [s for s in _steps_of(_index(self.expected)["wfs"].get(w) or {})
+                 if str(s.get("id")) not in paired]
+        if len(spare) != 1 or spare[0].get("task_kind"):
+            return {}
+        new = spare[0]
+        unset = [{"file": wf_file, "path": f"{base}.{k}"} for k in dstep if k != "id" and k not in new]
+        if kind_file:
+            unset.append({"file": kind_file, "path": ""})
+        sets = [{"file": wf_file, "path": f"{base}.{k}", "value": copy.deepcopy(v)}
+                for k, v in new.items() if k != "id" and dstep.get(k) != v]
+        return {"set": sets, "unset": unset}
 
     def __call__(self, gap, draft) -> Optional[dict]:
         t = self.translate(gap.key, draft.files)
@@ -476,6 +514,7 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "contradictions_asked": r["contradictions_asked"],
         "deferrals": r["deferrals"],
         "files": r["files"],
+        "turns": r["messages"],
         "seconds": secs,
     }
 

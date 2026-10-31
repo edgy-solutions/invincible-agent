@@ -5,6 +5,7 @@ The oracle arm reads each answer's ``facts``; no model runs here. The fixtures a
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -917,8 +918,11 @@ NO = "No, that is not right."
 
 def _record_as_approval(redraft=True):
     """Runs 19 to 21 (ADR-0061 §10): the model drafts the record's wait as a human approval. With
-    ``redraft``, the extractor rewrites the step from the person's rejection, as the grammar asks."""
+    ``redraft``, the extractor applies the rejection's correction as given, as the grammar asks;
+    without it, the correction is dropped."""
     def extractor(entry, draft, gap):
+        if not redraft and entry.get("corrects"):
+            return {"set": [], "unset": [], "defer": []}
         patch = se.OracleExtractor()(entry, draft, gap)
         if gap is not None and gap.key == "steps.pcn_record":
             for fact in patch["set"]:
@@ -928,18 +932,11 @@ def _record_as_approval(redraft=True):
                                                  "task_kind": "pcn_filing", "excludes": []}
             patch["set"].append({"file": FILING, "path": "",
                                  "value": {"kind": "pcn_filing", "accepts": ["filed"]}})
-        if redraft and gap is not None and gap.kind == "confirm" and str(entry.get("says", "")).startswith(NO):
-            patch = {"unset": [{"file": REC, "path": "steps[id=filed].task_kind"},
-                               {"file": REC, "path": "steps[id=filed].excludes"},
-                               {"file": FILING, "path": ""}],
-                     "set": [{"file": REC, "path": "steps[id=filed].kind", "value": "signal_await"},
-                             {"file": REC, "path": "steps[id=filed].signal", "value": "pcn_filed"},
-                             {"file": REC, "path": "steps[id=filed].accepts", "value": ["filed"]}]}
         return patch
     return extractor
 
 
-def test_a_confirm_of_a_step_the_process_does_not_have_is_rejected_and_the_redraft_runs():
+def test_a_confirm_of_a_step_the_process_does_not_have_is_rejected_and_its_correction_alone_redrafts_it():
     t, exp = _transcript("pcn_review"), _expected("pcn_review")
     u = sm.AligningUser(t, exp)
     r = se.run(t, _record_as_approval(), answer=u)
@@ -958,6 +955,8 @@ def test_control_a_rejection_the_model_does_not_act_on_leaves_the_draft_cannot_r
     r = se.run(t, _record_as_approval(redraft=False), answer=u)
     assert u.rejected == [REJECTED_KEY]
     assert r["status"] == "cannot_run" and r["files"] != exp
+    # the correction was offered, and logged with the turn that dropped it
+    assert [m["key"] for m in r["messages"] if m.get("correction")] == [REJECTED_KEY]
 
 
 def _confirm_draft():
@@ -1036,3 +1035,104 @@ def test_the_grammar_and_the_parser_carry_unset():
     m.errors = 0
     got = m._parse('{"set": [], "unset": [{"file": "a/b.yaml", "path": "x"}], "defer": []}')
     assert got["unset"] == [{"file": "a/b.yaml", "path": "x"}] and m.errors == 0
+
+
+# ── 10-31: each turn's reply is logged; the confirm names its step; the rejection carries facts ──
+
+def test_the_correction_is_the_stage_in_the_drafts_own_names():
+    d, g = _confirm_draft()
+    u = sm.AligningUser(_transcript("pcn_review"), _expected("pcn_review"))
+    a = u(g, d)
+    assert a["corrects"] == REJECTED_KEY
+    assert sorted((f["file"], f["path"], f["value"]) for f in a["facts"].get("set", [])) == sorted([
+        (REC, "steps[id=filed].kind", "signal_await"),
+        (REC, "steps[id=filed].signal", "pcn_filed"),
+        (REC, "steps[id=filed].accepts", ["filed"])])  # the audience is the same, so it is not set
+    assert sorted((f["file"], f["path"]) for f in a["facts"].get("unset", [])) == sorted([
+        (REC, "steps[id=filed].task_kind"), (REC, "steps[id=filed].excludes"), (FILING, "")])
+
+
+def test_a_step_confirm_names_its_step_and_no_other_confirm_does():
+    d, g = _confirm_draft()
+    assert "It is about step `filed` of workflows/pcn_record.yaml." in g.question
+    # control: the stage list is a slot of the trigger, not of a step
+    d.files["triggers/pcn_received.yaml"][se._STAGES] = ["pcn_impact_review", "pcn_record"]
+    d.set_at[("triggers/pcn_received.yaml", se._STAGES)] = 1
+    other = [x for x in se.confirms(d) if not any(p.startswith("steps[id=") for _, p in x.rewrites)]
+    assert [x.key for x in other] == [f"trigger.{se._STAGES}"] and "It is about" not in other[0].question
+
+
+def test_the_model_is_shown_a_correction_only_for_a_rejection():
+    d, g = _confirm_draft()
+    u = sm.AligningUser(_transcript("pcn_review"), _expected("pcn_review"))
+    a = u(g, d)
+    m = se.ModelExtractor.__new__(se.ModelExtractor)
+    m.context = {}
+    shown = m._user_message(a, d, g)
+    assert "\nCORRECTION\n" in shown and json.dumps(a["facts"]) in shown
+    # control: an answer by path carries facts too, and they reach the model as words only
+    path = {"says": "Yes.", "facts": a["facts"]}
+    assert "CORRECTION" not in m._user_message(path, d, g)
+
+
+def test_the_grammar_says_a_correction_is_applied_as_given():
+    assert "CORRECTION" in se._GRAMMAR and "apply them as given" in se._GRAMMAR
+
+
+def test_each_turn_logs_its_question_answer_and_every_reply_including_a_refused_one():
+    t = _transcript("pcn_review")
+    refused = []
+
+    def extractor(entry, draft, gap):
+        if gap is not None and gap.kind != "confirm" and not refused:
+            refused.append(gap.key)
+            return {"set": [], "unset": [{"file": REC, "path": "steps"}], "defer": []}
+        return se.OracleExtractor()(entry, draft, gap)
+
+    r = se.run(t, extractor)
+    log = r["messages"]
+    assert log[0]["kind"] == "opening" and log[0]["key"] is None
+    assert log[0]["user"] == t["opening"]["says"] and len(log[0]["replies"]) == 1
+    assert [m["key"] for m in log[1:]] == [q["key"] for q in r["questions"]]
+    assert [m["kind"] for m in log[1:]] == [q["kind"] for q in r["questions"]]
+    turn = next(m for m in log if m["key"] == refused[0])
+    first, second = turn["replies"]
+    assert first["patch"]["unset"] == [{"file": REC, "path": "steps"}] and first.get("refused")
+    assert "refused" not in second and "patch" in second
+    assert all(len(m["replies"]) == 1 for m in log if m is not turn and m["user"] is not None)
+
+
+def test_the_measure_row_carries_every_turn():
+    row = sm.measure("pcn_review", se.OracleExtractor())
+    assert len(row["turns"]) == row["questions"] + 1 and row["turns"][0]["kind"] == "opening"
+
+
+def test_a_selection_table_that_names_the_trigger_by_after_is_the_trigger_stage():
+    # run 23: the trigger's `selection` named a field, not a table
+    files = {"triggers/pcn.yaml": {"trigger": "pcn_received", "selection": "change_class"},
+             "decisions/sel.yaml": {"decision": "pcn_sel", "after": "pcn_received"}}
+    assert sm._index(files)["sel_name"] == "pcn_sel"
+
+
+def test_control_two_tables_naming_the_trigger_by_after_choose_neither():
+    files = {"triggers/pcn.yaml": {"trigger": "pcn_received", "selection": "change_class"},
+             "decisions/a.yaml": {"decision": "a", "after": "pcn_received"},
+             "decisions/b.yaml": {"decision": "b", "after": "pcn_received"}}
+    i = sm._index(files)
+    assert i["sel_name"] == "change_class" and i["sel"] is None
+
+
+def test_a_reply_logs_the_models_own_text_when_the_extractor_keeps_it():
+    class Raw:
+        last_raw = None
+
+        def __call__(self, entry, draft, gap):
+            self.last_raw = f"text for {gap.key if gap else 'opening'}"
+            return se.OracleExtractor()(entry, draft, gap)
+
+    r = se.run(_transcript("pcn_review"), Raw())
+    replies = [(m["key"], x) for m in r["messages"] for x in m["replies"]]
+    assert replies and all(x.get("raw") == f"text for {k or 'opening'}" for k, x in replies)
+    # control: an extractor that keeps no text logs none
+    assert all("raw" not in x for m in se.run(_transcript("pcn_review"), se.OracleExtractor())["messages"]
+               for x in m["replies"])
