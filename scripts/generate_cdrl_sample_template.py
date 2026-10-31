@@ -60,17 +60,27 @@ def build_bytes() -> bytes:
 
     raw = io.BytesIO()
     wb.save(raw)
+    return rewrite_zip(raw.getvalue(), _fix_core)
+
+
+def _fix_core(name: str, data: bytes) -> bytes:
+    if name == "docProps/core.xml":
+        # openpyxl stamps `modified` with the wall clock at save, whatever the property says.
+        return re.sub(rb"(<dcterms:modified[^>]*>)[^<]*", rb"\g<1>2026-10-28T00:00:00Z", data)
+    return data
+
+
+def rewrite_zip(raw: bytes, patch=None) -> bytes:
+    """The zip `raw` rewritten with a fixed member timestamp and a fixed (sorted) member order;
+    `patch(name, data)` may return replacement bytes for a member. Shared with the docx generator."""
     out = io.BytesIO()
-    with zipfile.ZipFile(raw) as src, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
+    with zipfile.ZipFile(io.BytesIO(raw)) as src, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
         for name in sorted(src.namelist()):
             info = zipfile.ZipInfo(name, date_time=_FIXED_ZIP_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o600 << 16
             data = src.read(name)
-            if name == "docProps/core.xml":
-                # openpyxl stamps `modified` with the wall clock at save, whatever the property says.
-                data = re.sub(rb"(<dcterms:modified[^>]*>)[^<]*", rb"\g<1>2026-10-28T00:00:00Z", data)
-            dst.writestr(info, data)
+            dst.writestr(info, patch(name, data) if patch else data)
     return out.getvalue()
 
 
