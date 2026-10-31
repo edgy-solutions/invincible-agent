@@ -195,6 +195,21 @@ def resolve_token_identity(
     return sub, authz_id, payload.get("email")
 
 
+def verified_claims(token: str) -> dict:
+    """Verify the token against Keycloak's JWKS and return its payload.
+
+    The RS256 signature is checked against the public key. Audience check is relaxed
+    (verify_aud=False) to ensure compatibility across client types. Raises jwt errors unchanged.
+    """
+    signing_key = jwks_client.get_signing_key_from_jwt(token)
+    return jwt.decode(
+        token,
+        signing_key.key,
+        algorithms=["RS256"],
+        options={"verify_aud": False}
+    )
+
+
 def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
     FastAPI dependency to validate the incoming OIDC token.
@@ -202,17 +217,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
     try:
         # 1. Fetch Keycloak Public Keys (JWKS)
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
-        
-        # 2. Decode and Verify JWT
-        # We verify the RS256 signature against the public key.
-        # Audience check is relaxed (verify_aud=False) to ensure compatibility across client types.
-        payload = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            options={"verify_aud": False}
-        )
+        # 2. Decode and Verify JWT (see verified_claims)
+        payload = verified_claims(token)
         
         realm_access = payload.get("realm_access", {})
         roles = realm_access.get("roles", [])

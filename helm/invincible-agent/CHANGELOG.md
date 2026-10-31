@@ -1,5 +1,21 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.74 — not yet cut
+
+Entries merged after the 0.4.73 cut (`e2c03799`). The releaser dates this heading at the cut.
+
+**Policy changes (the MCP surface's call policy: `can_call:<tag>`)**
+
+- **New group `mcp-callers`** (capability-only, no persona.domain cell); sandbox members alice and
+  bob (ruled 2026-10-31), plus the walkers erin and chris, who hold alice's groups (they also gain
+  `alert-processors`, which the 10-28 grant gave alice alone). **`topaz_sync` precondition**: a new group must be synced before the roll
+  that carries the rows (else the capability leg names an unknown group).
+- **Rows `can_call:ingest-export`, `can_call:ingest-v1`, `can_call:mcp`**, each `grant_to_groups:
+  [mcp-callers]`. Inert until the chart sets `CAN_CALL_DOOR_CLIENTS` (lane/01's).
+- **The door (BFF):** a token whose `azp` is in `CAN_CALL_DOOR_CLIENTS` reaches only the MCP
+  surface, and on it needs `can_call:<t>` for every tag of the route; everything else is 403
+  `not_entitled_to_call`, app-wide. Other callers are untouched; unset env, no-op.
+
 ## 0.4.73 — 2026-10-30
 
 Cut from master `e2c03799`. It carries every master merge since 0.4.72 (`77fb1d73`): #148, #151,
