@@ -856,7 +856,7 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.9.10"
+  meshSdkVersion: "v0.9.12"
   # CLOSED NETWORK (no route to github.com / pypi.org): point the install at a mirror.
   # The SDK is fetched from <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz, so the mirror holds the
   # GitHub tag tarball under that same file name (e.g. an Artifactory generic repo holding
@@ -1627,7 +1627,15 @@ cortexUi:
     # an OCI index with linux/amd64 and linux/arm64. The abbreviated tag and the full sha with
     # its last hex altered both answer 404. An environment's own values file still overrides
     # this pin (values-sandbox.yaml carries the same digest).
-    digest: "sha256:57e4078925d3b1fe44724c207c262c0fb3e8315a718bba20eb564b67f8eea43a"
+    # RE-PINNED FOR 0.4.72 (architect, 2026-10-30: "pin cortex at fe4d787 ... it is the
+    # case-panel fix and the rehearsal lands on that panel"): cortex-ui
+    # fe4d7879ac4c86a83bbc958565be11688bffd0cf -> 4d6dd208. It carries 42c470c's review_coverage
+    # send (under promotionRuns only) and the case panel's fix (the panel subscribes to the
+    # loaded kind menu; options read the pending task's own when the case omits them). Measured
+    # before pinning, the same three ways as above: the full tag resolves to this digest, an OCI
+    # index with linux/amd64 and linux/arm64; the abbreviated tag and the full sha with its last
+    # hex altered both answer 404. fe4d787 descends from 42c470c, which descends from e09e2ac.
+    digest: "sha256:4d6dd2085a005ff5790d4104ad6a5c9b1e73525d43e90592be8200df91c58555"
   port: 8080
   resources:
     requests:

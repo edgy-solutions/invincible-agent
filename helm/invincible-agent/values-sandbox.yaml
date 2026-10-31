@@ -1009,7 +1009,15 @@ cortexUi:
     # nginx.conf and helm/ are unchanged, and the src gains no import.meta.env read (one comment
     # naming it is removed). package.json gains a `gen:api` script, and .github/ moves only the CI
     # PRODUCER_REF; neither is a build input.
-    digest: "sha256:57e4078925d3b1fe44724c207c262c0fb3e8315a718bba20eb564b67f8eea43a"
+    # 2026-10-30, chart 0.4.72 (architect: "pin cortex at fe4d787 ... it is the case-panel fix
+    # and the rehearsal lands on that panel"): cortex-ui fe4d787 -> 4d6dd208, the same digest
+    # values.yaml carries by default. It descends from 42c470c (PRODUCER_REF 10ac02fe, platform
+    # #156; the promote act sends review_coverage under promotionRuns) and adds the case panel's
+    # fix in five commits. Measured before pinning: the FULL tag resolves to this digest, an OCI
+    # index with amd64 and arm64; the abbreviated tag and the full sha with its last hex altered
+    # both answer 404. 42c470c..fe4d787 leaves .github/workflows/build.yml, Dockerfile and
+    # package.json unchanged.
+    digest: "sha256:4d6dd2085a005ff5790d4104ad6a5c9b1e73525d43e90592be8200df91c58555"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -1052,7 +1060,9 @@ cortexUi:
     VITE_ELECTRIC_URL: "https://electric.edgy-solutions.com"
     # Runtime feature flags (cortex-ui adf44b5+): canvas export and the ingest client. Read at
     # boot from /config.js like the URLs above; rendered by frontend.yaml's generic env loop.
-    VITE_FEATURES: "canvasExport,ingest"
+    # 0.4.72 (architect, 2026-10-30): `promotionRuns` goes on in the same roll that first stores
+    # `review_coverage` on the promotion record (ingest-v1 1.4.0) -- never ahead of it.
+    VITE_FEATURES: "canvasExport,ingest,promotionRuns"
     # 2026-10-10, rev 186b: cortex #6 sends `frontend_version` on /interview/stream only when this
     # is "true" (docker-entrypoint.sh at 865c080 filters it to "true"/""). Its platform half, IA
     # #27, rolled in 186 and reads a request with or without it, so this is the switch, not a

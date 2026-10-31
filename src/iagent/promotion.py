@@ -76,6 +76,10 @@ KIND = "document_promotion"
 PROMOTED, REJECTED = "promoted", "rejected"
 VERBS = (PROMOTED, REJECTED)
 
+#: The request fields this handler reads, so the route's kind gate asks the handler rather than
+#: naming a kind (a field sent to a kind that does not consume it would be dropped silently).
+CONSUMES = frozenset({"row_edits", "header_edits", "review_coverage"})
+
 #: The codes a `rejected` comment may name (architect ruling 2026-10-17, "Reject codes, final").
 #: A wrong value, a wrong part or missing rows is a CORRECTION -- the steward fixes the row in
 #: place on the grouped review (row_edits) and the correction files extraction_defect -- so a
@@ -567,7 +571,9 @@ def _recorded_row_edits(stored: Any) -> Optional[list]:
 
 
 def _recorded_review_coverage(stored: Any) -> Optional[dict]:
-    """The `review_coverage` on a stored record's human_review check, or None."""
+    """The `review_coverage` on a stored record's human_review check, or None. A record stored in
+    the 1.4.0 `parts` form is read as items under the record's own content_kind (read-time
+    conversion, never rewritten), so a replay compares like with like."""
     if isinstance(stored, str):
         try:
             stored = json.loads(stored)
@@ -576,8 +582,12 @@ def _recorded_review_coverage(stored: Any) -> Optional[dict]:
     checks = stored.get("checks") if isinstance(stored, dict) else None
     for c in checks if isinstance(checks, list) else []:
         if isinstance(c, dict) and c.get("name") == "human_review":
-            cov = (c.get("inputs") or {}).get("review_coverage")
-            return cov if isinstance(cov, dict) else None
+            inputs = c.get("inputs") or {}
+            cov = inputs.get("review_coverage")
+            if not isinstance(cov, dict):
+                return None
+            from . import review_coverage as _rc
+            return _rc.normalise(cov, content_kind=inputs.get("content_kind"))
     return None
 
 

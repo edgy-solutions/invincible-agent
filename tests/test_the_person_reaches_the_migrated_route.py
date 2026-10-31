@@ -136,6 +136,10 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
      GATEWAY, "_export_package_from_template", "<dict>", ("current_user.authz_id",)),
     ("21 · onto the wire to engine-fin /cdrl_export",
      GATEWAY, "export_cdrl", "<dict>", ("current_user.authz_id",)),
+    # Hop 22: the plan answers export. The BFF names the caller to engine-cost's /answers_export,
+    # whose reader check keys on it. Numbered 22 because #145 took hops 18-21.
+    ("22 · onto the wire to engine-cost's /answers_export",
+     GATEWAY, "_export_plan_answers", "<dict>", ("current_user.authz_id",)),
 ]
 
 #: Hops whose identity parameter has NO default, so omission is a TypeError at the call, which is

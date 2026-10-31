@@ -99,6 +99,14 @@ def world(monkeypatch):
 
     monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
 
+    # The BFF reads the answer-export profile set engine-cost SERVES: here cost's real app, so the
+    # unknown scope below is "named by no served profile", not "the registry was unreachable".
+    from agent_fleet.cost_agent import main as cost_main
+    monkeypatch.setattr(cost_main, "_ANSWER_PROFILES", None)
+    cost = TestClient(cost_main.app)
+    monkeypatch.setattr(gateway, "_cost_profiles_get",
+                        lambda url: cost.get("/answers_export/profiles"))
+
     def post(cards, scope=SCOPE, ids=None, **extra):
         monkeypatch.setattr(gateway, "neo4j_driver",
                             _Driver({c["id"]: _store_row(c) for c in cards}, w.reads))

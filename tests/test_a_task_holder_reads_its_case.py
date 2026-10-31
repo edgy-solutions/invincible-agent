@@ -64,16 +64,22 @@ def _register(**over):
     return rows, sqls[0]
 
 
+def _column(rows, sql, name):
+    """Each row's value for the INSERT column `name`, read BY NAME off the statement's own column
+    list (a column appended after `case_id` must not make the seal read the wrong slot)."""
+    cols = [c.strip() for c in sql.split("(", 1)[1].split(")", 1)[0].split(",")]
+    assert all(len(r) == len(cols) for r in rows), (cols, rows[0])
+    return [dict(zip(cols, r))[name] for r in rows]
+
+
 def test_every_recipient_row_carries_the_case_id():
     rows, sql = _register(case_id="c-1")
-    assert [r[-1] for r in rows] == ["c-1", "c-1"]
-    assert "promise_name, case_id)" in sql
-    assert len(rows[0]) == 21
+    assert _column(rows, sql, "case_id") == ["c-1", "c-1"]
 
 
 def test_CONTROL_a_task_with_no_case_writes_none():
-    rows, _ = _register()
-    assert [r[-1] for r in rows] == [None, None]
+    rows, sql = _register()
+    assert _column(rows, sql, "case_id") == [None, None]
 
 
 def test_the_migration_and_the_create_sql_add_the_column():
