@@ -972,6 +972,80 @@ now 14: it includes the acknowledgement's `excludes`.
 
   Each changes the instrument, the loop, or both.
 
+  Both are built, together, in the next subsection. Neither works alone: a rejection the loop
+  cannot act on leaves the draft `cannot_run`, and the loop's rewrite has nothing to answer.
+
+#### 2026-10-30: a confirm may be answered "that is not right"
+
+Ruling (architect, 10-30): build the confirm rejection and take three runs. If a run is runnable
+with the planted contradiction caught, this ADR leaves draft.
+
+- **The loop: a confirm's answer may rewrite what it names.** Each confirm now carries a rewrite
+  scope beside its `revises`:
+  - for a step's slot (`excludes`, task kind): the whole step (`steps[id=<step>]`), and, when the
+    step names a task kind, that kind's file as a whole;
+  - for `trigger.stages` and a routing table's `next`: their own leaves, as before.
+
+  An answer to a confirm may carry `unset` entries, applied before its sets.
+  - An unset outside the scope is refused, and so is any unset that answers something other than
+    a confirm.
+  - A set inside the scope overwrites without a contradiction. A set outside it is an overwrite
+    contradiction, as before.
+  - A kind file in the scope can be removed whole, never rewritten leaf by leaf.
+  - An unset forgets the turns that set what it removed.
+
+  What an answer attributes is still its `revises`, so the oracle question counts are unchanged
+  (14/12/15).
+- **The grammar.** The reply is `{"set": [...], "unset": [...], "defer": [...]}`, and an unset
+  entry is `{"file", "path"}`. One rule is added: "When the question is a confirm ("Required, to
+  confirm: ...") and the user says it is not right, redraft what the question names from their
+  words: set the new values, and UNSET the fields that no longer apply (path "" of
+  task_kinds/<kind>.yaml removes a task kind only that step named). Never unset anything else."
+  The parser accepts `unset` and checks its entries' shape.
+- **The instrument: the scripted user refutes a step that is not there.** The user rejects a
+  confirm only when all of these hold:
+  - it is a confirm of a step's slot (`excludes` or task kind);
+  - the stage it is in aligns with an expected stage;
+  - either the expected stage has no step of that kind, or the expected step holds no such value.
+
+  The answer is "No, that is not right.", followed by the person's own words for that stage from
+  the bank. It carries no fact; the model must redraft from the words. The user never denies a
+  value the expected bundle holds, and any other confirm it cannot answer stays unanswerable. Each
+  rejection is recorded in a new `rejected` column. This changes the instrument: from run 22 on, a
+  step the model invented can be refuted. In runs 19 to 21 it could not.
+- **The residue.** A deferral of a slot the redraft removed stays recorded. Under the oracle with
+  the run-19 invention, those are the record approval's deadline and the filing kind's
+  `reason_required`. The files equal the expected bundle, but the deferral list names two slots
+  the bundle no longer has. Nothing cleans them up yet; a reviewer has to read them as stale.
+- **Seals.** `tests/socratic` gives 99 passed (11 new):
+  - the run-19 shape under the oracle: the extractor drafts the record's wait as a human approval.
+    The user rejects the one confirm, in the stage's words. The redraft is runnable and equal to
+    the expected bundle, and the planted contradiction is asked. Control: an extractor that
+    ignores the rejection leaves the draft `cannot_run`;
+  - a confirm rewrites its step and removes the task kind only that step names, with no
+    contradiction, and forgets the turns that set what it removed. Control: a set outside the
+    step is an overwrite contradiction;
+  - an unset outside the scope is refused, three ways: another step's leaf; a leaf of the kind
+    file; a kind another step names. An unset that answers a missing slot is refused too;
+  - the scripted user never denies a value the expected bundle holds. Control: it rejects only a
+    confirm;
+  - the grammar and the parser carry `unset`.
+- **Mutants,** each restored and checked with `cmp`, each red on an assertion:
+  - unsets ignored;
+  - the scope ignored for sets;
+  - an unset allowed outside a confirm;
+  - a scope as wide as the whole file;
+  - a kind-file scope that admits leaf unsets;
+  - removed leaves keeping their set turns;
+  - the parser dropping `unset`;
+  - no grammar line;
+  - the user never rejecting;
+  - the user rejecting a gap that is not a confirm;
+  - the user denying a value the expected bundle holds.
+
+  The set-turn mutant at first survived. The rewrite seal now asserts what was forgotten and what
+  stayed.
+
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a

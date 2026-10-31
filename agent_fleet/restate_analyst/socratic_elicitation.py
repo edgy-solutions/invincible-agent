@@ -99,6 +99,7 @@ class Gap:
     question: str     # user-facing text (templated; names the stage/step in plain words)
     proposed: Any = None                       # an overwrite contradiction: the value not applied
     revises: Tuple[Tuple[str, str], ...] = ()  # (file, leaf path) pairs an answer may overwrite
+    rewrites: Tuple[Tuple[str, str], ...] = ()  # a confirm: what "that is not right" may rewrite
 
 
 @dataclass
@@ -394,6 +395,15 @@ def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] =
     the answer set the leaf, else resolved in favour of the earlier value (``draft.kept_earlier``)."""
     patch = patch or {}
     revisable = set(answering.revises) if answering is not None else set()
+    scope = tuple(answering.rewrites) if answering is not None and answering.kind == "confirm" else ()
+    for entry in patch.get("unset") or []:
+        if not isinstance(entry, dict) or "file" not in entry or "path" not in entry:
+            raise PatchError(f"an unset entry needs file and path; got {entry!r}")
+        file, path = str(entry["file"]), str(entry["path"])
+        if not _in_scope(scope, file, path, unset=True):
+            raise PatchError(f"an unset may only remove what the confirm being answered names; "
+                             f"{path or 'the whole file'} of {file} is not")
+        _unset(draft, file, path)
     for entry in patch.get("set") or []:
         if not isinstance(entry, dict) or "file" not in entry or "path" not in entry or "value" not in entry:
             raise PatchError(f"a set entry needs file, path and value; got {entry!r}")
@@ -407,7 +417,7 @@ def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] =
                 old = container[key]
                 if old == leaf_value:
                     continue
-                if (file, leaf_path) not in revisable:
+                if (file, leaf_path) not in revisable and not _in_scope(scope, file, leaf_path):
                     _pend(draft, file, leaf_path, old, leaf_value)
                     continue
             container[key] = leaf_value
@@ -429,6 +439,36 @@ def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] =
                 ok, now = _get(draft.files, m.group(1), m.group(2))
                 if ok and now != g.proposed:
                     draft.kept_earlier.append(g.key)
+
+
+def _in_scope(scope: Tuple[Tuple[str, str], ...], file: str, path: str, unset: bool = False) -> bool:
+    """True iff ``path`` of ``file`` lies within a confirm's rewrite scope (ADR-0061 §10). A scope
+    entry whose path is "" names a whole file that may be removed (an unset of ""), never rewritten
+    leaf by leaf."""
+    for f, p in scope:
+        if f != file:
+            continue
+        if p == "":
+            if unset and path == "":
+                return True
+        elif path == p or path.startswith(p + ".") or path.startswith(p + "["):
+            return True
+    return False
+
+
+def _unset(draft: Draft, file: str, path: str) -> None:
+    """Remove ``path`` of ``file`` ("" removes the file), and forget the turns that set it."""
+    if path == "":
+        draft.files.pop(file, None)
+    else:
+        root = draft.files.get(file)
+        loc = _locate(root, parse_path(path), create=False) if root is not None else None
+        if loc is None or loc[1] not in loc[0]:
+            return
+        del loc[0][loc[1]]
+    for k in [k for k in draft.set_at if k[0] == file and (
+            path == "" or k[1] == path or k[1].startswith(path + ".") or k[1].startswith(path + "["))]:
+        del draft.set_at[k]
 
 
 def _pend(draft: Draft, file: str, path: str, old: Any, new: Any) -> None:
@@ -797,10 +837,15 @@ def _set_turn(draft: Draft, file: str, path: str) -> Optional[int]:
     return max(turns) if turns else None
 
 
-def _value_slots(files: Dict[str, dict]) -> List[Tuple[str, str, Tuple[Tuple[str, str], ...], str]]:
+_Slot = Tuple[str, str, Tuple[Tuple[str, str], ...], str, Tuple[Tuple[str, str], ...]]
+
+
+def _value_slots(files: Dict[str, dict]) -> List[_Slot]:
     """Each required slot the draft already HOLDS a value for, as (key, facet, leaves, what the
-    draft says): the slot's key is the one ``required_slots`` asks while the value is absent."""
-    out: List[Tuple[str, str, Tuple[Tuple[str, str], ...], str]] = []
+    draft says, what an answer of "that is not right" may rewrite): the slot's key is the one
+    ``required_slots`` asks while the value is absent. A step's slot may rewrite the whole step and
+    remove the task kind only it names; any other slot, only its own leaves."""
+    out: List[_Slot] = []
     wfs, kinds, decisions = _workflows(files), _kinds(files), _decisions(files)
     chain_by_after: Dict[str, Tuple[str, dict]] = {}
     for name, (tf, t) in decisions.items():
@@ -811,7 +856,7 @@ def _value_slots(files: Dict[str, dict]) -> List[Tuple[str, str, Tuple[Tuple[str
         if isinstance(stages, list) and stages:
             out.append((f"trigger.{_STAGES}", "trigger", ((f, _STAGES),),
                         f"a {_words(t.get('trigger') or _stem(f))} case passes through "
-                        f"{', '.join(_words(x) for x in stages)}, in that order"))
+                        f"{', '.join(_words(x) for x in stages)}, in that order", ((f, _STAGES),)))
     for wid, (f, raw) in wfs.items():
         for s in _steps(raw):
             sid = s.get("id")
@@ -819,6 +864,7 @@ def _value_slots(files: Dict[str, dict]) -> List[Tuple[str, str, Tuple[Tuple[str
                 continue
             tk = s.get("task_kind")
             named = _kinds_for(str(tk), kinds) if tk else []
+            step = ((f, f"steps[id={sid}]"),) + (((kinds[named[0]][0], ""),) if named else ())
             if named:
                 kf, kraw = kinds[named[0]]
                 acc = kraw.get("accepts")
@@ -826,13 +872,13 @@ def _value_slots(files: Dict[str, dict]) -> List[Tuple[str, str, Tuple[Tuple[str
                             ((f, f"steps[id={sid}].task_kind"), (kf, "accepts")),
                             f"{_words(sid)} in {_words(wid)} is a {_words(tk)} task"
                             + (f", answered {' or '.join(map(str, acc))}" if isinstance(acc, list) and acc
-                               else "")))
+                               else ""), step))
             if "excludes" in s:
                 ex = s["excludes"]
                 said = (f"nobody is barred from answering at {_words(sid)} in {_words(wid)}"
                         if not ex else f"{_fmt(ex)} may not answer at {_words(sid)} in {_words(wid)}")
                 out.append((f"actors.{wid}.{sid}.excludes", "actors",
-                            ((f, f"steps[id={sid}].excludes"),), said))
+                            ((f, f"steps[id={sid}].excludes"),), said, step))
     for wid, (f, raw) in wfs.items():
         if wid not in chain_by_after:
             continue
@@ -843,9 +889,8 @@ def _value_slots(files: Dict[str, dict]) -> List[Tuple[str, str, Tuple[Tuple[str
             continue  # not complete: its own slots are asked
         rows = "; ".join(f"{_fmt(r.get('when'))} -> {r.get('then')}"
                          for r in table.get("rows") or [] if isinstance(r, dict))
-        out.append((f"{facet}.{wid}.next", facet,
-                    tuple((tf, x) for x in ("matches", "domain", "rows", "terminals")),
-                    f"after {_words(wid)}: {rows}"))
+        leaves = tuple((tf, x) for x in ("matches", "domain", "rows", "terminals"))
+        out.append((f"{facet}.{wid}.next", facet, leaves, f"after {_words(wid)}: {rows}", leaves))
     return out
 
 
@@ -875,12 +920,13 @@ def confirms(draft: Draft) -> List[Gap]:
     differs replaces the slot's own value; one that touches a leaf the person did state is an
     overwrite contradiction, asked like any other."""
     out: List[Gap] = []
-    for key, facet, leaves, said in _value_slots(draft.files):
+    for key, facet, leaves, said, scope in _value_slots(draft.files):
         if _attributed(draft, key, leaves):
             continue
         out.append(Gap(key, facet, "confirm",
                        f"Required, to confirm: the draft says {said}, but you were never asked "
-                       "about it. Is that right? If not, what is it?", revises=leaves))
+                       "about it. Is that right? If not, what is it?", revises=leaves,
+                       rewrites=scope))
     return out
 
 
@@ -1204,9 +1250,10 @@ def _refuse_local(base_url: str) -> str:
 
 _GRAMMAR = """\
 You turn ONE statement from a domain user into a PATCH of a partial configuration bundle.
-Reply with JSON only: {"set": [...], "defer": [...]}.
+Reply with JSON only: {"set": [...], "unset": [...], "defer": [...]}.
 
 set entry : {"file": "<folder>/<name>.yaml", "path": "<path>", "value": <json>}
+unset entry: {"file": "<folder>/<name>.yaml", "path": "<path>"}
 defer entry: {"gap": "<gap key>", "reason": "<the user's words>"}
 
 PATH: dotted keys. `name[k=v]` selects the element of list `name` whose mapping has key k equal
@@ -1228,6 +1275,10 @@ RULES
   "{trigger.<field>}" in a template or exclusion.
 - When the question is a contradiction ("Which holds?"), set exactly the path the question names.
 - When the user says they cannot say yet, DEFER the gap being asked, with their reason.
+- When the question is a confirm ("Required, to confirm: ...") and the user says it is not right,
+  redraft what the question names from their words: set the new values, and UNSET the fields that
+  no longer apply (path "" of task_kinds/<kind>.yaml removes a task kind only that step named).
+  Never unset anything else.
 - REQUIRED: the trigger lists `stages`: every workflow id a case can pass through, in the user's
   order (a stage already drafted is named by its workflow id). Each stage is drafted as
   workflows/<stage>.yaml with id <stage>.
@@ -1325,16 +1376,18 @@ class ModelExtractor:
             obj = json.loads(content)
             ok = isinstance(obj, dict)
             sets = obj.get("set", []) if ok else []
+            unsets = obj.get("unset", []) if ok else []
             defers = obj.get("defer", []) if ok else []
-            ok = ok and isinstance(sets, list) and isinstance(defers, list)
+            ok = ok and isinstance(sets, list) and isinstance(unsets, list) and isinstance(defers, list)
             ok = ok and all(isinstance(s, dict) and {"file", "path", "value"} <= set(s) for s in sets)
+            ok = ok and all(isinstance(u, dict) and {"file", "path"} <= set(u) for u in unsets)
             ok = ok and all(isinstance(d, dict) and "gap" in d for d in defers)
         except (ValueError, AttributeError):
             ok = False
         if not ok:
             self.errors += 1
             return {"set": [], "defer": []}
-        return {"set": sets, "defer": defers}
+        return {"set": sets, "unset": unsets, "defer": defers}
 
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════

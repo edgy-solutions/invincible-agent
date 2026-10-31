@@ -905,3 +905,134 @@ def test_a_row_slot_for_an_outcome_listed_as_terminal_says_the_row_still_names_i
     assert "'rejected' is listed as a final state" in q["approvals.pcn_impact_review.next.rejected"].question
     # control: an outcome not listed as terminal gets no such line
     assert "final state" not in q["approvals.pcn_impact_review.next.needs_info"].question
+
+
+# ── 10-30: a confirm may be answered "that is not right" ────────────────────────────────────────
+
+REC = "workflows/pcn_record.yaml"
+FILING = "task_kinds/pcn_filing.yaml"
+REJECTED_KEY = "actors.pcn_record.filed.excludes"
+NO = "No, that is not right."
+
+
+def _record_as_approval(redraft=True):
+    """Runs 19 to 21 (ADR-0061 §10): the model drafts the record's wait as a human approval. With
+    ``redraft``, the extractor rewrites the step from the person's rejection, as the grammar asks."""
+    def extractor(entry, draft, gap):
+        patch = se.OracleExtractor()(entry, draft, gap)
+        if gap is not None and gap.key == "steps.pcn_record":
+            for fact in patch["set"]:
+                if fact["file"] == REC and fact["path"] == "":
+                    fact["value"]["steps"][1] = {"kind": "human_await", "id": "filed",
+                                                 "audience": "pcn_records:SUSTAINMENT",
+                                                 "task_kind": "pcn_filing", "excludes": []}
+            patch["set"].append({"file": FILING, "path": "",
+                                 "value": {"kind": "pcn_filing", "accepts": ["filed"]}})
+        if redraft and gap is not None and gap.kind == "confirm" and str(entry.get("says", "")).startswith(NO):
+            patch = {"unset": [{"file": REC, "path": "steps[id=filed].task_kind"},
+                               {"file": REC, "path": "steps[id=filed].excludes"},
+                               {"file": FILING, "path": ""}],
+                     "set": [{"file": REC, "path": "steps[id=filed].kind", "value": "signal_await"},
+                             {"file": REC, "path": "steps[id=filed].signal", "value": "pcn_filed"},
+                             {"file": REC, "path": "steps[id=filed].accepts", "value": ["filed"]}]}
+        return patch
+    return extractor
+
+
+def test_a_confirm_of_a_step_the_process_does_not_have_is_rejected_and_the_redraft_runs():
+    t, exp = _transcript("pcn_review"), _expected("pcn_review")
+    u = sm.AligningUser(t, exp)
+    r = se.run(t, _record_as_approval(), answer=u)
+    assert u.rejected == [REJECTED_KEY]
+    said = [m["user"] for m in r["messages"] if (m["user"] or "").startswith(NO)]
+    assert len(said) == 1
+    said = said[0]
+    assert said == NO + " " + t["answers"]["steps.pcn_record"]["says"]  # the stage, in their words
+    assert PLANTED in r["contradictions_asked"]
+    assert r["status"] == "runnable" and r["files"] == exp
+
+
+def test_control_a_rejection_the_model_does_not_act_on_leaves_the_draft_cannot_run():
+    t, exp = _transcript("pcn_review"), _expected("pcn_review")
+    u = sm.AligningUser(t, exp)
+    r = se.run(t, _record_as_approval(redraft=False), answer=u)
+    assert u.rejected == [REJECTED_KEY]
+    assert r["status"] == "cannot_run" and r["files"] != exp
+
+
+def _confirm_draft():
+    d = se.Draft(files=_expected("pcn_review"))
+    d.files[REC]["steps"][1] = {"kind": "human_await", "id": "filed", "audience": "pcn_records:SUSTAINMENT",
+                                "task_kind": "pcn_filing", "excludes": []}
+    d.files[FILING] = {"kind": "pcn_filing", "accepts": ["filed"]}
+    d.set_at[(REC, "steps")] = 1  # drafted in a turn that asked something else
+    g = next(x for x in se.confirms(d) if x.key == REJECTED_KEY)
+    return d, g
+
+
+def test_a_confirm_may_rewrite_its_step_and_remove_the_task_kind_only_that_step_names():
+    d, g = _confirm_draft()
+    assert set(g.rewrites) == {(REC, "steps[id=filed]"), (FILING, "")}
+    d.set_at[(FILING, "accepts")] = 1
+    d.set_at[(REC, "steps[id=filed].task_kind")] = 1
+    se.apply_patch(d, {"unset": [{"file": FILING, "path": ""}, {"file": REC, "path": "steps[id=filed].task_kind"}],
+                       "set": [{"file": REC, "path": "steps[id=filed].kind", "value": "signal_await"}]},
+                   1, answering=g)
+    assert FILING not in d.files and "task_kind" not in d.files[REC]["steps"][1]
+    assert d.files[REC]["steps"][1]["kind"] == "signal_await" and not d.pending
+    # what was removed forgets the turns that set it; the turn that drafted the whole list stays
+    assert (FILING, "accepts") not in d.set_at and (REC, "steps[id=filed].task_kind") not in d.set_at
+    assert d.set_at[(REC, "steps")] == 1
+
+
+def test_control_outside_its_step_a_confirm_answer_is_an_overwrite_contradiction():
+    d, g = _confirm_draft()
+    se.apply_patch(d, {"set": [{"file": REC, "path": "steps[id=disposition].channel", "value": "x"}]},
+                   1, answering=g)
+    assert [p.key for p in d.pending] == [f"contradiction:{REC}#steps[id=disposition].channel"]
+
+
+@pytest.mark.parametrize("unset", [
+    {"file": REC, "path": "steps[id=disposition].channel"},       # outside the step
+    {"file": FILING, "path": "accepts"},                         # the kind file: whole or nothing
+    {"file": "task_kinds/pcn_acknowledgement.yaml", "path": ""},  # a kind another step names
+])
+def test_an_unset_outside_the_confirms_scope_is_refused(unset):
+    d, g = _confirm_draft()
+    with pytest.raises(se.PatchError):
+        se.apply_patch(d, {"unset": [unset]}, 1, answering=g)
+
+
+def test_an_unset_is_refused_outside_a_confirm():
+    d, _ = _confirm_draft()
+    missing = se.Gap(REJECTED_KEY, "actors", "missing", "q", revises=((REC, "steps[id=filed].excludes"),),
+                     rewrites=((REC, "steps[id=filed]"),))
+    with pytest.raises(se.PatchError):
+        se.apply_patch(d, {"unset": [{"file": REC, "path": "steps[id=filed].excludes"}]}, 1, answering=missing)
+
+
+def test_the_scripted_user_never_denies_a_value_the_expected_bundle_holds():
+    t, exp = _transcript("pcn_review"), _expected("pcn_review")
+    key = "actors.pcn_acknowledge.acknowledge.excludes"
+    del t["answers"][key]
+    t["answers"]["steps.pcn_acknowledge"]["facts"]["set"] = []  # no entry states it either
+    u = sm.AligningUser(t, exp)
+    g = se.Gap(key, "actors", "confirm", "q")
+    assert u(g, se.Draft(files=exp)) is None and u.rejected == [] and u.unbanked == [key]
+
+
+def test_control_the_scripted_user_rejects_only_a_confirm():
+    _, g = _confirm_draft()
+    d, _ = _confirm_draft()
+    u = sm.AligningUser(_transcript("pcn_review"), _expected("pcn_review"))
+    missing = se.Gap(g.key, g.facet, "missing", g.question)
+    assert u(missing, d) is None and u.rejected == []
+    assert u(g, d)["says"].startswith(NO) and u.rejected == [REJECTED_KEY]
+
+
+def test_the_grammar_and_the_parser_carry_unset():
+    assert '"unset": [...]' in se._GRAMMAR and "UNSET the fields" in se._GRAMMAR
+    m = se.ModelExtractor.__new__(se.ModelExtractor)
+    m.errors = 0
+    got = m._parse('{"set": [], "unset": [{"file": "a/b.yaml", "path": "x"}], "defer": []}')
+    assert got["unset"] == [{"file": "a/b.yaml", "path": "x"}] and m.errors == 0

@@ -167,6 +167,7 @@ def _fact_target(key: str) -> Optional[Tuple[str, str]]:
 
 
 _CHAIN_SLOT = re.compile(r"^(?:approvals|outputs)\.([^.]+)\.next\.(.+)$")
+_STEP_SLOT = re.compile(r"^(?:actors|approvals)\.([^.]+)\.([^.]+)\.(?:excludes|task_kind)$")
 
 
 def _chain_target(key: str, expected: dict) -> Optional[Tuple[str, str]]:
@@ -227,6 +228,7 @@ class AligningUser:
         self.unaligned: list = []
         self.unbanked: list = []
         self.answered_by_path: list = []
+        self.rejected: list = []
         self.opening = transcript.get("opening")
         # the person's own list of stages, from the entry that declares it: `finalize` drops the
         # list from the served trigger, so the expected bundle does not carry it
@@ -367,9 +369,34 @@ class AligningUser:
                 return None if k is None else ".".join([head, k] + segs[2:])
         return None
 
+    def _rejection(self, gap, draft_files: dict, t: Optional[str]) -> Optional[dict]:
+        """A person asked to confirm a step their process does not have says so, in the words they
+        used for that stage (ADR-0061 §10, the confirm rejection, architect 2026-10-30). Only a
+        confirm of a step's slot, and only in a stage that aligns: the step has no counterpart of
+        its kind in the expected stage, or the expected step holds no such value. A value the
+        expected bundle holds is never denied; anything else stays unanswerable."""
+        m = _STEP_SLOT.match(gap.key) if gap.kind == "confirm" else None
+        if m is None:
+            return None
+        maps = self._maps(draft_files)
+        w = maps["defs"].get(m.group(1))
+        if w is None:
+            return None
+        if t is not None and maps["steps"].get((m.group(1), m.group(2))) is not None:
+            tgt = _fact_target(t)
+            if tgt is None or se._get(self.expected, *tgt)[0]:
+                return None
+        self.rejected.append(gap.key)
+        stage = self.bank.get(f"steps.{w}") or {}
+        return {"says": "No, that is not right." + (f" {stage['says']}" if stage.get("says") else ""),
+                "facts": {}}
+
     def __call__(self, gap, draft) -> Optional[dict]:
         t = self.translate(gap.key, draft.files)
         if t is None:
+            rejection = self._rejection(gap, draft.files, t)
+            if rejection is not None:
+                return rejection
             self.unaligned.append(gap.key)
             return None
         entry = self.bank.get(t)
@@ -379,6 +406,9 @@ class AligningUser:
             if hit is not None:
                 self.answered_by_path.append((gap.key, hit[0]))
                 return _narrowed(hit[1], *tgt)
+            rejection = self._rejection(gap, draft.files, t)
+            if rejection is not None:
+                return rejection
             self.unbanked.append(gap.key)
             return None
         if t != gap.key:
@@ -434,6 +464,7 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "aligned_answers": list(user.aligned_answers) if user else [],
         "unaligned": list(user.unaligned) if user else [],
         "answered_by_path": [list(p) for p in user.answered_by_path] if user else [],
+        "rejected": list(user.rejected) if user else [],
         "unbanked": list(user.unbanked) if user else sorted(k for k in keys if k not in set(bank)),
         "deferred_refusals": [k for k in r["deferred_refusals"] if k in r["deferrals"]],
         "model_errors": errors_of(extractor) + len(r["model_errors"]),
