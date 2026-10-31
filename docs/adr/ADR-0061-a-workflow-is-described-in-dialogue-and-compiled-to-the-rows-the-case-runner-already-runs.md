@@ -6,7 +6,7 @@ on 2026-10-25 (§9). By that ruling, this stays a draft until the model arm prod
 spec. None of the nine model fixture-runs after the rulings produced one (§9). On 2026-10-27, one
 of three PCN runs was runnable, but it is not the workflow the transcript describes (§10). The
 architect decides whether that meets the ruling. The 10-30 gate is a run that is runnable with the
-planted contradiction caught. Runs 22 to 24 do not meet it (§10).
+planted contradiction caught. Runs 22 to 27 do not meet it (§10).
 **Date:** 2026-10-24
 **Deciders:** architect (decision); Chris (review); lane/74 (draft)
 **Related:**
@@ -1167,6 +1167,53 @@ The bar stands: a run that is runnable with the planted contradiction caught.
 
   Three of them were first red on a KeyError, not an assertion: refused-dropped, raw-dropped
   and correction-empty. Their seals now read with a default, so they fail on the assertion.
+
+Three runs on PCN at `d1909291`, same model and harness, with no walk or roll in flight.
+
+| run | questions / bank | runnable errors | semantic diffs | open | answered by path | model errors | confirms | rejected | contradiction | deferral | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 25 | 25/14 | 3 | 4 | 4 | 5 | 0 | 5 | 1 | 1/1 | 1/1 | cannot_run | 489 |
+| 26 | 23/14 | 0 | 5 | 1 | 5 | 3 | 7 | 0 | 0/1 | 0/1 | cannot_run | 669 |
+| 27 | 22/14 | 0 | 6 | 1 | 5 | 0 | 8 | 1 | 1/1 | 1/1 | cannot_run | 531 |
+
+**The gate is not met.** Runs 25 and 27 catch the planted contradiction, but neither is runnable.
+This ADR stays a draft, and no PR is opened.
+
+- **The correction works.**
+  - In runs 25 and 27 the model again drafted the record's wait as a human approval, and the
+    scripted user rejected its `excludes` confirm once.
+  - Both times the turn log shows the model's reply was the correction, set for set and unset
+    for unset, and it was not refused.
+  - The task kind only that step named was removed with it.
+  - In run 26 the model drafted the record correctly, so nothing was rejected.
+- **What left each run not runnable: a runtime refusal the scripted user cannot answer.** In
+  each run the open key is one the loop raised from a runtime check. The rule says a runtime
+  refusal may not be deferred, so it stays open.
+  - **Run 25.** The model drafted the impact-review and program-approval task kinds at turns 0
+    and 7 with a `renders_as` that holds only a title. Neither is a valid declaration, so both
+    steps name an undeclared task kind. Three runtime errors remain, and four keys stay open.
+  - **Run 26.** The acknowledgement's chaining table has a `timed_out` row from the opening,
+    which the runtime refuses. It was asked twice and stayed open.
+  - **Run 27.** The acknowledgement's chaining table has a `rejected` row, but its task kind
+    accepts only `approved` and `escalated`. The loop asked "Can it end 'rejected'?" twice, and
+    the scripted user had no answer. No runtime error remains, and that one key is the only
+    thing open.
+- **The planted contradiction.**
+  - Runs 25 and 27: an overwrite on the impact review's `excludes` was asked, and it was read
+    as the planted key.
+  - Run 26: the impact review's `excludes` was answered by path from the opening. The bank
+    answer "may never sign off either review" put the bar on the program approval only, as in
+    runs 22 and 24, so no overwrite reached the planted leaf.
+- **Model errors.** Run 26's three refused patches used an index path (`steps[0]`) or an
+  append (`rows[+]`). Each was restated in the path grammar on the next reply and applied.
+- **Owed, for a ruling.**
+  - The remaining blocker in runs 26 and 27 is a chaining row for an outcome the expected stage
+    does not have. That is the routing-table counterpart of a step the process does not have. The
+    scripted user could answer it "no" with the row removed, as it now answers a confirm. That
+    would be a change to the instrument.
+  - Run 25's blocker is a task kind declared without its required rendering fields. Whether the
+    loop should ask for those fields as a required slot, rather than leave them to a runtime
+    error the person cannot answer, is a separate question.
 
 ## Consequences
 
