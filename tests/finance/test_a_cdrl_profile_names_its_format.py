@@ -173,7 +173,8 @@ def test_1_each_format_loads(declared, tmp_path):
     _write(d, _csv_raw(), "csv.yaml")
     got = {p.name: p for p in _load(d, declared, extra=[SAMPLE])}
     assert {n: p.format for n, p in got.items()} == {
-        "fin_docx": "docx", "fin_csv": "csv", JSON_NAME: "json", "cdrl_a001_ev_summary": "xlsx"}
+        "fin_docx": "docx", "fin_csv": "csv", JSON_NAME: "json", "cdrl_a001_ev_summary": "xlsx",
+        "cdrl_a002_cost_performance_docx": "docx"}
     assert all(p.provenance_sheets is False for n, p in got.items() if p.format != "xlsx")
 
 
@@ -457,9 +458,10 @@ def test_5_csv_hash_from_every_non_empty_field(fmt_profiles, tmp_path):
         assert cdrl._sha(sorted(cells, key=lambda c: (c[0], c[1]))) == env["cells_sha256"]
 
 
-def test_5_docx_hash_from_every_cell_that_differs_from_the_template(fmt_profiles, tmp_path):
-    path, env, doc = _docx_build(fmt_profiles, tmp_path)
-    tpl = docx.Document(str(fmt_profiles["fin_docx"].template_path))
+def docx_claim(delivered: Path, template: Path) -> str:
+    """The docx `cells_sha256` recomputed from the delivered file and its template alone: every
+    cell whose text differs from the template's, as [T<n>, A1, text], sorted."""
+    doc, tpl = docx.Document(str(delivered)), docx.Document(str(template))
     cells = []
     for n, table in enumerate(doc.tables, start=1):
         base = tpl.tables[n - 1]
@@ -469,7 +471,12 @@ def test_5_docx_hash_from_every_cell_that_differs_from_the_template(fmt_profiles
                 if cell.text != was:
                     cells.append([f"T{n}", f"{get_column_letter(j + 1)}{i + 1}", cell.text])
     assert cells
-    assert cdrl._sha(sorted(cells, key=lambda c: (c[0], c[1]))) == env["cells_sha256"]
+    return cdrl._sha(sorted(cells, key=lambda c: (c[0], c[1])))
+
+
+def test_5_docx_hash_from_every_cell_that_differs_from_the_template(fmt_profiles, tmp_path):
+    path, env, doc = _docx_build(fmt_profiles, tmp_path)
+    assert docx_claim(path, fmt_profiles["fin_docx"].template_path) == env["cells_sha256"]
 
 
 def test_5_the_csv_header_is_part_of_the_claim(fmt_profiles, tmp_path):

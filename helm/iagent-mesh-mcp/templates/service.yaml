@@ -1,0 +1,14 @@
+{{- if .Values.deployment.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "iagent-mesh-mcp.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - port: {{ .Values.deployment.port }}
+      targetPort: {{ .Values.deployment.port }}
+{{- end }}
