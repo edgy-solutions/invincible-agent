@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from agent_fleet.cost_agent import canvas as C  # noqa: E402
 from src.iagent import gateway  # noqa: E402
+from tests.recipient_rail_double import install as install_rail  # noqa: E402
 
 SCOPE = "notional-customer-alpha"
 GOOD = "sha256:" + "a" * 64
@@ -85,6 +86,7 @@ def world(monkeypatch):
         "roles": [], "persona": None, "entitled_domains": [], "is_authenticated": True,
     })()
     gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
+    install_rail(monkeypatch)  # Topaz, doubled with the SHIPPED policy/recipient_readers.yaml rows
 
     class _Client:
         def __init__(self, *a, **k): ...

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 import re
@@ -65,10 +66,19 @@ try:  # same three-shape idiom; `utils` is a sibling top-level module in the fla
     from utils.subject_coverage import dead_end_classes as _dead_end
     from utils.subject_coverage import unroutable_classes as _unroutable
     from utils.program_membership import can_view_program
+    from utils.recipient_readers import can_read_recipient
 except ImportError:
     from agent_fleet.utils.subject_coverage import dead_end_classes as _dead_end
     from agent_fleet.utils.subject_coverage import unroutable_classes as _unroutable
     from agent_fleet.utils.program_membership import can_view_program
+    from agent_fleet.utils.recipient_readers import can_read_recipient
+
+log = logging.getLogger(__name__)
+
+# This engine's OWN owner key on the `recipient_readers` rail (policy/recipient_readers.yaml): who may
+# download a package for one of ITS recipient scopes (`export.RECIPIENT_SCOPES`). Identity, not a
+# case; the rows are the rail's.
+_FIN_OWNER = "finance"
 
 FIN = "http://invincible-agent/fin#"
 MESH = "http://invincible-agent/mesh#"
@@ -1229,8 +1239,14 @@ def get_artifact(filename: str) -> FileResponse:
         _require_visible(cdrl_program, _verb_caller(""))
     else:
         caller = _current_caller()
-        readers = export.readers_for_recipient(scope)
-        if caller is None or caller.authz_id not in readers:
+        authz_id = getattr(caller, "authz_id", None) if caller else None
+        try:
+            permitted = bool(authz_id) and bool(can_read_recipient(_FIN_OWNER, scope, authz_id))
+        except Exception as exc:  # noqa: BLE001 -- transport/HTTP failure of the check itself
+            # An outage is not "no readers": a 503 at the door, never a 403 (the plan path's posture).
+            log.warning("recipient_readers check failed: %s", exc)
+            raise HTTPException(status_code=503, detail={"reason": "recipient_readers_unavailable"}) from exc
+        if not permitted:
             # NAMES THE PACKAGE, NEVER ITS READERS — the same asymmetry cost's route keeps.
             raise HTTPException(status_code=403, detail=f"not entitled to {scope!r}'s package")
 

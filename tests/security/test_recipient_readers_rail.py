@@ -329,10 +329,9 @@ def test_validate_policy_present_wellformed_rail_file_with_unknown_user_is_an_er
 
 # -- RATCHET: no code-held RECIPIENT_READERS table beyond the pending two -------------------
 
-PENDING = {
-    "agent_fleet/finance_agent/export.py",
-    "agent_fleet/cost_agent/seed.py",
-}
+#: EMPTY: finance's and cost's tables moved onto the rail (policy/recipient_readers.yaml). The set
+#: stays so the ratchet's shape (a file leaves PENDING when it stops holding a table) is unchanged.
+PENDING: set[str] = set()
 _NAME = "RECIPIENT_READERS"
 
 
@@ -403,6 +402,27 @@ def test_pending_lists_only_files_that_still_hold_a_table():
         f"(the ratchet only tightens)"
     )
 
+
+
+def test_e_pending_is_empty_and_the_census_finds_no_table():
+    """Arm e: both owners have moved; nothing is grandfathered and nothing holds a table."""
+    assert PENDING == set()
+    assert _census() == set()
+
+
+def test_e_no_readers_for_recipient_function_is_left_anywhere():
+    """The function that answered from a table is gone from every engine, and so is every
+    re-export; the one reader of the rail is agent_fleet/utils/recipient_readers."""
+    hits = []
+    for top in ("agent_fleet", "src"):
+        for dirpath, dirnames, filenames in os.walk(_REPO / top):
+            dirnames[:] = [d for d in dirnames if d != "__pycache__" and not d.startswith(".venv")]
+            for fn in filenames:
+                if fn.endswith(".py"):
+                    p = Path(dirpath) / fn
+                    if "readers_for_recipient" in p.read_text(encoding="utf-8"):
+                        hits.append(p.relative_to(_REPO).as_posix())
+    assert hits == [], hits
 
 # -- the Job render -------------------------------------------------------------------------
 
