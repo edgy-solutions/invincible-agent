@@ -100,8 +100,9 @@ class User(BaseModel):
     # value, so no consumer can mistake it for a real address.
     email: Optional[str] = None
     # The OAuth client the token was issued to (the verified payload's `azp`): which front door
-    # ("cortex-ui", an MCP server's client) the caller came through. AUDIT / DISPLAY only -- never
-    # an authorization key (use authz_id). None when the token carries none; never defaulted.
+    # ("cortex-ui", an MCP server's client) the caller came through. Never WHO is authorized (use
+    # authz_id). It does name the DOOR whose call policy applies (authz/call_capability.py,
+    # `can_call:<tag>`); otherwise AUDIT / DISPLAY. None when the token carries none; never defaulted.
     azp: Optional[str] = None
     # The AUTHORIZATION identity — the key Topaz/policy is seeded by, resolved
     # from USER_ENTITLEMENT_CLAIM (email by default; employee-ID at work-deploy),

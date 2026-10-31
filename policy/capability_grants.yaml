@@ -57,6 +57,18 @@
 # below: review-export `[alert-processors]`, fin CDRL `[finance-analysts]`, the program-finance
 # persona's group (ruled 2026-10-29). validate_policy also refuses a `can_export:<P>` key naming no
 # known profile, and a name in two kinds.
+#
+# THE `can_call:<tag>` CONVENTION (2026-10-30 ruling: "which tags a persona may call
+# (can_call:<tag>), rows on the rail, deny by default"). A capability keyed `can_call:<T>` decides
+# which callers arriving through a DOOR client may call the operations tagged T. A door client is
+# a token `azp` named in the BFF's CAN_CALL_DOOR_CLIENTS (the MCP server's client is the first);
+# every other caller is untouched. The door asks can_invoke on `can_call:<T>` for EVERY tag on the
+# route (AND: a tag added to a route can only narrow who calls it) and refuses on the first missing
+# one, so a tag with NO row is callable through a door by NOBODY (deny-by-default; no object
+# prune, and deleting a row revokes through the invoker-relation prune). Grant a persona through
+# its group (`grant_to_groups`). validate_policy.py refuses a `can_call:<T>` key whose T is not a
+# tag of the served MCP document (docs/api/mcp.openapi.json, held equal to the BFF by
+# scripts/generate_mcp_openapi.py --check).
 capabilities:
   # ADR-0029 Slice-1 demo fixture: the promotion workflow's publish emit. alice
   # (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) is the initiator authorized to
