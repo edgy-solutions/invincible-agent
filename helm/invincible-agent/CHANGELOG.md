@@ -7,9 +7,12 @@ Entries merged after the 0.4.73 cut (`e2c03799`). The releaser dates this headin
 **Policy changes (the MCP surface's call policy: `can_call:<tag>`)**
 
 - **New group `mcp-callers`** (capability-only, no persona.domain cell); sandbox members alice and
-  bob (ruled 2026-10-31), plus the walkers erin and chris, who hold alice's groups (they also gain
-  `alert-processors`, which the 10-28 grant gave alice alone). **`topaz_sync` precondition**: a new group must be synced before the roll
-  that carries the rows (else the capability leg names an unknown group).
+  bob only (ruled 2026-10-31). **`topaz_sync` precondition**: a new group must be synced before the
+  roll that carries the rows (else the capability leg names an unknown group).
+- **The walker seal exempts capability-only groups** (ruled 2026-10-31): a walker mirrors alice's
+  persona groups, not her capability fixtures (`alert-processors`, `mcp-callers`). The exempt set is
+  derived from the rail (an empty group that a capability row grants to), never listed. This
+  repairs the seal, red on master since the 10-28 `can_drop` grant.
 - **Rows `can_call:ingest-export`, `can_call:ingest-v1`, `can_call:mcp`**, each `grant_to_groups:
   [mcp-callers]`. Inert until the chart sets `CAN_CALL_DOOR_CLIENTS` (lane/01's).
 - **The door (BFF):** a token whose `azp` is in `CAN_CALL_DOOR_CLIENTS` reaches only the MCP

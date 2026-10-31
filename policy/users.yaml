@@ -162,8 +162,6 @@ users:
       - data-engineers
       - maintenance-mechanics
       - safety-engineers
-      - alert-processors         # walker mirror of alice (tests/test_oidc_broker_chart.py); FIXTURE, not a production claim.
-      - mcp-callers              # walker mirror of alice (tests/test_oidc_broker_chart.py); FIXTURE, not a production claim.
     default:
       persona: DATA_ENGINEER
       domains: [AVIATION]
@@ -183,8 +181,6 @@ users:
       - data-engineers
       - maintenance-mechanics
       - safety-engineers
-      - alert-processors         # walker mirror of alice (tests/test_oidc_broker_chart.py); FIXTURE, not a production claim.
-      - mcp-callers              # walker mirror of alice (tests/test_oidc_broker_chart.py); FIXTURE, not a production claim.
     default:
       persona: DATA_ENGINEER
       domains: [AVIATION]
