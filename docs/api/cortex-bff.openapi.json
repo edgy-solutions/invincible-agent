@@ -6755,7 +6755,7 @@
     },
     "/export/package/artifact/{filename}": {
       "get": {
-        "description": "Download proxy for a produced export package. THE GATEWAY-SIDE CHECK the relay asks\nfor: the engine repeats the same check on the same person's token (main.py's /artifact,\n~line 700), and the two agree because both read `seed.readers_for_recipient`. This is not\nredundant — it is the ONLY check between an unentitled browser and the engine's bytes,\nsince the engine sits behind the mesh and is not itself reachable from a browser.",
+        "description": "Download proxy for a produced export package. THE GATEWAY-SIDE CHECK the relay asks\nfor: the engine repeats the same check on the same person's token (main.py's /artifact,\n~line 700), and the two agree because both ask the `recipient_readers` rail. This is not\nredundant — it is the ONLY check between an unentitled browser and the engine's bytes,\nsince the engine sits behind the mesh and is not itself reachable from a browser.",
         "operationId": "export_package_artifact_export_package_artifact__filename__get",
         "parameters": [
           {

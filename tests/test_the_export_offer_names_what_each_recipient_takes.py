@@ -27,6 +27,7 @@ from agent_fleet.cost_agent import canvas as C  # noqa: E402
 from agent_fleet.cost_agent import entities as E  # noqa: E402
 from agent_fleet.cost_agent import measures as M  # noqa: E402
 from agent_fleet.cost_agent import seed  # noqa: E402
+from tests.recipient_rail_double import Rail, install as install_rail  # noqa: E402
 from agent_fleet.finance_agent.main import VERB_TO_FN  # noqa: E402
 from src.iagent import gateway  # noqa: E402
 from tests.test_a_mixed_board_exports_per_engine import _Driver, _store_row  # noqa: E402
@@ -78,7 +79,8 @@ SENT = {"duplicate": ["d1", "d1"]}
 @pytest.fixture
 def offer(monkeypatch):
     """`offer(cards, readers=None, ids=None, body=None)` -> the offer route's response.
-    `readers` replaces seed.RECIPIENT_READERS (who may export to whom)."""
+    `readers` ({scope: (emails)}) replaces the rail's `cost` rows (who may export to whom); without
+    it Topaz is doubled with the SHIPPED policy/recipient_readers.yaml."""
     user = type("U", (), {
         "authz_id": ALICE, "id": "sub-alice", "email": ALICE, "roles": [], "persona": None,
         "entitled_domains": [], "is_authenticated": True,
@@ -86,8 +88,8 @@ def offer(monkeypatch):
     gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
 
     def go(cards, readers=None, ids=None, body=None):
-        if readers is not None:
-            monkeypatch.setattr(seed, "RECIPIENT_READERS", readers)
+        install_rail(monkeypatch, None if readers is None else Rail(
+            {("cost", sc): tuple(r) for sc, r in readers.items()}))
         monkeypatch.setattr(gateway, "neo4j_driver",
                             _Driver({c["id"]: _store_row(c) for c in cards}, []))
         payload = body if body is not None else {

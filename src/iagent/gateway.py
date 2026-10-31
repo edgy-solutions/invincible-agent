@@ -2661,29 +2661,58 @@ _ENGINE_FIN_URL = os.getenv("ENGINE_FIN_PUBLIC_URL", "http://iagent-engine-fin:8
 _SHA256_LOCATOR_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
+# Each engine's OWN owner key on the `recipient_readers` rail (policy/recipient_readers.yaml). They are
+# identities, not cases: the rows (who reads which scope) are the rail's, and an owner string that is
+# not a key of that file reads nobody.
+_COST_OWNER = "cost"
+_FIN_OWNER = "finance"
+
+
+def _rail_reader(owner: str, scope: str, authz_id: Optional[str]) -> bool:
+    """`can_read_recipient(owner, ...)`, keyed on the PERSON's `authz_id`; a transport/HTTP failure
+    is a 503 (`recipient_readers_unavailable`), never a deny."""
+    from agent_fleet.utils.recipient_readers import can_read_recipient
+    try:
+        return bool(authz_id) and bool(can_read_recipient(owner, scope, authz_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("recipient_readers check failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail={"reason": "recipient_readers_unavailable"}
+        ) from exc
+
+
 def _export_recipients_for(user: "User") -> list[str]:
-    """Every recipient scope `user` may export to or download from, keyed on `authz_id` — the
-    SAME claim the engine's own /artifact route keys its authorization on (main.py's
-    `_scope_of_artifact` + `measures.readers_for_recipient`), never `user.id`. The two checks
-    agree because both read `seed.readers_for_recipient`.
-    """
+    """Every cost recipient scope `user` may export to or download from: the scopes engine-cost
+    DISCLOSES (`RECIPIENT_SCOPES`), each asked of the `recipient_readers` rail under owner
+    `cost`, keyed on `authz_id` -- the SAME claim and the same rail the engine's own /artifact
+    route asks. One Topaz call per scope. A rail that cannot be asked is a 503."""
     from agent_fleet.cost_agent import seed as _cost_seed
     return sorted(
         s for s in _cost_seed.RECIPIENT_SCOPES
-        if user.authz_id and user.authz_id in _cost_seed.readers_for_recipient(s)
+        if _rail_reader(_COST_OWNER, s, user.authz_id)
     )
+
+
+def _export_recipients_or_none(user: "User") -> list[str]:
+    """For the pickers only: a rail that cannot be asked omits cost's recipients (logged) rather
+    than taking the picker down, as `_plan_recipients_or_none` does. The export and the download
+    still answer 503."""
+    try:
+        return _export_recipients_for(user)
+    except HTTPException:
+        return []
 
 
 def _fin_export_recipients_for(user: "User") -> list[str]:
     """`_export_recipients_for`'s exact shape, read against engine-fin's own
-    `export.RECIPIENT_SCOPES`/`readers_for_recipient` instead of cost's — the two engines'
-    disclosures are entitled independently, and this is why there are two functions rather
-    than one parameterised by module: a caller reading the wrong engine's scopes would grant
-    access this gateway never meant to."""
+    `export.RECIPIENT_SCOPES` under owner `finance` -- the two engines' disclosures are entitled
+    independently (the rail's object id carries the owner), and this is why there are two
+    functions rather than one parameterised by module: a caller reading the wrong engine's
+    scopes would grant access this gateway never meant to."""
     from agent_fleet.finance_agent import export as _fin_export
     return sorted(
         s for s in _fin_export.RECIPIENT_SCOPES
-        if user.authz_id and user.authz_id in _fin_export.readers_for_recipient(s)
+        if _rail_reader(_FIN_OWNER, s, user.authz_id)
     )
 
 
@@ -2741,14 +2770,7 @@ def _plan_scope_names(profiles: Optional[dict] = None) -> list[str]:
 
 def _plan_reader(scope: str, authz_id: Optional[str]) -> bool:
     """`can_read_recipient("plan", ...)`; a transport/HTTP failure is a 503, never a deny."""
-    from agent_fleet.utils.recipient_readers import can_read_recipient
-    try:
-        return bool(authz_id) and bool(can_read_recipient(_PLAN_OWNER, scope, authz_id))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("recipient_readers check failed: %s", exc)
-        raise HTTPException(
-            status_code=503, detail={"reason": "recipient_readers_unavailable"}
-        ) from exc
+    return _rail_reader(_PLAN_OWNER, scope, authz_id)
 
 
 def _plan_may_export(profile_name: str, authz_id: Optional[str]) -> bool:
@@ -3197,8 +3219,8 @@ async def _call_engine_cost_package(
             rr = await client.post(
                 f"{_ENGINE_COST_URL}/measure/package_export",
                 json={"params": params},
-                # THE PERSON's identity, never a service identity (seed.py's RECIPIENT_READERS
-                # comment: no svc: reader is listed, and that is the confused-deputy argument
+                # THE PERSON's identity, never a service identity (ADR-0047 section 5.1: no svc:
+                # reader is ever on the rail, and that is the confused-deputy argument
                 # applied here — a service calling on the caller's behalf must carry THAT
                 # caller's identity or refuse).
                 headers={"Authorization": f"Bearer {bearer}"},
@@ -3254,7 +3276,7 @@ async def export_package_recipients(current_user: User = Depends(get_current_use
     return {
         "recipients": [
             {"value": s, "label": s}
-            for s in _export_recipients_for(current_user) + _plan_exportable_or_none(current_user)
+            for s in _export_recipients_or_none(current_user) + _plan_exportable_or_none(current_user)
         ]
     }
 
@@ -3390,7 +3412,7 @@ async def export_package_offer(
         "answers": len(body.answers),
         "recipients": [
             {"value": s, "label": s, **_offer_for_recipient(resolved, s)}
-            for s in _export_recipients_for(current_user)
+            for s in _export_recipients_or_none(current_user)
         ] + plan_offers,
     }
 
@@ -3681,7 +3703,14 @@ async def export_package(
         raise _plan_profiles_unavailable()
     is_plan_scope = plan_profiles is not None and recipient_scope in _plan_scope_names(plan_profiles)
     plan_recipients = _plan_recipients_for(current_user, plan_profiles) if is_plan_scope else []
-    options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
+    # ONE pass over the rail for cost's scopes, used for the listed options AND the door below. A rail
+    # that cannot be asked omits cost's options from the 409 listing (as the pickers do) but the
+    # door itself answers 503 -- never a 403.
+    try:
+        cost_recipients: Optional[list[str]] = _export_recipients_for(current_user)
+    except HTTPException:
+        cost_recipients = None
+    options = [{"value": s, "label": s} for s in (cost_recipients or [])]
     if plan_profiles is not None:
         options += [{"value": s, "label": s} for s in (
             _plan_exportable_for(current_user, plan_recipients, plan_profiles) if is_plan_scope
@@ -3703,9 +3732,11 @@ async def export_package(
         return await _export_plan_answers(
             body, request, current_user, recipient_scope, plan_profiles)
 
-    if recipient_scope not in _export_recipients_for(current_user):
+    if cost_recipients is None:
+        raise HTTPException(status_code=503, detail={"reason": "recipient_readers_unavailable"})
+    if recipient_scope not in cost_recipients:
         # WHY PRODUCTION IS GATED HERE, NOT ONLY THE DOWNLOAD: every recipient's package
-        # shares one directory (seed.py's RECIPIENT_READERS comment) and a canvas narrows
+        # shares one directory (the confused-deputy note beside cost's RECIPIENT_SCOPES) and a canvas narrows
         # what the file carries, so an unentitled producer could OVERWRITE a recipient's
         # package with a different canvas — a write-side confused-deputy, not just a read.
         raise HTTPException(
@@ -3806,7 +3837,7 @@ async def export_package_artifact(
 ):
     """Download proxy for a produced export package. THE GATEWAY-SIDE CHECK the relay asks
     for: the engine repeats the same check on the same person's token (main.py's /artifact,
-    ~line 700), and the two agree because both read `seed.readers_for_recipient`. This is not
+    ~line 700), and the two agree because both ask the `recipient_readers` rail. This is not
     redundant — it is the ONLY check between an unentitled browser and the engine's bytes,
     since the engine sits behind the mesh and is not itself reachable from a browser.
     """
