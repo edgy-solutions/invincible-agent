@@ -19,6 +19,34 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-30 (evening): the 10-30 relay, three of four items. Read this first
+
+The relay: "retarget #147 to master; the live export test on sandbox after 0.4.73 rolls (morning);
+then the overlay contract doc's second example (a cost measure); the CDRL docx path proven with
+one synthetic DID". #148, #144, #151 and #159 are all merged.
+
+- **#147** `fin/overlay-contract-doc` @ `88234c07`, base master: CLEAN, 21 pass and 3 skipped
+  (the real build).
+  - `3ccc0cda`: master `e2c03799` merged in `--no-ff`, with no conflicts.
+  - `88234c07`: §2's second example, VAC with the CPI method, a USD amount. The row is doc-only;
+    the sample overlay still ships TCPI alone.
+  - It adds the module `measure_modules/vac.py`, and a generic transcription arm for every measure
+    example.
+- **#176** `fin/cdrl-docx-sample` @ `75a2749e`, base master `41230a7e`: the docx sample A002 /
+  DI-NOTIONAL-0002, a deterministic template (pinned `691a2c5f…`) and its generator, and an
+  end-to-end test.
+  - **It carries one policy row fin placed:** `can_export:cdrl_a002_cost_performance_docx` →
+    finance-analysts. It is the 10-29 ruled default, but rows were lane/01's and gov's before.
+    **Chris to confirm or reassign** (it is flagged in the PR body). The rail validator reds the
+    PR without it.
+  - `test_cross_repo_contracts` and `test_oidc_broker_chart` are red at the base too, so they
+    predate it.
+- **Open (morning):** the live export test after 0.4.73 rolls. Alice exports a Portfolio board to
+  `notional-plan-office`. Prerequisites: Chris's Topaz sync, then the roll. Show the values diff
+  before any roll. Then run the 10-28 post-roll acceptance list (see the update below).
+- **Owed:** move finance's and cost's RECIPIENT_READERS onto the rail (gov ruling 4).
+- **Worktrees** under the scratchpad: `wt-doc` (#147) and `wt-docx` (#176, which has its own venv).
+
 ## Update 2026-10-30 (later): can_export ruled (b); #148 reads the served registry. Read this first
 
 ### Where each PR is
