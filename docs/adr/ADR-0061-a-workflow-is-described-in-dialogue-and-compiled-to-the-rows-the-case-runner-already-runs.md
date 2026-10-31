@@ -5,7 +5,8 @@ built and measured (§8). No route, no verb, no canvas. The architect ruled on t
 on 2026-10-25 (§9). By that ruling, this stays a draft until the model arm produces one runnable
 spec. None of the nine model fixture-runs after the rulings produced one (§9). On 2026-10-27, one
 of three PCN runs was runnable, but it is not the workflow the transcript describes (§10). The
-architect decides whether that meets the ruling.
+architect decides whether that meets the ruling. The 10-30 gate is a run that is runnable with the
+planted contradiction caught. Runs 22 to 24 do not meet it (§10).
 **Date:** 2026-10-24
 **Deciders:** architect (decision); Chris (review); lane/74 (draft)
 **Related:**
@@ -1045,6 +1046,53 @@ with the planted contradiction caught, this ADR leaves draft.
 
   The set-turn mutant at first survived. The rewrite seal now asserts what was forgotten and what
   stayed.
+
+Three runs on PCN at `d9c97b50`, same model and harness, with no walk or roll in flight.
+
+| run | questions / bank | runnable errors | semantic diffs | open | answered by path | model errors | confirms | rejected | contradiction | deferral | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 22 | 25/14 | 0 | 6 | 3 | 5 | 0 | 8 | 1 | 0/1 | 1/1 | cannot_run | 517 |
+| 23 | 23/14 | 2 | 6 | 2 | 1 | 0 | 8 | 1 | 0/1 | 0/1 | cannot_run | 474 |
+| 24 | 16/14 | 1 | 5 | 3 | 3 | 0 | 6 | 1 | 0/1 | 1/1 | cannot_run | 366 |
+
+**The gate is not met.** No run is runnable, and the planted contradiction is scored in none. This
+ADR stays a draft, and no PR is opened.
+
+- **The rejection was given in every run, and the redraft never landed.**
+  - In each run the model drafted the record stage's wait as a human approval again, with a task
+    kind and `excludes: []`.
+  - The scripted user rejected its `excludes` confirm, once per run, in the stage's words.
+  - In all three final drafts the step is still a human approval with its task kind and
+    `excludes`, and the record's `next` confirm stays open.
+  - That is the shape the seal's control describes: a rejection the model does not act on.
+  - The measure keeps no per-turn record of the model's replies. So it cannot tell which of these
+    happened: the model returned no unset, it returned one outside the scope, or a later turn
+    re-set the step. No patch was refused, which rules out an unset outside the scope.
+- **The planted contradiction was not scored, for two different reasons.**
+  - **Runs 22 and 24.** The submitter's bar reached only the program approval, never the impact
+    review, so no overwrite was raised on the planted leaf.
+    - In both runs, the impact review's `excludes` was confirmed and answered by path from the
+      opening, which writes `excludes: []` there. That is the planted half.
+    - The program approval's confirm was answered from the bank: "may never sign off either
+      review". The model set the bar on the program approval only.
+    - In runs 19 to 21 the same answer had carried the bar to both reviews. Whether it does is
+      the model's reading of "either review", not the mechanism.
+  - **Run 23.** An overwrite contradiction on the impact review's `excludes` was asked, in the
+    planted shape. But the trigger's selection table is not declared, and its `after` names no
+    definition. So no stage aligns, and the measure cannot read the key as the planted one. It is
+    scored 0/1, as the rule says. It is not rescored by hand.
+- **Other open keys.**
+  - Run 22: a `timed_out` row on two chaining tables, refused at runtime, asked twice each.
+  - Run 24: the acknowledgement's `next` and `ends`.
+  - Runs 23 and 24 have a selection table whose `after` names no definition: the trigger was
+    named differently from the table.
+- **The stall did not fire.** No model errors and no refused patches occurred in any run.
+- **Owed, for a ruling.**
+  - The measure should record each turn's reply. Without that, a rejection the model ignored
+    cannot be told from one it acted on that a later turn undid.
+  - The rejection works only if the model redrafts. Two ways to make that more likely: name the
+    step to redraft in the confirm's question, or make the rejection's answer carry the stage's
+    facts, not only its words. The second changes the instrument again.
 
 ## Consequences
 
