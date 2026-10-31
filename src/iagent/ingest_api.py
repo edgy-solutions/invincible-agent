@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 INGEST_V1_TAG = "ingest-v1"
 # The `mcp` surface: the thirteen BFF operations an MCP server wraps. Spec:
@@ -22,7 +22,7 @@ INGEST_V1_TAG = "ingest-v1"
 # (sections 1, 2, 5). Tagged ADDITIVELY on the routes (existing tags kept); /interview/stream shares
 # the /orchestrate handler but is NOT in this set.
 MCP_TAG = "mcp"
-INGEST_API_VERSION = "1.5.0"
+INGEST_API_VERSION = "1.6.0"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),
@@ -203,11 +203,25 @@ class EvidenceRef(_Strict):
     `bbox` is page fractions `[x0, y0, x1, y1]`, origin top-left, `0 <= x0 < x1 <= 1` and
     `0 <= y0 < y1 <= 1`. A null bbox means "on this page, no box" (ruling 205). Nothing else
     is served: no `bboxes`, `page_dims`, `units` or `quality`.
+
+    The authority is `iagent_mesh.provenance.EvidenceRef` (architect ruling 2026-10-31: the SDK rule
+    wins). This model is imported from it once the SDK (v0.9.13) renders `note` as omitted rather
+    than null and `bbox` as a 4-item array of 0..1 items; until then
+    `tests/test_an_evidence_ref_is_the_sdks_rule_page_fractions_or_a_422.py` holds the two to the
+    same verdict (this model may only be STRICTER: no null note, no bool page).
     """
     page: Annotated[int, Field(strict=True, ge=1)]
     bbox: Annotated[list[Annotated[float, Field(ge=0, le=1)]], Field(min_length=4, max_length=4)] | None = None
     # `note?: string` -- omitted when there is none, never null (7f omits it; cortex refuses null).
     note: Annotated[str, Field(pattern=r"\S")] = None
+
+    @model_validator(mode="after")
+    def _box_has_area(self):
+        if self.bbox is not None:
+            x0, y0, x1, y1 = self.bbox
+            if not (x1 > x0 and y1 > y0):
+                raise ValueError("bbox needs x0 < x1 and y0 < y1 (zero or negative area cites nothing)")
+        return self
 
 
 class ExtractionRow(_Strict):

@@ -1,6 +1,6 @@
 # Cortex ingest API, v1
 
-**Version 1.5.0, 2026-10-30.** This is the contract for a team that builds its own UI on the
+**Version 1.6.0, 2026-10-31.** This is the contract for a team that builds its own UI on the
 platform's document ingest: drop a file, follow it through extraction, read what was
 extracted, and act on the review tasks it raises.
 
@@ -511,6 +511,7 @@ do not show.
 | 404 | `task_not_found` | act | not your task | – |
 | 409 | `task_already_resolved` | act | decided; `decision`, `acted_by`, `acted_at` say how | – |
 | 422 | `review_coverage_invalid` | act | `check` says which: `review_shape`, `item_kind`, `unknown_rules_version`, `unknown_rule`, `unknown_<item_kind>`, `duplicate_<item_kind>`, `overlap`, `uncovered` | fix the coverage |
+| 422 | `evidence_ref_invalid` | act | `check` says which: `not_object`, `extra_key:<key>`, `page`, `bbox_not_fractions`, `bbox_degenerate`, `note_blank`, `invalid` (the SDK's `EvidenceRef` refused a ref that passes every named check). An `evidence_ref` on a row or header edit is `{page, bbox, note?}` with `bbox` in page fractions (`0 <= x0 < x1 <= 1`, `0 <= y0 < y1 <= 1`) or null; pixels are refused | send the box as page fractions |
 | 503 | `review_coverage_unverifiable` | act | the extraction's items could not be read, or the `item_kind` has no reader here; nothing was written | retry later |
 | 409 | `stale_extraction` | act | the drop moved on; `new_task_id` names the current task | act on that one |
 | 403 | `not_authorized_to_act` | act | you no longer hold the task's audience | – |

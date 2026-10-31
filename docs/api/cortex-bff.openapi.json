@@ -1952,7 +1952,7 @@
       },
       "EvidenceRef": {
         "additionalProperties": false,
-        "description": "7f's `wire_evidence_ref`, served as is (architect rulings 2026-10-21 and 2026-10-28).\n\n`bbox` is page fractions `[x0, y0, x1, y1]`, origin top-left, `0 <= x0 < x1 <= 1` and\n`0 <= y0 < y1 <= 1`. A null bbox means \"on this page, no box\" (ruling 205). Nothing else\nis served: no `bboxes`, `page_dims`, `units` or `quality`.",
+        "description": "7f's `wire_evidence_ref`, served as is (architect rulings 2026-10-21 and 2026-10-28).\n\n`bbox` is page fractions `[x0, y0, x1, y1]`, origin top-left, `0 <= x0 < x1 <= 1` and\n`0 <= y0 < y1 <= 1`. A null bbox means \"on this page, no box\" (ruling 205). Nothing else\nis served: no `bboxes`, `page_dims`, `units` or `quality`.\n\nThe authority is `iagent_mesh.provenance.EvidenceRef` (architect ruling 2026-10-31: the SDK rule\nwins). This model is imported from it once the SDK (v0.9.13) renders `note` as omitted rather\nthan null and `bbox` as a 4-item array of 0..1 items; until then\n`tests/test_an_evidence_ref_is_the_sdks_rule_page_fractions_or_a_422.py` holds the two to the\nsame verdict (this model may only be STRICTER: no null note, no bool page).",
         "properties": {
           "bbox": {
             "anyOf": [
@@ -5513,20 +5513,15 @@
       },
       "TitleEvidenceRef": {
         "additionalProperties": false,
-        "description": "A title candidate's crop: `EvidenceRef` plus the page-fraction bounds. A SUBCLASS so the\nsteward row_edits / header_edits evidence_ref (not yet converted) keeps `EvidenceRef` as it was.\nCortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422).",
+        "description": "A title candidate's crop: the served `ingest_api.EvidenceRef` (which the equivalence seal holds\nto the SDK verdict) plus the page-fraction bounds. A SUBCLASS of the served model, not of the SDK's,\nso the published title-candidate schema keeps its array-of-numbers bbox and `page` minimum. Steward\nrow_edits / header_edits evidence_ref now go through the SDK model (`_wire_evidence_ref`).\nCortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422).\nStrict, as the request model it replaced was: a coordinate sent as a string is refused, not coerced.",
         "properties": {
           "bbox": {
             "anyOf": [
               {
                 "items": {
-                  "anyOf": [
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ]
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
                 },
                 "maxItems": 4,
                 "minItems": 4,
@@ -5539,15 +5534,9 @@
             "title": "Bbox"
           },
           "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
+            "pattern": "\\S",
+            "title": "Note",
+            "type": "string"
           },
           "page": {
             "minimum": 1.0,
