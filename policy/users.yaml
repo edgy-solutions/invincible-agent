@@ -62,6 +62,7 @@ users:
       - maint-tier-ack-edge-01   # 2026-10-11 ruling: actor-only (no cell); see groups.yaml. No step waits on a tier ack since 2026-10-28; kept by ruling
       - maint-tier-ack-edge-02   # 2026-10-27: the edge-02 mirror, actor-only (no cell)
       - alert-processors         # FIXTURE grant, 2026-10-28: alice is the sandbox alert processor (PCN/PDN drops); not a claim about who drops notices in production.
+      - mcp-callers              # FIXTURE grant, 2026-10-31: sandbox MCP caller; not a claim about who calls the MCP surface in production.
       - finance-analysts    # FIXTURE grant, 2026-08-31: alice is the
                             # Engine F demo actor, so the persona/domain picker offers
                             # her the PROGRAM_FINANCE_ANALYST cell and a finance question
@@ -130,6 +131,7 @@ users:
       - maint-supervisors-edge-02
       # 2026-10-14 ruling: document_promotion:MANUFACTURING. Actor-only (no cell).
       - manufacturing-stewards
+      - mcp-callers              # FIXTURE grant, 2026-10-31: sandbox MCP caller; not a claim about who calls the MCP surface in production.
     default:
       persona: DATA_STEWARD
       domains: [AVIATION]
@@ -160,6 +162,8 @@ users:
       - data-engineers
       - maintenance-mechanics
       - safety-engineers
+      - alert-processors         # walker mirror of alice (tests/test_oidc_broker_chart.py); FIXTURE, not a production claim.
+      - mcp-callers              # walker mirror of alice (tests/test_oidc_broker_chart.py); FIXTURE, not a production claim.
     default:
       persona: DATA_ENGINEER
       domains: [AVIATION]
@@ -179,6 +183,8 @@ users:
       - data-engineers
       - maintenance-mechanics
       - safety-engineers
+      - alert-processors         # walker mirror of alice (tests/test_oidc_broker_chart.py); FIXTURE, not a production claim.
+      - mcp-callers              # walker mirror of alice (tests/test_oidc_broker_chart.py); FIXTURE, not a production claim.
     default:
       persona: DATA_ENGINEER
       domains: [AVIATION]

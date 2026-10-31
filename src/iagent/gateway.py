@@ -871,6 +871,10 @@ app = FastAPI(
     version="2.1.0",
     lifespan=lifespan,
 )
+# The door client's reach (`can_call:<tag>`, 2026-10-31 M3). Added FIRST so it is the INNERMOST
+# middleware: the CORS and no-store wrappers below still apply to its refusals.
+from .authz.call_capability import DoorGuard  # noqa: E402
+app.add_middleware(DoorGuard, router=app.router)
 
 # ── /version and /fleet/version ─────────────────────────────────────────────────────────
 #
