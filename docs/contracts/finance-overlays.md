@@ -151,6 +151,67 @@ person who approved it and `reason` is why. Replace the sample's `<accountable a
 real name before you send a row. There is no visibility key: a measure is only ever shown for a
 program the user has been granted, and nothing in a row can widen that.
 
+A second example, a cost amount, shows what changes when the measure is money. This row is not in
+the sample overlay; the sample ships TCPI alone. It is shown for its shape, and this doc's own
+test loads it through the real loader. VAC (variance at completion) is the budget less the
+estimate at completion, with the estimate worked out by the CPI method.
+
+```yaml
+# loads-as: measure_verb
+# SAMPLE -- invented in this repo to show the shape of a measure that is an amount. Not in the
+# sample overlay (policy/overlays/sample/); a deployment replaces it with its own.
+measure_id: fin_vac_cpi
+verb: finVarianceAtCompletion
+name: Variance at completion (CPI method)
+description: >-
+  The budget at completion less the estimate at completion, with the estimate worked out as BAC
+  divided by the cost performance index, reported period by period. An amount of money. Negative
+  means the program is forecast to overrun its budget; positive, to underrun it. Undefined while
+  no work has been performed, because the cost performance index has no value then. NOT the cost
+  variance to date - that is finVarianceAnalysis. NOT the forecast final cost itself - that is
+  finEacCalculation. NOT the efficiency needed to finish on budget - that is TCPI. OWNS the
+  phrasings: variance at completion, VAC, how far over or under budget will we finish.
+synonyms:
+  - variance at completion
+  - VAC
+  - forecast overrun at completion
+anti_synonyms:
+  - cost variance
+  - estimate at completion
+  - to-complete performance index
+inputs:
+  params: {program_id: {required: true}, window: {required: false}}
+  state: {bac: program.bac, bcwp: cumulative.bcwp, acwp: cumulative.acwp}
+computation:
+  module: agent_fleet.finance_agent.measure_modules.vac
+  function: vac_cpi
+  version: "1.0.0"
+  derived_from:
+    authority: Public EVM methodology (DoD/DAU EVM Gold Card formulation)
+    clause: VAC, with EAC = BAC / CPI
+    citation: name-only
+    transcription: VAC = BAC - BAC * ACWP / BCWP
+outputs:
+  archetype: PERIOD_SERIES
+  output_uri: VarianceAtCompletionSeries
+  series: [{key: vac, label: VAC, unit: USD}]          # an amount: a unit
+  reference: {value: 0, label: on budget}
+  undefined: {reason: no_work_performed, when: cumulative BCWP <= 0 (no work performed, so the cost performance index has no value)}
+policy:
+  status: sample
+  cells: [PROGRAM_FINANCE]
+  granted_by: <accountable approver>
+  reason: shows the measure-row contract for an amount on synthetic NP-MERIDIAN data
+```
+
+What differs from TCPI:
+
+- `unit` is present (`USD`), because this is an amount; TCPI is a ratio and leaves it out.
+- The reference line is 0, "on budget", not 1.0.
+- The `undefined` reason is `no_work_performed`, where TCPI's is `budget_spent`.
+- One row, one unit: an index and an amount are two rows, not two series on one row. A row whose
+  series mix units, or that lists more than one series, is refused at load (see the refusal list below).
+
 **What is refused at load.** The file is named in each message.
 
 - You gave a `measure_id` that does not start `fin_`, or that is a built-in measure's id, or a

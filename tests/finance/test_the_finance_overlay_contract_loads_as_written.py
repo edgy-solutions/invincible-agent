@@ -153,3 +153,48 @@ def test_the_variables_table_names_every_overlay_variable_the_loaders_read():
     listed = _column(_section(1), "kind", col=2)
     missing = sorted(found - listed)
     assert not missing, f"the doc's variables table omits {missing}"
+
+
+# -- arm 5: every measure example's transcription is what its module computes -----------------------
+
+from decimal import Decimal  # noqa: E402
+
+from tests.finance.test_the_method_registry_rows import _evaluate  # noqa: E402  (the evaluator, not a copy)
+
+_D = Decimal
+_GRID = [(_D(b), _D(w), _D(a))
+         for b in ("1000", "2500.5", "0")
+         for w in ("0", "-5", "400", "999", "1250.25")
+         for a in ("0", "500", "1000", "1200", "1250.25")]
+
+
+def test_every_measure_examples_transcription_is_what_its_module_computes(tmp_path, monkeypatch):
+    """No measure id is typed here: every `measure_verb` block in the doc is loaded, its
+    transcription's right-hand side is evaluated over a grid, and the module must agree wherever it
+    returns a figure. Wherever it returns None the row must declare `undefined` with a reason (the
+    row's `when:` prose is not evaluated). The grid must make each row's function return None at
+    least once, so the None half is exercised for every row."""
+    blocks = _blocks("measure_verb")
+    assert blocks, "the doc has no `# loads-as: measure_verb` example, so this arm checks nothing"
+    for i, body in enumerate(blocks):
+        d = tmp_path / f"t{i}"
+        d.mkdir()
+        monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(_stage_measures(d, [body])))
+        (row,) = measure_verbs.load_measure_verbs()
+        fn = row.resolve()
+        rhs = row.transcription.partition("=")[2]
+        nones = 0
+        for bac, bcwp, acwp in _GRID:
+            state = {"bac": bac, "bcwp": bcwp, "acwp": acwp}
+            got = fn(**{k: state[k] for k in row.state})
+            if got is None:
+                nones += 1
+                assert row.undefined and row.undefined.get("reason"), (
+                    f"{row.measure_id}: the function returns None at {state} but the row declares "
+                    f"no `undefined` reason")
+                continue
+            expected = _evaluate("EAC = " + rhs, {k.upper(): v for k, v in state.items()})
+            assert got == expected, (
+                f"{row.measure_id}: at {state} the module gives {got} but the transcription "
+                f"{row.transcription!r} gives {expected}")
+        assert nones, f"{row.measure_id}: the grid never makes the function return None, so the None half is unchecked"
