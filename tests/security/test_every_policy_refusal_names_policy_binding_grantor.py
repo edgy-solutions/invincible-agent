@@ -409,6 +409,9 @@ PENDING: dict[str, str] = {
     # 2026-10-28: the CDRL export routes relay engine-fin's 403 (program_not_visible) through here;
     # `tests/test_bff_cdrl_export.py::test_8_an_engine_403_is_relayed_with_grantable_by` is its seal.
     f"{GW}::_engine_failure::<relay_refusal>": RELAY,
+    # 2026-10-31: the same relay passes an engine 409/422 through with the engine's own body (the
+    # declared refusals, not policy ones); `tests/mcp_seals/test_a_relayed_refusal_passes_through.py`.
+    f"{GW}::_engine_failure::<detail>": RELAY,
     # engine-r check 6 (#133). ADR-0062 §5 names the family `repository_paths`, but its rail file
     # and grantor row arrive with engine-r's engine PR; until then the governed rows are held in
     # code, which is what `code` names. That PR moves this row to `repository_paths` and builds it.

@@ -2580,7 +2580,8 @@ async def finance_measure(
         })
 
     if rr.status_code == 422:
-        raise HTTPException(status_code=422, detail=rr.json().get("detail"))
+        raise HTTPException(status_code=422,
+                            detail=_engine_refusal_detail(rr, f"/measure/{fn}"))
     if rr.status_code >= 400:
         try:
             body_json = rr.json()
@@ -2590,7 +2591,7 @@ async def finance_measure(
         raise HTTPException(status_code=rr.status_code,
                             detail=_detail_with_message(rr.status_code, relay_refusal(detail)))
 
-    return rr.json()
+    return _engine_answer(rr, f"/measure/{fn}")
 
 
 @app.get("/plan/state_version")
@@ -3959,9 +3960,42 @@ _CDRL_MEDIA = {
 _CDRL_FILENAME_RE = re.compile(r"^fin-cdrl-[A-Za-z0-9_.-]+\.(" + "|".join(_CDRL_MEDIA) + r")$")
 
 
-def _engine_failure(label: str, rr) -> HTTPException:
-    """A refusal or failure an engine answered with, as this gateway's answer. 403 is the engine's
-    policy refusal completed by `relay_refusal`; anything else is a 502 naming the engine status."""
+def _engine_answer(rr, route: str):
+    """The decoded JSON of an engine's 2xx answer. An empty or non-JSON body (a Restate handler
+    that returns None is an EMPTY 200) is a named 502, never a crash and never a 200 `null`."""
+    try:
+        out = rr.json()
+    except Exception:  # noqa: BLE001 -- an undecodable body is the failure being named
+        out = None
+    if out is None:
+        raise HTTPException(status_code=502, detail={
+            "error": "engine_empty_answer", "engine_route": route,
+            "engine_status": rr.status_code,
+            "message": f"the engine answered {rr.status_code} on {route} with no JSON body.",
+        })
+    return out
+
+
+def _engine_refusal_detail(rr, route: str):
+    """The `detail` of an engine's refusal, as the engine sent it. An empty or non-JSON body
+    falls back to the response text, and an empty text is NAMED rather than left blank."""
+    try:
+        body_json = rr.json()
+        detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+    except Exception:  # noqa: BLE001
+        detail = getattr(rr, "text", "")
+    if detail is None or (isinstance(detail, str) and not detail.strip()):
+        detail = {"error": "engine_empty_body", "engine_route": route,
+                  "engine_status": rr.status_code,
+                  "message": f"the engine refused with {rr.status_code} on {route} and sent no body."}
+    return detail
+
+
+def _engine_failure(label: str, rr, route: str = "") -> HTTPException:
+    """A refusal or failure an engine answered with, as this gateway's answer. The engine's
+    declared refusals (403 policy, 409, 422) keep their status and every key of the body (advice
+    keys may be added: a 403 gains `grantable_by`, a 409 gains `message`); anything else
+    is a 502 naming the engine status."""
     try:
         body_json = rr.json()
         detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
@@ -3969,6 +4003,11 @@ def _engine_failure(label: str, rr) -> HTTPException:
         detail = getattr(rr, "text", "engine refused")
     if rr.status_code == 403:
         return HTTPException(status_code=403, detail=relay_refusal(detail))
+    if rr.status_code in (409, 422):
+        detail = _engine_refusal_detail(rr, route or label)
+        if rr.status_code == 409:
+            detail = _detail_with_message(409, detail)
+        return HTTPException(status_code=rr.status_code, detail=detail)
     return HTTPException(status_code=502, detail={
         "error": f"{label}_engine_failed", "engine_status": rr.status_code, "engine_detail": detail,
     })
@@ -3989,8 +4028,8 @@ async def export_cdrl_profiles(request: Request, current_user: User = Depends(ge
             "error": "fin_engine_unreachable", "message": str(exc),
         })
     if rr.status_code >= 400:
-        raise _engine_failure("fin", rr)
-    return rr.json()
+        raise _engine_failure("fin", rr, "/cdrl_profiles")
+    return _engine_answer(rr, "/cdrl_profiles")
 
 
 @app.get("/export/cdrl", tags=[MCP_TAG])
@@ -4028,9 +4067,9 @@ async def export_cdrl(
         if isinstance(detail, dict) and detail.get("error") == "unknown_profile":
             raise HTTPException(status_code=404, detail=detail)
     if rr.status_code >= 400:
-        raise _engine_failure("fin", rr)
+        raise _engine_failure("fin", rr, "/cdrl_export")
 
-    out = rr.json()
+    out = _engine_answer(rr, "/cdrl_export")
     filename = out.get("artifact_filename")
     cells_sha256 = (out.get("envelope") or {}).get("cells_sha256")
     if not (isinstance(filename, str) and _CDRL_FILENAME_RE.match(filename) and cells_sha256):
