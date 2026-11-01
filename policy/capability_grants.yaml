@@ -20,7 +20,7 @@
 # syncs: this tool owns `capability` `invoker` relations ONLY.
 #
 # PROVE-THE-NEGATIVE ON THE GRANT PATH. A capability is REFUSED (nothing applied,
-# non-zero exit) when MALFORMED — missing `granted_by` (accountable human), `reason`,
+# non-zero exit) when MALFORMED — missing `granted_by` (accountable grantor), `reason`,
 # or `grant_to`. An unexplained or targetless capability grant is not a grant; a
 # broken overlay does not partially apply. An INVOKE is an EFFECT (a mutation, not a
 # read) — an unaudited effect-grant is exactly what "an unauditable grant shouldn't
@@ -78,7 +78,7 @@ capabilities:
   # NOT — bob's fail-and-release at the direct_call is the deny side of the Slice-1
   # seal, through the same Topaz single-decider as the content gates.
   mesh:publishArtifact:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Demo fixture: exercises the capability `can_invoke` gate (ADR-0029 Slice-1
       direct_call, RULING Q3). alice may invoke mesh:publishArtifact — the promotion
@@ -99,7 +99,7 @@ capabilities:
   # INITIATES; humans REVIEW. Instance-one of the service-identity pattern (dispatcher / analyst
   # loop follow the same shape). svc:review-starter is seeded in users.yaml (service species).
   mesh:startReview:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       svc:review-starter (the extraction→review Dagster sensor's client-credentials identity) may
       invoke mesh:startReview — auto-start a grouped disposition review when a doc-tools extraction
@@ -125,7 +125,7 @@ capabilities:
   # green run. That degradation is deliberate — but it means an unseeded grant quietly reverts the
   # routing fix, so seed it in the same window as the sensor.
   mesh:fileTriageTask:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       svc:review-starter (the extraction→review Dagster sensor's client-credentials identity) may
       invoke mesh:fileTriageTask — file a triage task when a notice is refused for a PER-NOTICE
@@ -172,7 +172,7 @@ capabilities:
   # control is that any OTHER caller must still receive it — deny-by-default is not weakened here,
   # one subject is added to it.
   mesh:dispatchDispositions:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       svc:review-starter (the extraction→review pipeline's client-credentials identity) may invoke
       mesh:dispatchDispositions — cause the disposition effects of a review that completed WITHOUT
@@ -210,7 +210,7 @@ capabilities:
   # Sealed by tests/docs/test_every_explained_verb_has_a_derived_invoker.py: every explained verb
   # is granted here, and each grant_to equals the derived membership exactly.
   mesh:seedCanvas:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Docs page gate prerequisite. Owner cell PORTFOLIO_LEAD in PORTFOLIO_PLANNING (gateway's
       seed verb registration), granted by portfolio-leads; alice, erin and chris are its members (erin and chris by
@@ -223,7 +223,7 @@ capabilities:
       - erin@example.com
 
   mesh:seedPortfolioCanvas:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Docs page gate prerequisite. Same owner cell as mesh:seedCanvas, which supersedes it
       without removing it (ADR-0050 §4); granted by portfolio-leads; alice, erin and chris are its members (erin and chris by
@@ -234,7 +234,7 @@ capabilities:
       - erin@example.com
 
   mesh:finProgramBrief:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Docs page gate prerequisite. Owner cell PROGRAM_FINANCE_ANALYST in PROGRAM_FINANCE
       (policy/graphs/fin_program_brief.yaml), granted by finance-analysts; alice is its member.
@@ -244,7 +244,7 @@ capabilities:
       - erin@example.com
 
   mesh:costLotCostingReview:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Docs page gate prerequisite. Owner cell COST_ANALYST in PRODUCTION_COST
       (policy/graphs/cost_lot_costing_review.yaml), granted by cost-analysts; alice is its member.
@@ -254,7 +254,7 @@ capabilities:
       - erin@example.com
 
   mesh:enumerateInstances:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Docs page gate prerequisite. Three providers: PORTFOLIO_LEAD/PORTFOLIO_PLANNING (engine-p),
       PROGRAM_FINANCE_ANALYST/PROGRAM_FINANCE (engine-fin), COST_ANALYST/PRODUCTION_COST
@@ -267,7 +267,7 @@ capabilities:
       - erin@example.com
 
   mesh:resolveInstance:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Docs page gate prerequisite. Providers with a cell: PORTFOLIO_LEAD/PORTFOLIO_PLANNING
       (engine-p), PROGRAM_FINANCE_ANALYST/PROGRAM_FINANCE (engine-fin), COST_ANALYST/PRODUCTION_COST
@@ -285,7 +285,7 @@ capabilities:
   # declares a domain and no persona, so its invokers are every MAINTENANCE cell: groups.yaml grants
   # MAINTENANCE to maintenance-mechanics and (2026-10-16) openddil-maintainers.
   mesh:s1000dFaultWalk:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The verb declares domain MAINTENANCE and no persona; the only cell granting MAINTENANCE is
       MECHANIC/MAINTENANCE, granted by maintenance-mechanics and, from 2026-10-16, by
@@ -311,7 +311,7 @@ capabilities:
   # than consulted for it. svc:case-runner is seeded in users.yaml (service species), kind
   # delegate (values-sandbox.yaml's extraServiceClients, onBehalfOf platform-registrar).
   origin.write:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       svc:case-runner (restate-analyst's direct_call delegate identity for steps with no human
       user_jwt) may invoke origin.write — write the case's resolved origin once the steward has
@@ -324,7 +324,7 @@ capabilities:
   # can_drop:<content_kind> (2026-10-28 ruling) -- see the convention in the header. These two
   # rows are the shipped default; a deployment configures its own in its policy repository.
   can_drop:pcn:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       2026-10-28 ruling: drops of the `pcn` kind are restricted to the alert-processors group. This
       row's EXISTENCE gates the kind: deleting the row reopens `pcn` to every caller. A deployment
@@ -332,7 +332,7 @@ capabilities:
     grant_to_groups: [alert-processors]
 
   can_drop:pdn:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       2026-10-28 ruling: drops of the `pdn` kind are restricted to the alert-processors group. This
       row's EXISTENCE gates the kind: deleting the row reopens `pdn` to every caller. A deployment
@@ -342,7 +342,7 @@ capabilities:
   # ingest:exportBatch (2026-10-28 overnight ruling): GET /ingest/export (the batch) and the
   # export of a notice the caller did not drop. See src/iagent/export_profiles.py.
   ingest:exportBatch:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       2026-10-28 overnight ruling: batch export of promoted notices over a date range, for the
       alert-processors group. DOMAIN-SCOPED (architect 2026-10-29): the capability admits a notice
@@ -354,7 +354,7 @@ capabilities:
   # grantees: review-export to alert-processors, answer-export (plan-answers) to portfolio-leads,
   # CDRL to the program-finance persona's group.
   can_export:default-csv:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       2026-10-29 ruling: the review-export profile policy/exports/default-csv.yaml is exportable,
       single or in a batch, by alert-processors (the review-export default). Deny-by-default:
@@ -363,7 +363,7 @@ capabilities:
     grant_to_groups: [alert-processors]
 
   can_export:default-json:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       2026-10-29 ruling: the review-export profile policy/exports/default-json.yaml is exportable,
       single or in a batch, by alert-processors (the review-export default). Deny-by-default:
@@ -372,7 +372,7 @@ capabilities:
     grant_to_groups: [alert-processors]
 
   can_export:plan-answers:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       2026-10-29 ruling, re-keyed 2026-10-30: the answer-export profile
       policy/exports/answers/plan-answers.yaml (fin's #148) is exportable, single or in a batch, by
@@ -383,7 +383,7 @@ capabilities:
     grant_to_groups: [portfolio-leads]
 
   can_export:cdrl_a001_ev_summary:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       2026-10-29 ruling: a fin CDRL profile is exportable, single or in a batch, by the
       program-finance persona's group (finance-analysts) by default. Deny-by-default: deleting
@@ -392,7 +392,7 @@ capabilities:
     grant_to_groups: [finance-analysts]
 
   can_export:cdrl_a001_ev_summary_json:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       2026-10-29 ruling: a fin CDRL profile is exportable, single or in a batch, by the
       program-finance persona's group (finance-analysts) by default. This is the json format of

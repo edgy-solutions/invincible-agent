@@ -48,7 +48,7 @@ compartments:
   # genuinely recalls — the empty-input-law guard (a gate that filters a pool
   # where the sensitive class was never a candidate hasn't filtered anything).
   RESTRICTED_PROGRAMS:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Demo fixture: exercises the ontology-visibility gate's deny side. The
       assigned class's existence is treated as compartment-revealing; alice is
