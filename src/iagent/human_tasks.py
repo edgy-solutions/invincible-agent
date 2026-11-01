@@ -41,6 +41,7 @@ import psycopg2.extras
 # so a raise here and a catch at the BFF are the same module object.
 from iagent.authz import AuthorizationUnavailable  # noqa: F401 -- raised and re-exported
 from iagent.authz import AuthorizationUnconfigured  # noqa: F401 -- raised and re-exported
+from agent_fleet.utils.pdp_answer import check_answer
 
 try:
     from agent_fleet.utils import program_membership as _program_membership
@@ -232,7 +233,7 @@ def can_act_or_unavailable(audience: str, caller_id: str) -> bool:
         with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
             r = c.post("/api/v3/directory/check", json=payload)
             r.raise_for_status()
-            return bool(r.json().get("check"))
+            return check_answer(r)
     except (httpx.HTTPError, ValueError) as exc:  # ValueError: a body that is not JSON
         raise AuthorizationUnavailable(type(exc).__name__) from exc
 
@@ -275,7 +276,7 @@ def can_invoke_or_unavailable(capability: str, caller_id: str) -> bool:
             if r.status_code == 404:
                 return False
             r.raise_for_status()
-            return bool(r.json().get("check"))
+            return check_answer(r)
     except (httpx.HTTPError, ValueError) as exc:  # ValueError: a body that is not JSON
         raise AuthorizationUnavailable(type(exc).__name__) from exc
 
@@ -305,7 +306,7 @@ def check_can_invoke(capability: str, caller_id: str) -> bool:
         with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
             r = c.post("/api/v3/directory/check", json=payload)
             r.raise_for_status()
-            return bool(r.json().get("check"))
+            return check_answer(r)
     except Exception:
         return False  # fail-closed
 

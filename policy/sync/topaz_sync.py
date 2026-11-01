@@ -580,7 +580,12 @@ class TopazClient:
             },
         )
         r.raise_for_status()
-        return bool(r.json().get("check", False))
+        # Strict, like agent_fleet/utils/pdp_answer.py (this script runs by path and cannot import
+        # it): absent is a "no", a non-boolean is a malformed answer and raises.
+        check = r.json().get("check", False)
+        if not isinstance(check, bool):
+            raise ValueError(f"a malformed directory answer: `check` is a {type(check).__name__}")
+        return check
 
     def check_permission(
         self,

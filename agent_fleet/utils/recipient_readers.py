@@ -16,6 +16,11 @@ import os
 
 import httpx
 
+try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import check_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import check_answer
+
 
 def check_payload(owner: str, scope: str, caller_id: str) -> dict:
     return {
@@ -35,4 +40,4 @@ def can_read_recipient(owner: str, scope: str, caller_id: str, *,
     with httpx.Client(base_url=url, timeout=5.0) as c:
         r = c.post("/api/v3/directory/check", json=check_payload(owner, scope, caller_id))
         r.raise_for_status()
-        return r.json().get("check") is True
+        return check_answer(r)
