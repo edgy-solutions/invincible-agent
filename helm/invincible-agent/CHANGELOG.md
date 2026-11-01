@@ -4,6 +4,16 @@
 
 Entries merged after the 0.4.73 cut (`e2c03799`). The releaser dates this heading at the cut.
 
+**Policy changes (who may review: `can_review:<subject>`, 2026-10-31 directive)**
+
+- **New group `alignment-reviewers`** (capability-only, no persona.domain cell); sandbox member bob,
+  the stand-in TRAINING reviewer. **`topaz_sync` precondition**: sync the new group before the roll
+  that carries the row (else the capability leg names an unknown group).
+- **Row `can_review:alignment`**, `grant_to_groups: [alignment-reviewers]`. Deny-by-default: the
+  surface that writes a review asks `can_invoke` on `can_review:<S>`, so a subject with no row is
+  reviewable by nobody. **Inert in this chart**: the check belongs to the workbench, which today
+  gates `POST /alignment/proposals/review` only by login and `WB_STORE_WRITES`.
+
 **Policy changes (the MCP surface's call policy: `can_call:<tag>`)**
 
 - **New group `mcp-callers`** (capability-only, no persona.domain cell); sandbox members alice and

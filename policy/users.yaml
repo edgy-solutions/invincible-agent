@@ -132,6 +132,7 @@ users:
       # 2026-10-14 ruling: document_promotion:MANUFACTURING. Actor-only (no cell).
       - manufacturing-stewards
       - mcp-callers              # FIXTURE grant, 2026-10-31: sandbox MCP caller; not a claim about who calls the MCP surface in production.
+      - alignment-reviewers      # FIXTURE grant, 2026-10-31: sandbox alignment reviewer (can_review:alignment); not a claim about who reviews in production.
     default:
       persona: DATA_STEWARD
       domains: [AVIATION]
