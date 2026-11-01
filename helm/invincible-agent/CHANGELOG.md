@@ -1,8 +1,60 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.74 — not yet cut
+## 0.4.74 — 2026-10-31
 
-Entries merged after the 0.4.73 cut (`e2c03799`). The releaser dates this heading at the cut.
+Cut from master `0e6e6862`. It carries every master merge since 0.4.73 (`41230a7e`): #147, #176,
+#177, #178, #180, #182, #175, #179, #183, #184, #181, #185, #186, #188 and #189. Not in it: #149
+(gov, open), #187 (seal 1, waiting on saf), and #195 (the identity-census hop 23, opened after the
+train).
+
+**Images.** A chart bump restarts every pod.
+
+- **cortex-ui** is pinned to `c27e6d3` (`sha256:fa7e51ff…`). That is #59, where an export
+  profile's format is read verbatim, plus everything since `fe4d787`. Nothing changed in
+  `build.yml`, the Dockerfile or `package.json`, and no new `import.meta.env` read was added.
+  This cortex still sends `review_coverage` in the **parts** form. Its item form is cortex-ui #61,
+  which is open.
+- **cortex-bff** (`src/iagent`):
+  - #182: an `evidence_ref` follows the SDK's rule. A ref with page fractions passes; any other
+    is a 422 `evidence_ref_invalid` naming the failed check. ingest-v1 goes to 1.6.0. On sandbox
+    the stored population has no `evidence_ref` at all (fork 1, measured 10-31), so the rule
+    refuses no stored row.
+  - #181: the recipient readers for finance and cost come from the rail, through Topaz
+    `can_read_recipient`, not from code. A Topaz outage at a door answers 503
+    `recipient_readers_unavailable`.
+  - #179: the `can_call:<tag>` door. It does nothing until the chart sets
+    `CAN_CALL_DOOR_CLIENTS`, which no values file does yet.
+  - #184: a seed the persona cannot see is a policy refusal. It names the persona and the
+    missing domain.
+  - #186: an engine's 409 or 422 is relayed with its status and keys intact. An empty answer is
+    a named 502.
+  - #188: the BFF and the runner refuse a pixel box the same way.
+- **restate-analyst** (#188): `normalize_evidence_ref` applies the SDK's `EvidenceRef`.
+- **engine-fin** (#181, #185):
+  - its `/artifact` door asks the rail;
+  - a measure row declares its render shape, and the engine serves it.
+- **engine-cost** (#181): its `/artifact` door asks the rail.
+- **presentation-agent** (#185): it selects the archetype from the declared render, before the
+  output class.
+- **The legacy `review_coverage` parts form is still accepted.** Fork 3, which deletes it, is held
+  until cortex-ui #61 is on master. #173's "for 0.4.73 only" is extended by one release.
+
+**⚠ Before installing:** two hand syncs, both by a human, before the roll.
+
+1. **`topaz_sync` for the new group `mcp-callers`** (#179, below). Without it, the hook's
+   capability leg exits 5 and the release fails.
+2. **`recipient_reader_sync`, run once by hand from the 0.4.74 cortex-bff image** (#181). The
+   hook runs it at weight 3, which is after the engines roll. Until then, every finance and cost
+   download and export is refused (fail-closed). Sandbox is in image mode, so the rows come from
+   the 0.4.74 image's `policy/recipient_readers.yaml`.
+
+**Values.** No values change since 0.4.73 apart from the cortex-ui digest
+(`values.yaml` and `values-sandbox.yaml`).
+
+**No deploy effect:** #147 (the finance overlay contract doc and its key seal), #176 (a docx CDRL
+sample under `policy/`), #177 (the `iagent-mesh-mcp` chart, which is a separate chart and is not
+rolled with this one), #178 (the SDK-adoption seal), #180 (ingest-v1 1.5.0 docs), #175 (the MCP
+seals), #183 (`granted_by: seed`, an audit field; see below) and #189 (`board/`).
 
 **Policy changes (the MCP surface's call policy: `can_call:<tag>`)**
 
