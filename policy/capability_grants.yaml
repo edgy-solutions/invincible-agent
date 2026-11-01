@@ -71,6 +71,17 @@
 # (`grant_to_groups`). validate_policy.py refuses a `can_call:<T>` key whose T is not a tag of the
 # served MCP document (docs/api/mcp.openapi.json, held equal to the BFF by
 # scripts/generate_mcp_openapi.py --check).
+#
+# THE `can_review:<subject>` CONVENTION (2026-10-31 directive: "`can_review` for the workbench's
+# alignment reviewers"). A capability keyed `can_review:<S>` decides who may record a REVIEW
+# decision on review subject S (accept or reject what a pipeline proposed). The surface that writes
+# the decision asks Topaz `can_invoke` on capability `can_review:<S>` for the caller and refuses
+# when it is false; that check lives with the surface (the workbench's for `alignment`), never in
+# this repo's code, which names no subject. Deny-by-default: a subject with no row is reviewable by
+# NOBODY, and deleting a row revokes through the invoker-relation prune. Grant through a
+# capability-only group (`grant_to_groups`), never a person. The first ruled subject is
+# `alignment`: the workbench's concept-to-canonical ALIGNS_TO proposals
+# (`POST /alignment/proposals/review`).
 capabilities:
   # ADR-0029 Slice-1 demo fixture: the promotion workflow's publish emit. alice
   # (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) is the initiator authorized to
@@ -438,3 +449,12 @@ capabilities:
       row closes every MCP operation tagged mcp to door callers. A deployment configures this in its
       own policy repository.
     grant_to_groups: [mcp-callers]
+
+  can_review:alignment:
+    granted_by: seed
+    reason: >-
+      2026-10-31 directive: who may accept or reject the workbench's alignment proposals (a
+      concept ALIGNS_TO a canonical). The workbench asks can_invoke on this capability before it
+      writes a review. Deny-by-default: deleting this row leaves alignment reviewable by NOBODY. A
+      deployment configures this in its own policy repository.
+    grant_to_groups: [alignment-reviewers]
