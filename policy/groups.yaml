@@ -144,6 +144,11 @@ groups:
   # policy/capability_grants.yaml `grant_to_groups` for `can_drop:pcn` and `can_drop:pdn`.
   alert-processors: {}
 
+  # CALL-CAPABILITY GROUP ONLY (2026-10-31 ruling, M2). Grants NO persona.domain cell; named in
+  # policy/capability_grants.yaml `grant_to_groups` for every `can_call:<tag>`. A member may call the
+  # MCP surface through a door client; the member's own persona x domain still gates each route.
+  mcp-callers: {}
+
   # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-11 ruling). Grants NO persona.domain cell; named in
   # task_grants.yaml `grant_to_groups` for maint_supervisor_approval:edge-01.
   maint-supervisors-edge-01: {}
