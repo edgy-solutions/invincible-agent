@@ -12,8 +12,6 @@ neo4j, no Topaz and no engine is touched) is asked:
 and one positive control: a verified user token is admitted, so a refusal above is the door and not
 a broken instrument.
 
-The service-only arm is a STRICT XFAIL on master: see the test's reason for the defect.
-
 Run: uv run pytest tests/mcp_seals/test_no_mcp_tool_without_a_user_token.py -q
 """
 from __future__ import annotations
@@ -91,13 +89,6 @@ def test_control_a_verified_user_token_is_admitted(route, key):
     assert r.status_code == 200 and r.json() == {"reached": True}, (route.path, r.status_code)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DEFECT (Lane 1, src/iagent/auth.py get_current_user): the door verifies a signature and "
-    "resolves an authz id, and admits a service-only token (authz id in the `svc:` namespace, "
-    "client-credentials, no mailbox) on every mcp route. Nothing at the door tells a user token "
-    "from a service token; the only refusal of a `svc:` caller is per handler "
-    "(`_is_service_caller`) and covers only some routes. "
-    "Packet: sessions/2026-10-30-packet-to-lane-01-the-mcp-door-admits-a-service-token.md"))
 def test_a_service_only_token_is_refused_on_every_route(key):
     admitted = []
     for route in mcp_routes():
@@ -109,8 +100,8 @@ def test_a_service_only_token_is_refused_on_every_route(key):
 
 
 def test_the_service_token_is_a_service_caller_by_the_servers_own_predicate(key):
-    """CONTROL for the xfail: the token above is what the server itself calls a service caller, so
-    the xfail is not red for want of a well-formed service token."""
+    """CONTROL for the service-token seal: the token above is what the server itself calls a service caller, so
+    the refusal is not for want of a well-formed service token."""
     claims = jwt.decode(_service_token(key), options={"verify_signature": False})
     assert gateway._is_service_caller(auth.resolve_token_identity(claims)[1]) is True
     claims = jwt.decode(_user_token(key), options={"verify_signature": False})

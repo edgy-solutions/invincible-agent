@@ -1661,7 +1661,49 @@ async def file_triage_task(
             "recipients": len(result.get("recipients", []))}
 
 
-@app.get("/me/human_tasks", tags=[INGEST_V1_TAG, MCP_TAG], responses={200: {"model": HumanTasksListing}})
+def _body_names_on_behalf_of(route) -> bool:
+    """Does this route's request body carry an `on_behalf_of` field? Derived from the route's own
+    body parameters: a flat form/body field of that name, or a body model that declares it."""
+    for p in getattr(route.dependant, "body_params", []) or []:
+        if p.name == "on_behalf_of":
+            return True
+        model = getattr(p, "type_", None) or getattr(getattr(p, "field_info", None), "annotation", None)
+        if "on_behalf_of" in (getattr(model, "model_fields", None) or {}):
+            return True
+    return False
+
+
+def _mcp_door() -> list:
+    """The MCP surface's one door (saf seal 1): a verified token whose authz id is a service caller
+    (`_is_service_caller`: the `svc:` namespace or an asserted delegate, R-089) is refused 403
+    `service_token_refused` on every MCP-tagged route. Attached as `dependencies=_mcp_door()` on each
+    decorator, so FastAPI builds it into the route's dependant; a seal derives the tagged set and
+    asserts each carries it.
+
+    ONE exemption, derived and never listed: a declared delegate (`_delegate_principals`) passes on a
+    route whose request body has an `on_behalf_of` field -- there `_admit_on_behalf_of` still governs
+    what it may act for. A `svc:` id that is not a delegate is refused everywhere. The owning route
+    is found lazily, at first call, as the registered route whose dependant holds this very door."""
+    owner: dict = {}
+
+    def door(current_user: User = Depends(get_current_user)) -> User:
+        authz_id = current_user.authz_id
+        if not _is_service_caller(authz_id):
+            return current_user
+        if "takes_on_behalf_of" not in owner:
+            route = next((r for r in app.routes if any(
+                d.call is door for d in getattr(getattr(r, "dependant", None), "dependencies", []))), None)
+            owner["takes_on_behalf_of"] = route is not None and _body_names_on_behalf_of(route)
+        # R-089: a declared delegate passes only where the body can name a principal.
+        if owner["takes_on_behalf_of"] and authz_id in _delegate_principals():
+            return current_user
+        raise HTTPException(status_code=403, detail={"error": "service_token_refused", "authz_id": authz_id})
+
+    door.__mcp_door__ = True
+    return [Depends(door)]
+
+
+@app.get("/me/human_tasks", tags=[INGEST_V1_TAG, MCP_TAG], dependencies=_mcp_door(), responses={200: {"model": HumanTasksListing}})
 async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
     """The caller's pending queue (REST initial-load; the live path is the
     Electric subscription). Filtered by recipient_id=caller.authz_id — the SAME key
@@ -2546,7 +2588,7 @@ class FinanceMeasureBody(_BaseModel):
 _MEASURE_NAME = r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$"
 
 
-@app.post("/finance/measure/{fn}", tags=[MCP_TAG])
+@app.post("/finance/measure/{fn}", tags=[MCP_TAG], dependencies=_mcp_door())
 async def finance_measure(
     fn: _Annotated[str, _Path(pattern=_MEASURE_NAME)],
     body: FinanceMeasureBody,
@@ -3591,7 +3633,7 @@ async def _export_plan_answers(
     }
 
 
-@app.post("/export/package", tags=[MCP_TAG])
+@app.post("/export/package", tags=[MCP_TAG], dependencies=_mcp_door())
 async def export_package(
     body: ExportPackageRequest,
     request: Request,
@@ -3787,7 +3829,7 @@ async def export_package(
     }
 
 
-@app.get("/export/package/artifact/{filename}", tags=[MCP_TAG])
+@app.get("/export/package/artifact/{filename}", tags=[MCP_TAG], dependencies=_mcp_door())
 async def export_package_artifact(
     filename: str,
     request: Request,
@@ -3924,7 +3966,7 @@ def _engine_failure(label: str, rr) -> HTTPException:
     })
 
 
-@app.get("/export/cdrl/profiles", tags=[MCP_TAG])
+@app.get("/export/cdrl/profiles", tags=[MCP_TAG], dependencies=_mcp_door())
 async def export_cdrl_profiles(request: Request, current_user: User = Depends(get_current_user)):
     """The CDRL picker's option list: the engine's `[{name, format, scope, label}]`, relayed. The
     header keys only; the engine never sends a template path, a hash or a source."""
@@ -3943,7 +3985,7 @@ async def export_cdrl_profiles(request: Request, current_user: User = Depends(ge
     return rr.json()
 
 
-@app.get("/export/cdrl", tags=[MCP_TAG])
+@app.get("/export/cdrl", tags=[MCP_TAG], dependencies=_mcp_door())
 async def export_cdrl(
     request: Request,
     profile: str,
@@ -4802,7 +4844,7 @@ async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user:
     return ask
 
 
-@app.post("/canvas/seed", tags=[MCP_TAG], responses={200: {"model": CanvasSeedResponse}, 409: {"model": CanvasSeedConflict}})
+@app.post("/canvas/seed", tags=[MCP_TAG], dependencies=_mcp_door(), responses={200: {"model": CanvasSeedResponse}, 409: {"model": CanvasSeedConflict}})
 async def canvas_seed(
     request: CanvasSeedRequest,
     http_request: Request,
@@ -5519,7 +5561,7 @@ async def _stale_extraction(task_id: str, row: dict) -> "HTTPException":
         "stage": row.get("status"), "message": msg})
 
 
-@app.post("/human_tasks/{task_id}/act", tags=[INGEST_V1_TAG, MCP_TAG], responses={200: {"model": ActResponse}})
+@app.post("/human_tasks/{task_id}/act", tags=[INGEST_V1_TAG, MCP_TAG], dependencies=_mcp_door(), responses={200: {"model": ActResponse}})
 async def act_on_human_task(
     task_id: str,
     req: HumanTaskActRequest,
@@ -11125,7 +11167,7 @@ async def register_frontend_capabilities(
     )
 
 
-@app.post("/orchestrate", tags=[MCP_TAG])
+@app.post("/orchestrate", tags=[MCP_TAG], dependencies=_mcp_door())
 @app.post("/interview/stream")
 @_audit_orchestrate_refusals
 async def orchestrate(request: InterviewRequest, http_request: Request,
@@ -12403,7 +12445,7 @@ async def _load_viewable_case(case_id: str, current_user: User) -> tuple[dict, d
     return case, definitions
 
 
-@app.get("/cases/{case_id}", tags=[MCP_TAG])
+@app.get("/cases/{case_id}", tags=[MCP_TAG], dependencies=_mcp_door())
 async def get_case(case_id: str, current_user: User = Depends(get_current_user)):
     """GET /cases/{case_id} -- project the case runner's state (WorkflowRunner, ADR-0039) as
     cortex's `WorkflowCasePayload` (cortex-ui `src/archetypes/workflow-case/contract.ts`).
@@ -12571,7 +12613,7 @@ def _sniff_file_kind(head: bytes) -> Optional[str]:
     return None
 
 
-@app.post("/ingest", tags=[INGEST_V1_TAG, MCP_TAG], responses={200: {"model": IngestResponse}, **DROP_GATE_RESPONSES})
+@app.post("/ingest", tags=[INGEST_V1_TAG, MCP_TAG], dependencies=_mcp_door(), responses={200: {"model": IngestResponse}, **DROP_GATE_RESPONSES})
 async def ingest_document(
     file: UploadFile = File(...),
     kind: str = Form(...),
@@ -13766,7 +13808,7 @@ def _export_response(profile, rows: list, filename: str, **extra) -> Response:
 # The export routes carry their own tag, not ingest-v1: a v1 entry needs a JSON response model per
 # route and the CSV body is not JSON. They enter v1 as PREVIEW routes (like /empty) when Lane 1
 # regenerates the v1 doc and shapes lock (overnight item 5).
-@app.get("/ingest/export/profiles", tags=["ingest-export", MCP_TAG],
+@app.get("/ingest/export/profiles", tags=["ingest-export", MCP_TAG], dependencies=_mcp_door(),
          responses={200: {"model": list[ExportProfile]}})
 async def ingest_export_profiles_route(current_user: User = Depends(get_current_user)):
     """GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:
@@ -13802,7 +13844,7 @@ async def review_shapes_route(current_user: User = Depends(get_current_user)):
     return out
 
 
-@app.get("/ingest/export", tags=["ingest-export", MCP_TAG])
+@app.get("/ingest/export", tags=["ingest-export", MCP_TAG], dependencies=_mcp_door())
 async def ingest_export_batch_route(
         profile: Optional[str] = _Query(None), from_: Optional[str] = _Query(None, alias="from"),
         to: Optional[str] = _Query(None), current_user: User = Depends(get_current_user)):
