@@ -1686,7 +1686,8 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
             # A SERVED `render.shape` is the producer's declaration of how this answer is
             # drawn, and it is tried BEFORE the output class: a class an overlay added is on no
             # menu. With none, or when nothing fits, `select_presentation` runs unchanged.
-            _declared_shape = (_agent_resp.get("render") or {}).get("shape")                 if isinstance(_agent_resp.get("render"), dict) else None
+            _render = _agent_resp.get("render")
+            _declared_shape = _render.get("shape") if isinstance(_render, dict) else None
             _declared_prov: Dict[str, Any] = {}
             if isinstance(_declared_shape, str) and _declared_shape:
                 cap, _sel_prov = _select_by_declared_shape(
