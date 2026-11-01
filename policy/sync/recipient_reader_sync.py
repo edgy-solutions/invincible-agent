@@ -7,9 +7,13 @@ package (finance_agent/export.py and cost_agent/seed.py, each `RECIPIENT_READERS
 check ("is this caller a reader of this scope?"), which is exactly a Topaz `reader` relation
 (deny-by-default, git-asserted) on a `recipient_scope` object.
 
-THE OBJECT ID IS `<owner>:<scope>`. The OWNER (a closed set, `finance` | `cost`) is part of the
-id because the two engines' disclosures are entitled independently: a reader of one engine's
-scope is never a reader of the other's, even when the scope string collides.
+THE OBJECT ID IS `<owner>:<scope>`. The OWNER is part of the id because each owner's disclosures
+are entitled independently: a reader of one owner's scope is never a reader of another's, even
+when the scope string collides. The owners are CONFIGURATION (architect's standing rule,
+2026-10-30): they are the keys the rail file declares, each explicitly (an owner with no rows is
+`{}`), and this module names none. A deployment adds an owner with an overlay row, never a code
+change. An owner key must match OWNER_NAME_RE: lower-case, no `:` (a colon would make
+`<owner>:<scope>` ambiguous), at most 64 characters.
 
 EIGHT SYNCS, ONE DIRECTORY, DISJOINT SCOPE (no two prune the same relation):
   - topaz_sync.py                 -- persona/cell/group/member/user
@@ -27,7 +31,7 @@ relations not asserted in git (removing a row REVOKES can_read_recipient).
 
 PROVE-THE-NEGATIVE ON THE GRANT PATH, same discipline as program_member_sync.py: a row is
 REFUSED (nothing applied, non-zero exit) when MALFORMED -- missing `granted_by` (accountable
-human), `reason`, or `grant_to`; an owner outside {finance, cost}; an owner block or row that
+human), `reason`, or `grant_to`; an owner key that is not a name (OWNER_NAME_RE); an owner block or row that
 is not a mapping; or a `svc:` grantee (ADR-0047 section 5.1: a disclosure to a service identity
 entitles every caller it serves).
 
@@ -37,6 +41,7 @@ Readback (each grant resolves can_read_recipient TRUE) is the positive control.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from dataclasses import dataclass
 
@@ -52,8 +57,8 @@ PERMISSION = "can_read_recipient"
 # Disjoint prune scope: recipient_scope reader relations only.
 MANAGED_RECIPIENT_RELATIONS = [(OBJECT_TYPE, RELATION)]
 
-# CLOSED set: the engines that own a recipient scope.
-OWNERS = frozenset({"finance", "cost"})
+# An owner is a NAME the rail declares, not a member of a code-held set (2026-10-30 standing rule).
+OWNER_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -81,9 +86,10 @@ def load_readers(raw: dict) -> tuple[list[ReaderRecord], list[str]]:
     if not isinstance(top, dict):
         return out, ["recipient_readers MALFORMED: top level is not a mapping of owner -> scopes"]
     for owner, block in top.items():
-        if owner not in OWNERS:
-            errors.append(f"recipient_readers[{owner}] MALFORMED: owner is not one of "
-                          f"{sorted(OWNERS)}")
+        if not isinstance(owner, str) or not OWNER_NAME_RE.match(owner):
+            errors.append(f"recipient_readers[{owner}] MALFORMED: owner is not a name "
+                          f"({OWNER_NAME_RE.pattern}; no `:`, which would make "
+                          f"`<owner>:<scope>` ambiguous)")
             continue
         if block is None:
             block = {}

@@ -99,6 +99,10 @@ class User(BaseModel):
     # isn't email carries none. Stays `None` — never defaulted to a non-mailbox
     # value, so no consumer can mistake it for a real address.
     email: Optional[str] = None
+    # The OAuth client the token was issued to (the verified payload's `azp`): which front door
+    # ("cortex-ui", an MCP server's client) the caller came through. AUDIT / DISPLAY only -- never
+    # an authorization key (use authz_id). None when the token carries none; never defaulted.
+    azp: Optional[str] = None
     # The AUTHORIZATION identity — the key Topaz/policy is seeded by, resolved
     # from USER_ENTITLEMENT_CLAIM (email by default; employee-ID at work-deploy),
     # falling back to `sub` when the claim is absent. This is what every
@@ -288,6 +292,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         return User(
             id=user_id or authz_id,   # `sub` normally; authz_id if a token omits sub
             email=email,
+            azp=payload.get("azp"),
             authz_id=authz_id,
             roles=roles,
             persona=persona,

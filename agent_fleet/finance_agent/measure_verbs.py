@@ -11,6 +11,8 @@ Every refusal is at LOAD, names the FILE, and stops the engine booting: a row se
 half would be a verb that exists for some deployments and not others, with no symptom.
 
 * a formula, expression or query (`inputs` carries `params` and `state` only);
+* a top-level key the engine does not read (`_TOP_KEYS`): a `formula` written there would be
+  ignored, and its author would believe it took effect;
 * a quantity outside `STATE_VOCABULARY` (extending it is a code change, reviewed as one);
 * a built-in's `measure_id` or verb name;
 * a module that does I/O: its source is parsed and every import must be in `PURE_IMPORTS`;
@@ -97,6 +99,13 @@ PURE_IMPORTS = frozenset({"decimal", "typing", "__future__", "math", "fractions"
 _STATUSES = frozenset({"sample", "proposed", "ratified"})
 _PARAMS = frozenset({"program_id", "window"})
 _ID_RE = re.compile(r"^fin_[a-z0-9_]+$")
+# Every top-level key `_build` reads, and so every key a row may carry. `deleted` is not here: a
+# tombstone never reaches `_build` (`compose_rows` pops it), and `deleted: false` is not a key an
+# author writes. Docs: `docs/contracts/finance-overlays.md` section 2; the seal compares the two.
+_TOP_KEYS = frozenset({
+    "measure_id", "verb", "name", "description", "synonyms", "anti_synonyms",
+    "inputs", "computation", "outputs", "policy",
+})
 _PACKAGED = "agent_fleet.finance_agent."
 
 
@@ -185,6 +194,12 @@ def _names(builtins: tuple[Iterable[str], Iterable[str]]) -> tuple[frozenset, fr
 def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureVerbRow:
     # Raises ValueError: `compose_rows` re-raises it as MeasureVerbError WITH THE FILE NAMED.
     fns, verbs = _names(builtins)
+    unknown = sorted(set(raw) - _TOP_KEYS)
+    if unknown:
+        raise ValueError(
+            f"row carries {unknown}, which no part of the engine reads; a measure row cannot "
+            f"carry a formula, expression or query -- the computation lives in the named "
+            f"module (ADR-0053 section 3)")
     for path in ("measure_id", "verb", "name", "inputs.params.program_id", "inputs.state",
                  "computation.module", "computation.function", "computation.version",
                  "computation.derived_from.authority", "computation.derived_from.clause",

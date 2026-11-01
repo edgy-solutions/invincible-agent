@@ -1,0 +1,21 @@
+# SAMPLE -- a notional CDRL. A002 / DI-NOTIONAL-0002 name no real contract or data item.
+name: cdrl_a002_cost_performance_docx
+format: docx
+scope: program                       # one file per program
+label: CDRL A002 - Notional cost performance report, Word (synthetic)
+audience: program_office
+cdrl: {item: A002, title: Notional Cost Performance Report, data_item: DI-NOTIONAL-0002, frequency: monthly}
+template: {file: cdrl_a002_cost_performance.docx, sha256: 691a2c5f9e7c93137cb90b06f1e479f1fcd230f5ff085f78ee38e6035f37b8e1}
+cells: {T1!B1: program.name, T1!B2: program.id, T1!B3: as_of, T1!B4: cdrl.item, T1!B5: cdrl.data_item}   # table 1: labels in column A, values in column B
+sources:
+  - fn: fin_performance_indices
+  - fn: fin_tcpi
+table:
+  start: T2!A2                       # row 1 of table 2 is the template's own header row
+  key: period
+  columns:
+    - {from: period}
+    - {from: fin_performance_indices.cum_bcwp, format: "#,##0"}
+    - {from: fin_performance_indices.cum_acwp, format: "#,##0"}
+    - {from: fin_performance_indices.cum_cpi, format: "0.000"}
+    - {from: fin_tcpi.tcpi, format: "0.000"}

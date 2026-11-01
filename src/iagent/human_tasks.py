@@ -99,6 +99,9 @@ ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS promise_name TEXT;
 -- case_id: the case a task belongs to (architect ruling 2026-10-17); NULLABLE, honest-absent for
 -- tasks not filed from a case. Lets a task holder read the case the task is about.
 ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS case_id TEXT;
+-- on_behalf_of: who the task acts for, recorded apart from who requested it (ADR-0063 /
+-- OpenDDIL ADR-0052 s5). '' = service-origin finding; never NULL.
+ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS on_behalf_of TEXT NOT NULL DEFAULT '';
 """
 
 
@@ -245,6 +248,38 @@ def check_can_act(audience: str, caller_id: str) -> bool:
         return False  # fail-closed
 
 
+def can_invoke_or_unavailable(capability: str, caller_id: str) -> bool:
+    """Topaz ``can_invoke(caller, capability)``, the question :func:`check_can_invoke` asks, except
+    that a Topaz FAILURE raises instead of reading as False (ADR-0026: "auth is down" is not
+    "you're denied"). Empty capability or caller -> False. An unset TOPAZ_DIRECTORY_URL RAISES
+    `AuthorizationUnconfigured`. A transport error, a 5xx or an unreadable body RAISES
+    `AuthorizationUnavailable`.
+
+    An ungranted capability is a DENY, not an outage: `check_can_invoke` documents that Topaz
+    answers "object not found" for it, so a 404 from the check is False and every other non-2xx
+    is unavailable. The 404 mapping is asserted against a double, NOT measured live."""
+    if not capability or not caller_id:
+        return False
+    if not _TOPAZ_DIRECTORY_URL:
+        raise AuthorizationUnconfigured("TOPAZ_DIRECTORY_URL is unset")
+    payload = {
+        "object_type": "capability",
+        "object_id": capability,
+        "relation": "can_invoke",
+        "subject_type": "user",
+        "subject_id": caller_id,
+    }
+    try:
+        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+            r = c.post("/api/v3/directory/check", json=payload)
+            if r.status_code == 404:
+                return False
+            r.raise_for_status()
+            return bool(r.json().get("check"))
+    except (httpx.HTTPError, ValueError) as exc:  # ValueError: a body that is not JSON
+        raise AuthorizationUnavailable(type(exc).__name__) from exc
+
+
 def check_can_invoke(capability: str, caller_id: str) -> bool:
     """Application-layer gate for an EFFECT: Topaz ``can_invoke(caller, capability)``
     on the ``capability`` namespace (the sixth; git-asserted in
@@ -273,6 +308,48 @@ def check_can_invoke(capability: str, caller_id: str) -> bool:
             return bool(r.json().get("check"))
     except Exception:
         return False  # fail-closed
+
+
+def capability_object_exists(capability: str) -> bool:
+    """Does the Topaz directory object `capability:<capability>` exist? 404 -> False, found ->
+    True. Unlike :func:`check_can_invoke`, this NEVER swallows: here False means OPEN (the
+    `can_drop:<kind>` gate exists only while its object does), so a transport error, any other
+    non-2xx, or an unreadable answer RAISES `AuthorizationUnavailable`, and an unset
+    TOPAZ_DIRECTORY_URL RAISES `AuthorizationUnconfigured` (503 either way, never open).
+    Same directory API and object type as `policy/sync/topaz_sync.py`'s `object_exists`."""
+    if not _TOPAZ_DIRECTORY_URL:
+        raise AuthorizationUnconfigured("TOPAZ_DIRECTORY_URL is unset")
+    from urllib.parse import quote
+
+    try:
+        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+            r = c.get(f"/api/v3/directory/object/capability/{quote(capability, safe='')}")
+    except httpx.HTTPError as exc:
+        raise AuthorizationUnavailable(type(exc).__name__) from exc
+    if r.status_code == 404:
+        return False
+    if not r.is_success:
+        raise AuthorizationUnavailable(f"HTTP {r.status_code}")
+    return True
+
+
+def can_drop_refusal(kind: str, dropper_id: str) -> "dict | None":
+    """The `can_drop:<kind>` gate. None = the dropper may drop this kind; otherwise the fields of
+    the refusal, for the gateway to raise through `policy_refusal`. A kind is gated iff
+    `capability:can_drop:<kind>` exists; an absent object is OPEN. A raise from
+    `capability_object_exists` or `can_invoke_or_unavailable` propagates (never open, and a Topaz
+    failure is never a refusal: a 404 or `check: false` is the only "no")."""
+    capability = f"can_drop:{kind}"
+    if not capability_object_exists(capability):
+        return None
+    if can_invoke_or_unavailable(capability, dropper_id):
+        return None
+    return {
+        "policy_id": f"capability_grants:{capability}",
+        "missing_binding": f"can_invoke({capability})",
+        "message": f"{dropper_id!r} may not drop a {kind!r} document: it is not granted "
+                   f"{capability}.",
+    }
 
 
 def check_can_view_program(program: str, caller_id: str) -> bool:
@@ -394,6 +471,26 @@ def latest_task_for_subject(subject_ref: str, kind: str) -> Optional[dict[str, A
 #: generation and retires the old). NOT a resolution: no decision, no acted_by. Terminal, never open.
 SUPERSEDED = "superseded"
 
+#: The one status the inbox reads as OPEN, and the status of a task whose await timed out
+#: (terminal: nobody can act on it; retired by :func:`expire_open_task`).
+PENDING = "pending"
+TIMED_OUT = "timed_out"
+
+#: THE inbox predicate -- the one definition. REST (:func:`list_tasks_for`, parameterised) and the
+#: Electric feed (gateway `electric_shape_proxy`, literal) both build their WHERE from here.
+INBOX_RECIPIENT_COLUMN = "recipient_id"
+
+
+def inbox_where_params() -> str:
+    """The inbox WHERE with two `%s` placeholders: (caller authz_id, status)."""
+    return f"{INBOX_RECIPIENT_COLUMN} = %s AND status = %s"
+
+
+def inbox_where_literal(escaped_caller_id: str) -> str:
+    """The inbox WHERE as a literal for the Electric shape. Does NOT escape: the caller validates
+    and escapes the identity (gateway `_escape_identity_literal`) and passes the result in."""
+    return f"{INBOX_RECIPIENT_COLUMN} = '{escaped_caller_id}' AND status = '{PENDING}'"
+
 
 def supersede_open_task(task_id: str) -> int:
     """Mark every `pending` row of a logical task `superseded` (`updated_at` set); returns the
@@ -408,6 +505,27 @@ def supersede_open_task(task_id: str) -> int:
                     WHERE task_id = %s AND status = 'pending'""",
                 (now, task_id),
             )
+            n = cur.rowcount
+        conn.commit()
+    return n
+
+
+def expire_open_task(task_id: str, workflow_id: "str | None") -> int:
+    """Mark the `pending` rows of a task whose await TIMED OUT `timed_out` (`updated_at` set);
+    returns the rowcount. Touches only `pending` rows -- a resolved row keeps its resolution. When
+    `workflow_id` is given the update is scoped to it (task_id alone is not unique: HAZ-1003, see
+    :func:`mark_task_resolved`). Not a resolution: `decision`/`acted_by` are left as they were."""
+    now = int(time.time() * 1000)
+    sql = """UPDATE human_task_projection
+                SET status = 'timed_out', updated_at = %s
+              WHERE task_id = %s AND status = 'pending'"""
+    params: list[Any] = [now, task_id]
+    if workflow_id is not None:
+        sql += " AND workflow_id = %s"
+        params.append(workflow_id)
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, tuple(params))
             n = cur.rowcount
         conn.commit()
     return n
@@ -448,6 +566,7 @@ def register_task(
     promise_name: Optional[str] = None,
     excludes: Optional[list[str]] = None,
     case_id: Optional[str] = None,
+    on_behalf_of: str = "",
 ) -> dict[str, Any]:
     """Register a HumanTask: resolve the audience's authorized actors from Topaz
     and materialize ONE projection row per actor. Returns {task_id, recipients}.
@@ -469,6 +588,9 @@ def register_task(
     Restate ingress URL (defense in depth: a bad value is refused at the EARLIER of the two
     places that could catch it, same discipline as `check_can_act` re-checking at resolve time
     over trusting the replication filter alone).
+
+    `on_behalf_of` -- who the task acts for, recorded SEPARATELY from `requested_by` (ADR-0063).
+    "" is legal and means a service-origin finding; it is never a refusal.
 
     `requested_by` must name someone (`NoRequester` otherwise), checked FIRST: before the audience
     is resolved and before any DB touch, so no other refusal can stand in front of it.
@@ -504,13 +626,14 @@ def register_task(
             "task no one may act on (grant another actor the audience, then re-drive)"
         )
     now = int(time.time() * 1000)
+    on_behalf_of = str(on_behalf_of or "").strip()
     payload_json = json.dumps(payload or {})
     rows = []
     for actor_id in actors:
         rows.append((
             str(uuid.uuid4()), kind, task_id, workflow_id, audience, actor_id,
             "pending", title, summary, requested_by, subject_ref, payload_json,
-            None, None, None, None, now, now, workflow_service, promise_name, case_id,
+            None, None, None, None, now, now, workflow_service, promise_name, case_id, on_behalf_of,
         ))
     if rows:
         with _pg_connect() as conn:
@@ -521,7 +644,7 @@ def register_task(
                        (id, kind, task_id, workflow_id, audience, recipient_id,
                         status, title, summary, requested_by, subject_ref, payload,
                         acted_by, acted_at, decision, comment, created_at, updated_at,
-                        workflow_service, promise_name, case_id)
+                        workflow_service, promise_name, case_id, on_behalf_of)
                        VALUES %s""",
                     rows,
                 )
@@ -529,7 +652,7 @@ def register_task(
     return {"task_id": task_id, "audience": audience, "recipients": actors}
 
 
-def list_tasks_for(caller_id: str, *, status: str = "pending") -> list[dict[str, Any]]:
+def list_tasks_for(caller_id: str, *, status: str = PENDING) -> list[dict[str, Any]]:
     """REST fallback / initial-load for the caller's queue (the live path is the
     Electric subscription). `caller_id` is the authz_id. Filters by recipient_id =
     caller — the SAME key the Electric proxy injects, so REST and streaming agree."""
@@ -542,7 +665,7 @@ def list_tasks_for(caller_id: str, *, status: str = "pending") -> list[dict[str,
                           summary, requested_by, subject_ref, payload, created_at,
                           workflow_service, promise_name, case_id
                      FROM human_task_projection
-                    WHERE recipient_id = %s AND status = %s
+                    WHERE """ + inbox_where_params() + """
                     ORDER BY created_at DESC""",
                 (caller_id, status),
             )
@@ -677,7 +800,7 @@ def list_tasks_for_workflows(workflow_ids: "list[str]") -> list[dict[str, Any]]:
     with _pg_connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                """SELECT task_id, workflow_id, status, decision, acted_by, acted_at, comment
+                """SELECT task_id, workflow_id, status, decision, acted_by, acted_at, comment, payload, title
                      FROM human_task_projection
                     WHERE workflow_id = ANY(%s)""",
                 (ids,),
@@ -1079,6 +1202,9 @@ def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
     if decision == SUPERSEDED:
         # A supersession is the BFF retiring a task, not a person's decision: it has no acted_by.
         raise ValueError("'superseded' cannot be a resolution: use supersede_open_task")
+    if decision == TIMED_OUT:
+        # A timeout is the await expiring, not a person's decision: it has no acted_by.
+        raise ValueError("'timed_out' cannot be a resolution: use expire_open_task")
     status = decision
     with _pg_connect() as conn:
         with conn.cursor() as cur:

@@ -148,6 +148,20 @@ def test_2_an_impure_module(tmp_path, monkeypatch):
         sys.modules.pop("tmp_impure_measure", None)
 
 
+def test_2_a_top_level_formula_is_refused_not_ignored(tmp_path):
+    # Spec F: `_build` read named keys only, so a top-level `formula` loaded and did nothing.
+    _refused(tmp_path, lambda r: r.update(formula="BAC - EV"), "formula", "cannot carry a formula")
+
+
+def test_2_the_control_for_the_top_level_formula_differs_only_by_that_key(tmp_path):
+    d = _write(tmp_path, lambda r: None, name="good.yaml")
+    assert [r.measure_id for r in _load([d], tmp=tmp_path)] == ["fin_tcpi"]
+    (tmp_path / "x").mkdir()
+    bad = _write(tmp_path / "x", lambda r: r.update(formula="BAC - EV"))
+    with pytest.raises(measure_verbs.MeasureVerbError):
+        _load([bad], tmp=tmp_path)
+
+
 def test_2_policy_visibility(tmp_path):
     _refused(tmp_path, lambda r: r["policy"].update(visibility="public"), "visibility")
 

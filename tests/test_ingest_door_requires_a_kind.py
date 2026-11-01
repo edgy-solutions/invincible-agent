@@ -19,6 +19,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from src.iagent import content_kinds as ck  # noqa: E402
 from src.iagent import gateway  # noqa: E402
 from src.iagent import ingest_status as ist  # noqa: E402
+from tests._can_drop_open import can_drop_open  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("can_drop_open")
 
 
 def _reg(kind, branch="document", domain="maintenance"):
@@ -116,6 +119,8 @@ def test_the_real_openddil_lab_overlay_registers_xml_and_not_cad(client, rig, mo
     from pathlib import Path
     overlay = Path(__file__).resolve().parents[1] / "policy" / "overlays" / "openddil-lab" / "content_kinds"
     monkeypatch.undo()  # drop the rig's stand-in registry; rebuild the doubles over the real one
+    from src.iagent import human_tasks as _ht
+    monkeypatch.setattr(_ht, "capability_object_exists", lambda capability: False)  # undo() dropped can_drop_open
     monkeypatch.setattr(ck, "_REGISTRATIONS_CACHE", None)
     monkeypatch.setenv("CONTENT_KIND_OVERLAY_DIRS", str(overlay))
     s3, recorded = [], []

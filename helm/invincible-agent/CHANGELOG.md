@@ -1,6 +1,109 @@
 # invincible-agent helm chart — changelog
 
-## Unreleased
+## 0.4.73 — 2026-10-30
+
+Cut from master `e2c03799`. It carries every master merge since 0.4.72 (`77fb1d73`): #148, #151,
+#159, #144, #166, #161, #164, #167, #168, #162, #163, #171, #172, #169, #170 and #173. #149 (gov)
+and #147 (fin) are not in it; they go to 0.4.74 once their lanes act. The three policy blocks
+below were written into the 0.4.72 section by the PRs that landed after that cut; they are moved
+here, where they ship.
+
+**Images.** A chart bump restarts every pod.
+
+- **Every Python image pins iagent-mesh v0.9.12** (#172). The domain broker's
+  `meshSdkVersion` moves `v0.9.10` → `v0.9.12` with it; that is the one values change in this
+  release.
+- **cortex-bff** (`src/iagent`):
+  - #163: the export door checks `can_export:<profile>`, on single and batch exports alike. It is
+    deny-by-default, so a profile with no row cannot be exported by anyone.
+  - #148: the BFF reads the answer-export profiles that engine-cost serves, not its own copy.
+  - #172: `GET /review-shapes` serves one registry (`policy/review_shapes`). The review shapes
+    notice, document, course and finding are rows there, not code.
+  - #173: a promotion's `review_coverage` is accepted in both the legacy and the registry form
+    for this one release. A legacy body is converted on read, and ingest-v1 goes to 1.5.0. The
+    `document_promotion` literals become `promotion.KIND`.
+  - #169: thirteen BFF operations carry the `mcp` tag, the wrapping surface for the MCP server.
+    `docs/api/mcp.openapi.json` is generated and sealed, and ingest-v1 went to 1.4.1. `/orchestrate`
+    leaves one `orchestrate_access` audit line per call.
+  - #170: `POST /finance/measure/{fn}` is a thin relay to finance-agent that forwards the real
+    caller, declared `delegates` in the endpoint-gating manifest.
+  - #167: the minted acceptance case key is stamped where the engine response is read.
+  - #144: the BFF side of the CDRL format change.
+- **Dagster code location**: #167 also changes `dynamic_supervisor.py`. #168 records
+  `human_task_projection.on_behalf_of` apart from `requested_by`. The column is added by the
+  module's own `ADD COLUMN IF NOT EXISTS ... DEFAULT ''`, so no migration Job is needed.
+- **finance-agent**: #144. A CDRL profile names its format: docx tables, csv and json under the
+  xlsx contract. `cdrl_a001_ev_summary_json` ships in the sample overlay.
+- **cost-agent**: #148. It serves the answer-export profiles, including `plan-answers`.
+- **safety-agent**: #166. The draft card reads its task kind and reason verbs from the served
+  declarations.
+- **Policy baked into the images:**
+  - #151, #159 and #171 are described in the policy blocks below.
+  - #161: `mesh:s1000dFaultWalk` grants operator.regioneast, a user that is already in
+    `policy/users.yaml` (since 2026-10-20).
+  - #172 adds `policy/review_shapes/` and the openddil-lab content kinds' `review_shape`.
+
+**⚠ Before installing:** no human `topaz_sync` is expected.
+- `policy/groups.yaml`, `users.yaml`, `task_grants.yaml` and `program_members.yaml` are unchanged
+  since 0.4.72 (`git diff --quiet 77fb1d73 e2c03799` on the four files).
+- Every group a new `can_export:` row names already exists in `policy/groups.yaml`:
+  alert-processors (synced at rev 222), portfolio-leads and finance-analysts.
+- The capability leg of the task-grant-sync hook writes the new rows at the roll.
+
+At work, an overlay that sets `EXPORT_PROFILE_OVERLAY_DIRS` or carries fin CDRL profiles needs a
+`can_export:` row for each profile it adds, or `validate_policy` refuses it.
+
+**No deploy effect:** #162 (an ADR). #164 changes the walk census (`scripts/` and
+`src/iagent_pure/walk_census.py`); it is tooling, and no service reads it.
+
+**Policy changes (2026-10-29/30 rulings: who may export a profile)**
+
+- **The `can_export:<profile>` convention** (header comment in `policy/capability_grants.yaml`):
+  who may export export profile `<profile>`, deny-by-default (no row, nobody). `validate_policy`
+  gains three refusals: a `can_export:` key naming an unknown profile; a profile name in two of the
+  review-export, answer-export and fin CDRL sets; ANY known profile with no row. That refusal's
+  advice is derived from the rows deciding other profiles of the same kind; no group is named in
+  code (architect's standing rule, 2026-10-30). The ruled grantees are rows: review-export
+  `[alert-processors]`, fin CDRL `[finance-analysts]` (ruled 2026-10-29), and `plan-answers`
+  `[portfolio-leads]` (ruled 2026-10-29/30; alice, erin and chris hold it already, so no
+  `topaz_sync` precondition). That row shipped in #171.
+  One row gates a single export and a batch alike. Each kind is read where its own loader reads it:
+  `INGEST_EXPORT_PROFILE_DIR` or `policy/exports`; `EXPORT_PROFILE_POLICY_DIR` or
+  `policy/exports/answers`, plus `EXPORT_PROFILE_OVERLAY_DIRS`; fin's CDRL seed and overlays.
+  Answer-export profiles (fin's #148) need a row too (ruled 2026-10-30).
+- **Five rows ship**, one per profile the seed knows:
+  - `can_export:default-csv` and `can_export:default-json` (Lane 1's `policy/exports`),
+    `grant_to_groups: [alert-processors]`;
+  - `can_export:plan-answers` (#171), `[portfolio-leads]`;
+  - `can_export:cdrl_a001_ev_summary` and, from #171, `can_export:cdrl_a001_ev_summary_json`,
+    `[finance-analysts]`.
+
+  Every group already exists, so there is no `topaz_sync` precondition. The capability leg writes
+  the rows at the roll. They gate from this release on: #163's export door checks
+  `can_export:<P>`, on single and batch exports alike.
+
+**Policy changes (2026-10-29 ruling: a `plan` owner on the recipient_readers rail)**
+
+- **`recipient_readers` gains the owner `plan`** (`policy/recipient_readers.yaml`). It is the owner fin's #148 asks for plan recipients
+  (`can_read_recipient("plan", scope, caller)`). One row ships (ruled 2026-10-30): alice reads
+  `plan:notional-plan-office`, the recipient #148's `plan-answers` profile names. Any other plan
+  scope is refused. No sync precondition: the `recipient_scope` type exists and alice is a seeded
+  user; the recipient-readers leg writes the object and its one relation at the next roll.
+- **The owners are configuration, not code** (architect's standing rule, 2026-10-30). The rail's
+  owners are the keys the file declares; `recipient_reader_sync.OWNERS`, a closed set that made a new
+  owner a code edit, is gone. A deployment's overlay may declare its own owner. An owner key must be
+  a name (`OWNER_NAME_RE`, no `:`, which would make `<owner>:<scope>` ambiguous) or the overlay is
+  refused whole.
+
+## 0.4.72 — 2026-10-30
+
+Cut from master `3ff2235f` for the 2026-10-30 rehearsal, so that the work cluster installs
+a version and never a master sha. It carries every master merge since 0.4.71 (`23db2006`): #114,
+#115, #116, #119, #16, #17, #128, #125, #124, #129, #131, #132, #130, #133, #134, #126, #44, #135,
+#138, #136, #137, #139, #140, #127, #152, #146, #153, #155, #154, #156, #145, #150, #157, #158
+and #143. The release branch also regenerates `docs/api/cortex-bff.openapi.json`: #157 changed
+the docstring of `POST /cases/{case_id}/signals/{signal}` without regenerating it, which left
+`tests/test_bff_openapi_is_current.py` red on master. The fix is one line of generator output.
 
 **Policy changes (2026-10-28 ruling: pcn and pdn droppable by the alert-processors group only)**
 
@@ -11,9 +114,11 @@
 - **Two `can_drop:` rows** in `policy/capability_grants.yaml`: `can_drop:pcn` and `can_drop:pdn`,
   both `grant_to_groups: [alert-processors]`. A kind is gated iff `capability:can_drop:<kind>`
   exists, so deleting a row reopens the kind to every caller.
-- **Nothing gates a drop until Lane 1's door lands.** These rows are inert data until it does.
-- **The sync must also run in the task-grant-sync hook Job** (Lane 1's change); this entry does not
-  wire it.
+- **The door landed in #153**, so these rows now gate a drop: the ingest door refuses a caller
+  outside the group.
+- **The sync runs in the task-grant-sync hook Job** (#153,
+  `templates/task-grant-sync-job.yaml:258`), and in the overlay modes the Job FATALs, exit 2, when
+  the overlay lacks `capability_grants.yaml`.
 - **Before that roll, a human `topaz_sync` must create `group:alert-processors`** (new group in
   `policy/groups.yaml`, alice in `policy/users.yaml`), or the capability leg exits 5.
 
@@ -29,6 +134,85 @@
   `policy/recipient_readers.yaml` ships with both owners empty; the finance and cost lanes move
   their own rows. No engine reads the rail yet. Loading the new manifest type is done by the
   existing `topaz-manifest-load` Job.
+- **The frontend pin** in `values.yaml` and `values-sandbox.yaml`: `cortexUi.image.digest` →
+  `sha256:4d6dd208…` (cortex-ui `fe4d787`), the case-panel fix the rehearsal lands on
+  (architect, 2026-10-30). It descends from `42c470c`, the image that sends `review_coverage`.
+- **Sandbox values.** `VITE_FEATURES` gains `promotionRuns`, in the same roll that first stores
+  `review_coverage` (architect, 2026-10-30). Four overlay-dir keys arrive with their merges:
+  `MEASURE_VERB_OVERLAY_DIRS` and `CANVAS_OVERLAY_DIRS` (#135), `FIN_EXPORT_PROFILE_OVERLAY_DIRS`
+  (#136), and `GRANTOR_OVERLAY_DIRS` (#126).
+
+**Images.** A chart bump restarts every pod.
+- **cortex-bff (`src/iagent`):**
+  - The case panel reads `current_stage`, `options` and `output_artifact` from the workflow
+    definition and the case projection (#155).
+  - A choice card says what each choice leads to, read from the chaining table (#140).
+  - A timed-out task leaves the queue, and the REST route and the feed read one predicate (#146).
+  - A Topaz outage at the ingest door is a 503 with `Retry-After`, not a 403 (#153). The door reads
+    `capability:can_drop:<kind>`; with the rows in `policy/capability_grants.yaml` it gates `pcn`
+    and `pdn` to the alert-processors group.
+  - `GET /ingest/export` (the batch) and the export of a notice the caller did not drop need the
+    domain-scoped `ingest:exportBatch` capability: a notice is admitted only when its promotion
+    domain is one of the caller's entitlement-cell domains (#154). New `src/iagent/export_profiles.py`
+    and two default profiles, `policy/exports/default-csv.yaml` and `default-json.yaml`.
+  - `POST /human_tasks/{id}/act` on a `document_promotion` takes `review_coverage`: the parts
+    opened and the named groups. The server checks that every part is one or the other (422
+    `review_coverage_invalid`) and stores it on the provenance record. ingest-v1 1.4.0
+    (#156).
+  - An early exit records "no verb" and its reason (#152); an engine's refusal-bearing 401/403/409
+    is relayed as a refusal, not an outage (#131); a relayed refusal parses the same on both sides
+    (#119).
+  - The canvas seed's enumerator and the two engine-fin export posts forward the caller's own
+    edge identity, and are registered as hops 18–21 of the person chain; the enumerator's
+    parameters are keyword-only and required (#145).
+  - `/canvas/seed` derives the cell a persona names, and a panel's caller error is a 4xx naming
+    the field (#132); the export offer names what each recipient takes (#137); an answer routed
+    before the intent hop exports its verb (#139); an ask's program options name `program_members`
+    (#116).
+  - A reference per fan-out slot in the identity vault (#44); `write_grant_and_sync` writes an audit
+    line (#124).
+- **restate-analyst / workflow runner:**
+  - Approvals wait 72 h in the sandbox workflows (#152); a timed-out task leaves the queue (#146).
+  - The case routing reads the chaining table for card text (#140); the workflow definition
+    carries the stage and options the panel reads (#155).
+  - #157 — the supervisor's approval is the release (maint_release drops tier_ack).
+- **finance-agent:**
+  - The finance verbs refuse a program the caller cannot view, with the refusal envelope (#130).
+  - A measure is an overlay row (the TCPI verb) and a CDRL is an export profile (#135, #136); a
+    lotless answer on a refused cost board is named, not dropped (#137).
+  - A CDRL profile may set `provenance_sheets: false`, so the delivered file is exactly the
+    customer form. The envelope and `X-Cells-Sha256` still carry the provenance (#143).
+- **safety-agent:**
+  - One rule for `safety_critical`, a domain-scoped seed, and unmatched rows reported on the
+    PrimeRun row (#125, #115). No automated path clears `safety_critical` (#128).
+- **repository-agent (engine-r):** the repository-of-record core: propose, merge by sha, tag and
+  audit notes (#133); its 19 refusal keys are classified (#138). The chart has no template for
+  it; this is image content only.
+- **presentation-agent:** `MODEL_EXPLANATION` is admitted by name (#129).
+- **ontology_service:** an empty required slot is asked, and the parts answer holds (#16, #17).
+- **Policy baked into the images:**
+  - `can_drop:pcn`, `can_drop:pdn` and `ingest:exportBatch` rows, the `alert-processors` group and
+    alice's membership (#134, #154);
+  - `policy/recipient_readers.yaml` (both owners empty) and its grantor seed (#127);
+  - the maintenance workflows' card text, 72 h approvals and case-panel fields (#140, #152, #155);
+  - the sandbox grantor overlay and the sample TCPI, CDRL and canvas overlays (#126, #135, #136).
+
+**⚠ Before installing:**
+- **A human `topaz_sync` first.** `policy/groups.yaml:143` adds `alert-processors`, and
+  `policy/users.yaml:64` adds alice to it. `capability_grant_sync` never creates a group and exits
+  5 when it is absent from live Topaz, which fails the `task-grant-sync` Job (the leg is
+  `helm/invincible-agent/templates/task-grant-sync-job.yaml:258`). `ingest:exportBatch`
+  (`policy/capability_grants.yaml:315`) grants the same group, so one sync covers all three rows.
+- **The capability rows are written by the `task-grant-sync` Job** (`can_drop:pcn` at
+  `policy/capability_grants.yaml:297`, `can_drop:pdn` at `:305`, `ingest:exportBatch` at `:315`).
+  In the overlay modes the Job now FATALs, exit 2, if the overlay has no `capability_grants.yaml`.
+  `topaz-seed-cronjob.yaml` runs the same script.
+- **The `recipient_scope` manifest type** is declared at
+  `helm/invincible-agent/templates/topaz-configmap.yaml:269` and loaded by the existing
+  `topaz-manifest-load` Job (`templates/topaz-manifest-load-job.yaml`). A manifest SET replaces
+  the whole schema, so let that Job run before the `recipient_reader_sync` leg.
+
+**No deploy effect:** #114, #128, #150 and #158 (tests only). No merge in this range is docs-only.
 
 ## 0.4.71 — 2026-10-28
 

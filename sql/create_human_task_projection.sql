@@ -98,3 +98,7 @@ ALTER TABLE human_task_projection
 -- case_id: the case a task belongs to (architect ruling 2026-10-17); a holder may read that case.
 ALTER TABLE human_task_projection
     ADD COLUMN IF NOT EXISTS case_id TEXT;
+-- on_behalf_of: who the task acts for, apart from who requested it (ADR-0063 / OpenDDIL
+-- ADR-0052 s5). '' = service-origin finding.
+ALTER TABLE human_task_projection
+    ADD COLUMN IF NOT EXISTS on_behalf_of TEXT NOT NULL DEFAULT '';

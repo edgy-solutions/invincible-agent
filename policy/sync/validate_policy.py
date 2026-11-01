@@ -20,6 +20,10 @@ definition of "valid", never a parallel re-implementation):
   - program_members.yaml          → program_member_sync.load_programs
   - capability_grants.yaml        → also: a `grant_to_groups` group exists and has members, and
     a `can_drop:<K>` key names a KNOWN content kind (see known_content_kinds)
+  - capability_grants.yaml        → also: a `can_export:<P>` key names a KNOWN export profile
+    (see known_export_profiles), no profile name is in two kinds, and every known profile --
+    review-export (policy/exports), answer-export (policy/exports/answers) and fin CDRL -- has a
+    `can_export:<P>` row (deny-by-default: no row, nobody exports)
   - recipient_readers.yaml        → recipient_reader_sync.load_readers (WHEN PRESENT; not in
     DATA_FILES -- see the note there)
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
@@ -124,6 +128,83 @@ def known_content_kinds() -> tuple[set[str], list[str]]:
                 found += 1
         sources.append(f"{d.as_posix()} ({found} kind(s))")
     return kinds, sources
+
+
+#: No grantee is named in code (architect's standing rule, 2026-10-30: a group is configuration).
+#: Each ruled grantee is a ROW in policy/capability_grants.yaml -- the review-export default rows
+#: (alert-processors), the CDRL row (the program-finance persona's group), the plan-answers row
+#: (portfolio-leads) -- and the completeness refusal derives its advice from the rows that already
+#: decide profiles of the same kind.
+_EXPORT_KIND_LABEL = {"review_export": "review-export", "answer_export": "answer-export",
+                      "fin_cdrl": "fin CDRL"}
+
+
+def known_export_profiles(
+    sources: list[tuple[Path, str]] | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """The export profiles a `can_export:<P>` capability key may name: {name: kind}, and notes.
+
+    kind is "review_export" (lane/01's ingest-review profiles, policy/exports), "answer_export"
+    (fin's answer-export profiles, policy/exports/answers -- lane/01's glob is not recursive, so the
+    subdirectory keeps them apart) or "fin_cdrl" (fin's CDRL profiles). `sources` is an ordered
+    [(dir, kind)] for tests; None composes each kind from the directories its own loader reads:
+      - review_export: INGEST_EXPORT_PROFILE_DIR if set, else <root>/policy/exports
+        (src/iagent/export_profiles.py; the variable MOVES the directory, it adds none);
+      - answer_export: the seed (EXPORT_PROFILE_POLICY_DIR if set, else
+        <root>/policy/exports/answers), then each dir in EXPORT_PROFILE_OVERLAY_DIRS
+        (agent_fleet/utils/answer_exports.py);
+      - fin_cdrl: the seed (FIN_EXPORT_PROFILE_POLICY_DIR if set, else
+        <root>/policy/fin_export_profiles), each dir in FIN_EXPORT_PROFILE_OVERLAY_DIRS, then the
+        sandbox's overlay (policy/overlays/sample/fin_export_profiles).
+    Within a kind fin's semantics apply (agent_fleet/finance_agent/export_profiles.py): dirs are
+    applied in order, a later same-`name` row replaces an earlier one, `deleted: true` removes the
+    name. Only `name` and `deleted` are read (this gate runs where the engines are not
+    importable); unparseable files are ignored, as known_content_kinds does. A name present in
+    two kinds' final sets is a COLLISION: a note starting `COLLISION:` which validate() turns into an
+    error. Each source's note reads `<dir> (<n> profile(s))` or `<dir> (absent)`."""
+    root = Path(__file__).resolve().parents[2]
+    if sources is None:
+        sources = [(Path(os.getenv("INGEST_EXPORT_PROFILE_DIR")
+                         or root / "policy" / "exports"), "review_export")]
+        sources.append((Path(os.getenv("EXPORT_PROFILE_POLICY_DIR")
+                             or root / "policy" / "exports" / "answers"), "answer_export"))
+        raw = (os.getenv("EXPORT_PROFILE_OVERLAY_DIRS") or "").strip()
+        sources += [(Path(p.strip()), "answer_export") for p in raw.split(os.pathsep) if p.strip()]
+        sources.append((Path(os.getenv("FIN_EXPORT_PROFILE_POLICY_DIR")
+                             or root / "policy" / "fin_export_profiles"), "fin_cdrl"))
+        raw = (os.getenv("FIN_EXPORT_PROFILE_OVERLAY_DIRS") or "").strip()
+        sources += [(Path(p.strip()), "fin_cdrl") for p in raw.split(os.pathsep) if p.strip()]
+        sources.append((root / "policy" / "overlays" / "sample" / "fin_export_profiles", "fin_cdrl"))
+    by_kind: dict[str, set[str]] = {}
+    notes: list[str] = []
+    for d, kind in sources:
+        names = by_kind.setdefault(kind, set())
+        if not d.is_dir():
+            notes.append(f"{d.as_posix()} (absent)")
+            continue
+        found = 0
+        for f in sorted(d.glob("*.yaml")):
+            try:
+                doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except (OSError, yaml.YAMLError):
+                continue
+            n = doc.get("name") if isinstance(doc, dict) else None
+            if not (isinstance(n, str) and n.strip()):
+                continue
+            n = n.strip()
+            if doc.get("deleted") is True:
+                names.discard(n)
+            else:
+                names.add(n)
+                found += 1
+        notes.append(f"{d.as_posix()} ({found} profile(s))")
+    profiles: dict[str, str] = {}
+    for kind, names in by_kind.items():
+        for n in sorted(names):
+            if n in profiles:
+                notes.append(f"COLLISION: {n!r} is a {profiles[n]} profile and a {kind} profile")
+            profiles[n] = kind
+    return profiles, notes
 
 
 def _read_yaml(path: Path, errors: list[str]) -> dict:
@@ -287,6 +368,87 @@ def domain_consumption_required_fields(raw: dict, known_domains: set[str]) -> li
     return out
 
 
+#: A FORK of iagent_mesh ReviewShapeRow's required fields, restated because this gate runs
+#: without the SDK. tests/test_review_shapes_are_one_registry.py holds it equal to the model.
+REVIEW_SHAPE_REQUIRED = ("review_shape", "item_kind", "rules_version")
+
+
+def _read_review_shapes(d: Path) -> tuple[dict[str, Path], list[str]]:
+    """{review_shape: file} for every VALID `*.yaml` row in `d`, and the errors for the rest.
+    This gate runs where the SDK is not importable, so the row's shape (iagent_mesh
+    ReviewShapeRow: review_shape, item_kind and rules_version strings; params a mapping; rules a
+    list of {id: str, params: mapping}) is checked here, and the file stem must equal the row's
+    `review_shape` (src/iagent/review_shapes.py applies the same rule)."""
+    shapes: dict[str, Path] = {}
+    errors: list[str] = []
+    if not d.is_dir():
+        return shapes, errors
+    for f in sorted(d.glob("*.yaml")):
+        try:
+            doc = yaml.safe_load(f.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            errors.append(f"{f.as_posix()}: unreadable ({type(exc).__name__})")
+            continue
+        if not isinstance(doc, dict):
+            errors.append(f"{f.as_posix()}: a review-shape row is a mapping")
+            continue
+        problems: list[str] = []
+        bad = [k for k in REVIEW_SHAPE_REQUIRED
+               if not (isinstance(doc.get(k), str) and doc[k].strip())]
+        if bad:
+            problems.append(f"{', '.join(bad)} must be a non-empty string")
+        if not isinstance(doc.get("params", {}), dict):
+            problems.append("params must be a mapping")
+        rules = doc.get("rules", [])
+        if not isinstance(rules, list) or not all(
+                isinstance(r, dict) and isinstance(r.get("id"), str)
+                and isinstance(r.get("params", {}), dict) for r in rules):
+            problems.append("rules must be a list of {id: str, params: mapping}")
+        if problems:
+            errors += [f"{f.as_posix()}: {m}" for m in problems]
+            continue
+        if doc["review_shape"] != f.stem:
+            errors.append(f"{f.as_posix()}: file stem {f.stem!r} must equal review_shape "
+                          f"{doc['review_shape']!r}")
+            continue
+        shapes[doc["review_shape"]] = f
+    return shapes, errors
+
+
+def review_shape_errors(policy_dir: Path, enums_dir: Path) -> tuple[list[str], int]:
+    """(errors, n_shapes). Every `review_shapes/*.yaml` (the seed, and each
+    `overlays/*/review_shapes`) must validate, and every content-kind row that sets `review_shape`
+    (the seed's and each overlay's) must name a row in the registry composed FOR THAT OVERLAY:
+    the seed plus that overlay's own review_shapes. The seed is `<policy_dir>/review_shapes`, else
+    the product's (`<enums_dir>/review_shapes`) for an overlay repo validating its own tree."""
+    errors: list[str] = []
+    seed_dir = policy_dir / "review_shapes"
+    if not seed_dir.is_dir():
+        seed_dir = enums_dir / "review_shapes"
+    seed, errs = _read_review_shapes(seed_dir)
+    errors += errs
+    total = len(seed)
+    layers: list[tuple[Path, dict[str, Path]]] = [(policy_dir / "content_kinds", seed)]
+    overlays = policy_dir / "overlays"
+    for o in sorted(overlays.iterdir()) if overlays.is_dir() else []:
+        shapes, errs = _read_review_shapes(o / "review_shapes")
+        errors += errs
+        total += len(shapes)
+        layers.append((o / "content_kinds", {**seed, **shapes}))
+    for kinds_dir, registry in layers:
+        for f in sorted(kinds_dir.glob("*.yaml")) if kinds_dir.is_dir() else []:
+            try:
+                doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except (OSError, yaml.YAMLError):
+                continue
+            shape = doc.get("review_shape") if isinstance(doc, dict) else None
+            if shape is not None and shape not in registry:
+                errors.append(
+                    f"{f.as_posix()}: review_shape {shape!r} names no row in the review-shape "
+                    f"registry (known: {', '.join(sorted(registry)) or 'none'})")
+    return errors, total
+
+
 def validate(
     policy_dir: Path,
     enums_dir: Path,
@@ -392,6 +554,40 @@ def validate(
                 f"kind open. Known kinds ({len(_kinds)}) were composed from the `kind:` field "
                 f"of: " + "; ".join(_sources))
 
+    # `can_export:<P>` (DENY-BY-DEFAULT, unlike can_drop): the door asks can_invoke on
+    # `can_export:<P>` and False refuses, so a profile with no row is exportable by NOBODY. There is
+    # no generated default (the sync Job's image cannot reliably see every profile overlay), so the
+    # defaults are met by COMPLETENESS here: every known profile, of every kind, must have a row
+    # (CDRL ruled 2026-10-29, answer-export ruled 2026-10-30). The refusal's advice is DERIVED from
+    # the rows that decide other profiles of the same kind -- never a group held in code.
+    _profiles, _pnotes = known_export_profiles()
+    for _n in _pnotes:
+        if _n.startswith("COLLISION:"):
+            errors.append(f"capability_grants.yaml: export profile {_n}")
+    _pnotes = [n for n in _pnotes if not n.startswith("COLLISION:")]
+    _export_keys = {c.key[len("can_export:"):] for c in caps if c.key.startswith("can_export:")}
+    for _p in sorted(_export_keys - set(_profiles)):
+        errors.append(
+            f"capability_grants.yaml: 'can_export:{_p}' names {_p!r}, which is NOT a known export "
+            f"profile -- a misspelt key gates nothing and the real profile stays unexportable. "
+            f"Known profiles ({len(_profiles)}) were composed from the `name` field of: "
+            + "; ".join(_pnotes))
+    _kind_groups: dict[str, set[str]] = {}
+    for c in caps:
+        _cp = c.key[len("can_export:"):] if c.key.startswith("can_export:") else None
+        if _cp in _profiles:
+            _kind_groups.setdefault(_profiles[_cp], set()).update(c.grant_to_groups)
+    for _p, _k in sorted(_profiles.items()):
+        if _p not in _export_keys:
+            _l = _EXPORT_KIND_LABEL.get(_k, _k)
+            _g = sorted(_kind_groups.get(_k, ()))
+            errors.append(
+                f"capability_grants.yaml: {_l} profile {_p!r} has no 'can_export:{_p}' row, so "
+                f"NOBODY could export it (deny-by-default). Add one; "
+                + (f"the other {_l} rows grant `grant_to_groups: [{', '.join(_g)}]`" if _g else
+                   f"no other {_l} profile has a row to follow, so the row names its own group "
+                   f"(ask the architect)"))
+
     # recipient_readers.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note
     # there; required-or-not is open with the architect). Absent = no reader asserted = every
     # recipient check denies, which is fail-closed, so absence is not an error here.
@@ -482,6 +678,12 @@ def validate(
         caps, groups_raw.get("groups") or {}, users_raw.get("users") or [],
         file_label="capability_grants.yaml", noun="capability",
         nobody="nobody could invoke the capability"))
+
+    # review_shape: one vocabulary, one registry (ruled 2026-10-30). A row must validate, and a
+    # content kind's `review_shape` must name a row, or the card it asks for is not one we render.
+    _shape_errors, _n_shapes = review_shape_errors(policy_dir, enums_dir)
+    errors.extend(_shape_errors)
+    print(f"  review_shapes: {_n_shapes} shape(s)")
 
     # ── NO SERVICE IDENTITY AS A DISCLOSURE RECIPIENT ───────────────────────────────────────
     #

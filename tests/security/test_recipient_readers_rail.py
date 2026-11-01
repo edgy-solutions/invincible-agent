@@ -11,7 +11,11 @@ WHAT EACH GROUP DEFENDS
               whole, never partially applies (a silently dropped row is a reader nobody can find).
   derive      the Topaz object id is `<owner>:<scope>`; the same scope string under the two owners
               is two objects (CONTROL), so a reader of one engine is never a reader of the other.
-  shipped     the committed policy/recipient_readers.yaml loads clean with exactly the two owners.
+  owners      an owner is a NAME the rail declares, not a member of a code-held set (architect's
+              standing rule, 2026-10-30): a new owner loads from a row alone; a key that is not a
+              name (a `:` would make `<owner>:<scope>` ambiguous) is dropped and named.
+  shipped     the committed policy/recipient_readers.yaml loads clean with exactly the three owners;
+              its one plan row (ruled 2026-10-30) is alice on a scope an answer profile names.
   grantor     the family resolves in the composed grantor map, object-scoped, pointing at a rail
               file that exists -- so a refusal on this family can name who grants.
   join        the engine's question (object type, permission), the sync's constants and EVERY
@@ -88,10 +92,28 @@ def test_a_row_missing_a_required_field_is_dropped_and_the_error_names_it(field,
     assert len(errors) == 1 and field in errors[0], errors
 
 
-def test_an_owner_outside_the_closed_set_is_dropped_and_named():
-    rows, errors = load_readers(_raw(owner="safety"))
+def test_a_new_owner_is_a_row_not_a_code_change():
+    """Test 2 of the 10-30 standing rule: a new behaviour is reachable by adding a row. An owner
+    no code names loads and derives its own object."""
+    rows, errors = load_readers(_raw(owner="safety", scope="notional-board"))
+    assert errors == [] and [r.object_id for r in rows] == ["safety:notional-board"], errors
+    assert not hasattr(rrs, "OWNERS"), "a code-held owner set is back"
+
+
+@pytest.mark.parametrize("owner", ["plan:office", "Plan", "plan office", "", "9plan", "p" * 65])
+def test_an_owner_key_that_is_not_a_name_is_dropped_and_named(owner):
+    rows, errors = load_readers(_raw(owner=owner))
     assert rows == []
-    assert len(errors) == 1 and "safety" in errors[0] and "owner" in errors[0], errors
+    assert len(errors) == 1 and "owner is not a name" in errors[0], errors
+
+
+def test_a_colon_in_the_owner_would_collide_object_ids():
+    """CONTROL for the colon refusal: without it, owner `a:b` scope `c` and owner `a` scope `b:c`
+    are one Topaz object, so a reader of one would read the other."""
+    ok, errors = load_readers(_raw(owner="a", scope="b:c"))
+    assert errors == [] and [r.object_id for r in ok] == ["a:b:c"]
+    bad, errors = load_readers(_raw(owner="a:b", scope="c"))
+    assert bad == [] and len(errors) == 1, errors
 
 
 def test_a_non_mapping_owner_block_is_dropped_and_named():
@@ -145,11 +167,66 @@ def test_the_same_scope_under_both_owners_is_two_objects():
 
 # -- the shipped file -----------------------------------------------------------------------
 
-def test_shipped_rail_file_loads_clean_with_exactly_the_two_owners():
+def test_shipped_rail_file_loads_clean_with_exactly_the_three_owners():
+    """`plan` joined 2026-10-29 (architect's ruling) for fin's #148 plan recipient. The shipped
+    owners are the seed's rows; a deployment's overlay may declare more."""
     raw = yaml.safe_load(_RAIL.read_text(encoding="utf-8"))
     _rows, errors = load_readers(raw)
     assert errors == []
-    assert set(raw["recipient_readers"]) == {"finance", "cost"} == set(rrs.OWNERS)
+    assert set(raw["recipient_readers"]) == {"finance", "cost", "plan"}
+
+
+def test_the_shipped_plan_row_is_alice_on_the_notional_plan_office():
+    """Ruled 2026-10-30: "#159 adds alice as a reader of plan:notional-plan-office". Exactly that
+    one object and one reader -- a wider row is a reader nobody ruled."""
+    raw = yaml.safe_load(_RAIL.read_text(encoding="utf-8"))
+    rows, errors = load_readers(raw)
+    assert errors == []
+    plan = [(r.object_id, sorted(r.grant_to)) for r in rows if r.object_id.startswith("plan:")]
+    assert plan == [("plan:notional-plan-office", ["alice@example.com"])], plan
+
+
+def test_every_shipped_plan_scope_is_a_recipient_an_answer_profile_names():
+    """Join: a plan reader row on a scope no answer-export profile names entitles a download that
+    never exists, and the real recipient stays refused. Read from #148's profiles by FORM
+    (policy/exports/answers/*.yaml `recipients`); skips until they are on this tree."""
+    answers = _REPO / "policy" / "exports" / "answers"
+    named = set()
+    for f in sorted(answers.glob("*.yaml")) if answers.is_dir() else []:
+        doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+        if isinstance(doc, dict) and not doc.get("deleted"):
+            named |= set(doc.get("recipients") or [])
+    if not named:
+        pytest.skip("no answer-export profile names a recipient on this tree (fin's #148 has not landed)")
+    raw = yaml.safe_load(_RAIL.read_text(encoding="utf-8"))
+    scopes = set((raw["recipient_readers"].get("plan") or {}))
+    assert scopes and scopes <= named, (scopes, named)
+
+
+def test_a_plan_row_loads_and_derives_a_plan_object():
+    rows, errors = load_readers(_raw(owner="plan", scope="notional-plan-office"))
+    assert errors == [] and [r.object_id for r in rows] == ["plan:notional-plan-office"]
+    ids = {r.object_id for r in derive_desired(rows).relations}
+    assert ids == {"plan:notional-plan-office"}
+
+
+def test_the_plan_owner_is_the_one_every_consumer_asks_for():
+    """Join: the owner string fin's consumers pass (#148: engine-cost and the BFF each declare
+    `_PLAN_OWNER`) is an owner the shipped rail DECLARES -- read from the file, not a code set.
+    Found by FORM, so a third consumer is held too. Skips until a consumer is on this tree; then a
+    renamed constant on either side reds."""
+    form = re.compile(r'^_PLAN_OWNER\s*=\s*"([^"]*)"', re.M)
+    found = {}
+    for top in ("agent_fleet", "src"):
+        for f in (_REPO / top).rglob("*.py"):
+            if ".venv" in f.parts or "__pycache__" in f.parts:
+                continue
+            for m in form.finditer(f.read_text(encoding="utf-8", errors="replace")):
+                found[f.relative_to(_REPO).as_posix()] = m.group(1)
+    if not found:
+        pytest.skip("no consumer declares _PLAN_OWNER on this tree (fin's #148 has not landed)")
+    declared = set(yaml.safe_load(_RAIL.read_text(encoding="utf-8"))["recipient_readers"])
+    assert {k: v for k, v in found.items() if v not in declared} == {}, (found, declared)
 
 
 # -- grantor --------------------------------------------------------------------------------

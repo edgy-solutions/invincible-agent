@@ -46,6 +46,7 @@ from fastapi import (
     Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status,
 )
 from fastapi import Query as _Query
+from fastapi import Path as _Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
@@ -56,12 +57,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
+from iagent_mesh.review_coverage import ReviewShapeRow
+from iagent_mesh.provenance import EvidenceRef  # the SDK model; the one EvidenceRef (ruling 2026-10-31)
+from pydantic import ValidationError as _PydanticValidationError
+from . import review_coverage as _rcov
+from .review_coverage import ItemReviewCoverage
 from . import frontend_menu_store
 from .ingest_api import (
-    BINARY_200, INGEST_V1_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse, Entitlements,
-    Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing, RetriesListing,
+    BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, MCP_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse,
+    Entitlements, ExportProfile, Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing,
+    RetriesListing,
     RetryResponse, StatusBody, TitleLeafResponse,
 )
+from .ingest_api import EvidenceRef as _ServedEvidenceRef  # the served contract
 from .identity_vault import (
     _ensure_the_audit_line_actually_ARRIVES,
     VAULT,
@@ -156,6 +164,48 @@ def _env_int(name: str, default: int) -> int:
 
 
 _LEAF_BACKSTOP_ACTOR = "bff:manifest-leaf-backstop"
+
+
+# No Retry-After value existed in src/; 5 s matches the 5 s Topaz client timeout.
+_CAN_DROP_RETRY_AFTER = "5"
+
+
+def _row_dropper(row: dict) -> str:
+    """The dropper of record for a status row: `on_behalf_of`, the actor `_admit_on_behalf_of`
+    resolved at `record_received` (the PRINCIPAL when a delegate dropped for them). `submitted_by`
+    is the authenticated delegate and never answers a drop question; it is only the fallback for a
+    row that recorded no actor."""
+    return str((row or {}).get("on_behalf_of") or (row or {}).get("submitted_by") or "").strip()
+
+
+async def _can_drop_or_refuse(kind: str, dropper_id: str) -> None:
+    """THE one can_drop check, called by every site that sets a row's kind (the two doors,
+    title_leaf, /leaf, the BFF leaf backstop). A kind is gated iff the Topaz object
+    `capability:can_drop:<kind>` exists; then the dropper must hold `can_invoke`. Returns when the
+    dropper may drop it. Raises 403 `not_entitled_to_drop` (policy refusal) when not, and 503
+    `authorization_unavailable` / `authorization_unconfigured` when the directory cannot say --
+    a failed read is never "not gated"."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+    from .authz.refusal import policy_refusal
+
+    try:
+        refused = await run_in_threadpool(human_tasks.can_drop_refusal, kind, dropper_id)
+    except human_tasks.AuthorizationUnconfigured as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("can_drop gate unavailable for kind=%s: %s", kind, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify whether this kind is restricted"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
+    if refused is not None:
+        raise policy_refusal(
+            "not_entitled_to_drop", policy_id=refused["policy_id"],
+            missing_binding=refused["missing_binding"], message=refused["message"])
 _INGEST_LEAF_BACKSTOP_SECONDS_DEFAULT = 300
 
 # Ruling 2026-10-21 (a leaf set while the run is in flight): a PDF drop whose leaf (pcn|pdn) is set
@@ -259,6 +309,22 @@ async def _apply_manifest_leaf_block(row: dict, key, manifest: dict) -> tuple:
     if title is not None:
         # The sidecar is rewritten to the leaf BEFORE the row is re-opened, so the relaunch
         # runs as the leaf; an S3 error lands in the per-row except (row skipped).
+        try:
+            await _can_drop_or_refuse(title, _row_dropper(row))
+        except HTTPException as exc:
+            code = exc.status_code
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            logger.warning("ingest_leaf_backstop ingest_id=%s kind=%s refused by can_drop: %s (%s)",
+                           rid, title, detail.get("error"), code)
+            if code != 403:
+                # the directory could not answer: leave the row untouched for the next tick
+                return "can_drop_unavailable", False
+            held = await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+                rid, candidates=_backstop_candidates(block.get("candidates")),
+                detail=f"the title read named {title}, which the dropper may not drop; "
+                       "pick another kind",
+                from_statuses=[ingest_status.EXTRACTING]))
+            return ("awaiting_kind" if held else "row_moved"), held
         await run_in_threadpool(lambda: _apply_leaf_to_sidecar(row, title))
         ok = await run_in_threadpool(lambda: ingest_status.set_leaf(
             rid, title, "title", set_by=_LEAF_BACKSTOP_ACTOR,
@@ -1069,14 +1135,40 @@ async def get_mesh_config(current_user: User = Depends(get_current_user)):
 # step 3 wired), `cells` is empty and `source` reflects the JWT-legacy
 # path. The picker (step 5) treats an empty cells list as "no picker
 # — the caller is on the legacy persona-in-JWT posture."
-@app.get("/me/entitlements", tags=[INGEST_V1_TAG], responses={200: {"model": Entitlements}})
+@app.get("/me/entitlements", tags=[INGEST_V1_TAG], responses={200: {"model": Entitlements}, 503: DROP_GATE_RESPONSES[503]})
 async def get_me_entitlements(current_user: User = Depends(get_current_user)):
     """Return the current user's (persona, domain) entitlement matrix.
 
     `authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop
     echoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it
     as `on_behalf_of` is refused `not_a_delegate` (2026-10-21)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, human_tasks
+
     ent = current_user.entitlements
+    # `droppable_kinds`: every registered kind except a GATED kind (Topaz object
+    # `capability:can_drop:<kind>` exists) this caller is not granted. One unreadable object makes
+    # the whole answer 503 -- never a partial or guessed list.
+    def _droppable() -> list[str]:
+        out: list[str] = []
+        for reg in content_kinds.registrations():
+            if human_tasks.can_drop_refusal(reg.kind, current_user.authz_id) is None:
+                out.append(reg.kind)
+        return out
+
+    try:
+        droppable_kinds = await run_in_threadpool(_droppable)
+    except human_tasks.AuthorizationUnconfigured as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("droppable_kinds unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify which kinds are restricted"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
     return {
         "user_id": current_user.id,
         "authz_id": current_user.authz_id,
@@ -1090,6 +1182,7 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
             else None
         ),
         "source": ent.source,
+        "droppable_kinds": droppable_kinds,
     }
 
 
@@ -1106,7 +1199,9 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
 from pydantic import BaseModel as _BaseModel  # noqa: E402
 from pydantic import BeforeValidator as _BeforeValidator, StrictFloat as _StrictFloat  # noqa: E402
 from pydantic import StrictInt as _StrictInt  # noqa: E402
+from pydantic import StrictBool as _StrictBool, StrictStr as _StrictStr  # noqa: E402
 from typing import Annotated as _Annotated  # noqa: E402
+from typing import Union as _Union  # noqa: E402
 
 
 class HumanTaskRegisterRequest(_BaseModel):
@@ -1164,29 +1259,6 @@ class _RowEditsModel(_BaseModel):
     model_config = {"extra": "forbid"}
 
 
-class EvidenceRef(_BaseModel):
-    """Where on the source page a steward's edit is evidenced: the SDK's `EvidenceRef{page, bbox}`
-    (iagent-mesh-sdk lane/ca-0.9.11 provenance.py) plus an optional `note` (architect 2026-10-21;
-    the pre-ruling free string is now `note`). The wire also still takes that bare string until
-    cortex ships the struct; `_wire_evidence_ref` validates both.
-
-    Architect ruling (spec 205): "bbox may be null; page may not. Null bbox means 'stated on this
-    page, no box we can draw'. The card jumps to the page with no outline and labels it 'on page N,
-    no box'. Derived fields carry no evidence_ref at all." So `page` is required and `bbox` is
-    `None` (or omitted, which is the same) or four finite numbers."""
-    model_config = {"extra": "forbid", "frozen": True}
-    page: _StrictInt = Field(ge=1)
-    bbox: Optional[list[_StrictInt | _Annotated[_StrictFloat, Field(allow_inf_nan=False)]]] = Field(
-        default=None, min_length=4, max_length=4)
-    note: Optional[str] = None
-
-    @model_validator(mode="after")
-    def _note(self):
-        if self.note is not None:
-            _nonblank(self.note)
-        return self
-
-
 def _wire_evidence_ref(v):
     """The wire check for an evidence_ref: the struct (validated by `EvidenceRef`) or the legacy
     non-blank string; anything else is a 422. The value is kept in the form it arrived in -- the
@@ -1197,7 +1269,16 @@ def _wire_evidence_ref(v):
     if isinstance(v, str):
         return _nonblank(v)
     if isinstance(v, dict):
-        ref = EvidenceRef.model_validate(v)
+        # Architect ruling 2026-10-31: the SDK's rule wins; a ref it (or the named checks) refuses is
+        # a 422 naming the check. The checks are strict (no bool/str coercion) where the model is lax.
+        _check = _wire_evidence_ref_failure(v)
+        try:
+            ref = EvidenceRef.model_validate(v)
+        except _PydanticValidationError:
+            _check = _check or "invalid"
+        if _check is not None:
+            raise HTTPException(status_code=422, detail={
+                "error": "evidence_ref_invalid", "check": _check})
         return {"page": ref.page, "bbox": list(ref.bbox) if ref.bbox is not None else None,
                 **({"note": ref.note.strip()} if ref.note is not None else {})}
     raise ValueError("an evidence_ref is {page, bbox, note?} or a non-blank string")
@@ -1275,6 +1356,44 @@ class HeaderEdit(_RowEditsModel):
         return self
 
 
+class CoverageGroup(_RowEditsModel):
+    """One group of parts a steward folded without opening: the grouping rule, its key, and the
+    members NOT opened (part_index values)."""
+    rule: _Annotated[str, Field(min_length=1)]
+    key: _Annotated[str, Field(min_length=1)]
+    parts: list[_StrictInt]
+
+
+_UnitFloat = _Annotated[_StrictFloat, Field(ge=0, le=1, allow_inf_nan=False)]
+_UnitInt = _Annotated[_StrictInt, Field(ge=0, le=1)]
+
+
+class CoverageShared(_RowEditsModel):
+    """One evidence crop that many parts cite (recorded, not re-derived)."""
+    rule: _Annotated[str, Field(min_length=1)]
+    page: _StrictInt = Field(ge=1)
+    bbox: _Annotated[list[_UnitFloat | _UnitInt], Field(min_length=4, max_length=4)]
+    parts: list[_StrictInt]
+    confirmed: _StrictBool
+
+
+class ReviewCoverage(_RowEditsModel):
+    """DEPRECATED, accepted for 0.4.73 only: the 1.4.0 `parts` form; it is read as items (see
+    `review_coverage.py`). The item form is `ItemReviewCoverage`.
+
+    What the steward looked at on a document promotion (ruled 2026-10-29: a sampled promote is
+    legal if it is recorded). Ids are the extraction's integer `part_index`. The route checks every
+    part was opened or folded into a group (`review_coverage_invalid`); `sampled`, `flagged`,
+    `shared` and `sample` are recorded as sent."""
+    rules_version: _Annotated[str, Field(min_length=1)]
+    looked_at: list[_StrictInt]
+    sampled: list[_StrictInt]
+    flagged: list[_StrictInt]
+    groups: list[CoverageGroup]
+    shared: list[CoverageShared]
+    sample: Optional[dict[str, _StrictStr | _StrictInt | _StrictFloat | _StrictBool]] = None
+
+
 def _promotion_row_edits_enabled() -> bool:
     """IAGENT_PROMOTION_ROW_EDITS: ON only for the exact string "true" (after strip, lowercased).
     Default OFF (architect ruling 2026-10-18: server-flagged off until one live correction is proved)."""
@@ -1292,6 +1411,9 @@ class HumanTaskActRequest(_BaseModel):
     row_edits: Optional[RowEdits] = None
     # Document promotion `promoted` only (same flag as row_edits): header-field corrections.
     header_edits: Optional[list[HeaderEdit]] = None
+    # Document promotion `promoted` only: what the steward opened vs folded (provenance).
+    review_coverage: Optional[_Union[ItemReviewCoverage, ReviewCoverage]] = Field(
+        default=None, union_mode="left_to_right")
     # document_empty_confirm `has_parts` only (spec 208): the page the steward points at.
     page: Optional[_StrictInt] = None
 
@@ -1304,6 +1426,9 @@ class HumanTaskActRequest(_BaseModel):
         if self.row_edits is not None and self.decision not in ("approved", "promoted"):
             raise ValueError("row_edits is only valid with decision='approved' (grouped review) "
                              "or 'promoted' (document promotion)")
+        if self.review_coverage is not None and self.decision != "promoted":
+            raise ValueError("review_coverage is only valid with decision='promoted' "
+                             "(document promotion)")
         if self.header_edits is not None and not self.header_edits:
             self.header_edits = None
         if self.header_edits is not None:
@@ -1376,6 +1501,26 @@ async def register_human_task(
     logger.info("human_task registered: task_id=%s audience=%s recipients=%d",
                 req.task_id, req.audience, len(result.get("recipients", [])))
     return result
+
+
+class HumanTaskExpireRequest(_BaseModel):
+    task_id: str
+    workflow_id: Optional[str] = None
+
+
+@app.post("/internal/human_tasks/expire")
+async def expire_human_task(
+    req: HumanTaskExpireRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Retire the still-`pending` queue row(s) of a task whose human_await TIMED OUT, so neither
+    REST nor the feed offers a task nobody can act on. INTERNAL seam, same gate as register
+    (get_current_user). `expired == 0` is a 200: an already-resolved task stays resolved."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    n = await run_in_threadpool(lambda: human_tasks.expire_open_task(req.task_id, req.workflow_id))
+    logger.info("human_task expired: task_id=%s workflow_id=%s rows=%d", req.task_id, req.workflow_id, n)
+    return {"task_id": req.task_id, "workflow_id": req.workflow_id, "expired": n}
 
 
 @app.post("/access_requests")
@@ -1516,7 +1661,7 @@ async def file_triage_task(
             "recipients": len(result.get("recipients", []))}
 
 
-@app.get("/me/human_tasks", tags=[INGEST_V1_TAG], responses={200: {"model": HumanTasksListing}})
+@app.get("/me/human_tasks", tags=[INGEST_V1_TAG, MCP_TAG], responses={200: {"model": HumanTasksListing}})
 async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
     """The caller's pending queue (REST initial-load; the live path is the
     Electric subscription). Filtered by recipient_id=caller.authz_id — the SAME key
@@ -2389,6 +2534,61 @@ async def plan_measure(
     }
 
 
+class FinanceMeasureBody(_BaseModel):
+    """Only `params`. There is no `state_ref`, deliberately: finance_agent's `MeasureRequest`
+    (agent_fleet/finance_agent/main.py) carries `params` and `user_email` and nothing else, so a
+    `state_ref` here would be accepted and silently dropped."""
+    params: dict = {}
+
+
+# A measure name is one plain path segment. Without this, `..` or a decoded `?`/`#` in `fn` would
+# send the caller's bearer to some other engine path; the ruling exposes no engine route directly.
+_MEASURE_NAME = r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$"
+
+
+@app.post("/finance/measure/{fn}", tags=[MCP_TAG])
+async def finance_measure(
+    fn: _Annotated[str, _Path(pattern=_MEASURE_NAME)],
+    body: FinanceMeasureBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """A thin relay to finance_agent `/measure/{fn}` (architect ruling 10-30, ruling 1: "add a
+    thin BFF relay for /measure/{fn} (it's what cortex calls anyway). No engine route is exposed
+    directly.").
+
+    Unlike `plan_measure`, this relay forwards the caller's bearer and `authz_id`, so the engine's
+    program-visibility check (`_require_visible`) decides for the real caller. The engine's 422
+    `needs_slots` is relayed unchanged (it is the declared refusal for a missing slot, not a
+    policy refusal); every other >= 400 goes through `relay_refusal` as `export_package` does.
+    A 200 is the engine's envelope, untouched."""
+    bearer = _user_bearer(request)
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            rr = await client.post(
+                f"{_ENGINE_FIN_URL}/measure/{fn}",
+                json={"params": body.params, "user_email": current_user.authz_id},
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_unreachable", "message": str(exc),
+        })
+
+    if rr.status_code == 422:
+        raise HTTPException(status_code=422, detail=rr.json().get("detail"))
+    if rr.status_code >= 400:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, relay_refusal(detail)))
+
+    return rr.json()
+
+
 @app.get("/plan/state_version")
 async def plan_state_version(
     state_ref: str = "baseline",
@@ -2474,6 +2674,159 @@ def _fin_export_recipients_for(user: "User") -> list[str]:
         s for s in _fin_export.RECIPIENT_SCOPES
         if user.authz_id and user.authz_id in _fin_export.readers_for_recipient(s)
     )
+
+
+# -- PLAN ANSWERS EXPORT (policy/exports) ----------------------------------------------------
+#
+# A plan recipient is named by an answer-export profile (`agent_fleet/utils/answer_exports.py`,
+# seed `policy/exports/`), not by cost's `RECIPIENT_SCOPES`. Its READERS are the
+# `recipient_readers` rail under owner "plan": `can_read_recipient("plan", scope, authz_id)`.
+# Deny-by-default; until that owner exists on the rail nobody can export to one, which is intended.
+# PRODUCING one also needs `can_export:<profile name>` (ruled (b) 10-30, deny by default, the row is
+# policy's): "exportable" = reader AND can_export. The download stays reader-only.
+_PLAN_OWNER = "plan"
+_NOT_A_KIND = "not_a_kind_this_recipient_takes"
+_SCENARIO_ANSWER = "scenario_answer"
+
+
+def _cost_profiles_get(url: str) -> "httpx.Response":
+    """The one GET to engine-cost for its profile set (a seam: the tests serve cost's real app
+    through it). It carries NO person and so no bearer: the set is policy, not a person's data."""
+    return httpx.get(url, timeout=10.0)
+
+
+def _plan_profiles() -> dict:
+    """The answer-export profiles engine-cost SERVES (`GET /answers_export/profiles`), validated by
+    `answer_exports.profiles_from_wire`, the loader's own validator. The BFF holds no copy and
+    reads no profile from disk: the registry this code reads is the one the server serves, so an
+    overlay mounted on cost alone reaches the picker with no code change. Nothing is cached (a
+    cached set is a copy); callers that need it more than once hold the dict they were given.
+    Raises `AnswerProfilesUnavailable` when cost cannot be asked or serves a set that does not
+    validate: each caller decides what an outage means for it."""
+    from agent_fleet.utils import answer_exports as _ae
+    try:
+        rr = _cost_profiles_get(f"{_ENGINE_COST_URL}/answers_export/profiles")
+    except Exception as exc:  # noqa: BLE001 -- transport failure of the ask itself
+        logger.error("answer export profiles: engine-cost unreachable: %s", exc)
+        raise _ae.AnswerProfilesUnavailable(f"engine-cost unreachable: {exc}") from exc
+    if rr.status_code != 200:
+        logger.error("answer export profiles: engine-cost answered %s", rr.status_code)
+        raise _ae.AnswerProfilesUnavailable(f"engine-cost answered {rr.status_code}")
+    try:
+        return _ae.profiles_from_wire(rr.json())
+    except (_ae.AnswerExportError, ValueError) as exc:
+        logger.error("answer export profiles served by engine-cost do not validate: %s", exc)
+        raise _ae.AnswerProfilesUnavailable(f"served set does not validate: {exc}") from exc
+
+
+def _plan_profiles_unavailable() -> HTTPException:
+    return HTTPException(status_code=503, detail={"reason": "answer_profiles_unavailable"})
+
+
+def _plan_scope_names(profiles: Optional[dict] = None) -> list[str]:
+    profiles = _plan_profiles() if profiles is None else profiles
+    return sorted({s for p in profiles.values() for s in p.recipients})
+
+
+def _plan_reader(scope: str, authz_id: Optional[str]) -> bool:
+    """`can_read_recipient("plan", ...)`; a transport/HTTP failure is a 503, never a deny."""
+    from agent_fleet.utils.recipient_readers import can_read_recipient
+    try:
+        return bool(authz_id) and bool(can_read_recipient(_PLAN_OWNER, scope, authz_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("recipient_readers check failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail={"reason": "recipient_readers_unavailable"}
+        ) from exc
+
+
+def _plan_may_export(profile_name: str, authz_id: Optional[str]) -> bool:
+    """`can_export:<profile>` (Topaz `can_invoke` on the capability). A blank authz_id is False;
+    a transport/HTTP failure is a 503, never a deny. The same question as the review export's
+    `_may_export_profile` (#163); the two fold together at iagent-mesh v0.9.12."""
+    from agent_fleet.utils.export_capability import can_export
+    try:
+        return bool(authz_id) and bool(can_export(profile_name, authz_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("can_export check failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail={"reason": "can_export_unavailable"}
+        ) from exc
+
+
+def _plan_recipients_for(user: "User", profiles: Optional[dict] = None) -> list[str]:
+    """Every plan recipient scope `user` may export to: named by a served profile and admitted by
+    the `recipient_readers` rail. A blank `authz_id` is []. `AnswerProfilesUnavailable` escapes."""
+    if not user.authz_id:
+        return []
+    return [s for s in _plan_scope_names(profiles) if _plan_reader(s, user.authz_id)]
+
+
+def _answer_profiles_unavailable_type() -> type:
+    from agent_fleet.utils import answer_exports as _ae
+    return _ae.AnswerProfilesUnavailable
+
+
+def _plan_recipients_or_none(user: "User") -> list[str]:
+    """For the pickers only: a rail that cannot be asked omits the plan recipients rather than
+    taking cost's own list down. The export and the download still answer 503. The same holds
+    when engine-cost's profile set cannot be had."""
+    try:
+        return _plan_recipients_for(user)
+    except (HTTPException, _answer_profiles_unavailable_type()):
+        return []
+
+
+def _plan_profile_name(scope: str, profiles: Optional[dict] = None) -> Optional[str]:
+    from agent_fleet.utils import answer_exports as _ae
+    profile = _ae.profile_for_recipient(_plan_profiles() if profiles is None else profiles, scope)
+    return profile.name if profile is not None else None
+
+
+def _plan_exportable_for(
+    user: "User", readers: Optional[list[str]] = None, profiles: Optional[dict] = None,
+) -> list[str]:
+    """The plan recipient scopes `user` may EXPORT to: a reader AND `can_export` on the scope's
+    profile. Nobody is offered a recipient the export would refuse. `readers` is
+    `_plan_recipients_for(user)` when the caller already has it."""
+    profiles = _plan_profiles() if profiles is None else profiles
+    if readers is None:
+        readers = _plan_recipients_for(user, profiles)
+    out = []
+    for s in readers:
+        name = _plan_profile_name(s, profiles)
+        if name is not None and _plan_may_export(name, user.authz_id):
+            out.append(s)
+    return out
+
+
+def _plan_exportable_or_none(user: "User", profiles: Optional[dict] = None) -> list[str]:
+    """`_plan_recipients_or_none`'s twin for the pickers: a rail that cannot be asked omits the
+    plan recipients."""
+    try:
+        return _plan_exportable_for(user, None, profiles)
+    except (HTTPException, _answer_profiles_unavailable_type()):
+        return []
+
+
+def _plan_export_refusal_403(profile_name: str, scope: str) -> HTTPException:
+    """The compliant refusal for a reader who lacks `can_export:<profile>`."""
+    from .authz.refusal import policy_refusal
+    return policy_refusal(
+        "not_entitled_to_export", policy_id=f"capability_grants:can_export:{profile_name}",
+        missing_binding=f"can_invoke can_export:{profile_name}",
+        message=f"You are not entitled to export {profile_name} answers.",
+        extra={"recipient_scope": scope})
+
+
+def _plan_refusal_403(scope: str) -> HTTPException:
+    """The compliant refusal for a plan recipient the caller is not a reader of: the family
+    `recipient_readers` is object-scoped, so it names the family and no key."""
+    from .authz.refusal import policy_refusal
+    return policy_refusal(
+        "not_a_recipient_you_may_export_to", policy_id="recipient_readers",
+        missing_binding="can_read_recipient(recipient_scope)",
+        message="You are not a reader of this recipient.", extra={"recipient_scope": scope})
 
 
 def _user_bearer(request: Request) -> str:
@@ -2597,7 +2950,13 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
     `no_verb` stays the true refusal for those. `subject_instance_id` is read from the intent
     alone. An old or malformed routing record yields None, never an error.
     """
-    resolved: list[dict] = []
+    return [_resolve_export_record(r) for r in _read_export_records(artifact_ids, user_id)]
+
+
+def _read_export_records(artifact_ids: list[str], user_id: str) -> list:
+    """The `_ARTIFACT_BY_ID_CYPHER` record of each id, owner-checked: 404 for one that does not
+    resolve (refused, never dropped), 503 when the store is down."""
+    records: list = []
     for artifact_id in artifact_ids:
         try:
             with neo4j_driver.session() as session:
@@ -2613,32 +2972,125 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
                 status_code=404,
                 detail={"reason": "answer_not_found", "artifact_id": artifact_id},
             )
+        records.append(rec)
+    return records
 
-        intent: dict = {}
-        if rec.get("resolved_intent"):
-            try:
-                intent = json.loads(rec["resolved_intent"]) or {}
-            except (ValueError, TypeError):
-                intent = {}
 
-        def _or_none(v):
-            v = str(v or "").strip()
-            return None if not v or v == "UNKNOWN" else v
+def _resolve_export_record(rec) -> dict:
+    """One record as the engines' `{id, verb_iri, subject_instance_id}` (the two homes of the
+    verb are explained on `_resolve_export_answers`). Widens nothing."""
+    intent: dict = {}
+    if rec.get("resolved_intent"):
+        try:
+            intent = json.loads(rec["resolved_intent"]) or {}
+        except (ValueError, TypeError):
+            intent = {}
 
-        verb = _or_none(intent.get("verb_iri"))
-        if verb is None:
-            try:
-                _routing = json.loads(rec.get("routing_inline") or "null")
-                verb = _or_none(_routing["action"]["iri"])
-            except (ValueError, TypeError, KeyError):
-                verb = None
+    def _or_none(v):
+        v = str(v or "").strip()
+        return None if not v or v == "UNKNOWN" else v
 
-        resolved.append({
-            "id": str(rec["id"]),
-            "verb_iri": verb,
-            "subject_instance_id": _or_none(intent.get("subject_instance_id")),
+    verb = _or_none(intent.get("verb_iri"))
+    if verb is None:
+        try:
+            _routing = json.loads(rec.get("routing_inline") or "null")
+            verb = _or_none(_routing["action"]["iri"])
+        except (ValueError, TypeError, KeyError):
+            verb = None
+
+    return {
+        "id": str(rec["id"]),
+        "verb_iri": verb,
+        "subject_instance_id": _or_none(intent.get("subject_instance_id")),
+        "state_refs": _answer_state_refs(rec),
+    }
+
+
+def _answer_state_refs(rec) -> list[str]:
+    """The sorted distinct non-empty `state_ref` values on the answer's
+    `rendered_output.components[*]` (Engine P echoes the state it computed against; the
+    presentation agent copies it onto every component). Never raises: any parse or shape problem
+    is `[]`, and `[]` reads as BASELINE downstream (Engine P's default; pre-passthrough artifacts
+    never carried the key)."""
+    try:
+        out = json.loads(rec.get("rendered_output") or "null")
+        comps = out.get("components") if isinstance(out, dict) else None
+        if not isinstance(comps, list):
+            return []
+        refs = {c["state_ref"].strip() for c in comps
+                if isinstance(c, dict) and isinstance(c.get("state_ref"), str)}
+        return sorted(r for r in refs if r)
+    except (ValueError, TypeError, AttributeError):
+        return []
+
+
+def _plan_partition(resolved: list[dict], profile) -> tuple[list[dict], list[dict]]:
+    """THE ONE DECISION a plan recipient makes about a board, used by the export and the offer
+    alike: (taken answers, refused items). Taken = verb in `profile.kinds` and computed against
+    baseline, in board order. Refused = `{answer_id, kind, reason_code, reason}`, one refusal per
+    answer, in this order: `no_verb` when the answer has none; `not_a_kind_this_recipient_takes`
+    when its verb is not in `profile.kinds`; `scenario_answer` (ruled 10-29: only baseline
+    answers export) when a taken verb was computed against a scenario, the item also carrying
+    `scenario_id`. The state is the answer's `state_refs`; none present reads as baseline."""
+    from agent_fleet.cost_agent.canvas import REFUSAL_REASONS, NO_VERB, _verb_local
+    kinds = {_verb_local(k) for k in profile.kinds} - {None}
+    taken: list[dict] = []
+    refused: list[dict] = []
+    for ans in resolved:
+        local = _verb_local(ans.get("verb_iri"))
+        if local is not None and local in kinds:
+            scenarios = [r for r in ans.get("state_refs") or [] if r != "baseline"]
+            if not scenarios:
+                taken.append(ans)
+                continue
+            sid = ", ".join(sorted(scenarios))
+            refused.append({
+                "answer_id": ans["id"], "kind": local, "reason_code": _SCENARIO_ANSWER,
+                "scenario_id": sid,
+                "reason": f"computed against scenario {sid}; the {profile.name} export "
+                          f"takes baseline answers only",
+            })
+        elif local is None:
+            refused.append({"answer_id": ans["id"], "kind": None, "reason_code": NO_VERB,
+                            "reason": REFUSAL_REASONS[NO_VERB]})
+        else:
+            refused.append({
+                "answer_id": ans["id"], "kind": local, "reason_code": _NOT_A_KIND,
+                "reason": f"not a kind the {profile.name} export takes "
+                          f"({len(profile.kinds)} kinds)",
+            })
+    return taken, refused
+
+
+def _plan_rows(records: list, taken_ids: set[str]) -> list[dict]:
+    """The rows of the taken answers, in board order, read from the SAME records the board was
+    resolved from (no second query). Keys are `answer_exports.ANSWER_FIELDS`."""
+    rows: list[dict] = []
+    for rec in records:
+        resolved = _resolve_export_record(rec)
+        if resolved["id"] not in taken_ids:
+            continue
+        subject = None
+        try:
+            intent = json.loads(rec.get("resolved_intent") or "null")
+            if isinstance(intent, dict):
+                subject = intent.get("subject_uri") or None
+        except (ValueError, TypeError):
+            subject = None
+        valid = rec.get("valid_as_of")
+        if valid is not None and hasattr(valid, "isoformat"):
+            valid = valid.isoformat()
+        rows.append({
+            "answer_id": resolved["id"],
+            "question": rec.get("question_text"),
+            "summary": rec.get("summary"),
+            "verb": resolved["verb_iri"],
+            "subject": subject,
+            "program": rec.get("origin_program"),
+            "status": rec.get("status"),
+            "valid_as_of": None if valid is None else str(valid),
         })
-    return resolved
+    return rows
 
 
 def _partition_export_answers(resolved: list[dict]) -> list[tuple[str, list[dict]]]:
@@ -2659,7 +3111,9 @@ def _partition_export_answers(resolved: list[dict]) -> list[tuple[str, list[dict
     for ans in resolved:
         local = _verb_local(ans.get("verb_iri"))
         engine = "fin" if local in fin_verbs else "cost"
-        parts.setdefault(engine, []).append(ans)
+        # `state_refs` is the plan recipient's alone: it never reaches an engine payload.
+        parts.setdefault(engine, []).append(
+            {k: v for k, v in ans.items() if k != "state_refs"})
     return list(parts.items())
 
 
@@ -2694,15 +3148,18 @@ def _refused_entries(engine: str, refused_answers: list[dict], recipient_scope: 
 
     Items are grouped by `reason_code`, in order of each code's first appearance; a group's
     `answers` are its ids in board order. Every item of one code carries the same constant
-    reason, so the group's reason is the first item's. Only ever `status: "failed"`: cortex's
+    reason, so the group's reason is the first item's -- EXCEPT `scenario_answer`, whose reason
+    names its scenario: it groups by (code, reason) and the entry carries `scenario_id`. Only ever `status: "failed"`: cortex's
     reader drops the whole response on any other status. Never rendered on the customer page.
     """
     groups: dict[str, dict] = {}
     for item in refused_answers:
         code = item.get("reason_code")
-        g = groups.get(code)
+        # a scenario refusal names its scenario in the reason, so it groups by that reason
+        key = (code, item.get("reason")) if code == _SCENARIO_ANSWER else code
+        g = groups.get(key)
         if g is None:
-            g = groups[code] = {
+            g = groups[key] = {
                 "engine": engine,
                 "answers": [],
                 "export_id": None,
@@ -2712,6 +3169,8 @@ def _refused_entries(engine: str, refused_answers: list[dict], recipient_scope: 
                 "reason_code": code,
                 "reason": item.get("reason"),
             }
+            if item.get("scenario_id") is not None:
+                g["scenario_id"] = item["scenario_id"]
         g["answers"].append(item.get("answer_id"))
     return list(groups.values())
 
@@ -2783,7 +3242,8 @@ async def export_package_recipients(current_user: User = Depends(get_current_use
     sees are exactly the scopes their `authz_id` reads, never the full recipient catalogue."""
     return {
         "recipients": [
-            {"value": s, "label": s} for s in _export_recipients_for(current_user)
+            {"value": s, "label": s}
+            for s in _export_recipients_for(current_user) + _plan_exportable_or_none(current_user)
         ]
     }
 
@@ -2870,6 +3330,22 @@ def _offer_for_recipient(resolved: list[dict], scope: str) -> dict:
     }
 
 
+def _plan_offer_for_recipient(resolved: list[dict], scope: str, profiles: dict) -> dict:
+    """`_offer_for_recipient`'s shape for a plan recipient, decided by `_plan_partition` -- the
+    function the export takes its own decision from. `profiles` is the set the caller was given."""
+    from agent_fleet.utils import answer_exports as _ae
+    profile = _ae.profile_for_recipient(profiles, scope)
+    taken, refused = _plan_partition(resolved, profile)
+    exports = list(dict.fromkeys(a["id"] for a in taken))
+    return {
+        "offered": bool(exports),
+        "reason_code": None if exports else _OFFER_TAKES_NONE,
+        "reason": None if exports else _OFFER_TAKES_NONE_REASON,
+        "exports": exports,
+        "refused": refused,
+    }
+
+
 @app.post("/export/package/recipients")
 async def export_package_offer(
     body: ExportOfferRequest, current_user: User = Depends(get_current_user),
@@ -2890,12 +3366,21 @@ async def export_package_offer(
     resolved = _resolve_export_answers(
         [a.artifact_id for a in body.answers], current_user.id
     )
+    plan_offers: list[dict] = []
+    try:
+        profiles = _plan_profiles()
+        plan_offers = [
+            {"value": s, "label": s, **_plan_offer_for_recipient(resolved, s, profiles)}
+            for s in _plan_exportable_or_none(current_user, profiles)
+        ]
+    except _answer_profiles_unavailable_type():
+        pass  # logged by `_plan_profiles`; the plan recipients are omitted, cost's are not
     return {
         "answers": len(body.answers),
         "recipients": [
             {"value": s, "label": s, **_offer_for_recipient(resolved, s)}
             for s in _export_recipients_for(current_user)
-        ],
+        ] + plan_offers,
     }
 
 
@@ -3026,7 +3511,87 @@ async def _export_package_from_template(
     )
 
 
-@app.post("/export/package")
+async def _call_engine_cost_answers_export(payload: dict, bearer: str) -> dict:
+    """POST engine-cost's `/answers_export`. Its 403 is the engine's policy refusal completed by
+    `relay_refusal`; its 503 (`recipient_readers_unavailable`) stays a 503."""
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            rr = await client.post(
+                f"{_ENGINE_COST_URL}/answers_export", json=payload,
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "cost_engine_unreachable", "message": str(exc),
+        })
+    if rr.status_code >= 400:
+        if rr.status_code == 403:
+            raise _engine_failure("cost", rr)
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+    return rr.json()
+
+
+async def _export_plan_answers(
+    body: "ExportPackageRequest", request: Request, current_user: User, recipient_scope: str,
+    profiles: Optional[dict] = None,
+) -> dict:
+    """A board exported to a plan recipient: no cost or fin call is made.
+
+    The answers whose verb is in the profile's `kinds` are rendered by engine-cost's
+    `/answers_export`; the rest are refused by name, as `_refused_entries` shapes them. The
+    rows come from the same `_ARTIFACT_BY_ID_CYPHER` records the board resolved from.
+    """
+    from agent_fleet.utils import answer_exports as _ae
+    try:
+        profiles = _plan_profiles() if profiles is None else profiles
+    except _ae.AnswerProfilesUnavailable as exc:
+        raise _plan_profiles_unavailable() from exc
+    profile = _ae.profile_for_recipient(profiles, recipient_scope)
+    records = _read_export_records([a.artifact_id for a in body.answers], current_user.id)
+    resolved = [_resolve_export_record(r) for r in records]
+    taken, refused_items = _plan_partition(resolved, profile)
+
+    documents: list[dict] = []
+    if taken:
+        taken_ids = [a["id"] for a in taken]
+        rows = _plan_rows(records, set(taken_ids))
+        # CONTENT-ADDRESSED, as cost's: the same inputs name the same export.
+        export_id = hashlib.sha256(json.dumps(
+            {"recipient_scope": recipient_scope, "rows": rows},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str,
+        ).encode("utf-8")).hexdigest()
+        out = await _call_engine_cost_answers_export(
+            {"recipient_scope": recipient_scope, "export_id": export_id,
+             "user_email": current_user.authz_id, "rows": rows},
+            _user_bearer(request),
+        )
+        section = _shape_export_package_response(
+            out, recipient_scope=recipient_scope, template_id=None,
+            extra={"profile": out.get("profile")},
+        )
+        documents.append({"engine": "cost", "answers": taken_ids, **section})
+    documents.extend(_refused_entries("cost", refused_items, recipient_scope))
+
+    ok = [d["status"] == "exists" for d in documents]
+    status = "exists" if all(ok) else ("partial" if any(ok) else "failed")
+    refused = sum(len(d["answers"]) for d in documents if d["status"] != "exists")
+    export_id = next((d["export_id"] for d in documents if d["status"] == "exists"), None)
+    return {
+        "export_id": export_id,
+        "status": status,
+        "recipient_scope": recipient_scope,
+        "reason": None if not refused else f"{refused} of {len(body.answers)} answers refused",
+        "template_id": None,
+        "documents": documents,
+    }
+
+
+@app.post("/export/package", tags=[MCP_TAG])
 async def export_package(
     body: ExportPackageRequest,
     request: Request,
@@ -3089,9 +3654,27 @@ async def export_package(
     if not body.answers:
         raise HTTPException(status_code=400, detail={"reason": "no_answers"})
 
-    options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
-
     recipient_scope = (body.recipient_scope or "").strip()
+    # THE PLAN REGISTRY IS ENGINE-COST'S, READ OVER THE WIRE. When it cannot be had the plan scopes
+    # are omitted from the options (the picker's posture) and a request for anything that is not a
+    # cost or fin recipient is a 503 -- never a 403: an outage must not read as "not your recipient".
+    from agent_fleet.cost_agent import seed as _cost_seed
+    from agent_fleet.finance_agent import export as _fin_export
+    try:
+        plan_profiles: Optional[dict] = _plan_profiles()
+    except _answer_profiles_unavailable_type():
+        plan_profiles = None
+    if (plan_profiles is None and recipient_scope
+            and recipient_scope not in _cost_seed.RECIPIENT_SCOPES
+            and recipient_scope not in _fin_export.RECIPIENT_SCOPES):
+        raise _plan_profiles_unavailable()
+    is_plan_scope = plan_profiles is not None and recipient_scope in _plan_scope_names(plan_profiles)
+    plan_recipients = _plan_recipients_for(current_user, plan_profiles) if is_plan_scope else []
+    options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
+    if plan_profiles is not None:
+        options += [{"value": s, "label": s} for s in (
+            _plan_exportable_for(current_user, plan_recipients, plan_profiles) if is_plan_scope
+            else _plan_exportable_or_none(current_user, plan_profiles))]
     if not recipient_scope:
         raise HTTPException(
             status_code=409,
@@ -3099,6 +3682,15 @@ async def export_package(
                     "message": "name the recipient this package is for (recipient_scope); "
                                "the options are listed."},
         )
+
+    if is_plan_scope:
+        if recipient_scope not in plan_recipients:
+            raise _plan_refusal_403(recipient_scope)
+        plan_profile = _plan_profile_name(recipient_scope, plan_profiles)
+        if not _plan_may_export(plan_profile, current_user.authz_id):
+            raise _plan_export_refusal_403(plan_profile, recipient_scope)
+        return await _export_plan_answers(
+            body, request, current_user, recipient_scope, plan_profiles)
 
     if recipient_scope not in _export_recipients_for(current_user):
         # WHY PRODUCTION IS GATED HERE, NOT ONLY THE DOWNLOAD: every recipient's package
@@ -3195,7 +3787,7 @@ async def export_package(
     }
 
 
-@app.get("/export/package/artifact/{filename}")
+@app.get("/export/package/artifact/{filename}", tags=[MCP_TAG])
 async def export_package_artifact(
     filename: str,
     request: Request,
@@ -3214,10 +3806,27 @@ async def export_package_artifact(
     # first, then finance — which is safe only because the two engines' filename sets are
     # DISJOINT (sealed in tests/finance/test_fin_package_export.py): were a name ever claimed
     # by both, this order would silently prefer cost's scope and recipients_fn over finance's.
+    from agent_fleet.utils import answer_exports as _ae
     scope = _cost_seed.scope_of_artifact(filename)
+    plan_hit = None
+    plan_profiles: Optional[dict] = None
+    plan_unavailable = False
+    if scope is None and filename.startswith(_ae.ARTIFACT_PREFIX):
+        try:
+            plan_profiles = _plan_profiles()
+            plan_hit = _ae.match_artifact(plan_profiles, filename)
+        except _ae.AnswerProfilesUnavailable:
+            plan_unavailable = True
     if scope is not None:
         engine_url = _ENGINE_COST_URL
         recipients_fn = _export_recipients_for
+        engine_label = "cost"
+    elif plan_hit is not None:
+        # A plan answers export: produced by engine-cost, read on the `recipient_readers` rail.
+        scope = plan_hit[1]
+        engine_url = _ENGINE_COST_URL
+        # can_export gates PRODUCTION; reading a produced package is a reader's act.
+        recipients_fn = lambda u: _plan_recipients_for(u, plan_profiles)  # noqa: E731
         engine_label = "cost"
     else:
         scope = _fin_export.scope_of_artifact(filename)
@@ -3226,6 +3835,10 @@ async def export_package_artifact(
             recipients_fn = _fin_export_recipients_for
             engine_label = "fin"
         else:
+            if plan_unavailable:
+                # An `ia-answers-*` name the cost and fin matchers do not claim may be a plan
+                # package whose registry could not be read: unknown, not absent.
+                raise _plan_profiles_unavailable()
             # Same structural traversal defence as either engine's own route: a filename
             # neither engine could have produced is refused outright rather than sanitized
             # and forwarded.
@@ -3285,8 +3898,15 @@ async def export_package_artifact(
 # program visibility (its 403 is relayed here with `grantable_by` filled by `relay_refusal`), and
 # the bytes are fetched back through the engine's own /artifact route.
 
-_CDRL_XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-_CDRL_FILENAME_RE = re.compile(r"^fin-cdrl-[A-Za-z0-9_.-]+\.xlsx$")
+#: The closed map from a CDRL file's extension to its media type (mirrors the engine's
+#: `cdrl.MEDIA_TYPES`); the filename regex admits exactly its keys.
+_CDRL_MEDIA = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "csv": "text/csv; charset=utf-8",
+    "json": "application/json",
+}
+_CDRL_FILENAME_RE = re.compile(r"^fin-cdrl-[A-Za-z0-9_.-]+\.(" + "|".join(_CDRL_MEDIA) + r")$")
 
 
 def _engine_failure(label: str, rr) -> HTTPException:
@@ -3304,7 +3924,7 @@ def _engine_failure(label: str, rr) -> HTTPException:
     })
 
 
-@app.get("/export/cdrl/profiles")
+@app.get("/export/cdrl/profiles", tags=[MCP_TAG])
 async def export_cdrl_profiles(request: Request, current_user: User = Depends(get_current_user)):
     """The CDRL picker's option list: the engine's `[{name, format, scope, label}]`, relayed. The
     header keys only; the engine never sends a template path, a hash or a source."""
@@ -3323,14 +3943,14 @@ async def export_cdrl_profiles(request: Request, current_user: User = Depends(ge
     return rr.json()
 
 
-@app.get("/export/cdrl")
+@app.get("/export/cdrl", tags=[MCP_TAG])
 async def export_cdrl(
     request: Request,
     profile: str,
     program_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    """One program's CDRL as an xlsx. `X-Cells-Sha256` is the hash of every cell the producer
+    """One program's CDRL in the profile's format (xlsx, docx, csv or json). `X-Cells-Sha256` is the hash of every cell the producer
     wrote (the reproducibility claim; the file's own bytes are not claimed reproducible).
 
     Refusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with
@@ -3384,7 +4004,7 @@ async def export_cdrl(
 
     return Response(
         content=fr.content,
-        media_type=_CDRL_XLSX_MEDIA,
+        media_type=_CDRL_MEDIA[filename.rpartition(".")[2]],
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Cells-Sha256": str(cells_sha256),
@@ -4101,7 +4721,7 @@ class CanvasSeedConflict(_BaseModel):
     detail: CanvasSeedConflictDetail
 
 
-def _canvas_seed_enumerator(user_email: str, entitled_domains: list):
+def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list):
     """A SYNC `(class_uri, bound_slots=) -> {outcome, members, ...}` against engine-o's
     `/enumerate_instances`, with the body `dynamic_supervisor._make_enumerator` sends. Sync
     because `decide_disposition` calls it synchronously; the caller runs the whole disposition
@@ -4159,7 +4779,7 @@ async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user:
 
     ent = current_user.entitlements
     domains = _canvas_seed_domains(request, ent) or sorted({c.domain for c in ent.cells})
-    enum = _canvas_seed_enumerator(current_user.authz_id, domains)
+    enum = _canvas_seed_enumerator(user_email=current_user.authz_id, entitled_domains=domains)
 
     def _build():
         disp = decide_disposition(accepted=accepted, declared=declared, enumerate_class=enum)
@@ -4182,7 +4802,7 @@ async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user:
     return ask
 
 
-@app.post("/canvas/seed", responses={200: {"model": CanvasSeedResponse}, 409: {"model": CanvasSeedConflict}})
+@app.post("/canvas/seed", tags=[MCP_TAG], responses={200: {"model": CanvasSeedResponse}, 409: {"model": CanvasSeedConflict}})
 async def canvas_seed(
     request: CanvasSeedRequest,
     http_request: Request,
@@ -4899,7 +5519,7 @@ async def _stale_extraction(task_id: str, row: dict) -> "HTTPException":
         "stage": row.get("status"), "message": msg})
 
 
-@app.post("/human_tasks/{task_id}/act", tags=[INGEST_V1_TAG], responses={200: {"model": ActResponse}})
+@app.post("/human_tasks/{task_id}/act", tags=[INGEST_V1_TAG, MCP_TAG], responses={200: {"model": ActResponse}})
 async def act_on_human_task(
     task_id: str,
     req: HumanTaskActRequest,
@@ -5012,16 +5632,17 @@ async def act_on_human_task(
                 "message": "a delegated act is supported only for a workflow-backed resume of "
                            "another kind; act as the principal yourself."})
 
+    from . import promotion
     # row_edits is read ONLY by the grouped_review branch and (flag IAGENT_PROMOTION_ROW_EDITS on)
     # the document_promotion branch below. Sent on any other kind, or on a promotion while the flag
     # is off, it would be accepted and silently dropped, losing the correction (architect rulings
     # 2026-10-17, 2026-10-18). Asked before verb validation so the refusal names the real cause,
     # and before any write.
     if req.row_edits is not None and match.get("kind") != "grouped_review":
-        if match.get("kind") == "document_promotion":
+        if match.get("kind") == promotion.KIND:
             if not _promotion_row_edits_enabled():
                 raise HTTPException(status_code=422, detail={
-                    "error": "row_edits_not_for_kind", "kind": "document_promotion",
+                    "error": "row_edits_not_for_kind", "kind": promotion.KIND,
                     "enabled": False,
                     "message": "row edits on a document promotion are off on this deployment "
                                "(IAGENT_PROMOTION_ROW_EDITS); sent here they would be lost"})
@@ -5032,17 +5653,26 @@ async def act_on_human_task(
                            "promotion; sent here they would be lost"})
 
     # header_edits (ruling 10-20): document_promotion only, behind the SAME flag as row_edits.
-    if req.header_edits and match.get("kind") != "document_promotion":
+    if req.header_edits and match.get("kind") != promotion.KIND:
         raise HTTPException(status_code=422, detail={
             "error": "header_edits_not_for_kind", "kind": match.get("kind"),
             "message": "header edits are read only on a document promotion; sent here they "
                        "would be lost"})
     if req.header_edits and not _promotion_row_edits_enabled():
         raise HTTPException(status_code=422, detail={
-            "error": "header_edits_not_for_kind", "kind": "document_promotion",
+            "error": "header_edits_not_for_kind", "kind": promotion.KIND,
             "enabled": False,
             "message": "header edits on a document promotion are off on this deployment "
                        "(IAGENT_PROMOTION_ROW_EDITS); sent here they would be lost"})
+
+    # review_coverage: document_promotion only. Sent elsewhere it would be dropped, which is a
+    # provenance claim that is not true.
+    if req.review_coverage is not None and not _handler_consumes(
+            match.get("kind"), "review_coverage"):
+        raise HTTPException(status_code=422, detail={
+            "error": "review_coverage_not_for_kind", "kind": match.get("kind"),
+            "message": "review coverage is read only on a document promotion; sent here it "
+                       "would be lost"})
 
     if req.page is not None and match.get("kind") != EMPTY_CONFIRM_KIND:
         raise HTTPException(status_code=422, detail={
@@ -5103,8 +5733,8 @@ async def act_on_human_task(
     # resolves, for grouped_review's reason: a refused act must leave the task PENDING. The
     # decision record is the grant, so it is written fail-closed, and `promotion.act` re-asks
     # can_act itself. Every refusal carries its own status; none resolves the row.
-    if match.get("kind") == "document_promotion":
-        from . import ingest_status, promotion
+    if match.get("kind") == promotion.KIND:
+        from . import ingest_status
         from .decision_record_writer import DECISION_RECORD_ERA
 
         # A reject names one of the ruled codes (architect ruling 2026-10-17): `<code>` or
@@ -5241,6 +5871,50 @@ async def act_on_human_task(
                                                 r["evidence_ref"])),
                                         "evidence_ref": r["evidence_ref"]})
 
+        # REVIEW COVERAGE (ruling 10-29): every part opened or folded into a named group. Asked
+        # before any write; an unreadable extraction is a 503, never a skipped check.
+        coverage = None
+        if req.review_coverage is not None:
+            from . import content_kinds, review_shapes
+            try:
+                _cov_subject = promotion.subject_from_payload(match.get("payload"))
+                _arrived_new = isinstance(req.review_coverage, ItemReviewCoverage)
+                cov = _rcov.normalise(req.review_coverage.model_dump(mode="json"),
+                                      content_kind=_cov_subject.content_kind)
+                _reg = content_kinds.by_kind(_cov_subject.content_kind)
+                _declared = getattr(_reg, "review_shape", None)
+                _rows = review_shapes.valid_review_shapes()
+                _declared_row = _rows.get(_declared) if _declared else None
+                if _declared and _declared_row is None:
+                    raise LookupError(f"review_shape {_declared!r} has no valid registry row")
+                _bad = (_rcov.row_problem(cov, _rows.get(cov.get("review_shape")), _declared)
+                        if _arrived_new else None)
+                if _bad is None:
+                    # The universe is read by the declared row's item_kind; a legacy body whose
+                    # kind declares no shape is parts.
+                    _kind = _declared_row.item_kind if _declared_row else cov.get("item_kind", "part")
+                    _read = _rcov.universe_for(_kind)
+                    _universe = await run_in_threadpool(lambda: _read(
+                        lambda: _review_parts_for_payload(_cov_subject)))
+                    _bad = _rcov.problem(cov, _universe, _rows.get(cov.get("review_shape")),
+                                         arrived_new=_arrived_new, declared_shape=_declared)
+            except HTTPException as exc:
+                if exc.status_code < 500:
+                    raise  # e.g. 422 extraction_unbound: the binding said no, a retry will not help
+                raise HTTPException(status_code=503, detail={
+                    "error": "review_coverage_unverifiable", "task_id": task_id,
+                    "message": f"the extraction's parts could not be read "
+                               f"({type(exc).__name__}); nothing was written"})
+            except Exception as exc:  # noqa: BLE001 -- cannot-know is a refusal, nothing written
+                raise HTTPException(status_code=503, detail={
+                    "error": "review_coverage_unverifiable", "task_id": task_id,
+                    "message": f"the extraction's parts could not be read "
+                               f"({type(exc).__name__}); nothing was written"})
+            if _bad is not None:
+                raise HTTPException(status_code=422, detail={
+                    "error": "review_coverage_invalid", "check": _bad[0], "message": _bad[1]})
+            coverage = cov
+
         if req.decision == promotion.PROMOTED:
             # The notice's SUBJECT_TO set is reconciled to the reviewed rows (ruled 2026-10-20),
             # so the act needs the reviewed set. No extraction_ref: None (the act refuses 409 if a
@@ -5280,7 +5954,7 @@ async def act_on_human_task(
                 },
                 era=DECISION_RECORD_ERA, now_ms=int(time.time() * 1000),
                 row_edits=corrections, reviewed_mpns=_reviewed, earlier_ingests=_earlier,
-                leaf=_leaf_rec))
+                leaf=_leaf_rec, review_coverage=coverage))
         except promotion.PromotionRefused as exc:
             raise HTTPException(status_code=exc.status, detail={
                 "error": exc.error, "task_id": task_id, "message": str(exc)})
@@ -6801,6 +7475,101 @@ def _perror(
     if cause:
         payload["cause"] = cause
     return _sse("pipeline_error", json.dumps(payload))
+
+
+_orchestrate_audit_log = logging.getLogger("iagent.audit.orchestrate")
+# THE LINE MUST ARRIVE, NOT MERELY BE CALLED (see the note on `logger` above).
+_ensure_the_audit_line_actually_ARRIVES(_orchestrate_audit_log)
+
+
+def _orchestrate_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _orchestrate_audit_line(*, who: str, via: str, session_id: str, verb: str, case: str,
+                            when: str, outcome: str) -> None:
+    """ONE line per /orchestrate call: who, through which client, which verb and case, when, how
+    it ended. Never message text, tokens or payload bodies."""
+    _orchestrate_audit_log.info(
+        "orchestrate_access who=%s via=%s session_id=%s verb=%s case=%s when=%s outcome=%s",
+        who, via, session_id, verb, case, when, outcome,
+    )
+
+
+def _note_orchestrate_event(chunk, seen: dict) -> None:
+    """Read the routed verb and any case id off an SSE chunk; leave `seen` alone otherwise.
+
+    verb: the `route_decision` event's `action.iri` (both the Dagster path and
+    `_stream_direct_outcome` emit it); "UNKNOWN" is the router's no-verb value, recorded as "".
+    case: a `case_id` key at the top of an event's data object or one level under it.
+    Honest-absent: "" when never seen."""
+    if not isinstance(chunk, str) or not chunk.startswith("event: "):
+        return
+    head, _, rest = chunk.partition("\n")
+    name = head[len("event: "):].strip()
+    if name != "route_decision" and '"case_id"' not in rest:
+        return
+    try:
+        data = json.loads(rest[len("data: "):].strip()) if rest.startswith("data: ") else None
+    except ValueError:
+        return
+    if not isinstance(data, dict):
+        return
+    if name == "route_decision" and not seen["verb"]:
+        iri = (data.get("action") or {}).get("iri") if isinstance(data.get("action"), dict) else None
+        if isinstance(iri, str) and iri and iri != "UNKNOWN":
+            seen["verb"] = iri
+    if not seen["case"]:
+        for node in (data, *[v for v in data.values() if isinstance(v, dict)]):
+            cid = node.get("case_id")
+            if isinstance(cid, str) and cid:
+                seen["case"] = cid
+                break
+
+
+def _audit_orchestrate_refusals(fn):
+    """A refusal raised BEFORE the stream opens leaves its one audit line (`outcome=refused:<status>`),
+    then re-raises the SAME exception unchanged (not a new refusal site). The stream's own line is
+    written by `_audit_orchestrate_wrap`, wired inside the handler. `wraps` keeps the name, the
+    docstring (the OpenAPI description) and the signature FastAPI reads."""
+    @functools.wraps(fn)
+    async def door(request, http_request, current_user):
+        when = _orchestrate_now()
+        try:
+            return await fn(request, http_request, current_user)
+        except HTTPException as exc:
+            _orchestrate_audit_line(
+                who=current_user.authz_id, via=getattr(current_user, "azp", None) or "",
+                session_id=request.session_id, verb="", case="", when=when,
+                outcome=f"refused:{exc.status_code}",
+            )
+            raise
+    return door
+
+
+async def _audit_orchestrate_wrap(gen, *, who: str, via: str, session_id: str):
+    """Pass `gen` through unchanged and in order; write ONE `orchestrate_access` line when it ends.
+
+    outcome: completed | closed (GeneratorExit / CancelledError: the client went away) | error
+    (anything else, re-raised)."""
+    when = _orchestrate_now()
+    seen = {"verb": "", "case": ""}
+    outcome = "completed"
+    try:
+        async for chunk in gen:
+            _note_orchestrate_event(chunk, seen)
+            yield chunk
+    except (GeneratorExit, asyncio.CancelledError):
+        outcome = "closed"
+        raise
+    except BaseException:
+        outcome = "error"
+        raise
+    finally:
+        _orchestrate_audit_line(
+            who=who, via=via, session_id=session_id, verb=seen["verb"], case=seen["case"],
+            when=when, outcome=outcome,
+        )
 
 
 async def _keepalive_wrap(stream, interval_s: float = 10.0):
@@ -8538,6 +9307,9 @@ async def _generate_dagster_stream_inner(
     _artifact_id = request.artifact_id or (
         f"urn:li:answerArtifact:{session_id}-{uuid.uuid4().hex[:8]}"
     )
+    # True once a ROUTED subtask_slots_decision (non-empty verb_iri) has been captured into
+    # resolved_intent. See the precedence guard at the reader.
+    _resolved_from_routed = False
     _artifact_bundle: dict = {
         "id": _artifact_id,
         "question_text": user_query,
@@ -9012,6 +9784,17 @@ async def _generate_dagster_stream_inner(
                     except (ValueError, TypeError):
                         return fallback
 
+                # PRECEDENCE, order-independent. A run can have several subtasks and every
+                # materialization lands here. (1) A no-verb record (empty verb_iri, an early
+                # exit) must NOT replace a resolved_intent already taken from a routed record:
+                # a routed subtask wins over an early exit. (2) A routed record DOES replace a
+                # no-verb one. Keyed on a local flag, not on the bundle's prior contents: the
+                # ExtractIntent output seeded there first has no verb_iri contract.
+                _is_routed_rec = bool(_slots_md.get("verb_iri"))
+                if not _is_routed_rec and _resolved_from_routed:
+                    continue
+                if _is_routed_rec:
+                    _resolved_from_routed = True
                 _artifact_bundle["resolved_intent"] = {
                     "verb_iri": _slots_md.get("verb_iri") or "",
                     "disposition": _slots_md.get("disposition") or "",
@@ -9034,13 +9817,17 @@ async def _generate_dagster_stream_inner(
                     # row reading the artifact can count it. Classify path only: the direct
                     # path never calls /fill_slots.
                     "fill_slots": _slots_md.get("fill_slots") or "",
+                    "no_verb_reason": _slots_md.get("no_verb_reason") or "",
+                    "fallback_detail": _slots_md.get("fallback_detail") or "",
+                    "rejected_verb_iri": _slots_md.get("rejected_verb_iri") or "",
                 }
                 logger.info(
                     "resolved_intent captured for run %s: verb=%s disposition=%s "
-                    "accepted=%d refused=%d",
+                    "no_verb_reason=%s accepted=%d refused=%d",
                     run_id,
                     _slots_md.get("verb_iri") or "-",
                     _slots_md.get("disposition") or "-",
+                    _slots_md.get("no_verb_reason") or "-",
                     len(_artifact_bundle["resolved_intent"]["accepted_slots"] or {}),
                     len(_artifact_bundle["resolved_intent"]["refused_slots"] or []),
                 )
@@ -9675,6 +10462,10 @@ async def _stream_direct_outcome(
     if _expert:
         _rr = acceptance_request.review_request_of(_expert)
         if _rr:
+            # I3: stamp the minted case key onto the block the render reads (`_expert` is
+            # `expert_response` below), before anything downstream sees the engine's own copy.
+            _rr = acceptance_request.with_minted_ids(_rr)
+            _expert["review_request"] = _rr
             _err = await _open_safety_acceptance(
                 bundle, _rr, path="direct", stage_kind=direct_dispatch.STAGE_CALLING,
             )
@@ -10334,8 +11125,9 @@ async def register_frontend_capabilities(
     )
 
 
-@app.post("/orchestrate")
+@app.post("/orchestrate", tags=[MCP_TAG])
 @app.post("/interview/stream")
+@_audit_orchestrate_refusals
 async def orchestrate(request: InterviewRequest, http_request: Request,
                       current_user: User = Depends(get_current_user)):
     """
@@ -10582,41 +11374,48 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
 
     return StreamingResponse(
         _keepalive_wrap(
-            generate_dagster_stream(
-                request,
-                trace_id=_trace_id,
-                user_id=current_user.id,
-                # ADR-0025 hop 2 + identity consolidation (2026-07-09): the
-                # caller's AUTHORIZATION IDENTITY (authz_id — the
-                # USER_ENTITLEMENT_CLAIM key policy/users.yaml + the seeded Topaz
-                # `user` objects key on; NOT the sub in user_id, NOT necessarily
-                # email). In sandbox authz_id == email (transparent); at
-                # work-deploy USER_ENTITLEMENT_CLAIM=<employee-id claim> re-keys
-                # this and the entitlement lookup TOGETHER with one knob. Threaded
-                # so Engine D's query_metadata + Engine O's resolve ASK Topaz
-                # about the SAME subject the matrix was looked up by (no
-                # email-vs-employee-id divergence). The downstream param name is
-                # still `user_email` but it CARRIES authz_id — a full param rename
-                # (user_email→authz_id through supervisor/Engine D/Engine O) is the
-                # honesty follow-up; the VALUE is the load-bearing fix. "" when
-                # absent → Topaz denies (least-privileged).
-                user_email=current_user.authz_id,
-                user_persona=effective_persona,
-                entitled_domains=effective_domains,
-                # The caller's own credential, for the vault only. Read from the header
-                # rather than re-minted: the whole point of the ruled design is that what
-                # reaches /canvas/seed is ALICE'S OWN Ping-rooted token — the same one the
-                # browser sends on the button path — never a new one minted on some
-                # broker's authority.
-                caller_token=(
-                    (http_request.headers.get("authorization") or "")
-                    .removeprefix("Bearer ")
-                    .strip()
+            # INSIDE the keepalive: `_keepalive_wrap` turns a producer exception into an error
+            # event, so only here can the audit line say `outcome=error`.
+            _audit_orchestrate_wrap(
+                generate_dagster_stream(
+                    request,
+                    trace_id=_trace_id,
+                    user_id=current_user.id,
+                    # ADR-0025 hop 2 + identity consolidation (2026-07-09): the
+                    # caller's AUTHORIZATION IDENTITY (authz_id — the
+                    # USER_ENTITLEMENT_CLAIM key policy/users.yaml + the seeded Topaz
+                    # `user` objects key on; NOT the sub in user_id, NOT necessarily
+                    # email). In sandbox authz_id == email (transparent); at
+                    # work-deploy USER_ENTITLEMENT_CLAIM=<employee-id claim> re-keys
+                    # this and the entitlement lookup TOGETHER with one knob. Threaded
+                    # so Engine D's query_metadata + Engine O's resolve ASK Topaz
+                    # about the SAME subject the matrix was looked up by (no
+                    # email-vs-employee-id divergence). The downstream param name is
+                    # still `user_email` but it CARRIES authz_id — a full param rename
+                    # (user_email→authz_id through supervisor/Engine D/Engine O) is the
+                    # honesty follow-up; the VALUE is the load-bearing fix. "" when
+                    # absent → Topaz denies (least-privileged).
+                    user_email=current_user.authz_id,
+                    user_persona=effective_persona,
+                    entitled_domains=effective_domains,
+                    # The caller's own credential, for the vault only. Read from the header
+                    # rather than re-minted: the whole point of the ruled design is that what
+                    # reaches /canvas/seed is ALICE'S OWN Ping-rooted token — the same one the
+                    # browser sends on the button path — never a new one minted on some
+                    # broker's authority.
+                    caller_token=(
+                        (http_request.headers.get("authorization") or "")
+                        .removeprefix("Bearer ")
+                        .strip()
+                    ),
+                    # Capture A per ADR-0025: thread the JWT-read-time
+                    # origin flag from auth.User down to the produced_for
+                    # dict construction inside generate_dagster_stream.
+                    entitlement_source=current_user.entitlement_source,
                 ),
-                # Capture A per ADR-0025: thread the JWT-read-time
-                # origin flag from auth.User down to the produced_for
-                # dict construction inside generate_dagster_stream.
-                entitlement_source=current_user.entitlement_source,
+                who=current_user.authz_id,
+                via=getattr(current_user, "azp", None) or "",
+                session_id=request.session_id,
             ),
             interval_s=10.0,
         ),
@@ -11604,7 +12403,7 @@ async def _load_viewable_case(case_id: str, current_user: User) -> tuple[dict, d
     return case, definitions
 
 
-@app.get("/cases/{case_id}")
+@app.get("/cases/{case_id}", tags=[MCP_TAG])
 async def get_case(case_id: str, current_user: User = Depends(get_current_user)):
     """GET /cases/{case_id} -- project the case runner's state (WorkflowRunner, ADR-0039) as
     cortex's `WorkflowCasePayload` (cortex-ui `src/archetypes/workflow-case/contract.ts`).
@@ -11644,7 +12443,21 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
         task_rows = []  # HITL substrate unconfigured: approvals are honestly empty, not a 503 --
                         # the case itself is readable without it.
 
-    return case_projection.project_workflow_case(case, definitions, task_rows)
+    # The released ActionRecord, read ONLY when a definition could have emitted one. A store that
+    # cannot be read is a 503, not a null: null claims "not released", which is false when we
+    # cannot tell. Same detail as `GET /cases/{id}/action`.
+    output_artifact = None
+    if case_projection.has_emit_step(case, definitions):
+        try:
+            records = await run_in_threadpool(_read_action_records, case_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("action record read failed: %s", exc)
+            raise HTTPException(status_code=503,
+                                detail={"error": "artifact_store_unavailable"}) from exc
+        output_artifact = case_projection.release_artifact(case_id, records)
+
+    return case_projection.project_workflow_case(
+        case, definitions, task_rows, output_artifact)
 
 
 from pydantic import ConfigDict as _ConfigDict  # noqa: E402
@@ -11672,7 +12485,7 @@ async def answer_case_signal(
     current_user: User = Depends(get_current_user),
 ):
     """POST /cases/{case_id}/signals/{signal} -- a person answers a case's human-audience
-    signal (a `signal_await` step, e.g. maint_release's `tier_ack`). A human acknowledgment is
+    signal (a `signal_await` step; no committed definition declares one since 2026-10-28, when the supervisor's approval became the release). A human acknowledgment is
     a cortex action (architect ruling 2026-10-10).
 
     GENERIC over the signal name, GATED by the journalled audience: this route names no signal.
@@ -11758,7 +12571,7 @@ def _sniff_file_kind(head: bytes) -> Optional[str]:
     return None
 
 
-@app.post("/ingest", tags=[INGEST_V1_TAG], responses={200: {"model": IngestResponse}})
+@app.post("/ingest", tags=[INGEST_V1_TAG, MCP_TAG], responses={200: {"model": IngestResponse}, **DROP_GATE_RESPONSES})
 async def ingest_document(
     file: UploadFile = File(...),
     kind: str = Form(...),
@@ -11903,6 +12716,12 @@ async def ingest_document(
                 ),
             },
         )
+
+    # can_drop:<kind> (2026-10-28): a gated kind is dropped only by its grantees. The EFFECTIVE kind
+    # is `declared_content_kind` (a `leaf` already replaced it above); the dropper is `actor`, the
+    # principal of record when a delegate drops on their behalf. Before the bounded read, so a
+    # refused drop writes nothing.
+    await _can_drop_or_refuse(declared_content_kind, actor)
 
     # THE PROCESSABLE-KINDS CHECK (owner ruling, F2/F3): behind a flag that ships OFF. Flag off ->
     # the store and cache are never touched. Flag on is deny-by-default: no published list yet ->
@@ -12134,7 +12953,7 @@ def _dotted_get(d: dict[str, Any], path: str) -> Any:
     return cur
 
 
-@app.post("/ingest/events")
+@app.post("/ingest/events", responses=DROP_GATE_RESPONSES)
 async def ingest_event(
     req: IngestEventRequest,
     current_user: User = Depends(get_current_user),
@@ -12183,6 +13002,9 @@ async def ingest_event(
                 ),
             },
         )
+    # can_drop:<kind>: the dropper of record (`actor`) must hold it when the kind is gated.
+    # Before the trigger load, the runner and any write, so a refusal records nothing.
+    await _can_drop_or_refuse(req.content_kind, actor)
 
     try:
         from agent_fleet.restate_analyst.case_routing import (  # noqa: PLC0415
@@ -12731,9 +13553,15 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
     A REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the
     rejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404
     `rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`."""
+    row, _why = await _ingest_review_access(ingest_id, current_user, "extraction")
+    return await _extraction_body(ingest_id, row)
+
+
+async def _extraction_body(ingest_id: str, row: dict) -> dict:
+    """The body of GET /ingest/<id>/extraction for an already-gated `row` (the route and the
+    review export share it). Raises the same HTTPExceptions the route documents."""
     from starlette.concurrency import run_in_threadpool
 
-    row, _why = await _ingest_review_access(ingest_id, current_user, "extraction")
     ref = str(row.get("extraction_ref") or "").strip()
     if not ref:
         raise HTTPException(status_code=422, detail={
@@ -12787,8 +13615,14 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
             "source_snippet": it.get("source_snippet"), "evidence_ref": ev})
     summ = _review_notice_summary(review)
     leaf, leaf_source, corrected_by = _row_leaf(row)
+    from . import content_kinds, review_shapes
+    _reg = content_kinds.by_kind(row.get("content_kind") or "")
+    _shape = getattr(_reg, "review_shape", None)
+    _shape_row = review_shapes.valid_review_shapes().get(_shape) if _shape else None
     return {
         "ingest_id": ingest_id,
+        "review_shape": _shape if _shape_row is not None else None,
+        "item_kind": _shape_row.item_kind if _shape_row is not None else None,
         "notice_id": summ["notice_id"],
         "content_kind": row.get("content_kind"), "attempt": row.get("attempt"),
         "leaf": leaf, "leaf_source": leaf_source, "corrected_by": corrected_by,
@@ -12798,6 +13632,330 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
         "part_count": summ["part_count"],
         "rows": rows_out, "rows_without_evidence": without, "review_ref": key,
         "relocated_to": reloc[1] if reloc else None}
+
+
+_EXPORT_BATCH_CAPABILITY = "ingest:exportBatch"
+_EXPORT_PROFILE_CAPABILITY_PREFIX = "can_export:"
+_EXPORT_MAX_DAYS = 92
+_EXPORT_MAX_NOTICES = 500
+_EXPORT_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def _export_profile_or_422(name: Optional[str]):
+    """The named valid export profile, else 422 `export_profile_unknown` / `export_profile_invalid`."""
+    from . import export_profiles
+
+    p = export_profiles.load_profiles().get(name or "")
+    if p is None:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_profile_unknown",
+            "message": f"no export profile {name!r}; GET /ingest/export/profiles lists them"})
+    if isinstance(p, export_profiles.ProfileInvalid):
+        raise HTTPException(status_code=422, detail={
+            "error": "export_profile_invalid", "reason": p.reason,
+            "message": f"export profile {name!r} is invalid ({p.reason})"})
+    return p
+
+
+async def _may_export_batch(caller: str, route: str, ingest_id: str = "-") -> bool:
+    """The `ingest:exportBatch` capability for `caller`. A Topaz failure is 503, never a deny
+    (same bodies as `_ingest_review_access`); an ungranted capability is False."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    try:
+        return bool(await run_in_threadpool(
+            lambda: human_tasks.can_invoke_or_unavailable(_EXPORT_BATCH_CAPABILITY, caller)))
+    except human_tasks.AuthorizationUnconfigured as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unconfigured")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("export capability check unavailable: %s", type(exc).__name__)
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unavailable")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify the caller against the export capability"}) from exc
+
+
+async def _may_export_profile(caller: str, profile_name: str, route: str,
+                              ingest_id: str = "-") -> bool:
+    """The `can_export:<profile>` capability for `caller`. DENY BY DEFAULT: a profile with no
+    `can_export:` row is exportable by nobody (gov's #151 convention, the opposite of `can_drop`).
+    A Topaz failure is 503, never a deny (same bodies as `_may_export_batch`)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    capability = f"{_EXPORT_PROFILE_CAPABILITY_PREFIX}{profile_name}"
+    try:
+        return bool(await run_in_threadpool(
+            lambda: human_tasks.can_invoke_or_unavailable(capability, caller)))
+    except human_tasks.AuthorizationUnconfigured as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unconfigured")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("export profile capability check unavailable: %s", type(exc).__name__)
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unavailable")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify the caller against the export profile capability"}) from exc
+
+
+def _export_decision_record(ingest_id: str):
+    """Sync (threadpool): the stored decision record, 503 `decision_ledger_unreachable` on a fault."""
+    from . import promotion_stores
+
+    try:
+        return promotion_stores.PgDecisionLedger().record_for(ingest_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decision ledger read failed for %s: %s", ingest_id, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "decision_ledger_unreachable",
+            "message": f"the decision ledger did not answer: {type(exc).__name__}"})
+
+
+async def _export_notice_extraction(ingest_id: str, row: dict) -> dict:
+    """The extraction body of a PROMOTED, uncorrected notice, for the export; else the refusal.
+    409 `ingest_not_promoted` (body carries `status`); 409 `export_corrections_not_applied`; 503
+    `decision_ledger_unreachable`; then whatever `_extraction_body` refuses."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status, promotion
+
+    if row.get("status") != ingest_status.PROMOTED:
+        raise HTTPException(status_code=409, detail={
+            "error": "ingest_not_promoted", "status": row.get("status"),
+            "message": "only a promoted notice can be exported"})
+    rec = await run_in_threadpool(lambda: _export_decision_record(ingest_id))
+    if promotion._recorded_row_edits(rec):
+        raise HTTPException(status_code=409, detail={
+            "error": "export_corrections_not_applied",
+            "message": "the promotion carries steward corrections (row or header edits) and the "
+                       "export serves review.json's uncorrected values; refused until "
+                       "corrections are applied to the export"})
+    return await _extraction_body(ingest_id, row)
+
+
+def _export_render(profile, bodies: list) -> list:
+    from . import export_profiles
+
+    out: list = []
+    try:
+        for b in bodies:
+            out += export_profiles.render_rows(profile, b)
+    except export_profiles.ExportBlocked as exc:
+        raise HTTPException(status_code=422, detail={"error": "export_blocked", **exc.body()})
+    return out
+
+
+def _export_response(profile, rows: list, filename: str, **extra) -> Response:
+    from . import export_profiles
+
+    disp = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    if profile.format == "csv":
+        return Response(export_profiles.to_csv(profile.outputs, rows),
+                        media_type="text/csv; charset=utf-8", headers=disp)
+    return JSONResponse(export_profiles.to_json(profile, rows, **extra), headers=disp)
+
+
+# The export routes carry their own tag, not ingest-v1: a v1 entry needs a JSON response model per
+# route and the CSV body is not JSON. They enter v1 as PREVIEW routes (like /empty) when Lane 1
+# regenerates the v1 doc and shapes lock (overnight item 5).
+@app.get("/ingest/export/profiles", tags=["ingest-export", MCP_TAG],
+         responses={200: {"model": list[ExportProfile]}})
+async def ingest_export_profiles_route(current_user: User = Depends(get_current_user)):
+    """GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:
+    `[{name, format, granularity, label}]`. An invalid profile is logged at ERROR and left out.
+    Any authenticated caller (a name and a label are not notice content)."""
+    from . import export_profiles
+
+    out = []
+    for name, p in sorted(export_profiles.load_profiles().items()):
+        if isinstance(p, export_profiles.ProfileInvalid):
+            logger.error("export profile %s is invalid: %s", name, p)
+            continue
+        out.append({"name": p.name, "format": p.format, "granularity": p.granularity,
+                    "label": p.label})
+    return out
+
+
+@app.get("/review-shapes", tags=["ingest-export"],
+         responses={200: {"model": list[ReviewShapeRow]}})
+async def review_shapes_route(current_user: User = Depends(get_current_user)):
+    """GET /review-shapes -- the valid review-shape registry rows (`policy/review_shapes`, the
+    seed plus the deployment overlays), sorted by `review_shape`. An invalid row is logged at
+    ERROR and left out. Any authenticated caller: a shape row is policy configuration, not
+    content."""
+    from . import review_shapes
+
+    out = []
+    for name, row in sorted(review_shapes.load_review_shapes().items()):
+        if isinstance(row, review_shapes.ShapeInvalid):
+            logger.error("review shape %s is invalid: %s", name, row)
+            continue
+        out.append(row.model_dump(mode="json"))
+    return out
+
+
+@app.get("/ingest/export", tags=["ingest-export", MCP_TAG])
+async def ingest_export_batch_route(
+        profile: Optional[str] = _Query(None), from_: Optional[str] = _Query(None, alias="from"),
+        to: Optional[str] = _Query(None), current_user: User = Depends(get_current_user)):
+    """GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the
+    range (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.
+    A service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The
+    capability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is
+    one of the caller's entitlement-cell domains are in the set, filtered before the loud-not-
+    partial checks and before the 500 cap; a caller with no cells gets the empty export.
+    Gate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy
+    refusal; Topaz down is 503), AND, in addition, `can_export:<profile>` for the named profile
+    (403 `not_entitled_to_export`, a policy refusal; DENY BY DEFAULT: a profile with no row is
+    exportable by nobody), checked after the profile resolves (an unknown one stays 422). At most 92 days (both ends counted) and 500 notices. LOUD, NOT
+    PARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,
+    extraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks
+    on is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`)."""
+    from datetime import timedelta
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status, promotion_stores
+    from .authz.refusal import policy_refusal
+
+    caller = (current_user.authz_id or "").strip()
+    if _is_service_caller(caller) or not await _may_export_batch(caller, "export_batch"):
+        _audit_ingest_access("export_batch", "-", caller, "deny", "not_entitled")
+        raise policy_refusal(
+            "not_entitled_to_export_batch", policy_id="capability_grants:ingest:exportBatch",
+            missing_binding="can_invoke ingest:exportBatch",
+            message="exporting the promoted notices of a date range needs the ingest:exportBatch "
+                    "capability")
+    prof = _export_profile_or_422(profile)
+    if not await _may_export_profile(caller, prof.name, "export_batch", "-"):
+        _audit_ingest_access("export_batch", "-", caller, "deny", "not_entitled_to_profile")
+        raise policy_refusal(
+            "not_entitled_to_export", policy_id=f"capability_grants:can_export:{prof.name}",
+            missing_binding=f"can_invoke can_export:{prof.name}",
+            message=f"exporting through the {prof.name!r} profile needs the "
+                    f"can_export:{prof.name} capability")
+
+    def _day(v):
+        if not isinstance(v, str) or not _EXPORT_DATE_RE.fullmatch(v):
+            return None
+        try:
+            return _date.fromisoformat(v)
+        except ValueError:
+            return None
+
+    d0, d1 = _day(from_), _day(to)
+    if d0 is None or d1 is None or d0 > d1:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_invalid",
+            "message": "from and to are required, YYYY-MM-DD (UTC days), and from <= to"})
+    if (d1 - d0).days + 1 > _EXPORT_MAX_DAYS:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_too_large",
+            "message": f"at most {_EXPORT_MAX_DAYS} days (both ends counted); narrow the range"})
+
+    def _ms(d):
+        return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
+
+    start_ms, end_ms = _ms(d0), _ms(d1 + timedelta(days=1))
+    try:
+        domains = {c.domain for c in current_user.entitlements.cells}
+        hits = [] if not domains else await run_in_threadpool(
+            lambda: promotion_stores.PgDecisionLedger().promoted_between(
+                start_ms, end_ms, _EXPORT_MAX_NOTICES + 1, domains))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decision ledger range read failed: %s", exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "decision_ledger_unreachable",
+            "message": f"the decision ledger did not answer: {type(exc).__name__}"})
+    if len(hits) > _EXPORT_MAX_NOTICES:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_too_large",
+            "message": f"more than {_EXPORT_MAX_NOTICES} notices were promoted in the range; "
+                       "narrow the range"})
+    bodies = []
+    for ingest_id, _at in hits:
+        row = await run_in_threadpool(lambda i=ingest_id: ingest_status.get_row(i))
+        try:
+            if row is None or row.get("kind") == ingest_status.EVENT:
+                raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+            bodies.append(await _export_notice_extraction(ingest_id, row))
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                raise
+            d = exc.detail if isinstance(exc.detail, dict) else {}
+            raise HTTPException(status_code=422, detail={
+                "error": "export_notice_unreadable", "ingest_id": ingest_id,
+                "reason": d.get("error"), "message": d.get("message") or str(exc.detail)})
+    rows = _export_render(prof, bodies)
+    _ingest_access_log.info(
+        "ingest_export_batch caller=%s profile=%s from=%s to=%s n=%d",
+        caller, prof.name, d0.isoformat(), d1.isoformat(), len(bodies))
+    return _export_response(
+        prof, rows, f"ingest-export.{prof.name}.{d0.isoformat()}_{d1.isoformat()}.{prof.format}",
+        **{"from": d0.isoformat(), "to": d1.isoformat(), "notices": len(bodies)})
+
+
+@app.get("/ingest/{ingest_id}/export", tags=["ingest-export"])
+async def ingest_export_route(ingest_id: str, profile: Optional[str] = _Query(None),
+                              current_user: User = Depends(get_current_user)):
+    """GET /ingest/<id>/export?profile=<name> -- one PROMOTED notice rendered through a profile
+    (`policy/exports/`, 7f's batch-column-map vocabulary). A service caller never reaches the
+    capability: the original 403 is re-raised and Topaz is not asked. The capability is
+    DOMAIN-SCOPED: a notice whose promotion domain (`promotion.recorded_domain`) is not one of the
+    caller's cell domains, or has none, re-raises the original 403 (audit `out_of_domain`). Gate: `_ingest_review_access` (the
+    dropper, or a holder of the open task), and a caller it would 403 is admitted when they hold
+    the `ingest:exportBatch` capability (reason `export_capability`); a Topaz failure while that
+    is consulted is 503, a False re-raises the ORIGINAL 403. 422 `export_profile_unknown` /
+    `export_profile_invalid`. IN ADDITION to the gates above, for EVERY caller who reaches it (the
+    review-access path and the exportBatch path alike, a service caller that passed review access
+    too): the `can_export:<profile>` capability, checked after the profile resolves; 403
+    `not_entitled_to_export` (a policy refusal, DENY BY DEFAULT), Topaz down is 503. 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the
+    export serves review.json's values, so a promotion carrying steward row or header edits would
+    export the uncorrected ones; refused until a later slice applies corrections); 503
+    `decision_ledger_unreachable`; 422 `export_blocked` (naming notice, part, column)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+    from .authz.refusal import policy_refusal
+
+    caller = (current_user.authz_id or "").strip()
+    try:
+        row, _why = await _ingest_review_access(ingest_id, current_user, "export")
+    except HTTPException as exc:
+        if exc.status_code != 403:
+            raise
+        if _is_service_caller(caller):
+            raise
+        if not await _may_export_batch(caller, "export", ingest_id):
+            raise
+        row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+        if row is None or row.get("kind") == ingest_status.EVENT:
+            raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+        from . import promotion
+
+        rec = await run_in_threadpool(lambda: _export_decision_record(ingest_id))
+        if promotion.recorded_domain(rec) not in {c.domain for c in current_user.entitlements.cells}:
+            _audit_ingest_access("export", ingest_id, caller, "deny", "out_of_domain")
+            raise
+        _audit_ingest_access("export", ingest_id, caller, "allow", "export_capability")
+    prof = _export_profile_or_422(profile)
+    if not await _may_export_profile(caller, prof.name, "export", ingest_id):
+        _audit_ingest_access("export", ingest_id, caller, "deny", "not_entitled_to_profile")
+        raise policy_refusal(
+            "not_entitled_to_export", policy_id=f"capability_grants:can_export:{prof.name}",
+            missing_binding=f"can_invoke can_export:{prof.name}",
+            message=f"exporting through the {prof.name!r} profile needs the "
+                    f"can_export:{prof.name} capability")
+    body = await _export_notice_extraction(ingest_id, row)
+    rows = _export_render(prof, [body])
+    return _export_response(prof, rows, f"{ingest_id}.{prof.name}.{prof.format}")
 
 
 _SOURCE_MEDIA_TYPES = {"pdf": "application/pdf", "xml": "application/xml"}
@@ -13255,6 +14413,19 @@ def _bound_review_for_payload(subject) -> dict:
             "error": "extraction_unbound",
             "message": f"the review rows are not under this document's directory {prefix!r}"})
     return _read_review_json(key)
+
+
+def _handler_consumes(kind, field: str) -> bool:
+    """Whether the handler for `kind` reads request field `field`: the gate asks the handler."""
+    from . import promotion
+    return kind == promotion.KIND and field in promotion.CONSUMES
+
+
+def _review_parts_for_payload(subject) -> list:
+    """The distinct `part_index` of the extraction a promotion task points at (sync; threadpool),
+    read through the reader behind `GET /ingest/{id}/extraction`."""
+    return sorted({int(m.group(1)) for it in _review_items(_bound_review_for_payload(subject))
+                   if (m := _PART_FIELD_RE.match(str(it.get("field_path") or "")))})
 
 
 def _review_header_for_payload(subject) -> dict:
@@ -14346,10 +15517,14 @@ def _bbox_is_page_fractions(bbox) -> bool:
     return 0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1
 
 
-class TitleEvidenceRef(EvidenceRef):
-    """A title candidate's crop: `EvidenceRef` plus the page-fraction bounds. A SUBCLASS so the
-    steward row_edits / header_edits evidence_ref (not yet converted) keeps `EvidenceRef` as it was.
-    Cortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422)."""
+class TitleEvidenceRef(_ServedEvidenceRef):
+    """A title candidate's crop: the served `ingest_api.EvidenceRef` (which the equivalence seal holds
+    to the SDK verdict) plus the page-fraction bounds. A SUBCLASS of the served model, not of the SDK's,
+    so the published title-candidate schema keeps its array-of-numbers bbox and `page` minimum. Steward
+    row_edits / header_edits evidence_ref now go through the SDK model (`_wire_evidence_ref`).
+    Cortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422).
+    Strict, as the request model it replaced was: a coordinate sent as a string is refused, not coerced."""
+    model_config = {**_ServedEvidenceRef.model_config, "strict": True}
 
     @model_validator(mode="after")
     def _fractions(self):
@@ -14389,7 +15564,7 @@ class IngestTitleLeafRequest(_BaseModel):
     run_id: Optional[str] = None
 
 
-@app.post("/ingest/{ingest_id}/title_leaf", tags=[INGEST_V1_TAG], responses={200: {"model": TitleLeafResponse}})
+@app.post("/ingest/{ingest_id}/title_leaf", tags=[INGEST_V1_TAG], responses={200: {"model": TitleLeafResponse}, **DROP_GATE_RESPONSES})
 async def ingest_title_leaf_route(
     ingest_id: str, req: IngestTitleLeafRequest, current_user: User = Depends(get_current_user),
 ):
@@ -14454,6 +15629,20 @@ async def ingest_title_leaf_route(
             return _answer(row, True)
         # 3. a confident title
         if title is not None:
+            # can_drop:<title>, against the row's DROPPER (not doc-tools): a service identity must
+            # not launder a non-grantee's drop into a restricted kind. Refused: the leaf is NOT set
+            # and the row waits for a kind (the hold in step 4), then the 403 is answered.
+            try:
+                await _can_drop_or_refuse(title, _row_dropper(row))
+            except HTTPException as exc:
+                if exc.status_code == 403:
+                    await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+                        ingest_id,
+                        candidates=[c.model_dump() for c in (req.candidates or [])],
+                        detail=(f"the title named {title}, which the dropper may not drop; "
+                                "pick another kind"),
+                        run_id=req.run_id, from_statuses=[stage]))
+                raise
             written = await run_in_threadpool(lambda: ingest_status.set_leaf(
                 ingest_id, title, "title", set_by=caller, from_statuses=[stage]))
             if written is not None:
@@ -14485,7 +15674,7 @@ class IngestLeafRequest(_BaseModel):
     leaf: str
 
 
-@app.post("/ingest/{ingest_id}/leaf", tags=[INGEST_V1_TAG], responses={200: {"model": LeafResponse}})
+@app.post("/ingest/{ingest_id}/leaf", tags=[INGEST_V1_TAG], responses={200: {"model": LeafResponse}, **DROP_GATE_RESPONSES})
 async def ingest_leaf_route(
     ingest_id: str, req: IngestLeafRequest, current_user: User = Depends(get_current_user),
 ):
@@ -14568,6 +15757,17 @@ async def ingest_leaf_route(
                       "message": "the document moved on while the kind was being set; "
                                  "reload it and try again"}, "row_moved")
 
+    # can_drop:<leaf>, against the row's DROPPER, never the caller (a granted steward or the BFF must
+    # not move a non-grantee's document into a restricted kind). No steward exemption: deny by
+    # default until the architect rules. Once, before any write (the sidecar rewrite included); the
+    # dropper of record does not change across the rounds below.
+    try:
+        await _can_drop_or_refuse(leaf, _row_dropper(row))
+    except HTTPException as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny",
+                             "not_entitled_to_drop" if exc.status_code == 403
+                             else "authorization_unavailable")
+        raise
     old_kind = row.get("content_kind")
     same = _same_passes(old_kind, leaf)
     for _round in range(3):
@@ -15518,15 +16718,12 @@ async def electric_shape_proxy(
     # server-side WHERE; there is no branch that serves a table UNFILTERED.
     if table == "human_task_projection":
         escaped_id = _escape_identity_literal(current_user.authz_id)
-        # Scope the inbox stream to PENDING rows only, so it agrees with the REST
-        # snapshot (/me/human_tasks filters status='pending'). Without this the shape
-        # streamed EVERY row for the recipient incl. resolved ones; a resolved task
-        # could linger client-side as a stale 'pending' (the badge showing N, then
-        # dropping to the real count when the inbox opened and replacePending ran the
-        # REST reconcile). With status in the WHERE, resolving a task moves it OUT of
-        # the shape -> Electric emits a delete -> it drops cleanly, no flicker. status
-        # is a plain column (Electric's WHERE subset handles column = literal + AND).
-        server_where = f"recipient_id = '{escaped_id}' AND status = 'pending'"
+        # Scope the inbox stream to PENDING rows only, so it agrees with the REST snapshot
+        # (/me/human_tasks): resolving a task moves it OUT of the shape -> Electric emits a delete.
+        # The predicate's definition now lives in human_tasks (inbox_where_literal), shared with
+        # list_tasks_for; this site only supplies the validated, escaped identity.
+        from . import human_tasks as _human_tasks
+        server_where = _human_tasks.inbox_where_literal(escaped_id)
     elif table == "ingest_status_projection":
         # ADR-0041 §8: the ingestion seam's status stream. Same authz_id-keyed discipline
         # as human_task_projection above (submitted_by/on_behalf_of are authz identities,
