@@ -1,10 +1,10 @@
 # RECIPIENT READERS -- who may download a recipient's disclosure package, from the engine that
 # OWNS that recipient scope. Architect, 2026-10-27 ruling 4, refined 2026-10-28: "gov writes the
 # rail shape (a recipient_readers family with grantors); fin and cost each move their own
-# RECIPIENT_READERS onto it." This file is that shape. It ships EMPTY for finance and cost: each owning
-# lane moves its own rows here and switches its call sites to the rail; until then the code-held
-# tables (agent_fleet/finance_agent/export.py, agent_fleet/cost_agent/seed.py) remain the
-# authority and tests/security/test_recipient_readers_rail.py ratchets them down.
+# RECIPIENT_READERS onto it." This file is that shape. `finance` and `cost` hold the rows their code
+# tables held (moved by their owning lane, `granted_by: seed`: a shipped row's grantor is the seed,
+# never a person); the engines and the BFF ask Topaz, and no table remains in code
+# (tests/security/test_recipient_readers_rail.py ratchets that).
 #
 # SHAPE: KEY 1 = OWNER, declared HERE: the owners are this file's keys, not a code-held set
 # (architect's standing rule, 2026-10-30), so a deployment adds one in its overlay. Every owner is
@@ -38,8 +38,32 @@
 #     grant_to:
 #       - someone@example.com
 recipient_readers:
-  finance: {}
-  cost: {}
+  finance:
+    program_office.NP-MERIDIAN:
+      granted_by: seed
+      reason: >-
+        Moved from finance_agent/export.py's RECIPIENT_READERS under the architect's 2026-10-27 ruling 4: the recipient
+        readers leave code for this file. The scope is notional and the identity is a sandbox
+        one; the readers are exactly the ones the code table held.
+      grant_to:
+        - alice@example.com
+  cost:
+    notional-customer-alpha:
+      granted_by: seed
+      reason: >-
+        Moved from cost_agent/seed.py's RECIPIENT_READERS under the architect's 2026-10-27 ruling 4: the recipient
+        readers leave code for this file. The scope is notional and the identity is a sandbox
+        one; the readers are exactly the ones the code table held.
+      grant_to:
+        - alice@example.com
+    notional-customer-beta:
+      granted_by: seed
+      reason: >-
+        Moved from cost_agent/seed.py's RECIPIENT_READERS under the architect's 2026-10-27 ruling 4: the recipient
+        readers leave code for this file. The scope is notional and the identity is a sandbox
+        one; the readers are exactly the ones the code table held.
+      grant_to:
+        - bob@example.com
   plan:
     notional-plan-office:
       granted_by: seed

@@ -172,7 +172,9 @@ RECIPIENT_SCOPES: dict[str, tuple[int, ...]] = {
 }
 
 
-#: WHO MAY FETCH A PRODUCED PACKAGE, keyed on the mint-contract `authz_id` — the only field
+#: WHO MAY FETCH A PRODUCED PACKAGE is the `recipient_readers` policy rail (policy/recipient_readers.yaml,
+#: owner `cost`), asked through `agent_fleet.utils.recipient_readers.can_read_recipient`, keyed on the
+#: mint-contract `authz_id` — the only field
 #: `CallerIdentity` permits an authorization decision to read.
 #:
 #: ── WHY THIS EXISTS, AND WHY IT IS NOT "LATER" ──────────────────────────────────────────
@@ -182,33 +184,13 @@ RECIPIENT_SCOPES: dict[str, tuple[int, ...]] = {
 #: "The data is notional" is not a reason to wait — THE ROUTE'S SHAPE IS WHAT SHIPS TO THE
 #: FIRST CUSTOMER, and it ships with whatever check it has on the day.
 #:
-#: ── NO SERVICE IDENTITY IS LISTED, AND THAT IS THE POINT ────────────────────────────────
+#: ── NO SERVICE IDENTITY IS EVER A READER, AND THAT IS THE POINT ────────────────────────────────
 #: The card action reaches this engine through cortex-bff. Granting `svc:cortex-bff` would
 #: make the route open to anyone who can open the UI — a CONFUSED DEPUTY one hop out, which
 #: would look like an authorization check while being none. A service calling on behalf of a
 #: person must carry THAT PERSON's identity (ADR-0044's per-request minted ticket does
 #: exactly this); where it cannot, a refusal is the honest outcome rather than a blanket
 #: grant to the service.
-#:
-#: ── NOTIONAL, AND A REAL DEPLOYMENT DOES NOT READ THIS FROM A SEED ──────────────────────
-#: Sandbox identities against notional scopes. A deployment with real recipients reads this
-#: relation from policy, where it can be granted and reviewed on the same rail as every other
-#: entitlement in this fleet. It sits beside the scopes it governs, which is at least honest
-#: about being seed data.
-RECIPIENT_READERS: dict[str, tuple[str, ...]] = {
-    "notional-customer-alpha": ("alice@example.com",),
-    "notional-customer-beta": ("bob@example.com",),
-}
-
-
-def readers_for_recipient(recipient_scope: str) -> tuple[str, ...]:
-    """The callers entitled to fetch this recipient's package. EMPTY IS A REFUSAL.
-
-    An unknown scope returns empty rather than raising: the caller of this function is an HTTP
-    route that must answer 403 either way, and "this scope has no readers" and "this scope
-    does not exist" are the same answer to *may this caller have it*.
-    """
-    return RECIPIENT_READERS.get(recipient_scope, ())
 
 
 def artifact_filenames(recipient_scope: str) -> tuple[str, str]:
