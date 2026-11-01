@@ -1,0 +1,45 @@
+# SAMPLE -- invented in this repo to prove the measure-row contract end to end. A deployment
+# replaces it with its own. Overlay layer: policy/overlays/sample/. Proposal:
+# docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md
+measure_id: fin_vac_cpi
+verb: finVarianceAtCompletion
+name: Variance at completion (CPI method)
+description: >-
+  The budget at completion less the estimate at completion, with the estimate worked out as BAC
+  divided by the cost performance index, reported period by period. An amount of money. Negative
+  means the program is forecast to overrun its budget; positive, to underrun it. Undefined while
+  no work has been performed, because the cost performance index has no value then. NOT the cost
+  variance to date - that is finVarianceAnalysis. NOT the forecast final cost itself - that is
+  finEacCalculation. NOT the efficiency needed to finish on budget - that is TCPI. OWNS the
+  phrasings: variance at completion, VAC, how far over or under budget will we finish.
+synonyms:
+  - variance at completion
+  - VAC
+  - forecast overrun at completion
+anti_synonyms:
+  - cost variance
+  - estimate at completion
+  - to-complete performance index
+inputs:
+  params: {program_id: {required: true}, window: {required: false}}
+  state: {bac: program.bac, bcwp: cumulative.bcwp, acwp: cumulative.acwp}
+computation:
+  module: agent_fleet.finance_agent.measure_modules.vac
+  function: vac_cpi
+  version: "1.0.0"
+  derived_from:
+    authority: Public EVM methodology (DoD/DAU EVM Gold Card formulation)
+    clause: VAC, with EAC = BAC / CPI
+    citation: name-only
+    transcription: VAC = BAC - BAC * ACWP / BCWP
+outputs:
+  archetype: PERIOD_SERIES
+  output_uri: VarianceAtCompletionSeries
+  series: [{key: vac, label: VAC, unit: USD}]          # an amount: a unit
+  reference: {value: 0, label: on budget}
+  undefined: {reason: no_work_performed, when: cumulative BCWP <= 0 (no work performed, so the cost performance index has no value)}
+policy:
+  status: sample
+  cells: [PROGRAM_FINANCE]
+  granted_by: seed
+  reason: the shipped sample of a measure that is an amount, on synthetic NP-MERIDIAN data
