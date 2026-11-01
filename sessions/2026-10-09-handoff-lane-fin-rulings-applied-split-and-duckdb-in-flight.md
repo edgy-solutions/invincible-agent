@@ -54,10 +54,30 @@ the envelope.
   - **lane/01 is asked to review the presentation hunk.** Not authorized to merge.
   - The cc packet to cortex-ui/master (their "no render declared" raw seal) is placed in the
     master tree's `sessions/`, untracked.
+- **#181 MERGED** at `2a042971`, by Chris (second parent `115d90b0`; is-ancestor of origin/master
+  checked). Relay 4 said: "no readers": zero readers across every owner, plan included, is 403;
+  land saf's P6 and the template-outage test, then it merges.
+  - **On top of gov's `b42f2456`** (the `is True` fix), `115d90b0` adds `_picker_scopes` for both
+    `/export/package/recipients` pickers:
+    - a rail outage on cost or plan → 503 with `owner`;
+    - the profile set down → 503 `answer_profiles_unavailable`;
+    - an empty cost∪plan → 403 `policy_refusal("no_recipient_you_may_export_to", policy_id="recipient_readers")`.
+  - Finance is not a picker owner; its export is the template door.
+  - saf's seal file is committed as `tests/test_review_181_seals.py`, with P3/P4 removed as
+    superseded.
+  - CI: 21 passed, 3 skipped.
+  - **Deploy:** run the recipient_reader sync by hand BEFORE the roll that carries it, or accept
+    the fail-closed window (downloads and pickers refuse until the post-upgrade hook finishes).
+    Ask Chris.
 - **Still next:**
-  - fix `test_the_shipped_rail_has_no_plan_owner_and_the_feature_is_dark`;
-  - #181's deploy order;
-  - the sandbox acceptance list below.
+  - a small PR for the three master reds, all fin's:
+    - `test_the_shipped_rail_has_no_plan_owner_and_the_feature_is_dark` (stale since the plan
+      row);
+    - `test_both_export_routes_shape_through_the_ONE_helper` (misses `_export_plan_answers`);
+    - `test_the_ORCHESTRATION_SIDE_forwards_the_identity_only_along_the_sealed_chain`
+      (`finance_measure`).
+  - Fork 16 (a non-boolean check → 403 or 503) is the architect's, not fin's.
+  - The sandbox acceptance list below.
 
 ## Update 2026-10-31: relay 2 applied. #147 and #176 merged; the recipient readers are PR #181. Read this first
 
