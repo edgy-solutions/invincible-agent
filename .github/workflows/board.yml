@@ -1,0 +1,27 @@
+# The cross-lane board: board/BOARD.md must equal what scripts/render_board.py renders.
+name: board
+
+on:
+  pull_request:
+    paths:
+      - "board/**"
+      - "scripts/render_board.py"
+      - "tests/test_the_board_renders_from_items_deterministically.py"
+      - ".github/workflows/board.yml"
+  push:
+    branches: [master]
+    paths:
+      - "board/**"
+      - "scripts/render_board.py"
+      - "tests/test_the_board_renders_from_items_deterministically.py"
+      - ".github/workflows/board.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/render_board.py --check
