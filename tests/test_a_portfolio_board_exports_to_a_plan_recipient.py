@@ -572,13 +572,14 @@ def test_a_cost_only_board_to_alpha_answers_as_it_does_on_master(world):
     assert world.cost_package_calls == 1
 
 
-def test_a_rail_outage_takes_the_cost_door_down_as_a_503_and_the_picker_omits_cost(world):
+def test_a_rail_outage_takes_the_cost_door_and_the_picker_down_as_a_503(world):
     """Cost's readers ride the rail now (they were a code table when this test said the opposite):
-    a rail that cannot be asked is a 503 at the door, never a 403, and the picker omits the owner's
-    recipients rather than failing. The plan row is the same rail, so it is omitted too."""
+    a rail that cannot be asked is a 503 at the door, never a 403, and (ruled 10-31, was: omitted)
+    at the picker too, which names the owner it was asking."""
     world.rail_down = True
     r = world.get("/export/package/recipients")
-    assert r.status_code == 200 and r.json()["recipients"] == []
+    assert r.status_code == 503 and r.json()["detail"] == {
+        "reason": "recipient_readers_unavailable", "owner": "cost"}
     got = world.export(BOARD_COST, scope=ALPHA)
     assert got.status_code == 503 and got.json()["detail"] == {
         "reason": "recipient_readers_unavailable"}
@@ -1053,12 +1054,15 @@ def _down(world, mode="down"):
 
 
 @pytest.mark.parametrize("mode", ["down", "500", "bad"])
-def test_without_the_served_set_the_pickers_omit_plan_and_keep_cost(world, mode):
+def test_without_the_served_set_the_pickers_are_a_503_and_the_409_listing_omits_plan(world, mode):
+    """Was `..._the_pickers_omit_plan_and_keep_cost`: ruled 10-31, a profile-set outage at a picker
+    is a 503 `answer_profiles_unavailable` (never an omission, never a 403), cost non-empty or not.
+    The 409 listing INSIDE the export door is a door's error listing, and still omits."""
     assert PLAN in _picker(world)
     _down(world, mode)
-    assert PLAN not in _picker(world) and ALPHA in _picker(world)
-    offered = [x["value"] for x in world.offer(BOARD_COST).json()["recipients"]]
-    assert PLAN not in offered and ALPHA in offered
+    for got in (world.get("/export/package/recipients"), world.offer(BOARD_COST)):
+        assert got.status_code == 503, got.text
+        assert got.json()["detail"] == {"reason": "answer_profiles_unavailable"}
     r = world.export(BOARD_PLAN, scope="")
     assert r.status_code == 409
     options = [o["value"] for o in r.json()["detail"]["options"]]

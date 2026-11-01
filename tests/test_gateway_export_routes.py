@@ -32,7 +32,7 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import gateway  # noqa: E402
-from tests.recipient_rail_double import install as install_rail  # noqa: E402
+from tests.recipient_rail_double import install as install_rail, serve_no_plan_profiles  # noqa: E402
 
 
 ALICE_TOKEN = "alice-token"
@@ -87,6 +87,13 @@ def _one_named_cost_answer(monkeypatch):
 def _rail(monkeypatch):
     """Topaz, doubled with the SHIPPED rail rows (policy/recipient_readers.yaml)."""
     return install_rail(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def _plan_half_answerable(monkeypatch):
+    """The pickers' plan half must be answerable (an engine-cost that cannot be asked is a 503
+    there): engine-cost serves a set naming no plan recipient."""
+    serve_no_plan_profiles(monkeypatch)
 
 
 @pytest.fixture

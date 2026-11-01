@@ -8,8 +8,8 @@ sync's own loader (tests/recipient_rail_double.py) -- no reader and no scope is 
 
   arm a  each owner, each shipped row: the BFF doors (download, picker) and the owning engine's door
          admit the row's readers and refuse a non-reader with the existing 403.
-  arm b  Topaz raises: the doors answer 503 (never 403); the pickers omit that owner's recipients
-         and still list the others.
+  arm b  Topaz raises: the doors answer 503 (never 403); the pickers answer 503 naming the owner
+         (ruled 10-31; was: omitted), and are unaffected by an owner they never ask (finance).
   arm c  the request the door sends is `check_payload(<owner>, scope, authz_id)`, and the owner is
          a key of the yaml (read, never typed).
   arm d  a tmp rail file that adds a reader for an existing scope admits that reader with no code
@@ -37,7 +37,7 @@ from agent_fleet.finance_agent import export as fin_export  # noqa: E402
 from agent_fleet.finance_agent import main as fin_main  # noqa: E402
 from agent_fleet.utils import recipient_readers as rr  # noqa: E402
 from src.iagent import gateway  # noqa: E402
-from tests.recipient_rail_double import Rail, install, rail_rows  # noqa: E402
+from tests.recipient_rail_double import Rail, install, rail_rows, serve_no_plan_profiles  # noqa: E402
 
 _RAIL_FILE = pathlib.Path(__file__).resolve().parents[1] / "policy" / "recipient_readers.yaml"
 STRANGER = "mallory@example.com"
@@ -183,7 +183,7 @@ def test_a_a_reader_of_one_owner_is_not_a_reader_of_the_other(rail, bff):
 @pytest.mark.parametrize("reader", sorted({r for o, _s, r in ROWS if o == "cost"}))
 def test_a_the_bff_picker_lists_exactly_the_cost_scopes_the_person_reads(
         rail, bff, monkeypatch, reader):
-    _no_plan(monkeypatch)
+    serve_no_plan_profiles(monkeypatch)  # the plan half is answerable (a 503 otherwise) and empty
     want = sorted(s for (o, s), rs in rail_rows().items() if o == "cost" and reader in rs)
     assert want, "control: the person reads some cost scope"
     got = bff("/export/package/recipients", reader)
@@ -243,8 +243,11 @@ def test_b_an_outage_for_one_owner_leaves_the_other_owners_door_alone(rail, bff)
     assert bff(_bff_download("finance", fscope), reader).status_code == 503
 
 
-def test_b_the_picker_omits_cost_recipients_when_cost_is_down_and_still_lists_the_plan_ones(
-        rail, bff, monkeypatch):
+@pytest.mark.parametrize("down,owner", [("cost", "cost"), ("plan", "plan")])
+def test_b_the_picker_is_a_503_naming_the_owner_when_cost_or_plan_is_down(
+        rail, bff, monkeypatch, down, owner):
+    """Was `..._omits_cost_recipients_when_cost_is_down_and_still_lists_the_plan_ones`: ruled
+    10-31, an outage answers 503 and is never omitted (and 'no readers' is the 403)."""
     plan_scope = next(s for (o, s) in rail_rows() if o == "plan")
     plan_reader = rail_rows()[("plan", plan_scope)][0]
     with TestClient(cost_main.app) as cost:
@@ -254,14 +257,17 @@ def test_b_the_picker_omits_cost_recipients_when_cost_is_down_and_still_lists_th
         # control: all owners up -> the person's cost scopes AND the plan scope
         up = [r["value"] for r in bff("/export/package/recipients", plan_reader).json()["recipients"]]
         assert plan_scope in up and len(up) > 1, up
-        rail.down_owners = {"cost"}
+        rail.down_owners = {down}
         got = bff("/export/package/recipients", plan_reader)
-        assert got.status_code == 200, got.text
-        assert [r["value"] for r in got.json()["recipients"]] == [plan_scope]
+        assert got.status_code == 503, got.text
+        assert got.json()["detail"] == {"reason": "recipient_readers_unavailable", "owner": owner}
 
 
 def test_b_the_cost_picker_survives_a_dead_finance_rail(rail, bff, monkeypatch):
-    _no_plan(monkeypatch)
+    # UNCHANGED BY THE 10-31 RULING (an outage is 503): the picker lists cost and plan recipients and
+    # never asks the finance owner, so finance's outage is not the picker's outage. Finance's
+    # export is the template door.
+    serve_no_plan_profiles(monkeypatch)  # the plan half is answerable (a 503 otherwise) and empty
     reader = next(r for o, _s, r in ROWS if o == "cost")
     want = sorted(s for (o, s), rs in rail_rows().items() if o == "cost" and reader in rs)
     rail.down_owners = {"finance"}
@@ -278,7 +284,9 @@ def test_b_the_function_forms(rail):
     with pytest.raises(HTTPException) as e:
         gateway._fin_export_recipients_for(_User(reader))
     assert e.value.status_code == 503
-    assert gateway._export_recipients_or_none(_User(reader)) == []
+    with pytest.raises(HTTPException) as e:
+        gateway._picker_scopes(_User(reader))
+    assert e.value.status_code == 503 and e.value.detail["owner"] == "cost"
 
 
 def _post_export(monkeypatch, who, scope):

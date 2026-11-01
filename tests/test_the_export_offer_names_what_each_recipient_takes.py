@@ -27,7 +27,7 @@ from agent_fleet.cost_agent import canvas as C  # noqa: E402
 from agent_fleet.cost_agent import entities as E  # noqa: E402
 from agent_fleet.cost_agent import measures as M  # noqa: E402
 from agent_fleet.cost_agent import seed  # noqa: E402
-from tests.recipient_rail_double import Rail, install as install_rail  # noqa: E402
+from tests.recipient_rail_double import Rail, install as install_rail, serve_no_plan_profiles  # noqa: E402
 from agent_fleet.finance_agent.main import VERB_TO_FN  # noqa: E402
 from src.iagent import gateway  # noqa: E402
 from tests.test_a_mixed_board_exports_per_engine import _Driver, _store_row  # noqa: E402
@@ -90,6 +90,7 @@ def offer(monkeypatch):
     def go(cards, readers=None, ids=None, body=None):
         install_rail(monkeypatch, None if readers is None else Rail(
             {("cost", sc): tuple(r) for sc, r in readers.items()}))
+        serve_no_plan_profiles(monkeypatch)  # the plan half is answerable (a 503 otherwise) and empty
         monkeypatch.setattr(gateway, "neo4j_driver",
                             _Driver({c["id"]: _store_row(c) for c in cards}, []))
         payload = body if body is not None else {

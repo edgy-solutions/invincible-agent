@@ -6801,7 +6801,7 @@
     },
     "/export/package/recipients": {
       "get": {
-        "description": "The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller\nsees are exactly the scopes their `authz_id` reads, never the full recipient catalogue.",
+        "description": "The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller\nsees are exactly the scopes their `authz_id` reads, never the full recipient catalogue.\nAn outage (the rail for cost or plan, or engine-cost's profile set) is 503; a caller who reads\nno recipient of any owner listed is 403.",
         "operationId": "export_package_recipients_export_package_recipients_get",
         "responses": {
           "200": {
@@ -6821,7 +6821,7 @@
         "summary": "Export Package Recipients"
       },
       "post": {
-        "description": "The recipient picker for THIS board: for each recipient the caller may export to, which\nof the board's answers that recipient's export takes and which it refuses, with the\nreasons -- so a board no recipient takes is greyed before Export, not refused after it.\n\nRecipients are exactly `_export_recipients_for(current_user)`, in that order: one the\ncaller may not export to is ABSENT, never greyed (ADR-0047 §5). A recipient is `offered`\niff its export would take at least one answer; a partial board stays offered (mixed-board\npartial export is ruled, 2026-10-09/16) and `refused` names the answers that will not go.\nGates, as the export's: no answers is 400 `no_answers`; an id that does not resolve is\n404 (503 when the store is down).",
+        "description": "The recipient picker for THIS board: for each recipient the caller may export to, which\nof the board's answers that recipient's export takes and which it refuses, with the\nreasons -- so a board no recipient takes is greyed before Export, not refused after it.\n\nRecipients are exactly `_export_recipients_for(current_user)`, in that order: one the\ncaller may not export to is ABSENT, never greyed (ADR-0047 §5). A recipient is `offered`\niff its export would take at least one answer; a partial board stays offered (mixed-board\npartial export is ruled, 2026-10-09/16) and `refused` names the answers that will not go.\nGates, as the export's: no answers is 400 `no_answers`; an id that does not resolve is\n404 (503 when the store is down). As the GET picker: an outage is 503, and a caller who reads\nno recipient of any owner listed is 403.",
         "operationId": "export_package_offer_export_package_recipients_post",
         "requestBody": {
           "content": {

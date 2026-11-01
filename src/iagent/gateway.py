@@ -2693,16 +2693,6 @@ def _export_recipients_for(user: "User") -> list[str]:
     )
 
 
-def _export_recipients_or_none(user: "User") -> list[str]:
-    """For the pickers only: a rail that cannot be asked omits cost's recipients (logged) rather
-    than taking the picker down, as `_plan_recipients_or_none` does. The export and the download
-    still answer 503."""
-    try:
-        return _export_recipients_for(user)
-    except HTTPException:
-        return []
-
-
 def _fin_export_recipients_for(user: "User") -> list[str]:
     """`_export_recipients_for`'s exact shape, read against engine-fin's own
     `export.RECIPIENT_SCOPES` under owner `finance` -- the two engines' disclosures are entitled
@@ -2800,16 +2790,6 @@ def _answer_profiles_unavailable_type() -> type:
     return _ae.AnswerProfilesUnavailable
 
 
-def _plan_recipients_or_none(user: "User") -> list[str]:
-    """For the pickers only: a rail that cannot be asked omits the plan recipients rather than
-    taking cost's own list down. The export and the download still answer 503. The same holds
-    when engine-cost's profile set cannot be had."""
-    try:
-        return _plan_recipients_for(user)
-    except (HTTPException, _answer_profiles_unavailable_type()):
-        return []
-
-
 def _plan_profile_name(scope: str, profiles: Optional[dict] = None) -> Optional[str]:
     from agent_fleet.utils import answer_exports as _ae
     profile = _ae.profile_for_recipient(_plan_profiles() if profiles is None else profiles, scope)
@@ -2834,8 +2814,9 @@ def _plan_exportable_for(
 
 
 def _plan_exportable_or_none(user: "User", profiles: Optional[dict] = None) -> list[str]:
-    """`_plan_recipients_or_none`'s twin for the pickers: a rail that cannot be asked omits the
-    plan recipients."""
+    """The plan recipients a caller may export to, for the 409 listing INSIDE the `export_package`
+    door (a door's error listing, not a picker): a rail that cannot be asked omits them there and
+    the door itself answers 503. The pickers do not use this; see `_picker_scopes`."""
     try:
         return _plan_exportable_for(user, None, profiles)
     except (HTTPException, _answer_profiles_unavailable_type()):
@@ -2860,6 +2841,47 @@ def _plan_refusal_403(scope: str) -> HTTPException:
         "not_a_recipient_you_may_export_to", policy_id="recipient_readers",
         missing_binding="can_read_recipient(recipient_scope)",
         message="You are not a reader of this recipient.", extra={"recipient_scope": scope})
+
+
+def _no_recipient_refusal_403() -> HTTPException:
+    """The compliant refusal for a picker whose caller reads no recipient of any owner it lists
+    (the plan family of `_plan_refusal_403`: `recipient_readers` is object-scoped, so no key)."""
+    from .authz.refusal import policy_refusal
+    return policy_refusal(
+        "no_recipient_you_may_export_to", policy_id="recipient_readers",
+        missing_binding="can_read_recipient(recipient_scope)",
+        message="You read no recipient of any owner this picker lists.")
+
+
+def _picker_scopes(user: "User") -> tuple[list[str], list[str], dict]:
+    """`(cost scopes, plan scopes, plan profiles)` the caller may export to, for the two pickers
+    (GET and POST `/export/package/recipients`). An outage is a 503 and is never omitted: the rail
+    for any owner it asks (cost, plan; the detail names the owner) or engine-cost's profile set
+    (`answer_profiles_unavailable`). "No readers" is a 403: the union across those owners is empty.
+    The owners are the ones the picker lists, not finance's (its export is the template door)."""
+    try:
+        cost = _export_recipients_for(user)
+    except HTTPException as exc:
+        raise _picker_unavailable(exc, _COST_OWNER) from exc
+    try:
+        profiles = _plan_profiles()
+        plan = _plan_exportable_for(user, None, profiles)
+    except _answer_profiles_unavailable_type() as exc:
+        raise _plan_profiles_unavailable() from exc
+    except HTTPException as exc:
+        raise _picker_unavailable(exc, _PLAN_OWNER) from exc
+    if not cost and not plan:
+        raise _no_recipient_refusal_403()
+    return cost, plan, profiles
+
+
+def _picker_unavailable(exc: HTTPException, owner: str) -> HTTPException:
+    """A rail outage re-raised at a picker with the owner it was asking; any other 503 (the
+    `can_export` check) passes through as it was."""
+    detail = exc.detail
+    if isinstance(detail, dict) and detail.get("reason") == "recipient_readers_unavailable":
+        return HTTPException(status_code=exc.status_code, detail={**detail, "owner": owner})
+    return exc
 
 
 def _user_bearer(request: Request) -> str:
@@ -3272,13 +3294,11 @@ def _cost_refusal_section(exc: HTTPException, recipient_scope: str) -> dict:
 @app.get("/export/package/recipients")
 async def export_package_recipients(current_user: User = Depends(get_current_user)):
     """The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller
-    sees are exactly the scopes their `authz_id` reads, never the full recipient catalogue."""
-    return {
-        "recipients": [
-            {"value": s, "label": s}
-            for s in _export_recipients_or_none(current_user) + _plan_exportable_or_none(current_user)
-        ]
-    }
+    sees are exactly the scopes their `authz_id` reads, never the full recipient catalogue.
+    An outage (the rail for cost or plan, or engine-cost's profile set) is 503; a caller who reads
+    no recipient of any owner listed is 403."""
+    cost, plan, _profiles = _picker_scopes(current_user)
+    return {"recipients": [{"value": s, "label": s} for s in cost + plan]}
 
 class ExportOfferRequest(_BaseModel):
     """`POST /export/package/recipients`'s body: the same answer items `ExportPackageRequest`
@@ -3392,28 +3412,23 @@ async def export_package_offer(
     iff its export would take at least one answer; a partial board stays offered (mixed-board
     partial export is ruled, 2026-10-09/16) and `refused` names the answers that will not go.
     Gates, as the export's: no answers is 400 `no_answers`; an id that does not resolve is
-    404 (503 when the store is down).
+    404 (503 when the store is down). As the GET picker: an outage is 503, and a caller who reads
+    no recipient of any owner listed is 403.
     """
     if not body.answers:
         raise HTTPException(status_code=400, detail={"reason": "no_answers"})
     resolved = _resolve_export_answers(
         [a.artifact_id for a in body.answers], current_user.id
     )
-    plan_offers: list[dict] = []
-    try:
-        profiles = _plan_profiles()
-        plan_offers = [
-            {"value": s, "label": s, **_plan_offer_for_recipient(resolved, s, profiles)}
-            for s in _plan_exportable_or_none(current_user, profiles)
-        ]
-    except _answer_profiles_unavailable_type():
-        pass  # logged by `_plan_profiles`; the plan recipients are omitted, cost's are not
+    cost, plan, profiles = _picker_scopes(current_user)
     return {
         "answers": len(body.answers),
         "recipients": [
-            {"value": s, "label": s, **_offer_for_recipient(resolved, s)}
-            for s in _export_recipients_or_none(current_user)
-        ] + plan_offers,
+            {"value": s, "label": s, **_offer_for_recipient(resolved, s)} for s in cost
+        ] + [
+            {"value": s, "label": s, **_plan_offer_for_recipient(resolved, s, profiles)}
+            for s in plan
+        ],
     }
 
 

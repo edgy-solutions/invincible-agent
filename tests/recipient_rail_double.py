@@ -66,3 +66,13 @@ def install(monkeypatch, rail: Rail | None = None, *, path: Path | None = None) 
     monkeypatch.setattr(cost_main, "can_read_recipient", rail)
     monkeypatch.setattr(fin_main, "can_read_recipient", rail)
     return rail
+
+
+def serve_no_plan_profiles(monkeypatch) -> None:
+    """engine-cost SERVES a profile set that names no plan recipient: the pickers' plan half is
+    answerable and empty. (An engine-cost that cannot be asked is a 503 at a picker, never an
+    omission; a test that is not about the plan half serves this, not an outage.)"""
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        "src.iagent.gateway._cost_profiles_get",
+        lambda url: SimpleNamespace(status_code=200, json=lambda: {"profiles": []}))
