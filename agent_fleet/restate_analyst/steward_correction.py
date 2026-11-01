@@ -27,6 +27,9 @@ import math
 from dataclasses import dataclass, field, replace
 from typing import Iterable, Optional
 
+from iagent_mesh.provenance import EvidenceRef as _SdkEvidenceRef
+from pydantic import ValidationError
+
 try:  # lazy-import dance (container flattens the dir)
     from workflow_bulk_resolve import ItemResolution  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
@@ -54,6 +57,11 @@ class EditRefusal(ValueError):
 
 
 _EVIDENCE_REF_KEYS = frozenset({"page", "bbox", "note"})
+
+
+def _first_error(e: ValidationError) -> str:
+    err = e.errors()[0]
+    return f"{'.'.join(str(x) for x in err['loc']) or 'ref'}: {err['msg']}"
 
 
 def _num(v) -> bool:
@@ -90,6 +98,13 @@ def normalize_evidence_ref(v) -> dict:
         if not isinstance(note, str) or not note.strip():
             raise EditRefusal("an evidence_ref note must be a non-blank string when given")
         out["note"] = note.strip()
+    # The SDK model is the rule for a box (fractions of the page, strictly positive area). The runner
+    # applies it to the ref it was handed, so it refuses what the BFF refuses and, when the SDK pin
+    # moves, inherits the SDK's verdict on the rest (e.g. a null note) rather than a copy of it.
+    try:
+        _SdkEvidenceRef.model_validate(v)
+    except ValidationError as e:
+        raise EditRefusal(f"an evidence_ref is refused by the SDK model: {_first_error(e)}") from e
     return out
 
 

@@ -1261,9 +1261,9 @@ class _RowEditsModel(_BaseModel):
 
 def _wire_evidence_ref(v):
     """The wire check for an evidence_ref: the struct (validated by `EvidenceRef`) or the legacy
-    non-blank string; anything else is a 422. The value is kept in the form it arrived in -- the
-    act normalizes it with `steward_correction.normalize_evidence_ref`, the same function the
-    runner applies to whatever it is forwarded."""
+    non-blank string; anything else is a 422. The struct is checked here with the SDK model plus the
+    named checks (the act no longer calls `steward_correction.normalize_evidence_ref`); the Restate
+    runner applies the same SDK model in its own `normalize_evidence_ref` to whatever it is forwarded."""
     if v is None:
         return None
     if isinstance(v, str):
