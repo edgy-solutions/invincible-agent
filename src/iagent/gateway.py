@@ -874,6 +874,10 @@ app = FastAPI(
     version="2.1.0",
     lifespan=lifespan,
 )
+# The door client's reach (`can_call:<tag>`, 2026-10-31 M3). Added FIRST so it is the INNERMOST
+# middleware: the CORS and no-store wrappers below still apply to its refusals.
+from .authz.call_capability import DoorGuard  # noqa: E402
+app.add_middleware(DoorGuard, router=app.router)
 
 # ── /version and /fleet/version ─────────────────────────────────────────────────────────
 #
@@ -4302,11 +4306,15 @@ class SeedPortfolioCanvasRequest(_BaseModel):
 # as opposed to "the seed could not be performed". Decided by reading every `_perror(...)`
 # producer's `cause=`:
 #   seed_panel_verb_not_visible -- the seed_panel FALL_BACK whose reason is
-#       direct_dispatch.VERB_NO_LONGER_COMPATIBLE: the declared verb is not in the verifier's
-#       compatible set for this caller (revoked, retired, or a persona/domain that cannot see
-#       it). Emitted where the seed_panel turn falls back (the `seed_panel_fell_back` site).
-# EXCLUDED, and why: seed_panel_fell_back (any other fall-back reason, e.g. "verifier
-#   unreachable", is OURS), seed_panel_unroutable (template declares no subject),
+#       direct_dispatch.VERB_NOT_IN_CELL, and ONLY that: the verifier knows the declared verb
+#       UNSCOPED and every domain it declares is outside the caller's active cell, so a persona
+#       switch or a grant would satisfy it. The panel's failure record carries the verb's domains
+#       as `missing_domains` beside the cause. Emitted where the seed_panel turn falls back
+#       (the `seed_panel_fell_back` site).
+# EXCLUDED, and why: seed_panel_fell_back (any other fall-back reason is OURS or the verb's, not
+#   the caller's: "verifier unreachable"; "no longer compatible" -- the verb is retired, re-primed
+#   or dropped by arity, which is NOT a policy refusal; an unscoped re-check that failed is
+#   could-not-check, never a deny), seed_panel_unroutable (template declares no subject),
 #   route_intent_failed, auto_compile_failed, restate_unreachable, dagster_launch_failed,
 #   dagster_run_failed, ui_payload_fetch_error, ui_payload_timeout, acceptance_not_opened,
 #   engine_did_not_answer, render_ui_failed, stream_producer_error, stream_raised -- all
@@ -4320,15 +4328,23 @@ def _seed_failure_from_data(data: str | None) -> dict:
     payload `_perror` wrote. A missing or unparseable payload records `cause: "unrecorded"`."""
     kind = None
     cause = None
+    missing: list[str] = []
     if data:
         try:
             payload = json.loads(data.strip())
             if isinstance(payload, dict):
                 kind = payload.get("kind") or None
                 cause = payload.get("cause") or None
+                _md = payload.get("missing_domains")
+                if isinstance(_md, list):
+                    missing = sorted({str(d) for d in _md if d})
         except (ValueError, TypeError):
             pass
-    return {"event": "pipeline_error", "kind": kind, "cause": cause or "unrecorded"}
+    failure = {"event": "pipeline_error", "kind": kind, "cause": cause or "unrecorded"}
+    if missing:
+        # The domains the caller's cell lacks for this panel's verb -- data, not prose.
+        failure["missing_domains"] = missing
+    return failure
 
 
 def _seed_failure_from_http(status: int, raw: bytes | None) -> dict:
@@ -5081,6 +5097,38 @@ async def canvas_seed(
             "canvas_seed: NOTHING seeded (0/%s) -- refusing with %s. Upstream: %s causes: %s",
             total, 403 if _all_entitlement else 502, sorted(_codes)[:5], _causes,
         )
+        # A BOARD THE PERSONA CANNOT SEE IS A POLICY REFUSAL, NAMING THE PERSONA AND THE DOMAIN.
+        # Only when EVERY failed panel is a `seed_panel_verb_not_visible` carrying the domains its
+        # verb declares: the verifier knows the verbs, and the cell holds none of their domains.
+        # Any other all-entitlement mix (an upstream 403 with no domain to name) keeps the plain
+        # 403 below, because naming a domain for a refusal that has none would be invented.
+        _missing = sorted({
+            d for r in _failed for d in ((r.get("failure") or {}).get("missing_domains") or [])
+        })
+        if _all_entitlement and _missing and all(
+            (r.get("failure") or {}).get("missing_domains") for r in _failed
+        ):
+            _persona = request.active_persona or ""
+            _held = current_user.entitlements
+            _candidates = sorted(
+                p for p in _held.personas()
+                if p != _persona and set(_missing) <= set(_held.domains_for(p))
+            )
+            raise policy_refusal(
+                "persona_lacks_domain", policy_id="groups",
+                missing_binding=", ".join(
+                    f"a_group_granting({_persona}, {d})" for d in _missing
+                ),
+                message=(
+                    f"seeded 0 of {total} panels; persona {_persona or '(none named)'} holds "
+                    f"none of the domains these panels' verbs declare: {_missing}. Switching "
+                    "persona, or a group grant for that persona in one of those domains, "
+                    "would satisfy it"
+                ),
+                candidates=_candidates,
+                extra={"persona": _persona, "missing_domains": _missing,
+                       "causes": _causes or sorted(_codes)[:5]},
+            )
         if _all_entitlement:
             raise HTTPException(
                 status_code=403,
@@ -7455,6 +7503,7 @@ def _perror(
     kind: str | None = None,
     retryable: bool | None = None,
     cause: str | None = None,
+    missing_domains: "list[str] | tuple[str, ...] | None" = None,
 ) -> str:
     """Emit a typed `pipeline_error` event.
 
@@ -7466,6 +7515,8 @@ def _perror(
     cause     : machine-readable classification (verb_unfound,
                 llm_timeout, engine_5xx, dagster_run_failed, ...) for
                 downstream telemetry.
+    missing_domains : the domains a verb declares that the caller's cell lacks; sent only on
+                the `seed_panel_verb_not_visible` cause, read back by `_seed_failure_from_data`.
     """
     payload: dict = {"message": message}
     if kind:
@@ -7474,6 +7525,8 @@ def _perror(
         payload["retryable"] = retryable
     if cause:
         payload["cause"] = cause
+    if missing_domains:
+        payload["missing_domains"] = list(missing_domains)
     return _sse("pipeline_error", json.dumps(payload))
 
 
@@ -9549,7 +9602,8 @@ async def _generate_dagster_stream_inner(
                 # unattributable `NoCauseRecorded` with no verb (18 such rows, 2026-10-28).
                 _seed_cause = (
                     "seed_panel_verb_not_visible"
-                    if direct_dispatch.VERB_NO_LONGER_COMPATIBLE in _detail["reason"]
+                    if _direct.missing_domains
+                    and direct_dispatch.VERB_NOT_IN_CELL in _detail["reason"]
                     else "seed_panel_fell_back"
                 )
                 _ri = dict(_artifact_bundle.get("resolved_intent") or {})
@@ -9570,6 +9624,10 @@ async def _generate_dagster_stream_inner(
                     kind="verifying_route",
                     retryable=True,
                     cause=_seed_cause,
+                    missing_domains=(
+                        _direct.missing_domains
+                        if _seed_cause == "seed_panel_verb_not_visible" else None
+                    ),
                 )
                 yield _sse("stream_end", "{}")
                 await _dispatch_answer_artifact(_artifact_bundle)
