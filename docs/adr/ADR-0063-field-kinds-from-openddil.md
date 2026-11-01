@@ -3,7 +3,7 @@
 **Status:** Proposed. This is design only: there is no code and no roll. `lane/01` drafted §1–§4
 against `47502b35`. §2's safety half and §5 are `lane/saf`'s. §1's registry rows were assigned to
 `doc-tools/lane/7f`. An event row has no extractor half (F2a), so 7f reviewed the platform's rows instead (§1).
-**Date:** 2026-10-28
+**Date:** 2026-10-28; re-measured 2026-10-31 on `0dd53e9d` (SDK pin v0.9.12, citations moved, Q8 and Q10 answered). Open for the architect: questions 1–4.
 **Deciders:** architect (assigned 2026-10-28); domain owners per section
 **Related:**
   - openddil: the three ADRs being drafted (FRACAS failure records, safety states and interlocks,
@@ -24,8 +24,8 @@ Each finding was measured on `47502b35` and changes a section below.
 
 | # | premise | what the tree says |
 | --- | --- | --- |
-| F1 | review_shape is "record / finding / indicator" | **The pinned SDK has no `review_shape`.** At the pin (iagent_mesh v0.9.10), `ContentKindRegistration` is `extra="forbid"` and has eight fields: `kind, branch, passes, outputs, seeds_workflow, identity_field, refresh, domain` (`ingest.py:222-271`). `review_shape` (`Optional[Literal["notice","document"]]`) exists only on ca's untagged `lane/ca-0.9.11`. An earlier draft cited that branch's line numbers as though they were the pin (corrected 2026-10-28, from 7f's §1 packet). **The question is also moot:** an event-branch kind never opens a promotion review, so none of the three needs a `review_shape` (§1 decision 2). |
-| F2 | `arrives_as: json` | **The pin has no `arrives_as` either** (v0.9.11 only). "Event" is already two things at the pin. It is a **`branch`** (`CONTENT_KIND_BRANCHES = ("document", "event")`, `ingest.py:136`). It is also an **arrival shape**: `ingest_status.KINDS` is `(pdf, cad, xml, event)`, and `event` is kept outside `FILE_KINDS` so that a file cannot be dropped as one (`ingest_status.py:128,138`). The existing event kind, `maintenance-fault-event`, uses `branch: event`. |
+| F1 | review_shape is "record / finding / indicator" | **Re-measured 2026-10-31 on `0dd53e9d`: the pin is now iagent_mesh v0.9.12** (#172; it was v0.9.10 when this was drafted). At v0.9.12, `ContentKindRegistration` (`ingest.py:249`) is `extra="forbid"` and has fourteen fields, among them `review_shape: Optional[str]` (`:394`; added 0.9.11, values `notice` and `document` per the 10-21 ruling) and `arrives_as` (`:362`). So `review_shape` is on the pin, but it does not have the values the premise names. **The question is moot either way:** `review_shape` picks the card a promotion review opens, and an event-branch kind never opens one. None of the three kinds sets it (§1 decision 2). |
+| F2 | `arrives_as: json` | **`arrives_as` is on the pin since v0.9.12** (`ingest.py:362`, added 0.9.11). It is an open vocabulary, optional on every branch, and the SDK neither infers nor enforces it on an event row. "Event" is already two things at the pin. It is a **`branch`** (`CONTENT_KIND_BRANCHES = ("document", "event")`, `ingest.py:191`). It is also an **arrival shape**: `ingest_status.KINDS` is `(pdf, cad, xml, event)`, and `event` is kept outside `FILE_KINDS` so that a file cannot be dropped as one (`ingest_status.py:128,138`). The existing event kind, `maintenance-fault-event`, uses `branch: event`. |
 | F2a | an event row carries passes and outputs, as a document row does | On `branch: event`, `passes`/`outputs` are **forbidden**, `seeds_workflow`/`identity_field` are **required**, and `refresh` is optional (SDK 0.9.7; 7f's §1 packet). Two consequences. "A kind with no pass is not a kind" applies to the document branch only. And a row with no `seeds_workflow` is refused at compose. |
 | F3 | the FRACAS consumer receives events | It is a **read-time connector**. `agent_fleet/safety_agent/failure_source.py` (`FAILURE_SOURCE_CONNECTORS`, `values.yaml:671`) is queried by `what_failed_on_this_part` (`safety_agent/main.py:224`). There is no event sink to land on. |
 | F4 | "define the return event" for corrective action | iagent `ADR-0054:177` says the FRACAS phase-2 flip (corrective actions writing back) "is therefore its own decision". `ADR-0056` puts it out of scope. §2 can name the event, but building it pulls Phase 2 forward. |
@@ -34,7 +34,7 @@ Each finding was measured on `47502b35` and changes a section below.
 | F7 | domains per kind | `policy/domains.yaml` has no SAFETY, RELIABILITY or CYBER domain. Adding one requires ADR-0009 first (`domains.yaml:1-5`). Engine S is SUSTAINMENT. |
 | F8 | "interlock-rules-as-overlay" and the "false-readiness view" | Neither term appears anywhere in this tree. They are openddil: concepts, and the ADR names them with that prefix and maps them; it does not cite them as ours. |
 | F9 | no safety finding exists to land in | Engine S has acceptance and concurrence workflows and task kinds (hazard_link_review, risk_acceptance_*). "Finding" appears only in comments. |
-| F10 | the delegate map is policy | `on_behalf_of` is admitted by `_admit_on_behalf_of` (`gateway.py:4787`) against `DELEGATE_ON_BEHALF_OF`. That map is rendered from chart values (`helm/.../configmap.yaml:448`), and no `policy/` file declares it. |
+| F10 | the delegate map is policy | `on_behalf_of` is admitted by `_admit_on_behalf_of` (`gateway.py:5407`) against `DELEGATE_ON_BEHALF_OF`. That map is rendered from chart values (`helm/.../configmap.yaml:448`), and no `policy/` file declares it. |
 
 Side note, not a premise: `ADR-0035:94` says `snowflake` where `provenance.py` says `warehouse`.
 
@@ -44,7 +44,7 @@ Side note, not a premise: `ADR-0035:94` says `snowflake` where `provenance.py` s
 
 The rows are overlay files under `policy/overlays/openddil-lab/content_kinds/`, the same place as
 `maintenance-fault-event.yaml`. They use the pinned SDK model `ContentKindRegistration` (iagent_mesh
-v0.9.10, `ingest.py:194`).
+v0.9.12, `ingest.py:249`; master's pin since #172).
 
 **The rows are wholly the platform's.** The 2026-10-24 ruling splits a kind between two owners. The
 platform owns what a kind IS. doc-tools owns what it RUNS: `passes`, which the overlay mirrors. An event
@@ -64,9 +64,10 @@ row" reading of §2.
 1. **`branch: event` carries "not a document". No `arrives_as` is set.** The branch and the `event`
    arrival shape (F2) already say "this did not arrive as a file". `arrives_as` exists to choose which
    kinds are *offered as a leaf* for a file drop. An event kind is never offered, so the key would be
-   a fact nothing reads. It is also not on the pin (F2). The earlier `arrives_as: json` is withdrawn.
+   a fact nothing reads. The field is on the pin now (F2) and is optional on every branch, so leaving
+   it unset is a valid row, not a gap. The earlier `arrives_as: json` is withdrawn.
 2. **No `review_shape`.** It is withdrawn too, and with it the SDK widening this section used to request
-   (F1). `review_shape` picks the card a *promotion* review opens. An event is never promoted: it
+   (F1). The field is on the pin with `notice`/`document`; these rows leave it `None`, its default. `review_shape` picks the card a *promotion* review opens. An event is never promoted: it
    **seeds a workflow**. The reviewer's card is that workflow's task kind, with one task kind per kind.
    The card for a failure, a hazard and an indicator differs by its task kind, not by an SDK enum.
 3. **Every row names its workflow.** `seeds_workflow` is required on `branch: event` (F2a).
@@ -82,7 +83,7 @@ row" reading of §2.
    `work-instruction`), and a later rename is invisible to the registry fingerprint. Workflow and
    task-kind ids keep the tree's underscore form (`maintenance_fault`, `safety_finding_review`).
    The two forms name different things, so they do not drift into each other.
-5. **The door is `POST /ingest/events`** (`gateway.py:12137`, `IngestEventRequest` at `:12103`).
+5. **The door is `POST /ingest/events`** (`gateway.py:12956`, `IngestEventRequest` at `:12922`).
    Each event carries `on_behalf_of`, admitted by `_admit_on_behalf_of`. OpenDDIL's broker
    identity must be in the delegate map (F10). That is a values change per deployment, not a
    policy row, and §3 proposes moving it onto the rail.
@@ -359,6 +360,14 @@ Cited, not restated:
 8. (saf, Q4, owner Lane 1) Where does the episode key live on the ledger entry? I found no
    field. Recommend a named field on the case, not the task payload. **Ruled 2026-10-29: Lane
    1's; answered in #141.**
+   **Answer (Lane 1, measured 2026-10-31 on `0dd53e9d`):** the field already exists. The case
+   record the runner opens carries `episode`, which is `case_routing.episode_key(trigger, flat)`
+   (`agent_fleet/restate_analyst/workflow_runner.py:284,299`). The `CaseEpisode` virtual object
+   (`:73-74`) is keyed by it and holds the one open case per episode. A revision that moves the
+   episode is refused (`case_routing.py:370-374`). So the trigger rows in §1 decision 6 are all these
+   kinds need. No task-payload field and no ledger column is added. One gap remains for the card,
+   not for routing: neither `case_projection.py` nor `case_summary.py` surfaces `episode` today.
+   Showing it is a read on the case, owned by whoever builds the slice's card (§5).
 9. (saf, Q5, §4) Does the source class travel as its own per-entry field beside `obtained_via`,
    never mapped to a rung? Recommend yes (F6). **Ruled 2026-10-29: "Q9 yes, `source_class` as its
    own field beside obtained_via".**
@@ -366,3 +375,16 @@ Cited, not restated:
     finding reaches neither `assess_deferral_risk` nor the promotion. Recommend a read-time lookup
     owned by Engine S's source, not stored on the finding. **Ruled 2026-10-29: Lane 1's;
     answered in #141.**
+    **Answer (Lane 1, measured 2026-10-31 on `0dd53e9d`):** the join is a read-time lookup through
+    the seam Engine S already has. It is not stored on the finding: the finding carries
+    OpenDDIL's asset id verbatim (§1 decision 6).
+    - `failure_source.py` resolves records through deployment-configured `SystemOfRecordQuery`
+      connectors (`FAILURE_SOURCE_CONNECTORS`, `values.yaml:671`). Each connector is keyed by
+      a `by` field; today the fields are `part_number` and `platform` (`failure_source.py:37-38`).
+    - The asset → part → WorkOrder join is one more `by` key on the same seam. A connector answers
+      by asset id, and the deployment names that connector in config, never in code (ruled 10-30).
+    - `assess_deferral_risk` takes `work_order_id` (`measures.py:217`), and today it resolves only
+      against the in-engine `WORK_ORDERS` fixture.
+    - **Not built.** It is Engine S's code (saf). Lane 1 owns only this decision.
+    - Until a deployment configures the asset connector, a finding whose asset resolves to no work
+      order reaches neither verb, and that must be a named refusal, not a guess.
