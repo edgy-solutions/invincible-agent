@@ -147,10 +147,11 @@ here). `undefined` is optional; if the function can return nothing for a month, 
 
 **Policy.** `status` is `sample`, `proposed` or `ratified`. `cells` is a non-empty list naming the
 access cells that may see the measure (the sample uses `PROGRAM_FINANCE`). `granted_by` is the
-person who approved it and `reason` is why. Replace the sample's `<accountable approver>` with a
-real name before you send a row. The rows shipped in the sample overlay say `granted_by: seed`, because the
-repo grants them; a deployment's row names its own approver, as the examples here do. There is no visibility key: a measure is only ever shown for a
-program the user has been granted, and nothing in a row can widen that.
+person who approved it and `reason` is why. Replace the examples' `<accountable approver>` with a
+real name before you send a row. The rows shipped in the sample overlay say `granted_by: seed`,
+because the repo grants them; a deployment's row names its own approver, as the examples here do.
+There is no visibility key: a measure is only ever shown for a program the user has been granted,
+and nothing in a row can widen that.
 
 A second example, a cost amount, shows what changes when the measure is money. This row is in
 the sample overlay too: the sample ships TCPI and VAC. It is shown for its shape, and this doc's own
