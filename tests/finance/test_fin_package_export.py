@@ -31,6 +31,7 @@ for _p in (ROOT, ROOT / "src", ROOT / "scripts"):
 from agent_fleet.finance_agent import export as fin_export  # noqa: E402
 from agent_fleet.finance_agent import state_codec  # noqa: E402
 from agent_fleet.finance_agent.seed import build_seed  # noqa: E402
+from tests.recipient_rail_double import install as install_rail  # noqa: E402
 from iagent.canvas_template import (  # noqa: E402
     Package, load_template, panel_dispatch, recipient_scope_for, template_ref,
 )
@@ -86,6 +87,7 @@ def posts(monkeypatch):
     """Record every POST the gateway makes; answer with a valid engine body."""
     import iagent.gateway as gw
 
+    install_rail(monkeypatch)  # Topaz, doubled with the SHIPPED policy/recipient_readers.yaml rows
     calls: list[dict] = []
 
     class _Client:

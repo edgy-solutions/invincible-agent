@@ -167,7 +167,7 @@ def test_2_policy_visibility(tmp_path):
 
 
 def test_2_mixed_units(tmp_path):
-    _refused(tmp_path, lambda r: r["outputs"].update(
+    _refused(tmp_path, lambda r: r["render"].update(
         series=[{"key": "a", "label": "A", "unit": "USD"}, {"key": "b", "label": "B"}]),
         "mixes units")
 
@@ -313,7 +313,8 @@ def test_5_the_envelope_is_the_builtins_plus_method(double, client):
                           json={"params": {"program_id": PROGRAM}, "user_email": ALICE})
     assert builtin.status_code == 200, builtin.text
     declared_keys = set(_ask(client).json())
-    assert declared_keys == set(builtin.json()) | {"method"}
+    # `render` joined the declared envelope with the row's render block (spec RB); built-ins have none.
+    assert declared_keys == set(builtin.json()) | {"method", "render"}
 
 
 def test_5_a_budget_already_spent_is_undefined_with_its_reason(double, client, monkeypatch):

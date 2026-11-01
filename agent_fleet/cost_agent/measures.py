@@ -144,7 +144,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     from export import audit_line, build_dataset_package, build_package
     from pricing import DEFAULT_COMPOSITION, compose_price, rates_for, unit_price
     from seed import (
-        RECIPIENT_SCOPES, artifact_filenames, lots_for_recipient, readers_for_recipient,
+        RECIPIENT_SCOPES, artifact_filenames, lots_for_recipient,
     )
 except ImportError:
     from agent_fleet.cost_agent import canvas as canvas_reader
@@ -158,7 +158,7 @@ except ImportError:
         DEFAULT_COMPOSITION, compose_price, rates_for, unit_price,
     )
     from agent_fleet.cost_agent.seed import (
-        RECIPIENT_SCOPES, artifact_filenames, lots_for_recipient, readers_for_recipient,
+        RECIPIENT_SCOPES, artifact_filenames, lots_for_recipient,
     )
 
 #: ONE VERB, ONE FIXED OUTPUT TYPE (ADR-0030). Read twice — by the route, to stamp the

@@ -91,7 +91,7 @@ formats:
     rung: monitored
     pipeline_version: "doc-tools@d5b44829eb9bc29791aa71857b987c1d3256569c"
     sample_rate: 1.0
-    ratified_by: cnogradi
+    ratified_by: owner
     ratified_on: 2026-08-09
     repromoted_on: 2026-08-09
     repromoted_on: 2026-08-10
@@ -124,7 +124,7 @@ formats:
 #     rung: monitored              # supervised | monitored | trusted
 #     pipeline_version: "doc-tools@446fbae"   # the version this rung was earned UNDER
 #     sample_rate: 0.25            # monitored only — the counterfactual evidence engine
-#     ratified_by: <accountable human>
+#     ratified_by: owner          # a seat, not a person (architect ruling 2026-10-31)
 #     ratified_on: 2026-08-01
 #     evidence: >-
 #       Correction rate over N records at this pipeline version, and the span they cover.
