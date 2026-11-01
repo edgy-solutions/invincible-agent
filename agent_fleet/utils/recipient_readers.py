@@ -35,4 +35,4 @@ def can_read_recipient(owner: str, scope: str, caller_id: str, *,
     with httpx.Client(base_url=url, timeout=5.0) as c:
         r = c.post("/api/v3/directory/check", json=check_payload(owner, scope, caller_id))
         r.raise_for_status()
-        return bool(r.json().get("check"))
+        return r.json().get("check") is True

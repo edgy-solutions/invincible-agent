@@ -33,11 +33,13 @@ computation:
     citation: name-only
     transcription: TCPI = (BAC - BCWP) / (BAC - ACWP)
 outputs:
-  archetype: PERIOD_SERIES
   output_uri: ToCompletePerformanceIndexSeries
-  series: [{key: tcpi, label: TCPI}]          # dimensionless: no unit key
-  reference: {value: 1.0, label: at budgeted efficiency}
   undefined: {reason: budget_spent, when: BAC <= cumulative ACWP (the budget is spent; no efficiency completes the work within it)}
+render:
+  shape: MULTI_SERIES
+  value_label: TCPI
+  series: [{key: tcpi, label: TCPI}]          # dimensionless: no unit key
+  target: {value: 1.0, label: at budgeted efficiency}
 policy:
   status: sample
   cells: [PROGRAM_FINANCE]

@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -89,6 +89,11 @@ FALL_BACK = "fall_back"
 # gateway reads it to type the seed_panel cause; one constant so the producer and the
 # classifier cannot drift.
 VERB_NO_LONGER_COMPATIBLE = "no longer compatible"
+# The reason text of the FALL_BACK that means the verb EXISTS (the unscoped verifier returns it)
+# and declares domains the caller's active cell does not hold. A policy fact about the caller,
+# unlike VERB_NO_LONGER_COMPATIBLE (retired / re-primed / arity), which is a fact about the verb.
+# The domains travel as `DirectOutcome.missing_domains`, never parsed back out of this text.
+VERB_NOT_IN_CELL = "is not in this cell"
 
 #: THE STAGES THIS PATH ACTUALLY RUNS, and the list is short because the path is short.
 #: The Dagster stream's five kinds describe a decomposition, a resolution and a
@@ -152,6 +157,10 @@ class DirectOutcome:
     predicate: Optional[dict] = None
     accepted_params: Dict[str, Any] = field(default_factory=dict)
     refusals: List[dict] = field(default_factory=list)
+    #: Set ONLY on a FALL_BACK whose reason is VERB_NOT_IN_CELL: the verb's own declared domains
+    #: (upper-case, sorted), none of which the caller's active cell holds. Empty on every other
+    #: outcome, so "empty" never means "a cell problem".
+    missing_domains: Tuple[str, ...] = ()
 
 
 def materialization(**metadata: Any) -> dict:
@@ -178,6 +187,36 @@ def materialization(**metadata: Any) -> dict:
         else:
             entries.append({"label": label, "text": str(value)})
     return {"metadataEntries": entries}
+
+
+def _verb_declared_outside_cell(
+    subject: str, verb: str, entitled_domains: List[str], *, ontology_url: str, on_behalf_of: str,
+) -> Tuple[str, ...]:
+    """The verb's declared domains when the verifier knows the verb UNSCOPED and none of them is
+    held by the caller's cell; `()` in every other case.
+
+    ONE extra verifier call, on the failure path only. It separates "this cell cannot see the verb"
+    (a policy fact the caller can repair by switching persona or being granted) from "the verb is
+    retired / re-primed" (not a policy fact). **A lookup that failed is NOT a deny**: could-not-check
+    returns `()`, the caller keeps the old reason, and the failure is logged.
+    """
+    unscoped, err = find_compatible_verbs(
+        subject, [], ontology_url=ontology_url, on_behalf_of=on_behalf_of,
+    )
+    if err is not None:
+        logger.warning(
+            "direct path: unscoped re-check of verb %s failed (%s); keeping the "
+            "'%s' reason, not a policy refusal", verb, err, VERB_NO_LONGER_COMPATIBLE,
+        )
+        return ()
+    held = {str(d).upper() for d in entitled_domains}
+    for cv in unscoped or []:
+        if cv.get("verb_iri") != verb:
+            continue
+        declared = sorted({str(d).upper() for d in (cv.get("domains") or [])})
+        if declared and not held.intersection(declared):
+            return tuple(declared)
+    return ()
 
 
 def dispatch_pre_resolved(
@@ -281,6 +320,9 @@ def dispatch_pre_resolved(
                    **_turn_records}
     _bound_names = {str(k) for k in _provenance}
     flagged: List[dict] = []
+    # What the verifier listed BEFORE the arity filter: a verb in this set that is absent from
+    # `truth` below was dropped by arity, which is neither a retired verb nor a cell fact.
+    _listed_iris = {cv.get("verb_iri") for cv in (verbs or [])}
     if verbs:
         _kept: List[dict] = []
         for _cv in verbs:
@@ -296,6 +338,22 @@ def dispatch_pre_resolved(
         # The ask's verb is no longer eligible — revoked, retired, re-primed, or this picker
         # has a different persona from the asker. Recomputing is the correct answer.
         _stage(STAGE_VERIFYING, "failed")
+        _not_in_cell = (
+            ()
+            if verb in _listed_iris or not entitled_domains
+            else _verb_declared_outside_cell(
+                subject, verb, entitled_domains, ontology_url=ontology_url,
+                on_behalf_of=on_behalf_of,
+            )
+        )
+        if _not_in_cell:
+            return DirectOutcome(
+                FALL_BACK,
+                f"verb {verb} {VERB_NOT_IN_CELL}: it declares {list(_not_in_cell)}, "
+                f"this caller's active domains are "
+                f"{sorted({str(d).upper() for d in entitled_domains})}",
+                missing_domains=_not_in_cell,
+            )
         return DirectOutcome(FALL_BACK, f"verb {verb} {VERB_NO_LONGER_COMPATIBLE} with {subject}")
 
     _stage(STAGE_VERIFYING, "completed")

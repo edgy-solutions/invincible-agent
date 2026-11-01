@@ -22,6 +22,14 @@ When a policy refusal happens, its `grantable_by` is read from this map
 | `object_scoped` | `true` when a key would name a program, asset or compartment. A refusal then names the family alone, so a withheld target answers like an absent one (ADR-0047 §5.1, ADR-0049 Ruling 4). |
 | `rail_file` | the policy file the family's rows live in. Absent for `config` and `code`. |
 
+## A shipped row's grantor is `seed`
+
+Every `granted_by` in a rail file this repository ships says `seed`, never a person (ruled
+2026-10-31). The platform seed is what grants a shipped row. A deployment's own rows name
+their approver: rows in its policy repository or an overlay, and the reader grant an approval
+writes at runtime. The seal derives the rail files from this map's `rail_file` values:
+`tests/security/test_a_shipped_grantor_is_the_seed.py`.
+
 ## Rules for new families
 
 - **A new grant-bearing policy file needs a row here.** A file is grant-bearing if its rows carry
