@@ -35,6 +35,7 @@ from fastapi.testclient import TestClient
 from agent_fleet.cost_agent import measures as m
 from agent_fleet.cost_agent.main import app
 from agent_fleet.cost_agent.seed import RECIPIENT_SCOPES, build_state
+from tests.recipient_rail_double import install as install_rail
 
 STATE = build_state()
 SCOPE = "notional-customer-alpha"
@@ -69,6 +70,8 @@ def as_caller(monkeypatch):
     exercisable for callers who could never hold a token — an unidentified one, and another
     customer's.
     """
+    install_rail(monkeypatch)  # Topaz, doubled with the SHIPPED policy/recipient_readers.yaml rows
+
     def _run(authz_id):
         monkeypatch.setattr("agent_fleet.cost_agent.main._current_caller",
                             lambda: _Caller(authz_id) if authz_id is not None else None)

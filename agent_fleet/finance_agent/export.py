@@ -59,19 +59,11 @@ RECIPIENT_SCOPES: dict[str, str] = {
     for audience in AUDIENCES
 }
 
-#: WHO MAY FETCH A PRODUCED PACKAGE, keyed on the mint-contract `authz_id`. NOTIONAL: this
-#: engine has no ratified reader yet, and this map awaits one — the same posture cost's
-#: `RECIPIENT_READERS` states for its own two notional customers. No service identity is
-#: listed, for the identical confused-deputy reason cost's docstring gives.
-RECIPIENT_READERS: dict[str, tuple[str, ...]] = {
-    "program_office.NP-MERIDIAN": ("alice@example.com",),
-}
-
-
-def readers_for_recipient(recipient_scope: str) -> tuple[str, ...]:
-    """The callers entitled to fetch this recipient's package. EMPTY IS A REFUSAL — an
-    unknown scope and a scope with no readers answer a 403 route the same way."""
-    return RECIPIENT_READERS.get(recipient_scope, ())
+#: WHO MAY FETCH A PRODUCED PACKAGE IS NOT HELD HERE. It is the `recipient_readers` policy rail
+#: (policy/recipient_readers.yaml, owner `finance`): the BFF and this engine ask
+#: `agent_fleet.utils.recipient_readers.can_read_recipient`, keyed on the person's `authz_id`.
+#: `RECIPIENT_SCOPES` above says what a scope discloses; the rail says who reads it. No service
+#: identity is ever a reader (ADR-0047 section 5.1: the confused-deputy argument).
 
 
 def program_for_recipient(recipient_scope: str) -> str:
