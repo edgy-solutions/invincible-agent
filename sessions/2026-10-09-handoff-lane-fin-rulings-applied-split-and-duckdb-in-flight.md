@@ -19,6 +19,46 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-31 (late): relay 3 applied. Two PRs open, #184 and #185. Read this first
+
+Relay 3 (architect, to lane/fin, cc cortex-ui) has two parts. Part one: TCPI renders raw because
+nothing declares its shape, so the measure row gets a `render` block, engine-fin serves it, and
+cortex picks the renderer from it (raw stays the fallback). Part two: a persona that lacks the
+domain gets "no longer compatible with <class>", which is wrong; it must be a policy refusal with
+the envelope.
+
+- **The TCPI seed that "failed" on sandbox was the persona, not fin.** alice ran DATA_ENGINEER,
+  whose domains are AVIATION, DOCS and MESH. The same verbs seed fine as
+  PROGRAM_FINANCE_ANALYST. Re-seed TCPI under that persona during the acceptance run.
+- **Six panels, not five.** The user confirmed the top grid reads as a header. That is cortex's
+  item.
+- **PR #184, `fin/seed-cell-refusal`** (`01be111e`, base `258c89ad`):
+  - `direct_dispatch` re-checks unscoped, on the failure path only. A verb outside the cell gets
+    `VERB_NOT_IN_CELL` plus `missing_domains`; a retired verb or a failed lookup keeps "no longer
+    compatible".
+  - When every panel fails as not-in-cell, the seed raises
+    `policy_refusal("persona_lacks_domain", policy_id="groups", missing_binding="a_group_granting(<P>, <D>)")`,
+    with `candidates` and `extra={persona, missing_domains, causes}`.
+  - Cortex reads it through `readPolicyRefusal`, so no change there.
+  - Not authorized to merge.
+- **PR #185, `fin/measure-render-block`** (`ece398a3`, base `258c89ad`). Chris ruled three
+  things:
+  1. The row gets `render: {shape, value_label, series, target}`, and the loader refuses the old
+     `outputs.*` keys.
+  2. The shape is an archetype name.
+  3. presentation_agent is the hop.
+  - **TCPI declares MULTI_SERIES** (my ruling, from the implementer's census). Cortex's
+    PERIOD_SERIES contract is planning's capex series.
+  - `COMPUTED_SHAPES = {MULTI_SERIES}`, tied by a test to `capability_admission.KNOWN_ARCHETYPES`.
+  - `select_by_declared_shape` runs before `select_presentation`.
+  - **lane/01 is asked to review the presentation hunk.** Not authorized to merge.
+  - The cc packet to cortex-ui/master (their "no render declared" raw seal) is placed in the
+    master tree's `sessions/`, untracked.
+- **Still next:**
+  - fix `test_the_shipped_rail_has_no_plan_owner_and_the_feature_is_dark`;
+  - #181's deploy order;
+  - the sandbox acceptance list below.
+
 ## Update 2026-10-31: relay 2 applied. #147 and #176 merged; the recipient readers are PR #181. Read this first
 
 The relay (10-31) said: "#176's row stays, `granted_by: seed` — a shipped row's grantor is the seed, never a person; Chris is not named in policy. #147 and #176 merge. Recipient readers to the rail next."
