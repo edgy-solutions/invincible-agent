@@ -161,7 +161,7 @@ groups:
   # vouch for a contributed work-instruction (ADR-0041 §5). Sandbox member = bob.
   manufacturing-stewards: {}
 
-  # OpenDDIL's brokered maintainers (2026-10-16, Chris's directive item 5: "Seed operator.atlantia
+  # OpenDDIL's brokered maintainers (architect ruling 2026-10-16, item 5: "Seed operator.atlantia
   # a cell via a group (openddil-maintainers → MAINTENANCE)"). Grants the EXISTING
   # MECHANIC·MAINTENANCE cell, the only persona with a MAINTENANCE cell, so no new cell object
   # is minted; the picker reaches it only through the group path. Members = operator.atlantia and

@@ -19,6 +19,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SEED = "seed"
+OWNER = "owner"  # a shipped ratifier is the owner seat, not a person (architect ruling 2026-10-31)
 
 
 def _rail_files() -> list[str]:
@@ -68,3 +69,12 @@ def test_every_shipped_grantor_is_the_seed(rail_file):
 def test_the_detector_sees_a_person_at_any_depth():
     doc = {"a": {"granted_by": SEED, "b": [{"granted_by": "someone"}]}}  # positive control on the detector
     assert [v for _, v in _grantors(doc) if v != SEED] == ["someone"]
+
+
+def test_every_shipped_ratifier_is_the_owner_seat():
+    files = [p for p in sorted((ROOT / "policy").glob("*.yaml"))
+             if re.search(r"^\s+ratified_by:", p.read_text(encoding="utf-8"), flags=re.M)]
+    assert files, "positive control: some shipped policy file carries a ratifier"
+    people = [(p.name, v) for p in files
+              for v in re.findall(r"^\s+ratified_by:\s*(\S+)", p.read_text(encoding="utf-8"), flags=re.M) if v != OWNER]
+    assert not people, f"a shipped ratifier is `{OWNER}`, a seat, never a person: {people}"

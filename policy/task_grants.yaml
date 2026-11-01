@@ -28,7 +28,7 @@
 # wrong-grant, since a workflow then suspends awaiting an approver who cannot exist.
 # `validate_policy` REFUSES a grant_to not in users.yaml.
 #
-# GROUP AUDIENCES, RULED 2026-10-10 (architect; Chris chose "build group audiences"). An
+# GROUP AUDIENCES (architect ruling 2026-10-10: "build group audiences"). An
 # audience may instead (or also) carry `grant_to_groups: [<group>]`. Each names a group from
 # `policy/groups.yaml`; its members come from `users.yaml`; the sync writes
 # `task_audience:<aud>#actor@group:<G>#member` (the manifest already allows
