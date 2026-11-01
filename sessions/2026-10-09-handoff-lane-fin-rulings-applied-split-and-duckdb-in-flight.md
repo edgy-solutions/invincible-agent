@@ -19,6 +19,57 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-10-31 (overnight): the overnight relay. #191 and #193 open, three packets placed. Read this first
+
+The relay: "the three stale-test fix PR; the TCPI render on sandbox after 0.4.74 is not tonight;
+VAC as a second shipped sample measure behind the overlay contract; the work-side finance overlay
+packet for Chris (what a work measure row looks like, what env, what sync)."
+
+- **PR #191, `fin/three-master-reds`** (`aec831ff`, base `2a042971`) fixes two of the three reds.
+  - The plan-owner seal is now
+    `test_the_shipped_plan_owner_is_seed_granted_for_scopes_the_plan_path_offers_and_denies_without_topaz`.
+    - The plan rows are `granted_by: seed`.
+    - The plan scopes ⊆ the answer-profile recipients.
+    - Topaz absent still denies.
+  - The ONE-helper seal is `test_every_export_path_shapes_through_the_ONE_helper`. It derives
+    the transports and shapers from the AST, so a third export path cannot slip past it.
+  - Not authorized to merge.
+- **The third red is lane/01's**: `finance_measure` in the identity-hop census, from `e4ef4735`.
+  - Packet placed: `sessions/2026-10-31-packet-to-lane-01-your-finance-measure-relay-is-an-unsealed-identity-hop.md`.
+  - fin's reading: engine-fin uses `user_email` only for `_require_visible` and reaches no mint,
+    so it is a new hop in HOPS. The call is theirs.
+- **PR #193, `fin/vac-sample-measure`** (`0bf10b4d`): VAC ships as a sample row
+  (`policy/overlays/sample/measure_verbs/fin_vac.yaml`), with no production `.py`.
+  - **The 10-31 grantor ruling** is applied to both sample rows (`granted_by: seed`) and sealed.
+  - **Contract D forced one vocabulary edit:** `fin:VarianceAtCompletionSeries` in
+    `finance_extension.ttl`. **Deploy: re-prime BEFORE the engine-fin roll,** or registration
+    503s and then 422s.
+  - **#185 interaction:** whichever merges second migrates `fin_vac.yaml` to `render:`
+    MULTI_SERIES.
+  - Routing ("variance" phrasings vs finVarianceAnalysis) is not measured live.
+  - Not authorized to merge.
+- **The work-side overlay packet for Chris** is placed:
+  `sessions/2026-10-31-packet-to-chris-work-finance-overlay-a-row-an-env-and-three-gaps-before-it-serves.md`.
+  - It covers the row skeleton, the env table, the Topaz rows, and three gaps:
+    - **delivery:** nothing puts private rows into the pods;
+    - **vocabulary:** Contract D needs a repo TTL edit per class;
+    - **data:** engine-fin computes over the notional seed only.
+  - **Two questions for Chris:** (A) derived images or (B) a chart initContainer; and whether a
+    real EV source is a work goal.
+- **The architect packet** is placed:
+  `sessions/2026-10-31-packet-to-architect-a-work-measure-cannot-serve-three-gaps-two-forks-and-cells-is-unenforced.md`.
+  - **Fork A, the class.** fin leans a generic `fin:DeclaredMeasureSeries`.
+  - **Fork B, delivery.** fin leans (B).
+  - **fin's own defect:** a row's `policy.cells` is loaded but never enforced. fin leans
+    registering each declared verb with the row's cells as its domains.
+- **Waiting on:**
+  - Chris's two answers;
+  - the architect on Forks A and B, the cells defect, and Fork 16;
+  - merge authorization for #184, #185, #191 and #193 (lane/01 reviews #185's presentation
+    hunk);
+  - #181's deploy order (ask Chris before the roll).
+- **Not tonight:** the TCPI render on sandbox after 0.4.74.
+
 ## Update 2026-10-31 (late): relay 3 applied. Two PRs open, #184 and #185. Read this first
 
 Relay 3 (architect, to lane/fin, cc cortex-ui) has two parts. Part one: TCPI renders raw because
