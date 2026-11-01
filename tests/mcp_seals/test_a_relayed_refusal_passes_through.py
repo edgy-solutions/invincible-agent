@@ -12,7 +12,7 @@ to a policy refusal; that is the BFF completing it, not rewrapping it, so the ch
 engine's keys survive, not that no key is added.) An engine that answers with NO body must never
 become a 500 (an unhandled crash of the relay), and a refusal must never become a 200.
 
-Two STRICT XFAILs name the defects found on master; see their reasons.
+Both defects found on master are fixed; the two seals below hold them.
 
 Run: uv run pytest tests/mcp_seals/test_a_relayed_refusal_passes_through.py -q
 """
@@ -165,7 +165,7 @@ def _passing_cases():
                          ids=[f"{sorted(r.methods)[0]} {r.path} {st}" for r, st in _passing_cases()])
 def test_control_a_declared_refusal_with_a_body_keeps_its_status_and_keys(engine, route, status):
     """Where the relay passes the envelope, the status and the engine's keys survive. (A relay
-    that hands every non-403 to `_engine_failure` is held by the strict xfail below instead.)"""
+    that hands every non-403 to `_engine_failure` is held by the test below instead.)"""
     engine.update(status=status, content=json.dumps(ENGINE_BODIES[status]).encode())
     r = _call(route)
     assert engine["calls"], "instrument failure: the engine double was not reached"
@@ -186,12 +186,6 @@ def test_an_empty_refusal_body_is_never_a_crash_or_a_200(engine, route, status):
         assert r.status_code == status, (route.path, status, r.status_code)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DEFECT (Lane 1, gateway.py finance_measure on 422 and 200; export_cdrl_profiles and export_cdrl "
-    "on 200): an engine answer with an EMPTY body reaches `rr.json()` unguarded, so the relay "
-    "raises and answers 500 (a refusal the engine sent becomes a crash). The >= 400 arms that "
-    "fall back to the response text are guarded. "
-    "Packet: sessions/2026-10-30-packet-to-lane-01-relay-envelope-defects-finance-empty-body-and-cdrl-rewrap.md"))
 def test_an_empty_422_or_200_body_is_never_a_500(engine):
     bad = []
     for route in relays():
@@ -204,12 +198,6 @@ def test_an_empty_422_or_200_body_is_never_a_500(engine):
     assert not bad, f"an empty engine body became a 500: {bad}"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DEFECT (Lane 1, gateway.py _engine_failure, used by export_cdrl and export_cdrl_profiles): "
-    "only a 403 is passed through; an engine 409 or 422 (declared refusals) is rewrapped into a "
-    "502 `fin_engine_failed` carrying the engine's body as `engine_detail`. The status and the "
-    "code the engine sent are gone. /finance/measure/{fn} passes 409 and 422 through. "
-    "Packet: sessions/2026-10-30-packet-to-lane-01-relay-envelope-defects-finance-empty-body-and-cdrl-rewrap.md"))
 def test_a_declared_409_or_422_is_not_rewrapped_into_a_502(engine):
     rewrapped = []
     for route in relays():

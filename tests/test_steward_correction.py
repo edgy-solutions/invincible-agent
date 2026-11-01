@@ -692,21 +692,21 @@ def test_defect_task_names_the_ingest_only_when_given():
 # ---------------------------------------------------------------------------
 # evidence_ref is the SDK struct {page, bbox, note?}; the legacy string becomes `note` (2026-10-21)
 # ---------------------------------------------------------------------------
-_S = {"page": 2, "bbox": [10, 20.5, 110, 220], "note": "  the cell  "}
-_S_NORM = {"page": 2, "bbox": [10, 20.5, 110, 220], "note": "the cell"}
-_S_BARE = {"page": 3, "bbox": [1, 2, 3, 4]}
+_S = {"page": 2, "bbox": [0.1, 0.205, 0.5, 0.9], "note": "  the cell  "}
+_S_NORM = {"page": 2, "bbox": [0.1, 0.205, 0.5, 0.9], "note": "the cell"}
+_S_BARE = {"page": 3, "bbox": [0.1, 0.2, 0.3, 0.4]}
 _GOOD = [(_S, _S_NORM), (_S_BARE, _S_BARE), ("  legacy ref ", {"note": "legacy ref"}),
          ({"page": 3, "bbox": None}, {"page": 3, "bbox": None}),
          ({"page": 3}, {"page": 3, "bbox": None})]
 _GOOD_IDS = ["struct", "struct_no_note", "legacy_string", "null_bbox", "absent_bbox"]
 _BAD_REFS = [
-    "", "   ", 5, [], {}, {"bbox": [1, 2, 3, 4]}, {"bbox": None},
-    {"page": 0, "bbox": [1, 2, 3, 4]}, {"page": True, "bbox": [1, 2, 3, 4]},
-    {"page": "1", "bbox": [1, 2, 3, 4]}, {"page": 1, "bbox": [1, 2, 3]},
-    {"page": 1, "bbox": [1, 2, 3, 4, 5]}, {"page": 1, "bbox": [True, 2, 3, 4]},
+    "", "   ", 5, [], {}, {"bbox": [0.1, 0.2, 0.3, 0.4]}, {"bbox": None},
+    {"page": 0, "bbox": [0.1, 0.2, 0.3, 0.4]}, {"page": True, "bbox": [0.1, 0.2, 0.3, 0.4]},
+    {"page": "1", "bbox": [0.1, 0.2, 0.3, 0.4]}, {"page": 1, "bbox": [0.1, 0.2, 0.3]},
+    {"page": 1, "bbox": [0.1, 0.2, 0.3, 0.4, 5]}, {"page": 1, "bbox": [True, 0.2, 0.3, 0.4]},
     {"page": 1, "bbox": [float("nan"), 2, 3, 4]}, {"page": 1, "bbox": [float("inf"), 2, 3, 4]},
-    {"page": 1, "bbox": [1, 2, 3, 4], "extra": "x"},
-    {"page": 1, "bbox": [1, 2, 3, 4], "note": " "}, {"page": 1, "bbox": [1, 2, 3, 4], "note": 7},
+    {"page": 1, "bbox": [0.1, 0.2, 0.3, 0.4], "extra": "x"},
+    {"page": 1, "bbox": [0.1, 0.2, 0.3, 0.4], "note": " "}, {"page": 1, "bbox": [0.1, 0.2, 0.3, 0.4], "note": 7},
 ]
 _BAD_IDS = ["blank", "spaces", "int", "list", "empty_obj", "no_page", "null_bbox_no_page", "page0",
             "page_bool", "page_str", "bbox3", "bbox5", "bbox_bool", "bbox_nan", "bbox_inf",
@@ -756,7 +756,7 @@ def test_normalizing_is_deterministic_and_never_adds_a_none_note():
 def test_a_string_consumer_gets_the_note_else_the_canonical_json():
     assert sc.evidence_text(_S_NORM) == "the cell"
     assert sc.evidence_text({"note": "p1"}) == "p1"
-    assert sc.evidence_text({"page": 3, "bbox": [1, 2, 3, 4]}) == '{"bbox":[1,2,3,4],"page":3}'
+    assert sc.evidence_text({"page": 3, "bbox": [0.1, 0.2, 0.3, 0.4]}) == '{"bbox":[0.1,0.2,0.3,0.4],"page":3}'
 
 
 def test_spec_205_a_null_or_absent_bbox_normalizes_to_an_explicit_none():

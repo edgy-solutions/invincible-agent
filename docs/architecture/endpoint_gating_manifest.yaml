@@ -1126,10 +1126,9 @@ services:
           than incidental: the builder and the pinned Pyodide runtime live in the repository
           checkout and are not in the image, so nothing is ever written there.
 
-          WHAT REMAINS TO RE-EXAMINE when the data stops being notional: the reader list is
-          SEED DATA (`seed.RECIPIENT_READERS`), not policy. A real deployment reads that
-          relation from the grant rail where it can be reviewed and revoked; a mapping in a
-          seed can be changed by anyone who can change the engine."
+          WHERE THE READERS LIVE: the reader list is
+          ON THE POLICY RAIL (`recipient_readers`, owner `cost`: policy/recipient_readers.yaml), not
+          in code; the engine asks Topaz and a transport failure is a 503, never a 403."
       - method: GET
         path: /answers_export/profiles
         identity: none
@@ -1283,7 +1282,7 @@ services:
       - method: GET
         path: /artifact/{filename}
         identity: "caller authz_id, checked against the recipient's reader list"
-        gate: "AUTHORIZATION on the caller (export.readers_for_recipient, or program visibility for a CDRL name) + a DERIVED filename allow-list; transport auth (OBSERVE)"
+        gate: "AUTHORIZATION on the caller (the `recipient_readers` rail, owner `finance`, or program visibility for a CDRL name) + a DERIVED filename allow-list; transport auth (OBSERVE)"
         exposes: the-whole-disclosure-package
         consumers: ["cortex-bff /export/package/artifact/{filename}", the recipient the package was built for]
         class: gated
@@ -1293,13 +1292,12 @@ services:
           row above and the same posture: a name outside the closed set derived from
           export.artifact_filenames is a 404 BEFORE any entitlement check (a 403 there would
           confirm that some package exists under it), then the caller's authz_id must be in
-          export.readers_for_recipient(scope) or the answer is 403 naming the package and
+          the `recipient_readers` rail (owner `finance`) or the answer is 403 naming the package and
           never its readers. No service identity is entitled (a card action through cortex-bff
           carries the person's identity, ADR-0044). Traversal is refused structurally by
           comparison against the closed set, never by cleaning input into a path.
-          THE READER LIST IS SEED DATA (export.RECIPIENT_READERS), not policy: a real
-          deployment reads that relation from the grant rail where it can be reviewed and
-          revoked. 404 in a deployed pod where the builder and runtime are absent from the
+          THE READER LIST IS THE POLICY RAIL (policy/recipient_readers.yaml, owner `finance`), not
+          code; a rail that cannot be asked is a 503, never a 403. 404 in a deployed pod where the builder and runtime are absent from the
           image, since nothing is written there. A CDRL (fin-cdrl-<profile>-<program>.xlsx, the
           allow-list derived from the composed profiles crossed with the seed programs) is
           gated instead on program visibility (_require_visible), the check /cdrl_export made,
@@ -2085,19 +2083,19 @@ services:
       - method: GET
         path: /export/package/recipients
         identity: keycloak-jwt
-        gate: "get_current_user + entitlement filter via seed.readers_for_recipient keyed on authz_id"
+        gate: "get_current_user + entitlement filter via the recipient_readers rail (owner cost) keyed on authz_id"
         exposes: gated-content
         consumers: [cortex-ui canvas export (mesh:packageExport)]
         class: gated
         justification: >-
           The recipient picker's option list. Every scope returned is one the caller's
-          authz_id reads (agent_fleet.cost_agent.seed.readers_for_recipient) — the SAME
-          claim and the SAME function the production and download routes below gate on,
+          authz_id reads on the recipient_readers rail (owner cost) — the SAME
+          claim and the SAME rail the production and download routes below gate on,
           so the menu a caller sees cannot promise more than the other two routes allow.
       - method: POST
         path: /export/package/recipients
         identity: keycloak-jwt
-        gate: "get_current_user + the recipient list is _export_recipients_for(user) (seed.readers_for_recipient keyed on authz_id); answers refused-not-dropped via the artifact store's own ownership query"
+        gate: "get_current_user + the recipient list is _export_recipients_for(user) (the recipient_readers rail keyed on authz_id); answers refused-not-dropped via the artifact store's own ownership query"
         exposes: gated-content
         consumers: [cortex-ui canvas export (mesh:packageExport)]
         class: gated
@@ -2116,19 +2114,19 @@ services:
       - method: POST
         path: /export/package
         identity: keycloak-jwt
-        gate: "get_current_user + recipient_scope required and must be one authz_id reads (seed.readers_for_recipient); a plan recipient also needs can_invoke can_export:<profile> (403 not_entitled_to_export); answers refused-not-dropped via the artifact store's own ownership query"
+        gate: "get_current_user + recipient_scope required and must be one authz_id reads (the recipient_readers rail); a plan recipient also needs can_invoke can_export:<profile> (403 not_entitled_to_export); answers refused-not-dropped via the artifact store's own ownership query"
         exposes: object-store-write
         consumers: [cortex-ui canvas export (mesh:packageExport)]
         class: gated
         justification: >-
           THE PRODUCTION HALF OF A GOVERNED EMIT (ADR-0047). No default recipient
           (ADR-0047 §1): a blank recipient_scope is refused (409) rather than guessed.
-          The recipient gate is on authz_id via seed.readers_for_recipient, and
+          The recipient gate is on authz_id on the recipient_readers rail (a failed ask is a 503), and
           PRODUCTION IS GATED HERE, NOT ONLY THE DOWNLOAD — every recipient's package
           shares one directory and a canvas narrows what the file carries, so an
           unentitled producer could overwrite a recipient's package with a different
           canvas. The engine call forwards THE PERSON's bearer, never a service
-          identity (seed.py's RECIPIENT_READERS comment names no svc: reader —
+          identity (no svc: reader is ever on the rail, ADR-0047 section 5.1 —
           the confused-deputy argument). Every canvas answer id is resolved through the
           same ownership query /artifacts/{artifact_id} uses; one that does not resolve
           is a 404, refused rather than silently dropped. A plan answers recipient adds
@@ -2140,7 +2138,7 @@ services:
       - method: GET
         path: /export/package/artifact/{filename}
         identity: keycloak-jwt
-        gate: "get_current_user + filename resolved to a recipient scope via seed.scope_of_artifact (closed set) + that scope must be one authz_id reads (seed.readers_for_recipient)"
+        gate: "get_current_user + filename resolved to a recipient scope via seed.scope_of_artifact (closed set) + that scope must be one authz_id reads (the recipient_readers rail)"
         exposes: gated-content
         consumers: [cortex-ui canvas export (mesh:packageExport)]
         class: gated
@@ -2148,9 +2146,9 @@ services:
           THE DOWNLOAD HALF, and the GATEWAY-SIDE CHECK the relay asks for. A filename
           outside the closed set derived from seed.artifact_filenames is a 404 before
           any call to the engine — the same structural traversal defence as the
-          engine's own /artifact route. recipient gate on authz_id via
-          seed.readers_for_recipient, same claim and same function the engine's route
-          reads, so the two checks agree by construction. The person's bearer is
+          engine's own /artifact route. recipient gate on authz_id on the
+          recipient_readers rail, same claim and same rail the engine's route
+          asks, so the two checks agree by construction. The person's bearer is
           forwarded to the engine (no service identity), so the engine repeats the
           identical check on the identical token — belt AND braces on one disclosure,
           not a redundant no-op, since the engine is not itself reachable from a

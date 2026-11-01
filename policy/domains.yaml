@@ -65,7 +65,7 @@ domains:
   # nothing observable; the grant is the safety-engineers group in groups.yaml.
   - SUSTAINMENT
   # TRAINING (added 2026-10-24, roll 207): the domain of doc-tools' `course` kind (ADR-0059,
-  # doc-tools lane tr), per Chris's ruling 2026-10-23 "a kind names the document, not the
+  # doc-tools lane tr), per architect ruling 2026-10-23 "a kind names the document, not the
   # domain". In NO group yet, so it grants nobody anything; who reads training material is a
   # groups.yaml decision that has not been made.
   - TRAINING

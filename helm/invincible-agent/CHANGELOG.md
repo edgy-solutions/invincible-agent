@@ -1,5 +1,36 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.74 — not yet cut
+
+Entries merged after the 0.4.73 cut (`e2c03799`). The releaser dates this heading at the cut.
+
+**Policy changes (the MCP surface's call policy: `can_call:<tag>`)**
+
+- **New group `mcp-callers`** (capability-only, no persona.domain cell); sandbox members alice and
+  bob only (ruled 2026-10-31). **`topaz_sync` precondition**: a new group must be synced before the
+  roll that carries the rows (else the capability leg names an unknown group).
+- **The walker seal exempts capability-only groups** (ruled 2026-10-31): a walker mirrors alice's
+  persona groups, not her capability fixtures (`alert-processors`, `mcp-callers`). The exempt set is
+  derived from the rail (an empty group that a capability row grants to), never listed. This
+  repairs the seal, red on master since the 10-28 `can_drop` grant.
+- **Rows `can_call:ingest-export`, `can_call:ingest-v1`, `can_call:mcp`**, each `grant_to_groups:
+  [mcp-callers]`. Inert until the chart sets `CAN_CALL_DOOR_CLIENTS` (lane/01's).
+- **The door (BFF):** a token whose `azp` is in `CAN_CALL_DOOR_CLIENTS` reaches only the MCP
+  surface, and on it needs `can_call:<t>` for every tag of the route; everything else is 403
+  `not_entitled_to_call`, app-wide. Other callers are untouched; unset env, no-op.
+
+**Policy changes (a shipped row's grantor is `seed`, ruled 2026-10-31)**
+
+- **71 shipped rows** across seven rail files now say `granted_by: seed` instead of a person:
+  `asset_grants` 6, `capability_grants` 20, `domain_consumption` 11, `ontology_compartments` 1,
+  `program_members` 3, `recipient_readers` 1, `task_grants` 29. No other field changed.
+- **No live effect.** `granted_by` is an audit field; no sync writes it to Topaz, so no
+  `topaz_sync` is owed for this.
+- **A deployment's own rows still name their approver**: its policy repository, an overlay, and
+  the reader grant an approval writes at runtime. So the rule is a repo seal
+  (`tests/security/test_a_shipped_grantor_is_the_seed.py`), not a `validate_policy` row, which
+  runs on the deployed policy. The rail files are derived from `policy/grantors/*.yaml`.
+
 ## 0.4.73 — 2026-10-30
 
 Cut from master `e2c03799`. It carries every master merge since 0.4.72 (`77fb1d73`): #148, #151,

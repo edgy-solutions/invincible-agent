@@ -24,6 +24,8 @@ definition of "valid", never a parallel re-implementation):
     (see known_export_profiles), no profile name is in two kinds, and every known profile --
     review-export (policy/exports), answer-export (policy/exports/answers) and fin CDRL -- has a
     `can_export:<P>` row (deny-by-default: no row, nobody exports)
+  - capability_grants.yaml        → also: a `can_call:<T>` key names a tag of the served MCP document
+    (see known_call_tags); no row is required per tag (deny-by-default: no row, nobody calls)
   - recipient_readers.yaml        → recipient_reader_sync.load_readers (WHEN PRESENT; not in
     DATA_FILES -- see the note there)
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
@@ -58,6 +60,7 @@ Exit: 0 valid · 2 any error (all errors listed, none silently dropped).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -128,6 +131,26 @@ def known_content_kinds() -> tuple[set[str], list[str]]:
                 found += 1
         sources.append(f"{d.as_posix()} ({found} kind(s))")
     return kinds, sources
+
+
+def known_call_tags() -> tuple[set[str], list[str]]:
+    """The tags a `can_call:<T>` capability key may name: the union of `tags` over every operation
+    of docs/api/mcp.openapi.json (the committed projection of the served MCP document), and a note
+    `<path> (<n> tag(s))` or `<path> (absent)`."""
+    root = Path(__file__).resolve().parents[2]
+    f = root / "docs" / "api" / "mcp.openapi.json"
+    if not f.is_file():
+        return set(), [f"{f.as_posix()} (absent)"]
+    try:
+        doc = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set(), [f"{f.as_posix()} (absent)"]
+    tags: set[str] = set()
+    for item in (doc.get("paths") or {}).values():
+        for op in (item or {}).values():
+            if isinstance(op, dict):
+                tags.update(t for t in (op.get("tags") or []) if isinstance(t, str))
+    return tags, [f"{f.as_posix()} ({len(tags)} tag(s))"]
 
 
 #: No grantee is named in code (architect's standing rule, 2026-10-30: a group is configuration).
@@ -587,6 +610,17 @@ def validate(
                 + (f"the other {_l} rows grant `grant_to_groups: [{', '.join(_g)}]`" if _g else
                    f"no other {_l} profile has a row to follow, so the row names its own group "
                    f"(ask the architect)"))
+
+    # `can_call:<T>` (2026-10-30 ruling, deny-by-default): the door asks can_invoke on `can_call:<T>`
+    # for every tag of the route; a misspelt key gates nothing. No row is required per tag.
+    _ctags, _cnotes = known_call_tags()
+    for c in caps:
+        if c.key.startswith("can_call:") and c.key[len("can_call:"):] not in _ctags:
+            errors.append(
+                f"capability_grants.yaml: {c.key!r} names {c.key[len('can_call:'):]!r}, which is "
+                f"NOT a tag of the served MCP document -- a misspelt key gates nothing and the "
+                f"real tag stays uncallable through a door. Known tags ({len(_ctags)}): "
+                + ", ".join(sorted(_ctags)) + "; composed from " + "; ".join(_cnotes))
 
     # recipient_readers.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note
     # there; required-or-not is open with the architect). Absent = no reader asserted = every

@@ -269,12 +269,15 @@ async def test_the_CONTROL_an_ordinary_FALL_BACK_still_reaches_the_classified_pa
 async def test_a_seed_panel_FALL_BACK_because_the_verb_is_not_visible_carries_the_entitlement_cause(
     stubbed_stream, monkeypatch,
 ):
-    """The reason `direct_dispatch` gives when the caller's cell cannot see the verb types the
-    pipeline_error, so `/canvas/seed` can answer 403 `cell_cannot_see_verbs`."""
+    """The reason `direct_dispatch` gives when the caller's cell cannot see the verb
+    (`VERB_NOT_IN_CELL`, with the verb's domains on the outcome) types the pipeline_error and
+    carries `missing_domains`, so `/canvas/seed` can answer a policy refusal. (Was pinned to
+    `VERB_NO_LONGER_COMPATIBLE`, which is now a retired/re-primed verb and is NOT entitlement.)"""
     def _incompatible(**kwargs):
         return gw.direct_dispatch.DirectOutcome(
             kind=gw.direct_dispatch.FALL_BACK,
-            reason=f"verb mesh:finX {gw.direct_dispatch.VERB_NO_LONGER_COMPATIBLE} with fin#Y",
+            reason=f"verb mesh:finX {gw.direct_dispatch.VERB_NOT_IN_CELL}: it declares ['D']",
+            missing_domains=("D",),
         )
 
     monkeypatch.setattr(gw, "dispatch_pre_resolved", _incompatible)
@@ -289,13 +292,14 @@ async def test_a_seed_panel_FALL_BACK_because_the_verb_is_not_visible_carries_th
     blob = "".join([ev async for ev in gw._generate_dagster_stream_inner(req)])
     assert "seed_panel_verb_not_visible" in blob, blob
     assert "seed_panel_fell_back" not in blob
+    assert _pipeline_error(blob)["missing_domains"] == ["D"]
 
 
 # ── SECTION 3 — the failed seed's artifact records the template's verb and the cause ─────────
 # Layer asserted: the bundle handed to `_dispatch_answer_artifact` (stubbed, so the real
 # backstop that writes `NoCauseRecorded` does not run; the point is that it has nothing to do).
 
-_NOT_VISIBLE = "verb mesh:finX {} with fin#Y"
+_NOT_IN_CELL = "verb mesh:finX {}: it declares ['D']"
 
 
 def _pipeline_error(blob: str) -> dict:
@@ -315,13 +319,14 @@ async def test_a_failed_seed_artifact_records_the_templates_verb_and_the_cause(
     from iagent.canvas_template import load_template, panel_dispatch
 
     reason = (
-        _NOT_VISIBLE.format(gw.direct_dispatch.VERB_NO_LONGER_COMPATIBLE) if not_visible
+        _NOT_IN_CELL.format(gw.direct_dispatch.VERB_NOT_IN_CELL) if not_visible
         else "the mesh no longer agrees with this declared subject"
     )
     monkeypatch.setattr(
         gw, "dispatch_pre_resolved",
         lambda **k: gw.direct_dispatch.DirectOutcome(
-            kind=gw.direct_dispatch.FALL_BACK, reason=reason),
+            kind=gw.direct_dispatch.FALL_BACK, reason=reason,
+            missing_domains=("D",) if not_visible else ()),
     )
     bindings = {"program": "NP-MERIDIAN"}
     template = load_template("program_finance")

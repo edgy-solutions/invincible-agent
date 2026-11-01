@@ -40,7 +40,7 @@ FIN_GROUP = "finance-analysts"
 
 
 def _row(group=(GROUP,), users=()):
-    r = {"granted_by": "cnogradi", "reason": "test"}
+    r = {"granted_by": "seed", "reason": "test"}
     if group:
         r["grant_to_groups"] = list(group)
     if users:

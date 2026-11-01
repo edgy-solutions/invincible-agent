@@ -874,6 +874,10 @@ app = FastAPI(
     version="2.1.0",
     lifespan=lifespan,
 )
+# The door client's reach (`can_call:<tag>`, 2026-10-31 M3). Added FIRST so it is the INNERMOST
+# middleware: the CORS and no-store wrappers below still apply to its refusals.
+from .authz.call_capability import DoorGuard  # noqa: E402
+app.add_middleware(DoorGuard, router=app.router)
 
 # ── /version and /fleet/version ─────────────────────────────────────────────────────────
 #
@@ -1261,9 +1265,9 @@ class _RowEditsModel(_BaseModel):
 
 def _wire_evidence_ref(v):
     """The wire check for an evidence_ref: the struct (validated by `EvidenceRef`) or the legacy
-    non-blank string; anything else is a 422. The value is kept in the form it arrived in -- the
-    act normalizes it with `steward_correction.normalize_evidence_ref`, the same function the
-    runner applies to whatever it is forwarded."""
+    non-blank string; anything else is a 422. The struct is checked here with the SDK model plus the
+    named checks (the act no longer calls `steward_correction.normalize_evidence_ref`); the Restate
+    runner applies the same SDK model in its own `normalize_evidence_ref` to whatever it is forwarded."""
     if v is None:
         return None
     if isinstance(v, str):
@@ -2576,7 +2580,8 @@ async def finance_measure(
         })
 
     if rr.status_code == 422:
-        raise HTTPException(status_code=422, detail=rr.json().get("detail"))
+        raise HTTPException(status_code=422,
+                            detail=_engine_refusal_detail(rr, f"/measure/{fn}"))
     if rr.status_code >= 400:
         try:
             body_json = rr.json()
@@ -2586,7 +2591,7 @@ async def finance_measure(
         raise HTTPException(status_code=rr.status_code,
                             detail=_detail_with_message(rr.status_code, relay_refusal(detail)))
 
-    return rr.json()
+    return _engine_answer(rr, f"/measure/{fn}")
 
 
 @app.get("/plan/state_version")
@@ -2650,29 +2655,48 @@ _ENGINE_FIN_URL = os.getenv("ENGINE_FIN_PUBLIC_URL", "http://iagent-engine-fin:8
 _SHA256_LOCATOR_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
+# Each engine's OWN owner key on the `recipient_readers` rail (policy/recipient_readers.yaml). They are
+# identities, not cases: the rows (who reads which scope) are the rail's, and an owner string that is
+# not a key of that file reads nobody.
+_COST_OWNER = "cost"
+_FIN_OWNER = "finance"
+
+
+def _rail_reader(owner: str, scope: str, authz_id: Optional[str]) -> bool:
+    """`can_read_recipient(owner, ...)`, keyed on the PERSON's `authz_id`; a transport/HTTP failure
+    is a 503 (`recipient_readers_unavailable`), never a deny."""
+    from agent_fleet.utils.recipient_readers import can_read_recipient
+    try:
+        return bool(authz_id) and bool(can_read_recipient(owner, scope, authz_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("recipient_readers check failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail={"reason": "recipient_readers_unavailable"}
+        ) from exc
+
+
 def _export_recipients_for(user: "User") -> list[str]:
-    """Every recipient scope `user` may export to or download from, keyed on `authz_id` — the
-    SAME claim the engine's own /artifact route keys its authorization on (main.py's
-    `_scope_of_artifact` + `measures.readers_for_recipient`), never `user.id`. The two checks
-    agree because both read `seed.readers_for_recipient`.
-    """
+    """Every cost recipient scope `user` may export to or download from: the scopes engine-cost
+    DISCLOSES (`RECIPIENT_SCOPES`), each asked of the `recipient_readers` rail under owner
+    `cost`, keyed on `authz_id` -- the SAME claim and the same rail the engine's own /artifact
+    route asks. One Topaz call per scope. A rail that cannot be asked is a 503."""
     from agent_fleet.cost_agent import seed as _cost_seed
     return sorted(
         s for s in _cost_seed.RECIPIENT_SCOPES
-        if user.authz_id and user.authz_id in _cost_seed.readers_for_recipient(s)
+        if _rail_reader(_COST_OWNER, s, user.authz_id)
     )
 
 
 def _fin_export_recipients_for(user: "User") -> list[str]:
     """`_export_recipients_for`'s exact shape, read against engine-fin's own
-    `export.RECIPIENT_SCOPES`/`readers_for_recipient` instead of cost's — the two engines'
-    disclosures are entitled independently, and this is why there are two functions rather
-    than one parameterised by module: a caller reading the wrong engine's scopes would grant
-    access this gateway never meant to."""
+    `export.RECIPIENT_SCOPES` under owner `finance` -- the two engines' disclosures are entitled
+    independently (the rail's object id carries the owner), and this is why there are two
+    functions rather than one parameterised by module: a caller reading the wrong engine's
+    scopes would grant access this gateway never meant to."""
     from agent_fleet.finance_agent import export as _fin_export
     return sorted(
         s for s in _fin_export.RECIPIENT_SCOPES
-        if user.authz_id and user.authz_id in _fin_export.readers_for_recipient(s)
+        if _rail_reader(_FIN_OWNER, s, user.authz_id)
     )
 
 
@@ -2730,14 +2754,7 @@ def _plan_scope_names(profiles: Optional[dict] = None) -> list[str]:
 
 def _plan_reader(scope: str, authz_id: Optional[str]) -> bool:
     """`can_read_recipient("plan", ...)`; a transport/HTTP failure is a 503, never a deny."""
-    from agent_fleet.utils.recipient_readers import can_read_recipient
-    try:
-        return bool(authz_id) and bool(can_read_recipient(_PLAN_OWNER, scope, authz_id))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("recipient_readers check failed: %s", exc)
-        raise HTTPException(
-            status_code=503, detail={"reason": "recipient_readers_unavailable"}
-        ) from exc
+    return _rail_reader(_PLAN_OWNER, scope, authz_id)
 
 
 def _plan_may_export(profile_name: str, authz_id: Optional[str]) -> bool:
@@ -2767,16 +2784,6 @@ def _answer_profiles_unavailable_type() -> type:
     return _ae.AnswerProfilesUnavailable
 
 
-def _plan_recipients_or_none(user: "User") -> list[str]:
-    """For the pickers only: a rail that cannot be asked omits the plan recipients rather than
-    taking cost's own list down. The export and the download still answer 503. The same holds
-    when engine-cost's profile set cannot be had."""
-    try:
-        return _plan_recipients_for(user)
-    except (HTTPException, _answer_profiles_unavailable_type()):
-        return []
-
-
 def _plan_profile_name(scope: str, profiles: Optional[dict] = None) -> Optional[str]:
     from agent_fleet.utils import answer_exports as _ae
     profile = _ae.profile_for_recipient(_plan_profiles() if profiles is None else profiles, scope)
@@ -2801,8 +2808,9 @@ def _plan_exportable_for(
 
 
 def _plan_exportable_or_none(user: "User", profiles: Optional[dict] = None) -> list[str]:
-    """`_plan_recipients_or_none`'s twin for the pickers: a rail that cannot be asked omits the
-    plan recipients."""
+    """The plan recipients a caller may export to, for the 409 listing INSIDE the `export_package`
+    door (a door's error listing, not a picker): a rail that cannot be asked omits them there and
+    the door itself answers 503. The pickers do not use this; see `_picker_scopes`."""
     try:
         return _plan_exportable_for(user, None, profiles)
     except (HTTPException, _answer_profiles_unavailable_type()):
@@ -2827,6 +2835,47 @@ def _plan_refusal_403(scope: str) -> HTTPException:
         "not_a_recipient_you_may_export_to", policy_id="recipient_readers",
         missing_binding="can_read_recipient(recipient_scope)",
         message="You are not a reader of this recipient.", extra={"recipient_scope": scope})
+
+
+def _no_recipient_refusal_403() -> HTTPException:
+    """The compliant refusal for a picker whose caller reads no recipient of any owner it lists
+    (the plan family of `_plan_refusal_403`: `recipient_readers` is object-scoped, so no key)."""
+    from .authz.refusal import policy_refusal
+    return policy_refusal(
+        "no_recipient_you_may_export_to", policy_id="recipient_readers",
+        missing_binding="can_read_recipient(recipient_scope)",
+        message="You read no recipient of any owner this picker lists.")
+
+
+def _picker_scopes(user: "User") -> tuple[list[str], list[str], dict]:
+    """`(cost scopes, plan scopes, plan profiles)` the caller may export to, for the two pickers
+    (GET and POST `/export/package/recipients`). An outage is a 503 and is never omitted: the rail
+    for any owner it asks (cost, plan; the detail names the owner) or engine-cost's profile set
+    (`answer_profiles_unavailable`). "No readers" is a 403: the union across those owners is empty.
+    The owners are the ones the picker lists, not finance's (its export is the template door)."""
+    try:
+        cost = _export_recipients_for(user)
+    except HTTPException as exc:
+        raise _picker_unavailable(exc, _COST_OWNER) from exc
+    try:
+        profiles = _plan_profiles()
+        plan = _plan_exportable_for(user, None, profiles)
+    except _answer_profiles_unavailable_type() as exc:
+        raise _plan_profiles_unavailable() from exc
+    except HTTPException as exc:
+        raise _picker_unavailable(exc, _PLAN_OWNER) from exc
+    if not cost and not plan:
+        raise _no_recipient_refusal_403()
+    return cost, plan, profiles
+
+
+def _picker_unavailable(exc: HTTPException, owner: str) -> HTTPException:
+    """A rail outage re-raised at a picker with the owner it was asking; any other 503 (the
+    `can_export` check) passes through as it was."""
+    detail = exc.detail
+    if isinstance(detail, dict) and detail.get("reason") == "recipient_readers_unavailable":
+        return HTTPException(status_code=exc.status_code, detail={**detail, "owner": owner})
+    return exc
 
 
 def _user_bearer(request: Request) -> str:
@@ -3186,8 +3235,8 @@ async def _call_engine_cost_package(
             rr = await client.post(
                 f"{_ENGINE_COST_URL}/measure/package_export",
                 json={"params": params},
-                # THE PERSON's identity, never a service identity (seed.py's RECIPIENT_READERS
-                # comment: no svc: reader is listed, and that is the confused-deputy argument
+                # THE PERSON's identity, never a service identity (ADR-0047 section 5.1: no svc:
+                # reader is ever on the rail, and that is the confused-deputy argument
                 # applied here — a service calling on the caller's behalf must carry THAT
                 # caller's identity or refuse).
                 headers={"Authorization": f"Bearer {bearer}"},
@@ -3239,13 +3288,11 @@ def _cost_refusal_section(exc: HTTPException, recipient_scope: str) -> dict:
 @app.get("/export/package/recipients")
 async def export_package_recipients(current_user: User = Depends(get_current_user)):
     """The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller
-    sees are exactly the scopes their `authz_id` reads, never the full recipient catalogue."""
-    return {
-        "recipients": [
-            {"value": s, "label": s}
-            for s in _export_recipients_for(current_user) + _plan_exportable_or_none(current_user)
-        ]
-    }
+    sees are exactly the scopes their `authz_id` reads, never the full recipient catalogue.
+    An outage (the rail for cost or plan, or engine-cost's profile set) is 503; a caller who reads
+    no recipient of any owner listed is 403."""
+    cost, plan, _profiles = _picker_scopes(current_user)
+    return {"recipients": [{"value": s, "label": s} for s in cost + plan]}
 
 class ExportOfferRequest(_BaseModel):
     """`POST /export/package/recipients`'s body: the same answer items `ExportPackageRequest`
@@ -3359,28 +3406,23 @@ async def export_package_offer(
     iff its export would take at least one answer; a partial board stays offered (mixed-board
     partial export is ruled, 2026-10-09/16) and `refused` names the answers that will not go.
     Gates, as the export's: no answers is 400 `no_answers`; an id that does not resolve is
-    404 (503 when the store is down).
+    404 (503 when the store is down). As the GET picker: an outage is 503, and a caller who reads
+    no recipient of any owner listed is 403.
     """
     if not body.answers:
         raise HTTPException(status_code=400, detail={"reason": "no_answers"})
     resolved = _resolve_export_answers(
         [a.artifact_id for a in body.answers], current_user.id
     )
-    plan_offers: list[dict] = []
-    try:
-        profiles = _plan_profiles()
-        plan_offers = [
-            {"value": s, "label": s, **_plan_offer_for_recipient(resolved, s, profiles)}
-            for s in _plan_exportable_or_none(current_user, profiles)
-        ]
-    except _answer_profiles_unavailable_type():
-        pass  # logged by `_plan_profiles`; the plan recipients are omitted, cost's are not
+    cost, plan, profiles = _picker_scopes(current_user)
     return {
         "answers": len(body.answers),
         "recipients": [
-            {"value": s, "label": s, **_offer_for_recipient(resolved, s)}
-            for s in _export_recipients_for(current_user)
-        ] + plan_offers,
+            {"value": s, "label": s, **_offer_for_recipient(resolved, s)} for s in cost
+        ] + [
+            {"value": s, "label": s, **_plan_offer_for_recipient(resolved, s, profiles)}
+            for s in plan
+        ],
     }
 
 
@@ -3670,7 +3712,14 @@ async def export_package(
         raise _plan_profiles_unavailable()
     is_plan_scope = plan_profiles is not None and recipient_scope in _plan_scope_names(plan_profiles)
     plan_recipients = _plan_recipients_for(current_user, plan_profiles) if is_plan_scope else []
-    options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
+    # ONE pass over the rail for cost's scopes, used for the listed options AND the door below. A rail
+    # that cannot be asked omits cost's options from the 409 listing (as the pickers do) but the
+    # door itself answers 503 -- never a 403.
+    try:
+        cost_recipients: Optional[list[str]] = _export_recipients_for(current_user)
+    except HTTPException:
+        cost_recipients = None
+    options = [{"value": s, "label": s} for s in (cost_recipients or [])]
     if plan_profiles is not None:
         options += [{"value": s, "label": s} for s in (
             _plan_exportable_for(current_user, plan_recipients, plan_profiles) if is_plan_scope
@@ -3692,9 +3741,11 @@ async def export_package(
         return await _export_plan_answers(
             body, request, current_user, recipient_scope, plan_profiles)
 
-    if recipient_scope not in _export_recipients_for(current_user):
+    if cost_recipients is None:
+        raise HTTPException(status_code=503, detail={"reason": "recipient_readers_unavailable"})
+    if recipient_scope not in cost_recipients:
         # WHY PRODUCTION IS GATED HERE, NOT ONLY THE DOWNLOAD: every recipient's package
-        # shares one directory (seed.py's RECIPIENT_READERS comment) and a canvas narrows
+        # shares one directory (the confused-deputy note beside cost's RECIPIENT_SCOPES) and a canvas narrows
         # what the file carries, so an unentitled producer could OVERWRITE a recipient's
         # package with a different canvas — a write-side confused-deputy, not just a read.
         raise HTTPException(
@@ -3795,7 +3846,7 @@ async def export_package_artifact(
 ):
     """Download proxy for a produced export package. THE GATEWAY-SIDE CHECK the relay asks
     for: the engine repeats the same check on the same person's token (main.py's /artifact,
-    ~line 700), and the two agree because both read `seed.readers_for_recipient`. This is not
+    ~line 700), and the two agree because both ask the `recipient_readers` rail. This is not
     redundant — it is the ONLY check between an unentitled browser and the engine's bytes,
     since the engine sits behind the mesh and is not itself reachable from a browser.
     """
@@ -3909,9 +3960,42 @@ _CDRL_MEDIA = {
 _CDRL_FILENAME_RE = re.compile(r"^fin-cdrl-[A-Za-z0-9_.-]+\.(" + "|".join(_CDRL_MEDIA) + r")$")
 
 
-def _engine_failure(label: str, rr) -> HTTPException:
-    """A refusal or failure an engine answered with, as this gateway's answer. 403 is the engine's
-    policy refusal completed by `relay_refusal`; anything else is a 502 naming the engine status."""
+def _engine_answer(rr, route: str):
+    """The decoded JSON of an engine's 2xx answer. An empty or non-JSON body (a Restate handler
+    that returns None is an EMPTY 200) is a named 502, never a crash and never a 200 `null`."""
+    try:
+        out = rr.json()
+    except Exception:  # noqa: BLE001 -- an undecodable body is the failure being named
+        out = None
+    if out is None:
+        raise HTTPException(status_code=502, detail={
+            "error": "engine_empty_answer", "engine_route": route,
+            "engine_status": rr.status_code,
+            "message": f"the engine answered {rr.status_code} on {route} with no JSON body.",
+        })
+    return out
+
+
+def _engine_refusal_detail(rr, route: str):
+    """The `detail` of an engine's refusal, as the engine sent it. An empty or non-JSON body
+    falls back to the response text, and an empty text is NAMED rather than left blank."""
+    try:
+        body_json = rr.json()
+        detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+    except Exception:  # noqa: BLE001
+        detail = getattr(rr, "text", "")
+    if detail is None or (isinstance(detail, str) and not detail.strip()):
+        detail = {"error": "engine_empty_body", "engine_route": route,
+                  "engine_status": rr.status_code,
+                  "message": f"the engine refused with {rr.status_code} on {route} and sent no body."}
+    return detail
+
+
+def _engine_failure(label: str, rr, route: str = "") -> HTTPException:
+    """A refusal or failure an engine answered with, as this gateway's answer. The engine's
+    declared refusals (403 policy, 409, 422) keep their status and every key of the body (advice
+    keys may be added: a 403 gains `grantable_by`, a 409 gains `message`); anything else
+    is a 502 naming the engine status."""
     try:
         body_json = rr.json()
         detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
@@ -3919,6 +4003,11 @@ def _engine_failure(label: str, rr) -> HTTPException:
         detail = getattr(rr, "text", "engine refused")
     if rr.status_code == 403:
         return HTTPException(status_code=403, detail=relay_refusal(detail))
+    if rr.status_code in (409, 422):
+        detail = _engine_refusal_detail(rr, route or label)
+        if rr.status_code == 409:
+            detail = _detail_with_message(409, detail)
+        return HTTPException(status_code=rr.status_code, detail=detail)
     return HTTPException(status_code=502, detail={
         "error": f"{label}_engine_failed", "engine_status": rr.status_code, "engine_detail": detail,
     })
@@ -3939,8 +4028,8 @@ async def export_cdrl_profiles(request: Request, current_user: User = Depends(ge
             "error": "fin_engine_unreachable", "message": str(exc),
         })
     if rr.status_code >= 400:
-        raise _engine_failure("fin", rr)
-    return rr.json()
+        raise _engine_failure("fin", rr, "/cdrl_profiles")
+    return _engine_answer(rr, "/cdrl_profiles")
 
 
 @app.get("/export/cdrl", tags=[MCP_TAG])
@@ -3978,9 +4067,9 @@ async def export_cdrl(
         if isinstance(detail, dict) and detail.get("error") == "unknown_profile":
             raise HTTPException(status_code=404, detail=detail)
     if rr.status_code >= 400:
-        raise _engine_failure("fin", rr)
+        raise _engine_failure("fin", rr, "/cdrl_export")
 
-    out = rr.json()
+    out = _engine_answer(rr, "/cdrl_export")
     filename = out.get("artifact_filename")
     cells_sha256 = (out.get("envelope") or {}).get("cells_sha256")
     if not (isinstance(filename, str) and _CDRL_FILENAME_RE.match(filename) and cells_sha256):
@@ -4302,11 +4391,15 @@ class SeedPortfolioCanvasRequest(_BaseModel):
 # as opposed to "the seed could not be performed". Decided by reading every `_perror(...)`
 # producer's `cause=`:
 #   seed_panel_verb_not_visible -- the seed_panel FALL_BACK whose reason is
-#       direct_dispatch.VERB_NO_LONGER_COMPATIBLE: the declared verb is not in the verifier's
-#       compatible set for this caller (revoked, retired, or a persona/domain that cannot see
-#       it). Emitted where the seed_panel turn falls back (the `seed_panel_fell_back` site).
-# EXCLUDED, and why: seed_panel_fell_back (any other fall-back reason, e.g. "verifier
-#   unreachable", is OURS), seed_panel_unroutable (template declares no subject),
+#       direct_dispatch.VERB_NOT_IN_CELL, and ONLY that: the verifier knows the declared verb
+#       UNSCOPED and every domain it declares is outside the caller's active cell, so a persona
+#       switch or a grant would satisfy it. The panel's failure record carries the verb's domains
+#       as `missing_domains` beside the cause. Emitted where the seed_panel turn falls back
+#       (the `seed_panel_fell_back` site).
+# EXCLUDED, and why: seed_panel_fell_back (any other fall-back reason is OURS or the verb's, not
+#   the caller's: "verifier unreachable"; "no longer compatible" -- the verb is retired, re-primed
+#   or dropped by arity, which is NOT a policy refusal; an unscoped re-check that failed is
+#   could-not-check, never a deny), seed_panel_unroutable (template declares no subject),
 #   route_intent_failed, auto_compile_failed, restate_unreachable, dagster_launch_failed,
 #   dagster_run_failed, ui_payload_fetch_error, ui_payload_timeout, acceptance_not_opened,
 #   engine_did_not_answer, render_ui_failed, stream_producer_error, stream_raised -- all
@@ -4320,15 +4413,23 @@ def _seed_failure_from_data(data: str | None) -> dict:
     payload `_perror` wrote. A missing or unparseable payload records `cause: "unrecorded"`."""
     kind = None
     cause = None
+    missing: list[str] = []
     if data:
         try:
             payload = json.loads(data.strip())
             if isinstance(payload, dict):
                 kind = payload.get("kind") or None
                 cause = payload.get("cause") or None
+                _md = payload.get("missing_domains")
+                if isinstance(_md, list):
+                    missing = sorted({str(d) for d in _md if d})
         except (ValueError, TypeError):
             pass
-    return {"event": "pipeline_error", "kind": kind, "cause": cause or "unrecorded"}
+    failure = {"event": "pipeline_error", "kind": kind, "cause": cause or "unrecorded"}
+    if missing:
+        # The domains the caller's cell lacks for this panel's verb -- data, not prose.
+        failure["missing_domains"] = missing
+    return failure
 
 
 def _seed_failure_from_http(status: int, raw: bytes | None) -> dict:
@@ -5081,6 +5182,38 @@ async def canvas_seed(
             "canvas_seed: NOTHING seeded (0/%s) -- refusing with %s. Upstream: %s causes: %s",
             total, 403 if _all_entitlement else 502, sorted(_codes)[:5], _causes,
         )
+        # A BOARD THE PERSONA CANNOT SEE IS A POLICY REFUSAL, NAMING THE PERSONA AND THE DOMAIN.
+        # Only when EVERY failed panel is a `seed_panel_verb_not_visible` carrying the domains its
+        # verb declares: the verifier knows the verbs, and the cell holds none of their domains.
+        # Any other all-entitlement mix (an upstream 403 with no domain to name) keeps the plain
+        # 403 below, because naming a domain for a refusal that has none would be invented.
+        _missing = sorted({
+            d for r in _failed for d in ((r.get("failure") or {}).get("missing_domains") or [])
+        })
+        if _all_entitlement and _missing and all(
+            (r.get("failure") or {}).get("missing_domains") for r in _failed
+        ):
+            _persona = request.active_persona or ""
+            _held = current_user.entitlements
+            _candidates = sorted(
+                p for p in _held.personas()
+                if p != _persona and set(_missing) <= set(_held.domains_for(p))
+            )
+            raise policy_refusal(
+                "persona_lacks_domain", policy_id="groups",
+                missing_binding=", ".join(
+                    f"a_group_granting({_persona}, {d})" for d in _missing
+                ),
+                message=(
+                    f"seeded 0 of {total} panels; persona {_persona or '(none named)'} holds "
+                    f"none of the domains these panels' verbs declare: {_missing}. Switching "
+                    "persona, or a group grant for that persona in one of those domains, "
+                    "would satisfy it"
+                ),
+                candidates=_candidates,
+                extra={"persona": _persona, "missing_domains": _missing,
+                       "causes": _causes or sorted(_codes)[:5]},
+            )
         if _all_entitlement:
             raise HTTPException(
                 status_code=403,
@@ -7455,6 +7588,7 @@ def _perror(
     kind: str | None = None,
     retryable: bool | None = None,
     cause: str | None = None,
+    missing_domains: "list[str] | tuple[str, ...] | None" = None,
 ) -> str:
     """Emit a typed `pipeline_error` event.
 
@@ -7466,6 +7600,8 @@ def _perror(
     cause     : machine-readable classification (verb_unfound,
                 llm_timeout, engine_5xx, dagster_run_failed, ...) for
                 downstream telemetry.
+    missing_domains : the domains a verb declares that the caller's cell lacks; sent only on
+                the `seed_panel_verb_not_visible` cause, read back by `_seed_failure_from_data`.
     """
     payload: dict = {"message": message}
     if kind:
@@ -7474,6 +7610,8 @@ def _perror(
         payload["retryable"] = retryable
     if cause:
         payload["cause"] = cause
+    if missing_domains:
+        payload["missing_domains"] = list(missing_domains)
     return _sse("pipeline_error", json.dumps(payload))
 
 
@@ -9549,7 +9687,8 @@ async def _generate_dagster_stream_inner(
                 # unattributable `NoCauseRecorded` with no verb (18 such rows, 2026-10-28).
                 _seed_cause = (
                     "seed_panel_verb_not_visible"
-                    if direct_dispatch.VERB_NO_LONGER_COMPATIBLE in _detail["reason"]
+                    if _direct.missing_domains
+                    and direct_dispatch.VERB_NOT_IN_CELL in _detail["reason"]
                     else "seed_panel_fell_back"
                 )
                 _ri = dict(_artifact_bundle.get("resolved_intent") or {})
@@ -9570,6 +9709,10 @@ async def _generate_dagster_stream_inner(
                     kind="verifying_route",
                     retryable=True,
                     cause=_seed_cause,
+                    missing_domains=(
+                        _direct.missing_domains
+                        if _seed_cause == "seed_panel_verb_not_visible" else None
+                    ),
                 )
                 yield _sse("stream_end", "{}")
                 await _dispatch_answer_artifact(_artifact_bundle)
