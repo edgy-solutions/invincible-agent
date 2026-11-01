@@ -593,7 +593,7 @@ def test_the_shipped_plan_owner_is_seed_granted_for_scopes_the_plan_path_offers_
     the plan path offers -- a recipient of a served answer-export profile, read from the profile
     loader, not typed. And with no Topaz to ask, the REAL can_read_recipient still denies."""
     import yaml
-    sys.path.insert(0, str(ROOT / "policy" / "sync"))
+    monkeypatch.syspath_prepend(str(ROOT / "policy" / "sync"))
     import recipient_reader_sync as rrs
     raw = yaml.safe_load((ROOT / "policy" / "recipient_readers.yaml")
                          .read_text(encoding="utf-8"))
