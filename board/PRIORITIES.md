@@ -27,4 +27,4 @@ Data, read by `scripts/render_board.py`. Edit here; never in code.
 ## Reorders
 
 - 2026-10-31 (Chris, via the architect): board reinstated; order 1 PCN/PDN, 2 finance, 3 API/SDK/MCP, 4 docs, 5 OpenDDIL (waiting on their fix), 6 training, 7 workflow (Socratic), 8 engine-r.
-- 2026-10-31 (Lane 1, at seeding; provisional until the architect rules): 9 cross-cutting appended below the eight, for work that serves no one feature (releases, governance ratchets, safety, the board).
+- 2026-10-31 (Lane 1, at seeding; accepted by the architect 10-31): 9 cross-cutting appended below the eight, for work that serves no one feature (releases, governance ratchets, safety, the board).
