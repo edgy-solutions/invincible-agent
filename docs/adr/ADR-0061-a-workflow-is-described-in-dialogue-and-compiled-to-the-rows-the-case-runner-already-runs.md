@@ -6,7 +6,7 @@ on 2026-10-25 (§9). By that ruling, this stays a draft until the model arm prod
 spec. None of the nine model fixture-runs after the rulings produced one (§9). On 2026-10-27, one
 of three PCN runs was runnable, but it is not the workflow the transcript describes (§10). The
 architect decides whether that meets the ruling. The 10-30 gate is a run that is runnable with the
-planted contradiction caught. Runs 22 to 27 do not meet it (§10).
+planted contradiction caught. Runs 22 to 30 do not meet it (§10).
 **Date:** 2026-10-24
 **Deciders:** architect (decision); Chris (review); lane/74 (draft)
 **Related:**
@@ -1214,6 +1214,50 @@ This ADR stays a draft, and no PR is opened.
   - Run 25's blocker is a task kind declared without its required rendering fields. Whether the
     loop should ask for those fields as a required slot, rather than leave them to a runtime
     error the person cannot answer, is a separate question.
+
+#### 2026-10-31: runs 28 to 30 at the confirm rejection
+
+The architect asked for three more runs with the confirm rejection, under the same bar. Three runs
+on PCN at `57626cf5`, which has the same code as `d1909291`. Same model and harness, with no walk
+or roll in flight.
+
+| run | questions / bank | runnable errors | semantic diffs | open | answered by path | model errors | confirms | rejected | contradiction | deferral | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 28 | 27/14 | 1 | 5 | 2 | 6 | 0 | 7 | 0 | 1/1 | 0/1 | cannot_run | 542 |
+| 29 | 26/14 | 0 | 6 | 2 | 5 | 1 | 9 | 1 | 1/1 | 0/1 | cannot_run | 611 |
+| 30 | 26/14 | 0 | 6 | 2 | 5 | 2 | 8 | 1 | 1/1 | 0/1 | cannot_run | 580 |
+
+**The gate is not met.** All three runs catch the planted contradiction, but none is runnable.
+This ADR stays a draft, and no PR is opened.
+
+- **The contradiction is caught in every run.** An overwrite on the impact review's `excludes`
+  was asked, and it was read as the planted key.
+- **The correction works.**
+  - In runs 29 and 30 the record step was drafted as a human approval again, and its confirm was
+    rejected.
+  - Both times the model's first reply was the correction, set for set and unset for unset, and
+    it was not refused.
+  - In run 28 the record was drafted correctly, so nothing was rejected.
+- **The same blocker in all three runs: a `timed_out` row the stage does not have.**
+  - In each opening, the model gave the impact-review and acknowledgement chaining tables a
+    `timed_out` row. Neither step has a deadline, and the expected stages have no `timed_out`
+    outcome.
+  - The runtime refuses each row. The loop asks "Can it end 'timed_out'?" twice per table, and the
+    scripted user has no answer, so both keys stay open.
+  - That is the blocker runs 26 and 27 owed a ruling on.
+- **Run 28 also has a runtime error.** Its selection table names the trigger by `after`, the
+  shape run 23 drafted. The measure now reads that shape as the trigger stage, but the runtime
+  refuses it.
+- **The planted deferral was not recorded in any of the three runs.** Each time, the person's
+  answer "We have not agreed a turnaround for the engineering disposition yet" was drafted as
+  `deadline_seconds: null`, not as a deferral. In runs 25 and 27 the same answer was deferred.
+  That is the model's reading, not the mechanism. It does not bear on the gate.
+- **Model errors.** Runs 29 and 30 had three refused patches between them, each with an index path
+  (`steps[0]`). Each was restated in the path grammar on the next reply and applied.
+- **Owed, for a ruling: as for runs 25 to 27.** With the rejection working, the planted
+  contradiction is caught in five of the six runs since `d1909291`. What stands between those
+  runs and the bar is now a routing row for an outcome the stage does not have. The scripted
+  user cannot answer it, and a runtime refusal may not be deferred.
 
 ## Consequences
 
