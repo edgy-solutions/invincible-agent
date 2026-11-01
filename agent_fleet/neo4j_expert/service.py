@@ -119,7 +119,7 @@ def _can_read_document(caller_email: str, source_id: str) -> bool:
             timeout=5.0,
         )
         r.raise_for_status()
-        return bool(r.json().get("check", False))
+        return check_answer(r)
     except Exception as e:  # noqa: BLE001 — fail-closed on ANY failure
         print(f"[Engine E] can_read check FAILED (fail-closed deny) src={source_id!r}: {e}")
         return False
@@ -141,6 +141,11 @@ except ImportError:
             b = init_baml_client(b)
         except ImportError:
             pass
+
+try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import check_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import check_answer
 
 try:
     from tools import execute_cypher as _module_execute_cypher, get_graph_schema, get_neo4j_driver

@@ -54,6 +54,10 @@ except ImportError:  # pragma: no cover
     )
 
 try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import check_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import check_answer
+try:  # pragma: no cover - import path differs by runtime
     from utils.declared_query import QueryVerb  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover
     from agent_fleet.utils.declared_query import QueryVerb
@@ -235,7 +239,7 @@ def check_can_invoke(
     try:
         r = httpx.post(f"{topaz_url}/api/v3/directory/check", json=payload, timeout=5.0)
         r.raise_for_status()
-        return bool(r.json().get("check"))
+        return check_answer(r)
     except Exception:
         return False  # fail-closed
 
@@ -291,7 +295,7 @@ def check_can_act(
     try:
         r = httpx.post(f"{topaz_url}/api/v3/directory/check", json=payload, timeout=5.0)
         r.raise_for_status()
-        return bool(r.json().get("check"))
+        return check_answer(r)
     except Exception:
         return False  # fail-closed
 

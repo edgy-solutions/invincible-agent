@@ -21,6 +21,11 @@ import os
 
 import httpx
 
+try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import check_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import check_answer
+
 
 def check_payload(profile_name: str, caller_id: str) -> dict:
     return {
@@ -41,4 +46,4 @@ def can_export(profile_name: str, caller_id: str, *, directory_url: str | None =
         if r.status_code == 404:
             return False
         r.raise_for_status()
-        return bool(r.json().get("check"))
+        return check_answer(r)
