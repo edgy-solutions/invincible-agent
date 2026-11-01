@@ -25,6 +25,7 @@ the first symptom three layers away. Prose names and component names are differe
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -873,8 +874,11 @@ def _measure_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
-    """The envelope of a DECLARED measure: the PERIOD_SERIES shape `fin_performance_indices`
-    answers in, with `series` and `reference` from the row and the method beside the figure.
+    """The envelope of a DECLARED measure: the MULTI_SERIES shape `fin_performance_indices`
+    answers in (cortex's MULTI_SERIES contract: `rows` by `period`, declared `series`, optional
+    `reference`), with `series` and `reference` from the row and the method beside the figure.
+    `render` is a copy of the row's render block: it names the archetype the row declares, so
+    presentation can select it without the output class being on any menu.
 
     `verdict` is the mechanical restatement `measure_verbs.declared_verdict` builds from the row's
     own reference (absent when there are no rows), so the brief never falls back to "reported
@@ -902,6 +906,7 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
         "artifact_id": _artifact_id(fn, params, rows),
         "value_label": row.series[0].get("label", row.name),
         "series": [dict(s) for s in row.series],
+        "render": copy.deepcopy(row.render),
         **({"reference": dict(row.reference)} if row.reference else {}),
         "data_provenance": notional_banner(),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
