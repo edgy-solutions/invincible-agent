@@ -1,6 +1,31 @@
 apiVersion: v1
 entries:
+  iagent-mesh-mcp:
+  - apiVersion: v2
+    appVersion: 0.0.0
+    created: "2026-11-01T04:02:07.392736521Z"
+    description: Keycloak resource-server client (iagent-mesh, RFC 8693 token exchange)
+      for the MCP server over the BFF, plus the optional server Deployment. Separate
+      from invincible-agent so it needs no flag there and restarts nothing.
+    digest: 92043107f6b5de88d2d21d9e0d7eced9458ddc8974e47cc550f739f6df7059a4
+    name: iagent-mesh-mcp
+    type: application
+    urls:
+    - https://github.com/edgy-solutions/invincible-agent/releases/download/iagent-mesh-mcp-0.1.0/iagent-mesh-mcp-0.1.0.tgz
+    version: 0.1.0
   invincible-agent:
+  - apiVersion: v2
+    appVersion: 2026.07.02
+    created: "2026-11-01T04:02:07.62547399Z"
+    description: Invincible Agent — Multi-engine AI agent mesh orchestrated by Dagster.
+      Includes Restate durable execution, LangGraph support, Swarms.ai scraper, DataHub
+      wrapper, Ontology reasoner, and a dynamic BPMN workflow interpreter.
+    digest: 41f87912cf5d031b5536f08a6b6dbae0be8a84c0fc120540cd1c7807e1fc7b43
+    name: invincible-agent
+    type: application
+    urls:
+    - https://github.com/edgy-solutions/invincible-agent/releases/download/invincible-agent-0.4.74/invincible-agent-0.4.74.tgz
+    version: 0.4.74
   - apiVersion: v2
     appVersion: 2026.07.02
     created: "2026-10-31T02:54:57.413219173Z"
@@ -2185,4 +2210,4 @@ entries:
     urls:
     - https://github.com/edgy-solutions/invincible-agent/releases/download/invincible-agent-0.1.1/invincible-agent-0.1.1.tgz
     version: 0.1.1
-generated: "2026-10-31T02:54:57.414117124Z"
+generated: "2026-11-01T04:02:07.625975769Z"
