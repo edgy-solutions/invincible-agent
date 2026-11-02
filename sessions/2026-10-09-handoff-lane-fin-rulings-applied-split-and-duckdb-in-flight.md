@@ -38,6 +38,7 @@ defect, fix. Convert fin_vac.yaml to render: before #193 merges."
   - `tests/finance` 573 passed, 13 skipped, on master `a76c7d5a`.
   - CI not read yet.
 - **Neither is authorized to merge.** lane/01 has the packet.
+- **The `cells` departure is accepted (relay, 11-02):** a row's cells may name a domain outside the engine's own. A row isn't refused for that.
 
 **Deploy order for #202:** re-prime, roll engine-fin, read the edges, then on sandbox delete the old edges.
 The Cypher is in the PR body. Re-registering doesn't retire an old output edge, and a plain prime doesn't
