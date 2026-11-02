@@ -22,6 +22,7 @@ WHAT THIS DEFENDS (the review export: `GET /ingest/{id}/export?profile=`, the ba
 """
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
@@ -34,6 +35,7 @@ import httpx
 import pytest
 
 pytest.importorskip("fastapi")
+from fastapi import HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import export_profiles as ep  # noqa: E402
@@ -776,14 +778,33 @@ def test_s1_a_service_holding_the_capability_gets_the_original_403_on_the_single
     assert asked == []
 
 
-def test_s2_a_service_holding_the_capability_gets_the_batch_403_and_topaz_is_not_asked(
+def test_s2_a_service_holding_the_capability_is_refused_at_the_mcp_door_and_topaz_is_not_asked(
         monkeypatch, tmp_path):
-    r = _batch(monkeypatch, tmp_path, [], [], who=SERVICE, topaz=(200, True))
+    _use_profiles(monkeypatch, tmp_path, t=SIMPLE)
+    _, asked = _install(monkeypatch, [], topaz=(200, True))
+    _as(SERVICE)
+    r = _get("/ingest/export?profile=t&from=2026-10-01&to=2026-10-02")
     assert r.status_code == 403, r.text
-    assert r.json()["detail"]["error"] == "not_entitled_to_export_batch"
-    assert r.json()["detail"]["refusal"]["policy_id"] == CAP
+    assert r.json()["detail"]["error"] == "service_token_refused"
+    assert asked == []
     assert Ledger.calls == []
     assert gateway._is_service_caller(SERVICE)
+
+
+def test_s2b_past_the_door_the_batch_route_still_refuses_a_service_itself(monkeypatch, tmp_path):
+    # The door answers first, so no HTTP request reaches this branch: call the handler directly.
+    _use_profiles(monkeypatch, tmp_path, t=SIMPLE)
+    _, asked = _install(monkeypatch, [], topaz=(200, True))
+    _as(SERVICE)
+    user = gateway.app.dependency_overrides[gateway.get_current_user]()
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(gateway.ingest_export_batch_route(
+            profile="t", from_="2026-10-01", to="2026-10-02", current_user=user))
+    assert refused.value.status_code == 403
+    assert refused.value.detail["error"] == "not_entitled_to_export_batch"
+    assert refused.value.detail["refusal"]["policy_id"] == CAP
+    assert asked == []
+    assert Ledger.calls == []
 
 
 def test_s3_control_a_human_with_the_capability_is_admitted_on_both_routes(monkeypatch, tmp_path):

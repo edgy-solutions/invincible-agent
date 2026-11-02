@@ -13993,7 +13993,8 @@ async def ingest_export_batch_route(
         to: Optional[str] = _Query(None), current_user: User = Depends(get_current_user)):
     """GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the
     range (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.
-    A service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The
+    A service caller (`_is_service_caller`) is refused at the MCP door, 403
+    `service_token_refused`, and past the door by the capability gate; Topaz is not asked. The
     capability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is
     one of the caller's entitlement-cell domains are in the set, filtered before the loud-not-
     partial checks and before the 500 cap; a caller with no cells gets the empty export.
