@@ -149,7 +149,7 @@ def test_3_an_undefined_period_shows_the_reason_string(profiles, tmp_path, monke
     state = _spent_state(monkeypatch)
     path, _ = cdrl.build_cdrl(
         state, profiles[NAME], program_id=PROGRAM, as_of=AS_OF, out_dir=tmp_path,
-        run_source=lambda fn, params: engine._cdrl_source(fn, params))
+        run_source=lambda fn, params: engine._cdrl_source(fn, params, caller="alice@example.com"))
     t2 = _cells(docx.Document(str(path)).tables[1])
     assert t2[1:] and {row[4] for row in t2[1:]} == {"undefined: budget_spent"}
 
@@ -158,7 +158,7 @@ def test_3_an_absent_value_is_an_empty_cell_and_no_template_text_survives(profil
     """The first period's TCPI is not returned: the body row the template ships must come back empty
     there, not carry any text of the template's."""
     def source(fn, params):
-        env, method = engine._cdrl_source(fn, params)
+        env, method = engine._cdrl_source(fn, params, caller="alice@example.com")
         if fn == "fin_tcpi":
             env = {**env, "rows": list(env["rows"])[1:]}
         return env, method

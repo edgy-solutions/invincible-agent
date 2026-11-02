@@ -1231,7 +1231,10 @@ services:
         class: releasable_by_design
         justification: "the six finance verbs — variance analysis, EAC, performance indices,
           burn rate, variance drivers, funding status. Releasable ONLY because the model is the
-          notional seed; this is the row to revisit first when real program data arrives."
+          notional seed; this is the row to revisit first when real program data arrives.
+          A DECLARED measure (a policy row, not one of the six) is also gated on its row's
+          `policy.cells`: 403 measure_not_in_cell unless the caller holds one of those domains
+          (503 when the directory cannot be asked); a built-in asks the directory nothing."
       - method: POST
         path: /resolve_instance
         identity: none
@@ -1277,7 +1280,9 @@ services:
           recipient's program is 403, so a request cannot put one program's rows into
           another program's package. Revisit as ungated_by_accident if the gateway stops
           being the only caller; it is the row to re-examine when the data stops being
-          notional. 503 (named) when the build cannot run in the image: that behaviour is
+          notional. A panel naming a DECLARED measure whose `policy.cells` the caller holds none
+          of refuses the whole request, 403 measure_not_in_cell, before any panel is measured.
+          503 (named) when the build cannot run in the image: that behaviour is
           deliberate and stays.
       - method: GET
         path: /artifact/{filename}
@@ -1301,7 +1306,9 @@ services:
           image, since nothing is written there. A CDRL (fin-cdrl-<profile>-<program>.xlsx, the
           allow-list derived from the composed profiles crossed with the seed programs) is
           gated instead on program visibility (_require_visible), the check /cdrl_export made,
-          because a CDRL is one program's deliverable and has no recipient reader list.
+          because a CDRL is one program's deliverable and has no recipient reader list, and then
+          on the `policy.cells` of every declared measure the CDRL's profile sources (403
+          measure_not_in_cell; the file holds those figures).
       - method: GET
         path: /cdrl_profiles
         identity: none
@@ -1330,7 +1337,9 @@ services:
           no file written; a service caller sees nothing. Only then does it run each source
           through _measure_envelope, the function /measure/{fn} serves, fill the profile's xlsx
           template and WRITE fin-cdrl-<profile>-<program>.xlsx to the shared dist directory,
-          answering the package_export locator shape plus the cells_sha256 envelope. 503 (named)
+          answering the package_export locator shape plus the cells_sha256 envelope. A source that
+          is a DECLARED measure whose `policy.cells` the caller holds none of refuses the whole
+          request, 403 measure_not_in_cell, before anything is measured or written. 503 (named)
           when the image has no package directory to write to.
 
   docs_agent:

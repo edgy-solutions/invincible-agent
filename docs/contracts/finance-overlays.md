@@ -155,8 +155,13 @@ is refused at load; a result that is served with none is shown to the viewer as 
 `outputs.archetype`, `outputs.series` and `outputs.reference` were the old layout and are refused,
 with a message naming `render.shape`, `render.series` and `render.target`.
 
-**Policy.** `status` is `sample`, `proposed` or `ratified`. `cells` is a non-empty list naming the
-access cells that may see the measure (the sample uses `PROGRAM_FINANCE`). `granted_by` is the
+**Policy.** `status` is `sample`, `proposed` or `ratified`. `cells` is a non-empty list of access
+DOMAINS (the entitlement matrix is persona by domain; the sample uses `PROGRAM_FINANCE`), and it is
+enforced: it is what the verb registers under, and the engine refuses, 403 `measure_not_in_cell`, a
+caller who holds none of them (503 when the directory cannot be asked). That holds on every path:
+`/measure/{fn}`, a package with a panel of this measure, a CDRL whose profile sources it, and the file
+that CDRL build wrote. A program member with no grant in these cells loses this measure, and any CDRL
+sourcing it, and keeps the built-ins. A misspelt cell denies everyone. `granted_by` is the
 person who approved it and `reason` is why. Replace the examples' `<accountable approver>` with a
 real name before you send a row. The rows shipped in the sample overlay say `granted_by: seed`,
 because the repo grants them; a deployment's row names its own approver, as the examples here do.

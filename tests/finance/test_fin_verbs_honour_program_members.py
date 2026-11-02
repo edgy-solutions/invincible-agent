@@ -70,9 +70,9 @@ def measured(monkeypatch):
     calls: list[tuple[str, dict]] = []
     real = engine._measure_envelope
 
-    def spy(fn, params):
+    def spy(fn, params, **kw):
         calls.append((fn, dict(params)))
-        return real(fn, params)
+        return real(fn, params, **kw)
 
     monkeypatch.setattr(engine, "_measure_envelope", spy)
     return calls

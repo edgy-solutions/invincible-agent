@@ -381,7 +381,7 @@ def _served_panels():
     out = []
     for i, (verb, _s, params) in enumerate(_dispatches()):
         fn = fmain.VERB_TO_FN[verb]
-        env = fmain._measure_envelope(fn, dict(params))
+        env = fmain._measure_envelope(fn, dict(params), caller="alice@example.com")
         out.append({"panel": i, "verb": verb, "fn": fn, "params": dict(params),
                     "artifact_id": env["artifact_id"], "rows": env["rows"]})
     return out
