@@ -7,6 +7,10 @@ the real `User` model. Three identities are made distinct on purpose (authz id, 
 line that took the wrong one cannot match by accident. It is checked on BOTH exits: the line a
 refusal leaves before the stream opens, and the line the stream leaves when it ends.
 
+A SERVICE caller never reaches the line: since #187 the MCP door refuses it 403 before `/orchestrate`
+logs anything, so the tests below assert that refusal (the envelope read off the live app) and the
+absence of a line, with a user-token control, instead of a line naming a service identity.
+
 DELEGATION, as it exists on master: `/orchestrate` has NO `on_behalf_of`. `InterviewRequest` has no
 such field and no token-exchange `act` claim is read anywhere in `auth.py`; `on_behalf_of` exists
 only on the ingest-family routes (`/ingest`, `/human_tasks/{task_id}/act`) as an ASSERTED body field
@@ -25,6 +29,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.iagent import gateway
+from src.iagent.ingest_api import MCP_TAG
 from src.iagent.auth import User
 
 LOGGER = "iagent.audit.orchestrate"
@@ -104,14 +109,67 @@ def test_the_line_follows_the_token_it_is_not_a_constant(caller, caplog, monkeyp
     assert _field(line, "who") == "bob@example.com", line
 
 
-def test_a_service_identity_is_named_as_itself_never_as_a_user(caller, caplog, monkeypatch):
-    """A delegate's (or any `svc:`) token is the caller on this route. The line names that identity
-    and says which client it came through; it does not borrow a human's name."""
+def _door_refusal_served_by_another_route():
+    """The refusal envelope the MCP door SERVES, read off the live app: the 403 any other MCP-tagged
+    GET route (derived from `app.routes` by `MCP_TAG`, path params filled) answers a service caller.
+    Nothing here is a typed copy of the status or the body."""
+    import re
+    seen = []
+    for r in gateway.app.routes:
+        if MCP_TAG not in (getattr(r, "tags", None) or []) or "GET" not in (getattr(r, "methods", None) or ()):
+            continue
+        if getattr(r, "path", "") == "/orchestrate" or getattr(r, "body_field", None) is not None:
+            continue
+        seen.append(re.sub(r"\{[^}]+\}", "x", r.path))
+    assert seen, "no other MCP-tagged GET route to read the served refusal from"
+    out = []
+    for path in seen:
+        got = TestClient(gateway.app, raise_server_exceptions=False).get(path, headers={"Authorization": "Bearer tok"})
+        out.append((got.status_code, got.json()))
+    assert all(o == out[0] for o in out), out  # one door, one envelope, on every route
+    return out[0]
+
+
+def _post_stream_unrefused(session):
+    return TestClient(gateway.app, raise_server_exceptions=False).post(
+        "/orchestrate", json={"message": "x", "session_id": session}, headers={"Authorization": "Bearer tok"})
+
+
+def test_a_service_identity_is_refused_at_the_door_and_the_refusal_is_the_served_one(
+        caller, caplog, monkeypatch):
+    """#187: the MCP door refuses a service caller before /orchestrate runs. This asserts the REFUSAL
+    (status and envelope, equal to what the door serves on its other routes), not an audit line."""
     caller["user"] = _user("svc:mcp-server")
-    _post_streaming("s-svc", monkeypatch)
+    status, envelope = _door_refusal_served_by_another_route()
+    assert status == 403 and envelope["detail"]["authz_id"] == "svc:mcp-server", (status, envelope)
+    r = _post_streaming("s-svc", monkeypatch)
+    assert (r.status_code, r.json()) == (status, envelope), (r.status_code, r.text[:200])
+
+
+def test_a_declared_delegate_is_refused_here_too_because_the_body_has_no_on_behalf_of(
+        caller, caplog, monkeypatch):
+    """A delegate passes only where the body can name a principal; `InterviewRequest` cannot."""
+    monkeypatch.setenv("DELEGATE_ON_BEHALF_OF", '{"svc:mcp-server": ["alice@example.com"]}')
+    caller["user"] = _user("svc:mcp-server")
+    status, envelope = _door_refusal_served_by_another_route()
+    r = _post_streaming("s-delegate", monkeypatch)
+    assert (r.status_code, r.json()) == (status, envelope), (r.status_code, r.text[:200])
+
+
+def test_a_refused_service_request_writes_no_audit_line_and_a_user_request_on_the_same_path_does(
+        caller, caplog, monkeypatch):
+    """ABSENCE with its CONTROL: the refused request leaves no `orchestrate_access` line (the door
+    refuses before /orchestrate logs anything); the same path with a user token leaves exactly one,
+    so the empty log above is the door, not a broken logger."""
+    caller["user"] = _user("svc:mcp-server")
+    refused = _post_streaming("s-absent", monkeypatch)
+    assert refused.status_code == 403, refused.status_code
+    assert _lines(caplog) == [], _lines(caplog)
+    caller["user"] = _user()
+    ok = _post_streaming("s-present", monkeypatch)
+    assert ok.status_code == 200, ok.status_code
     (line,) = _lines(caplog)
-    assert _field(line, "who") == "svc:mcp-server" and _field(line, "via") == CLIENT, line
-    assert AUTHZ not in line, line
+    assert _field(line, "who") == AUTHZ and "svc:" not in line, line
 
 
 def test_orchestrate_has_no_on_behalf_of_so_there_is_no_principal_to_name():
