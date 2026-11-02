@@ -544,3 +544,61 @@ def select_presentation(
         "candidates_satisfied": len(satisfied),
         "refusals": refusals,
     }
+
+
+def select_by_declared_shape(
+    frontend_id: Optional[str],
+    shape: str,
+    payload: Optional[Dict[str, Any]] = None,
+    *,
+    frontend_version: Optional[str] = None,
+    output_uri: Optional[str] = None,
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    """Choose the capability whose archetype is the shape the PRODUCER DECLARED.
+
+    A measure row declares `render.shape` and its engine serves it with the envelope, so an
+    output class that is on no menu (an overlay adds classes without a code change) still draws.
+    The shape is looked up on the same menu `select_presentation` would use: the caller's, or
+    the union for an anonymous caller. The payload check is the same `_evaluate`: a REFUSED
+    verdict excludes a capability; SATISFIED and NOT_EVALUATED both win, because the producer's
+    declaration is the authority where no typed contract exists (the `declared` rule of
+    `select_presentation`). Returns (capability, provenance); (None, provenance) when the shape
+    is on no menu or the payload fails its contract, and the caller then falls through to
+    `select_presentation` unchanged. No measure or class name appears here.
+    """
+    menu = menu_for(frontend_id, frontend_version)
+    anonymous = menu is None
+    if anonymous and output_uri and _live_view_is_registered_for(output_uri):
+        # ADR-0042 ruling 9 PRECEDES a declaration: decline to nominate, and let
+        # `select_presentation` give its specific refusal.
+        return None, {"selection_basis": "declared_render", "declared_shape": shape,
+                      "declared_unfit": "live view requires a registered caller (ADR-0042 ruling 9)"}
+    if anonymous:
+        menu = union_menu()
+    caps: List[Dict[str, Any]] = menu.get("capabilities") or []
+    fits, refusals = [], []
+    for c in caps:
+        if str(c.get("archetype") or "") != shape:
+            continue
+        verdict, reason = _evaluate(c, payload)
+        if verdict == REFUSED:
+            refusals.append({"archetype": shape, "reason": reason, "verdict": REFUSED})
+        else:
+            fits.append(c)
+    prov: Dict[str, Any] = {
+        "presentation_source": "default-menu" if anonymous else "registered",
+        "frontend_id": menu.get("frontend_id"),
+        "registration_version": menu.get("frontend_version"),
+        "version_basis": menu.get("version_basis", "newest"),
+        "selection_basis": "declared_render",
+        "declared_shape": shape,
+        "refusals": refusals,
+    }
+    if not fits:
+        prov["declared_unfit"] = (
+            refusals[0]["reason"] if refusals
+            else f"declared shape {shape!r} is on no registered menu")
+        return None, prov
+    winner = fits[0]
+    prov["archetype"] = winner.get("archetype")
+    return winner, prov
