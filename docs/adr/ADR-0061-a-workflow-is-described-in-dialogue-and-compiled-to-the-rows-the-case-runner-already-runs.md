@@ -1,11 +1,11 @@
 # ADR-0061 — A workflow is described in dialogue and compiled to the rows the case runner already runs
 
-**Status:** Proposed. The 10-30 gate is a run that is runnable with the planted contradiction
-caught. Runs 32 and 33 meet it in those words, on 2026-11-02, so this leaves draft under the
-architect's dispatch. Neither bundle is the workflow the transcript describes: run 32 leaves two of
-its four definitions unreachable and run 33 leaves one (§10). `runnable` does not check for that, and
-the architect decides whether it should. A prototype of the elicitation loop and three synthetic
-fixtures are built and measured (§8). No route, no verb, no canvas.
+**Status:** Proposed, ruled 2026-11-02: this ADR records the design and its measurements, including
+the gap below. **The bar for "the loop works" is not met.** It is met when `runnable` refuses any
+definition no table routes to from the trigger, and a run is runnable with all four stages reachable.
+Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
+are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
+measured (§8). No route, no verb, no canvas.
 **Date:** 2026-10-24
 **Deciders:** architect (decision); Chris (review); lane/74 (draft)
 **Related:**
@@ -1381,6 +1381,20 @@ chaining seal does: a declared `disposes` ends the definition, and the table is 
 Seals: `tests/socratic`, 141 passed (5 new). Four mutants, each red with the file restored by `cmp`.
 One of them, reading an undeclared `disposes` as disposing, is red on a `TypeError` in the loop's own
 derivation, not on an assertion.
+
+#### 2026-11-02: the architect's rulings on runs 31 to 33
+
+1. Proposed stands. The ADR records the design and its measurements, including the gap. The bar for
+   "the loop works" is not met until (2) is built and a run is runnable with all four stages
+   reachable.
+2. `runnable` refuses any definition no table routes to from the trigger. Runs 32 and 33 become
+   `cannot_run`, which is the truth.
+3. `reason_required` is a required slot per approval step ("which outcomes need a reason?"), by the
+   same mechanism as `excludes`.
+4. `disposes` goes in the grammar, asked only for emit steps.
+
+Both interpretations stand: a null for who is barred reads as absent, and a stated "no limit" null is
+asked. Three runs follow (2), (3) and (4).
 
 ## Consequences
 
