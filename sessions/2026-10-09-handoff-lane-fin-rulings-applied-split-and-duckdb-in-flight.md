@@ -19,7 +19,51 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
-## Update 2026-10-31 (overnight): the overnight relay. #191 and #193 open, three packets placed. Read this first
+## Update 2026-11-02: Chris's overlay rulings. #200 and #202 open, #191 and #193 merged. Read this first
+
+The relay: "Q1: B, an initContainer that clones the policy repo at a pinned ref into the pods. Q2: rows
+loading is the goal now; a real EV source is later. One shared class for every declared measure
+(fin#DeclaredMeasureSeries with the measure id as a property) so work adds no ontology; `cells` enforced —
+defect, fix. Convert fin_vac.yaml to render: before #193 merges."
+
+- **#193 and #191 are merged** (lane/01's 11-02 train, master `a76c7d5a`). `fin_vac.yaml` went to `render:`
+  first (`936aa6cd`).
+- **PR #200, `fin/policy-overlay-init-container`** (`08d6c201`): the chart's `policyOverlay` block, off by
+  default.
+  - Zero render diff when off. All Docker checks pass.
+  - It doesn't bump the chart version, so the version seal reds until lane/01's release.
+  - Render arms skip in CI (no helm); locally 23 pass.
+- **PR #202, `fin/declared-measure-class`** (`61810a1d`): `fin:DeclaredMeasureSeries` and `fin:measureId`,
+  and `policy.cells` enforced on `/measure`, `/package_export`, `/cdrl_export` and `/artifact`.
+  - `tests/finance` 573 passed, 13 skipped, on master `a76c7d5a`.
+  - CI not read yet.
+- **Neither is authorized to merge.** lane/01 has the packet.
+
+**Deploy order for #202:** re-prime, roll engine-fin, read the edges, then on sandbox delete the old edges.
+The Cypher is in the PR body. Re-registering doesn't retire an old output edge, and a plain prime doesn't
+clear it.
+
+**Packets placed in the master `sessions/`, untracked:**
+- to Chris: `2026-11-02-packet-to-chris-work-finance-overlay-as-ruled-a-row-a-values-block-and-one-re-prime.md`.
+  It replaces the 10-31 packet, which is marked superseded.
+- to lane/01: `2026-11-02-packet-to-lane-01-from-fin-200-and-202-ready-202-needs-a-re-prime-before-its-roll.md`.
+
+**Found on the way:**
+- `test_7_bff_relays_the_refusal` was red on master since `cff49fcf` and in no census. #202 carries the fix.
+- The implementer's report said every finance file exited 0, but its own log had that red. Read the logs,
+  not the summary.
+
+**Still open:**
+- Read CI on #202.
+- The TCPI render on sandbox, once a roll carries #202. Not requested yet.
+- cortex's request for a captured `components[*].archetype` from one unrendered TCPI response. It needs
+  sandbox, and it's unanswered: `2026-10-31-packet-to-fin-from-cortex-the-raw-seal-exists-in-two-forms-which-one-does-tcpi-arrive-as.md`.
+- #181's deploy order: ask Chris before the roll.
+- Fork 16 is the architect's.
+- Not measured: the generic class comment's effect on recall for live phrasings, and whether a re-prime
+  removes the two old class nodes from Neo4j and Weaviate.
+
+## Update 2026-10-31 (overnight): the overnight relay. #191 and #193 open, three packets placed
 
 The relay: "the three stale-test fix PR; the TCPI render on sandbox after 0.4.74 is not tonight;
 VAC as a second shipped sample measure behind the overlay contract; the work-side finance overlay
