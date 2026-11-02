@@ -416,6 +416,43 @@ agentFleet:
     FIN_EXPORT_PROFILE_OVERLAY_DIRS: "/path/to/finance-policy/fin_export_profiles"
 ```
 
+**How a deployment delivers the directories to the pods.** The chart can fetch them from your
+private policy repo itself, so nothing is baked into an image. In the chart values:
+
+```yaml
+policyOverlay:
+  enabled: true
+  ref: "<a full 40-character commit sha, or a tag>"
+  path: ""            # the repo subdirectory holding the directories above; "" is the repo root
+```
+
+- The repository, its credential and its CA are the ones already given under
+  `topazSeed.policySource.git` (`repoUrl`, `authSecretName`, `caSecretName`). There is one repo and
+  one credential. `repoUrl` must be set.
+- An init container clones the repo at `ref` and copies only the directories each service is
+  named for: `measure_verbs` and `fin_export_profiles` to the finance service, `canvases` to
+  cortex-bff. The repo's other directories, users and grants among them, never reach those pods.
+- The chart sets `MEASURE_VERB_OVERLAY_DIRS`, `FIN_EXPORT_PROFILE_OVERLAY_DIRS` and
+  `CANVAS_OVERLAY_DIRS` to the in-pod paths (`/policy-overlay/<dir>`). Do not set them by hand when
+  this is on; the chart's value wins. `fin_export_profiles` and `canvases` may be absent from the
+  repo; `measure_verbs` may not.
+- `ref` is a sha or a tag, never a branch: a branch name is refused when the pod starts. To change a
+  row, commit it, tag or note the new sha, and change `ref`. The new `ref` rolls the pods; a row
+  edited in place under the same `ref` is not picked up.
+- Prefer a sha. A tag is only as fixed as your git host keeps it: if a tag moves, a pod that restarts
+  gets the new rows while its neighbours keep the old ones. Some git servers refuse a fetch by bare
+  sha (the error names an unadvertised object); on those, use a tag and protect it.
+- A clone that fails (bad credential, unknown ref, a required directory missing) stops the new pod
+  from starting. A rollout then holds on the old pod, which keeps serving the previous rows.
+- **Every pod start clones, not only a rollout.** While the git host is down, a pod that restarts or
+  moves to another node stays down until the host returns. This covers cortex-bff, which serves
+  everything, even though its `canvases` directory is optional. If you ship no boards, set
+  `policyOverlay.components.cortex-bff: null` so cortex-bff does not clone at all.
+- Where `networkPolicy.enabled` is on, the git host must be listed in `networkPolicy.extraEgress`.
+  The finance service has a default-deny egress, and without the entry the init container times
+  out with no message about policy.
+- It is off by default.
+
 **Before you send it.**
 
 1. Validate each kind locally, from a checkout of the platform repo. These commands load the sample

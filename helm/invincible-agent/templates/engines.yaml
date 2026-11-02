@@ -36,6 +36,7 @@
 {{- range $engines }}
 {{- $eng := .values }}
 {{- if $eng.enabled }}
+{{- $ov := include "invincible-agent.policyOverlayActive" (dict "root" $ "component" .component) }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -60,6 +61,12 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if $ov }}
+      initContainers:
+        {{- include "invincible-agent.policyOverlayInit" (dict "root" $ "component" .component) | nindent 8 }}
+      volumes:
+        {{- include "invincible-agent.policyOverlayVolumes" (dict "root" $ "component" .component) | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ .component }}
           {{- /* `digest` IS PASSED HERE OR THE PIN IS INERT. The helper honours a digest, but only
@@ -79,7 +86,7 @@ spec:
                 name: {{ $.Release.Name }}-config
             - secretRef:
                 name: {{ $.Release.Name }}-secrets
-          {{- if or $eng.env (eq .component "engine-a") }}
+          {{- if or $eng.env (eq .component "engine-a") $ov }}
           env:
             {{- range $k, $v := $eng.env }}
             - name: {{ $k }}
@@ -91,6 +98,15 @@ spec:
             - name: CASE_WORKFLOW_RETENTION_DAYS
               value: {{ $.Values.restate.caseWorkflowRetentionDays | default 30 | quote }}
             {{- end }}
+            {{- if $ov }}
+            # policyOverlay: the delivered dirs. A container env beats the configmap's envFrom, so a
+            # hand-set path cannot disagree with what the init container delivered.
+            {{- include "invincible-agent.policyOverlayEnv" (dict "root" $ "component" .component) | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          {{- if $ov }}
+          volumeMounts:
+            {{- include "invincible-agent.policyOverlayMounts" (dict "root" $ "component" .component) | nindent 12 }}
           {{- end }}
           resources:
             {{- toYaml $eng.resources | nindent 12 }}

@@ -2429,6 +2429,35 @@ topazSeed:
         repository: "alpine/git"
         tag: "v2.45.2"
 
+# DELIVER DIRS OF THE PRIVATE POLICY REPO TO NAMED PODS, at a pinned ref (ruled 2026-11-02).
+# An initContainer (`fetch-policy-overlay`) clones the repo and copies ONLY the dirs listed below
+# for that component into a read-only emptyDir; the pod's overlay env (the loader's own variable)
+# is then set to the copied path. Contract: docs/contracts/finance-overlays.md section 4.
+#   * ONE repo, ONE credential: `repoUrl`, `image`, `authSecretName` and `caSecretName` are
+#     REUSED from topazSeed.policySource.git. Nothing is repeated here.
+#   * `ref` is a full 40-hex commit sha or a tag. No default. A branch name fails at the fetch.
+#     The ref is in the pod template, so a changed ref ROLLS the component.
+#   * When networkPolicy.enabled, the git host must be in networkPolicy.extraEgress for engine
+#     pods (engine-fin has a default-deny egress), or the init container times out with no
+#     policy error. cortex-bff has no egress policy.
+#   * A clone failure stops the new pod starting; a rollout then holds on the old pod. EVERY pod
+#     start clones, so while the git host is down a restarted pod stays down, cortex-bff included.
+#     No boards to deliver? `components.cortex-bff: null` and cortex-bff never clones.
+#   * Only the listed dirs reach a pod: the repo also holds users and grants, which an engine
+#     must not see. A row without `optional: true` whose dir is missing from the repo is fatal.
+policyOverlay:
+  enabled: false          # bare defaults and sandbox: OFF. Sandbox keeps the baked sample.
+  ref: ""                 # REQUIRED when enabled: a full commit sha or a tag. No default.
+  path: ""                # repo subdirectory holding the dirs below; "" is the repo root
+  mountPath: /policy-overlay
+  # component -> the dirs that component is given, and the env its loader reads.
+  components:
+    engine-fin:
+      - {dir: measure_verbs, env: MEASURE_VERB_OVERLAY_DIRS}
+      - {dir: fin_export_profiles, env: FIN_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
+    cortex-bff:
+      - {dir: canvases, env: CANVAS_OVERLAY_DIRS, optional: true}
+
 # STARTUP sync for task_grant_sync ONLY (task_audience `actor` relations —
 # policy/sync/task_grant_sync.py), as a post-install/post-upgrade helm hook Job. Narrower than
 # topazSeed (which runs this SAME sync plus five others, on a schedule, default-disabled):
