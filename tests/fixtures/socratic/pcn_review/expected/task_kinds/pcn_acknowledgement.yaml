@@ -1,0 +1,11 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+kind: pcn_acknowledgement
+accepts:
+- acknowledged
+- escalated
+reason_required:
+- escalated
+renders_as:
+  badge: PCN-ACKNOWLE
+  title: Pcn acknowledgement
+  archetype: APPROVAL_TASK

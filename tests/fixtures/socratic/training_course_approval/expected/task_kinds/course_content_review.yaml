@@ -1,0 +1,15 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+kind: course_content_review
+accepts:
+- approved
+- changes_requested
+- rejected
+- deferred
+reason_required:
+- changes_requested
+- rejected
+- deferred
+renders_as:
+  badge: COURSE-CONTE
+  title: Course content review
+  archetype: APPROVAL_TASK
