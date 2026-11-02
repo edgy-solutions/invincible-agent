@@ -1017,7 +1017,15 @@ cortexUi:
     # index with amd64 and arm64; the abbreviated tag and the full sha with its last hex altered
     # both answer 404. 42c470c..fe4d787 leaves .github/workflows/build.yml, Dockerfile and
     # package.json unchanged.
-    digest: "sha256:4d6dd2085a005ff5790d4104ad6a5c9b1e73525d43e90592be8200df91c58555"
+    # RE-PINNED FOR 0.4.74 (architect, 2026-10-31: "cut 0.4.74 (cortex at c27e6d3 or cortex's
+    # item-form merge if it lands)"; cortex-ui #61, the item form, had not landed): cortex-ui
+    # c27e6d3e3ba2f87e72b4b1f61a8fafec7ab09688 -> fa7e51ff. It adds #59 (an export profile's
+    # format is read verbatim) to fe4d787, and still sends review_coverage in the parts form.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # fe4d787..c27e6d3 leaves .github/workflows/build.yml, Dockerfile and package.json unchanged
+    # and adds no import.meta.env read.
+    digest: "sha256:fa7e51ff10d27b60f61609e4e815917c787e17fb4056621220350a832595dea7"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
