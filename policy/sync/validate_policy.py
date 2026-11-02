@@ -26,6 +26,8 @@ definition of "valid", never a parallel re-implementation):
     `can_export:<P>` row (deny-by-default: no row, nobody exports)
   - capability_grants.yaml        → also: a `can_call:<T>` key names a tag of the served MCP document
     (see known_call_tags); no row is required per tag (deny-by-default: no row, nobody calls)
+  - capability_grants.yaml        → also: a `can_review:<S>` key names a registered review subject
+    (see known_review_subjects); no row is required per subject (no row, nobody reviews)
   - recipient_readers.yaml        → recipient_reader_sync.load_readers (WHEN PRESENT; not in
     DATA_FILES -- see the note there)
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
@@ -151,6 +153,24 @@ def known_call_tags() -> tuple[set[str], list[str]]:
             if isinstance(op, dict):
                 tags.update(t for t in (op.get("tags") or []) if isinstance(t, str))
     return tags, [f"{f.as_posix()} ({len(tags)} tag(s))"]
+
+
+def known_review_subjects(path: Path | None = None) -> tuple[set[str], list[str]]:
+    """The subjects a `can_review:<S>` capability key may name: the `name` of every row of
+    policy/review_subjects.yaml (the product's registry, read from beside this script and never
+    from a deployment's policy dir), and a note `<path> (<n> subject(s))` or `<path> (absent)`.
+    An absent or unreadable registry is an empty set, which refuses every `can_review:` row."""
+    f = path or Path(__file__).resolve().parents[2] / "policy" / "review_subjects.yaml"
+    if not f.is_file():
+        return set(), [f"{f.as_posix()} (absent)"]
+    try:
+        doc = yaml.safe_load(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError):
+        return set(), [f"{f.as_posix()} (absent)"]
+    rows = doc.get("review_subjects") if isinstance(doc, dict) else None
+    subjects = {r["name"].strip() for r in (rows if isinstance(rows, list) else [])
+                if isinstance(r, dict) and isinstance(r.get("name"), str) and r["name"].strip()}
+    return subjects, [f"{f.as_posix()} ({len(subjects)} subject(s))"]
 
 
 #: No grantee is named in code (architect's standing rule, 2026-10-30: a group is configuration).
@@ -621,6 +641,17 @@ def validate(
                 f"NOT a tag of the served MCP document -- a misspelt key gates nothing and the "
                 f"real tag stays uncallable through a door. Known tags ({len(_ctags)}): "
                 + ", ".join(sorted(_ctags)) + "; composed from " + "; ".join(_cnotes))
+
+    # `can_review:<S>` (2026-11-02 ruling, deny-by-default): the surface asks can_invoke on
+    # `can_review:<S>`; a misspelt key gates nothing. No row is required per subject.
+    _rsubjects, _rnotes = known_review_subjects()
+    for c in caps:
+        if c.key.startswith("can_review:") and c.key[len("can_review:"):] not in _rsubjects:
+            errors.append(
+                f"capability_grants.yaml: {c.key!r} names {c.key[len('can_review:'):]!r}, which is "
+                f"NOT a registered review subject -- a misspelt key gates nothing and the real "
+                f"subject stays reviewable by nobody. Known subjects ({len(_rsubjects)}): "
+                + ", ".join(sorted(_rsubjects)) + "; composed from " + "; ".join(_rnotes))
 
     # recipient_readers.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note
     # there; required-or-not is open with the architect). Absent = no reader asserted = every
