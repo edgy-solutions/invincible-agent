@@ -168,13 +168,14 @@ def _fact_target(key: str) -> Optional[Tuple[str, str]]:
         return f"workflows/{s[1]}.yaml", f"steps[id={s[2]}].task_kind"
     if len(s) == 4 and s[0] == "approvals" and s[3] == "deadline":
         return f"workflows/{s[1]}.yaml", f"steps[id={s[2]}].deadline_seconds"
-    if len(s) == 3 and s[0] == "approvals" and s[2] == "reason_required":
-        return f"task_kinds/{s[1]}.yaml", "reason_required"
     return None
 
 
 _CHAIN_SLOT = re.compile(r"^(?:approvals|outputs)\.([^.]+)\.next\.(.+)$")
-_STEP_SLOT = re.compile(r"^(?:actors|approvals)\.([^.]+)\.([^.]+)\.(?:excludes|task_kind)$")
+_STEP_SLOT = re.compile(r"^(?:actors|approvals)\.([^.]+)\.([^.]+)\.(?:excludes|task_kind|reason_required)$")
+_REASON_SLOT = re.compile(r"^approvals\.([^.]+)\.([^.]+)\.reason_required$")
+_ROUTED_SLOT = re.compile(r"^steps\.([^.]+)\.routed$")
+_ENDS_SLOT = re.compile(r"^outputs\.([^.]+)\.ends$")
 _CHAIN_ROW = re.compile(r"^contradiction:chaining\.([^.]+)\.(.+)$")
 
 
@@ -190,6 +191,31 @@ def _chain_target(key: str, expected: dict) -> Optional[Tuple[str, str]]:
     if f is None:
         return None
     return f, (m.group(2) if m.group(2).startswith("domain.") else "rows")
+
+
+def _slot_target(key: str, expected: dict) -> Optional[Tuple[str, str]]:
+    """(file, path) a TRANSLATED slot asks about when only the expected bundle can say where: a
+    step's reasons sit on the task kind it names, a stage is routed to by whichever table has a row
+    for it, and a stage ends at its last disposing step."""
+    wfs, kinds = se._workflows(expected), se._kinds(expected)
+    m = _REASON_SLOT.match(key)
+    if m:
+        wf = wfs.get(m.group(1))
+        step = next((s for s in _steps_of(wf[1]) if str(s.get("id")) == m.group(2)), None) if wf else None
+        named = se._kinds_for(str(step.get("task_kind") or ""), kinds) if step else []
+        return (kinds[named[0]][0], "reason_required") if named else None
+    m = _ROUTED_SLOT.match(key)
+    if m:
+        f = next((f for f, d in sorted(expected.items()) if f.startswith("decisions/")
+                  and isinstance(d, dict) and any(isinstance(r, dict) and r.get("then") == m.group(1)
+                                                  for r in d.get("rows") or [])), None)
+        return (f, "rows") if f else None
+    m = _ENDS_SLOT.match(key)
+    if m and m.group(1) in wfs:
+        f, wf = wfs[m.group(1)]
+        ending = [s for s in _steps_of(wf) if se._disposes(s)]
+        return (f, f"steps[id={ending[-1].get('id')}].kind") if ending else None
+    return None
 
 
 def _sets_path(entry: dict, file: str, path: str) -> bool:
@@ -465,7 +491,7 @@ class AligningUser:
             return None
         entry = self.bank.get(t)
         if entry is None:
-            tgt = _fact_target(t) or _chain_target(t, self.expected)
+            tgt = _fact_target(t) or _chain_target(t, self.expected) or _slot_target(t, self.expected)
             hit = self.entry_for_path(*tgt) if tgt else None
             if hit is not None:
                 self.answered_by_path.append((gap.key, hit[0]))
@@ -522,6 +548,7 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "missing": {"count": len(r["missing"]), "first": r["missing"][:10]},
         "open": r["open"],
         "runnable_errors": {"count": len(r["runnable"]), "first": r["runnable"][:5]},
+        "unreachable": sorted(set(se._workflows(r["files"])) - se._reachable(r["files"])),
         "exact": r["files"] == expected,
         "leaf_diffs": {"count": len(ld), "first": ld[:20]},
         "semantic_diffs": {"count": len(sd), "first": sd[:20]},

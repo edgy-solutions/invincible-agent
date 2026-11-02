@@ -514,7 +514,7 @@ def _task_kind_model():
 def _stub_renders_as(row: dict) -> dict:
     out = dict(row)
     out.setdefault("renders_as", {"badge": "X", "title": "x", "archetype": "APPROVAL_TASK"})
-    if out.get("reason_required", ()) is None:  # asked as a null, see null_values
+    if out.get("reason_required", ()) is None:  # reads as absent, see required_slots
         del out["reason_required"]
     return out
 
@@ -525,7 +525,6 @@ def _reachable(files: Dict[str, dict]) -> set:
     decisions = _decisions(files)
     wfs = _workflows(files)
     chain_by_after = {str(t["after"]): t for _, (f, t) in decisions.items() if t.get("after")}
-    terminals = {x for _, (f, t) in decisions.items() for x in (t.get("terminals") or [])}
     todo: List[dict] = []
     for _, t in _of(files, "triggers"):
         sel = decisions.get(str(t.get("selection")))
@@ -534,6 +533,7 @@ def _reachable(files: Dict[str, dict]) -> set:
     seen: set = set()
     while todo:
         table = todo.pop()
+        terminals = set(table.get("terminals") or [])
         for row in table.get("rows") or []:
             then = row.get("then") if isinstance(row, dict) else None
             if then and then not in terminals and str(then) in wfs and str(then) not in seen:
@@ -644,8 +644,11 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
             continue
         steps = _steps(raw)
         if steps and not any(_disposes(s) for s in steps):
+            sent = [s.get("id") for s in steps if s.get("kind") == "emit"]
+            how = (f"does sending {_words(sent[-1])} settle it, and with what outcome, or does someone "
+                   "confirm it afterwards?" if sent else "who or what confirms it?")
             out.append(Gap(f"outputs.{wid}.ends", "outputs", "missing",
-                           f"How does {_words(wid)} know it has finished -- who or what confirms it?"))
+                           f"How does {_words(wid)} know it has finished -- {how}"))
 
     for wid, (f, raw) in wfs.items():
         if wid not in reach:
@@ -790,8 +793,11 @@ def _chain_slots(wid: str, facet: str, tfile: str, table: dict,
 def required_slots(files: Dict[str, dict]) -> List[Gap]:
     """Slots asked by name for EVERY definition in the draft, reachable or not (ADR-0061 R4): the
     trigger's stages and each stage not yet drafted, the task kind of each approval, who is barred
-    from answering each approval (``excludes``), the routing table after each definition that ends
-    in a verb, and the values and rows of every routing table that names a drafted definition."""
+    from answering each approval (``excludes``), which of its outcomes need a reason
+    (``reason_required``), the routing table after each definition that ends in a verb, and the
+    values and rows of every routing table that names a drafted definition. Once all of those are
+    held, each definition no table routes to from the trigger: ``runnable`` refuses it, and a refusal
+    the person never hears cannot be answered."""
     out: List[Gap] = []
     wfs = _workflows(files)
     kinds = _kinds(files)
@@ -829,6 +835,14 @@ def required_slots(files: Dict[str, dict]) -> List[Gap]:
                                f"Required: who is barred from answering at {_words(s.get('id'))} in "
                                f"{_words(wid)} -- for example whoever submitted it? Say nobody if no "
                                "one is.", revises=((f, f"steps[id={s.get('id')}].excludes"),)))
+            named = _kinds_for(str(tk), kinds) if tk else []
+            if any(kinds[n][1].get("reason_required") is None for n in named):  # as excludes: a null has said nothing
+                acc = kinds[named[0]][1].get("accepts")
+                tail = f" Answers are: {', '.join(map(str, acc))}." if isinstance(acc, list) and acc else ""
+                out.append(Gap(f"approvals.{wid}.{s.get('id')}.reason_required", "approvals", "missing",
+                               f"Required: which outcomes of {_words(s.get('id'))} in {_words(wid)} need "
+                               f"a reason?{tail} Say none if none do.",
+                               revises=tuple((kinds[n][0], "reason_required") for n in named)))
     for wid, (f, raw) in wfs.items():
         verbs, last = _emits(raw, kinds)
         facet = "approvals" if last is not None and last.get("kind") == "human_await" else "outputs"
@@ -843,6 +857,16 @@ def required_slots(files: Dict[str, dict]) -> List[Gap]:
         out.append(Gap(f"{facet}.{wid}.next", facet, "missing",
                        f"Required: the routing table after {_words(wid)} -- for each way it can "
                        f"end{tail}, what happens next?"))
+    if not out:  # asked last: a table still being drafted is asked for by name above
+        reach = _reachable(files)
+        revises = tuple((tf, leaf) for tf, _ in decisions.values()
+                        for leaf in ("rows", "terminals", f"domain.{_CHAIN_INPUT}"))
+        for wid in wfs:
+            if wid not in reach:
+                out.append(Gap(f"steps.{wid}.routed", "steps", "missing",
+                               f"Required: no stage leads to {_words(wid)}, so a case can never reach "
+                               "it. Which stage's ending leads to it, and on which outcome?",
+                               revises=revises))
     return out
 
 
@@ -900,6 +924,19 @@ def _value_slots(files: Dict[str, dict]) -> List[_Slot]:
                         if not ex else f"{_fmt(ex)} may not answer at {_words(sid)} in {_words(wid)}")
                 out.append((f"actors.{wid}.{sid}.excludes", "actors",
                             ((f, f"steps[id={sid}].excludes"),), said, step))
+            held = [kinds[n][1].get("reason_required") for n in named]
+            if held and all(r is not None for r in held):
+                said = (f"{_fmt(held[0])} need a reason at {_words(sid)} in {_words(wid)}" if held[0]
+                        else f"no outcome needs a reason at {_words(sid)} in {_words(wid)}")
+                out.append((f"approvals.{wid}.{sid}.reason_required", "approvals",
+                            tuple((kinds[n][0], "reason_required") for n in named), said, step))
+    for wid, (f, raw) in wfs.items():
+        for s in _steps(raw):
+            if s.get("kind") == "emit" and s.get("id") and s.get("disposes") is not None:
+                sid = s["id"]
+                out.append((f"outputs.{wid}.ends", "outputs", ((f, f"steps[id={sid}].disposes"),),
+                            f"sending {_words(sid)} itself settles {_words(wid)}, with the outcome "
+                            f"{s['disposes']}", ((f, f"steps[id={sid}]"),)))
     for wid, (f, raw) in wfs.items():
         if wid not in chain_by_after:
             continue
@@ -969,9 +1006,6 @@ def _null_slots(files: Dict[str, dict]) -> List[Tuple[str, str, str, str, Option
                     and s["deadline_seconds"] is None:
                 out.append((f"approvals.{wid}.{s['id']}.deadline", "approvals", f,
                             f"steps[id={s['id']}].deadline_seconds", wid))
-    for kname, (f, raw) in _kinds(files).items():
-        if "reason_required" in raw and raw["reason_required"] is None:
-            out.append((f"approvals.{kname}.reason_required", "approvals", f, "reason_required", None))
     return out
 
 
@@ -1047,12 +1081,6 @@ def _completeness(files: Dict[str, dict]) -> List[Gap]:
                 out.append(Gap(f"approvals.{wid}.{sid}.deadline", "approvals", "missing",
                                f"How long may {_words(sid)} in {_words(wid)} wait for an answer "
                                "before it counts as overdue, if at all?"))
-    for kname, (f, raw) in _kinds(files).items():
-        if "reason_required" not in raw:
-            acc = raw.get("accepts")
-            tail = f" Answers are: {', '.join(acc)}." if isinstance(acc, list) and acc else ""
-            out.append(Gap(f"approvals.{kname}.reason_required", "approvals", "missing",
-                           f"Which answers on {_words(kname)} must come with a stated reason?{tail}"))
     has_emit = any(s.get("kind") == "emit" for _, (f, r) in _workflows(files).items() for s in _steps(r))
     if not has_emit:
         out.append(Gap("outputs.record", "outputs", "missing",
@@ -1190,6 +1218,7 @@ def runnable(files: Dict[str, dict]) -> List[str]:
     a fixed seed directory, so it is not used)."""
     errors: List[str] = []
     fin = finalize(files)
+    reach = _reachable(fin)
     saved = {k: os.environ.get(k) for k in _ENV}
     with tempfile.TemporaryDirectory(prefix="socratic-") as tmp:
         root = Path(tmp)
@@ -1247,6 +1276,8 @@ def runnable(files: Dict[str, dict]) -> List[str]:
                             errors.append(f"table {tname}: matches {attr!r}, which no trigger requires "
                                           "and the runner does not measure at termination")
             for wid, wf in wfs.items():
+                if wid not in reach:
+                    errors.append(f"definition {wid}: no table routes to it from the trigger")
                 for s in wf.steps:
                     if getattr(s, "kind", None) == "human_await":
                         tk = s.task_kind or ""
@@ -1344,7 +1375,8 @@ task_kinds/<kind>.yaml. A user's process is: a TRIGGER (the event, the case key,
 two events one episode, the facts later tables need), a SELECTION table (decision table mapping the
 event's facts to the first workflow), WORKFLOWS (steps: human_await, signal_await, emit, render,
 wait ...), one CHAINING table per workflow (`after: <workflow id>`, matching `outcome`, naming the
-next workflow or a declared terminal), and TASK KINDS (`accepts`, `reason_required`). Never set
+next workflow or a declared terminal), and TASK KINDS (`accepts`, `reason_required`). `[]` for
+`reason_required` means no answer needs a reason. Never set
 `renders_as`: a task kind's rendering comes from its declaration default.
 
 RULES
@@ -1374,6 +1406,11 @@ RULES
   terminal listed in `terminals`.
 - REQUIRED: every human_await step sets excludes: the "{trigger.<field>}" of whoever may not
   answer, or [] when the user says anyone may answer or nobody is barred.
+- REQUIRED: every task kind sets reason_required: the answers that must come with a reason, or []
+  only when the user says none do.
+- An emit step that is itself what settles its workflow sets disposes: the outcome it settles with,
+  and that workflow's chaining table routes that value. When someone or something confirms it
+  afterwards, that is a signal_await and the emit has no disposes. Only an emit step has disposes.
 - A step with a deadline_seconds can also end timed_out (the runner's outcome when the deadline
   expires), so its workflow's chaining table routes timed_out as well.
 - A row matches an event field only with one of its listed event values; map the user's words to

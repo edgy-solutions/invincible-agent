@@ -1396,6 +1396,72 @@ derivation, not on an assertion.
 Both interpretations stand: a null for who is barred reads as absent, and a stated "no limit" null is
 asked. Three runs follow (2), (3) and (4).
 
+#### 2026-11-02: rulings 2, 3 and 4, built
+
+**Ruling 2, the refusal.** `runnable` reports `definition <id>: no table routes to it from the
+trigger` for each definition the walk from the trigger does not reach. Read against the stored
+drafts: run 32 now refuses two definitions and run 33 one, so both are `cannot_run`, as ruled. Run 31
+was already `cannot_run` on its open slots, and all its definitions are reached.
+
+The walk had to change first. `_reachable` held one list of terminals across all tables, while
+`runnable` reads a row's `then` against its own table's terminals. A value that was a terminal in
+one table therefore stopped a row in another, and the walk could refuse a bundle the runner runs. It
+now reads each table's own terminals.
+
+**A question ruling 2 did not name: my call, for review.** A refusal the person never hears can't be
+answered, and §9 says a refusal is never deferred: the loop keeps asking, or stops with "cannot run,
+missing X". So `required_slots` also asks `steps.<id>.routed`: "no stage leads to X, so a case can
+never reach it. Which stage's ending leads to it, and on which outcome?" It is asked only when no
+other required slot is open, because a table still being drafted is asked for by name first, and it
+may not be deferred. The answer may rewrite a table's rows, its terminals and its input's domain. The
+model writes the row; the loop inserts nothing. The ruling did not ask for this. Without it, a run
+that reaches the refusal can only end `cannot_run`.
+
+There is one limit. The person can't yet answer "that is not a stage": a definition the model invented
+stays open, and the run stays `cannot_run`. That is the honest result, and the runs below may show it.
+
+**Ruling 3, the reasons.** Each approval step now has the required slot
+`approvals.<definition>.<step>.reason_required`, built as `excludes` is. A null reads as absent. A
+value nobody stated is confirmed once, and the answer may replace it, so a stated reason is no longer
+charged as an overwrite of a `[]` nobody asked for; that charge is what lost the reasons in runs 31
+to 33. The per-kind question and the per-kind null are gone. The grammar now says `reason_required`
+is required, and that `[]` means no answer needs one.
+
+The cost is in the fixtures. Each person's reasons used to arrive inside a stage answer, which is not
+attributed to the step, so each is now confirmed:
+
+| fixture | questions before | questions now | new entries in the person's words |
+| --- | --- | --- | --- |
+| `pcn_review` | 15 | 18 | 3 |
+| `maint_case_release` | 12 | 14 | 2 |
+| `training_course_approval` | 16 | 18 | 2 |
+
+The training content review adds no question: its reasons are answered in its own contradiction.
+
+**Ruling 4, `disposes`.** The grammar says an emit step that is itself what settles its workflow sets
+`disposes`, that its chaining table routes that value, that a later confirmation is a `signal_await`,
+and that only an emit step has `disposes`. A definition that only sends is asked "does sending X
+settle it, and with what outcome, or does someone confirm it afterwards?". A definition with no emit
+keeps "who or what confirms it?". A `disposes` nobody stated is confirmed under
+`outputs.<id>.ends`, and one on any other kind of step is refused by `runnable` and never confirmed.
+
+**The instrument.** The scripted user answers the three new slot forms from the expected bundle:
+reasons from the kind the step names, a routed question from the first table with a row into that
+stage, and an ending from that stage's last disposing step. It also rejects a reason confirm on a step
+the process does not have. The measure row gains `unreachable`.
+
+**Seals and mutants.** `tests/socratic` has 171 passing at `LOCKED_SDK=sdk_0912`, and the gov ratchet
+24. All 19 mutants of the new behaviour went red. Three survived the first pass:
+
+- Removing the reason line from the grammar survived, and now has a seal.
+- Confirming a `disposes` on any kind of step survived, and now has a seal.
+- Removing `_slot_target` from the scripted user's rejection survived because it decided nothing.
+  The target always comes from the expected bundle, so the check always holds. That call is removed,
+  and its mutant is replaced by one on the reason form of a step slot.
+
+One red is a `KeyError`, not an assertion: treating a null as held, where the test indexes the slot
+that should be open. The slot's absence is the failure the test exists to catch.
+
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a

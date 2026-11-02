@@ -370,6 +370,34 @@ answers:
         path: steps[id=acknowledge].deadline_seconds
         value: null
       defer: []
+  approvals.pcn_impact_review.engineering_disposition.reason_required:
+    says: Rejecting or asking for more information needs a reason.
+    facts:
+      set:
+      - file: task_kinds/pcn_engineering_disposition.yaml
+        path: reason_required
+        value:
+        - rejected
+        - needs_info
+      defer: []
+  approvals.pcn_acknowledge.acknowledge.reason_required:
+    says: Escalating needs a reason.
+    facts:
+      set:
+      - file: task_kinds/pcn_acknowledgement.yaml
+        path: reason_required
+        value:
+        - escalated
+      defer: []
+  approvals.pcn_program_approval.program_approval.reason_required:
+    says: A rejection needs a reason.
+    facts:
+      set:
+      - file: task_kinds/pcn_program_approval.yaml
+        path: reason_required
+        value:
+        - rejected
+      defer: []
 planted:
   contradictions:
   - contradiction:workflows/pcn_impact_review.yaml#steps[id=engineering_disposition].excludes

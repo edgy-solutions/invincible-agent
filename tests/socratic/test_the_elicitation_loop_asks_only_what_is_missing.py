@@ -245,7 +245,7 @@ def _orphan(files):
                    "title": "Orphan review", "excludes": [], "deadline_seconds": None}]}
 
 
-def test_control_reachability_a_definition_no_table_names_is_not_asked_about():
+def test_control_reachability_a_definition_no_table_names_is_not_asked_for_its_details():
     f = _good()
     _orphan(f)
     assert [k for k in _keys(f) if "orphan_stage" in k] == []
@@ -463,8 +463,10 @@ def test_t7_every_fixture_is_runnable_under_the_oracle_and_the_aligner(name):
             assert row["answered_by_path"] == []
     # 10-30 turn check: +1, +2, +4 confirms of slots each person stated in passing (ADR-0061 §10)
     # 11-02: +1 "defer this?" for each stated null: one in PCN, one in training, none in maint
+    # 11-02: +1 confirm per approval whose reasons were stated in passing: 3, 2, 2 (the content
+    # review's reasons are answered in their own contradiction)
     assert sm.measure(name, se.OracleExtractor())["questions"] == {
-        "pcn_review": 15, "maint_case_release": 12, "training_course_approval": 16}[name]
+        "pcn_review": 18, "maint_case_release": 14, "training_course_approval": 18}[name]
 
 
 def _event_values_unseen(name: str, transcript: dict) -> list:
@@ -556,7 +558,6 @@ def test_an_unbanked_question_is_answered_by_the_entry_that_sets_its_path():
     # _fact_target
     assert sm._fact_target("actors.w.s.excludes") == ("workflows/w.yaml", "steps[id=s].excludes")
     assert sm._fact_target("approvals.w.s.deadline") == ("workflows/w.yaml", "steps[id=s].deadline_seconds")
-    assert sm._fact_target("approvals.k.reason_required") == ("task_kinds/k.yaml", "reason_required")
     assert sm._fact_target("approvals.x.next") is None
 
 
@@ -804,13 +805,20 @@ def test_a_declared_stage_no_row_names_yet_is_paired_by_its_place_in_the_list():
 PROGRAM = "workflows/pcn_program_approval.yaml"
 PLANTED = "contradiction:workflows/pcn_impact_review.yaml#steps[id=engineering_disposition].excludes"
 CONFIRMED = {  # the slots each fixture's person stated in passing, so the turn check asks them
-    "pcn_review": ["actors.pcn_acknowledge.acknowledge.excludes"],
+    "pcn_review": ["actors.pcn_acknowledge.acknowledge.excludes",
+                   "approvals.pcn_impact_review.engineering_disposition.reason_required",
+                   "approvals.pcn_acknowledge.acknowledge.reason_required",
+                   "approvals.pcn_program_approval.program_approval.reason_required"],
     "maint_case_release": ["actors.maint_case_inspection.inspection.excludes",
-                           "actors.maint_case_supervisor_release.supervisor.excludes"],
+                           "actors.maint_case_supervisor_release.supervisor.excludes",
+                           "approvals.maint_case_inspection.inspection.reason_required",
+                           "approvals.maint_case_supervisor_release.supervisor.reason_required"],
     "training_course_approval": ["actors.course_content_review.content.excludes",
                                  "actors.course_security_review.security.excludes",
                                  "actors.course_accreditation.accreditation.excludes",
-                                 "approvals.course_content_review.content.task_kind"],
+                                 "approvals.course_content_review.content.task_kind",
+                                 "approvals.course_security_review.security.reason_required",
+                                 "approvals.course_accreditation.accreditation.reason_required"],
 }
 
 
@@ -1355,7 +1363,6 @@ def test_a_null_is_asked_once_even_when_the_slot_was_asked_twice_before():
 
 
 @pytest.mark.parametrize("file,leaf,key", [
-    ("task_kinds/pcn_acknowledgement.yaml", "reason_required", "approvals.pcn_acknowledgement.reason_required"),
     ("triggers/pcn_received.yaml", "requires", "trigger.requires"),
 ])
 def test_every_slot_asked_while_absent_asks_its_null_too(file, leaf, key):
@@ -1464,3 +1471,291 @@ def test_control_an_emit_that_disposes_nothing_needs_no_table_after_it():
     f = _record_only_emits()
     del f[REC_CH]
     assert not any("no table declares `after: pcn_record`" in e for e in se.runnable(f))
+
+
+# ── runnable refuses a definition no table routes to (architect, 2026-11-02) ─────────────────
+
+PROGRAM_CH = "decisions/pcn_program_approval_chaining.yaml"
+PROGRAM_NEXT = "approvals.pcn_program_approval.next"
+ROUTED = "steps.pcn_record.routed"
+REFUSED = "definition pcn_record: no table routes to it from the trigger"
+
+
+def _cut(files, stage, terminal):
+    """Every row that routes to ``stage`` ends the case at ``terminal`` instead: run 33's table."""
+    for name, d in files.items():
+        if not name.startswith("decisions/"):
+            continue
+        for row in d.get("rows") or []:
+            if row.get("then") == stage:
+                row["then"] = terminal
+                if terminal not in d["terminals"]:
+                    d["terminals"].append(terminal)
+
+
+def _staged(files):
+    """``files`` as a draft holds them: ``finalize`` drops the trigger's stages from a bundle, and
+    the routing question waits for them."""
+    trigger = next(d for f, d in files.items() if f.startswith("triggers/"))
+    trigger[se._STAGES] = sorted(d["id"] for f, d in files.items() if f.startswith("workflows/"))
+    return files
+
+
+def test_runnable_refuses_a_definition_no_table_routes_to():
+    f = _good()
+    _cut(f, "pcn_record", "pcn_rejected")
+    assert se.runnable(f) == [REFUSED]
+
+
+def test_runnable_refuses_everything_downstream_of_the_cut():
+    """Run 32's shape: the record has a table after it and a row into it, from a stage no case
+    reaches. Only a walk from the trigger says so."""
+    f = _good()
+    _cut(f, "pcn_program_approval", "pcn_rejected")
+    assert sorted(se.runnable(f)) == [
+        "definition pcn_program_approval: no table routes to it from the trigger", REFUSED]
+
+
+def test_runnable_refuses_a_definition_with_no_table_at_all():
+    f = _good()
+    _orphan(f)
+    assert "definition orphan_stage: no table routes to it from the trigger" in se.runnable(f)
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_control_every_stage_of_each_expected_bundle_is_reached(name):
+    assert se.runnable(_expected(name)) == []
+    assert se.required_slots(_staged(_expected(name))) == []
+
+
+def test_a_terminal_is_read_in_its_own_table():
+    """Another table's terminal of that name does not stop this table's row: ``runnable`` reads a
+    row's ``then`` against its own table, so a walk with one list of terminals refuses a bundle the
+    runner runs."""
+    f = _good()
+    f["decisions/pcn_acknowledge_chaining.yaml"]["terminals"].append("pcn_record")
+    assert "pcn_record" in se._reachable(f)
+    assert REFUSED not in se.runnable(f)
+
+
+def test_the_person_is_asked_about_the_refusal_and_may_not_defer_it():
+    f = _staged(_good())
+    _cut(f, "pcn_record", "pcn_rejected")
+    g = _slots(f)[ROUTED]
+    assert g.kind == "missing" and "pcn record" in g.question
+    assert (PROGRAM_CH, "rows") in g.revises and (PROGRAM_CH, "terminals") in g.revises
+    assert se.non_deferrable(se.Draft(files=f), ROUTED)
+
+
+def test_control_the_routing_question_waits_for_the_tables_being_drafted():
+    """A stage the draft has not routed yet is asked for by its table, not reported as lost."""
+    f = _staged(_good())
+    _cut(f, "pcn_record", "pcn_rejected")
+    del f[CH]
+    slots = _slots(f)
+    assert "approvals.pcn_impact_review.next" in slots and ROUTED not in slots
+
+
+def _routes_to_a_terminal(entry, draft, gap):
+    patch = se.OracleExtractor()(entry, draft, gap)
+    if gap is not None and gap.key == PROGRAM_NEXT:
+        return json.loads(json.dumps(patch).replace(
+            '"then": "pcn_record"', '"then": "pcn_rejected"'))
+    return patch
+
+
+def test_a_person_who_hears_the_refusal_can_route_the_stage():
+    t = _transcript("pcn_review")
+    r = se.run(t, _routes_to_a_terminal, answer=sm.AligningUser(t, _expected("pcn_review")))
+    assert ROUTED in [q["key"] for q in r["questions"]]
+    assert not any("rows" in c for c in r["contradictions_asked"])
+    assert r["status"] == "runnable" and r["files"] == _expected("pcn_review")
+
+
+def test_a_refusal_left_unanswered_is_open_and_cannot_run():
+    r = se.run(_transcript("pcn_review"), _routes_to_a_terminal)
+    assert ROUTED in r["open"] and ROUTED not in r["deferrals"]
+    assert REFUSED in r["runnable"] and r["status"] == "cannot_run"
+
+
+def test_the_measure_row_names_what_is_unreachable():
+    row = sm.measure("pcn_review", _routes_to_a_terminal)
+    assert row["unreachable"] == ["pcn_record"]
+    assert sm.measure("pcn_review", se.OracleExtractor())["unreachable"] == []
+
+
+# ── which outcomes need a reason: a required slot per approval step (architect, 2026-11-02) ───
+
+REASON_KIND = "task_kinds/pcn_engineering_disposition.yaml"
+REASON_KEY = "approvals.pcn_impact_review.engineering_disposition.reason_required"
+KIND_ENTRY = "approvals.pcn_impact_review.engineering_disposition.task_kind"
+
+
+def _set_reasons(value):
+    """An extractor that writes ``value`` (or nothing, for None) as the reasons in the turn that
+    drafts the kind, as a model does while answering a question that did not ask."""
+    def extractor(entry, draft, gap):
+        patch = se.OracleExtractor()(entry, draft, gap)
+        if gap is not None and gap.key == KIND_ENTRY:
+            patch = copy.deepcopy(patch)
+            for fact in patch["set"]:
+                if fact["file"] == REASON_KIND:
+                    del fact["value"]["reason_required"]
+                    if value is not None:
+                        fact["value"]["reason_required"] = value
+        return patch
+    return extractor
+
+
+@pytest.mark.parametrize("held", ["absent", "null"])
+def test_every_approval_step_is_asked_which_outcomes_need_a_reason(held):
+    f = _good()
+    del f[REASON_KIND]["reason_required"]
+    if held == "null":  # as excludes: a null has said nothing, so it is not "defer this?"
+        f[REASON_KIND]["reason_required"] = None
+    g = _slots(f)[REASON_KEY]
+    assert g.kind == "missing" and g.facet == "approvals"
+    assert "need a reason" in g.question and "needs_info" in g.question
+    assert g.revises == ((REASON_KIND, "reason_required"),)
+    assert [x.kind for x in se.gaps(se.Draft(files=f)) if x.key == REASON_KEY] == ["missing"]
+
+
+def test_control_a_held_value_and_a_signal_step_are_not_asked():
+    """pcn_record's signal_await declares no reasons and is not an approval step."""
+    assert [k for k in _slots(_good()) if k.endswith("reason_required")] == []
+
+
+def test_each_step_naming_a_kind_is_asked_for_itself():
+    f = _good()
+    del f[REASON_KIND]["reason_required"]
+    _step(f, PROGRAM, "program_approval")["task_kind"] = "pcn_engineering_disposition"
+    keys = [k for k in _slots(f) if k.endswith("reason_required")]
+    assert keys == [REASON_KEY, "approvals.pcn_program_approval.program_approval.reason_required"]
+
+
+def test_the_per_kind_question_is_gone():
+    f = _good()
+    del f[REASON_KIND]["reason_required"]
+    keys = [g.key for g in se._completeness(f)]
+    assert "approvals.pcn_engineering_disposition.reason_required" not in keys
+    _step(f, IR, "engineering_disposition").pop("deadline_seconds", None)  # the control: it still asks
+    assert "approvals.pcn_impact_review.engineering_disposition.deadline" in \
+        [g.key for g in se._completeness(f)]
+
+
+def test_the_reasons_may_not_be_deferred():
+    t = _transcript("pcn_review")
+    del t["answers"][REASON_KEY]
+    r = se.run(t, _set_reasons(None))
+    assert REASON_KEY in r["open"] and REASON_KEY not in r["deferrals"]
+    assert r["status"] == "cannot_run"
+
+
+def test_an_empty_list_nobody_stated_is_replaced_by_the_stated_reasons():
+    """Runs 31 to 33 lost the reasons: an unasked `[]`, and a later statement charged as an overwrite
+    with nobody to answer it (ADR-0061 §10). The confirm's answer may replace the value."""
+    t = _transcript("pcn_review")
+    r = se.run(t, _set_reasons([]))
+    assert {"key": REASON_KEY, "kind": "confirm", "facet": "approvals"} in r["questions"]
+    assert not any("reason_required" in c for c in r["contradictions_asked"])
+    assert r["files"] == _expected("pcn_review") and r["status"] == "runnable"
+
+
+def test_the_grammar_requires_the_reasons_and_says_what_empty_means():
+    grammar = " ".join(se._GRAMMAR.split())
+    assert "every task kind sets reason_required" in grammar
+    assert "[] only when the user says none do" in grammar
+
+
+def test_a_reason_confirm_on_a_step_the_process_does_not_have_is_rejected():
+    d, _ = _confirm_draft()
+    d.files[FILING]["reason_required"] = []
+    d.set_at[(FILING, "reason_required")] = 1
+    key = "approvals.pcn_record.filed.reason_required"
+    g = next(x for x in se.confirms(d) if x.key == key)
+    assert (REC, "steps[id=filed]") in g.rewrites
+    u = sm.AligningUser(_transcript("pcn_review"), _expected("pcn_review"))
+    said = u(g, d)
+    assert said is not None and said["says"].startswith(NO) and u.rejected == [key]
+
+
+def test_control_reasons_the_person_was_asked_for_are_not_confirmed():
+    r = se.run(_transcript("pcn_review"), _set_reasons(None))
+    assert [q["kind"] for q in r["questions"] if q["key"] == REASON_KEY] == ["missing"]
+    assert r["files"] == _expected("pcn_review")
+
+
+def test_the_confirm_says_what_the_draft_holds():
+    f = _good()
+    d = se.Draft(files=f)
+    d.set_at[(REASON_KIND, "reason_required")] = 1
+    g = next(x for x in se.confirms(d) if x.key == REASON_KEY)
+    assert "rejected" in g.question and "needs_info" in g.question and g.revises == ((REASON_KIND, "reason_required"),)
+    f[REASON_KIND]["reason_required"] = []
+    g = next(x for x in se.confirms(d) if x.key == REASON_KEY)
+    assert "no outcome needs a reason" in g.question
+
+
+def test_the_scripted_user_finds_where_each_new_slot_is_stated():
+    e = _expected("pcn_review")
+    assert sm._slot_target(REASON_KEY, e) == (REASON_KIND, "reason_required")
+    assert sm._slot_target(ROUTED, e) == (PROGRAM_CH, "rows")
+    assert sm._slot_target("steps.pcn_acknowledge.routed", e) == (SEL, "rows")
+    assert sm._slot_target("outputs.pcn_record.ends", e) == (REC, "steps[id=filed].kind")
+    assert sm._slot_target("approvals.no_such.step.reason_required", e) is None
+    assert sm._slot_target("steps.no_such.routed", e) is None
+    assert sm._slot_target("approvals.x.next", e) is None
+
+
+# ── an emit may dispose: in the grammar, asked only for emit steps (architect, 2026-11-02) ────
+
+
+def test_the_grammar_says_only_an_emit_disposes():
+    assert "Only an emit step has disposes" in se._GRAMMAR
+
+
+def test_a_definition_that_only_sends_is_asked_whether_sending_settles_it():
+    q = _keys(_record_only_emits())["outputs.pcn_record.ends"].question
+    assert "sending disposition" in q and "with what outcome" in q
+
+
+def test_control_a_definition_with_no_emit_is_not_asked_about_sending():
+    f = _good()
+    f[REC]["steps"] = [{"kind": "render", "id": "page", "template": "x"}]
+    q = _keys(f)["outputs.pcn_record.ends"].question
+    assert "who or what confirms it" in q and "sending" not in q
+
+
+def test_a_disposition_on_any_other_step_is_refused_and_not_confirmed():
+    f = _good()
+    _step(f, IR, "engineering_disposition")["disposes"] = "approved"
+    assert not [s for s in se._value_slots(f) if s[0] == "outputs.pcn_impact_review.ends"]
+
+
+def test_only_an_emit_step_may_declare_it():
+    f = _good()
+    _step(f, IR, "engineering_disposition")["disposes"] = "approved"
+    assert se.runnable(f) != []
+
+
+def _sends_and_guesses(entry, draft, gap):
+    patch = se.OracleExtractor()(entry, draft, gap)
+    if gap is not None and gap.key == "steps.pcn_record":
+        patch = {**patch, "set": list(patch.get("set") or []) + [
+            {"file": REC, "path": "steps[id=disposition].disposes", "value": "filed"}]}
+    return patch
+
+
+def test_a_disposition_nobody_stated_is_confirmed():
+    t = _transcript("pcn_review")
+    r = se.run(t, _sends_and_guesses, answer=sm.AligningUser(t, _expected("pcn_review")))
+    assert {"key": "outputs.pcn_record.ends", "kind": "confirm", "facet": "outputs"} in r["questions"]
+    assert "outputs.pcn_record.ends" not in r["open"]
+
+
+def test_control_a_disposition_the_person_was_asked_about_is_not_confirmed():
+    d = se.Draft(files=_record_only_emits("filed"))
+    d.set_at[(REC, "steps[id=disposition].disposes")] = 2
+    assert "outputs.pcn_record.ends" in [g.key for g in se.confirms(d)]
+    d.answered["outputs.pcn_record.ends"] = 2
+    assert "outputs.pcn_record.ends" not in [g.key for g in se.confirms(d)]
