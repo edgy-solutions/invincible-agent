@@ -462,8 +462,9 @@ def test_t7_every_fixture_is_runnable_under_the_oracle_and_the_aligner(name):
         if aligned:
             assert row["answered_by_path"] == []
     # 10-30 turn check: +1, +2, +4 confirms of slots each person stated in passing (ADR-0061 §10)
+    # 11-02: +1 "defer this?" for each stated null: one in PCN, one in training, none in maint
     assert sm.measure(name, se.OracleExtractor())["questions"] == {
-        "pcn_review": 14, "maint_case_release": 12, "training_course_approval": 15}[name]
+        "pcn_review": 15, "maint_case_release": 12, "training_course_approval": 16}[name]
 
 
 def _event_values_unseen(name: str, transcript: dict) -> list:
@@ -1136,3 +1137,287 @@ def test_a_reply_logs_the_models_own_text_when_the_extractor_keeps_it():
     # control: an extractor that keeps no text logs none
     assert all("raw" not in x for m in se.run(_transcript("pcn_review"), se.OracleExtractor())["messages"]
                for x in m["replies"])
+
+
+# ── 2026-11-02: a row for an outcome the stage lacks; rendering; a null is not a deferral ───────
+
+CHAIN = "decisions/pcn_acknowledge_chaining.yaml"
+CHAIN_NAME = "pcn_acknowledge_chaining"
+
+
+def _with_stray_row(outcome):
+    files = _expected("pcn_review")
+    t = files[CHAIN]
+    t["domain"]["outcome"] = list(t["domain"]["outcome"]) + [outcome]
+    t["rows"] = list(t["rows"]) + [{"when": {"outcome": outcome}, "then": t["rows"][0]["then"]}]
+    return files
+
+
+def _gap_of(files, key):
+    return next(g for g in se.problems(files) if g.key == key)
+
+
+def test_the_scripted_user_says_no_to_a_row_for_an_outcome_the_stage_lacks_and_the_row_goes():
+    exp = _expected("pcn_review")
+    files = _with_stray_row("timed_out")
+    key = f"contradiction:chaining.{CHAIN_NAME}.timed_out"
+    u = sm.AligningUser(_transcript("pcn_review"), exp)
+    entry = u(_gap_of(files, key), se.Draft(files=files)) or {}
+    assert entry.get("says", "").startswith("No") and entry.get("corrects") == key and u.denied_rows == [key]
+    assert u.rejected == [] and u.unbanked == []
+    by_path = {x["path"]: x["value"] for x in (entry.get("facts") or {}).get("set", [])}
+    assert by_path == {"domain.outcome": exp[CHAIN]["domain"]["outcome"], "rows": exp[CHAIN]["rows"]}
+    # applied as the answer to that question, it is what the question may revise, and the gap is gone
+    d = se.Draft(files=files)
+    se.apply_patch(d, entry["facts"], 1, answering=_gap_of(files, key))
+    assert d.pending == [] and d.files[CHAIN] == exp[CHAIN]
+    assert key not in [g.key for g in se.problems(d.files)]
+
+
+def test_control_an_outcome_the_expected_table_routes_is_never_denied():
+    t, exp = _transcript("pcn_review"), _expected("pcn_review")
+    files = copy.deepcopy(exp)
+    # the draft's task kind has lost an outcome the expected table still routes
+    routed = exp[CHAIN]["domain"]["outcome"][0]
+    files["task_kinds/pcn_acknowledgement.yaml"]["accepts"] = [
+        v for v in files["task_kinds/pcn_acknowledgement.yaml"]["accepts"] if v != routed]
+    key = f"contradiction:chaining.{CHAIN_NAME}.{routed}"
+    u = sm.AligningUser(t, exp)
+    assert u(_gap_of(files, key), se.Draft(files=files)) is None
+    assert u.denied_rows == [] and u.unbanked == [key]
+
+
+def test_control_a_table_that_does_not_align_is_not_answered():
+    files = _with_stray_row("timed_out")
+    key = f"contradiction:chaining.{CHAIN_NAME}.timed_out"
+    g = _gap_of(files, key)
+    # nothing reaches the stage in this expected bundle, so the table has no counterpart
+    exp = _expected("pcn_review")
+    del exp[CHAIN]
+    u = sm.AligningUser(_transcript("pcn_review"), exp)
+    assert u(g, se.Draft(files=files)) is None and u.denied_rows == []
+    # and when the key translates to a table the expected bundle does not hold
+    assert u._no_such_outcome(g, files, "contradiction:chaining.not_expected.timed_out") is None
+    assert u.denied_rows == []
+
+
+def test_control_a_planted_row_contradiction_is_answered_from_the_bank():
+    t = _transcript("training_course_approval")
+    key = "contradiction:chaining.course_content_review_chaining.deferred"
+    assert key in t["planted"]["contradictions"]
+    u = sm.AligningUser(t, _expected("training_course_approval"))
+    g = se.Gap(key, "approvals", "contradiction", "q",
+               revises=(("decisions/course_content_review_chaining.yaml", "rows"),))
+    assert u(g, se.Draft(files=_expected("training_course_approval"))) == t["answers"][key]
+    assert u.denied_rows == []
+
+
+def test_the_model_is_shown_a_row_denials_correction():
+    entry = {"says": "No", "corrects": "contradiction:chaining.t.v", "facts": {"set": [{"file": "f", "path": "rows", "value": []}]}}
+    assert "CORRECTION" in se.ModelExtractor("http://model.invalid", "m")._user_message(entry, se.Draft(), None)
+
+
+def test_the_grammar_applies_a_correction_outside_the_confirm_rule():
+    assert any(ln.startswith("- When the answer carries a CORRECTION") for ln in se._GRAMMAR.splitlines())
+
+
+KIND = "task_kinds/k.yaml"
+
+
+@pytest.mark.parametrize("entry", [
+    {"file": KIND, "path": "", "value": {"kind": "k", "accepts": ["approved"], "renders_as": {"title": "T"}}},
+    {"file": KIND, "path": "kind", "value": "k"},
+])
+def test_a_rendering_field_written_by_the_model_is_never_held(entry):
+    d = se.Draft()
+    se.apply_patch(d, {"set": [entry, {"file": KIND, "path": "renders_as", "value": {"title": "T"}},
+                               {"file": KIND, "path": "renders_as.badge", "value": "B"}]}, 1)
+    assert "renders_as" not in d.files[KIND]
+    assert not [k for k in d.set_at if "renders_as" in k[1]]
+
+
+def test_a_second_rendering_value_raises_no_contradiction_and_an_unset_is_not_refused():
+    d = se.Draft(files={KIND: {"kind": "k", "accepts": ["approved"]}})
+    se.apply_patch(d, {"set": [{"file": KIND, "path": "renders_as.title", "value": "one"}]}, 1)
+    se.apply_patch(d, {"set": [{"file": KIND, "path": "renders_as.title", "value": "two"}],
+                       "unset": [{"file": KIND, "path": "renders_as"}]}, 2)
+    assert d.pending == [] and "renders_as" not in d.files[KIND]
+
+
+def test_a_rendering_only_patch_declares_no_task_kind():
+    d = se.Draft()
+    se.apply_patch(d, {"set": [{"file": KIND, "path": "renders_as", "value": {"title": "T"}}]}, 1)
+    assert KIND not in d.files
+
+
+def test_the_rendering_comes_from_the_declaration_default_and_the_bundle_runs():
+    # run 25: two kinds with a `renders_as` holding only a title, and the runtime refused them
+    exp = _expected("pcn_review")
+    files = copy.deepcopy(exp)
+    kind_file = "task_kinds/pcn_acknowledgement.yaml"
+    d = se.Draft(files={f: b for f, b in files.items() if f != kind_file})
+    body = {k: v for k, v in files[kind_file].items() if k != "renders_as"}
+    se.apply_patch(d, {"set": [{"file": kind_file, "path": "", "value": {**body, "renders_as": {"title": "T"}}}]}, 1)
+    assert not [g.key for g in se.problems(d.files) if "task_kind" in g.key]
+    fin = se.finalize(d.files)
+    assert fin[kind_file]["renders_as"] == exp[kind_file]["renders_as"]
+    assert se.runnable(fin) == []
+
+
+def test_control_a_shipped_kinds_own_rendering_is_kept():
+    # the drop is at the dialogue's door: finalize does not overwrite a declared rendering
+    files = {KIND: {"kind": "k", "accepts": ["approved"],
+                    "renders_as": {"badge": "OWN", "title": "Own", "archetype": "TRIAGE_TASK"}}}
+    assert se.finalize(files)[KIND]["renders_as"]["badge"] == "OWN"
+
+
+def test_control_only_a_task_kinds_rendering_is_dropped():
+    d = se.Draft()
+    se.apply_patch(d, {"set": [{"file": "workflows/w.yaml", "path": "renders_as", "value": "kept"}]}, 1)
+    assert d.files.get("workflows/w.yaml", {}).get("renders_as") == "kept"
+
+
+WF = "workflows/pcn_program_approval.yaml"
+NULL_STEP = "steps[id=program_approval].deadline_seconds"
+NULL_KEY = "approvals.pcn_program_approval.program_approval.deadline"
+
+
+def _null_draft(turn=3):
+    files = _expected("pcn_review")
+    step = next(s for s in files[WF]["steps"] if s["id"] == "program_approval")
+    step["deadline_seconds"] = None
+    d = se.Draft(files=files)
+    d.set_at[(WF, NULL_STEP)] = turn
+    return d
+
+
+def _null_gap(d):
+    return next(g for g in se.gaps(d) if g.key == NULL_KEY)
+
+
+def test_a_null_written_for_a_required_value_is_asked_defer_this():
+    d = _null_draft()
+    g = _null_gap(d)
+    assert g.kind == "null" and "Defer this?" in g.question and g.revises == ((WF, NULL_STEP),)
+    assert se.non_deferrable(d, NULL_KEY) is None
+
+
+def test_null_is_not_a_deferral():
+    d = _null_draft()
+    assert d.deferrals == {} and NULL_KEY in [g.key for g in se.gaps(d)]
+
+
+def test_a_deferral_removes_the_null_and_settles_the_key():
+    d = _null_draft()
+    se.apply_patch(d, {"defer": [{"gap": NULL_KEY, "reason": "not agreed"}]}, 4, answering=_null_gap(d))
+    step = next(s for s in d.files[WF]["steps"] if s["id"] == "program_approval")
+    assert d.deferrals == {NULL_KEY: "not agreed"} and "deadline_seconds" not in step
+    assert NULL_KEY not in [g.key for g in se.gaps(d)]
+
+
+def test_a_value_replaces_the_null_without_a_contradiction():
+    d = _null_draft()
+    se.apply_patch(d, {"set": [{"file": WF, "path": NULL_STEP, "value": 3600}]}, 4, answering=_null_gap(d))
+    assert d.pending == [] and NULL_KEY not in [g.key for g in se.gaps(d)]
+
+
+def test_control_a_null_the_person_was_asked_about_stands():
+    d = _null_draft()
+    d.vouched[(WF, NULL_STEP)] = 4
+    assert NULL_KEY not in [g.key for g in se.gaps(d)]
+    step = next(s for s in d.files[WF]["steps"] if s["id"] == "program_approval")
+    assert step["deadline_seconds"] is None
+    # a null written after that answer is asked again: the vouching does not outlive the value
+    d.set_at[(WF, NULL_STEP)] = 5
+    assert NULL_KEY in [g.key for g in se.gaps(d)]
+
+
+def test_control_a_value_is_not_asked_and_an_absent_slot_is_asked_as_missing():
+    assert NULL_KEY not in [g.key for g in se.gaps(se.Draft(files=_expected("pcn_review")))]
+    files = _expected("pcn_review")
+    step = next(s for s in files[WF]["steps"] if s["id"] == "program_approval")
+    del step["deadline_seconds"]
+    assert [g.kind for g in se.gaps(se.Draft(files=files)) if g.key == NULL_KEY] == ["missing"]
+
+
+def test_control_a_null_on_a_definition_no_table_names_is_not_asked():
+    f = _good()
+    _orphan(f)
+    assert [g for g in se.null_values(se.Draft(files=f)) if "orphan_stage" in g.key] == []
+
+
+def test_a_null_is_asked_once_even_when_the_slot_was_asked_twice_before():
+    d = _null_draft()
+    d.asked[NULL_KEY] = 2
+    assert NULL_KEY in [g.key for g in se.gaps(d)]
+    d.null_asked.add(NULL_KEY)
+    assert NULL_KEY not in [g.key for g in se.gaps(d)]
+
+
+@pytest.mark.parametrize("file,leaf,key", [
+    ("task_kinds/pcn_acknowledgement.yaml", "reason_required", "approvals.pcn_acknowledgement.reason_required"),
+    ("triggers/pcn_received.yaml", "requires", "trigger.requires"),
+])
+def test_every_slot_asked_while_absent_asks_its_null_too(file, leaf, key):
+    files = _expected("pcn_review")
+    if file not in files:
+        file = next(f for f in files if f.startswith("triggers/"))
+    files[file][leaf] = None
+    d = se.Draft(files=files)
+    assert [g.kind for g in se.gaps(d) if g.key == key] == ["null"]
+    assert not [g.key for g in se.problems(files) if g.key.startswith("contradiction:")]
+    se.apply_patch(d, {"defer": [{"gap": key, "reason": "not decided"}]}, 1)
+    assert leaf not in d.files[file]
+
+
+def test_a_null_for_who_is_barred_is_not_nobody_and_may_not_be_deferred():
+    files = _expected("pcn_review")
+    step = next(s for s in files[WF]["steps"] if s["id"] == "program_approval")
+    step["excludes"] = None
+    key = "actors.pcn_program_approval.program_approval.excludes"
+    d = se.Draft(files=files)
+    assert [g.kind for g in se.gaps(d) if g.key == key] == ["missing"]
+    assert se.non_deferrable(d, key) is not None
+    assert not [s for s in se._value_slots(files) if s[0] == key]  # not read as "nobody is barred"
+    g = next(g for g in se.gaps(d) if g.key == key)
+    se.apply_patch(d, {"set": [{"file": WF, "path": "steps[id=program_approval].excludes", "value": []}]}, 1, answering=g)
+    assert d.pending == [] and key not in [g.key for g in se.gaps(d) if g.kind == "missing"]
+
+
+def test_the_loop_defers_a_null_the_person_says_is_not_decided():
+    t = _transcript("pcn_review")
+    calls = []
+
+    def extractor(entry, draft, gap):
+        if gap is not None and gap.key == DEADLINE_KEY and gap.kind == "missing":
+            calls.append(gap.kind)  # the model reads "not agreed" as null, as in runs 28 to 30
+            f = "workflows/pcn_impact_review.yaml"
+            return {"set": [{"file": f, "path": "steps[id=engineering_disposition].deadline_seconds",
+                             "value": None}], "unset": [], "defer": []}
+        return se.OracleExtractor()(entry, draft, gap)
+
+    r = se.run(t, extractor)
+    assert calls == ["missing"]
+    assert [q["kind"] for q in r["questions"] if q["key"] == DEADLINE_KEY] == ["missing", "null"]
+    assert DEADLINE_KEY in r["deferrals"] and r["status"] == "runnable"
+    assert r["files"] == _expected("pcn_review")
+
+
+def test_a_stated_no_deadline_survives_the_question():
+    r = se.run(_transcript("pcn_review"), se.OracleExtractor())
+    key = "approvals.pcn_acknowledge.acknowledge.deadline"
+    assert [q["kind"] for q in r["questions"] if q["key"] == key] == ["null"]
+    assert key not in r["deferrals"]
+    step = next(s for s in r["files"]["workflows/pcn_acknowledge.yaml"]["steps"] if s["id"] == "acknowledge")
+    assert step["deadline_seconds"] is None
+
+
+def test_the_measure_row_names_nulls_and_denials():
+    row = sm.measure("pcn_review", se.OracleExtractor(), aligned=True)
+    assert row["nulls_asked"] == ["approvals.pcn_acknowledge.acknowledge.deadline"]
+    assert row["denied_rows"] == []
+
+
+def test_the_grammar_says_null_is_not_a_deferral_and_never_set_renders_as():
+    grammar = " ".join(se._GRAMMAR.split())
+    assert "null is not a deferral" in grammar and "Never set `renders_as`" in grammar

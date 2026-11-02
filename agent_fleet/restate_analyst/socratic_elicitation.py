@@ -22,7 +22,8 @@ PATCH GRAMMAR::
 A path is dotted keys; ``name[k=v]`` selects the element of list ``name`` whose mapping has key
 ``k`` equal to ``v`` (string compare), appending ``{k: v}`` when absent; ``""`` is the file root. A
 mapping value is applied leaf by leaf (so a contradiction is found per leaf); a list is a leaf.
-``None`` is a value: ``deadline_seconds: null`` is "explicitly no deadline".
+``None`` is a value: ``deadline_seconds: null`` is "explicitly no deadline", once the person has been
+asked. It is never a deferral (architect, 2026-11-02; see ``null_values``).
 
 THREE DEPARTURES FROM THE WRITTEN SPEC, each small and each removable (see the hand-back):
 
@@ -95,7 +96,7 @@ _LEAF_WORDS = {
 class Gap:
     key: str          # stable string, the fixture bank's lookup key
     facet: str        # one of: trigger, actors, steps, approvals, outputs
-    kind: str         # "missing" | "contradiction" | "confirm"
+    kind: str         # "missing" | "contradiction" | "confirm" | "null"
     question: str     # user-facing text (templated; names the stage/step in plain words)
     proposed: Any = None                       # an overwrite contradiction: the value not applied
     revises: Tuple[Tuple[str, str], ...] = ()  # (file, leaf path) pairs an answer may overwrite
@@ -113,7 +114,8 @@ class Draft:
     asked: Counter = field(default_factory=Counter)           # gap key -> times asked
     answered: Dict[str, int] = field(default_factory=dict)    # gap key -> last turn it was answered
     vouched: Dict[Tuple[str, str], int] = field(default_factory=dict)  # (file, leaf) -> turn the
-    #   person answered a question naming that leaf (a confirm or an overwrite contradiction)
+    #   person answered a question naming that leaf (a confirm, a null, or an overwrite contradiction)
+    null_asked: set = field(default_factory=set)              # gap keys asked as "defer this?"
 
 
 class PatchError(ValueError):
@@ -388,8 +390,15 @@ def _field_facet(field_name: str, step_kind: Optional[str]) -> str:
 # PATCH
 # ═════════════════════════════════════════════════════════════════════════════════════════════
 
+def _is_rendering(file: str, path: str) -> bool:
+    """True iff ``path`` of ``file`` is a task kind's rendering field. Those are never a dialogue
+    question: they come from the declaration default ``finalize`` writes (architect, 2026-11-02).
+    Run 25 drafted a ``renders_as`` holding only a title, and the runtime refused both kinds."""
+    return file.startswith("task_kinds/") and (path == "renders_as" or path.startswith("renders_as."))
+
+
 def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] = None) -> None:
-    """Apply ``patch`` to ``draft``. A leaf already holding a deep-unequal value is NOT overwritten:
+    """Apply ``patch`` to ``draft``. A rendering field is dropped, set or unset. A leaf already holding a deep-unequal value is NOT overwritten:
     it becomes a pending contradiction -- unless ``answering`` names that leaf in its ``revises``.
     An equal re-set is a no-op. Answering an overwrite contradiction always settles it: applied if
     the answer set the leaf, else resolved in favour of the earlier value (``draft.kept_earlier``)."""
@@ -400,6 +409,8 @@ def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] =
         if not isinstance(entry, dict) or "file" not in entry or "path" not in entry:
             raise PatchError(f"an unset entry needs file and path; got {entry!r}")
         file, path = str(entry["file"]), str(entry["path"])
+        if _is_rendering(file, path):
+            continue
         if not _in_scope(scope, file, path, unset=True):
             raise PatchError(f"an unset may only remove what the confirm being answered names; "
                              f"{path or 'the whole file'} of {file} is not")
@@ -408,8 +419,11 @@ def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] =
         if not isinstance(entry, dict) or "file" not in entry or "path" not in entry or "value" not in entry:
             raise PatchError(f"a set entry needs file, path and value; got {entry!r}")
         file, base, value = str(entry["file"]), str(entry["path"]), entry["value"]
+        leaves = [(p, v) for p, v in _leaves(base, copy.deepcopy(value)) if not _is_rendering(file, p)]
+        if not leaves:
+            continue
         root = draft.files.setdefault(file, {})
-        for leaf_path, leaf_value in _leaves(base, copy.deepcopy(value)):
+        for leaf_path, leaf_value in leaves:
             if leaf_path == "":
                 raise PatchError(f"cannot set the root of {file} to a non-mapping")
             container, key = _locate(root, parse_path(leaf_path), create=True)  # type: ignore[misc]
@@ -430,6 +444,7 @@ def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] =
             draft.deferrals[str(d["gap"])] = str(d.get("reason") or "deferred")
         else:
             draft.open[str(d["gap"])] = f"{why}; the user said: {d.get('reason') or 'deferred'}"
+    _drop_deferred_nulls(draft)
     if answering is not None and answering.kind == "contradiction":
         mine = [g for g in draft.pending if g.key == answering.key]
         for g in mine:
@@ -496,6 +511,8 @@ def _task_kind_model():
 def _stub_renders_as(row: dict) -> dict:
     out = dict(row)
     out.setdefault("renders_as", {"badge": "X", "title": "x", "archetype": "APPROVAL_TASK"})
+    if out.get("reason_required", ()) is None:  # asked as a null, see null_values
+        del out["reason_required"]
     return out
 
 
@@ -545,7 +562,8 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
     for f, t in triggers:
         tname = str(t.get("trigger") or _stem(f))
         try:
-            _cr.Trigger.model_validate({k: v for k, v in t.items() if k != _STAGES})
+            _cr.Trigger.model_validate({k: v for k, v in t.items() if k != _STAGES
+                                        and not (k == "requires" and v is None)})  # see null_values
         except ValidationError as exc:
             for e in exc.errors():
                 if e["type"] == "missing":
@@ -803,11 +821,11 @@ def required_slots(files: Dict[str, dict]) -> List[Gap]:
                                f"Required: the task kind for the approval {_words(s.get('id'))} in "
                                f"{_words(wid)}. Name it and the answers a person can give there "
                                "(for example approve, reject)."))
-            if "excludes" not in s:
+            if s.get("excludes") is None:  # who is barred may not be deferred: a null has said nothing
                 out.append(Gap(f"actors.{wid}.{s.get('id')}.excludes", "actors", "missing",
                                f"Required: who is barred from answering at {_words(s.get('id'))} in "
                                f"{_words(wid)} -- for example whoever submitted it? Say nobody if no "
-                               "one is."))
+                               "one is.", revises=((f, f"steps[id={s.get('id')}].excludes"),)))
     for wid, (f, raw) in wfs.items():
         verbs, last = _emits(raw, kinds)
         facet = "approvals" if last is not None and last.get("kind") == "human_await" else "outputs"
@@ -873,7 +891,7 @@ def _value_slots(files: Dict[str, dict]) -> List[_Slot]:
                             f"{_words(sid)} in {_words(wid)} is a {_words(tk)} task"
                             + (f", answered {' or '.join(map(str, acc))}" if isinstance(acc, list) and acc
                                else ""), step))
-            if "excludes" in s:
+            if s.get("excludes") is not None:
                 ex = s["excludes"]
                 said = (f"nobody is barred from answering at {_words(sid)} in {_words(wid)}"
                         if not ex else f"{_fmt(ex)} may not answer at {_words(sid)} in {_words(wid)}")
@@ -935,6 +953,55 @@ def confirms(draft: Draft) -> List[Gap]:
     return out
 
 
+def _null_slots(files: Dict[str, dict]) -> List[Tuple[str, str, str, str, Optional[str]]]:
+    """Each value ``_completeness`` asks for while absent that the draft holds as null, under the
+    key it asks, as (key, facet, file, leaf, the definition it binds to if any)."""
+    out: List[Tuple[str, str, str, str, Optional[str]]] = []
+    for f, t in _of(files, "triggers"):
+        if "requires" in t and t["requires"] is None:
+            out.append(("trigger.requires", "trigger", f, "requires", None))
+    for wid, (f, raw) in _workflows(files).items():
+        for s in _steps(raw):
+            if s.get("kind") == "human_await" and s.get("id") and "deadline_seconds" in s \
+                    and s["deadline_seconds"] is None:
+                out.append((f"approvals.{wid}.{s['id']}.deadline", "approvals", f,
+                            f"steps[id={s['id']}].deadline_seconds", wid))
+    for kname, (f, raw) in _kinds(files).items():
+        if "reason_required" in raw and raw["reason_required"] is None:
+            out.append((f"approvals.{kname}.reason_required", "approvals", f, "reason_required", None))
+    return out
+
+
+def null_values(draft: Draft) -> List[Gap]:
+    """A null written for a required value is asked as "defer this?": null is not a deferral
+    (architect, 2026-11-02). Runs 28 to 30 drafted "we have not agreed a turnaround" as
+    ``deadline_seconds: null``, which the runtime reads as a decision that there is no deadline. The
+    person's answer settles it: a deferral removes the null, a value replaces it, and only a null
+    the person was asked about stands. Asked once, under the key the slot is asked by, so a
+    deferral lands where it would have landed had the slot been absent."""
+    out: List[Gap] = []
+    reach = _reachable(draft.files)
+    for key, facet, file, leaf, wid in _null_slots(draft.files):
+        if wid is not None and wid not in reach:
+            continue  # as ``_completeness``: a definition no table names is not asked about
+        turn = _set_turn(draft, file, leaf) or 0
+        if any(f == file and _related(p, leaf) and vt >= turn for (f, p), vt in draft.vouched.items()):
+            continue
+        out.append(Gap(key, facet, "null",
+                       f"Required: the draft leaves {_describe(file, leaf)} empty, and an empty value "
+                       "is not a deferral. Defer this? If it is not decided yet, say so. If it is "
+                       "decided, say what it is, or that there is none.", revises=((file, leaf),)))
+    return out
+
+
+def _drop_deferred_nulls(draft: Draft) -> None:
+    """A deferred value is absent, not null: the served file would otherwise say there is none."""
+    if draft.deferrals:
+        for key, _, file, leaf, _ in _null_slots(draft.files):
+            if key in draft.deferrals:
+                _unset(draft, file, leaf)
+
+
 _BARRED_RX = re.compile(r"actors\.[^.]+\.[^.]+\.excludes")
 
 
@@ -994,15 +1061,17 @@ def _completeness(files: Dict[str, dict]) -> List[Gap]:
 def gaps(draft: Draft) -> List[Gap]:
     """Everything still to settle, highest priority first: pending overwrite contradictions, then
     other contradictions, then missing items by facet (trigger, actors, steps, approvals, outputs).
-    A gap whose key is deferred is settled. A confirm is asked once."""
-    return [g for g in _all_gaps(draft) if draft.asked[g.key] < (1 if g.kind == "confirm" else 2)]
+    A gap whose key is deferred is settled. A confirm or a null is asked once."""
+    return [g for g in _all_gaps(draft)
+            if (g.key not in draft.null_asked if g.kind == "null"
+                else draft.asked[g.key] < (1 if g.kind == "confirm" else 2))]
 
 
 def _all_gaps(draft: Draft) -> List[Gap]:
     """``gaps`` before the asked-twice cut. A confirm ranks after every missing item; an open key
     ranks after every other gap."""
     rest = (required_slots(draft.files) + problems(draft.files) + _completeness(draft.files)
-            + confirms(draft))
+            + null_values(draft) + confirms(draft))
     seen: set = set()
     pend, contra, missing, confirm = [], [], [], []
     for g in list(draft.pending) + rest:
@@ -1271,7 +1340,8 @@ task_kinds/<kind>.yaml. A user's process is: a TRIGGER (the event, the case key,
 two events one episode, the facts later tables need), a SELECTION table (decision table mapping the
 event's facts to the first workflow), WORKFLOWS (steps: human_await, signal_await, emit, render,
 wait ...), one CHAINING table per workflow (`after: <workflow id>`, matching `outcome`, naming the
-next workflow or a declared terminal), and TASK KINDS (`accepts`, `reason_required`).
+next workflow or a declared terminal), and TASK KINDS (`accepts`, `reason_required`). Never set
+`renders_as`: a task kind's rendering comes from its declaration default.
 
 RULES
 - Emit ONLY facts the statement makes. Never infer, never fill a default, never add a field the user
@@ -1279,12 +1349,14 @@ RULES
 - Use ONLY the event fields and audiences listed in the context; write an event field as
   "{trigger.<field>}" in a template or exclusion.
 - When the question is a contradiction ("Which holds?"), set exactly the path the question names.
-- When the user says they cannot say yet, DEFER the gap being asked, with their reason.
+- When the user says they cannot say yet, DEFER the gap being asked, with their reason. null is not
+  a deferral: set null only when the user says there is none.
 - When the question is a confirm ("Required, to confirm: ...") and the user says it is not right,
   redraft what the question names from their words: set the new values, and UNSET the fields that
   no longer apply (path "" of task_kinds/<kind>.yaml removes a task kind only that step named).
-  Never unset anything else. When the answer carries a CORRECTION, those are the user's own facts
-  in the draft's names: apply them as given.
+  Never unset anything else.
+- When the answer carries a CORRECTION, those are the user's own facts in the draft's names:
+  apply them as given.
 - REQUIRED: the trigger lists `stages`: every workflow id a case can pass through, in the user's
   order (a stage already drafted is named by its workflow id). Each stage is drafted as
   workflows/<stage>.yaml with id <stage>.
@@ -1485,6 +1557,7 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
             draft.deferrals[g.key] = reason
         else:
             draft.open[g.key] = f"{why}; {reason}"
+        _drop_deferred_nulls(draft)
 
     while turn < max_turns:
         note()
@@ -1496,6 +1569,8 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
         g = pending_gaps[0]
         turn += 1
         draft.asked[g.key] += 1
+        if g.kind == "null":
+            draft.null_asked.add(g.key)
         questions.append({"key": g.key, "kind": g.kind, "facet": g.facet})
         if g.kind == "contradiction":
             contradictions_asked.append(g.key)
@@ -1514,10 +1589,13 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
         before = copy.deepcopy((draft.files, draft.deferrals))
         _apply_or_charge(draft, extractor, entry, g, turn, model_errors, messages[-1]["replies"])
         draft.answered[g.key] = turn
-        if g.kind in ("confirm", "contradiction"):
+        if g.kind in ("confirm", "contradiction", "null"):
             for leaf in g.revises:
                 draft.vouched[leaf] = turn
-        live = g.key not in draft.deferrals and any(x.key == g.key for x in _all_gaps(draft))
+        # a null the answer just wrote has not been asked about: it is the next question, not an
+        # answer that failed to settle this one (runs 28 to 30)
+        live = g.key not in draft.deferrals and any(
+            x.key == g.key and (x.kind != "null" or x.key in draft.null_asked) for x in _all_gaps(draft))
         if live and draft.asked[g.key] > 1 and (draft.files, draft.deferrals) == before:
             # asked again (a repeat is of an open key) and the answer changed nothing: run 18
             # asked ten questions twice (ADR-0061 §10)

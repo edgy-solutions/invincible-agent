@@ -175,6 +175,7 @@ def _fact_target(key: str) -> Optional[Tuple[str, str]]:
 
 _CHAIN_SLOT = re.compile(r"^(?:approvals|outputs)\.([^.]+)\.next\.(.+)$")
 _STEP_SLOT = re.compile(r"^(?:actors|approvals)\.([^.]+)\.([^.]+)\.(?:excludes|task_kind)$")
+_CHAIN_ROW = re.compile(r"^contradiction:chaining\.([^.]+)\.(.+)$")
 
 
 def _chain_target(key: str, expected: dict) -> Optional[Tuple[str, str]]:
@@ -236,6 +237,7 @@ class AligningUser:
         self.unbanked: list = []
         self.answered_by_path: list = []
         self.rejected: list = []
+        self.denied_rows: list = []
         self.opening = transcript.get("opening")
         # the person's own list of stages, from the entry that declares it: `finalize` drops the
         # list from the served trigger, so the expected bundle does not carry it
@@ -429,6 +431,30 @@ class AligningUser:
                 for k, v in new.items() if k != "id" and dstep.get(k) != v]
         return {"set": sets, "unset": unset}
 
+    def _no_such_outcome(self, gap, draft_files: dict, t: Optional[str]) -> Optional[dict]:
+        """A person who knows their process, asked whether a stage can end a way it cannot, says no,
+        and the row goes (architect 2026-11-02). Only for a table that aligns, and only an outcome
+        the expected table does not route: a value the expected bundle holds is never denied."""
+        mine, theirs = _CHAIN_ROW.match(gap.key), _CHAIN_ROW.match(t or "")
+        if gap.kind != "contradiction" or mine is None or theirs is None:
+            return None
+        table = _index(draft_files)["decisions"].get(mine.group(1))
+        other = _index(self.expected)["decisions"].get(theirs.group(1))
+        file = next((f for f, p in gap.revises if p == "rows"), None)
+        if table is None or other is None or file is None:
+            return None
+        v = mine.group(2)
+        if v in ((other.get("domain") or {}).get(se._CHAIN_INPUT) or []):
+            return None
+        self.denied_rows.append(gap.key)
+        domain = [x for x in ((table.get("domain") or {}).get(se._CHAIN_INPUT) or []) if x != v]
+        rows = [r for r in (table.get("rows") or []) if not (
+            isinstance(r, dict) and (r.get("when") or {}).get(se._CHAIN_INPUT) == v)]
+        return {"says": f"No, it cannot end '{v}'. That stage has no such outcome.",
+                "facts": {"set": [{"file": file, "path": f"domain.{se._CHAIN_INPUT}", "value": domain},
+                                  {"file": file, "path": "rows", "value": copy.deepcopy(rows)}]},
+                "corrects": gap.key}
+
     def __call__(self, gap, draft) -> Optional[dict]:
         t = self.translate(gap.key, draft.files)
         if t is None:
@@ -444,7 +470,7 @@ class AligningUser:
             if hit is not None:
                 self.answered_by_path.append((gap.key, hit[0]))
                 return _narrowed(hit[1], *tgt)
-            rejection = self._rejection(gap, draft.files, t)
+            rejection = self._rejection(gap, draft.files, t) or self._no_such_outcome(gap, draft.files, t)
             if rejection is not None:
                 return rejection
             self.unbanked.append(gap.key)
@@ -503,6 +529,7 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "unaligned": list(user.unaligned) if user else [],
         "answered_by_path": [list(p) for p in user.answered_by_path] if user else [],
         "rejected": list(user.rejected) if user else [],
+        "denied_rows": list(user.denied_rows) if user else [],
         "unbanked": list(user.unbanked) if user else sorted(k for k in keys if k not in set(bank)),
         "deferred_refusals": [k for k in r["deferred_refusals"] if k in r["deferrals"]],
         "model_errors": errors_of(extractor) + len(r["model_errors"]),
@@ -510,6 +537,7 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "transport_errors": list(getattr(extractor, "transport_errors", [])),
         "asked": keys,
         "confirms": [q["key"] for q in r["questions"] if q["kind"] == "confirm"],
+        "nulls_asked": [q["key"] for q in r["questions"] if q["kind"] == "null"],
         "stalled": r["stalled"],
         "contradictions_asked": r["contradictions_asked"],
         "deferrals": r["deferrals"],

@@ -1259,6 +1259,57 @@ This ADR stays a draft, and no PR is opened.
   runs and the bar is now a routing row for an outcome the stage does not have. The scripted
   user cannot answer it, and a runtime refusal may not be deferred.
 
+#### 2026-11-02: three rulings, built
+
+The architect ruled on what runs 25 to 30 owed, and all three rulings are built.
+
+1. **A routing row for an outcome the stage lacks is answered "no", and the row is removed.** The
+   scripted user models a person who knows their process.
+   - When a chaining contradiction reaches it with no bank answer, and the table aligns, and the
+     expected table does not route that outcome, it says no. Its correction is the table without
+     that row and without that outcome in its domain.
+   - An outcome the expected table routes is never denied, and a bank answer comes first. The
+     planted contradiction in the training fixture still gets its bank answer.
+   - This is a change to the instrument. The measure row now has `denied_rows`.
+   - Replayed on the final files of runs 26 to 30, it answers every chaining key those runs left
+     open and no chaining contradiction remains. Four of the five then have no runtime error. Run 28
+     keeps its selection table's `after`, which this ruling does not touch. That replay checks the
+     answer only. It is not a run.
+2. **Rendering fields are never a dialogue question.** They come from the task kind's declaration
+   default. The draft drops `renders_as` whether the model sets it whole, by leaf, inside a whole
+   file, or unsets it. A patch holding nothing else declares no task kind. `finalize` then writes
+   the default, and a shipped kind's own rendering is untouched. The grammar says never to set it.
+3. **A null written for a required value is asked as "defer this?". Null is not a deferral.**
+   - This is a new gap kind, asked once, under the key the slot is asked by when absent.
+   - A deferral removes the null and records the deferral. A value replaces the null without a
+     contradiction. A null the person was asked about stands, until a later turn writes it again.
+   - The slots are the three `_completeness` asks for while absent and the runner accepts: a step's
+     `deadline_seconds`, a kind's `reason_required` and a trigger's `requires`. The last two were
+     refused as a contradiction before, and now reach the same question.
+
+Three things in this build go beyond the words of the rulings, and are for review:
+
+- **`excludes: null`.** Who is barred may not be deferred (§5), so "defer this?" would be a question
+  the loop must then refuse. It was read as "nobody is barred". It is now read as absent and asked
+  as the required slot it is.
+- **A stated "no limit" is asked too.** The ruling is literal, and a null the person stated cannot
+  be told mechanically from one the model wrote for "not agreed". So the fixtures gain a bank
+  entry where the person states there is no time limit: PCN's acknowledgement and training's
+  security review. The bank answers "do not defer it". The oracle's question counts move from 14 to
+  15 and from 15 to 16, and PCN's bank is now 15. This is one more question to a person, for each
+  null they stated.
+- **A model that keeps the null after "not decided" is not stopped.** The person's answer vouches for
+  the leaf, so the null stands. The measure shows it as a semantic diff and a missed deferral. It
+  does not bear on the status.
+
+The seal for the null found a defect before any run. An answer that writes the null itself, which
+is the shape of runs 28 to 30, was charged as "the answer did not settle it" and deferred without
+asking. A null not yet asked about is now the next question, not an unsettled answer.
+
+Seals: `tests/socratic`, 136 passed (28 new). 28 mutants, each red on an assertion and restored by
+`cmp`. On the first pass one survived, a guard its control never reached, and two were red on a
+`TypeError` and a `KeyError`. The seals were tightened, and those three now die on assertions.
+
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a

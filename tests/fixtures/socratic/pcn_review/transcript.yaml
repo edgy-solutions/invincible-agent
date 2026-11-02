@@ -362,6 +362,14 @@ answers:
         path: steps[id=acknowledge].excludes
         value: []
       defer: []
+  approvals.pcn_acknowledge.acknowledge.deadline:
+    says: Do not defer it. There is no time limit on acknowledging.
+    facts:
+      set:
+      - file: workflows/pcn_acknowledge.yaml
+        path: steps[id=acknowledge].deadline_seconds
+        value: null
+      defer: []
 planted:
   contradictions:
   - contradiction:workflows/pcn_impact_review.yaml#steps[id=engineering_disposition].excludes

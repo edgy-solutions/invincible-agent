@@ -396,6 +396,14 @@ answers:
         path: steps[id=content].task_kind
         value: course_content_review
       defer: []
+  approvals.course_security_review.security.deadline:
+    says: Do not defer it. There is no time limit on the security review.
+    facts:
+      set:
+      - file: workflows/course_security_review.yaml
+        path: steps[id=security].deadline_seconds
+        value: null
+      defer: []
 planted:
   contradictions:
   - contradiction:chaining.course_content_review_chaining.deferred
