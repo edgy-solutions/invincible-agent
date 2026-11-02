@@ -1707,6 +1707,77 @@ def test_the_scripted_user_finds_where_each_new_slot_is_stated():
     assert sm._slot_target("approvals.x.next", e) is None
 
 
+# ── run 34: a value of the wrong shape is refused, never a crash ──────────────────────────────
+
+def _wrong_shape(file, *path, value):
+    """The whole of ``file`` with one node replaced, and a draft that does not hold it yet, so the
+    patch lands rather than charging an overwrite."""
+    f = _good()
+    doc = copy.deepcopy(f.pop(file))
+    node = doc
+    for p in path[:-1]:
+        node = node[p]
+    node[path[-1]] = value
+    return se.Draft(files=f), {"set": [{"file": file, "path": "", "value": doc}]}
+
+
+@pytest.mark.parametrize("file,path,value", [
+    (CH, ("rows", 0, "when"), "approved"),  # run 34's own
+    (CH, ("rows", 0), "approved"),
+    (CH, ("rows", 0, "then"), {"a": 1}),
+    (CH, ("rows",), 1),
+    (CH, ("matches",), 1),
+    (CH, ("matches", 0), {"a": 1}),
+    (CH, ("domain",), "x"),
+    (CH, ("domain", "outcome"), 1),
+    (CH, ("terminals",), 1),
+    (CH, ("terminals", 0), {"a": 1}),
+    (CH, ("after",), {"a": 1}),
+    (REASON_KIND, ("accepts", 0), {"a": 1}),
+    (IR, ("steps", 0, "kind"), ["x"]),
+    (TRIG, ("requires",), 1),
+])
+def test_a_value_of_the_wrong_shape_is_refused_and_the_draft_keeps_what_it_had(file, path, value):
+    draft, patch = _wrong_shape(file, *path, value=value)
+    before = copy.deepcopy(draft.files)
+    charged, log = [], []
+    se._apply_or_charge(draft, lambda *_: patch, {"says": "x"}, None, 1, charged, log)
+    assert draft.files == before
+    assert len(charged) == 1 + se.PATCH_RESTATES and "wrong shape" in charged[0]["error"]
+    assert "{when: {input: value}, then: name}" in log[0]["refused"]
+
+
+def test_control_the_same_file_of_the_right_shape_lands():
+    file = CH
+    draft, patch = _wrong_shape(file, "after", value=_good()[file]["after"])
+    charged = []
+    se._apply_or_charge(draft, lambda *_: patch, {"says": "x"}, None, 1, charged)
+    assert charged == [] and draft.files[file] == _good()[file]
+
+
+@pytest.mark.parametrize("value", [[1], 1])
+def test_the_instrument_records_a_shape_the_loop_tolerates(value):
+    f = _good()
+    f[IR]["steps"] = value
+    assert len(sm.semantic_diffs(f, _good())) == 1
+    assert sm._steps_of(f[IR]) == []
+
+
+def test_a_run_restates_a_row_of_the_wrong_shape_and_finishes():
+    """Run 34 lost everything: the crash came before the row was written out."""
+    def once_wrong(entry, draft, gap):
+        patch = se.OracleExtractor()(entry, draft, gap)
+        if gap is not None and gap.key == PROGRAM_NEXT and not entry.get("refused"):
+            patch = copy.deepcopy(patch)
+            for fact in patch["set"]:
+                if fact["file"] == PROGRAM_CH:
+                    fact["value"]["rows"][0]["when"] = "approved"
+        return patch
+    r = se.run(_transcript("pcn_review"), once_wrong)
+    assert len(r["model_errors"]) == 1 and "wrong shape" in r["model_errors"][0]["error"]
+    assert r["status"] == "runnable" and r["files"] == _expected("pcn_review")
+
+
 # ── an emit may dispose: in the grammar, asked only for emit steps (architect, 2026-11-02) ────
 
 

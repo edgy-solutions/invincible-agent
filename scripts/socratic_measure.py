@@ -127,7 +127,11 @@ def _walk(prefix: str, a, b, out: list) -> None:
 
 def semantic_diffs(final: dict, expected: dict) -> list:
     out: list = []
-    _walk("", canonical(final), canonical(expected), out)
+    try:
+        drafted = canonical(final)
+    except (AttributeError, TypeError) as exc:  # a shape the loop tolerates must not lose the run's row
+        return [f"the draft has no canonical form ({type(exc).__name__}: {exc})"]
+    _walk("", drafted, canonical(expected), out)
     return out
 
 
@@ -156,7 +160,8 @@ def _index(files: dict) -> dict:
 
 
 def _steps_of(wf: dict) -> list:
-    return [s for s in (wf.get("steps") or []) if isinstance(s, dict)]
+    steps = wf.get("steps")
+    return [s for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
 
 
 def _fact_target(key: str) -> Optional[Tuple[str, str]]:

@@ -1462,6 +1462,51 @@ the process does not have. The measure row gains `unreachable`.
 One red is a `KeyError`, not an assertion: treating a null as held, where the test indexes the slot
 that should be open. The slot's absence is the failure the test exists to catch.
 
+#### 2026-11-02: run 34 crashed, and a value of the wrong shape is now refused
+
+The first run after rulings 2, 3 and 4 did not finish. The model wrote a row's `when` as a string, and
+`decide` raised `AttributeError` from inside `problems`, `required_slots` and `runnable`. No output was
+written, so what else run 34 held is lost, and it counts as none of the three runs. Rulings 2 to 4 did
+not introduce this. `_apply_or_charge` already promised that a run never crashes on model output, and
+the promise covered only a `PatchError`.
+
+**The census.** One row is a sample, so I put eight wrong-typed values at every node of the PCN bundle
+and called each reader: 3264 calls, 20 distinct crash sites, across the tables, the kinds, the steps and
+the trigger.
+
+**The refusal.** This defends the class rather than the 20 sites. A patch is already tried on a copy, so
+`_refuse_unreadable` reads that copy with `_all_gaps` and `runnable`. If either raises anything, the
+patch is refused and the model restates it with the refusal in hand, under the existing restate limit.
+This goes beyond the rulings' words: it is my call, for review. `decision_table.py`, the production
+evaluator, is deliberately unchanged, so a broken row reaching it directly still raises.
+
+The instrument needed its own guards. Values the loop tolerates still reach the measure, so
+`semantic_diffs` records a draft with no canonical form as a difference, and `_steps_of` reads a `steps`
+that isn't a list as empty. The first pass of the census found 7 such sites in the instrument.
+
+| fixture | wrong-typed values refused | passed the refusal | crash sites in later readers |
+| --- | --- | --- | --- |
+| `pcn_review` | 135 | 681 | 0 |
+| `maint_case_release`, `training_course_approval` | 334 | 1322 | 0 |
+
+The later readers are `finalize`, `semantic_diffs`, the reachability walk and the scripted user on each
+open gap. This census covers one wrong value at one node of a complete bundle. It does not cover a
+wrong value in a partial draft, or two at once. A reader the refusal does not call, reached only from a
+partial draft, could still raise.
+
+**The cost.** `runnable` now runs on every patch, so `tests/socratic` takes about 40 to 47 seconds, up
+from about 9.5. In a model run this is small beside the model's own time. I have not measured it there.
+
+**Seals and mutants.** `tests/socratic` has 189 passing at `LOCKED_SDK=sdk_0912`, and the gov ratchet
+24. All six mutants of the refusal and the guards went red: not reading the draft at all, catching only
+`AttributeError`, not calling `_all_gaps`, not calling `runnable`, and removing each instrument guard.
+Removing `runnable` from the refusal is held by one seal only.
+
+**A correction to the runs through 33.** They ran under `-I`, which ignores `PYTHONPATH`, so they
+imported the venv's `iagent_mesh` 0.9.5 and not the 0.9.12 overlay. The loop imports only `task_kinds`
+from the SDK, and that file is byte-identical in the two versions, so their results stand. The runs below
+use the 0.9.12 overlay.
+
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a

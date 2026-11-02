@@ -1528,12 +1528,26 @@ class ModelExtractor:
 PATCH_RESTATES = 1  # times the model is asked to restate a refused patch before the turn moves on
 
 
+def _refuse_unreadable(draft: Draft) -> None:
+    """A patch whose value has the wrong shape, read by every reader of a draft on the copy it was
+    tried on. Run 34 wrote a row's ``when`` as a string and ``decide`` raised; a wrong type did the same
+    at twenty places in all, so this reads the draft rather than listing the shapes."""
+    try:
+        _all_gaps(draft)
+        runnable(draft.files)
+    except Exception as exc:  # noqa: BLE001 -- any reader's failure refuses the patch, never the run
+        raise PatchError(f"a value in this patch has the wrong shape, so the draft cannot be read "
+                         f"({type(exc).__name__}: {_first_line(exc)}). A table's rows are a list of "
+                         "{when: {input: value}, then: name}; each list of names holds only names.") from exc
+
+
 def _apply_or_charge(draft: Draft, extractor: Callable[[dict, Draft, Optional[Gap]], dict],
                      entry: dict, gap: Optional[Gap], turn: int, charged: List[dict],
                      log: Optional[List[dict]] = None) -> None:
     """Apply the extractor's patch for one turn. A patch the loop cannot apply is a model error
     charged to that turn (architect, 2026-10-30): it is recorded, the model is asked to restate it
-    with the refusal in hand, and the loop continues. A run never crashes on model output. The
+    with the refusal in hand, and the loop continues. A run never crashes on model output: a patch
+    that leaves the draft unreadable is refused. The
     patch is tried on a copy, so nothing of a refused patch lands in the draft. Each reply goes to
     ``log``: the patch, the model's own text when it has one, and the refusal if any."""
     ask = entry
@@ -1548,6 +1562,7 @@ def _apply_or_charge(draft: Draft, extractor: Callable[[dict, Draft, Optional[Ga
             if getattr(extractor, "last_raw", None) is not None:
                 reply["raw"] = extractor.last_raw  # type: ignore[attr-defined]
             apply_patch(trial, patch, turn, answering=gap)
+            _refuse_unreadable(trial)
         except PatchError as exc:
             reply["refused"] = str(exc)
             charged.append({"turn": turn, "error": str(exc)})
