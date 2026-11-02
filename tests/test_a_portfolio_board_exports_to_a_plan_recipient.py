@@ -584,12 +584,26 @@ def test_a_rail_outage_takes_the_cost_door_and_the_picker_down_as_a_503(world):
     assert got.status_code == 503 and got.json()["detail"] == {
         "reason": "recipient_readers_unavailable"}
 
-# ── dark by default, and the image carries it ────────────────────────────────────────────────
-def test_the_shipped_rail_has_no_plan_owner_and_the_feature_is_dark(monkeypatch):
+# ── the plan owner ships (ruled 2026-10-30), and the image carries it ─────────────────────────
+def test_the_shipped_plan_owner_is_seed_granted_for_scopes_the_plan_path_offers_and_denies_without_topaz(
+        monkeypatch):
+    """The plan owner SHIPS (ruled 2026-10-30; this test said the opposite before the row was
+    ruled). What stays true, read through the sync's own loader: every shipped plan row is granted
+    by `seed` (a shipped row's grantor is the seed, never a person), and every plan scope is one
+    the plan path offers -- a recipient of a served answer-export profile, read from the profile
+    loader, not typed. And with no Topaz to ask, the REAL can_read_recipient still denies."""
     import yaml
-    owners = yaml.safe_load((ROOT / "policy" / "recipient_readers.yaml")
-                            .read_text(encoding="utf-8"))["recipient_readers"]
-    assert "plan" not in owners
+    monkeypatch.syspath_prepend(str(ROOT / "policy" / "sync"))
+    import recipient_reader_sync as rrs
+    raw = yaml.safe_load((ROOT / "policy" / "recipient_readers.yaml")
+                         .read_text(encoding="utf-8"))
+    rows, errors = rrs.load_readers(raw)
+    assert errors == [], errors
+    plan_rows = [r for r in rows if r.owner == "plan"]
+    assert plan_rows, "the plan owner ships a row (ruled 2026-10-30)"
+    assert {r.granted_by for r in plan_rows} == {"seed"}
+    offered = {s for p in AE.load_answer_export_profiles().values() for s in p.recipients}
+    assert {r.scope for r in plan_rows} <= offered
     monkeypatch.delenv("TOPAZ_DIRECTORY_URL", raising=False)
     monkeypatch.setattr(cost_main, "_ANSWER_PROFILES", None)
     with TestClient(cost_main.app) as engine:
