@@ -80,8 +80,8 @@ def test_a_manifest_naming_nothing_at_all_is_refused(tmp_path) -> None:
     assert retag.verify(_manifest(tmp_path, images={}), "0.4.65", _registry(_GOOD)) == 2
 
 
-def test_a_still_building_matrix_is_a_warning_not_a_failure(tmp_path) -> None:
-    """The push-triggered release runs alongside the build: every image can be missing (exit 3)."""
+def test_a_manifest_with_every_image_missing_is_exit_3(tmp_path) -> None:
+    """Exit 3 is still distinct from 1, so the log says WHICH; the release fails on both."""
     m = _manifest(tmp_path, images={}, missing=["cortex-bff", "graph-host"])
     assert retag.verify(m, "0.4.65", _registry(_GOOD)) == 3
 
@@ -97,18 +97,154 @@ def _step(wf: str, header: str) -> int:
     return wf.index(f"      - name: {header}")
 
 
-def test_the_release_job_verifies_between_the_retag_and_the_upload() -> None:
+def _code(block: str) -> str:
+    return "\n".join(ln for ln in block.splitlines() if not ln.lstrip().startswith("#"))
+
+
+def test_the_release_tags_and_verifies_before_it_publishes() -> None:
+    """Retag, then verify, then chart-releaser, then the manifest: a release exists only over
+    images that are tagged and read back. chart-releaser ran FIRST until 2026-10-25."""
     wf = _RELEASE_WF.read_text(encoding="utf-8")
     retag_at = _step(wf, "Retag images to the chart version, by digest")
     verify_at = _step(wf, "Verify the release tags resolve to the manifest digests")
+    publish_at = _step(wf, "Run chart-releaser")
     upload_at = _step(wf, "Attach the digest manifest to the chart release")
-    assert retag_at < verify_at < upload_at
-    block = wf[verify_at:upload_at]
-    code = "\n".join(ln for ln in block.splitlines() if not ln.lstrip().startswith("#"))
-    assert "retag_images_by_digest.py --verify" in code
-    assert "steps.retag.outputs.version" in code
-    # Under `bash -e` an uncaptured exit aborts the step, and the exit-3 warning below cannot run.
-    assert "|| rc=$?" in code and '"$rc" = "3"' in code
+    assert retag_at < verify_at < publish_at < upload_at
+    verify = _code(wf[verify_at:publish_at])
+    assert "retag_images_by_digest.py --verify" in verify
+    assert "steps.retag.outputs.version" in verify
+    # Under `bash -e` an uncaptured exit aborts the step before the annotation; a `| tee` would
+    # hand rc tee's exit (the default shell has no pipefail).
+    assert "|| rc=$?" in verify and 'exit "$rc"' in verify and "| tee" not in verify
+
+
+def test_no_missing_image_is_a_warning() -> None:
+    """Exit 3 was a `::warning::` in both steps, which is how 0 of 19 published green."""
+    wf = _RELEASE_WF.read_text(encoding="utf-8")
+    steps = _code(wf[_step(wf, "Retag images to the chart version, by digest"):
+                     _step(wf, "Run chart-releaser")])
+    assert "::warning::" not in steps
+    assert "3) echo \"::error::" in steps and "exit 3" in steps
+
+
+def test_a_dispatch_must_name_the_release_tags_own_commit() -> None:
+    wf = _RELEASE_WF.read_text(encoding="utf-8")
+    retag_step = _code(wf[_step(wf, "Retag images to the chart version, by digest"):
+                          _step(wf, "Verify the release tags resolve to the manifest digests")])
+    assert 'refs/tags/invincible-agent-${version}^{commit}' in retag_step
+    assert '"${tagged}" != "${sha}"' in retag_step
+
+
+def _yaml(path: pathlib.Path) -> dict:
+    import yaml
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def test_the_release_is_called_by_the_build_and_needs_it() -> None:
+    """THE ROOT CAUSE: the release had its own `push` trigger and raced the matrix."""
+    rel = _yaml(_RELEASE_WF)
+    triggers = rel.get("on", rel.get(True))  # PyYAML reads a bare `on:` key as True
+    assert "push" not in triggers and "workflow_call" in triggers and "workflow_dispatch" in triggers
+    jobs = _yaml(_BUILD_WF)["jobs"]
+    release = jobs["release"]
+    assert release["uses"] == "./.github/workflows/release-helm-charts.yml"
+    assert "build" in release["needs"] and "release-gate" in release["needs"]
+    assert "always()" not in str(release.get("if", ""))
+    gate = jobs["release-gate"]
+    assert "build" in gate["needs"] and gate["if"].startswith("always()")
+    assert "needs.build.result" in _code(gate["steps"][0]["run"])
+    assert "helm/" in jobs["helm-changed"]["steps"][-1]["run"]
+
+
+# ── THE NO-OVERWRITE GUARD ─────────────────────────────────────────────────────────────────
+_SVCS = ["cortex-bff", "graph-host"]
+_SRC = {f"{_REG}/cortex-bff:{_COMMIT}": _A, f"{_REG}/graph-host:{_COMMIT}": _B}
+
+
+def _dst(states: dict):
+    """A destination reader: `states` maps a service to its tag_state; unnamed ones are absent."""
+    return lambda ref: states.get(ref.split("/")[-1].split(":")[0], ("absent", None))
+
+
+def _plan(states: dict, src=None) -> dict:
+    return retag.plan(_SVCS, _COMMIT, "0.4.69", _registry(_SRC if src is None else src), _dst(states))
+
+
+def test_absent_tags_are_planned_and_nothing_refuses() -> None:
+    p = _plan({})
+    assert p["tag"] == {"cortex-bff": _A, "graph-host": _B} and retag.refusal(p) is None
+
+
+def test_a_tag_already_at_the_built_digest_is_left_alone() -> None:
+    p = _plan({"graph-host": ("present", _B)})
+    assert p["already"] == {"graph-host": _B} and "graph-host" not in p["tag"]
+    assert retag.refusal(p) is None
+
+
+def test_a_tag_at_another_digest_is_a_conflict_and_refuses() -> None:
+    """The twin of the arm above: the same present tag, one digest different."""
+    p = _plan({"graph-host": ("present", _A)})
+    assert p["conflicts"] == {"graph-host": {"tagged": _A, "built": _B}}
+    assert retag.refusal(p) == 4
+
+
+def test_an_unreadable_destination_refuses_rather_than_creates() -> None:
+    p = _plan({"graph-host": ("unreadable", None)})
+    assert "graph-host" not in p["tag"] and retag.refusal(p) == 1
+
+
+def test_a_missing_source_image_refuses() -> None:
+    p = _plan({}, src={f"{_REG}/cortex-bff:{_COMMIT}": _A})
+    assert p["missing"] == ["graph-host"] and retag.refusal(p) == 3
+
+
+def test_tag_state_tells_absent_from_unreadable(monkeypatch) -> None:
+    for rc, out, want in ((1, "ERROR: ghcr.io/x:0.4.69: not found", ("absent", None)),
+                          (1, "ERROR: MANIFEST_UNKNOWN: manifest unknown", ("absent", None)),
+                          (1, "ERROR: dial tcp: connection reset by peer", ("unreadable", None)),
+                          (0, f"{_A}\n", ("present", _A))):
+        monkeypatch.setattr(retag, "_run", lambda cmd, r=rc, o=out: (r, o))
+        assert retag.tag_state("ghcr.io/x:0.4.69") == want, out
+
+
+def _main(monkeypatch, tmp_path, dst: dict) -> "tuple[int, list, dict]":
+    """Run main() against a registry double; return (exit, the creates it issued, the manifest)."""
+    creates: list = []
+
+    def run(cmd):
+        if cmd[3] == "create":
+            creates.append(cmd)
+            return 0, ""
+        ref = cmd[4]
+        if ref in _SRC:
+            return 0, _SRC[ref]
+        if ref in dst:
+            return 0, dst[ref]
+        return 1, f"ERROR: {ref}: not found"
+
+    monkeypatch.setattr(retag, "_run", run)
+    monkeypatch.setattr(retag, "services_from_matrix", lambda: list(_SVCS))
+    out = tmp_path / "image-digests.json"
+    summary = tmp_path / "summary.md"
+    monkeypatch.setattr("sys.argv", ["retag", "--chart-version", "0.4.69", "--sha", _COMMIT,
+                                     "--manifest", str(out), "--summary-file", str(summary)])
+    rc = retag.main()
+    return rc, creates, json.loads(out.read_text(encoding="utf-8"))
+
+
+def test_a_conflict_anywhere_means_no_tag_is_written_anywhere(monkeypatch, tmp_path) -> None:
+    rc, creates, m = _main(monkeypatch, tmp_path, {f"{_REG}/graph-host:0.4.69": _A})
+    assert rc == 4 and creates == []
+    assert m["conflicts"] == {"graph-host": {"tagged": _A, "built": _B}} and m["images"] == {}
+    assert "CONFLICT `graph-host:0.4.69`" in (tmp_path / "summary.md").read_text(encoding="utf-8")
+
+
+def test_the_same_registry_without_the_conflict_tags_only_what_is_absent(monkeypatch, tmp_path) -> None:
+    """The control: graph-host already at ITS digest. One create, for cortex-bff, by digest."""
+    rc, creates, m = _main(monkeypatch, tmp_path, {f"{_REG}/graph-host:0.4.69": _B})
+    assert rc == 0
+    assert [c[-3:] for c in creates] == [["-t", f"{_REG}/cortex-bff:0.4.69", f"{_REG}/cortex-bff@{_A}"]]
+    assert m["images"] == {"cortex-bff": _A, "graph-host": _B} and m["already_tagged"] == ["graph-host"]
 
 
 def test_every_build_carries_the_oci_labels() -> None:

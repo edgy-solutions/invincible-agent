@@ -540,7 +540,9 @@ def test_regioneast_is_mapped_the_way_borduria_was_and_liaison_holds_the_approva
     assert regioneast["default"] == borduria["default"] == {"persona": "MECHANIC", "domains": ["MAINTENANCE"]}
     liaison = by_id[_LIAISON_SUB]
     # the dry run needs liaison to hold maint_fault_approval:edge-01; the supervisor group stays
-    assert set(liaison["groups"]) == {"maint-approvers-edge-01", "maint-supervisors-edge-01"}
+    # 2026-10-27: and their edge-02 mirrors (architect directive item 1)
+    assert set(liaison["groups"]) == {"maint-approvers-edge-01", "maint-supervisors-edge-01",
+                                      "maint-approvers-edge-02", "maint-supervisors-edge-02"}
     assert "default" not in liaison  # still actor-only: no persona cell
 
 
@@ -772,8 +774,17 @@ def test_users_yaml_humans_and_the_realm_import_are_the_same_population(sandbox)
 def test_the_walkers_hold_alices_groups_and_default_and_nothing_else(who):
     by_id = {u["id"]: u for u in _users_yaml()}
     alice, walker = by_id["alice@example.com"], by_id[f"{who}@example.com"]
-    assert len(alice["groups"]) == 10, alice["groups"]                   # positive control: the set is non-trivial (10: + maint-tier-ack-edge-01, ruling 2026-10-11)
-    assert set(walker["groups"]) == set(alice["groups"]) and len(walker["groups"]) == len(alice["groups"])
+    # CAPABILITY-ONLY groups are exempt (ruled 2026-10-31): a group with no persona.domain cell that a
+    # capability row grants to. Membership is a capability fixture (alice's alert-processors, alice's and
+    # bob's mcp-callers), not part of the persona set a walker mirrors. Derived from the rail, never listed.
+    cells = yaml.safe_load((_REPO / "policy" / "groups.yaml").read_text(encoding="utf-8"))["groups"]
+    rows = yaml.safe_load((_REPO / "policy" / "capability_grants.yaml").read_text(encoding="utf-8"))["capabilities"]
+    cap_only = {g for r in rows.values() for g in (r.get("grant_to_groups") or []) if not cells.get(g)}
+    assert cap_only & set(alice["groups"]), "positive control: alice holds a capability-only group"
+    mirrored = [g for g in alice["groups"] if g not in cap_only]
+    assert len(mirrored) == 11, mirrored                                 # positive control: the set is non-trivial (11: + maint-tier-ack-edge-01, ruling 2026-10-11; + maint-tier-ack-edge-02, 2026-10-27)
+    held = [g for g in walker["groups"] if g not in cap_only]
+    assert set(held) == set(mirrored) and len(held) == len(mirrored)
     assert walker["default"] == alice["default"]
     # NO DIRECT GRANT. The only rows naming a walker are the capability rows whose grant_to is DERIVED from
     # group membership (the two derived-invoker seals pin each such row to the derived set exactly, both

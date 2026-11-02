@@ -99,6 +99,11 @@ class User(BaseModel):
     # isn't email carries none. Stays `None` — never defaulted to a non-mailbox
     # value, so no consumer can mistake it for a real address.
     email: Optional[str] = None
+    # The OAuth client the token was issued to (the verified payload's `azp`): which front door
+    # ("cortex-ui", an MCP server's client) the caller came through. Never WHO is authorized (use
+    # authz_id). It does name the DOOR whose call policy applies (authz/call_capability.py,
+    # `can_call:<tag>`); otherwise AUDIT / DISPLAY. None when the token carries none; never defaulted.
+    azp: Optional[str] = None
     # The AUTHORIZATION identity — the key Topaz/policy is seeded by, resolved
     # from USER_ENTITLEMENT_CLAIM (email by default; employee-ID at work-deploy),
     # falling back to `sub` when the claim is absent. This is what every
@@ -190,6 +195,21 @@ def resolve_token_identity(
     return sub, authz_id, payload.get("email")
 
 
+def verified_claims(token: str) -> dict:
+    """Verify the token against Keycloak's JWKS and return its payload.
+
+    The RS256 signature is checked against the public key. Audience check is relaxed
+    (verify_aud=False) to ensure compatibility across client types. Raises jwt errors unchanged.
+    """
+    signing_key = jwks_client.get_signing_key_from_jwt(token)
+    return jwt.decode(
+        token,
+        signing_key.key,
+        algorithms=["RS256"],
+        options={"verify_aud": False}
+    )
+
+
 def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
     FastAPI dependency to validate the incoming OIDC token.
@@ -197,17 +217,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
     try:
         # 1. Fetch Keycloak Public Keys (JWKS)
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
-        
-        # 2. Decode and Verify JWT
-        # We verify the RS256 signature against the public key.
-        # Audience check is relaxed (verify_aud=False) to ensure compatibility across client types.
-        payload = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            options={"verify_aud": False}
-        )
+        # 2. Decode and Verify JWT (see verified_claims)
+        payload = verified_claims(token)
         
         realm_access = payload.get("realm_access", {})
         roles = realm_access.get("roles", [])
@@ -288,6 +299,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         return User(
             id=user_id or authz_id,   # `sub` normally; authz_id if a token omits sub
             email=email,
+            azp=payload.get("azp"),
             authz_id=authz_id,
             roles=roles,
             persona=persona,
@@ -295,7 +307,11 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             entitlement_source=entitlement_source,
             entitlements=entitlements,
         )
-        
+
+    except HTTPException:
+        # A refusal raised above (503 authorization_unavailable, 401 no identity) is already
+        # the answer; the catch-all below would re-wrap it as a 401 and hide the outage.
+        raise
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

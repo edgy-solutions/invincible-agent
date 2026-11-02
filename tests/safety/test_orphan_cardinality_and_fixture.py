@@ -20,7 +20,7 @@ from agent_fleet.safety_agent.entities import (
     HAZARDS,
     WRITE_UPS,
     WORK_ORDERS,
-    CRITICAL_ITEMS,
+    SAFETY_ITEMS,
     Hazard,
     Mitigation,
 )
@@ -150,8 +150,8 @@ def test_no_identity_value_is_shared_across_fixture_field_kinds():
     buckets = {
         "hazard_id": {h.hazard_id for h in HAZARDS},
         "mitigation_id": {m.mitigation_id for h in HAZARDS for m in h.mitigations},
-        "csi_id": {c.csi_id for c in CRITICAL_ITEMS},
-        "part_number": {c.part_number for c in CRITICAL_ITEMS}
+        "csi_id": {c.csi_id for c in SAFETY_ITEMS},
+        "part_number": {c.part_number for c in SAFETY_ITEMS}
         | {w.part_number for w in WORK_ORDERS},
         "work_order_id": {w.work_order_id for w in WORK_ORDERS},
         "write_up_id": {w.write_up_id for w in WRITE_UPS},
@@ -174,7 +174,7 @@ def test_no_identity_value_is_a_prefix_of_another():
         for bucket in (
             {h.hazard_id for h in HAZARDS},
             {m.mitigation_id for h in HAZARDS for m in h.mitigations},
-            {c.csi_id for c in CRITICAL_ITEMS},
+            {c.csi_id for c in SAFETY_ITEMS},
             {w.work_order_id for w in WORK_ORDERS},
             {w.write_up_id for w in WRITE_UPS},
         )

@@ -46,6 +46,7 @@ from fastapi import (
     Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status,
 )
 from fastapi import Query as _Query
+from fastapi import Path as _Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from neo4j import GraphDatabase
@@ -56,11 +57,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
+from iagent_mesh.review_coverage import ReviewShapeRow
+from iagent_mesh.provenance import EvidenceRef  # the SDK model; the one EvidenceRef (ruling 2026-10-31)
+from pydantic import ValidationError as _PydanticValidationError
+from . import review_coverage as _rcov
+from .review_coverage import ItemReviewCoverage
 from . import frontend_menu_store
+from .ingest_api import (
+    BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, MCP_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse,
+    Entitlements, ExportProfile, Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing,
+    RetriesListing,
+    RetryResponse, StatusBody, TitleLeafResponse,
+)
+from .ingest_api import EvidenceRef as _ServedEvidenceRef  # the served contract
 from .identity_vault import (
     _ensure_the_audit_line_actually_ARRIVES,
     VAULT,
     RedemptionOutcome,
+    vault_slots,
     vault_ttl_seconds,
     logger as _vault_audit_log,   # the ONE logger whose level the vault owns
 )
@@ -69,6 +83,7 @@ from .answer_artifact_writer import (
     DurabilityStatus,
     get_writer,
 )
+from .authz.refusal import relay_refusal
 
 
 logger = logging.getLogger("cortex")
@@ -149,6 +164,48 @@ def _env_int(name: str, default: int) -> int:
 
 
 _LEAF_BACKSTOP_ACTOR = "bff:manifest-leaf-backstop"
+
+
+# No Retry-After value existed in src/; 5 s matches the 5 s Topaz client timeout.
+_CAN_DROP_RETRY_AFTER = "5"
+
+
+def _row_dropper(row: dict) -> str:
+    """The dropper of record for a status row: `on_behalf_of`, the actor `_admit_on_behalf_of`
+    resolved at `record_received` (the PRINCIPAL when a delegate dropped for them). `submitted_by`
+    is the authenticated delegate and never answers a drop question; it is only the fallback for a
+    row that recorded no actor."""
+    return str((row or {}).get("on_behalf_of") or (row or {}).get("submitted_by") or "").strip()
+
+
+async def _can_drop_or_refuse(kind: str, dropper_id: str) -> None:
+    """THE one can_drop check, called by every site that sets a row's kind (the two doors,
+    title_leaf, /leaf, the BFF leaf backstop). A kind is gated iff the Topaz object
+    `capability:can_drop:<kind>` exists; then the dropper must hold `can_invoke`. Returns when the
+    dropper may drop it. Raises 403 `not_entitled_to_drop` (policy refusal) when not, and 503
+    `authorization_unavailable` / `authorization_unconfigured` when the directory cannot say --
+    a failed read is never "not gated"."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+    from .authz.refusal import policy_refusal
+
+    try:
+        refused = await run_in_threadpool(human_tasks.can_drop_refusal, kind, dropper_id)
+    except human_tasks.AuthorizationUnconfigured as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("can_drop gate unavailable for kind=%s: %s", kind, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify whether this kind is restricted"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
+    if refused is not None:
+        raise policy_refusal(
+            "not_entitled_to_drop", policy_id=refused["policy_id"],
+            missing_binding=refused["missing_binding"], message=refused["message"])
 _INGEST_LEAF_BACKSTOP_SECONDS_DEFAULT = 300
 
 # Ruling 2026-10-21 (a leaf set while the run is in flight): a PDF drop whose leaf (pcn|pdn) is set
@@ -252,6 +309,22 @@ async def _apply_manifest_leaf_block(row: dict, key, manifest: dict) -> tuple:
     if title is not None:
         # The sidecar is rewritten to the leaf BEFORE the row is re-opened, so the relaunch
         # runs as the leaf; an S3 error lands in the per-row except (row skipped).
+        try:
+            await _can_drop_or_refuse(title, _row_dropper(row))
+        except HTTPException as exc:
+            code = exc.status_code
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            logger.warning("ingest_leaf_backstop ingest_id=%s kind=%s refused by can_drop: %s (%s)",
+                           rid, title, detail.get("error"), code)
+            if code != 403:
+                # the directory could not answer: leave the row untouched for the next tick
+                return "can_drop_unavailable", False
+            held = await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+                rid, candidates=_backstop_candidates(block.get("candidates")),
+                detail=f"the title read named {title}, which the dropper may not drop; "
+                       "pick another kind",
+                from_statuses=[ingest_status.EXTRACTING]))
+            return ("awaiting_kind" if held else "row_moved"), held
         await run_in_threadpool(lambda: _apply_leaf_to_sidecar(row, title))
         ok = await run_in_threadpool(lambda: ingest_status.set_leaf(
             rid, title, "title", set_by=_LEAF_BACKSTOP_ACTOR,
@@ -691,15 +764,18 @@ async def lifespan(application: FastAPI):
         #   authority : the caller's own, re-checked per ask, exactly as the portfolio verb
         #   amplifies : one request -> N sequential governed asks. Declared `slow`.
         _ratified = ratified_template_ids()
+        # ONE DESCRIPTION, TWO REGISTRATIONS: one verb keeps one meaning in whichever cell it
+        # is registered, so the second registration below reads this same variable.
+        _seed_canvas_description = (
+            "Compose a canvas from a RATIFIED TEMPLATE by asking that template's panels "
+            "through the governed interview path and returning their artifact ids in "
+            "slot order. This BUILDS A BOARD; it does not answer a question. A request "
+            "for ONE measure is that measure's verb, not this one. `template_id` names "
+            "which board: " + ", ".join(_ratified) + "."
+        )
         _register_verb(
             name="cortex_bff_orchestration",
-            description=(
-                "Compose a canvas from a RATIFIED TEMPLATE by asking that template's panels "
-                "through the governed interview path and returning their artifact ids in "
-                "slot order. This BUILDS A BOARD; it does not answer a question. A request "
-                "for ONE measure is that measure's verb, not this one. `template_id` names "
-                "which board: " + ", ".join(_ratified) + "."
-            ),
+            description=_seed_canvas_description,
             verb="mesh:seedCanvas",
             input_uri="http://invincible-agent/idp#Portfolio",
             output_uri="http://invincible-agent/mesh#CanvasSeedResult",
@@ -724,6 +800,42 @@ async def lifespan(application: FastAPI):
                 "enum": _ratified,
                 "description": "Which ratified canvas template to build.",
             }],
+        )
+        # ── THE SAME VERB IN THE PROGRAM-FINANCE CELL ──────────────────────────────────
+        #
+        # The portfolio registration above is typed `idp#Portfolio` and owned by
+        # PORTFOLIO_LEAD, so from the finance cell the chat grounded `mesh:finProgramBrief`
+        # instead and from any other cell nothing grounded. This one is typed by the class
+        # the finance board is ABOUT (`fin#Program`), so "make me a finance canvas" routes
+        # here and elicits "which program?" through the same disposition as every other verb.
+        #
+        # `name` MUST differ from the first registration's: the stale-row sweep deletes rows
+        # that share a tool_urn and verb but have a different input_uri, so a shared name
+        # would have each registration sweep the other's row away.
+        #
+        # THE SLOTS ARE DERIVED from the ratified templates and `SHARED_SLOT_REFERENTS`
+        # (`canvas_template.seed_canvas_referent_slots`), the same builder the 409's ask reads.
+        from .canvas_template import REFERENT_CELLS, seed_canvas_referent_slots
+
+        _fin_program = "http://invincible-agent/fin#Program"
+        _fin_persona, _fin_domain = REFERENT_CELLS[_fin_program]
+        _register_verb(
+            name="cortex_bff_orchestration_program_finance",
+            description=_seed_canvas_description,
+            verb="mesh:seedCanvas",
+            input_uri=_fin_program,
+            output_uri="http://invincible-agent/mesh#CanvasSeedResult",
+            endpoint_url=f"{_bff_base}/canvas/seed",
+            verb_synonyms=[
+                "make me a finance canvas",
+                "build the program finance board",
+                "set up a program finance canvas",
+                "make me a finance board for a program",
+            ],
+            owner_persona=_fin_persona,
+            domains=[_fin_domain],
+            cost_class="slow",
+            slots=seed_canvas_referent_slots(),
         )
     except Exception as _exc:  # pragma: no cover
         # Best-effort, matching the fleet's posture: a failed registration means
@@ -762,6 +874,10 @@ app = FastAPI(
     version="2.1.0",
     lifespan=lifespan,
 )
+# The door client's reach (`can_call:<tag>`, 2026-10-31 M3). Added FIRST so it is the INNERMOST
+# middleware: the CORS and no-store wrappers below still apply to its refusals.
+from .authz.call_capability import DoorGuard  # noqa: E402
+app.add_middleware(DoorGuard, router=app.router)
 
 # ── /version and /fleet/version ─────────────────────────────────────────────────────────
 #
@@ -1023,14 +1139,40 @@ async def get_mesh_config(current_user: User = Depends(get_current_user)):
 # step 3 wired), `cells` is empty and `source` reflects the JWT-legacy
 # path. The picker (step 5) treats an empty cells list as "no picker
 # — the caller is on the legacy persona-in-JWT posture."
-@app.get("/me/entitlements")
+@app.get("/me/entitlements", tags=[INGEST_V1_TAG], responses={200: {"model": Entitlements}, 503: DROP_GATE_RESPONSES[503]})
 async def get_me_entitlements(current_user: User = Depends(get_current_user)):
     """Return the current user's (persona, domain) entitlement matrix.
 
     `authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop
     echoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it
     as `on_behalf_of` is refused `not_a_delegate` (2026-10-21)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, human_tasks
+
     ent = current_user.entitlements
+    # `droppable_kinds`: every registered kind except a GATED kind (Topaz object
+    # `capability:can_drop:<kind>` exists) this caller is not granted. One unreadable object makes
+    # the whole answer 503 -- never a partial or guessed list.
+    def _droppable() -> list[str]:
+        out: list[str] = []
+        for reg in content_kinds.registrations():
+            if human_tasks.can_drop_refusal(reg.kind, current_user.authz_id) is None:
+                out.append(reg.kind)
+        return out
+
+    try:
+        droppable_kinds = await run_in_threadpool(_droppable)
+    except human_tasks.AuthorizationUnconfigured as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("droppable_kinds unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify which kinds are restricted"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
     return {
         "user_id": current_user.id,
         "authz_id": current_user.authz_id,
@@ -1044,6 +1186,7 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
             else None
         ),
         "source": ent.source,
+        "droppable_kinds": droppable_kinds,
     }
 
 
@@ -1060,7 +1203,9 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
 from pydantic import BaseModel as _BaseModel  # noqa: E402
 from pydantic import BeforeValidator as _BeforeValidator, StrictFloat as _StrictFloat  # noqa: E402
 from pydantic import StrictInt as _StrictInt  # noqa: E402
+from pydantic import StrictBool as _StrictBool, StrictStr as _StrictStr  # noqa: E402
 from typing import Annotated as _Annotated  # noqa: E402
+from typing import Union as _Union  # noqa: E402
 
 
 class HumanTaskRegisterRequest(_BaseModel):
@@ -1118,40 +1263,26 @@ class _RowEditsModel(_BaseModel):
     model_config = {"extra": "forbid"}
 
 
-class EvidenceRef(_BaseModel):
-    """Where on the source page a steward's edit is evidenced: the SDK's `EvidenceRef{page, bbox}`
-    (iagent-mesh-sdk lane/ca-0.9.11 provenance.py) plus an optional `note` (architect 2026-10-21;
-    the pre-ruling free string is now `note`). The wire also still takes that bare string until
-    cortex ships the struct; `_wire_evidence_ref` validates both.
-
-    Architect ruling (spec 205): "bbox may be null; page may not. Null bbox means 'stated on this
-    page, no box we can draw'. The card jumps to the page with no outline and labels it 'on page N,
-    no box'. Derived fields carry no evidence_ref at all." So `page` is required and `bbox` is
-    `None` (or omitted, which is the same) or four finite numbers."""
-    model_config = {"extra": "forbid", "frozen": True}
-    page: _StrictInt = Field(ge=1)
-    bbox: Optional[list[_StrictInt | _Annotated[_StrictFloat, Field(allow_inf_nan=False)]]] = Field(
-        default=None, min_length=4, max_length=4)
-    note: Optional[str] = None
-
-    @model_validator(mode="after")
-    def _note(self):
-        if self.note is not None:
-            _nonblank(self.note)
-        return self
-
-
 def _wire_evidence_ref(v):
     """The wire check for an evidence_ref: the struct (validated by `EvidenceRef`) or the legacy
-    non-blank string; anything else is a 422. The value is kept in the form it arrived in -- the
-    act normalizes it with `steward_correction.normalize_evidence_ref`, the same function the
-    runner applies to whatever it is forwarded."""
+    non-blank string; anything else is a 422. The struct is checked here with the SDK model plus the
+    named checks (the act no longer calls `steward_correction.normalize_evidence_ref`); the Restate
+    runner applies the same SDK model in its own `normalize_evidence_ref` to whatever it is forwarded."""
     if v is None:
         return None
     if isinstance(v, str):
         return _nonblank(v)
     if isinstance(v, dict):
-        ref = EvidenceRef.model_validate(v)
+        # Architect ruling 2026-10-31: the SDK's rule wins; a ref it (or the named checks) refuses is
+        # a 422 naming the check. The checks are strict (no bool/str coercion) where the model is lax.
+        _check = _wire_evidence_ref_failure(v)
+        try:
+            ref = EvidenceRef.model_validate(v)
+        except _PydanticValidationError:
+            _check = _check or "invalid"
+        if _check is not None:
+            raise HTTPException(status_code=422, detail={
+                "error": "evidence_ref_invalid", "check": _check})
         return {"page": ref.page, "bbox": list(ref.bbox) if ref.bbox is not None else None,
                 **({"note": ref.note.strip()} if ref.note is not None else {})}
     raise ValueError("an evidence_ref is {page, bbox, note?} or a non-blank string")
@@ -1229,6 +1360,44 @@ class HeaderEdit(_RowEditsModel):
         return self
 
 
+class CoverageGroup(_RowEditsModel):
+    """One group of parts a steward folded without opening: the grouping rule, its key, and the
+    members NOT opened (part_index values)."""
+    rule: _Annotated[str, Field(min_length=1)]
+    key: _Annotated[str, Field(min_length=1)]
+    parts: list[_StrictInt]
+
+
+_UnitFloat = _Annotated[_StrictFloat, Field(ge=0, le=1, allow_inf_nan=False)]
+_UnitInt = _Annotated[_StrictInt, Field(ge=0, le=1)]
+
+
+class CoverageShared(_RowEditsModel):
+    """One evidence crop that many parts cite (recorded, not re-derived)."""
+    rule: _Annotated[str, Field(min_length=1)]
+    page: _StrictInt = Field(ge=1)
+    bbox: _Annotated[list[_UnitFloat | _UnitInt], Field(min_length=4, max_length=4)]
+    parts: list[_StrictInt]
+    confirmed: _StrictBool
+
+
+class ReviewCoverage(_RowEditsModel):
+    """DEPRECATED, accepted for 0.4.73 only: the 1.4.0 `parts` form; it is read as items (see
+    `review_coverage.py`). The item form is `ItemReviewCoverage`.
+
+    What the steward looked at on a document promotion (ruled 2026-10-29: a sampled promote is
+    legal if it is recorded). Ids are the extraction's integer `part_index`. The route checks every
+    part was opened or folded into a group (`review_coverage_invalid`); `sampled`, `flagged`,
+    `shared` and `sample` are recorded as sent."""
+    rules_version: _Annotated[str, Field(min_length=1)]
+    looked_at: list[_StrictInt]
+    sampled: list[_StrictInt]
+    flagged: list[_StrictInt]
+    groups: list[CoverageGroup]
+    shared: list[CoverageShared]
+    sample: Optional[dict[str, _StrictStr | _StrictInt | _StrictFloat | _StrictBool]] = None
+
+
 def _promotion_row_edits_enabled() -> bool:
     """IAGENT_PROMOTION_ROW_EDITS: ON only for the exact string "true" (after strip, lowercased).
     Default OFF (architect ruling 2026-10-18: server-flagged off until one live correction is proved)."""
@@ -1246,14 +1415,24 @@ class HumanTaskActRequest(_BaseModel):
     row_edits: Optional[RowEdits] = None
     # Document promotion `promoted` only (same flag as row_edits): header-field corrections.
     header_edits: Optional[list[HeaderEdit]] = None
+    # Document promotion `promoted` only: what the steward opened vs folded (provenance).
+    review_coverage: Optional[_Union[ItemReviewCoverage, ReviewCoverage]] = Field(
+        default=None, union_mode="left_to_right")
+    # document_empty_confirm `has_parts` only (spec 208): the page the steward points at.
+    page: Optional[_StrictInt] = None
 
     @model_validator(mode="after")
     def _verb_fields(self):
+        if self.page is not None and self.decision != "has_parts":
+            raise ValueError("page is only valid with decision='has_parts'")
         if self.reason_code is not None and self.decision != "rejected":
             raise ValueError("reason_code is only valid with decision='rejected'")
         if self.row_edits is not None and self.decision not in ("approved", "promoted"):
             raise ValueError("row_edits is only valid with decision='approved' (grouped review) "
                              "or 'promoted' (document promotion)")
+        if self.review_coverage is not None and self.decision != "promoted":
+            raise ValueError("review_coverage is only valid with decision='promoted' "
+                             "(document promotion)")
         if self.header_edits is not None and not self.header_edits:
             self.header_edits = None
         if self.header_edits is not None:
@@ -1326,6 +1505,26 @@ async def register_human_task(
     logger.info("human_task registered: task_id=%s audience=%s recipients=%d",
                 req.task_id, req.audience, len(result.get("recipients", [])))
     return result
+
+
+class HumanTaskExpireRequest(_BaseModel):
+    task_id: str
+    workflow_id: Optional[str] = None
+
+
+@app.post("/internal/human_tasks/expire")
+async def expire_human_task(
+    req: HumanTaskExpireRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Retire the still-`pending` queue row(s) of a task whose human_await TIMED OUT, so neither
+    REST nor the feed offers a task nobody can act on. INTERNAL seam, same gate as register
+    (get_current_user). `expired == 0` is a 200: an already-resolved task stays resolved."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    n = await run_in_threadpool(lambda: human_tasks.expire_open_task(req.task_id, req.workflow_id))
+    logger.info("human_task expired: task_id=%s workflow_id=%s rows=%d", req.task_id, req.workflow_id, n)
+    return {"task_id": req.task_id, "workflow_id": req.workflow_id, "expired": n}
 
 
 @app.post("/access_requests")
@@ -1466,7 +1665,7 @@ async def file_triage_task(
             "recipients": len(result.get("recipients", []))}
 
 
-@app.get("/me/human_tasks")
+@app.get("/me/human_tasks", tags=[INGEST_V1_TAG, MCP_TAG], responses={200: {"model": HumanTasksListing}})
 async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
     """The caller's pending queue (REST initial-load; the live path is the
     Electric subscription). Filtered by recipient_id=caller.authz_id — the SAME key
@@ -1550,7 +1749,7 @@ async def get_templates(current_user: User = Depends(get_current_user)):
     """
     from starlette.concurrency import run_in_threadpool
     from .canvas_template import (
-        load_template, ratified_template_ids, template_ref,
+        SHARED_SLOT_REFERENTS, load_template, ratified_template_ids, template_ref,
     )
 
     def _read():
@@ -1576,6 +1775,20 @@ async def get_templates(current_user: User = Depends(get_current_user)):
                 "template_ref": template_ref(t),
                 "panels": len(t.panels),
                 "shared_slots": [sl.name for sl in (t.shared_slots or [])],
+                # `shared_slots` (names) stays as cortex reads it; this sibling says which of
+                # them the server can ASK about, so a picker can offer the row and expect a 409
+                # carrying an ask instead of only labelling it "needs a binding". No
+                # enumeration happens here: `askable` is a fact about the declaration.
+                "shared_slot_detail": [
+                    {
+                        "name": sl.name,
+                        "param": sl.bind_as,
+                        "required": sl.required,
+                        "consumed": any(sl.name in p.consumes for p in t.panels),
+                        "askable": sl.bind_as in SHARED_SLOT_REFERENTS,
+                    }
+                    for sl in (t.shared_slots or [])
+                ],
             })
         return rows, broken
 
@@ -2325,6 +2538,62 @@ async def plan_measure(
     }
 
 
+class FinanceMeasureBody(_BaseModel):
+    """Only `params`. There is no `state_ref`, deliberately: finance_agent's `MeasureRequest`
+    (agent_fleet/finance_agent/main.py) carries `params` and `user_email` and nothing else, so a
+    `state_ref` here would be accepted and silently dropped."""
+    params: dict = {}
+
+
+# A measure name is one plain path segment. Without this, `..` or a decoded `?`/`#` in `fn` would
+# send the caller's bearer to some other engine path; the ruling exposes no engine route directly.
+_MEASURE_NAME = r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$"
+
+
+@app.post("/finance/measure/{fn}", tags=[MCP_TAG])
+async def finance_measure(
+    fn: _Annotated[str, _Path(pattern=_MEASURE_NAME)],
+    body: FinanceMeasureBody,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """A thin relay to finance_agent `/measure/{fn}` (architect ruling 10-30, ruling 1: "add a
+    thin BFF relay for /measure/{fn} (it's what cortex calls anyway). No engine route is exposed
+    directly.").
+
+    Unlike `plan_measure`, this relay forwards the caller's bearer and `authz_id`, so the engine's
+    program-visibility check (`_require_visible`) decides for the real caller. The engine's 422
+    `needs_slots` is relayed unchanged (it is the declared refusal for a missing slot, not a
+    policy refusal); every other >= 400 goes through `relay_refusal` as `export_package` does.
+    A 200 is the engine's envelope, untouched."""
+    bearer = _user_bearer(request)
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            rr = await client.post(
+                f"{_ENGINE_FIN_URL}/measure/{fn}",
+                json={"params": body.params, "user_email": current_user.authz_id},
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_unreachable", "message": str(exc),
+        })
+
+    if rr.status_code == 422:
+        raise HTTPException(status_code=422,
+                            detail=_engine_refusal_detail(rr, f"/measure/{fn}"))
+    if rr.status_code >= 400:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, relay_refusal(detail)))
+
+    return _engine_answer(rr, f"/measure/{fn}")
+
+
 @app.get("/plan/state_version")
 async def plan_state_version(
     state_ref: str = "baseline",
@@ -2386,30 +2655,227 @@ _ENGINE_FIN_URL = os.getenv("ENGINE_FIN_PUBLIC_URL", "http://iagent-engine-fin:8
 _SHA256_LOCATOR_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
+# Each engine's OWN owner key on the `recipient_readers` rail (policy/recipient_readers.yaml). They are
+# identities, not cases: the rows (who reads which scope) are the rail's, and an owner string that is
+# not a key of that file reads nobody.
+_COST_OWNER = "cost"
+_FIN_OWNER = "finance"
+
+
+def _rail_reader(owner: str, scope: str, authz_id: Optional[str]) -> bool:
+    """`can_read_recipient(owner, ...)`, keyed on the PERSON's `authz_id`; a transport/HTTP failure
+    is a 503 (`recipient_readers_unavailable`), never a deny."""
+    from agent_fleet.utils.recipient_readers import can_read_recipient
+    try:
+        return bool(authz_id) and bool(can_read_recipient(owner, scope, authz_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("recipient_readers check failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail={"reason": "recipient_readers_unavailable"}
+        ) from exc
+
+
 def _export_recipients_for(user: "User") -> list[str]:
-    """Every recipient scope `user` may export to or download from, keyed on `authz_id` — the
-    SAME claim the engine's own /artifact route keys its authorization on (main.py's
-    `_scope_of_artifact` + `measures.readers_for_recipient`), never `user.id`. The two checks
-    agree because both read `seed.readers_for_recipient`.
-    """
+    """Every cost recipient scope `user` may export to or download from: the scopes engine-cost
+    DISCLOSES (`RECIPIENT_SCOPES`), each asked of the `recipient_readers` rail under owner
+    `cost`, keyed on `authz_id` -- the SAME claim and the same rail the engine's own /artifact
+    route asks. One Topaz call per scope. A rail that cannot be asked is a 503."""
     from agent_fleet.cost_agent import seed as _cost_seed
     return sorted(
         s for s in _cost_seed.RECIPIENT_SCOPES
-        if user.authz_id and user.authz_id in _cost_seed.readers_for_recipient(s)
+        if _rail_reader(_COST_OWNER, s, user.authz_id)
     )
 
 
 def _fin_export_recipients_for(user: "User") -> list[str]:
     """`_export_recipients_for`'s exact shape, read against engine-fin's own
-    `export.RECIPIENT_SCOPES`/`readers_for_recipient` instead of cost's — the two engines'
-    disclosures are entitled independently, and this is why there are two functions rather
-    than one parameterised by module: a caller reading the wrong engine's scopes would grant
-    access this gateway never meant to."""
+    `export.RECIPIENT_SCOPES` under owner `finance` -- the two engines' disclosures are entitled
+    independently (the rail's object id carries the owner), and this is why there are two
+    functions rather than one parameterised by module: a caller reading the wrong engine's
+    scopes would grant access this gateway never meant to."""
     from agent_fleet.finance_agent import export as _fin_export
     return sorted(
         s for s in _fin_export.RECIPIENT_SCOPES
-        if user.authz_id and user.authz_id in _fin_export.readers_for_recipient(s)
+        if _rail_reader(_FIN_OWNER, s, user.authz_id)
     )
+
+
+# -- PLAN ANSWERS EXPORT (policy/exports) ----------------------------------------------------
+#
+# A plan recipient is named by an answer-export profile (`agent_fleet/utils/answer_exports.py`,
+# seed `policy/exports/`), not by cost's `RECIPIENT_SCOPES`. Its READERS are the
+# `recipient_readers` rail under owner "plan": `can_read_recipient("plan", scope, authz_id)`.
+# Deny-by-default; until that owner exists on the rail nobody can export to one, which is intended.
+# PRODUCING one also needs `can_export:<profile name>` (ruled (b) 10-30, deny by default, the row is
+# policy's): "exportable" = reader AND can_export. The download stays reader-only.
+_PLAN_OWNER = "plan"
+_NOT_A_KIND = "not_a_kind_this_recipient_takes"
+_SCENARIO_ANSWER = "scenario_answer"
+
+
+def _cost_profiles_get(url: str) -> "httpx.Response":
+    """The one GET to engine-cost for its profile set (a seam: the tests serve cost's real app
+    through it). It carries NO person and so no bearer: the set is policy, not a person's data."""
+    return httpx.get(url, timeout=10.0)
+
+
+def _plan_profiles() -> dict:
+    """The answer-export profiles engine-cost SERVES (`GET /answers_export/profiles`), validated by
+    `answer_exports.profiles_from_wire`, the loader's own validator. The BFF holds no copy and
+    reads no profile from disk: the registry this code reads is the one the server serves, so an
+    overlay mounted on cost alone reaches the picker with no code change. Nothing is cached (a
+    cached set is a copy); callers that need it more than once hold the dict they were given.
+    Raises `AnswerProfilesUnavailable` when cost cannot be asked or serves a set that does not
+    validate: each caller decides what an outage means for it."""
+    from agent_fleet.utils import answer_exports as _ae
+    try:
+        rr = _cost_profiles_get(f"{_ENGINE_COST_URL}/answers_export/profiles")
+    except Exception as exc:  # noqa: BLE001 -- transport failure of the ask itself
+        logger.error("answer export profiles: engine-cost unreachable: %s", exc)
+        raise _ae.AnswerProfilesUnavailable(f"engine-cost unreachable: {exc}") from exc
+    if rr.status_code != 200:
+        logger.error("answer export profiles: engine-cost answered %s", rr.status_code)
+        raise _ae.AnswerProfilesUnavailable(f"engine-cost answered {rr.status_code}")
+    try:
+        return _ae.profiles_from_wire(rr.json())
+    except (_ae.AnswerExportError, ValueError) as exc:
+        logger.error("answer export profiles served by engine-cost do not validate: %s", exc)
+        raise _ae.AnswerProfilesUnavailable(f"served set does not validate: {exc}") from exc
+
+
+def _plan_profiles_unavailable() -> HTTPException:
+    return HTTPException(status_code=503, detail={"reason": "answer_profiles_unavailable"})
+
+
+def _plan_scope_names(profiles: Optional[dict] = None) -> list[str]:
+    profiles = _plan_profiles() if profiles is None else profiles
+    return sorted({s for p in profiles.values() for s in p.recipients})
+
+
+def _plan_reader(scope: str, authz_id: Optional[str]) -> bool:
+    """`can_read_recipient("plan", ...)`; a transport/HTTP failure is a 503, never a deny."""
+    return _rail_reader(_PLAN_OWNER, scope, authz_id)
+
+
+def _plan_may_export(profile_name: str, authz_id: Optional[str]) -> bool:
+    """`can_export:<profile>` (Topaz `can_invoke` on the capability). A blank authz_id is False;
+    a transport/HTTP failure is a 503, never a deny. The same question as the review export's
+    `_may_export_profile` (#163); the two fold together at iagent-mesh v0.9.12."""
+    from agent_fleet.utils.export_capability import can_export
+    try:
+        return bool(authz_id) and bool(can_export(profile_name, authz_id))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("can_export check failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail={"reason": "can_export_unavailable"}
+        ) from exc
+
+
+def _plan_recipients_for(user: "User", profiles: Optional[dict] = None) -> list[str]:
+    """Every plan recipient scope `user` may export to: named by a served profile and admitted by
+    the `recipient_readers` rail. A blank `authz_id` is []. `AnswerProfilesUnavailable` escapes."""
+    if not user.authz_id:
+        return []
+    return [s for s in _plan_scope_names(profiles) if _plan_reader(s, user.authz_id)]
+
+
+def _answer_profiles_unavailable_type() -> type:
+    from agent_fleet.utils import answer_exports as _ae
+    return _ae.AnswerProfilesUnavailable
+
+
+def _plan_profile_name(scope: str, profiles: Optional[dict] = None) -> Optional[str]:
+    from agent_fleet.utils import answer_exports as _ae
+    profile = _ae.profile_for_recipient(_plan_profiles() if profiles is None else profiles, scope)
+    return profile.name if profile is not None else None
+
+
+def _plan_exportable_for(
+    user: "User", readers: Optional[list[str]] = None, profiles: Optional[dict] = None,
+) -> list[str]:
+    """The plan recipient scopes `user` may EXPORT to: a reader AND `can_export` on the scope's
+    profile. Nobody is offered a recipient the export would refuse. `readers` is
+    `_plan_recipients_for(user)` when the caller already has it."""
+    profiles = _plan_profiles() if profiles is None else profiles
+    if readers is None:
+        readers = _plan_recipients_for(user, profiles)
+    out = []
+    for s in readers:
+        name = _plan_profile_name(s, profiles)
+        if name is not None and _plan_may_export(name, user.authz_id):
+            out.append(s)
+    return out
+
+
+def _plan_exportable_or_none(user: "User", profiles: Optional[dict] = None) -> list[str]:
+    """The plan recipients a caller may export to, for the 409 listing INSIDE the `export_package`
+    door (a door's error listing, not a picker): a rail that cannot be asked omits them there and
+    the door itself answers 503. The pickers do not use this; see `_picker_scopes`."""
+    try:
+        return _plan_exportable_for(user, None, profiles)
+    except (HTTPException, _answer_profiles_unavailable_type()):
+        return []
+
+
+def _plan_export_refusal_403(profile_name: str, scope: str) -> HTTPException:
+    """The compliant refusal for a reader who lacks `can_export:<profile>`."""
+    from .authz.refusal import policy_refusal
+    return policy_refusal(
+        "not_entitled_to_export", policy_id=f"capability_grants:can_export:{profile_name}",
+        missing_binding=f"can_invoke can_export:{profile_name}",
+        message=f"You are not entitled to export {profile_name} answers.",
+        extra={"recipient_scope": scope})
+
+
+def _plan_refusal_403(scope: str) -> HTTPException:
+    """The compliant refusal for a plan recipient the caller is not a reader of: the family
+    `recipient_readers` is object-scoped, so it names the family and no key."""
+    from .authz.refusal import policy_refusal
+    return policy_refusal(
+        "not_a_recipient_you_may_export_to", policy_id="recipient_readers",
+        missing_binding="can_read_recipient(recipient_scope)",
+        message="You are not a reader of this recipient.", extra={"recipient_scope": scope})
+
+
+def _no_recipient_refusal_403() -> HTTPException:
+    """The compliant refusal for a picker whose caller reads no recipient of any owner it lists
+    (the plan family of `_plan_refusal_403`: `recipient_readers` is object-scoped, so no key)."""
+    from .authz.refusal import policy_refusal
+    return policy_refusal(
+        "no_recipient_you_may_export_to", policy_id="recipient_readers",
+        missing_binding="can_read_recipient(recipient_scope)",
+        message="You read no recipient of any owner this picker lists.")
+
+
+def _picker_scopes(user: "User") -> tuple[list[str], list[str], dict]:
+    """`(cost scopes, plan scopes, plan profiles)` the caller may export to, for the two pickers
+    (GET and POST `/export/package/recipients`). An outage is a 503 and is never omitted: the rail
+    for any owner it asks (cost, plan; the detail names the owner) or engine-cost's profile set
+    (`answer_profiles_unavailable`). "No readers" is a 403: the union across those owners is empty.
+    The owners are the ones the picker lists, not finance's (its export is the template door)."""
+    try:
+        cost = _export_recipients_for(user)
+    except HTTPException as exc:
+        raise _picker_unavailable(exc, _COST_OWNER) from exc
+    try:
+        profiles = _plan_profiles()
+        plan = _plan_exportable_for(user, None, profiles)
+    except _answer_profiles_unavailable_type() as exc:
+        raise _plan_profiles_unavailable() from exc
+    except HTTPException as exc:
+        raise _picker_unavailable(exc, _PLAN_OWNER) from exc
+    if not cost and not plan:
+        raise _no_recipient_refusal_403()
+    return cost, plan, profiles
+
+
+def _picker_unavailable(exc: HTTPException, owner: str) -> HTTPException:
+    """A rail outage re-raised at a picker with the owner it was asking; any other 503 (the
+    `can_export` check) passes through as it was."""
+    detail = exc.detail
+    if isinstance(detail, dict) and detail.get("reason") == "recipient_readers_unavailable":
+        return HTTPException(status_code=exc.status_code, detail={**detail, "owner": owner})
+    return exc
 
 
 def _user_bearer(request: Request) -> str:
@@ -2524,8 +2990,22 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
     REFUSED, NEVER DROPPED (canvas.py's rule): an id that does not resolve raises 404 rather
     than being silently omitted from the canvas — an export quietly missing an answer nobody
     asked to drop would look complete while disclosing less than the caller intended.
+
+    THE VERB HAS TWO HOMES. `resolved_intent.verb_iri` is read first; answers written before
+    `e4154f91` (2026-09-04) carry the verb only in the routing record (`routing_inline`
+    -> `action.iri`), and `resolved_intent` holds the ExtractIntent output with no verb. The
+    routing record is read only when the intent has none: the two agreed on all 1,018 artifacts
+    carrying both (measured 2026-10-28). `UNKNOWN` there means the supervisor chose no verb, so
+    `no_verb` stays the true refusal for those. `subject_instance_id` is read from the intent
+    alone. An old or malformed routing record yields None, never an error.
     """
-    resolved: list[dict] = []
+    return [_resolve_export_record(r) for r in _read_export_records(artifact_ids, user_id)]
+
+
+def _read_export_records(artifact_ids: list[str], user_id: str) -> list:
+    """The `_ARTIFACT_BY_ID_CYPHER` record of each id, owner-checked: 404 for one that does not
+    resolve (refused, never dropped), 503 when the store is down."""
+    records: list = []
     for artifact_id in artifact_ids:
         try:
             with neo4j_driver.session() as session:
@@ -2541,24 +3021,125 @@ def _resolve_export_answers(artifact_ids: list[str], user_id: str) -> list[dict]
                 status_code=404,
                 detail={"reason": "answer_not_found", "artifact_id": artifact_id},
             )
+        records.append(rec)
+    return records
 
-        intent: dict = {}
-        if rec.get("resolved_intent"):
-            try:
-                intent = json.loads(rec["resolved_intent"]) or {}
-            except (ValueError, TypeError):
-                intent = {}
 
-        def _or_none(v):
-            v = str(v or "").strip()
-            return None if not v or v == "UNKNOWN" else v
+def _resolve_export_record(rec) -> dict:
+    """One record as the engines' `{id, verb_iri, subject_instance_id}` (the two homes of the
+    verb are explained on `_resolve_export_answers`). Widens nothing."""
+    intent: dict = {}
+    if rec.get("resolved_intent"):
+        try:
+            intent = json.loads(rec["resolved_intent"]) or {}
+        except (ValueError, TypeError):
+            intent = {}
 
-        resolved.append({
-            "id": str(rec["id"]),
-            "verb_iri": _or_none(intent.get("verb_iri")),
-            "subject_instance_id": _or_none(intent.get("subject_instance_id")),
+    def _or_none(v):
+        v = str(v or "").strip()
+        return None if not v or v == "UNKNOWN" else v
+
+    verb = _or_none(intent.get("verb_iri"))
+    if verb is None:
+        try:
+            _routing = json.loads(rec.get("routing_inline") or "null")
+            verb = _or_none(_routing["action"]["iri"])
+        except (ValueError, TypeError, KeyError):
+            verb = None
+
+    return {
+        "id": str(rec["id"]),
+        "verb_iri": verb,
+        "subject_instance_id": _or_none(intent.get("subject_instance_id")),
+        "state_refs": _answer_state_refs(rec),
+    }
+
+
+def _answer_state_refs(rec) -> list[str]:
+    """The sorted distinct non-empty `state_ref` values on the answer's
+    `rendered_output.components[*]` (Engine P echoes the state it computed against; the
+    presentation agent copies it onto every component). Never raises: any parse or shape problem
+    is `[]`, and `[]` reads as BASELINE downstream (Engine P's default; pre-passthrough artifacts
+    never carried the key)."""
+    try:
+        out = json.loads(rec.get("rendered_output") or "null")
+        comps = out.get("components") if isinstance(out, dict) else None
+        if not isinstance(comps, list):
+            return []
+        refs = {c["state_ref"].strip() for c in comps
+                if isinstance(c, dict) and isinstance(c.get("state_ref"), str)}
+        return sorted(r for r in refs if r)
+    except (ValueError, TypeError, AttributeError):
+        return []
+
+
+def _plan_partition(resolved: list[dict], profile) -> tuple[list[dict], list[dict]]:
+    """THE ONE DECISION a plan recipient makes about a board, used by the export and the offer
+    alike: (taken answers, refused items). Taken = verb in `profile.kinds` and computed against
+    baseline, in board order. Refused = `{answer_id, kind, reason_code, reason}`, one refusal per
+    answer, in this order: `no_verb` when the answer has none; `not_a_kind_this_recipient_takes`
+    when its verb is not in `profile.kinds`; `scenario_answer` (ruled 10-29: only baseline
+    answers export) when a taken verb was computed against a scenario, the item also carrying
+    `scenario_id`. The state is the answer's `state_refs`; none present reads as baseline."""
+    from agent_fleet.cost_agent.canvas import REFUSAL_REASONS, NO_VERB, _verb_local
+    kinds = {_verb_local(k) for k in profile.kinds} - {None}
+    taken: list[dict] = []
+    refused: list[dict] = []
+    for ans in resolved:
+        local = _verb_local(ans.get("verb_iri"))
+        if local is not None and local in kinds:
+            scenarios = [r for r in ans.get("state_refs") or [] if r != "baseline"]
+            if not scenarios:
+                taken.append(ans)
+                continue
+            sid = ", ".join(sorted(scenarios))
+            refused.append({
+                "answer_id": ans["id"], "kind": local, "reason_code": _SCENARIO_ANSWER,
+                "scenario_id": sid,
+                "reason": f"computed against scenario {sid}; the {profile.name} export "
+                          f"takes baseline answers only",
+            })
+        elif local is None:
+            refused.append({"answer_id": ans["id"], "kind": None, "reason_code": NO_VERB,
+                            "reason": REFUSAL_REASONS[NO_VERB]})
+        else:
+            refused.append({
+                "answer_id": ans["id"], "kind": local, "reason_code": _NOT_A_KIND,
+                "reason": f"not a kind the {profile.name} export takes "
+                          f"({len(profile.kinds)} kinds)",
+            })
+    return taken, refused
+
+
+def _plan_rows(records: list, taken_ids: set[str]) -> list[dict]:
+    """The rows of the taken answers, in board order, read from the SAME records the board was
+    resolved from (no second query). Keys are `answer_exports.ANSWER_FIELDS`."""
+    rows: list[dict] = []
+    for rec in records:
+        resolved = _resolve_export_record(rec)
+        if resolved["id"] not in taken_ids:
+            continue
+        subject = None
+        try:
+            intent = json.loads(rec.get("resolved_intent") or "null")
+            if isinstance(intent, dict):
+                subject = intent.get("subject_uri") or None
+        except (ValueError, TypeError):
+            subject = None
+        valid = rec.get("valid_as_of")
+        if valid is not None and hasattr(valid, "isoformat"):
+            valid = valid.isoformat()
+        rows.append({
+            "answer_id": resolved["id"],
+            "question": rec.get("question_text"),
+            "summary": rec.get("summary"),
+            "verb": resolved["verb_iri"],
+            "subject": subject,
+            "program": rec.get("origin_program"),
+            "status": rec.get("status"),
+            "valid_as_of": None if valid is None else str(valid),
         })
-    return resolved
+    return rows
 
 
 def _partition_export_answers(resolved: list[dict]) -> list[tuple[str, list[dict]]]:
@@ -2579,7 +3160,9 @@ def _partition_export_answers(resolved: list[dict]) -> list[tuple[str, list[dict
     for ans in resolved:
         local = _verb_local(ans.get("verb_iri"))
         engine = "fin" if local in fin_verbs else "cost"
-        parts.setdefault(engine, []).append(ans)
+        # `state_refs` is the plan recipient's alone: it never reaches an engine payload.
+        parts.setdefault(engine, []).append(
+            {k: v for k, v in ans.items() if k != "state_refs"})
     return list(parts.items())
 
 
@@ -2614,15 +3197,18 @@ def _refused_entries(engine: str, refused_answers: list[dict], recipient_scope: 
 
     Items are grouped by `reason_code`, in order of each code's first appearance; a group's
     `answers` are its ids in board order. Every item of one code carries the same constant
-    reason, so the group's reason is the first item's. Only ever `status: "failed"`: cortex's
+    reason, so the group's reason is the first item's -- EXCEPT `scenario_answer`, whose reason
+    names its scenario: it groups by (code, reason) and the entry carries `scenario_id`. Only ever `status: "failed"`: cortex's
     reader drops the whole response on any other status. Never rendered on the customer page.
     """
     groups: dict[str, dict] = {}
     for item in refused_answers:
         code = item.get("reason_code")
-        g = groups.get(code)
+        # a scenario refusal names its scenario in the reason, so it groups by that reason
+        key = (code, item.get("reason")) if code == _SCENARIO_ANSWER else code
+        g = groups.get(key)
         if g is None:
-            g = groups[code] = {
+            g = groups[key] = {
                 "engine": engine,
                 "answers": [],
                 "export_id": None,
@@ -2632,6 +3218,8 @@ def _refused_entries(engine: str, refused_answers: list[dict], recipient_scope: 
                 "reason_code": code,
                 "reason": item.get("reason"),
             }
+            if item.get("scenario_id") is not None:
+                g["scenario_id"] = item["scenario_id"]
         g["answers"].append(item.get("answer_id"))
     return list(groups.values())
 
@@ -2647,8 +3235,8 @@ async def _call_engine_cost_package(
             rr = await client.post(
                 f"{_ENGINE_COST_URL}/measure/package_export",
                 json={"params": params},
-                # THE PERSON's identity, never a service identity (seed.py's RECIPIENT_READERS
-                # comment: no svc: reader is listed, and that is the confused-deputy argument
+                # THE PERSON's identity, never a service identity (ADR-0047 section 5.1: no svc:
+                # reader is ever on the rail, and that is the confused-deputy argument
                 # applied here — a service calling on the caller's behalf must carry THAT
                 # caller's identity or refuse).
                 headers={"Authorization": f"Bearer {bearer}"},
@@ -2700,11 +3288,141 @@ def _cost_refusal_section(exc: HTTPException, recipient_scope: str) -> dict:
 @app.get("/export/package/recipients")
 async def export_package_recipients(current_user: User = Depends(get_current_user)):
     """The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller
-    sees are exactly the scopes their `authz_id` reads, never the full recipient catalogue."""
+    sees are exactly the scopes their `authz_id` reads, never the full recipient catalogue.
+    An outage (the rail for cost or plan, or engine-cost's profile set) is 503; a caller who reads
+    no recipient of any owner listed is 403."""
+    cost, plan, _profiles = _picker_scopes(current_user)
+    return {"recipients": [{"value": s, "label": s} for s in cost + plan]}
+
+class ExportOfferRequest(_BaseModel):
+    """`POST /export/package/recipients`'s body: the same answer items `ExportPackageRequest`
+    takes (`ExportAnswer`), and nothing else -- the offer names no recipient, it lists them."""
+    answers: list[ExportAnswer] = []
+
+
+#: The recipient-level code for a board whose answers this recipient's export takes none of.
+_OFFER_TAKES_NONE = "takes_none_of_these_answers"
+_OFFER_TAKES_NONE_REASON = "none of these answers is a kind this recipient's export takes"
+#: The export's own code (a section that failed naming only some answers) for a cost answer the
+#: engine did not name: no answer is about a lot, or an id twice. The reason is the engine's message.
+_OFFER_UNNAMED = "not_in_model"
+
+
+def _offer_for_recipient(resolved: list[dict], scope: str) -> dict:
+    """What ONE recipient's export would do with this board, decided by the export's own
+    functions and never by a parallel rule: `_partition_export_answers` splits the board,
+    engine-fin's answers are refused as `_fin_ad_hoc_refusal_section` refuses them, and
+    engine-cost's are decided by `canvas.resolve`, the call `measures.package_export` makes
+    first, with the same arguments. Every answer id lands exactly once in `exports` or
+    `refused`; `refused` is in board order.
+
+    The exception classes are the ones `canvas` itself bound (`canvas.Unentitled`), not a
+    second import of `entities`: the module has a flat-import fallback, and two module objects
+    would make two classes of one name so the `except` below would never match.
+    """
+    from agent_fleet.cost_agent import canvas as _canvas
+    from agent_fleet.cost_agent import seed as _cost_seed
+
+    parts = dict(_partition_export_answers(resolved))
+    cost_answers = parts.get("cost", [])
+    fin_ids = {a["id"] for a in parts.get("fin", [])}
+    kinds = {a["id"]: _canvas._verb_local(a.get("verb_iri")) for a in resolved}
+    board = list(dict.fromkeys(a["id"] for a in resolved))
+
+    rows: dict[str, dict] = {}
+
+    def _row(aid: str, code: str, reason: str) -> None:
+        rows[aid] = {"answer_id": aid, "kind": kinds[aid], "reason_code": code, "reason": reason}
+
+    fin_refusal = _fin_ad_hoc_refusal_section([], scope)
+    for aid in fin_ids:
+        _row(aid, fin_refusal["reason_code"], fin_refusal["reason"])
+
+    exports: list[str] = []
+    reason_code: Optional[str] = None
+    reason: Optional[str] = None
+    if not cost_answers:
+        reason_code, reason = _OFFER_TAKES_NONE, _OFFER_TAKES_NONE_REASON
+    else:
+        try:
+            composed = _canvas.resolve(
+                {"answers": cost_answers}, recipient_scope=scope,
+                entitled_lots=_cost_seed.lots_for_recipient(scope),
+            )
+        except _canvas.Unentitled:
+            reason_code, reason = "unentitled", _canvas.ENTITLEMENT_REFUSAL
+            for a in cost_answers:
+                _row(a["id"], reason_code, reason)
+        except _canvas.NotInModel as exc:
+            reason_code, reason = _OFFER_TAKES_NONE, _OFFER_TAKES_NONE_REASON
+            named = exc.refused if isinstance(exc.refused, list) and exc.refused else []
+            for item in named:
+                _row(item["answer_id"], item["reason_code"], item["reason"])
+            # An answer the engine did not name (every answer resolved, none is about a lot)
+            # is still refused, and still appears once.
+            for a in cost_answers:
+                if a["id"] not in rows:
+                    _row(a["id"], _OFFER_UNNAMED, str(exc))
+        else:
+            exports = list(composed["answers"])
+            for item in composed["refused"]:
+                _row(item["answer_id"], item["reason_code"], item["reason"])
+
     return {
+        "offered": bool(exports) and reason_code is None,
+        "reason_code": reason_code,
+        "reason": reason,
+        "exports": exports,
+        "refused": [rows[aid] for aid in board if aid in rows],
+    }
+
+
+def _plan_offer_for_recipient(resolved: list[dict], scope: str, profiles: dict) -> dict:
+    """`_offer_for_recipient`'s shape for a plan recipient, decided by `_plan_partition` -- the
+    function the export takes its own decision from. `profiles` is the set the caller was given."""
+    from agent_fleet.utils import answer_exports as _ae
+    profile = _ae.profile_for_recipient(profiles, scope)
+    taken, refused = _plan_partition(resolved, profile)
+    exports = list(dict.fromkeys(a["id"] for a in taken))
+    return {
+        "offered": bool(exports),
+        "reason_code": None if exports else _OFFER_TAKES_NONE,
+        "reason": None if exports else _OFFER_TAKES_NONE_REASON,
+        "exports": exports,
+        "refused": refused,
+    }
+
+
+@app.post("/export/package/recipients")
+async def export_package_offer(
+    body: ExportOfferRequest, current_user: User = Depends(get_current_user),
+):
+    """The recipient picker for THIS board: for each recipient the caller may export to, which
+    of the board's answers that recipient's export takes and which it refuses, with the
+    reasons -- so a board no recipient takes is greyed before Export, not refused after it.
+
+    Recipients are exactly `_export_recipients_for(current_user)`, in that order: one the
+    caller may not export to is ABSENT, never greyed (ADR-0047 §5). A recipient is `offered`
+    iff its export would take at least one answer; a partial board stays offered (mixed-board
+    partial export is ruled, 2026-10-09/16) and `refused` names the answers that will not go.
+    Gates, as the export's: no answers is 400 `no_answers`; an id that does not resolve is
+    404 (503 when the store is down). As the GET picker: an outage is 503, and a caller who reads
+    no recipient of any owner listed is 403.
+    """
+    if not body.answers:
+        raise HTTPException(status_code=400, detail={"reason": "no_answers"})
+    resolved = _resolve_export_answers(
+        [a.artifact_id for a in body.answers], current_user.id
+    )
+    cost, plan, profiles = _picker_scopes(current_user)
+    return {
+        "answers": len(body.answers),
         "recipients": [
-            {"value": s, "label": s} for s in _export_recipients_for(current_user)
-        ]
+            {"value": s, "label": s, **_offer_for_recipient(resolved, s)} for s in cost
+        ] + [
+            {"value": s, "label": s, **_plan_offer_for_recipient(resolved, s, profiles)}
+            for s in plan
+        ],
     }
 
 
@@ -2729,9 +3447,10 @@ async def _export_package_from_template(
     Only `program_finance` is wired to an engine today (engine-fin). A second packageable
     template would need its own dispatch here — this function does not invent one.
     """
+    from .authz.refusal import policy_refusal
     from .canvas_template import (
         UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, load_template,
-        panel_dispatch, ratified_template_ids, recipient_scope_for, template_ref,
+        panel_dispatch, ratified_template_ids, recipient_scope_for, slot_refusal, template_ref,
         validate_bindings,
     )
 
@@ -2761,8 +3480,9 @@ async def _export_package_from_template(
     except UnknownBinding as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except UnboundRequiredSlot as exc:
-        raise HTTPException(status_code=409, detail={
-            "error": "unbound_required_slot", "message": str(exc)})
+        # A POLICY REFUSAL: it asks the caller to choose (`canvas_template.slot_refusal`).
+        raise policy_refusal("unbound_required_slot", status_code=409, message=str(exc),
+                             **slot_refusal(template, exc.slots))
 
     # `validate_bindings` already guarantees every slot this template's panels CONSUME is
     # bound, so `recipient_scope_for` cannot raise here in practice — this still catches it
@@ -2809,7 +3529,8 @@ async def _export_package_from_template(
         async with httpx.AsyncClient(timeout=120.0) as client:  # a build is slow
             rr = await client.post(
                 f"{_ENGINE_FIN_URL}/package_export",
-                json={"recipient_scope": recipient_scope, "canvas": canvas, "as_of": as_of},
+                json={"recipient_scope": recipient_scope, "canvas": canvas, "as_of": as_of,
+                      "user_email": current_user.authz_id},
                 headers={"Authorization": f"Bearer {bearer}"},
             )
     except Exception as exc:
@@ -2824,7 +3545,7 @@ async def _export_package_from_template(
         except Exception:
             detail = getattr(rr, "text", "engine refused")
         raise HTTPException(status_code=rr.status_code,
-                            detail=_detail_with_message(rr.status_code, detail))
+                            detail=_detail_with_message(rr.status_code, relay_refusal(detail)))
 
     out = rr.json()
     return _shape_export_package_response(
@@ -2832,7 +3553,87 @@ async def _export_package_from_template(
     )
 
 
-@app.post("/export/package")
+async def _call_engine_cost_answers_export(payload: dict, bearer: str) -> dict:
+    """POST engine-cost's `/answers_export`. Its 403 is the engine's policy refusal completed by
+    `relay_refusal`; its 503 (`recipient_readers_unavailable`) stays a 503."""
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            rr = await client.post(
+                f"{_ENGINE_COST_URL}/answers_export", json=payload,
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "cost_engine_unreachable", "message": str(exc),
+        })
+    if rr.status_code >= 400:
+        if rr.status_code == 403:
+            raise _engine_failure("cost", rr)
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+    return rr.json()
+
+
+async def _export_plan_answers(
+    body: "ExportPackageRequest", request: Request, current_user: User, recipient_scope: str,
+    profiles: Optional[dict] = None,
+) -> dict:
+    """A board exported to a plan recipient: no cost or fin call is made.
+
+    The answers whose verb is in the profile's `kinds` are rendered by engine-cost's
+    `/answers_export`; the rest are refused by name, as `_refused_entries` shapes them. The
+    rows come from the same `_ARTIFACT_BY_ID_CYPHER` records the board resolved from.
+    """
+    from agent_fleet.utils import answer_exports as _ae
+    try:
+        profiles = _plan_profiles() if profiles is None else profiles
+    except _ae.AnswerProfilesUnavailable as exc:
+        raise _plan_profiles_unavailable() from exc
+    profile = _ae.profile_for_recipient(profiles, recipient_scope)
+    records = _read_export_records([a.artifact_id for a in body.answers], current_user.id)
+    resolved = [_resolve_export_record(r) for r in records]
+    taken, refused_items = _plan_partition(resolved, profile)
+
+    documents: list[dict] = []
+    if taken:
+        taken_ids = [a["id"] for a in taken]
+        rows = _plan_rows(records, set(taken_ids))
+        # CONTENT-ADDRESSED, as cost's: the same inputs name the same export.
+        export_id = hashlib.sha256(json.dumps(
+            {"recipient_scope": recipient_scope, "rows": rows},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str,
+        ).encode("utf-8")).hexdigest()
+        out = await _call_engine_cost_answers_export(
+            {"recipient_scope": recipient_scope, "export_id": export_id,
+             "user_email": current_user.authz_id, "rows": rows},
+            _user_bearer(request),
+        )
+        section = _shape_export_package_response(
+            out, recipient_scope=recipient_scope, template_id=None,
+            extra={"profile": out.get("profile")},
+        )
+        documents.append({"engine": "cost", "answers": taken_ids, **section})
+    documents.extend(_refused_entries("cost", refused_items, recipient_scope))
+
+    ok = [d["status"] == "exists" for d in documents]
+    status = "exists" if all(ok) else ("partial" if any(ok) else "failed")
+    refused = sum(len(d["answers"]) for d in documents if d["status"] != "exists")
+    export_id = next((d["export_id"] for d in documents if d["status"] == "exists"), None)
+    return {
+        "export_id": export_id,
+        "status": status,
+        "recipient_scope": recipient_scope,
+        "reason": None if not refused else f"{refused} of {len(body.answers)} answers refused",
+        "template_id": None,
+        "documents": documents,
+    }
+
+
+@app.post("/export/package", tags=[MCP_TAG])
 async def export_package(
     body: ExportPackageRequest,
     request: Request,
@@ -2895,9 +3696,34 @@ async def export_package(
     if not body.answers:
         raise HTTPException(status_code=400, detail={"reason": "no_answers"})
 
-    options = [{"value": s, "label": s} for s in _export_recipients_for(current_user)]
-
     recipient_scope = (body.recipient_scope or "").strip()
+    # THE PLAN REGISTRY IS ENGINE-COST'S, READ OVER THE WIRE. When it cannot be had the plan scopes
+    # are omitted from the options (the picker's posture) and a request for anything that is not a
+    # cost or fin recipient is a 503 -- never a 403: an outage must not read as "not your recipient".
+    from agent_fleet.cost_agent import seed as _cost_seed
+    from agent_fleet.finance_agent import export as _fin_export
+    try:
+        plan_profiles: Optional[dict] = _plan_profiles()
+    except _answer_profiles_unavailable_type():
+        plan_profiles = None
+    if (plan_profiles is None and recipient_scope
+            and recipient_scope not in _cost_seed.RECIPIENT_SCOPES
+            and recipient_scope not in _fin_export.RECIPIENT_SCOPES):
+        raise _plan_profiles_unavailable()
+    is_plan_scope = plan_profiles is not None and recipient_scope in _plan_scope_names(plan_profiles)
+    plan_recipients = _plan_recipients_for(current_user, plan_profiles) if is_plan_scope else []
+    # ONE pass over the rail for cost's scopes, used for the listed options AND the door below. A rail
+    # that cannot be asked omits cost's options from the 409 listing (as the pickers do) but the
+    # door itself answers 503 -- never a 403.
+    try:
+        cost_recipients: Optional[list[str]] = _export_recipients_for(current_user)
+    except HTTPException:
+        cost_recipients = None
+    options = [{"value": s, "label": s} for s in (cost_recipients or [])]
+    if plan_profiles is not None:
+        options += [{"value": s, "label": s} for s in (
+            _plan_exportable_for(current_user, plan_recipients, plan_profiles) if is_plan_scope
+            else _plan_exportable_or_none(current_user, plan_profiles))]
     if not recipient_scope:
         raise HTTPException(
             status_code=409,
@@ -2906,9 +3732,20 @@ async def export_package(
                                "the options are listed."},
         )
 
-    if recipient_scope not in _export_recipients_for(current_user):
+    if is_plan_scope:
+        if recipient_scope not in plan_recipients:
+            raise _plan_refusal_403(recipient_scope)
+        plan_profile = _plan_profile_name(recipient_scope, plan_profiles)
+        if not _plan_may_export(plan_profile, current_user.authz_id):
+            raise _plan_export_refusal_403(plan_profile, recipient_scope)
+        return await _export_plan_answers(
+            body, request, current_user, recipient_scope, plan_profiles)
+
+    if cost_recipients is None:
+        raise HTTPException(status_code=503, detail={"reason": "recipient_readers_unavailable"})
+    if recipient_scope not in cost_recipients:
         # WHY PRODUCTION IS GATED HERE, NOT ONLY THE DOWNLOAD: every recipient's package
-        # shares one directory (seed.py's RECIPIENT_READERS comment) and a canvas narrows
+        # shares one directory (the confused-deputy note beside cost's RECIPIENT_SCOPES) and a canvas narrows
         # what the file carries, so an unentitled producer could OVERWRITE a recipient's
         # package with a different canvas — a write-side confused-deputy, not just a read.
         raise HTTPException(
@@ -2968,6 +3805,19 @@ async def export_package(
                     **rest,
                 })
             documents.extend(_refused_entries(engine, refused_items, recipient_scope))
+            if section["status"] != "exists":
+                # A FAILED section that names only some answers (canvas.resolve's "no answer
+                # is about a lot" refusal) still owes the rest: an answer in no document is
+                # an answer the exporter never accounted for.
+                named = {i.get("answer_id") for i in refused_items}
+                rest_ids = [i for i in ids if i not in named]
+                if rest_ids:
+                    documents.append({
+                        "engine": engine, "answers": rest_ids, "export_id": None,
+                        "status": "failed", "recipient_scope": recipient_scope,
+                        "outcome": "not_in_model", "reason_code": "not_in_model",
+                        "reason": section.get("reason"),
+                    })
             continue
         doc = {"engine": engine, "answers": ids, **section}
         if doc["status"] == "failed":
@@ -2988,7 +3838,7 @@ async def export_package(
     }
 
 
-@app.get("/export/package/artifact/{filename}")
+@app.get("/export/package/artifact/{filename}", tags=[MCP_TAG])
 async def export_package_artifact(
     filename: str,
     request: Request,
@@ -2996,7 +3846,7 @@ async def export_package_artifact(
 ):
     """Download proxy for a produced export package. THE GATEWAY-SIDE CHECK the relay asks
     for: the engine repeats the same check on the same person's token (main.py's /artifact,
-    ~line 700), and the two agree because both read `seed.readers_for_recipient`. This is not
+    ~line 700), and the two agree because both ask the `recipient_readers` rail. This is not
     redundant — it is the ONLY check between an unentitled browser and the engine's bytes,
     since the engine sits behind the mesh and is not itself reachable from a browser.
     """
@@ -3007,10 +3857,27 @@ async def export_package_artifact(
     # first, then finance — which is safe only because the two engines' filename sets are
     # DISJOINT (sealed in tests/finance/test_fin_package_export.py): were a name ever claimed
     # by both, this order would silently prefer cost's scope and recipients_fn over finance's.
+    from agent_fleet.utils import answer_exports as _ae
     scope = _cost_seed.scope_of_artifact(filename)
+    plan_hit = None
+    plan_profiles: Optional[dict] = None
+    plan_unavailable = False
+    if scope is None and filename.startswith(_ae.ARTIFACT_PREFIX):
+        try:
+            plan_profiles = _plan_profiles()
+            plan_hit = _ae.match_artifact(plan_profiles, filename)
+        except _ae.AnswerProfilesUnavailable:
+            plan_unavailable = True
     if scope is not None:
         engine_url = _ENGINE_COST_URL
         recipients_fn = _export_recipients_for
+        engine_label = "cost"
+    elif plan_hit is not None:
+        # A plan answers export: produced by engine-cost, read on the `recipient_readers` rail.
+        scope = plan_hit[1]
+        engine_url = _ENGINE_COST_URL
+        # can_export gates PRODUCTION; reading a produced package is a reader's act.
+        recipients_fn = lambda u: _plan_recipients_for(u, plan_profiles)  # noqa: E731
         engine_label = "cost"
     else:
         scope = _fin_export.scope_of_artifact(filename)
@@ -3019,6 +3886,10 @@ async def export_package_artifact(
             recipients_fn = _fin_export_recipients_for
             engine_label = "fin"
         else:
+            if plan_unavailable:
+                # An `ia-answers-*` name the cost and fin matchers do not claim may be a plan
+                # package whose registry could not be read: unknown, not absent.
+                raise _plan_profiles_unavailable()
             # Same structural traversal defence as either engine's own route: a filename
             # neither engine could have produced is refused outright rather than sanitized
             # and forwarded.
@@ -3069,6 +3940,164 @@ async def export_package_artifact(
         content=rr.content,
         media_type=rr.headers.get("content-type", "application/octet-stream"),
         headers=headers,
+    )
+
+
+# -- CDRL export (proposal: a CDRL is an export profile, Part 2) ---------------
+#
+# Mirrors the package_export client above: the BFF forwards THE PERSON's bearer, the engine decides
+# program visibility (its 403 is relayed here with `grantable_by` filled by `relay_refusal`), and
+# the bytes are fetched back through the engine's own /artifact route.
+
+#: The closed map from a CDRL file's extension to its media type (mirrors the engine's
+#: `cdrl.MEDIA_TYPES`); the filename regex admits exactly its keys.
+_CDRL_MEDIA = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "csv": "text/csv; charset=utf-8",
+    "json": "application/json",
+}
+_CDRL_FILENAME_RE = re.compile(r"^fin-cdrl-[A-Za-z0-9_.-]+\.(" + "|".join(_CDRL_MEDIA) + r")$")
+
+
+def _engine_answer(rr, route: str):
+    """The decoded JSON of an engine's 2xx answer. An empty or non-JSON body (a Restate handler
+    that returns None is an EMPTY 200) is a named 502, never a crash and never a 200 `null`."""
+    try:
+        out = rr.json()
+    except Exception:  # noqa: BLE001 -- an undecodable body is the failure being named
+        out = None
+    if out is None:
+        raise HTTPException(status_code=502, detail={
+            "error": "engine_empty_answer", "engine_route": route,
+            "engine_status": rr.status_code,
+            "message": f"the engine answered {rr.status_code} on {route} with no JSON body.",
+        })
+    return out
+
+
+def _engine_refusal_detail(rr, route: str):
+    """The `detail` of an engine's refusal, as the engine sent it. An empty or non-JSON body
+    falls back to the response text, and an empty text is NAMED rather than left blank."""
+    try:
+        body_json = rr.json()
+        detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+    except Exception:  # noqa: BLE001
+        detail = getattr(rr, "text", "")
+    if detail is None or (isinstance(detail, str) and not detail.strip()):
+        detail = {"error": "engine_empty_body", "engine_route": route,
+                  "engine_status": rr.status_code,
+                  "message": f"the engine refused with {rr.status_code} on {route} and sent no body."}
+    return detail
+
+
+def _engine_failure(label: str, rr, route: str = "") -> HTTPException:
+    """A refusal or failure an engine answered with, as this gateway's answer. The engine's
+    declared refusals (403 policy, 409, 422) keep their status and every key of the body (advice
+    keys may be added: a 403 gains `grantable_by`, a 409 gains `message`); anything else
+    is a 502 naming the engine status."""
+    try:
+        body_json = rr.json()
+        detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+    except Exception:
+        detail = getattr(rr, "text", "engine refused")
+    if rr.status_code == 403:
+        return HTTPException(status_code=403, detail=relay_refusal(detail))
+    if rr.status_code in (409, 422):
+        detail = _engine_refusal_detail(rr, route or label)
+        if rr.status_code == 409:
+            detail = _detail_with_message(409, detail)
+        return HTTPException(status_code=rr.status_code, detail=detail)
+    return HTTPException(status_code=502, detail={
+        "error": f"{label}_engine_failed", "engine_status": rr.status_code, "engine_detail": detail,
+    })
+
+
+@app.get("/export/cdrl/profiles", tags=[MCP_TAG])
+async def export_cdrl_profiles(request: Request, current_user: User = Depends(get_current_user)):
+    """The CDRL picker's option list: the engine's `[{name, format, scope, label}]`, relayed. The
+    header keys only; the engine never sends a template path, a hash or a source."""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            rr = await client.get(
+                f"{_ENGINE_FIN_URL}/cdrl_profiles",
+                headers={"Authorization": f"Bearer {_user_bearer(request)}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_unreachable", "message": str(exc),
+        })
+    if rr.status_code >= 400:
+        raise _engine_failure("fin", rr, "/cdrl_profiles")
+    return _engine_answer(rr, "/cdrl_profiles")
+
+
+@app.get("/export/cdrl", tags=[MCP_TAG])
+async def export_cdrl(
+    request: Request,
+    profile: str,
+    program_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """One program's CDRL in the profile's format (xlsx, docx, csv or json). `X-Cells-Sha256` is the hash of every cell the producer
+    wrote (the reproducibility claim; the file's own bytes are not claimed reproducible).
+
+    Refusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with
+    `grantable_by` filled); any other engine failure is a 502 naming the engine's status.
+    """
+    bearer = _user_bearer(request)
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            rr = await client.post(
+                f"{_ENGINE_FIN_URL}/cdrl_export",
+                json={"profile": profile, "program_id": program_id,
+                      "user_email": current_user.authz_id},
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_unreachable", "message": str(exc),
+        })
+    if rr.status_code == 404:
+        try:
+            body_json = rr.json()
+            detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+        except Exception:
+            detail = None
+        if isinstance(detail, dict) and detail.get("error") == "unknown_profile":
+            raise HTTPException(status_code=404, detail=detail)
+    if rr.status_code >= 400:
+        raise _engine_failure("fin", rr, "/cdrl_export")
+
+    out = _engine_answer(rr, "/cdrl_export")
+    filename = out.get("artifact_filename")
+    cells_sha256 = (out.get("envelope") or {}).get("cells_sha256")
+    if not (isinstance(filename, str) and _CDRL_FILENAME_RE.match(filename) and cells_sha256):
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_bad_cdrl_response",
+            "message": "engine returned no verifiable CDRL artifact",
+        })
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            fr = await client.get(
+                f"{_ENGINE_FIN_URL}/artifact/{filename}",
+                headers={"Authorization": f"Bearer {bearer}"},
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "fin_engine_unreachable", "message": str(exc),
+        })
+    if fr.status_code >= 400:
+        raise _engine_failure("fin", fr)
+
+    return Response(
+        content=fr.content,
+        media_type=_CDRL_MEDIA[filename.rpartition(".")[2]],
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Cells-Sha256": str(cells_sha256),
+        },
     )
 
 
@@ -3362,11 +4391,15 @@ class SeedPortfolioCanvasRequest(_BaseModel):
 # as opposed to "the seed could not be performed". Decided by reading every `_perror(...)`
 # producer's `cause=`:
 #   seed_panel_verb_not_visible -- the seed_panel FALL_BACK whose reason is
-#       direct_dispatch.VERB_NO_LONGER_COMPATIBLE: the declared verb is not in the verifier's
-#       compatible set for this caller (revoked, retired, or a persona/domain that cannot see
-#       it). Emitted where the seed_panel turn falls back (the `seed_panel_fell_back` site).
-# EXCLUDED, and why: seed_panel_fell_back (any other fall-back reason, e.g. "verifier
-#   unreachable", is OURS), seed_panel_unroutable (template declares no subject),
+#       direct_dispatch.VERB_NOT_IN_CELL, and ONLY that: the verifier knows the declared verb
+#       UNSCOPED and every domain it declares is outside the caller's active cell, so a persona
+#       switch or a grant would satisfy it. The panel's failure record carries the verb's domains
+#       as `missing_domains` beside the cause. Emitted where the seed_panel turn falls back
+#       (the `seed_panel_fell_back` site).
+# EXCLUDED, and why: seed_panel_fell_back (any other fall-back reason is OURS or the verb's, not
+#   the caller's: "verifier unreachable"; "no longer compatible" -- the verb is retired, re-primed
+#   or dropped by arity, which is NOT a policy refusal; an unscoped re-check that failed is
+#   could-not-check, never a deny), seed_panel_unroutable (template declares no subject),
 #   route_intent_failed, auto_compile_failed, restate_unreachable, dagster_launch_failed,
 #   dagster_run_failed, ui_payload_fetch_error, ui_payload_timeout, acceptance_not_opened,
 #   engine_did_not_answer, render_ui_failed, stream_producer_error, stream_raised -- all
@@ -3380,15 +4413,50 @@ def _seed_failure_from_data(data: str | None) -> dict:
     payload `_perror` wrote. A missing or unparseable payload records `cause: "unrecorded"`."""
     kind = None
     cause = None
+    missing: list[str] = []
     if data:
         try:
             payload = json.loads(data.strip())
             if isinstance(payload, dict):
                 kind = payload.get("kind") or None
                 cause = payload.get("cause") or None
+                _md = payload.get("missing_domains")
+                if isinstance(_md, list):
+                    missing = sorted({str(d) for d in _md if d})
         except (ValueError, TypeError):
             pass
-    return {"event": "pipeline_error", "kind": kind, "cause": cause or "unrecorded"}
+    failure = {"event": "pipeline_error", "kind": kind, "cause": cause or "unrecorded"}
+    if missing:
+        # The domains the caller's cell lacks for this panel's verb -- data, not prose.
+        failure["missing_domains"] = missing
+    return failure
+
+
+def _seed_failure_from_http(status: int, raw: bytes | None) -> dict:
+    """The typed failure of one panel the stream REFUSED before opening: `{event: "http",
+    status, cause, field}`, read defensively from FastAPI's body (`{"detail": {"error", ...}}`,
+    or a 422's `{"detail": [{"loc": [...]}]}`). An unreadable body records `unrecorded`."""
+    cause: str = "unrecorded"
+    field = None
+    try:
+        body = json.loads((raw or b"").decode("utf-8", "replace") or "null")
+    except (ValueError, TypeError):
+        body = None
+    d = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(d, dict):
+        if isinstance(d.get("error"), str) and d["error"]:
+            cause = d["error"]
+        if isinstance(d.get("field"), str) and d["field"]:
+            field = d["field"]
+        elif cause == "incomplete_override":
+            req = d.get("requested") if isinstance(d.get("requested"), dict) else {}
+            field = "active_persona" if not req.get("persona") else "active_domains"
+    elif isinstance(d, list) and d and isinstance(d[0], dict):
+        cause = "validation_error"
+        loc = d[0].get("loc")
+        if isinstance(loc, (list, tuple)) and len(loc) > 1:
+            field = ".".join(str(x) for x in loc[1:])
+    return {"event": "http", "status": status, "cause": cause, "field": field}
 
 
 @app.post("/seed/portfolio_canvas")
@@ -3560,6 +4628,11 @@ async def seed_template_canvas(
                 ) as resp:
                     if resp.status_code != 200:
                         detail = "HTTP " + str(resp.status_code)
+                        try:
+                            _raw = await resp.aread()
+                        except Exception:  # noqa: BLE001
+                            _raw = b""
+                        failure = _seed_failure_from_http(resp.status_code, _raw)
                     else:
                         saw_final = False
                         saw_error = False
@@ -3627,15 +4700,210 @@ class CanvasSeedRequest(_BaseModel):
     `active_persona`/`active_domains` ride through to `/interview/stream` UNCHANGED — `None`
     lets the stream fall back to the caller's own default cell exactly as a hand-typed turn
     would, rather than this route inventing a cell on the caller's behalf.
+
+    `params`, `user_persona` AND `domain` ARE THE SUPERVISOR'S DISPATCH FIELDS. A bound verb is
+    dispatched by POSTing its bound slots under `params` plus the caller's chosen cell; this
+    model declared none of them, so pydantic DROPPED them silently and a chat-routed seedCanvas
+    lost its `template_id` and built the portfolio board. `canvas_template.fold_dispatch_params`
+    reads them now.
     """
     canvas_type: str = "portfolio_planning"
     template_id: Optional[str] = None
     bindings: Optional[dict[str, str]] = None
     active_persona: Optional[str] = None
     active_domains: Optional[list[str]] = None
+    params: Optional[dict[str, Any]] = None
+    user_persona: Optional[str] = None
+    domain: Optional[str] = None
 
 
-@app.post("/canvas/seed")
+# ── The /canvas/seed response bodies, DECLARED FOR THE OPENAPI ONLY ───────────────────────
+#
+# The route wires these through `responses=`, never `response_model=`: `response_model` filters
+# and serializes the body, which would add `template_id: null` to the partial and empty returns
+# and break the ruling that those stay three fields. Keys below are derived from the producers:
+# `iagent_pure.slot_disposition.ask_card`, `_canvas_seed_ask`, and `canvas_template.policy_hint`.
+class CanvasSeedResponse(_BaseModel):
+    artifact_ids: list[str] = Field(description="Slot-ordered ids; empty on a partial or empty seed.")
+    seeded: int = Field(description="Panels seeded.")
+    total: int = Field(description="Panels the template declares.")
+    template_id: Optional[str] = Field(
+        default=None,
+        description="Present on full success only; ABSENT (not null) on a partial or empty seed.",
+    )
+
+
+class CanvasSeedPolicyCell(_BaseModel):
+    persona: str
+    domain: str
+
+
+class CanvasSeedPolicy(_BaseModel):
+    cell: CanvasSeedPolicyCell = Field(description="The cell that owns the referent.")
+    groups: list[str] = Field(description="Groups in policy/groups.yaml that grant the cell.")
+    repair: Literal["switch_cell", "grant_member", "join_group", "declare_group"]
+    message: str
+
+
+class CanvasSeedAskOption(_BaseModel):
+    value: str
+    label: str
+
+
+class CanvasSeedAskStructuredData(_BaseModel):
+    slot: Optional[str] = None
+    options: list[CanvasSeedAskOption]
+    option_source: str
+    free_text_reason: Optional[str] = None
+    total_count: int
+    scoped_by: list[str]
+    bound_slots_offered: list[str]
+    already_known: dict[str, Any]
+
+
+class CanvasSeedAsk(_BaseModel):
+    """`ask_card(...)` plus `template_id`, `binding_slot` and (abstain on no members) `policy`."""
+    status: Literal["slot_elicitation", "slot_abstain"]
+    disposition: Literal["ask", "abstain"]
+    output_uri: str
+    verb_iri: str
+    sub_query: str
+    slot: Optional[str] = None
+    reason: str
+    spoken: str
+    found: str
+    options: list[CanvasSeedAskOption]
+    option_source: str
+    free_text_reason: Optional[str] = None
+    truncated_from: int
+    total_count: int
+    scoped_by: list[str]
+    bound_slots_offered: list[str]
+    accepted_slots: dict[str, Any]
+    message: str
+    summary: str
+    structured_data: CanvasSeedAskStructuredData
+    data: str
+    sources: list[Any]
+    template_id: str = Field(description="Always set by `_canvas_seed_ask`.")
+    binding_slot: Optional[str] = Field(description="The shared-slot NAME (not the dispatch param).")
+    policy: Optional[CanvasSeedPolicy] = Field(
+        default=None,
+        description="Present only when the caller's enumeration came back empty (an abstain).",
+    )
+
+
+class CanvasSeedAskUnavailable(_BaseModel):
+    error: Literal["ask_unavailable"]
+    detail: str = Field(description="The builder's exception class name.")
+
+
+class CanvasSeedRefusal(_BaseModel):
+    """`authz.refusal.refusal`'s envelope (ca's `iagent_mesh.refusal.Refusal` field names)."""
+    policy_id: str = Field(description="The policy family that refused, e.g. `groups` or `program_members`.")
+    missing_binding: str = Field(description="What the caller lacks, e.g. `can_view_program(program)`.")
+    grantable_by: str = Field(description="Who can grant it and how, from policy/grantors/.")
+    candidates: list[str] = Field(description="The choices that would satisfy it; empty when none is offered.")
+
+
+class CanvasSeedConflictDetail(_BaseModel):
+    error: Literal["unbound_required_slot"]
+    message: str
+    ask: Optional[CanvasSeedAsk | CanvasSeedAskUnavailable] = Field(
+        default=None,
+        description="Absent when no unbound slot is askable; best-effort, so it may be the unavailable form.",
+    )
+    refusal: CanvasSeedRefusal = Field(
+        description="Always present: the 409 asks the caller to choose or request something (`slot_refusal`).",
+    )
+
+
+class CanvasSeedConflict(_BaseModel):
+    detail: CanvasSeedConflictDetail
+
+
+def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list):
+    """A SYNC `(class_uri, bound_slots=) -> {outcome, members, ...}` against engine-o's
+    `/enumerate_instances`, with the body `dynamic_supervisor._make_enumerator` sends. Sync
+    because `decide_disposition` calls it synchronously; the caller runs the whole disposition
+    in a threadpool so this never blocks the event loop. Raises on connect/timeout, which the
+    disposition files as `no_provider` rather than as a menu."""
+    def _enumerate(class_uri: str, *, bound_slots: dict | None = None) -> dict:
+        _bound = {str(k): str(v) for k, v in (bound_slots or {}).items() if v not in (None, "")}
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.post(
+                f"{_DAGSONTOLOGY_SVC_URL}/enumerate_instances",
+                json={"class_uri": class_uri, "bound_slots": _bound,
+                      "user_email": user_email,
+                      "entitled_domains": list(entitled_domains or [])},
+            )
+        resp.raise_for_status()
+        return resp.json() or {}
+    return _enumerate
+
+
+def _canvas_seed_domains(request, ent) -> list[str] | None:
+    """The cell a seed request names: explicit `active_domains` (truthy -- `[]` is unset) win;
+    else `ent.domains_for(active_persona)` when a persona is named; else None (the caller named
+    no cell). ONE derivation, shared by the ask and the seed."""
+    if request.active_domains:
+        return list(request.active_domains)
+    if request.active_persona:
+        return ent.domains_for(request.active_persona)
+    return None
+
+
+async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user: User):
+    """The ask for a 409'd seed, or None when no unbound slot is askable.
+
+    Built by the SAME disposition the chat path uses (`decide_disposition` + `ask_card`) from
+    the SAME slot declarations the program-cell registration carries
+    (`canvas_template.referent_slots`), so the two cannot drift. `policy` is added whenever the
+    caller's enumeration came back EMPTY (an abstain on no members) -- never for `no_provider` or
+    `too_many`, where a list exists or nobody was asked, and "you cannot see any" would be false.
+    It is derived from `REFERENT_CELLS`, policy/groups.yaml and the caller's own cells.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from iagent_pure.slot_disposition import ABSTAIN, ask_card, decide_disposition
+    from .canvas_template import (
+        REFERENT_CELLS, SHARED_SLOT_REFERENTS, policy_hint, referent_slots,
+    )
+
+    clean = {k: v for k, v in (request.bindings or {}).items() if v not in (None, "")}
+    consumed = {c for p in template.panels for c in p.consumes}
+    unbound = consumed - set(clean)
+    declared = referent_slots({template.template_id: template}, only=unbound)
+    if not declared:
+        return None
+    accepted = {s.bind_as: clean[s.name] for s in template.shared_slots if s.name in clean}
+    slot_name = {s.bind_as: s.name for s in template.shared_slots}
+
+    ent = current_user.entitlements
+    domains = _canvas_seed_domains(request, ent) or sorted({c.domain for c in ent.cells})
+    enum = _canvas_seed_enumerator(user_email=current_user.authz_id, entitled_domains=domains)
+
+    def _build():
+        disp = decide_disposition(accepted=accepted, declared=declared, enumerate_class=enum)
+        return disp, ask_card(
+            disp, verb_iri="mesh:seedCanvas",
+            sub_query=f"seed canvas {template.template_id}", accepted=accepted,
+        )
+
+    disp, ask = await run_in_threadpool(_build)
+    ask["template_id"] = template.template_id
+    ask["binding_slot"] = slot_name.get(disp.slot or "", disp.slot)
+    if disp.action == ABSTAIN:
+        referent = SHARED_SLOT_REFERENTS.get(disp.slot or "")
+        if referent in REFERENT_CELLS:
+            o_persona, o_domain = REFERENT_CELLS[referent]
+            held = any(c.persona == o_persona and c.domain == o_domain for c in ent.cells)
+            ask["policy"] = policy_hint(
+                referent, held=held, asked_in_cell=o_domain in domains,
+            )
+    return ask
+
+
+@app.post("/canvas/seed", tags=[MCP_TAG], responses={200: {"model": CanvasSeedResponse}, 409: {"model": CanvasSeedConflict}})
 async def canvas_seed(
     request: CanvasSeedRequest,
     http_request: Request,
@@ -3677,7 +4945,50 @@ async def canvas_seed(
     # — and a board that is WRONG is harder to catch than one that is absent. cortex-ui-60 hit
     # the client-side half of this same hazard tonight, where an unknown id fell through to
     # generic placement in complete silence.
-    from .canvas_template import load_template, ratified_template_ids
+    from .canvas_template import (
+        DispatchParamsRefused, fold_dispatch_params, load_template, ratified_template_ids,
+    )
+
+    # THE SUPERVISOR'S DISPATCH FIELDS, FOLDED BEFORE ANYTHING IS RESOLVED. `params` carries a
+    # chat-routed seedCanvas's bound slots and was silently dropped before this; a disagreement
+    # or an unplaceable key is a 422, and a keyed `params` never falls back to portfolio.
+    try:
+        _folded_id, _folded_bindings = fold_dispatch_params(
+            request.params, request.template_id, request.bindings
+        )
+    except DispatchParamsRefused as _perr:
+        raise HTTPException(status_code=422, detail=str(_perr))
+    request.template_id = _folded_id or request.template_id
+    request.bindings = _folded_bindings or request.bindings
+    # The caller's chosen cell rides in as `user_persona`/`domain`; it fills the picker fields
+    # ONLY when they are unset, so an explicit picker value always wins.
+    if request.active_persona is None and request.user_persona:
+        request.active_persona = request.user_persona
+    if request.active_domains is None and request.domain:
+        request.active_domains = [request.domain]
+    # THE CELL A PERSONA NAMES. The stream refuses a persona without domains, so a persona-only
+    # seed (the chat re-send after the "which program?" pick) is completed HERE from the
+    # caller's own entitlements, the same derivation the ask uses. A seed never picks a cell
+    # the caller did not name: neither field set stays unset.
+    if request.active_persona and not request.active_domains:
+        _derived = _canvas_seed_domains(request, current_user.entitlements)
+        if not _derived:
+            from .authz.refusal import policy_refusal as _policy_refusal
+            raise _policy_refusal(
+                "persona_not_held", policy_id="groups",
+                missing_binding=f"a_group_granting({request.active_persona})",
+                message=f"you hold no cell under persona {request.active_persona}",
+            )
+        request.active_domains = _derived
+    elif request.active_domains and not request.active_persona:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "incomplete_override", "field": "active_persona",
+                "message": "a seed names its domains without a persona; send active_persona "
+                           "(or user_persona) too",
+            },
+        )
 
     _requested = (request.template_id or "").strip()
     if not _requested:
@@ -3723,8 +5034,10 @@ async def canvas_seed(
     # `canvas_template.validate_bindings` so packageExport's own gates (below, `/export/package`)
     # read the SAME checks rather than a second copy that could drift from this one. Messages
     # and status codes are unchanged; only where they are computed moved.
+    from .authz.refusal import policy_refusal
     from .canvas_template import (
-        UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, validate_bindings,
+        UnboundRequiredSlot, UndeclaredConsumption, UnknownBinding, slot_refusal,
+        validate_bindings,
     )
 
     try:
@@ -3734,8 +5047,28 @@ async def canvas_seed(
     except UnknownBinding as _terr:
         raise HTTPException(status_code=422, detail=str(_terr))
     except UnboundRequiredSlot as _terr:
-        raise HTTPException(status_code=409, detail={
-            "error": "unbound_required_slot", "message": str(_terr)})
+        _detail: dict = {"message": str(_terr)}
+        # THE 409 CARRIES THE ASK. Built by the disposition the chat path uses, so a picker
+        # gets "which program?" with candidates (or the policy to set) instead of only a
+        # refusal. It is best-effort by construction: a failure here must never turn the
+        # refusal into a 500.
+        try:
+            _ask = await _canvas_seed_ask(_template, request, current_user)
+            if _ask is not None:
+                _detail["ask"] = _ask
+                if _ask.get("policy"):
+                    _detail["message"] = _ask["policy"]["message"]
+                elif _ask.get("options"):
+                    _detail["message"] = _ask.get("message") or _detail["message"]
+        except Exception as _aerr:  # noqa: BLE001
+            logger.warning("canvas_seed: ask builder failed (%r); 409 keeps its plain body", _aerr)
+            _detail["ask"] = {"error": "ask_unavailable", "detail": type(_aerr).__name__}
+        # A POLICY REFUSAL (it asks the caller to choose): the envelope says what the ask says
+        # -- its options as candidates, its repair as the binding (`slot_refusal`).
+        raise policy_refusal(
+            "unbound_required_slot", status_code=409, message=_detail.pop("message"),
+            extra=_detail, **slot_refusal(_template, _terr.slots, _detail.get("ask")),
+        )
 
     if _template.template_id == "portfolio":
         inner = SeedPortfolioCanvasRequest(
@@ -3815,15 +5148,72 @@ async def canvas_seed(
 
         def _entitlement_shaped(r: dict) -> bool:
             f = r.get("failure")
+            if f is not None and f.get("event") == "http":
+                return f.get("status") == 403
             if f is not None:
                 return (f.get("cause") or "unrecorded") in _SEED_ENTITLEMENT_CAUSES
             return "403" in str(r.get("detail") or "")
 
         _all_entitlement = bool(_failed) and all(_entitlement_shaped(r) for r in _failed)
+        _http = [r["failure"] for r in _failed if (r.get("failure") or {}).get("event") == "http"]
+        _relay = (
+            not _all_entitlement and len(_http) == len(_failed)
+            and len({f["status"] for f in _http}) == 1 and _http[0]["status"] in (400, 422)
+        )
+        if _relay:
+            _ucauses = sorted({f["cause"] for f in _http})
+            _fields = sorted({f["field"] for f in _http if f.get("field")})
+            _rdetail = {
+                "error": "seed_panel_refused",
+                "upstream_error": _ucauses[0] if len(_ucauses) == 1 else _ucauses,
+                "fields": _fields,
+                "causes": _ucauses,
+                "message": (
+                    f"seeded 0 of {total} panels; every panel was refused as a malformed "
+                    f"request: {_ucauses} (fields: {_fields})"
+                ),
+            }
+            logger.warning("canvas_seed: NOTHING seeded (0/%s) -- panels refused the request: %s",
+                           total, _rdetail)
+            if _http[0]["status"] == 400:
+                raise HTTPException(status_code=400, detail=_rdetail)
+            raise HTTPException(status_code=422, detail=_rdetail)
         logger.warning(
             "canvas_seed: NOTHING seeded (0/%s) -- refusing with %s. Upstream: %s causes: %s",
             total, 403 if _all_entitlement else 502, sorted(_codes)[:5], _causes,
         )
+        # A BOARD THE PERSONA CANNOT SEE IS A POLICY REFUSAL, NAMING THE PERSONA AND THE DOMAIN.
+        # Only when EVERY failed panel is a `seed_panel_verb_not_visible` carrying the domains its
+        # verb declares: the verifier knows the verbs, and the cell holds none of their domains.
+        # Any other all-entitlement mix (an upstream 403 with no domain to name) keeps the plain
+        # 403 below, because naming a domain for a refusal that has none would be invented.
+        _missing = sorted({
+            d for r in _failed for d in ((r.get("failure") or {}).get("missing_domains") or [])
+        })
+        if _all_entitlement and _missing and all(
+            (r.get("failure") or {}).get("missing_domains") for r in _failed
+        ):
+            _persona = request.active_persona or ""
+            _held = current_user.entitlements
+            _candidates = sorted(
+                p for p in _held.personas()
+                if p != _persona and set(_missing) <= set(_held.domains_for(p))
+            )
+            raise policy_refusal(
+                "persona_lacks_domain", policy_id="groups",
+                missing_binding=", ".join(
+                    f"a_group_granting({_persona}, {d})" for d in _missing
+                ),
+                message=(
+                    f"seeded 0 of {total} panels; persona {_persona or '(none named)'} holds "
+                    f"none of the domains these panels' verbs declare: {_missing}. Switching "
+                    "persona, or a group grant for that persona in one of those domains, "
+                    "would satisfy it"
+                ),
+                candidates=_candidates,
+                extra={"persona": _persona, "missing_domains": _missing,
+                       "causes": _causes or sorted(_codes)[:5]},
+            )
         if _all_entitlement:
             raise HTTPException(
                 status_code=403,
@@ -3857,18 +5247,16 @@ async def canvas_seed(
         )
         return {"artifact_ids": [], "seeded": seeded, "total": total}
 
-    # NEITHER OPTIONAL FIELD IS SENT, AND THAT IS THE CORRECT STATE TODAY.
+    # `template_id` IS SENT NOW BECAUSE ITS READER EXISTS; `name` STAYS UNSENT.
     #
-    # `canvas_type` was dispatched for emission on the premise that the receiver reads
-    # it. IT DOES NOT — checked, 2026-08-29: cortex's CanvasSeed.contract.ts declares
-    # it `required: false`, and canvasSeedFromArtifact's return type is literally
-    # `{ ids: string[]; name?: string }`. No reader exists anywhere in that repo.
-    # Sending it would be a PRODUCER-side write with no consumer — the exact mirror of
-    # the orphan species the dispatch set out to remove — and it would cost breaking
-    # the seal directly above, whose stated purpose is keeping fields a future client
-    # might start depending on OFF this response. The honest order is: cortex reads it
-    # first (it matters only when a second canvas_type exists), then the producer
-    # states it. The arm's passthrough already carries it the day that happens.
+    # This comment used to say neither optional field was sent, on a measured premise
+    # (2026-08-29): cortex declared `canvas_type` `required: false` and no reader existed
+    # anywhere in that repo, so sending it would have been a PRODUCER-side write with no
+    # consumer. It named the order: cortex reads it first, then the producer states it.
+    # That condition is met: cortex-ui's canvasSeedFromArtifact
+    # (src/lib/canvasSeedFromAnswer.ts) now prefers `template_id` and treats `canvas_type` as
+    # legacy. So the full-success path names its template, and the partial and empty returns
+    # above are unchanged. `canvas_type` itself is still not sent: `template_id` supersedes it.
     #
     # `name` has a real reader, and still must not be sent: the phrase path has no
     # spoken name, so any value here would be invented. The receiver already defaults
@@ -3878,6 +5266,7 @@ async def canvas_seed(
         "artifact_ids": [a for a in (result.get("artifact_ids") or []) if a],
         "seeded": seeded,
         "total": total,
+        "template_id": _template.template_id,
     }
 
 
@@ -3914,6 +5303,10 @@ class RedeemIdentityBody(BaseModel):
     # supervisor image degrades to "no cross-check" rather than to a hard failure — but a
     # supervisor that sends it gets the stronger guarantee.
     claimed_launcher: Optional[str] = None
+    # Which fan-out slot of the run this subtask redeems (its Dagster mapping key,
+    # `task_<n>`). One single-use reference per slot, so two caller-identity subtasks in one
+    # plan do not read as a replay. Bounded to [0, IDENTITY_VAULT_SLOTS) below.
+    slot: int = 0
 
 
 @app.post("/internal/identity/redeem")
@@ -3951,15 +5344,30 @@ async def redeem_caller_identity(
             },
         )
 
+    _slots = vault_slots()
+    if body.slot < 0 or body.slot >= _slots:
+        _vault_audit_log.error(
+            "identity_vault: REFUSED redemption for run_id=%s slot=%s — outside [0, %s)",
+            body.run_id, body.slot, _slots,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "slot_out_of_range",
+                "run_id": body.run_id,
+                "message": f"slot must be in [0, {_slots}).",
+            },
+        )
+
     # INVARIANTS 2, 3, 4 are all enforced inside this one call, atomically.
-    result = VAULT.redeem(body.run_id, claimed_launcher=body.claimed_launcher)
+    result = VAULT.redeem(body.run_id, claimed_launcher=body.claimed_launcher, slot=body.slot)
 
     # INVARIANT 6 — one line per redemption: run_id, subject, timestamp, outcome. The
     # timestamp is the log record's own. The vault's whole legitimacy is that the token's
     # journey is VISIBLE.
     _vault_audit_log.info(
-        "identity_vault: redemption run_id=%s caller=%s subject=%s outcome=%s",
-        body.run_id, caller, result.subject or "-", result.outcome,
+        "identity_vault: redemption run_id=%s slot=%s caller=%s subject=%s outcome=%s",
+        body.run_id, body.slot, caller, result.subject or "-", result.outcome,
     )
 
     if result.ok:
@@ -4244,7 +5652,7 @@ async def _stale_extraction(task_id: str, row: dict) -> "HTTPException":
         "stage": row.get("status"), "message": msg})
 
 
-@app.post("/human_tasks/{task_id}/act")
+@app.post("/human_tasks/{task_id}/act", tags=[INGEST_V1_TAG, MCP_TAG], responses={200: {"model": ActResponse}})
 async def act_on_human_task(
     task_id: str,
     req: HumanTaskActRequest,
@@ -4357,16 +5765,17 @@ async def act_on_human_task(
                 "message": "a delegated act is supported only for a workflow-backed resume of "
                            "another kind; act as the principal yourself."})
 
+    from . import promotion
     # row_edits is read ONLY by the grouped_review branch and (flag IAGENT_PROMOTION_ROW_EDITS on)
     # the document_promotion branch below. Sent on any other kind, or on a promotion while the flag
     # is off, it would be accepted and silently dropped, losing the correction (architect rulings
     # 2026-10-17, 2026-10-18). Asked before verb validation so the refusal names the real cause,
     # and before any write.
     if req.row_edits is not None and match.get("kind") != "grouped_review":
-        if match.get("kind") == "document_promotion":
+        if match.get("kind") == promotion.KIND:
             if not _promotion_row_edits_enabled():
                 raise HTTPException(status_code=422, detail={
-                    "error": "row_edits_not_for_kind", "kind": "document_promotion",
+                    "error": "row_edits_not_for_kind", "kind": promotion.KIND,
                     "enabled": False,
                     "message": "row edits on a document promotion are off on this deployment "
                                "(IAGENT_PROMOTION_ROW_EDITS); sent here they would be lost"})
@@ -4377,17 +5786,31 @@ async def act_on_human_task(
                            "promotion; sent here they would be lost"})
 
     # header_edits (ruling 10-20): document_promotion only, behind the SAME flag as row_edits.
-    if req.header_edits and match.get("kind") != "document_promotion":
+    if req.header_edits and match.get("kind") != promotion.KIND:
         raise HTTPException(status_code=422, detail={
             "error": "header_edits_not_for_kind", "kind": match.get("kind"),
             "message": "header edits are read only on a document promotion; sent here they "
                        "would be lost"})
     if req.header_edits and not _promotion_row_edits_enabled():
         raise HTTPException(status_code=422, detail={
-            "error": "header_edits_not_for_kind", "kind": "document_promotion",
+            "error": "header_edits_not_for_kind", "kind": promotion.KIND,
             "enabled": False,
             "message": "header edits on a document promotion are off on this deployment "
                        "(IAGENT_PROMOTION_ROW_EDITS); sent here they would be lost"})
+
+    # review_coverage: document_promotion only. Sent elsewhere it would be dropped, which is a
+    # provenance claim that is not true.
+    if req.review_coverage is not None and not _handler_consumes(
+            match.get("kind"), "review_coverage"):
+        raise HTTPException(status_code=422, detail={
+            "error": "review_coverage_not_for_kind", "kind": match.get("kind"),
+            "message": "review coverage is read only on a document promotion; sent here it "
+                       "would be lost"})
+
+    if req.page is not None and match.get("kind") != EMPTY_CONFIRM_KIND:
+        raise HTTPException(status_code=422, detail={
+            "error": "page_not_for_kind", "kind": match.get("kind"),
+            "message": "a page is read only on a document_empty_confirm; sent here it would be lost"})
 
     # VERB VALIDATION, per the task's OWN species — after authz (never leak a kind to an
     # unauthorized caller through a validation error) and before any write.
@@ -4426,12 +5849,25 @@ async def act_on_human_task(
             "message": str(exc),
         })
 
+    # FULFILLMENT (document_empty_confirm, spec 208): the SAME writer as POST /ingest/{id}/empty. The
+    # audience gate and the verb validation above have passed; `_decide_empty` closes the task.
+    if match.get("kind") == EMPTY_CONFIRM_KIND:
+        _ep = match.get("payload")
+        if isinstance(_ep, (str, bytes)):
+            _ep = json.loads(_ep)
+        _eing = _ep.get("ingest_id") if isinstance(_ep, dict) else None
+        if not isinstance(_eing, str) or not _eing:
+            raise HTTPException(status_code=409, detail={
+                "error": "no_open_empty_task", "task_id": task_id,
+                "message": "the task names no ingest"})
+        return await _decide_empty(_eing, req.decision, actor, req.page, task_id=task_id)
+
     # FULFILLMENT (document_promotion, ADR-0041 §5/§6): the effect runs BEFORE the projection
     # resolves, for grouped_review's reason: a refused act must leave the task PENDING. The
     # decision record is the grant, so it is written fail-closed, and `promotion.act` re-asks
     # can_act itself. Every refusal carries its own status; none resolves the row.
-    if match.get("kind") == "document_promotion":
-        from . import ingest_status, promotion
+    if match.get("kind") == promotion.KIND:
+        from . import ingest_status
         from .decision_record_writer import DECISION_RECORD_ERA
 
         # A reject names one of the ruled codes (architect ruling 2026-10-17): `<code>` or
@@ -4568,6 +6004,50 @@ async def act_on_human_task(
                                                 r["evidence_ref"])),
                                         "evidence_ref": r["evidence_ref"]})
 
+        # REVIEW COVERAGE (ruling 10-29): every part opened or folded into a named group. Asked
+        # before any write; an unreadable extraction is a 503, never a skipped check.
+        coverage = None
+        if req.review_coverage is not None:
+            from . import content_kinds, review_shapes
+            try:
+                _cov_subject = promotion.subject_from_payload(match.get("payload"))
+                _arrived_new = isinstance(req.review_coverage, ItemReviewCoverage)
+                cov = _rcov.normalise(req.review_coverage.model_dump(mode="json"),
+                                      content_kind=_cov_subject.content_kind)
+                _reg = content_kinds.by_kind(_cov_subject.content_kind)
+                _declared = getattr(_reg, "review_shape", None)
+                _rows = review_shapes.valid_review_shapes()
+                _declared_row = _rows.get(_declared) if _declared else None
+                if _declared and _declared_row is None:
+                    raise LookupError(f"review_shape {_declared!r} has no valid registry row")
+                _bad = (_rcov.row_problem(cov, _rows.get(cov.get("review_shape")), _declared)
+                        if _arrived_new else None)
+                if _bad is None:
+                    # The universe is read by the declared row's item_kind; a legacy body whose
+                    # kind declares no shape is parts.
+                    _kind = _declared_row.item_kind if _declared_row else cov.get("item_kind", "part")
+                    _read = _rcov.universe_for(_kind)
+                    _universe = await run_in_threadpool(lambda: _read(
+                        lambda: _review_parts_for_payload(_cov_subject)))
+                    _bad = _rcov.problem(cov, _universe, _rows.get(cov.get("review_shape")),
+                                         arrived_new=_arrived_new, declared_shape=_declared)
+            except HTTPException as exc:
+                if exc.status_code < 500:
+                    raise  # e.g. 422 extraction_unbound: the binding said no, a retry will not help
+                raise HTTPException(status_code=503, detail={
+                    "error": "review_coverage_unverifiable", "task_id": task_id,
+                    "message": f"the extraction's parts could not be read "
+                               f"({type(exc).__name__}); nothing was written"})
+            except Exception as exc:  # noqa: BLE001 -- cannot-know is a refusal, nothing written
+                raise HTTPException(status_code=503, detail={
+                    "error": "review_coverage_unverifiable", "task_id": task_id,
+                    "message": f"the extraction's parts could not be read "
+                               f"({type(exc).__name__}); nothing was written"})
+            if _bad is not None:
+                raise HTTPException(status_code=422, detail={
+                    "error": "review_coverage_invalid", "check": _bad[0], "message": _bad[1]})
+            coverage = cov
+
         if req.decision == promotion.PROMOTED:
             # The notice's SUBJECT_TO set is reconciled to the reviewed rows (ruled 2026-10-20),
             # so the act needs the reviewed set. No extraction_ref: None (the act refuses 409 if a
@@ -4607,7 +6087,7 @@ async def act_on_human_task(
                 },
                 era=DECISION_RECORD_ERA, now_ms=int(time.time() * 1000),
                 row_edits=corrections, reviewed_mpns=_reviewed, earlier_ingests=_earlier,
-                leaf=_leaf_rec))
+                leaf=_leaf_rec, review_coverage=coverage))
         except promotion.PromotionRefused as exc:
             raise HTTPException(status_code=exc.status, detail={
                 "error": exc.error, "task_id": task_id, "message": str(exc)})
@@ -5851,8 +7331,11 @@ def _project_sources(mat: dict) -> list[dict] | None:
         # `obtained_via`, `ingest_id`, `dropped_by`, `promoted_by`: the graph's provenance as a
         # retrieval path copies it onto each source (engine-o's notice_parts.py is the first);
         # `promoted_by` is what the floor's promoted set is read from below.
+        # `mpn` and `notice_id`: the part and the notice a whichPartsDoesThisNoticeAffect source
+        # is ABOUT. Without them the citation is a label ("P/N 5530-184") and a URI, and nothing
+        # downstream can join a source to its table row or its notice without parsing either.
         for extra in ("matched_for", "provenance", "obtained_via", "ingest_id", "dropped_by",
-                      "promoted_by"):
+                      "promoted_by", "mpn", "notice_id"):
             if extra in src:
                 projected[extra] = src[extra]
         out.append(projected)
@@ -6105,6 +7588,7 @@ def _perror(
     kind: str | None = None,
     retryable: bool | None = None,
     cause: str | None = None,
+    missing_domains: "list[str] | tuple[str, ...] | None" = None,
 ) -> str:
     """Emit a typed `pipeline_error` event.
 
@@ -6116,6 +7600,8 @@ def _perror(
     cause     : machine-readable classification (verb_unfound,
                 llm_timeout, engine_5xx, dagster_run_failed, ...) for
                 downstream telemetry.
+    missing_domains : the domains a verb declares that the caller's cell lacks; sent only on
+                the `seed_panel_verb_not_visible` cause, read back by `_seed_failure_from_data`.
     """
     payload: dict = {"message": message}
     if kind:
@@ -6124,7 +7610,104 @@ def _perror(
         payload["retryable"] = retryable
     if cause:
         payload["cause"] = cause
+    if missing_domains:
+        payload["missing_domains"] = list(missing_domains)
     return _sse("pipeline_error", json.dumps(payload))
+
+
+_orchestrate_audit_log = logging.getLogger("iagent.audit.orchestrate")
+# THE LINE MUST ARRIVE, NOT MERELY BE CALLED (see the note on `logger` above).
+_ensure_the_audit_line_actually_ARRIVES(_orchestrate_audit_log)
+
+
+def _orchestrate_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _orchestrate_audit_line(*, who: str, via: str, session_id: str, verb: str, case: str,
+                            when: str, outcome: str) -> None:
+    """ONE line per /orchestrate call: who, through which client, which verb and case, when, how
+    it ended. Never message text, tokens or payload bodies."""
+    _orchestrate_audit_log.info(
+        "orchestrate_access who=%s via=%s session_id=%s verb=%s case=%s when=%s outcome=%s",
+        who, via, session_id, verb, case, when, outcome,
+    )
+
+
+def _note_orchestrate_event(chunk, seen: dict) -> None:
+    """Read the routed verb and any case id off an SSE chunk; leave `seen` alone otherwise.
+
+    verb: the `route_decision` event's `action.iri` (both the Dagster path and
+    `_stream_direct_outcome` emit it); "UNKNOWN" is the router's no-verb value, recorded as "".
+    case: a `case_id` key at the top of an event's data object or one level under it.
+    Honest-absent: "" when never seen."""
+    if not isinstance(chunk, str) or not chunk.startswith("event: "):
+        return
+    head, _, rest = chunk.partition("\n")
+    name = head[len("event: "):].strip()
+    if name != "route_decision" and '"case_id"' not in rest:
+        return
+    try:
+        data = json.loads(rest[len("data: "):].strip()) if rest.startswith("data: ") else None
+    except ValueError:
+        return
+    if not isinstance(data, dict):
+        return
+    if name == "route_decision" and not seen["verb"]:
+        iri = (data.get("action") or {}).get("iri") if isinstance(data.get("action"), dict) else None
+        if isinstance(iri, str) and iri and iri != "UNKNOWN":
+            seen["verb"] = iri
+    if not seen["case"]:
+        for node in (data, *[v for v in data.values() if isinstance(v, dict)]):
+            cid = node.get("case_id")
+            if isinstance(cid, str) and cid:
+                seen["case"] = cid
+                break
+
+
+def _audit_orchestrate_refusals(fn):
+    """A refusal raised BEFORE the stream opens leaves its one audit line (`outcome=refused:<status>`),
+    then re-raises the SAME exception unchanged (not a new refusal site). The stream's own line is
+    written by `_audit_orchestrate_wrap`, wired inside the handler. `wraps` keeps the name, the
+    docstring (the OpenAPI description) and the signature FastAPI reads."""
+    @functools.wraps(fn)
+    async def door(request, http_request, current_user):
+        when = _orchestrate_now()
+        try:
+            return await fn(request, http_request, current_user)
+        except HTTPException as exc:
+            _orchestrate_audit_line(
+                who=current_user.authz_id, via=getattr(current_user, "azp", None) or "",
+                session_id=request.session_id, verb="", case="", when=when,
+                outcome=f"refused:{exc.status_code}",
+            )
+            raise
+    return door
+
+
+async def _audit_orchestrate_wrap(gen, *, who: str, via: str, session_id: str):
+    """Pass `gen` through unchanged and in order; write ONE `orchestrate_access` line when it ends.
+
+    outcome: completed | closed (GeneratorExit / CancelledError: the client went away) | error
+    (anything else, re-raised)."""
+    when = _orchestrate_now()
+    seen = {"verb": "", "case": ""}
+    outcome = "completed"
+    try:
+        async for chunk in gen:
+            _note_orchestrate_event(chunk, seen)
+            yield chunk
+    except (GeneratorExit, asyncio.CancelledError):
+        outcome = "closed"
+        raise
+    except BaseException:
+        outcome = "error"
+        raise
+    finally:
+        _orchestrate_audit_line(
+            who=who, via=via, session_id=session_id, verb=seen["verb"], case=seen["case"],
+            when=when, outcome=outcome,
+        )
 
 
 async def _keepalive_wrap(stream, interval_s: float = 10.0):
@@ -7862,6 +9445,9 @@ async def _generate_dagster_stream_inner(
     _artifact_id = request.artifact_id or (
         f"urn:li:answerArtifact:{session_id}-{uuid.uuid4().hex[:8]}"
     )
+    # True once a ROUTED subtask_slots_decision (non-empty verb_iri) has been captured into
+    # resolved_intent. See the precedence guard at the reader.
+    _resolved_from_routed = False
     _artifact_bundle: dict = {
         "id": _artifact_id,
         "question_text": user_query,
@@ -7941,6 +9527,14 @@ async def _generate_dagster_stream_inner(
         # second question of a session would resume the first one's state and reducers that
         # append would merge two answers. A session is not a run.
         _run_id = 'run-' + uuid.uuid4().hex
+
+        def _direct_stage_events() -> list:
+            _t0 = _direct_stages[0][2] if _direct_stages else time.time()
+            return [
+                _stage(_kind, _status, elapsed_ms=max(0, int((_at - _t0) * 1000)))
+                for _kind, _status, _at in _direct_stages
+            ]
+
         try:
             _direct = await asyncio.to_thread(
                 functools.partial(
@@ -7981,14 +9575,53 @@ async def _generate_dagster_stream_inner(
                 )
             )
         except Exception as exc:  # noqa: BLE001
-            # A RAISE IS A FALL-BACK, not an error for the user. `dispatch_pre_resolved` is
-            # contracted not to raise; if it does, that is a bug in the fast path and the
-            # slow path still answers the question.
+            # A RAISE IS A FALL-BACK on an ordinary turn, and a SERVER FAULT on a seed turn.
+            # `dispatch_pre_resolved` is contracted not to raise; if it does, that is a bug
+            # in the fast path. An ordinary question still has a phrase, so the slow path
+            # answers it. A seed turn has no phrase underneath it (see the FALL_BACK branch
+            # below), so the same fall-through would answer a different question than the
+            # panel named: it fails visibly, bound to the step it died in.
             logger.warning(
-                "direct path raised for run %s (%s: %s) — routing the full path",
+                "direct path raised for run %s (%s: %s) — %s",
                 session_id, type(exc).__name__, exc,
+                "failing the seed turn" if _is_seed_panel_turn else "routing the full path",
             )
             _direct = None
+            if _is_seed_panel_turn:
+                # STARTED-WITH-NO-OUTCOME means the raise landed inside that step; with
+                # nothing reported the first step was never left.
+                _step = (
+                    _direct_stages[-1][0] if _direct_stages
+                    else direct_dispatch.STAGE_VERIFYING
+                )
+                for _ev in _direct_stage_events():
+                    yield _ev
+                if _direct_stages and _direct_stages[-1][1] == "started":
+                    yield _stage(_step, "failed")
+                # The class name only: an engine exception's text can carry an internal
+                # host. The log line above keeps the full text.
+                _seed_cause = "seed_panel_dispatch_raised"
+                _msg = (
+                    f"seed_panel's dispatch failed in step {_step} "
+                    f"({type(exc).__name__})"
+                )
+                _artifact_bundle["status"] = "failed"
+                _ri = dict(_artifact_bundle.get("resolved_intent") or {})
+                for _k in ("verb_iri", "subject_uri", "subject_instance_id"):
+                    _v = _pre_resolved.get(_k)
+                    if _v not in (None, ""):
+                        _ri.setdefault(_k, _v)
+                _ri.setdefault("failure_cause", {
+                    "exception": _seed_cause,
+                    "message": _msg,
+                    "where": "seed_panel_dispatch",
+                    "step": _step,
+                })
+                _artifact_bundle["resolved_intent"] = _ri
+                yield _perror(_msg, kind=_step, retryable=True, cause=_seed_cause)
+                yield _sse("stream_end", "{}")
+                await _dispatch_answer_artifact(_artifact_bundle)
+                return
 
         # DELIVERED AFTER THE FACT, WITH THEIR REAL TIMES. The dispatch is sync and runs in
         # a worker thread, so the events cannot be yielded as they happen without a queue —
@@ -7996,11 +9629,8 @@ async def _generate_dagster_stream_inner(
         # each stage carries the elapsed time actually measured at its own boundary rather
         # than a timeline composed here.
         if _direct is not None:
-            _t0 = _direct_stages[0][2] if _direct_stages else time.time()
-            for _kind, _status, _at in _direct_stages:
-                yield _stage(
-                    _kind, _status, elapsed_ms=max(0, int((_at - _t0) * 1000))
-                )
+            for _ev in _direct_stage_events():
+                yield _ev
 
         if _direct is not None and _direct.kind not in (
             direct_dispatch.ROUTED, direct_dispatch.ABSTAIN
@@ -8051,14 +9681,37 @@ async def _generate_dagster_stream_inner(
                 # disagreement must reach the caller as a visible failure, never get laundered
                 # through the classifier guessing at a label.
                 _artifact_bundle["status"] = "failed"
+                # THE ARTIFACT RECORDS WHAT THE STREAM SAYS. One cause code feeds both, and the
+                # template's verb is written like `_stream_direct_outcome` writes it (setdefault,
+                # never over a fuller intent): without them the failed seed read as an
+                # unattributable `NoCauseRecorded` with no verb (18 such rows, 2026-10-28).
+                _seed_cause = (
+                    "seed_panel_verb_not_visible"
+                    if _direct.missing_domains
+                    and direct_dispatch.VERB_NOT_IN_CELL in _detail["reason"]
+                    else "seed_panel_fell_back"
+                )
+                _ri = dict(_artifact_bundle.get("resolved_intent") or {})
+                for _k in ("verb_iri", "subject_uri", "subject_instance_id"):
+                    _v = _pre_resolved.get(_k)
+                    if _v not in (None, ""):
+                        _ri.setdefault(_k, _v)
+                _ri.setdefault("disposition", _direct.kind)
+                _ri.setdefault("failure_cause", {
+                    "exception": _seed_cause,
+                    "message": _detail["reason"],
+                    "where": "seed_panel_fall_back",
+                    "outcome": _direct.kind,
+                })
+                _artifact_bundle["resolved_intent"] = _ri
                 yield _perror(
                     f"seed_panel's declared route is no longer valid: {_detail['reason']}",
                     kind="verifying_route",
                     retryable=True,
-                    cause=(
-                        "seed_panel_verb_not_visible"
-                        if direct_dispatch.VERB_NO_LONGER_COMPATIBLE in _detail["reason"]
-                        else "seed_panel_fell_back"
+                    cause=_seed_cause,
+                    missing_domains=(
+                        _direct.missing_domains
+                        if _seed_cause == "seed_panel_verb_not_visible" else None
                     ),
                 )
                 yield _sse("stream_end", "{}")
@@ -8153,7 +9806,7 @@ async def _generate_dagster_stream_inner(
     # honest place for it to fail, not here where the cause would be guessed at.
     if caller_token:
         try:
-            VAULT.stash(run_id, caller_token, subject=user_email)
+            VAULT.stash(run_id, caller_token, subject=user_email, slots=vault_slots())
         except Exception as _vault_exc:  # noqa: BLE001
             logger.warning(
                 "identity_vault: could not stash the caller reference for run %s (%s: %s). "
@@ -8274,6 +9927,17 @@ async def _generate_dagster_stream_inner(
                     except (ValueError, TypeError):
                         return fallback
 
+                # PRECEDENCE, order-independent. A run can have several subtasks and every
+                # materialization lands here. (1) A no-verb record (empty verb_iri, an early
+                # exit) must NOT replace a resolved_intent already taken from a routed record:
+                # a routed subtask wins over an early exit. (2) A routed record DOES replace a
+                # no-verb one. Keyed on a local flag, not on the bundle's prior contents: the
+                # ExtractIntent output seeded there first has no verb_iri contract.
+                _is_routed_rec = bool(_slots_md.get("verb_iri"))
+                if not _is_routed_rec and _resolved_from_routed:
+                    continue
+                if _is_routed_rec:
+                    _resolved_from_routed = True
                 _artifact_bundle["resolved_intent"] = {
                     "verb_iri": _slots_md.get("verb_iri") or "",
                     "disposition": _slots_md.get("disposition") or "",
@@ -8296,13 +9960,17 @@ async def _generate_dagster_stream_inner(
                     # row reading the artifact can count it. Classify path only: the direct
                     # path never calls /fill_slots.
                     "fill_slots": _slots_md.get("fill_slots") or "",
+                    "no_verb_reason": _slots_md.get("no_verb_reason") or "",
+                    "fallback_detail": _slots_md.get("fallback_detail") or "",
+                    "rejected_verb_iri": _slots_md.get("rejected_verb_iri") or "",
                 }
                 logger.info(
                     "resolved_intent captured for run %s: verb=%s disposition=%s "
-                    "accepted=%d refused=%d",
+                    "no_verb_reason=%s accepted=%d refused=%d",
                     run_id,
                     _slots_md.get("verb_iri") or "-",
                     _slots_md.get("disposition") or "-",
+                    _slots_md.get("no_verb_reason") or "-",
                     len(_artifact_bundle["resolved_intent"]["accepted_slots"] or {}),
                     len(_artifact_bundle["resolved_intent"]["refused_slots"] or []),
                 )
@@ -8937,6 +10605,10 @@ async def _stream_direct_outcome(
     if _expert:
         _rr = acceptance_request.review_request_of(_expert)
         if _rr:
+            # I3: stamp the minted case key onto the block the render reads (`_expert` is
+            # `expert_response` below), before anything downstream sees the engine's own copy.
+            _rr = acceptance_request.with_minted_ids(_rr)
+            _expert["review_request"] = _rr
             _err = await _open_safety_acceptance(
                 bundle, _rr, path="direct", stage_kind=direct_dispatch.STAGE_CALLING,
             )
@@ -9596,8 +11268,9 @@ async def register_frontend_capabilities(
     )
 
 
-@app.post("/orchestrate")
+@app.post("/orchestrate", tags=[MCP_TAG])
 @app.post("/interview/stream")
+@_audit_orchestrate_refusals
 async def orchestrate(request: InterviewRequest, http_request: Request,
                       current_user: User = Depends(get_current_user)):
     """
@@ -9828,55 +11501,64 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
         # template: a caller asking for panel 0 must not be refused over panel 5's slot.
         _sp_unbound = sorted(set(_sp_panel.consumes) - set(_sp_bindings))
         if _sp_unbound:
-            raise HTTPException(
+            from .authz.refusal import policy_refusal
+            from .canvas_template import slot_refusal
+            # A POLICY REFUSAL (it asks the caller to choose) -- `canvas_template.slot_refusal`.
+            raise policy_refusal(
+                "unbound_required_slot",
                 status_code=409,
-                detail={
-                    "error": "unbound_required_slot",
-                    "message": (
-                        f"template {_sp_template_id!r} panel {_sp_panel_idx} consumes shared "
-                        f"slot(s) {_sp_unbound} that nothing binds yet. Supply it in seed_panel's "
-                        f"`bindings`."
-                    ),
-                },
+                message=(
+                    f"template {_sp_template_id!r} panel {_sp_panel_idx} consumes shared "
+                    f"slot(s) {_sp_unbound} that nothing binds yet. Supply it in seed_panel's "
+                    f"`bindings`."
+                ),
+                **slot_refusal(_sp_template, _sp_unbound),
             )
 
     return StreamingResponse(
         _keepalive_wrap(
-            generate_dagster_stream(
-                request,
-                trace_id=_trace_id,
-                user_id=current_user.id,
-                # ADR-0025 hop 2 + identity consolidation (2026-07-09): the
-                # caller's AUTHORIZATION IDENTITY (authz_id — the
-                # USER_ENTITLEMENT_CLAIM key policy/users.yaml + the seeded Topaz
-                # `user` objects key on; NOT the sub in user_id, NOT necessarily
-                # email). In sandbox authz_id == email (transparent); at
-                # work-deploy USER_ENTITLEMENT_CLAIM=<employee-id claim> re-keys
-                # this and the entitlement lookup TOGETHER with one knob. Threaded
-                # so Engine D's query_metadata + Engine O's resolve ASK Topaz
-                # about the SAME subject the matrix was looked up by (no
-                # email-vs-employee-id divergence). The downstream param name is
-                # still `user_email` but it CARRIES authz_id — a full param rename
-                # (user_email→authz_id through supervisor/Engine D/Engine O) is the
-                # honesty follow-up; the VALUE is the load-bearing fix. "" when
-                # absent → Topaz denies (least-privileged).
-                user_email=current_user.authz_id,
-                user_persona=effective_persona,
-                entitled_domains=effective_domains,
-                # The caller's own credential, for the vault only. Read from the header
-                # rather than re-minted: the whole point of the ruled design is that what
-                # reaches /canvas/seed is ALICE'S OWN Ping-rooted token — the same one the
-                # browser sends on the button path — never a new one minted on some
-                # broker's authority.
-                caller_token=(
-                    (http_request.headers.get("authorization") or "")
-                    .removeprefix("Bearer ")
-                    .strip()
+            # INSIDE the keepalive: `_keepalive_wrap` turns a producer exception into an error
+            # event, so only here can the audit line say `outcome=error`.
+            _audit_orchestrate_wrap(
+                generate_dagster_stream(
+                    request,
+                    trace_id=_trace_id,
+                    user_id=current_user.id,
+                    # ADR-0025 hop 2 + identity consolidation (2026-07-09): the
+                    # caller's AUTHORIZATION IDENTITY (authz_id — the
+                    # USER_ENTITLEMENT_CLAIM key policy/users.yaml + the seeded Topaz
+                    # `user` objects key on; NOT the sub in user_id, NOT necessarily
+                    # email). In sandbox authz_id == email (transparent); at
+                    # work-deploy USER_ENTITLEMENT_CLAIM=<employee-id claim> re-keys
+                    # this and the entitlement lookup TOGETHER with one knob. Threaded
+                    # so Engine D's query_metadata + Engine O's resolve ASK Topaz
+                    # about the SAME subject the matrix was looked up by (no
+                    # email-vs-employee-id divergence). The downstream param name is
+                    # still `user_email` but it CARRIES authz_id — a full param rename
+                    # (user_email→authz_id through supervisor/Engine D/Engine O) is the
+                    # honesty follow-up; the VALUE is the load-bearing fix. "" when
+                    # absent → Topaz denies (least-privileged).
+                    user_email=current_user.authz_id,
+                    user_persona=effective_persona,
+                    entitled_domains=effective_domains,
+                    # The caller's own credential, for the vault only. Read from the header
+                    # rather than re-minted: the whole point of the ruled design is that what
+                    # reaches /canvas/seed is ALICE'S OWN Ping-rooted token — the same one the
+                    # browser sends on the button path — never a new one minted on some
+                    # broker's authority.
+                    caller_token=(
+                        (http_request.headers.get("authorization") or "")
+                        .removeprefix("Bearer ")
+                        .strip()
+                    ),
+                    # Capture A per ADR-0025: thread the JWT-read-time
+                    # origin flag from auth.User down to the produced_for
+                    # dict construction inside generate_dagster_stream.
+                    entitlement_source=current_user.entitlement_source,
                 ),
-                # Capture A per ADR-0025: thread the JWT-read-time
-                # origin flag from auth.User down to the produced_for
-                # dict construction inside generate_dagster_stream.
-                entitlement_source=current_user.entitlement_source,
+                who=current_user.authz_id,
+                via=getattr(current_user, "azp", None) or "",
+                session_id=request.session_id,
             ),
             interval_s=10.0,
         ),
@@ -10864,7 +12546,7 @@ async def _load_viewable_case(case_id: str, current_user: User) -> tuple[dict, d
     return case, definitions
 
 
-@app.get("/cases/{case_id}")
+@app.get("/cases/{case_id}", tags=[MCP_TAG])
 async def get_case(case_id: str, current_user: User = Depends(get_current_user)):
     """GET /cases/{case_id} -- project the case runner's state (WorkflowRunner, ADR-0039) as
     cortex's `WorkflowCasePayload` (cortex-ui `src/archetypes/workflow-case/contract.ts`).
@@ -10904,7 +12586,21 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
         task_rows = []  # HITL substrate unconfigured: approvals are honestly empty, not a 503 --
                         # the case itself is readable without it.
 
-    return case_projection.project_workflow_case(case, definitions, task_rows)
+    # The released ActionRecord, read ONLY when a definition could have emitted one. A store that
+    # cannot be read is a 503, not a null: null claims "not released", which is false when we
+    # cannot tell. Same detail as `GET /cases/{id}/action`.
+    output_artifact = None
+    if case_projection.has_emit_step(case, definitions):
+        try:
+            records = await run_in_threadpool(_read_action_records, case_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("action record read failed: %s", exc)
+            raise HTTPException(status_code=503,
+                                detail={"error": "artifact_store_unavailable"}) from exc
+        output_artifact = case_projection.release_artifact(case_id, records)
+
+    return case_projection.project_workflow_case(
+        case, definitions, task_rows, output_artifact)
 
 
 from pydantic import ConfigDict as _ConfigDict  # noqa: E402
@@ -10932,7 +12628,7 @@ async def answer_case_signal(
     current_user: User = Depends(get_current_user),
 ):
     """POST /cases/{case_id}/signals/{signal} -- a person answers a case's human-audience
-    signal (a `signal_await` step, e.g. maint_release's `tier_ack`). A human acknowledgment is
+    signal (a `signal_await` step; no committed definition declares one since 2026-10-28, when the supervisor's approval became the release). A human acknowledgment is
     a cortex action (architect ruling 2026-10-10).
 
     GENERIC over the signal name, GATED by the journalled audience: this route names no signal.
@@ -11018,11 +12714,13 @@ def _sniff_file_kind(head: bytes) -> Optional[str]:
     return None
 
 
-@app.post("/ingest")
+@app.post("/ingest", tags=[INGEST_V1_TAG, MCP_TAG], responses={200: {"model": IngestResponse}, **DROP_GATE_RESPONSES})
 async def ingest_document(
     file: UploadFile = File(...),
     kind: str = Form(...),
-    on_behalf_of: str = Form(...),
+    # Blank or absent means the caller (`_admit_on_behalf_of`). `Form(...)` refused a blank as
+    # `missing` before that rule could run, so the documented "send it blank" was a 422.
+    on_behalf_of: str = Form(""),
     content_kind: Optional[str] = Form(None),
     leaf: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
@@ -11161,6 +12859,12 @@ async def ingest_document(
                 ),
             },
         )
+
+    # can_drop:<kind> (2026-10-28): a gated kind is dropped only by its grantees. The EFFECTIVE kind
+    # is `declared_content_kind` (a `leaf` already replaced it above); the dropper is `actor`, the
+    # principal of record when a delegate drops on their behalf. Before the bounded read, so a
+    # refused drop writes nothing.
+    await _can_drop_or_refuse(declared_content_kind, actor)
 
     # THE PROCESSABLE-KINDS CHECK (owner ruling, F2/F3): behind a flag that ships OFF. Flag off ->
     # the store and cache are never touched. Flag on is deny-by-default: no published list yet ->
@@ -11392,7 +13096,7 @@ def _dotted_get(d: dict[str, Any], path: str) -> Any:
     return cur
 
 
-@app.post("/ingest/events")
+@app.post("/ingest/events", responses=DROP_GATE_RESPONSES)
 async def ingest_event(
     req: IngestEventRequest,
     current_user: User = Depends(get_current_user),
@@ -11441,6 +13145,9 @@ async def ingest_event(
                 ),
             },
         )
+    # can_drop:<kind>: the dropper of record (`actor`) must hold it when the kind is gated.
+    # Before the trigger load, the runner and any write, so a refusal records nothing.
+    await _can_drop_or_refuse(req.content_kind, actor)
 
     try:
         from agent_fleet.restate_analyst.case_routing import (  # noqa: PLC0415
@@ -11710,6 +13417,51 @@ async def _ingest_status_body(row: dict, current_user: User) -> dict:
             logger.warning("ingest %s: the case's artifacts could not be listed: %s", row["id"], exc)
             artifacts = None
 
+    # The review task (208). At `review` the steward acts on ONE of two tasks: the empty-confirm task
+    # for the CURRENT attempt when the extraction found no rows (_hold_empty_for_confirmation filed
+    # it), else the current generation's promotion task. The open empty-confirm payload decides which,
+    # the same lookup _decide_empty makes. Off `review` all three are null. A failed read at review
+    # leaves all three null: "could not be determined", never a guessed task id.
+    review_task_id = review_shape = account = None
+    if source_row is not None and stage == ingest_status.REVIEW:
+        from . import human_tasks
+
+        _src_id = source_row.get("id") or ""
+        _empty_id = _empty_confirm_task_id(_src_id, source_row.get("attempt"))
+        try:
+            _empty = await run_in_threadpool(lambda: human_tasks.get_open_task_payload(_empty_id))
+        except Exception as exc:  # noqa: BLE001 — unknown, not none; the row must still answer
+            logger.warning("ingest %s: the review task could not be read: %s", row["id"], exc)
+        else:
+            if _empty is not None:
+                review_task_id, review_shape = _empty_id, "empty"
+                account = _empty.get("account")
+            else:
+                review_task_id = _promotion_task_id(
+                    _src_id, int(source_row.get("review_generation") or 0))
+                review_shape = "promotion"
+
+    # extraction_defect (packet 2026-10-11): the NEWEST extraction_defect task filed about this drop,
+    # as {task_id, edits}, or null when none is on record. `edits` counts ROWS deleted, added or
+    # corrected (a header correction is not a row; the empty has_parts defect has none, so 0). A
+    # failed read, or a duplicate whose original this caller cannot see, leaves the key ABSENT: no claim.
+    _ABSENT = object()
+    extraction_defect = _ABSENT
+    if source_row is not None:
+        from . import human_tasks
+
+        try:
+            _defect = await run_in_threadpool(lambda: human_tasks.latest_task_for_subject(
+                source_row.get("id") or "", "extraction_defect"))
+        except Exception as exc:  # noqa: BLE001 — unknown, not none; the row must still answer
+            logger.warning("ingest %s: the extraction defect could not be read: %s", row["id"], exc)
+        else:
+            extraction_defect = None if _defect is None else {
+                "task_id": _defect["task_id"],
+                "edits": sum(1 for e in (_defect["payload"].get("edits") or [])
+                             if isinstance(e, dict)
+                             and e.get("op") in ("corrected", "added", "deleted"))}
+
     body = {
         "ingest_id": row["id"],
         "stage": stage,
@@ -11729,12 +13481,15 @@ async def _ingest_status_body(row: dict, current_user: User) -> dict:
         "attempt": attempt,
         "notice_id": notice_id,
         "artifacts": artifacts,
-        # Spec 204: the id of the promotion task a steward acts on -- the CURRENT generation's --
-        # while the row is at `review`, else null. A generation change replaces it.
-        "review_task_id": (
-            _promotion_task_id(source_row.get("id") or "", int(source_row.get("review_generation") or 0))
-            if source_row is not None and stage == ingest_status.REVIEW else None),
+        # Spec 204 / 208: the task a steward acts on while the row is at `review` (see above), which
+        # of the two it is, and the extraction's own account of an empty one. A generation change
+        # replaces a promotion task.
+        "review_task_id": review_task_id,
+        "review_shape": review_shape,
+        "account": account,
     }
+    if extraction_defect is not _ABSENT:
+        body["extraction_defect"] = extraction_defect
     # The leaf (spec 203). Present ONLY for a leaf-capable row (absent, not null, for cad / xml /
     # s1000d / ...: absent tells cortex "no claim", so it draws no chip). A duplicate reads the
     # ORIGINAL's leaf; an invisible original leaves the keys absent. Never reads review.json per poll.
@@ -11752,7 +13507,7 @@ async def _ingest_status_body(row: dict, current_user: User) -> dict:
     return body
 
 
-@app.get("/ingest/{ingest_id}/status")
+@app.get("/ingest/{ingest_id}/status", tags=[INGEST_V1_TAG], responses={200: {"model": StatusBody}})
 async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_current_user)):
     """GET /ingest/<id>/status — for the SUBMITTER or the on_behalf_of principal only.
 
@@ -11891,31 +13646,47 @@ async def _ingest_review_access(ingest_id: str, current_user: User, route: str) 
         "message": "only the dropper or a holder of the open promotion task may read this document"})
 
 
-def _evidence_ref(it: dict) -> Optional[dict]:
-    mm = it.get("match_method")
-    page = it.get("page_number")
-    bboxes = it.get("bboxes")
-    if (isinstance(page, int) and not isinstance(page, bool) and page >= 1
-            and isinstance(bboxes, list) and bboxes
-            and all(isinstance(b, (list, tuple)) and len(b) == 4
-                    and all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in b)
-                    for b in bboxes)):
-        return {"page": page, "bbox": bboxes[0], "bboxes": bboxes,
-                "page_dims": it.get("page_dims"),
-                "units": "pt" if it.get("match_method") == "text_layer_cell" else "px",
-                # architect 2026-10-17: cortex renders a cell match and a region match
-                # differently. An unrecognised method (e.g. inherited_doc_level) stays None --
-                # undecided, never guessed.
-                "quality": ("cell" if mm == "text_layer_cell"
-                            else "region" if isinstance(mm, str) and mm.startswith("region_")
-                            else None)}
+def _wire_evidence_ref_failure(w) -> Optional[str]:
+    """The first contract check `w` fails, or None. Contract: `ingest_api.EvidenceRef`."""
+    import math
+    if not isinstance(w, dict):
+        return "not_object"
+    for k in w:
+        if k not in ("page", "bbox", "note"):
+            return f"extra_key:{k}"
+    page = w.get("page")
+    if not isinstance(page, int) or isinstance(page, bool) or page < 1:
+        return "page"
+    bbox = w.get("bbox")
+    if bbox is not None:
+        if (not isinstance(bbox, (list, tuple)) or len(bbox) != 4
+                or not all(isinstance(n, (int, float)) and not isinstance(n, bool)
+                           and math.isfinite(n) and 0 <= n <= 1 for n in bbox)):
+            return "bbox_not_fractions"
+        if not (bbox[0] < bbox[2] and bbox[1] < bbox[3]):
+            return "bbox_degenerate"
+    if "note" in w and (not isinstance(w["note"], str) or not w["note"].strip()):
+        return "note_blank"
     return None
 
 
-@app.get("/ingest/{ingest_id}/extraction")
+def _evidence_ref(it: dict) -> Optional[dict]:
+    # Architect rulings 2026-10-21 (BFF serves 7f's wire_evidence_ref as is) and 2026-10-28 (the
+    # contract holds nothing else): a legacy item with no wire_evidence_ref has no evidence_ref.
+    if "wire_evidence_ref" not in it:
+        return None
+    w = it["wire_evidence_ref"]
+    failed = _wire_evidence_ref_failure(w)
+    if failed is None:
+        return w
+    logger.warning("wire_evidence_ref refused (%s) for %s", failed, it.get("field_path"))
+    return None
+
+
+@app.get("/ingest/{ingest_id}/extraction", tags=[INGEST_V1_TAG], responses={200: {"model": Extraction}})
 async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(get_current_user)):
     """GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the
-    evidence reference (page, bbox, units, quality cell|region|null) the review card draws. Gate: `_ingest_review_access`
+    evidence reference (7f's `wire_evidence_ref`: page, bbox in page fractions, optional note) the review card draws. Gate: `_ingest_review_access`
     (the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of
     review.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and
     is counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /
@@ -11925,9 +13696,15 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
     A REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the
     rejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404
     `rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`."""
+    row, _why = await _ingest_review_access(ingest_id, current_user, "extraction")
+    return await _extraction_body(ingest_id, row)
+
+
+async def _extraction_body(ingest_id: str, row: dict) -> dict:
+    """The body of GET /ingest/<id>/extraction for an already-gated `row` (the route and the
+    review export share it). Raises the same HTTPExceptions the route documents."""
     from starlette.concurrency import run_in_threadpool
 
-    row, _why = await _ingest_review_access(ingest_id, current_user, "extraction")
     ref = str(row.get("extraction_ref") or "").strip()
     if not ref:
         raise HTTPException(status_code=422, detail={
@@ -11981,8 +13758,14 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
             "source_snippet": it.get("source_snippet"), "evidence_ref": ev})
     summ = _review_notice_summary(review)
     leaf, leaf_source, corrected_by = _row_leaf(row)
+    from . import content_kinds, review_shapes
+    _reg = content_kinds.by_kind(row.get("content_kind") or "")
+    _shape = getattr(_reg, "review_shape", None)
+    _shape_row = review_shapes.valid_review_shapes().get(_shape) if _shape else None
     return {
         "ingest_id": ingest_id,
+        "review_shape": _shape if _shape_row is not None else None,
+        "item_kind": _shape_row.item_kind if _shape_row is not None else None,
         "notice_id": summ["notice_id"],
         "content_kind": row.get("content_kind"), "attempt": row.get("attempt"),
         "leaf": leaf, "leaf_source": leaf_source, "corrected_by": corrected_by,
@@ -11992,6 +13775,330 @@ async def ingest_extraction_route(ingest_id: str, current_user: User = Depends(g
         "part_count": summ["part_count"],
         "rows": rows_out, "rows_without_evidence": without, "review_ref": key,
         "relocated_to": reloc[1] if reloc else None}
+
+
+_EXPORT_BATCH_CAPABILITY = "ingest:exportBatch"
+_EXPORT_PROFILE_CAPABILITY_PREFIX = "can_export:"
+_EXPORT_MAX_DAYS = 92
+_EXPORT_MAX_NOTICES = 500
+_EXPORT_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def _export_profile_or_422(name: Optional[str]):
+    """The named valid export profile, else 422 `export_profile_unknown` / `export_profile_invalid`."""
+    from . import export_profiles
+
+    p = export_profiles.load_profiles().get(name or "")
+    if p is None:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_profile_unknown",
+            "message": f"no export profile {name!r}; GET /ingest/export/profiles lists them"})
+    if isinstance(p, export_profiles.ProfileInvalid):
+        raise HTTPException(status_code=422, detail={
+            "error": "export_profile_invalid", "reason": p.reason,
+            "message": f"export profile {name!r} is invalid ({p.reason})"})
+    return p
+
+
+async def _may_export_batch(caller: str, route: str, ingest_id: str = "-") -> bool:
+    """The `ingest:exportBatch` capability for `caller`. A Topaz failure is 503, never a deny
+    (same bodies as `_ingest_review_access`); an ungranted capability is False."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    try:
+        return bool(await run_in_threadpool(
+            lambda: human_tasks.can_invoke_or_unavailable(_EXPORT_BATCH_CAPABILITY, caller)))
+    except human_tasks.AuthorizationUnconfigured as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unconfigured")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("export capability check unavailable: %s", type(exc).__name__)
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unavailable")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify the caller against the export capability"}) from exc
+
+
+async def _may_export_profile(caller: str, profile_name: str, route: str,
+                              ingest_id: str = "-") -> bool:
+    """The `can_export:<profile>` capability for `caller`. DENY BY DEFAULT: a profile with no
+    `can_export:` row is exportable by nobody (gov's #151 convention, the opposite of `can_drop`).
+    A Topaz failure is 503, never a deny (same bodies as `_may_export_batch`)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    capability = f"{_EXPORT_PROFILE_CAPABILITY_PREFIX}{profile_name}"
+    try:
+        return bool(await run_in_threadpool(
+            lambda: human_tasks.can_invoke_or_unavailable(capability, caller)))
+    except human_tasks.AuthorizationUnconfigured as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unconfigured")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("export profile capability check unavailable: %s", type(exc).__name__)
+        _audit_ingest_access(route, ingest_id, caller, "deny", "authorization_unavailable")
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify the caller against the export profile capability"}) from exc
+
+
+def _export_decision_record(ingest_id: str):
+    """Sync (threadpool): the stored decision record, 503 `decision_ledger_unreachable` on a fault."""
+    from . import promotion_stores
+
+    try:
+        return promotion_stores.PgDecisionLedger().record_for(ingest_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decision ledger read failed for %s: %s", ingest_id, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "decision_ledger_unreachable",
+            "message": f"the decision ledger did not answer: {type(exc).__name__}"})
+
+
+async def _export_notice_extraction(ingest_id: str, row: dict) -> dict:
+    """The extraction body of a PROMOTED, uncorrected notice, for the export; else the refusal.
+    409 `ingest_not_promoted` (body carries `status`); 409 `export_corrections_not_applied`; 503
+    `decision_ledger_unreachable`; then whatever `_extraction_body` refuses."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status, promotion
+
+    if row.get("status") != ingest_status.PROMOTED:
+        raise HTTPException(status_code=409, detail={
+            "error": "ingest_not_promoted", "status": row.get("status"),
+            "message": "only a promoted notice can be exported"})
+    rec = await run_in_threadpool(lambda: _export_decision_record(ingest_id))
+    if promotion._recorded_row_edits(rec):
+        raise HTTPException(status_code=409, detail={
+            "error": "export_corrections_not_applied",
+            "message": "the promotion carries steward corrections (row or header edits) and the "
+                       "export serves review.json's uncorrected values; refused until "
+                       "corrections are applied to the export"})
+    return await _extraction_body(ingest_id, row)
+
+
+def _export_render(profile, bodies: list) -> list:
+    from . import export_profiles
+
+    out: list = []
+    try:
+        for b in bodies:
+            out += export_profiles.render_rows(profile, b)
+    except export_profiles.ExportBlocked as exc:
+        raise HTTPException(status_code=422, detail={"error": "export_blocked", **exc.body()})
+    return out
+
+
+def _export_response(profile, rows: list, filename: str, **extra) -> Response:
+    from . import export_profiles
+
+    disp = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    if profile.format == "csv":
+        return Response(export_profiles.to_csv(profile.outputs, rows),
+                        media_type="text/csv; charset=utf-8", headers=disp)
+    return JSONResponse(export_profiles.to_json(profile, rows, **extra), headers=disp)
+
+
+# The export routes carry their own tag, not ingest-v1: a v1 entry needs a JSON response model per
+# route and the CSV body is not JSON. They enter v1 as PREVIEW routes (like /empty) when Lane 1
+# regenerates the v1 doc and shapes lock (overnight item 5).
+@app.get("/ingest/export/profiles", tags=["ingest-export", MCP_TAG],
+         responses={200: {"model": list[ExportProfile]}})
+async def ingest_export_profiles_route(current_user: User = Depends(get_current_user)):
+    """GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:
+    `[{name, format, granularity, label}]`. An invalid profile is logged at ERROR and left out.
+    Any authenticated caller (a name and a label are not notice content)."""
+    from . import export_profiles
+
+    out = []
+    for name, p in sorted(export_profiles.load_profiles().items()):
+        if isinstance(p, export_profiles.ProfileInvalid):
+            logger.error("export profile %s is invalid: %s", name, p)
+            continue
+        out.append({"name": p.name, "format": p.format, "granularity": p.granularity,
+                    "label": p.label})
+    return out
+
+
+@app.get("/review-shapes", tags=["ingest-export"],
+         responses={200: {"model": list[ReviewShapeRow]}})
+async def review_shapes_route(current_user: User = Depends(get_current_user)):
+    """GET /review-shapes -- the valid review-shape registry rows (`policy/review_shapes`, the
+    seed plus the deployment overlays), sorted by `review_shape`. An invalid row is logged at
+    ERROR and left out. Any authenticated caller: a shape row is policy configuration, not
+    content."""
+    from . import review_shapes
+
+    out = []
+    for name, row in sorted(review_shapes.load_review_shapes().items()):
+        if isinstance(row, review_shapes.ShapeInvalid):
+            logger.error("review shape %s is invalid: %s", name, row)
+            continue
+        out.append(row.model_dump(mode="json"))
+    return out
+
+
+@app.get("/ingest/export", tags=["ingest-export", MCP_TAG])
+async def ingest_export_batch_route(
+        profile: Optional[str] = _Query(None), from_: Optional[str] = _Query(None, alias="from"),
+        to: Optional[str] = _Query(None), current_user: User = Depends(get_current_user)):
+    """GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the
+    range (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.
+    A service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The
+    capability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is
+    one of the caller's entitlement-cell domains are in the set, filtered before the loud-not-
+    partial checks and before the 500 cap; a caller with no cells gets the empty export.
+    Gate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy
+    refusal; Topaz down is 503), AND, in addition, `can_export:<profile>` for the named profile
+    (403 `not_entitled_to_export`, a policy refusal; DENY BY DEFAULT: a profile with no row is
+    exportable by nobody), checked after the profile resolves (an unknown one stays 422). At most 92 days (both ends counted) and 500 notices. LOUD, NOT
+    PARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,
+    extraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks
+    on is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`)."""
+    from datetime import timedelta
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status, promotion_stores
+    from .authz.refusal import policy_refusal
+
+    caller = (current_user.authz_id or "").strip()
+    if _is_service_caller(caller) or not await _may_export_batch(caller, "export_batch"):
+        _audit_ingest_access("export_batch", "-", caller, "deny", "not_entitled")
+        raise policy_refusal(
+            "not_entitled_to_export_batch", policy_id="capability_grants:ingest:exportBatch",
+            missing_binding="can_invoke ingest:exportBatch",
+            message="exporting the promoted notices of a date range needs the ingest:exportBatch "
+                    "capability")
+    prof = _export_profile_or_422(profile)
+    if not await _may_export_profile(caller, prof.name, "export_batch", "-"):
+        _audit_ingest_access("export_batch", "-", caller, "deny", "not_entitled_to_profile")
+        raise policy_refusal(
+            "not_entitled_to_export", policy_id=f"capability_grants:can_export:{prof.name}",
+            missing_binding=f"can_invoke can_export:{prof.name}",
+            message=f"exporting through the {prof.name!r} profile needs the "
+                    f"can_export:{prof.name} capability")
+
+    def _day(v):
+        if not isinstance(v, str) or not _EXPORT_DATE_RE.fullmatch(v):
+            return None
+        try:
+            return _date.fromisoformat(v)
+        except ValueError:
+            return None
+
+    d0, d1 = _day(from_), _day(to)
+    if d0 is None or d1 is None or d0 > d1:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_invalid",
+            "message": "from and to are required, YYYY-MM-DD (UTC days), and from <= to"})
+    if (d1 - d0).days + 1 > _EXPORT_MAX_DAYS:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_too_large",
+            "message": f"at most {_EXPORT_MAX_DAYS} days (both ends counted); narrow the range"})
+
+    def _ms(d):
+        return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
+
+    start_ms, end_ms = _ms(d0), _ms(d1 + timedelta(days=1))
+    try:
+        domains = {c.domain for c in current_user.entitlements.cells}
+        hits = [] if not domains else await run_in_threadpool(
+            lambda: promotion_stores.PgDecisionLedger().promoted_between(
+                start_ms, end_ms, _EXPORT_MAX_NOTICES + 1, domains))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("decision ledger range read failed: %s", exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "decision_ledger_unreachable",
+            "message": f"the decision ledger did not answer: {type(exc).__name__}"})
+    if len(hits) > _EXPORT_MAX_NOTICES:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_too_large",
+            "message": f"more than {_EXPORT_MAX_NOTICES} notices were promoted in the range; "
+                       "narrow the range"})
+    bodies = []
+    for ingest_id, _at in hits:
+        row = await run_in_threadpool(lambda i=ingest_id: ingest_status.get_row(i))
+        try:
+            if row is None or row.get("kind") == ingest_status.EVENT:
+                raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+            bodies.append(await _export_notice_extraction(ingest_id, row))
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                raise
+            d = exc.detail if isinstance(exc.detail, dict) else {}
+            raise HTTPException(status_code=422, detail={
+                "error": "export_notice_unreadable", "ingest_id": ingest_id,
+                "reason": d.get("error"), "message": d.get("message") or str(exc.detail)})
+    rows = _export_render(prof, bodies)
+    _ingest_access_log.info(
+        "ingest_export_batch caller=%s profile=%s from=%s to=%s n=%d",
+        caller, prof.name, d0.isoformat(), d1.isoformat(), len(bodies))
+    return _export_response(
+        prof, rows, f"ingest-export.{prof.name}.{d0.isoformat()}_{d1.isoformat()}.{prof.format}",
+        **{"from": d0.isoformat(), "to": d1.isoformat(), "notices": len(bodies)})
+
+
+@app.get("/ingest/{ingest_id}/export", tags=["ingest-export"])
+async def ingest_export_route(ingest_id: str, profile: Optional[str] = _Query(None),
+                              current_user: User = Depends(get_current_user)):
+    """GET /ingest/<id>/export?profile=<name> -- one PROMOTED notice rendered through a profile
+    (`policy/exports/`, 7f's batch-column-map vocabulary). A service caller never reaches the
+    capability: the original 403 is re-raised and Topaz is not asked. The capability is
+    DOMAIN-SCOPED: a notice whose promotion domain (`promotion.recorded_domain`) is not one of the
+    caller's cell domains, or has none, re-raises the original 403 (audit `out_of_domain`). Gate: `_ingest_review_access` (the
+    dropper, or a holder of the open task), and a caller it would 403 is admitted when they hold
+    the `ingest:exportBatch` capability (reason `export_capability`); a Topaz failure while that
+    is consulted is 503, a False re-raises the ORIGINAL 403. 422 `export_profile_unknown` /
+    `export_profile_invalid`. IN ADDITION to the gates above, for EVERY caller who reaches it (the
+    review-access path and the exportBatch path alike, a service caller that passed review access
+    too): the `can_export:<profile>` capability, checked after the profile resolves; 403
+    `not_entitled_to_export` (a policy refusal, DENY BY DEFAULT), Topaz down is 503. 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the
+    export serves review.json's values, so a promotion carrying steward row or header edits would
+    export the uncorrected ones; refused until a later slice applies corrections); 503
+    `decision_ledger_unreachable`; 422 `export_blocked` (naming notice, part, column)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+    from .authz.refusal import policy_refusal
+
+    caller = (current_user.authz_id or "").strip()
+    try:
+        row, _why = await _ingest_review_access(ingest_id, current_user, "export")
+    except HTTPException as exc:
+        if exc.status_code != 403:
+            raise
+        if _is_service_caller(caller):
+            raise
+        if not await _may_export_batch(caller, "export", ingest_id):
+            raise
+        row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+        if row is None or row.get("kind") == ingest_status.EVENT:
+            raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+        from . import promotion
+
+        rec = await run_in_threadpool(lambda: _export_decision_record(ingest_id))
+        if promotion.recorded_domain(rec) not in {c.domain for c in current_user.entitlements.cells}:
+            _audit_ingest_access("export", ingest_id, caller, "deny", "out_of_domain")
+            raise
+        _audit_ingest_access("export", ingest_id, caller, "allow", "export_capability")
+    prof = _export_profile_or_422(profile)
+    if not await _may_export_profile(caller, prof.name, "export", ingest_id):
+        _audit_ingest_access("export", ingest_id, caller, "deny", "not_entitled_to_profile")
+        raise policy_refusal(
+            "not_entitled_to_export", policy_id=f"capability_grants:can_export:{prof.name}",
+            missing_binding=f"can_invoke can_export:{prof.name}",
+            message=f"exporting through the {prof.name!r} profile needs the "
+                    f"can_export:{prof.name} capability")
+    body = await _export_notice_extraction(ingest_id, row)
+    rows = _export_render(prof, [body])
+    return _export_response(prof, rows, f"{ingest_id}.{prof.name}.{prof.format}")
 
 
 _SOURCE_MEDIA_TYPES = {"pdf": "application/pdf", "xml": "application/xml"}
@@ -12084,7 +14191,7 @@ def _open_source_object(ingest_id: str, row: dict) -> tuple[Any, str]:
     return _get(ref_at), ref
 
 
-@app.get("/ingest/{ingest_id}/source")
+@app.get("/ingest/{ingest_id}/source", tags=[INGEST_V1_TAG], responses={200: BINARY_200})
 async def ingest_source_route(ingest_id: str, current_user: User = Depends(get_current_user)):
     """GET /ingest/<id>/source -- the dropped document's own bytes, streamed in chunks (never
     buffered whole). Same gate and audit as `/extraction`; works for the dropper before any
@@ -12130,7 +14237,7 @@ def _is_service_caller(authz_id: Optional[str]) -> bool:
     return bool(a) and (a.startswith("svc:") or a in _delegate_principals())
 
 
-@app.post("/ingest/{ingest_id}/retry")
+@app.post("/ingest/{ingest_id}/retry", tags=[INGEST_V1_TAG], responses={200: {"model": RetryResponse}})
 async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] = None,
                              current_user: User = Depends(get_current_user)):
     """POST /ingest/<id>/retry. The architect's 2026-10-12 directive, "pipeline failure must reach
@@ -12279,6 +14386,7 @@ async def ingest_retry_route(ingest_id: str, body: Optional[IngestRetryRequest] 
     _terminal_stages = (
         ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
         ingest_status.DUPLICATE, ingest_status.CASE_OPENED, ingest_status.REVIEW_REJECTED,
+        ingest_status.NO_PARTS,
     )
     if stage in _terminal_stages:
         raise HTTPException(status_code=409, detail={
@@ -12448,6 +14556,19 @@ def _bound_review_for_payload(subject) -> dict:
             "error": "extraction_unbound",
             "message": f"the review rows are not under this document's directory {prefix!r}"})
     return _read_review_json(key)
+
+
+def _handler_consumes(kind, field: str) -> bool:
+    """Whether the handler for `kind` reads request field `field`: the gate asks the handler."""
+    from . import promotion
+    return kind == promotion.KIND and field in promotion.CONSUMES
+
+
+def _review_parts_for_payload(subject) -> list:
+    """The distinct `part_index` of the extraction a promotion task points at (sync; threadpool),
+    read through the reader behind `GET /ingest/{id}/extraction`."""
+    return sorted({int(m.group(1)) for it in _review_items(_bound_review_for_payload(subject))
+                   if (m := _PART_FIELD_RE.match(str(it.get("field_path") or "")))})
 
 
 def _review_header_for_payload(subject) -> dict:
@@ -12807,7 +14928,253 @@ async def _file_or_find_document_promotion_task(
     return task_id, "FILED"
 
 
-@app.get("/ingest/retries")
+# ── document_empty_confirm (ruling 2026-10-23, spec 208) ─────────────────────────────────────────
+# A zero-row extraction on a NOTICE (content_kind in ingest_status.LEAVES) files this task instead of
+# failing the row. Two doors, one writer: `POST /human_tasks/{id}/act` and `POST /ingest/{id}/empty`
+# both call `_decide_empty`.
+EMPTY_CONFIRM_KIND = "document_empty_confirm"
+_EMPTY_DECISIONS = ("confirmed_no_parts", "has_parts")
+_EMPTY_OPEN_DETAIL = ("the extraction found no part rows; awaiting confirmation that the document "
+                      "has none")
+_EMPTY_DEFECT_REASON = "the steward says the document has parts; the extraction found none"
+_ADD_MISSED_PART_MSG = ("entering parts by hand on an empty extraction is not built yet (awaiting a "
+                        "ruling on where hand-entered parts land)")
+
+
+def _empty_confirm_task_id(ingest_id: str, attempt) -> str:
+    """One task per (ingest_id, attempt): a re-posted stage finds it, a relaunch files a new one."""
+    return f"{EMPTY_CONFIRM_KIND}:{ingest_id}:a{int(attempt or 1)}"
+
+
+def _empty_account(review) -> dict:
+    """The extraction's OWN account of why it found no rows, DERIVED from review.json's top-level
+    `stats` and `review_reasons`. An unreadable review.json or stats gives `why: "unknown"` and Nones:
+    no figure is ever invented."""
+    stats = review.get("stats") if isinstance(review, dict) else None
+    reasons = review.get("review_reasons") if isinstance(review, dict) else None
+
+    def _n(key):
+        v = stats.get(key) if isinstance(stats, dict) else None
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    n_tables, no_col, emitted = _n("n_tables"), _n("grid_no_parts_col"), _n("grid_rows_emitted")
+    if not isinstance(stats, dict):
+        why = "unknown"
+    elif n_tables == 0:
+        why = "no_table"
+    elif n_tables is not None and n_tables > 0 and no_col is not None and no_col > 0:
+        why = "no_parts_column"
+    else:
+        why = "zero_rows"
+    return {"n_tables": n_tables, "grid_no_parts_col": no_col, "grid_rows_emitted": emitted,
+            "review_reasons": [str(r) for r in reasons] if isinstance(reasons, list) else [],
+            "why": why}
+
+
+async def _file_or_find_empty_confirm_task(
+    ingest_id: str, row: dict, *, requested_by: str, account: dict, forced: bool,
+) -> tuple[str, str]:
+    """Find-or-file the `document_empty_confirm` task for the row's CURRENT attempt. Audience
+    `document_promotion:<DOMAIN>`, DOMAIN from the kind registry exactly as the promotion filer derives
+    it; no origin gate (nothing to promote). Same refusals as that filer: 422 `no_declared_domain`,
+    503 `hitl_unconfigured`, 422 `no_entitled_recipients`, 422 `no_requester`. Writes nothing on any."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, human_tasks, promotion
+
+    kind_reg = content_kinds.by_kind(row.get("content_kind"))
+    domain = kind_reg.domain if (kind_reg is not None and kind_reg.domain) else None
+    if domain is None:
+        raise HTTPException(status_code=422, detail={
+            "error": "no_declared_domain",
+            "message": f"ingest {ingest_id} has content_kind={row.get('content_kind')!r}, which "
+                       "resolves to no steward pool to route the confirmation to."})
+    audience = f"{promotion.KIND}:{str(domain).upper()}"
+    attempt = row.get("attempt")
+    task_id = _empty_confirm_task_id(ingest_id, attempt)
+    if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
+        return task_id, "ALREADY_FILED"
+    payload = {"review_shape": "empty", "ingest_id": ingest_id, "attempt": attempt,
+               "source": f"/ingest/{ingest_id}/source", "account": account,
+               "forced_text_fallback": bool(forced), "add_missed_part": bool(forced),
+               "content_kind": row.get("content_kind")}
+    try:
+        await run_in_threadpool(lambda: human_tasks.register_task(
+            kind=EMPTY_CONFIRM_KIND, task_id=task_id, audience=audience,
+            title=f"No parts found in {ingest_id}",
+            summary=(f"The extraction of {ingest_id} (attempt {attempt}) found no part rows "
+                     f"({account.get('why')}). Confirm the document has none, or say it has parts."),
+            requested_by=requested_by, subject_ref=ingest_id, payload=payload))
+    except human_tasks.HumanTaskConfigError as exc:
+        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    except human_tasks.NoEntitledRecipients as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
+    return task_id, "FILED"
+
+
+async def _decide_empty(ingest_id: str, decision: str, actor: str, page, *,
+                        task_id: Optional[str] = None) -> dict:
+    """THE ONE WRITER of a `document_empty_confirm` decision; both doors call it, and it closes the
+    task either way. Refusals write nothing: 422 `invalid_decision` / `page_required` /
+    `page_not_for_decision`, 404 `ingest_not_found`, 409 `no_open_empty_task` (the row is not at
+    `review` with this attempt's task open), 409 `add_missed_part_not_built` (`has_parts` on the
+    second-zero task).
+
+    `confirmed_no_parts`: the row ends `no_parts` with detail `no parts (confirmed by <actor>)`.
+    `has_parts` (needs an integer page >= 1): files `extraction_defect` to
+    `dispatch_failure:<DOMAIN>` through the BFF's own task filer (the workflow's filer lives in
+    restate_analyst and is not reachable from here), then relaunches the row with the text fallback
+    forced (`attempt` + 1, back to `received`)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks, ingest_status, promotion
+
+    if decision not in _EMPTY_DECISIONS:
+        raise HTTPException(status_code=422, detail={
+            "error": "invalid_decision", "allowed": list(_EMPTY_DECISIONS)})
+    if decision == "confirmed_no_parts" and page is not None:
+        raise HTTPException(status_code=422, detail={
+            "error": "page_not_for_decision",
+            "message": "a page is read only on has_parts"})
+    if decision == "has_parts" and (
+            not isinstance(page, int) or isinstance(page, bool) or page < 1):
+        raise HTTPException(status_code=422, detail={
+            "error": "page_required",
+            "message": "has_parts needs the integer page (>= 1) the steward points at"})
+    row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+    if row is None or row.get("kind") == ingest_status.EVENT:
+        raise HTTPException(status_code=404, detail={"error": "ingest_not_found"})
+    current_id = _empty_confirm_task_id(ingest_id, row.get("attempt"))
+    payload = (await run_in_threadpool(lambda: human_tasks.get_open_task_payload(current_id))
+               if row.get("status") == ingest_status.REVIEW else None)
+    if payload is None or (task_id is not None and task_id != current_id):
+        raise HTTPException(status_code=409, detail={
+            "error": "no_open_empty_task", "stage": row.get("status"), "task_id": task_id,
+            "message": "no open confirmation for this document's current attempt"})
+    if decision == "has_parts" and payload.get("add_missed_part"):
+        raise HTTPException(status_code=409, detail={
+            "error": "add_missed_part_not_built", "message": _ADD_MISSED_PART_MSG})
+    if decision == "confirmed_no_parts":
+        await run_in_threadpool(lambda: ingest_status.update_status(
+            ingest_id, ingest_status.NO_PARTS, detail=f"no parts (confirmed by {actor})"))
+        n = await run_in_threadpool(lambda: human_tasks.mark_task_resolved(
+            current_id, caller_id=actor, decision=decision, comment=""))
+        return {"ingest_id": ingest_id, "task_id": current_id, "decision": decision,
+                "stage": ingest_status.NO_PARTS, "rows_resolved": n}
+    # has_parts
+    state = await run_in_threadpool(lambda: human_tasks.get_task_open_state(current_id))
+    try:
+        defect_aud = f"dispatch_failure:{promotion.domain_of((state or {}).get('audience'))}"
+    except promotion.PromotionRefused as exc:
+        raise HTTPException(status_code=exc.status, detail={"error": exc.error, "message": str(exc)})
+    defect_id = f"extraction-defect:{ingest_id}:empty-a{row.get('attempt')}"
+    defect_payload = {"ingest_id": ingest_id, "page": page, "reason": _EMPTY_DEFECT_REASON,
+                      "account": payload.get("account"), "decided_by": actor}
+    try:
+        if not await run_in_threadpool(lambda: human_tasks.task_exists(defect_id)):
+            await run_in_threadpool(lambda: human_tasks.register_task(
+                kind="extraction_defect", task_id=defect_id, audience=defect_aud,
+                title=f"Extraction defect -- {ingest_id} found no parts (page {page})",
+                summary=(f"The extraction of {ingest_id} found no part rows; {actor} says the "
+                         f"document has parts (page {page})."),
+                requested_by=actor, subject_ref=ingest_id, payload=defect_payload))
+    except human_tasks.HumanTaskConfigError as exc:
+        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    except human_tasks.NoEntitledRecipients as exc:
+        raise HTTPException(status_code=409, detail={
+            "error": "extraction_defect_unroutable", "audience": defect_aud, "message": str(exc)})
+    except human_tasks.NoRequester as exc:
+        raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
+    new_attempt = await run_in_threadpool(lambda: ingest_status.relaunch_with_text_fallback(
+        ingest_id, expect_attempt=int(row.get("attempt") or 1)))
+    if new_attempt is None:
+        raise HTTPException(status_code=409, detail={
+            "error": "no_open_empty_task",
+            "message": "the document moved while the decision was written; nothing was relaunched"})
+    n = await run_in_threadpool(lambda: human_tasks.mark_task_resolved(
+        current_id, caller_id=actor, decision=decision, comment=""))
+    return {"ingest_id": ingest_id, "task_id": current_id, "decision": decision,
+            "stage": ingest_status.RECEIVED, "attempt": new_attempt, "extraction_defect": defect_id,
+            "force_text_fallback": True, "rows_resolved": n}
+
+
+async def _hold_empty_for_confirmation(
+    ingest_id: str, row: dict, req, *, caller: str, prefix: str, adopt: dict, run: dict,
+) -> dict:
+    """The stage route's answer to a zero-row extraction on a NOTICE: file (or find) the
+    `document_empty_confirm` task, then move the row to `review` with the open detail. TASK FIRST,
+    STATUS SECOND, and a 4xx refusal fails the row retryably exactly as the promotion filer's does;
+    a 5xx writes nothing. Nothing is written `failed:extraction_empty`. A row whose
+    `force_text_fallback` is TRUE has already had its forced relaunch: its task carries
+    `add_missed_part`."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    review = await _server_extraction_review(req.extraction_ref, prefix)
+    account = _empty_account(review)
+    try:
+        task_id, _st = await _file_or_find_empty_confirm_task(
+            ingest_id, row, requested_by=caller, account=account,
+            forced=bool(row.get("force_text_fallback")))
+    except HTTPException as exc:
+        if 400 <= exc.status_code < 500:
+            _d = exc.detail if isinstance(exc.detail, dict) else {}
+            _err = _d.get("error") if isinstance(_d.get("error"), str) else None
+            _why = f"review refused ({exc.status_code}): {_err or exc.detail}"
+            try:
+                await run_in_threadpool(lambda: ingest_status.update_status(
+                    ingest_id, ingest_status.FAILED, detail=_why,
+                    failure={
+                        "reason_code": (_err if _err and ingest_status.REASON_CODE_RE.match(_err)
+                                        else "review_refused"),
+                        "reason": _why, "step": "review",
+                        "run_id": req.run_id or row.get("run_id"),
+                        "pin_digest": req.pin_digest,
+                        "failed_at": int(time.time() * 1000)},
+                    **adopt, **run))
+            except Exception as werr:  # noqa: BLE001 -- the caller must still see the refusal
+                logger.warning("ingest %s: the refused empty confirmation could not be written as "
+                               "failed (%s: %s)", ingest_id, type(werr).__name__, werr)
+        raise
+    try:
+        await run_in_threadpool(lambda: ingest_status.update_status(
+            ingest_id, ingest_status.REVIEW, extracted_count=req.extracted_count,
+            extracted_total=req.extracted_total, extraction_ref=req.extraction_ref,
+            detail=_EMPTY_OPEN_DETAIL, **adopt, **run))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid_stage_update", "message": str(exc)})
+    return {"ingest_id": ingest_id, "stage": ingest_status.REVIEW, "task_id": task_id,
+            "task_kind": EMPTY_CONFIRM_KIND}
+
+
+class IngestEmptyRequest(_BaseModel):
+    """POST /ingest/{ingest_id}/empty's body: the dropper's or steward's answer on an empty extraction."""
+    model_config = {"extra": "forbid"}
+    decision: Literal["confirmed_no_parts", "has_parts"]
+    page: Optional[_StrictInt] = None
+
+    @model_validator(mode="after")
+    def _page_only_with_has_parts(self):
+        if self.page is not None and self.decision != "has_parts":
+            raise ValueError("page is only valid with decision='has_parts'")
+        return self
+
+
+@app.post("/ingest/{ingest_id}/empty", tags=[INGEST_V1_TAG], responses={200: {"model": EmptyDecisionResponse}}, openapi_extra=PREVIEW_EXTRA)
+async def decide_empty_route(ingest_id: str, req: IngestEmptyRequest,
+                             current_user: User = Depends(get_current_user)):
+    """POST /ingest/{ingest_id}/empty -- answer a document's `document_empty_confirm`. Gate:
+    `_ingest_review_access` (the dropper, or a holder of the open promotion task: the same gate as
+    `/ingest/{id}/leaf`). The dropper may confirm their own: there is nothing to approve. The same
+    writer as the task act (`_decide_empty`)."""
+    await _ingest_review_access(ingest_id, current_user, "POST /ingest/{ingest_id}/empty")
+    return await _decide_empty(ingest_id, req.decision, (current_user.authz_id or "").strip(), req.page)
+
+
+@app.get("/ingest/retries", tags=[INGEST_V1_TAG], responses={200: {"model": RetriesListing}})
 async def list_ingest_retries(
     limit: int = _Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
@@ -12841,11 +15208,12 @@ async def list_ingest_retries(
          "kind": r["kind"], "content_kind": r["content_kind"],
          "object_prefix": r["object_prefix"], "sha256": r["sha256"],
          "run_id": r["run_id"], "updated_at": r["updated_at"],
-         "reason": r.get("retry_reason")}
+         "reason": r.get("retry_reason"),
+         "force_text_fallback": bool(r.get("force_text_fallback"))}
         for r in rows]}
 
 
-@app.get("/ingest/mine")
+@app.get("/ingest/mine", tags=[INGEST_V1_TAG], responses={200: {"model": MineListing}})
 async def list_my_ingests(
     limit: int = _Query(50, ge=1, le=200),
     before: Optional[str] = _Query(None),
@@ -13014,7 +15382,7 @@ async def update_ingest_stage(
     # ruling 2026-10-10), so a later move (including `failed`) off it is refused 409.
     _terminal_stages = (ingest_status.PROMOTED, ingest_status.REJECTED, ingest_status.FAILED,
                         ingest_status.AWAITING_ORIGIN, ingest_status.REVIEW_REJECTED,
-                        ingest_status.AWAITING_KIND)
+                        ingest_status.AWAITING_KIND, ingest_status.NO_PARTS)
 
     caller = (current_user.authz_id or "").strip()
     if not _DOC_TOOLS_SERVICE_AUTHZ_ID or caller != _DOC_TOOLS_SERVICE_AUTHZ_ID:
@@ -13140,6 +15508,12 @@ async def update_ingest_stage(
         # non-event row). An unreadable review.json is NOT empty: today's refusal stands.
         _rows = await _server_extraction_row_count(req.extraction_ref, _prefix)
         if _rows == 0 or req.extracted_count == 0:
+            # A NOTICE (content_kind pcn|pdn) is asked about, not failed (ruling 2026-10-23, spec 208):
+            # a `document_empty_confirm` task, the row at `review`. Every other kind keeps today's
+            # failed:extraction_empty and 422 below, unchanged.
+            if str(row.get("content_kind") or "").strip().lower() in ingest_status.LEAVES:
+                return await _hold_empty_for_confirmation(
+                    ingest_id, row, req, caller=caller, prefix=_prefix, adopt=_adopt, run=_run)
             _why = "the extraction found no part rows"
             try:
                 await run_in_threadpool(lambda: ingest_status.update_status(
@@ -13286,10 +15660,14 @@ def _bbox_is_page_fractions(bbox) -> bool:
     return 0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1
 
 
-class TitleEvidenceRef(EvidenceRef):
-    """A title candidate's crop: `EvidenceRef` plus the page-fraction bounds. A SUBCLASS so the
-    steward row_edits / header_edits evidence_ref (not yet converted) keeps `EvidenceRef` as it was.
-    Cortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422)."""
+class TitleEvidenceRef(_ServedEvidenceRef):
+    """A title candidate's crop: the served `ingest_api.EvidenceRef` (which the equivalence seal holds
+    to the SDK verdict) plus the page-fraction bounds. A SUBCLASS of the served model, not of the SDK's,
+    so the published title-candidate schema keeps its array-of-numbers bbox and `page` minimum. Steward
+    row_edits / header_edits evidence_ref now go through the SDK model (`_wire_evidence_ref`).
+    Cortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422).
+    Strict, as the request model it replaced was: a coordinate sent as a string is refused, not coerced."""
+    model_config = {**_ServedEvidenceRef.model_config, "strict": True}
 
     @model_validator(mode="after")
     def _fractions(self):
@@ -13329,7 +15707,7 @@ class IngestTitleLeafRequest(_BaseModel):
     run_id: Optional[str] = None
 
 
-@app.post("/ingest/{ingest_id}/title_leaf")
+@app.post("/ingest/{ingest_id}/title_leaf", tags=[INGEST_V1_TAG], responses={200: {"model": TitleLeafResponse}, **DROP_GATE_RESPONSES})
 async def ingest_title_leaf_route(
     ingest_id: str, req: IngestTitleLeafRequest, current_user: User = Depends(get_current_user),
 ):
@@ -13394,6 +15772,20 @@ async def ingest_title_leaf_route(
             return _answer(row, True)
         # 3. a confident title
         if title is not None:
+            # can_drop:<title>, against the row's DROPPER (not doc-tools): a service identity must
+            # not launder a non-grantee's drop into a restricted kind. Refused: the leaf is NOT set
+            # and the row waits for a kind (the hold in step 4), then the 403 is answered.
+            try:
+                await _can_drop_or_refuse(title, _row_dropper(row))
+            except HTTPException as exc:
+                if exc.status_code == 403:
+                    await run_in_threadpool(lambda: ingest_status.hold_for_kind(
+                        ingest_id,
+                        candidates=[c.model_dump() for c in (req.candidates or [])],
+                        detail=(f"the title named {title}, which the dropper may not drop; "
+                                "pick another kind"),
+                        run_id=req.run_id, from_statuses=[stage]))
+                raise
             written = await run_in_threadpool(lambda: ingest_status.set_leaf(
                 ingest_id, title, "title", set_by=caller, from_statuses=[stage]))
             if written is not None:
@@ -13425,7 +15817,7 @@ class IngestLeafRequest(_BaseModel):
     leaf: str
 
 
-@app.post("/ingest/{ingest_id}/leaf")
+@app.post("/ingest/{ingest_id}/leaf", tags=[INGEST_V1_TAG], responses={200: {"model": LeafResponse}, **DROP_GATE_RESPONSES})
 async def ingest_leaf_route(
     ingest_id: str, req: IngestLeafRequest, current_user: User = Depends(get_current_user),
 ):
@@ -13508,6 +15900,17 @@ async def ingest_leaf_route(
                       "message": "the document moved on while the kind was being set; "
                                  "reload it and try again"}, "row_moved")
 
+    # can_drop:<leaf>, against the row's DROPPER, never the caller (a granted steward or the BFF must
+    # not move a non-grantee's document into a restricted kind). No steward exemption: deny by
+    # default until the architect rules. Once, before any write (the sidecar rewrite included); the
+    # dropper of record does not change across the rounds below.
+    try:
+        await _can_drop_or_refuse(leaf, _row_dropper(row))
+    except HTTPException as exc:
+        _audit_ingest_access(route, ingest_id, caller, "deny",
+                             "not_entitled_to_drop" if exc.status_code == 403
+                             else "authorization_unavailable")
+        raise
     old_kind = row.get("content_kind")
     same = _same_passes(old_kind, leaf)
     for _round in range(3):
@@ -14458,15 +16861,12 @@ async def electric_shape_proxy(
     # server-side WHERE; there is no branch that serves a table UNFILTERED.
     if table == "human_task_projection":
         escaped_id = _escape_identity_literal(current_user.authz_id)
-        # Scope the inbox stream to PENDING rows only, so it agrees with the REST
-        # snapshot (/me/human_tasks filters status='pending'). Without this the shape
-        # streamed EVERY row for the recipient incl. resolved ones; a resolved task
-        # could linger client-side as a stale 'pending' (the badge showing N, then
-        # dropping to the real count when the inbox opened and replacePending ran the
-        # REST reconcile). With status in the WHERE, resolving a task moves it OUT of
-        # the shape -> Electric emits a delete -> it drops cleanly, no flicker. status
-        # is a plain column (Electric's WHERE subset handles column = literal + AND).
-        server_where = f"recipient_id = '{escaped_id}' AND status = 'pending'"
+        # Scope the inbox stream to PENDING rows only, so it agrees with the REST snapshot
+        # (/me/human_tasks): resolving a task moves it OUT of the shape -> Electric emits a delete.
+        # The predicate's definition now lives in human_tasks (inbox_where_literal), shared with
+        # list_tasks_for; this site only supplies the validated, escaped identity.
+        from . import human_tasks as _human_tasks
+        server_where = _human_tasks.inbox_where_literal(escaped_id)
     elif table == "ingest_status_projection":
         # ADR-0041 §8: the ingestion seam's status stream. Same authz_id-keyed discipline
         # as human_task_projection above (submitted_by/on_behalf_of are authz identities,

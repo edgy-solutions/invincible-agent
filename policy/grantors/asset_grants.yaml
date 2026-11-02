@@ -1,0 +1,8 @@
+# SEED -- deployment-neutral. A deployment names its own approvers in an overlay row
+# (GRANTOR_OVERLAY_DIRS), which replaces this row whole (ADR-0036).
+family: asset_grants
+rail_file: policy/asset_grants.yaml
+object_scoped: true
+who: the approvers of policy/asset_grants.yaml in this deployment's policy repository
+how: >-
+  a reviewed change adding a grant row for the asset (subject, granted_by, reason; ADR-0026), applied by topaz_sync

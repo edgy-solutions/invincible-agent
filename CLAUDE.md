@@ -100,9 +100,10 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
   before `git add`, and stage named paths only — a green belongs to a sha, not a directory.
 - **Commit from a file**: `git commit -F <file>`, never `-m` with backticks (command substitution
   has silently deleted terms from messages here).
-- **Every commit needs a `Lane: <worktree-dir>/<branch>` trailer**, or `.githooks/pre-push`
-  refuses the push (R-058). Derive it, don't type it: basename of `git rev-parse --show-toplevel`,
-  then `git branch --show-current`. Add it with `git commit --trailer`.
+- **Every commit needs a `Lane: <lane id>/<branch>` trailer**, or `.githooks/pre-push`
+  refuses the push (R-058). The id is a row of `.githooks/lanes`, **never a worktree path**
+  (ruled 2026-10-26): a throwaway worktree commits as its lane, e.g. `Lane: ia-01/lane/01-x`.
+  Derive it, don't type it: `.githooks/pre-push --expected`. Add it with `git commit --trailer`.
 - **Only the owning lane commits in this repo; packets are placed, never committed, by anyone
   else.** Another repo's lane drops its packet into `sessions/` and leaves it untracked (or
   staged); the owning lane reads it and commits it with its own work.

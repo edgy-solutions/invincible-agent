@@ -223,3 +223,52 @@ def test_exec_empty_derived_set_warns_on_a_wildcard_and_writes_nothing():
     assert "undeclared, live client unchanged" in run.out
     assert "WARN cortex-ui: live redirectUris holds a wildcard" in run.out
     assert _puts(run) == [] and _stored(run)["redirectUris"] == ["*"]
+
+
+# Keycloak holds redirectUris / webOrigins as sets and serves them in its own order: 0.4.69's
+# readback failed on a correct realm because it compared the array text (rev 217). The double
+# serves those fields reversed (tests/fake_keycloak_curl.py), so an order-dependent compare reds here.
+_FINAL = {"webOrigins": [f"https://{_H}"], "attributes": {"post.logout.redirect.uris": f"https://{_H}/"}}
+
+
+@pytest.mark.parametrize("order", [[f"https://{_H}", f"https://{_H}/"], [f"https://{_H}/", f"https://{_H}"]],
+                         ids=["declared_order", "reversed"])
+def test_exec_readback_accepts_the_declared_set_in_either_order(script, order):
+    run = _run(_readback(script), _state(_live(redirectUris=order, **_FINAL)))
+    assert run.rc == 0, run.out + run.err
+    assert "ok   cortex-ui redirects 2 literal, no wildcard" in run.out
+
+
+def test_exec_readback_refuses_a_missing_member(script):
+    # a set compare, not a subset one: one literal short is still a failure
+    run = _run(_readback(script), _state(_live(redirectUris=[f"https://{_H}/"], **_FINAL)))
+    assert run.rc == 1 and "FAIL cortex-ui: live" in run.out and "redirectUris" in run.out
+
+
+@pytest.mark.parametrize("order", [[f"https://{_H}", f"https://{_H}/"], [f"https://{_H}/", f"https://{_H}"]],
+                         ids=["declared_order", "reversed"])
+def test_exec_converge_treats_the_declared_set_in_either_order_as_declared(script, order):
+    # the live realm after 0.4.69 holds the declared literals in its own order: no PUT
+    run = _run(_converge(script), _state(_live(redirectUris=order, **_FINAL)))
+    assert run.rc == 0, run.out + run.err
+    assert "as declared" in run.out and _puts(run) == []
+
+
+_A, _B = "https://a.example.com", "https://b.example.com"
+
+
+@pytest.fixture(scope="module")
+def two_origins() -> str:
+    # the sandbox derives ONE origin, so only a declared pair exercises the webOrigins set compare
+    return _script(_render(*_SANDBOX, *_OFF, *_set("keycloak.cortexUiClient.redirectUris", [_A, _B]),
+                           *_set("keycloak.cortexUiClient.webOrigins", [_A, _B]),
+                           *_set("keycloak.cortexUiClient.postLogoutRedirectUris", [f"{_A}/"])))
+
+
+@pytest.mark.parametrize("order", [[_A, _B], [_B, _A]], ids=["declared_order", "reversed"])
+def test_exec_two_declared_origins_converge_once_and_read_back_in_either_order(two_origins, order):
+    live = _live(redirectUris=order, webOrigins=order, attributes={"post.logout.redirect.uris": f"{_A}/"})
+    run = _run(_converge(two_origins) + "\n" + _readback(two_origins), _state(live))
+    assert run.rc == 0, run.out + run.err
+    assert "as declared" in run.out and _puts(run) == []
+    assert "ok   cortex-ui redirects 2 literal, no wildcard" in run.out

@@ -161,6 +161,13 @@ KNOWN_ARCHETYPES = frozenset({
     # registration naming either was refused at the door with every other site green.
     "ILLUSTRATION",
     "WORKFLOW_CASE",
+    # MODEL_EXPLANATION, 2026-10-28 -- the NINTH round. cortex-ui 9b23135 declared its
+    # contract (src/archetypes/model-explanation/, behind the modelCanvas flag) as ADR-0057's
+    # explainModel read side, cortex-PROPOSED: no producer serves it yet, the same standing
+    # ILLUSTRATION had. test_every_bound_archetype_is_in_the_ADMISSION_VOCABULARY was red on
+    # master from then on, and three lanes stepped around it rather than read it. Site 1 only,
+    # as above: the projector row waits for a producer whose wire shape it would carry.
+    "MODEL_EXPLANATION",
 })
 
 # Field encodings a registered contract may declare. `json-string` is the one that

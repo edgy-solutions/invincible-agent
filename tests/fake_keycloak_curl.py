@@ -14,6 +14,7 @@ Supported (the paths realm-reconcile-job.yaml's broker / retired-user segments u
   DELETE users/{id}
   clients (state key "clients", default []): GET clients?clientId= | clients/{id} (no mappers) |
          clients/{id}/protocol-mappers/models; POST clients | clients/{id}/protocol-mappers/models; PUT clients/{id}
+         (a client's redirectUris / webOrigins are served REVERSED: Keycloak holds them as sets)
 Anything else is logged as "UNHANDLED" and fails (curl exit 22).
 
 ASSUMED (not verified against a live Keycloak): a copied flow's sub-flows are renamed
@@ -101,6 +102,20 @@ def _client(st: dict, cid: str) -> dict | None:
     return next((c for c in st.get("clients", []) if c["id"] == cid), None)
 
 
+#: Keycloak holds these as SETS and serves them in its own order, not the order they were PUT
+#: (measured on the live realm, 0.4.69: a two-literal PUT read back reversed). The double serves
+#: them reversed, so a compare that depends on PUT order fails here as it did live.
+_SET_FIELDS = ("redirectUris", "webOrigins")
+
+
+def _as_served(c: dict) -> dict:
+    out = {k: v for k, v in c.items() if k != "protocolMappers"}
+    for k in _SET_FIELDS:
+        if isinstance(out.get(k), list):
+            out[k] = list(reversed(out[k]))
+    return out
+
+
 def handle(method: str, path: str, query: dict, body: object) -> tuple[int, object]:
     st = _load()
     seg = [urllib.parse.unquote(p) for p in path.strip("/").split("/")]
@@ -110,7 +125,7 @@ def handle(method: str, path: str, query: dict, body: object) -> tuple[int, obje
             return 200, [c for c in st.get("clients", []) if c["clientId"] == want]
         if seg[0] == "clients" and len(seg) == 2:
             c = _client(st, seg[1])
-            return (200, {k: v for k, v in c.items() if k != "protocolMappers"}) if c else (404, None)
+            return (200, _as_served(c)) if c else (404, None)
         if seg[0] == "clients" and len(seg) == 4 and seg[2:] == ["protocol-mappers", "models"]:
             c = _client(st, seg[1])
             return (200, c.get("protocolMappers", [])) if c else (404, None)

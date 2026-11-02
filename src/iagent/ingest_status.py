@@ -67,7 +67,7 @@ STAGES = (RECEIVED, EXTRACTING, REVIEW, PROMOTED, REJECTED, FAILED)
 
 # Stages whose `detail` is REQUIRED — the two that end an ingest without landing it, so a
 # consumer reading the status is told WHY rather than only THAT (ca's IngestStatus rule).
-_DETAIL_REQUIRED_STAGES = (REJECTED, FAILED, "review_rejected")
+_DETAIL_REQUIRED_STAGES = (REJECTED, FAILED, "review_rejected", "no_parts")
 
 # Out-of-band terminal: a repeat arrival never enters the ladder above (it never extracts,
 # never awaits disposition) — it is a DIFFERENT fact, recorded once and done. Kept separate from
@@ -102,7 +102,14 @@ REVIEW_REJECTED = "review_rejected"
 # Same shape as AWAITING_ORIGIN: terminal for doc-tools' stage route and the retry route; the ONE exit
 # is the dropper's or steward's `POST /ingest/{id}/leaf`, which re-opens the row at `received`.
 AWAITING_KIND = "awaiting_kind"
-ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN, REVIEW_REJECTED, AWAITING_KIND)
+# Out-of-band terminal (ruling 2026-10-23, spec 208): a notice whose extraction found no part rows and
+# whose steward (or dropper) CONFIRMED the document has none. NOT a failure and NOT on the STAGES
+# ladder (STAGES mirrors the SDK). Same shape as AWAITING_ORIGIN and REVIEW_REJECTED: terminal for
+# doc-tools' stage route and the retry route. `detail` is required and is exactly
+# `no parts (confirmed by <who>)`, which the row shows.
+NO_PARTS = "no_parts"
+ALL_STATUSES = STAGES + (DUPLICATE, CASE_OPENED, AWAITING_ORIGIN, REVIEW_REJECTED, AWAITING_KIND,
+                         NO_PARTS)
 
 # The notice leaves a drop can carry as its content_kind (single definition; the gateway imports it).
 LEAVES = ("pcn", "pdn")
@@ -146,6 +153,9 @@ EVENT_INGEST_ID_RE = re.compile(r"^evt-[0-9a-f]{64}$")
 # supersedes it), so it is named once here for both sides.
 REASON_TIMEOUT = "timeout"
 REASON_LEAF_APPLIED = "leaf_applied"
+# Why a row was relaunched (spec 208): a steward said an empty extraction has parts, so the relaunch
+# forces the text fallback.
+REASON_TEXT_FALLBACK = "text_fallback"
 # Why a row sits at `awaiting_kind` (ruling 2026-10-22): no leaf could be identified for it.
 REASON_KIND_NOT_IDENTIFIED = "kind_not_identified"
 REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -241,6 +251,11 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS retry_reason TEXT;
 -- (`kind_not_identified` = the run finished / the title read named no leaf). Served by the status
 -- route only while the stage is awaiting_kind. NULLABLE, IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS hold_reason TEXT;
+
+-- 2026-10-23 (spec 208, an empty extraction a steward says has parts): the relaunch must force the text
+-- fallback. TRUE once a steward answered `has_parts` on a `document_empty_confirm`; doc-tools reads it
+-- from GET /ingest/retries. NOT NULL DEFAULT FALSE, IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS force_text_fallback BOOLEAN NOT NULL DEFAULT FALSE;
 """
 
 
@@ -475,7 +490,7 @@ def get_row(ingest_id: str) -> Optional[dict[str, Any]]:
                           created_at, updated_at, content_kind, extraction_ref,
                           failure, run_id, attempt, notice_id,
                           leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation,
-                          hold_reason
+                          hold_reason, force_text_fallback
                      FROM ingest_status_projection
                     WHERE id = %s""",
                 (ingest_id,),
@@ -876,12 +891,12 @@ def list_pending_retries(*, limit: int) -> list[dict]:
     run_key `{id}-a{attempt}`. A first attempt (`attempt` = 1) is the sensor's own and is never
     listed. EVENT rows are excluded for the same reason as in `fail_stale_received`. Read-only."""
     keys = ("id", "attempt", "kind", "content_kind", "object_prefix", "sha256", "run_id",
-            "updated_at", "retry_reason")
+            "updated_at", "retry_reason", "force_text_fallback")
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT id, attempt, kind, content_kind, object_prefix, sha256, run_id, updated_at,
-                          retry_reason
+                          retry_reason, force_text_fallback
                      FROM ingest_status_projection
                     WHERE status = 'received' AND attempt > 1 AND kind <> 'event'
                     ORDER BY updated_at ASC, id ASC
@@ -908,6 +923,28 @@ def retry_failed(ingest_id: str, *, now_ms: Optional[int] = None) -> Optional[in
                     WHERE id = %s AND status = 'failed' AND kind <> 'event'
                 RETURNING attempt""",
                 (now, ingest_id),
+            )
+            r = cur.fetchone()
+        conn.commit()
+    return r[0] if r else None
+
+
+def relaunch_with_text_fallback(ingest_id: str, *, expect_attempt: int,
+                                now_ms: Optional[int] = None) -> Optional[int]:
+    """Re-open a `review` document row at `received` so doc-tools relaunches it with the text fallback
+    FORCED (spec 208, a steward's `has_parts` on an empty extraction). ONE guarded UPDATE ... RETURNING:
+    `force_text_fallback` = TRUE, `attempt` + 1, `failure`/`detail` cleared, `retry_reason` =
+    `text_fallback`. The guard is `status = 'review'`, a live row and `attempt` still being what the
+    caller saw, so a row that moved meanwhile matches nothing (None). Returns the NEW attempt."""
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE ingest_status_projection SET status = 'received', force_text_fallback = TRUE, "
+                "attempt = attempt + 1, failure = NULL, detail = NULL, retry_reason = %s, "
+                "updated_at = %s WHERE id = %s AND status = 'review' AND kind <> 'event' "
+                "AND attempt = %s RETURNING attempt",
+                (REASON_TEXT_FALLBACK, now, ingest_id, int(expect_attempt)),
             )
             r = cur.fetchone()
         conn.commit()

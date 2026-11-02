@@ -150,3 +150,8 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS retry_reason TEXT;
 -- (`kind_not_identified` = the run finished / the title read named no leaf). Served by the status
 -- route only while the stage is awaiting_kind. NULLABLE, IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS hold_reason TEXT;
+
+-- 2026-10-23 (spec 208, an empty extraction a steward says has parts): the relaunch must force the text
+-- fallback. TRUE once a steward answered `has_parts` on a `document_empty_confirm`; doc-tools reads it
+-- from GET /ingest/retries. NOT NULL DEFAULT FALSE, IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS force_text_fallback BOOLEAN NOT NULL DEFAULT FALSE;

@@ -39,6 +39,16 @@ from agent_fleet.finance_agent.seed import build_seed  # noqa: E402
 _STATE = build_seed()
 _KW = {"fin_eac_calculation": {"method": "CPI"}}
 
+#: `/measure/<fn>` answers only a caller who can view the program; the membership check is
+#: replaced (below) by a double that admits her.
+_CALLER = "alice@example.com"
+
+
+@pytest.fixture(autouse=True)
+def _member(monkeypatch):
+    from agent_fleet.finance_agent import main as fmain
+    monkeypatch.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
+
 
 def _envelope(fn: str) -> dict:
     """The response body `/measure/<fn>` builds, via the app itself rather than a copy of it."""
@@ -46,7 +56,8 @@ def _envelope(fn: str) -> dict:
     from agent_fleet.finance_agent.main import app
     with TestClient(app) as client:
         r = client.post(f"/measure/{fn}",
-                        json={"params": {"program_id": "NP-MERIDIAN", **_KW.get(fn, {})}})
+                        json={"params": {"program_id": "NP-MERIDIAN", **_KW.get(fn, {})},
+                              "user_email": _CALLER})
     assert r.status_code == 200, f"{fn}: {r.status_code} {r.text[:200]}"
     return r.json()
 
@@ -1836,7 +1847,8 @@ def test_every_field_the_COMPETING_MEASURES_contract_reads_ARRIVES():
     passthrough = set(_projector_passthrough()["COMPETING_MEASURES"][1])
     with TestClient(app) as client:
         payload = client.post(
-            "/measure/fin_eac_comparison", json={"params": {"program_id": "NP-MERIDIAN"}}
+            "/measure/fin_eac_comparison",
+            json={"params": {"program_id": "NP-MERIDIAN"}, "user_email": _CALLER},
         ).json()
 
     expected = declared - set(_CONTRACT_FIELDS_SUPPLIED_PER_ROW)
@@ -2283,3 +2295,27 @@ def test_the_BUILDER_SELECTOR_REJECTS_what_it_must():
             f"{label}: the selector rejected this source for the wrong reason -- expected a "
             f"message carrying {fragment!r}, got {str(caught.value)[:160]!r}"
         )
+
+
+# -- DECLARED verbs (a measure is an overlay row) -----------------------------------------
+# Every seal above iterates the built-in tables. A verb a deployment DECLARES is served by the
+# same route, so its series, reference and verdict must reach the wire from its ROW, and are
+# asserted here from the row, with the sample overlay (policy/overlays/sample) as the population.
+
+def test_a_declared_measure_carries_its_rows_declaration_on_the_wire(monkeypatch):
+    from agent_fleet.finance_agent import main as fmain
+    from agent_fleet.finance_agent import measure_verbs
+
+    sample = Path(__file__).resolve().parents[2] / "policy" / "overlays" / "sample" / "measure_verbs"
+    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(sample))
+    declared = fmain._load_declared()
+    assert declared, "the sample overlay declares no measure"
+    monkeypatch.setattr(fmain, "DECLARED", declared)
+    for fn, row in declared.items():
+        body = _envelope(fn)
+        assert body["series"] == [dict(s) for s in row.series], fn
+        assert body["reference"] == dict(row.reference), fn
+        assert body["output_uri"] == measures.FIN + row.output_uri, fn
+        assert body["value_label"] == row.series[0]["label"], fn
+        assert body["method"]["module_sha256"] == row.module_sha256, fn
+        assert body["verdict"] == measure_verbs.declared_verdict(row, body["rows"]), fn

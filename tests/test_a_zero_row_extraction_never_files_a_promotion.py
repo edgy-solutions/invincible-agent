@@ -110,13 +110,13 @@ def _assert_refused_empty(w, r):
     assert w.row["status"] == "failed" and w.row["kind"] != "event"
 
 
-def test_a_pcn_review_with_zero_part_rows_is_refused_and_the_row_fails_retryably(monkeypatch):
-    w = _world(monkeypatch)
+def test_a_pdf_review_with_zero_part_rows_is_refused_and_the_row_fails_retryably(monkeypatch):
+    w = _world(monkeypatch, "pdf")  # spec 208: a LEAF (pcn/pdn) is asked, not failed
     _assert_refused_empty(w, _stage_review())
 
 
 def test_the_run_the_request_carried_rides_on_the_failure(monkeypatch):
-    w = _world(monkeypatch)
+    w = _world(monkeypatch, "pdf")  # spec 208: a LEAF (pcn/pdn) is asked, not failed
     r = _stage_review(run_id="run-9")
     assert r.status_code == 422, r.text
     (_, kw), = w.writes
@@ -125,18 +125,18 @@ def test_the_run_the_request_carried_rides_on_the_failure(monkeypatch):
 
 
 def test_a_claimed_zero_is_refused_even_though_review_json_holds_parts(monkeypatch):
-    w = _world(monkeypatch)
+    w = _world(monkeypatch, "pdf")  # spec 208: a LEAF (pcn/pdn) is asked, not failed
     w.review = {"review_items": [_PART]}
     _assert_refused_empty(w, _stage_review(extracted_count=0))
 
 
 def test_a_claimed_five_does_not_outvote_a_server_count_of_zero(monkeypatch):
-    w = _world(monkeypatch)
+    w = _world(monkeypatch, "pdf")  # spec 208: a LEAF (pcn/pdn) is asked, not failed
     _assert_refused_empty(w, _stage_review(extracted_count=5))
 
 
 def test_header_items_alone_are_not_rows(monkeypatch):
-    w = _world(monkeypatch)
+    w = _world(monkeypatch, "pdf")  # spec 208: a LEAF (pcn/pdn) is asked, not failed
     w.review = {"review_items": [_HEADER, {"field_path": "header.pub_date", "value": "2026-01-01"}]}
     _assert_refused_empty(w, _stage_review())
 

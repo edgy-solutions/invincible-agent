@@ -58,8 +58,13 @@ def _resolves_to_message_dict(tree, call, name: str) -> bool:
     scope = fn if fn is not None else tree
     best = None
     for n in ast.walk(scope):
+        # AN ANNOTATION IS STILL AN ASSIGNMENT. `d: dict = {..., "message": ...}` binds the same
+        # value as `d = {...}`; reading only `ast.Assign` redded a 409 that carried its message
+        # (#97's canvas-seed body). A bare annotation (`d: dict`, no value) binds nothing.
         if (isinstance(n, ast.Assign) and n.lineno < call.lineno
-                and any(isinstance(t, ast.Name) and t.id == name for t in n.targets)):
+                and any(isinstance(t, ast.Name) and t.id == name for t in n.targets)) or (
+                isinstance(n, ast.AnnAssign) and n.value is not None and n.lineno < call.lineno
+                and isinstance(n.target, ast.Name) and n.target.id == name):
             if best is None or n.lineno > best.lineno:
                 best = n
     return best is not None and _has_message(best.value)
@@ -126,6 +131,24 @@ def test_control_a_compliant_snippet_is_not_reported():
            'raise HTTPException(status_code=404, detail="other statuses are out of scope")\n')
     n, bad = check_source(src)
     assert n == 2 and bad == []
+
+
+def test_control_an_annotated_detail_is_read_like_a_plain_one():
+    ok = ('def f():\n'
+          '    d: dict = {"error": "x", "message": "m"}\n'
+          '    raise HTTPException(status_code=409, detail=d)\n')
+    missing = ('def f():\n'
+               '    d: dict = {"error": "x"}\n'
+               '    raise HTTPException(status_code=409, detail=d)\n')
+    # The bare annotation comes AFTER a compliant binding, so it is the latest candidate: if it
+    # counted, it would shadow the binding that carries the message and report a false red.
+    bare = ('def f():\n'
+            '    d = {"error": "x", "message": "m"}\n'
+            '    d: dict\n'
+            '    raise HTTPException(status_code=409, detail=d)\n')
+    assert check_source(ok)[1] == []
+    assert check_source(missing)[1] == [3]
+    assert check_source(bare)[1] == [], "an annotation with no value rebinds nothing"
 
 
 def test_control_a_relayed_detail_must_go_through_the_helper():

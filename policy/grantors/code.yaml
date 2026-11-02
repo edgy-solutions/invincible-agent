@@ -1,0 +1,8 @@
+# SEED -- a binding still held in platform code. Its grantor is a platform change, which is
+# the reason such a binding is pending a move onto the policy rail (ADR-0026).
+family: code
+object_scoped: false
+who: the platform maintainers
+how: >-
+  a reviewed platform change to the table the policy id names; a binding held in code is
+  pending a move onto the policy rail

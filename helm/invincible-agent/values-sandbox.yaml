@@ -109,6 +109,15 @@ agentFleet:
     # Telemetry (ADR-0038): tags every trace with the cluster it ran in. The LANGFUSE_*
     # creds ride in via agentFleet.secrets (values-sandbox.secret.yaml, gitignored).
     DEPLOY_ENV: "sandbox"
+    # A MEASURE IS AN OVERLAY ROW (proposal docs/proposals/a-measure-is-an-overlay-row-...md).
+    # SANDBOX ONLY, not the chart's default configmap: the sample TCPI row and its board are
+    # invented to prove the contract. engine-fin reads the first, cortex-bff the second; the
+    # shared agentFleet configmap carries both and each service reads only its own.
+    MEASURE_VERB_OVERLAY_DIRS: "/app/policy/overlays/sample/measure_verbs"
+    CANVAS_OVERLAY_DIRS: "/app/policy/overlays/sample/canvases"
+    # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
+    # and its template are invented. engine-fin reads it.
+    FIN_EXPORT_PROFILE_OVERLAY_DIRS: "/app/policy/overlays/sample/fin_export_profiles"
 
     # MinIO / S3 — the SHARED config (iagent-config) the prime-substrate Job reads
     # (it bridges these to S3_ENDPOINT_URL / AWS_* via optional configMapKeyRefs).
@@ -991,7 +1000,32 @@ cortexUi:
     # e0c3c6d descends from c390a03, and Dockerfile, docker-entrypoint.sh, nginx.conf, package
     # files and the src's import.meta.env reads are unchanged; helm/ (chart 0.3.0) and .github/
     # (retag-image.yml) moved, neither of them a build input.
-    digest: "sha256:c02ee0d262d64a04aa5f201224af6ac9351944c0b0f9735d5d3c4949b3a2f533"
+    # 2026-10-28, chart 0.4.71 (architect: "cortex pinned at e09e2ac (image 57e40789…)"; P0:
+    # "both clusters get the same image"): cortex-ui e09e2ac re-pins PRODUCER_REF to 4a5ff6b6,
+    # platform #121, the ruled evidence_ref {page, bbox, note?} -> 57e40789, the same digest
+    # values.yaml now carries by default. Measured before pinning: the FULL tag resolves to this
+    # digest, an OCI index with amd64 and arm64; the abbreviated tag and the full sha with its last
+    # hex altered both answer 404. e09e2ac descends from e0c3c6d. Dockerfile, docker-entrypoint.sh,
+    # nginx.conf and helm/ are unchanged, and the src gains no import.meta.env read (one comment
+    # naming it is removed). package.json gains a `gen:api` script, and .github/ moves only the CI
+    # PRODUCER_REF; neither is a build input.
+    # 2026-10-30, chart 0.4.72 (architect: "pin cortex at fe4d787 ... it is the case-panel fix
+    # and the rehearsal lands on that panel"): cortex-ui fe4d787 -> 4d6dd208, the same digest
+    # values.yaml carries by default. It descends from 42c470c (PRODUCER_REF 10ac02fe, platform
+    # #156; the promote act sends review_coverage under promotionRuns) and adds the case panel's
+    # fix in five commits. Measured before pinning: the FULL tag resolves to this digest, an OCI
+    # index with amd64 and arm64; the abbreviated tag and the full sha with its last hex altered
+    # both answer 404. 42c470c..fe4d787 leaves .github/workflows/build.yml, Dockerfile and
+    # package.json unchanged.
+    # RE-PINNED FOR 0.4.74 (architect, 2026-10-31: "cut 0.4.74 (cortex at c27e6d3 or cortex's
+    # item-form merge if it lands)"; cortex-ui #61, the item form, had not landed): cortex-ui
+    # c27e6d3e3ba2f87e72b4b1f61a8fafec7ab09688 -> fa7e51ff. It adds #59 (an export profile's
+    # format is read verbatim) to fe4d787, and still sends review_coverage in the parts form.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # fe4d787..c27e6d3 leaves .github/workflows/build.yml, Dockerfile and package.json unchanged
+    # and adds no import.meta.env read.
+    digest: "sha256:fa7e51ff10d27b60f61609e4e815917c787e17fb4056621220350a832595dea7"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -1034,7 +1068,9 @@ cortexUi:
     VITE_ELECTRIC_URL: "https://electric.edgy-solutions.com"
     # Runtime feature flags (cortex-ui adf44b5+): canvas export and the ingest client. Read at
     # boot from /config.js like the URLs above; rendered by frontend.yaml's generic env loop.
-    VITE_FEATURES: "canvasExport,ingest"
+    # 0.4.72 (architect, 2026-10-30): `promotionRuns` goes on in the same roll that first stores
+    # `review_coverage` on the promotion record (ingest-v1 1.4.0) -- never ahead of it.
+    VITE_FEATURES: "canvasExport,ingest,promotionRuns"
     # 2026-10-10, rev 186b: cortex #6 sends `frontend_version` on /interview/stream only when this
     # is "true" (docker-entrypoint.sh at 865c080 filters it to "true"/""). Its platform half, IA
     # #27, rolled in 186 and reads a request with or without it, so this is the switch, not a
@@ -1077,6 +1113,12 @@ cortexBff:
     # 2026-10-20, ON for 198 with cortex's flag still off (step 2 of the order in the 10-19
     # morning report): the server takes row_edits on a promotion, no UI sends them yet.
     IAGENT_PROMOTION_ROW_EDITS: "true"
+    # Who a policy refusal names as the grantor (src/iagent/authz/refusal.py). The seed
+    # (policy/grantors/) is deployment-neutral; this overlay names the sandbox's own approver
+    # (architect, 2026-10-27, ruling 5). Sandbox only: the chart sets no default, so a deployment
+    # without this key reads the seed. A path that does not exist composes NOTHING, silently --
+    # tests/security/test_the_sandbox_names_its_grantor.py holds it to a directory with rows.
+    GRANTOR_OVERLAY_DIRS: "/app/policy/overlays/sample/grantors"
   ingress:
     enabled: true
     className: traefik

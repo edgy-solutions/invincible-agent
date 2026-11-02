@@ -1,0 +1,21 @@
+# SEED -- platform species (ruling 2026-10-23, spec 208). Filed by the stage route when a NOTICE
+# (content_kind pcn|pdn) extracts to zero part rows: instead of failing the row, a person is asked
+# whether the document really has no parts. Audience: `document_promotion:<DOMAIN>` (the same stewards
+# that promote), keyed by (ingest_id, attempt). The dropper may confirm their own: nothing to approve.
+#
+# Payload (review_shape lives in the PAYLOAD, not here -- TaskKind is extra="forbid"):
+# {review_shape: "empty", ingest_id, attempt, source: "/ingest/<id>/source", account:{n_tables,
+# grid_no_parts_col, grid_rows_emitted, review_reasons, why}, forced_text_fallback, add_missed_part,
+# content_kind}.
+#
+# confirmed_no_parts: terminal and NOT a failure; the row ends `no_parts` ("no parts (confirmed by
+# <who>)"). has_parts: needs a page; files extraction_defect and relaunches with the text fallback
+# forced. Where the forced run is also empty, the new task carries add_missed_part and has_parts is
+# refused until hand entry is built.
+kind: document_empty_confirm
+renders_as:
+  badge: EMPTY
+  title: Confirm a document has no parts
+  archetype: APPROVAL_TASK
+accepts: [confirmed_no_parts, has_parts]
+reason_required: []

@@ -26,7 +26,10 @@ _MESH = "http://invincible-agent/mesh#"
 # table cannot silently lose or gain a provider. A provider whose persona is not in
 # personas.yaml is listed with its cells anyway: it contributes nobody, and that is asserted.
 _PROVIDERS = {
-    "seedCanvas": {"src/iagent/gateway.py": [("PORTFOLIO_LEAD", "PORTFOLIO_PLANNING")]},
+    # Two registrations in gateway.py: the portfolio cell, and the program-finance cell
+    # (PROGRAM_FINANCE_ANALYST, from canvas_template.REFERENT_CELLS).
+    "seedCanvas": {"src/iagent/gateway.py": [("PORTFOLIO_LEAD", "PORTFOLIO_PLANNING"),
+                                             ("PROGRAM_FINANCE_ANALYST", "PROGRAM_FINANCE")]},
     "seedPortfolioCanvas": {"src/iagent/gateway.py": [("PORTFOLIO_LEAD", "PORTFOLIO_PLANNING")]},
     "finProgramBrief": {"policy/graphs/fin_program_brief.yaml": None},
     "costLotCostingReview": {"policy/graphs/cost_lot_costing_review.yaml": None},

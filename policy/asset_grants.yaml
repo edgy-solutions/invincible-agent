@@ -8,7 +8,7 @@
 # directory writes. `grant_sync.py` flows these into Topaz as `reader`
 # relations; removing an entry REVOKES the grant (git is the source of truth).
 #
-# Every entry REQUIRES an accountable human (`granted_by`) and a `reason` —
+# Every entry REQUIRES an accountable grantor (`granted_by`) and a `reason` —
 # an anonymous or unexplained grant is REFUSED by the sync (prove-the-negative
 # on the grant path). `subject` is the entitlement key (email, matching the
 # seeded `user` objects); `asset` is the dataset URN; the relation is `reader`.
@@ -25,7 +25,7 @@ grants:
   # rehearsal (alice→reader→customers_gold) with a git-blame-able assertion.
   - subject: alice@example.com
     asset: "urn:li:dataset:(urn:li:dataPlatform:snowflake,gold.sales.customers_gold,PROD)"
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Demo power-user: alice reads the gold customer table to exercise the
       allow-side of the sealed DA-read gate. Fixture grant (not a claim that
@@ -38,21 +38,21 @@ grants:
   # sandbox), NOT reactive-on-denial.
   - subject: alice@example.com
     asset: "urn:li:dataset:(urn:li:dataPlatform:dagster,mesh_demo_customers,PROD)"
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Demo: alice reads the mesh_demo_customers dataset (region breakdown) to
       exercise the end-to-end DA-read allow path through the now-working gate.
       Fixture grant — remove when the demo no longer needs a granted reader.
   - subject: alice@example.com
     asset: "urn:li:dataset:(urn:li:dataPlatform:s3,iagent-minio.publog-lake/publog/p_cage,PROD)"
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Demo: alice reads the p_cage dataset for testing.
   # Document grants (`kind: document`): the asset is a doc_id the corpus attests.
   - subject: alice@example.com
     kind: document
     asset: "TM-1H-130H-2-12-01"
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Fixture grant: alice reads one retrievable C-130H manual so the Engine W
       identity census measures parity on an identity that keeps something (roll
@@ -62,7 +62,7 @@ grants:
   - subject: alice@example.com
     kind: document
     asset: "mil#wpn-howtouse"
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Folded from a relation hand-written into Topaz on 2026-07-06 that nothing
       reproduced. Folded so the new document prune scope does not revoke it
@@ -71,7 +71,7 @@ grants:
   - subject: alice@example.com
     kind: document
     asset: "mil#wpn-m0004-1-1680-TNG"
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Folded from a relation hand-written into Topaz on 2026-07-06 that nothing
       reproduced. Folded so the new document prune scope does not revoke it

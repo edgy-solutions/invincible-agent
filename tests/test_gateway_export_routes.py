@@ -10,13 +10,13 @@ WHAT THESE DEFEND:
   * ADR-0047 §1: no default recipient — a blank recipient_scope is a 409 naming the options
     the CALLER actually reads, never the full recipient catalogue.
   * the production gate and the download gate both key on authz_id via
-    seed.readers_for_recipient, and both run BEFORE anything downstream is touched (the
+    the `recipient_readers` rail (owner cost), and both run BEFORE anything downstream is touched (the
     engine on production, the answer-store lookup on production, the engine on download).
   * a canvas answer id that does not resolve is REFUSED (404), never silently dropped — an
     export missing an answer nobody asked to drop would look complete while disclosing less
     than intended.
   * the caller's own bearer crosses to the engine on BOTH routes — never a service identity
-    (the confused-deputy argument seed.py's RECIPIENT_READERS comment makes).
+    (the confused-deputy argument seed.py's reader-identity comment makes).
   * artifact_uri in the production response is always the GATEWAY's own path, never the
     engine's `out["artifact_uri"]` — a link that bypassed this file's download gate would
     make the gate decorative.
@@ -32,6 +32,7 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import gateway  # noqa: E402
+from tests.recipient_rail_double import install as install_rail, serve_no_plan_profiles  # noqa: E402
 
 
 ALICE_TOKEN = "alice-token"
@@ -80,6 +81,19 @@ def _one_named_cost_answer(monkeypatch):
             {"id": i, "verb_iri": "mesh#Foo", "subject_instance_id": "inst-1"} for i in ids
         ],
     )
+
+
+@pytest.fixture(autouse=True)
+def _rail(monkeypatch):
+    """Topaz, doubled with the SHIPPED rail rows (policy/recipient_readers.yaml)."""
+    return install_rail(monkeypatch)
+
+
+@pytest.fixture(autouse=True)
+def _plan_half_answerable(monkeypatch):
+    """The pickers' plan half must be answerable (an engine-cost that cannot be asked is a 503
+    there): engine-cost serves a set naming no plan recipient."""
+    serve_no_plan_profiles(monkeypatch)
 
 
 @pytest.fixture

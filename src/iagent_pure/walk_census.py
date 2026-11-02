@@ -503,6 +503,16 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
 
     # A REVIEW REQUEST IN THE PAYLOAD, which is the engine asking for a task — see DISPOSITIONS.
     requested = _review_request(result)
+    # THE SECOND SURFACE. The gateway consumes the `review_request` BEFORE the render
+    # (gateway.py `_open_safety_acceptance`; acceptance_request.py:25-45), so a task that WAS
+    # requested leaves no block in the stream. Its outcome is on the answer record:
+    # `resolved_intent.acceptance_dispatched` (a list) or `acceptance_not_opened`.
+    # Precedence: `asked` > a request (stream OR record) > the rest.
+    ri = result.get("resolved_intent") if isinstance(result.get("resolved_intent"), dict) else {}
+    dispatched = [d for d in (ri.get("acceptance_dispatched") or []) if isinstance(d, dict)]
+    not_opened = ri.get("acceptance_not_opened")
+    if not requested and dispatched:
+        requested = dispatched[0]
     refusals = _card_refusals(comps)
 
     if asked:
@@ -551,6 +561,17 @@ def judge(row: CensusRow, result: dict) -> tuple[str, list[str]]:
     else:
         actual = "none"
 
+    if isinstance(not_opened, dict) and not_opened:
+        why.append(
+            f"acceptance NOT OPENED: {not_opened.get('exception')!r} at "
+            f"{not_opened.get('where')!r} ({not_opened.get('message')}) — the task was requested "
+            f"and the gateway failed to open it; this is never `drawn`"
+        )
+    if result.get("resolved_intent_error") and "task_requested" in row.dispositions:
+        why.append(
+            f"answer record unreadable ({result['resolved_intent_error']}) — whether the task "
+            f"was dispatched is unknown, and unknown is not a pass"
+        )
     if row.expect_task and requested:
         want_kind = row.expect_task.get("kind")
         got_kind = requested.get("kind")

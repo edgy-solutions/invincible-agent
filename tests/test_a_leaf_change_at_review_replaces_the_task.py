@@ -19,6 +19,9 @@ from src.iagent import ingest_status as ist  # noqa: E402
 from tests.test_a_promotion_takes_row_edits_behind_its_flag import (  # noqa: E402,F401
     INGEST_ID as WORLD_ID, PAYLOAD, world,
 )
+from tests._can_drop_open import can_drop_open  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("can_drop_open")
 from tests.test_the_leaf_is_on_the_row_and_the_dropper_can_correct_it import (  # noqa: E402,F401
     ALICE, BOB, DOCTOOLS, ID, PREFIX, REF, _as, _by_kind_pdn_reruns, _leaf, _title, db,
 )
@@ -36,6 +39,9 @@ def _filer(db, monkeypatch, error=None):
         return gateway._promotion_task_id(ingest_id, kw.get("generation") or 0), "FILED"
 
     monkeypatch.setattr(gateway, "_file_or_find_document_promotion_task", file_task)
+    # 208: at review the row reads the empty-confirm task (none here) and the newest defect (none)
+    monkeypatch.setattr(ht, "get_open_task_payload", lambda task_id: None)
+    monkeypatch.setattr(ht, "latest_task_for_subject", lambda subject_ref, kind: None)
 
 
 def _review(db, **kw):
@@ -380,8 +386,11 @@ def test_the_edges_zero_and_one_are_accepted(db):
     assert r.json()["leaf_candidates"][0]["evidence_ref"]["bbox"] == [0, 0, 1, 1]
 
 
-def test_only_the_title_candidate_is_bounded_the_steward_evidence_ref_is_unchanged():
-    gateway.EvidenceRef(page=1, bbox=[300, 200, 1400, 260])
+def test_the_steward_evidence_ref_is_bounded_too_since_the_2026_10_31_ruling():
+    # Was "only the title candidate is bounded"; the SDK rule now binds the steward ref as well
+    # (a 422 evidence_ref_invalid, sealed in test_an_evidence_ref_is_the_sdks_rule_...).
+    with pytest.raises(Exception):
+        gateway.EvidenceRef(page=1, bbox=[300, 200, 1400, 260])
     with pytest.raises(Exception):
         gateway.TitleEvidenceRef(page=1, bbox=[300, 200, 1400, 260])
 
@@ -464,8 +473,8 @@ def test_spec_205_the_steward_evidence_ref_takes_a_null_or_absent_bbox_but_needs
     w = gateway._wire_evidence_ref
     assert w({"page": 3, "bbox": None}) == {"page": 3, "bbox": None}
     assert w({"page": 3}) == {"page": 3, "bbox": None}
-    assert w({"page": 3, "bbox": [1, 2, 3, 4], "note": " n "}) == {
-        "page": 3, "bbox": [1, 2, 3, 4], "note": "n"}
+    assert w({"page": 3, "bbox": [0.1, 0.2, 0.3, 0.4], "note": " n "}) == {
+        "page": 3, "bbox": [0.1, 0.2, 0.3, 0.4], "note": "n"}
     for bad in ({"bbox": None}, {"page": 3, "bbox": [1, 2, 3]}):
         with pytest.raises(Exception):
             w(bad)

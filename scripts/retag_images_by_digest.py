@@ -18,7 +18,11 @@ that decides what gets built, it is the thing that decides what gets retagged.
 
 RUNS RETROACTIVELY. `--chart-version` and `--sha` are arguments rather than environment reads, so
 a release that shipped before this existed can be given its tags after the fact — which is how
-0.3.77 got them.
+0.3.77 got them, and how 0.4.68 and 0.4.69 were repaired (their push runs raced the build).
+
+A RELEASE TAG NEVER MOVES. Every destination is read before anything is written: a `:<version>`
+already at the commit's digest is left alone, and one at any OTHER digest stops the whole run with
+nothing written (exit 4). A re-run is therefore safe, and an overwrite is impossible.
 
     uv run --frozen python scripts/retag_images_by_digest.py \\
         --chart-version 0.3.77 --sha <commit> [--dry-run]
@@ -73,6 +77,67 @@ def digest_of(image: str) -> "str | None":
     return m.group(0) if m else None
 
 
+#: What a registry says when a tag does not exist. Anything else that fails is UNREADABLE, never
+#: absent: a transient read error must not license a create over a tag that is really there.
+_ABSENT = re.compile(r"not found|manifest unknown|name unknown", re.I)
+
+
+def tag_state(image: str) -> "tuple[str, str | None]":
+    """``("absent", None)``, ``("present", digest)`` or ``("unreadable", None)`` for ``image``."""
+    rc, out = _run(["docker", "buildx", "imagetools", "inspect", image, "--format", "{{.Manifest.Digest}}"])
+    if rc == 0:
+        m = re.search(r"sha256:[0-9a-f]{64}", out)
+        return ("present", m.group(0)) if m else ("unreadable", None)
+    return ("absent", None) if _ABSENT.search(out) else ("unreadable", None)
+
+
+def plan(services: "list[str]", sha: str, version: str, resolve=None, read_dst=None) -> dict:
+    """What the retag WOULD do, decided for every service before anything is written.
+
+    A RELEASE TAG NEVER MOVES (ruling 2026-10-25). `:<version>` that already names the digest the
+    commit built is done (`already`); one that names ANY OTHER digest is a `conflict`, and a
+    conflict anywhere means nothing is tagged anywhere -- the run stops and reports, it does not
+    overwrite. A destination that cannot be read is `unreadable` and refuses the same way.
+
+    `resolve` (source tag -> digest or None) and `read_dst` (destination -> `tag_state`) are
+    parameters so the decision is measured without a registry.
+    """
+    resolve, read_dst = resolve or digest_of, read_dst or tag_state
+    out: dict = {"tag": {}, "already": {}, "missing": [], "conflicts": {}, "unreadable": []}
+    for svc in services:
+        dig = resolve(f"{REGISTRY}/{PREFIX}/{svc}:{sha}")
+        if dig is None:
+            out["missing"].append(svc)
+            continue
+        state, have = read_dst(f"{REGISTRY}/{PREFIX}/{svc}:{version}")
+        if state == "absent":
+            out["tag"][svc] = dig
+        elif state == "present" and have == dig:
+            out["already"][svc] = dig
+        elif state == "present":
+            out["conflicts"][svc] = {"tagged": have, "built": dig}
+        else:
+            out["unreadable"].append(svc)
+    return out
+
+
+def refusal(p: dict) -> "int | None":
+    """The exit code a plan refuses with, or None when every service may be tagged.
+
+    4 = a release tag already names another digest; 1 = a destination could not be read;
+    3 = an image of the commit does not exist. ALL THREE ARE FATAL to a release (ruling
+    2026-10-25: a release that references images that do not exist is not a release); the codes
+    stay distinct so the log says which.
+    """
+    if p["conflicts"]:
+        return 4
+    if p["unreadable"]:
+        return 1
+    if p["missing"]:
+        return 3
+    return None
+
+
 FAKE_DIGEST = "sha256:" + "0" * 64
 
 
@@ -108,7 +173,8 @@ def verify(manifest_path: str, chart_version: str, resolve=None) -> int:
     for svc in missing:
         print(f"  UNVERIFIED {svc}: missing from the manifest, so no tag was cut")
     if not manifest["images"]:
-        # EXIT 3, as the retag does: the matrix is still building, and nothing was tagged to check.
+        # EXIT 3, as the retag does: an image is missing, nothing was tagged to check, and the
+        # release fails on it (since 2026-10-25 the release waits for the build, so it is a fault).
         print(f"verify {chart_version}: 0 image(s) tagged, {len(missing)} missing")
         return 3
     probs = mismatches(manifest, resolve)
@@ -138,6 +204,7 @@ def main() -> int:
     ap.add_argument("--sha", help="the commit whose images are being retagged")
     ap.add_argument("--manifest", default="image-digests.json")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--summary-file", help="append a markdown record of the run (e.g. $GITHUB_STEP_SUMMARY)")
     ap.add_argument("--verify", action="store_true",
                     help="read --manifest back from the registry instead of retagging")
     args = ap.parse_args()
@@ -155,51 +222,71 @@ def main() -> int:
         return 2
 
     print(f"{len(services)} service(s) from {_BUILD_WF.name}")
-    rows, missing, failed = {}, [], []
-    for svc in services:
-        src = f"{REGISTRY}/{PREFIX}/{svc}:{args.sha}"
-        dst = f"{REGISTRY}/{PREFIX}/{svc}:{args.chart_version}"
-        dig = digest_of(src)
-        if dig is None:
-            missing.append(svc)
-            print(f"  MISSING   {svc}  ({src} does not resolve)")
-            continue
-        if args.dry_run:
-            print(f"  would tag {svc}  {dig[:19]}…  -> :{args.chart_version}")
+    # DECIDE EVERYTHING, THEN WRITE. A refusal found at service 12 must not leave 11 tags behind.
+    p = plan(services, args.sha, args.chart_version)
+    for svc in p["missing"]:
+        print(f"  MISSING   {svc}  ({REGISTRY}/{PREFIX}/{svc}:{args.sha} does not resolve)")
+    for svc, c in p["conflicts"].items():
+        print(f"  CONFLICT  {svc}:{args.chart_version} names {c['tagged']}, the commit built "
+              f"{c['built']} -- not overwritten")
+    for svc in p["unreadable"]:
+        print(f"  UNREADABLE {svc}:{args.chart_version} -- cannot tell absent from present")
+    for svc, dig in p["already"].items():
+        print(f"  already   {svc}  {dig[:19]}…  = :{args.chart_version}")
+    rc = refusal(p)
+    rows, failed = dict(p["already"]), []
+    if rc is None:
+        for svc, dig in p["tag"].items():
+            if args.dry_run:
+                print(f"  would tag {svc}  {dig[:19]}…  -> :{args.chart_version}")
+                rows[svc] = dig
+                continue
+            # BY DIGEST: the new tag points at the bytes the sha tag points at, not at the sha tag.
+            out_rc, out = _run(["docker", "buildx", "imagetools", "create", "-t",
+                                f"{REGISTRY}/{PREFIX}/{svc}:{args.chart_version}",
+                                f"{REGISTRY}/{PREFIX}/{svc}@{dig}"])
+            if out_rc != 0:
+                failed.append(svc)
+                print(f"  FAILED    {svc}: {out.strip()[:200]}")
+                continue
             rows[svc] = dig
-            continue
-        # BY DIGEST: the new tag points at the bytes the sha tag points at, not at the sha tag.
-        rc, out = _run(["docker", "buildx", "imagetools", "create", "-t", dst,
-                        f"{REGISTRY}/{PREFIX}/{svc}@{dig}"])
-        if rc != 0:
-            failed.append(svc)
-            print(f"  FAILED    {svc}: {out.strip()[:200]}")
-            continue
-        rows[svc] = dig
-        print(f"  tagged    {svc}  {dig[:19]}…  -> :{args.chart_version}")
+            print(f"  tagged    {svc}  {dig[:19]}…  -> :{args.chart_version}")
+    else:
+        print(f"REFUSING to tag anything (exit {rc}): see the lines above")
 
     manifest = {
         "chart_version": args.chart_version,
         "commit": args.sha,
         "registry": f"{REGISTRY}/{PREFIX}",
+        # On a refusal this lists only the tags that ALREADY named the commit's digests.
         "images": rows,
         # NAMED, NOT OMITTED. A manifest that silently lists only what worked is a claim that
         # what it lists is everything.
-        "missing": sorted(missing),
-        "failed": sorted(failed),
+        "missing": sorted(p["missing"]),
+        "failed": sorted(failed + p["unreadable"]),
+        "conflicts": p["conflicts"],
+        "already_tagged": sorted(p["already"]),
         "expected": len(services),
     }
     Path(args.manifest).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {args.manifest}: {len(rows)}/{len(services)} tagged")
+    line = (f"retag {args.chart_version} at {args.sha}: {len(rows)}/{len(services)} tagged "
+            f"({len(p['already'])} already), {len(p['missing'])} missing, "
+            f"{len(p['conflicts'])} conflict(s), {len(failed) + len(p['unreadable'])} failed")
+    print(f"wrote {args.manifest}: {line}")
+    if args.summary_file:
+        # THE LOG OF A DISPATCH: the run's job summary carries what it did, by count and by name.
+        with open(args.summary_file, "a", encoding="utf-8") as f:
+            f.write(f"### {line}\n\n")
+            for svc, c in p["conflicts"].items():
+                f.write(f"- CONFLICT `{svc}:{args.chart_version}` names `{c['tagged']}`, "
+                        f"built `{c['built']}`; not overwritten\n")
+            for svc in sorted(p["missing"]):
+                f.write(f"- MISSING `{svc}:{args.sha}`\n")
+            f.write("\n")
 
-    if failed:
-        return 1
-    if missing:
-        # EXIT 3, NOT 1: nothing broke, and some images are not there. Distinguishing them lets a
-        # release fail on a retag error while a still-building matrix is visible without being
-        # fatal — the same three-state discipline the census uses.
-        return 3
-    return 0
+    if rc is not None:
+        return rc
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

@@ -16,17 +16,22 @@ remedy is always "record it and move on."**
 > unusual; the rule was not reaching anyone in time. A lane learns the trailer exists at the
 > moment it merges master, which is exactly when nobody re-reads the suite list (R-063).
 
-**THE VALUE IS PRODUCED BY THE ACT, NEVER TYPED.** The hook derives `Lane: <worktree>/<branch>`
-from `git rev-parse --show-toplevel` and `--show-current` in the worktree the push runs from, so
-the trailer cannot name a lane that is not this one. That is R-058.1's whole content: a session
+**THE VALUE IS PRODUCED BY THE ACT, NEVER TYPED.** The hook derives `Lane: <lane id>/<branch>`
+from `git branch --show-current` and the `.githooks/lanes` row that owns that branch, so the
+trailer cannot name a lane that is not this one. That is R-058.1's whole content: a session
 address predicts neither half, and a hand-typed pair is how `ia-28/lane/28` came to be written for
 a lane that works in `ia-74`. Same construction as the roll script deriving its image tag rather
 than accepting one.
 
-**PRESENCE, NOT THE PAIR.** A commit cherry-picked from another lane legitimately carries THAT
-lane's trailer — it is the author, and rewriting it would be a false attribution of exactly the
-kind R-058.2 names. So the hook asks "does this name a lane", and the post-hoc seal asks the
-question that needs the registry: "is that a REGISTERED pair". Two arms, two questions.
+**A LANE ID, NEVER A WORKTREE PATH** (ruled 2026-10-26). The hook used to suggest the basename of
+`--show-toplevel`, which in a throwaway worktree is a name that resolves to nobody once the
+worktree is gone. `.githooks/pre-push --expected` prints the derived trailer.
+
+**THE PAIR AGAINST THE REGISTRY, NEVER AGAINST THIS WORKTREE.** A commit cherry-picked from another
+lane legitimately carries THAT lane's trailer — it is the author, and rewriting it would be a false
+attribution of exactly the kind R-058.2 names. So both arms ask questions whose answer does not
+depend on where the push runs: "does this name a lane", and, once the registry is in the commit's
+ancestry, "is that a REGISTERED pair".
 
 Run: uv run --frozen pytest tests/test_the_lane_trailer_hook_refuses_before_a_push.py -v
 """
@@ -69,19 +74,70 @@ def test_IT_PARSES():
     assert r.returncode == 0, f"the hook does not parse: {r.stderr}"
 
 
-def test_THE_LANE_IS_DERIVED_FROM_THE_WORKTREE_not_typed():
+def test_THE_LANE_IS_DERIVED_not_typed():
     """THE PROPERTY THAT MAKES IT SAFER THAN A CONVENTION. If the expected value were a literal
     in the hook, every worktree would need a different copy and the copies would drift into
     exactly the mispairing R-058.1 records."""
     src = _hook()
-    assert "--show-toplevel" in src, "the worktree half is not derived"
-    assert "rev-parse --abbrev-ref HEAD" in src or "--show-current" in src, (
-        "the branch half is not derived"
-    )
+    assert ".githooks/lanes" in src, "the lane id is not read from the registry"
+    assert "--show-current" in src, "the branch half is not derived"
     assert not re.search(r'EXPECTED="Lane: ia-\d', src), (
         "the expected lane is hard-coded, so this copy of the hook is wrong in every worktree "
         "but one"
     )
+    assert 'EXPECTED="Lane: ${WT}/' not in src, (
+        "the hook suggests the worktree basename again — wrong in every throwaway worktree"
+    )
+
+
+def _expected_in(tmp_path: Path, dirname: str, branch: str) -> subprocess.CompletedProcess:
+    """`--expected` run by the REAL hook against the REAL registry, in a scratch repository whose
+    directory and branch are the case under test. No commit is needed: `--show-current` names an
+    unborn branch, and `--expected` exits before anything reads history."""
+    repo = tmp_path / dirname
+    (repo / ".githooks").mkdir(parents=True)
+    (repo / ".githooks" / "pre-push").write_bytes(_HOOK.read_bytes())
+    (repo / ".githooks" / "lanes").write_bytes((_REPO / ".githooks" / "lanes").read_bytes())
+    subprocess.run(["git", "init", "-q", "-b", branch], cwd=str(repo), check=True, timeout=60)
+    return subprocess.run(
+        ["bash", ".githooks/pre-push", "--expected"],     # relative: see test_IT_PARSES
+        cwd=str(repo), capture_output=True, encoding="utf-8", errors="replace", timeout=60,
+    )
+
+
+@pytest.mark.parametrize("dirname,branch,expected", [
+    ("ia-01", "lane/01", "Lane: ia-01/lane/01"),
+    # THE CASE THE RULING IS ABOUT: a throwaway worktree takes its lane's id, not its own name.
+    ("wkc", "lane/01-register-422", "Lane: ia-01/lane/01-register-422"),
+    ("ia-saf", "lane/saf-seal-frs-knowledge-document", "Lane: ia-saf/lane/saf-seal-frs-knowledge-document"),
+    # A registered worktree on another lane's branch is not that lane: the branch's owner is.
+    ("ia-74", "lane/01-x", "Lane: ia-01/lane/01-x"),
+    ("invincible-agent", "master", None),
+])
+def test_EXPECTED_NAMES_THE_LANE_NOT_THE_WORKTREE(tmp_path: Path, dirname: str, branch: str,
+                                                  expected: str | None):
+    r = _expected_in(tmp_path, dirname, branch)
+    if expected is None:
+        assert r.returncode == 1 and r.stdout == "", (
+            f"{dirname}@{branch} owns no lane, yet --expected answered {r.stdout!r}"
+        )
+        assert "no row in .githooks/lanes owns branch" in r.stderr, r.stderr
+    else:
+        assert r.returncode == 0, f"--expected failed for {dirname}@{branch}: {r.stderr}"
+        assert r.stdout.strip() == expected, (
+            f"{dirname}@{branch}: expected {expected!r}, the hook printed {r.stdout.strip()!r}"
+        )
+
+
+def test_THE_HOOK_AND_THE_SEAL_BIND_THE_REGISTRY_FROM_ONE_COMMIT():
+    """Same reason as the rule commit below: two arms that disagree about WHO the registry binds
+    leave a commit refused by one and passed by the other. Both derive it as the commit that
+    ADDED the file."""
+    seal = _SEAL.read_text(encoding="utf-8")
+    for name, src in (("hook", _hook()), ("seal", seal)):
+        assert "--diff-filter=A" in src and ".githooks/lanes" in src, (
+            f"the {name} no longer derives the registry's rule commit as the commit that added it"
+        )
 
 
 def test_IT_BINDS_BY_ANCESTRY_like_the_seal():
@@ -119,13 +175,17 @@ def test_IT_STANDS_ASIDE_WHEN_IT_CANNOT_KNOW():
     )
 
 
-def test_IT_CHECKS_PRESENCE_AND_SAYS_WHY_IT_DOES_NOT_CHECK_THE_PAIR():
-    """The division of labour is a decision, and a later reader finding only presence-checking
-    would reasonably 'finish the job' — turning a legitimate cherry-pick from another lane into
-    a refused push, and inviting exactly the false attribution R-058.2 is about."""
+def test_IT_CHECKS_THE_PAIR_AGAINST_THE_REGISTRY_AND_SAYS_WHY_NEVER_THIS_WORKTREE():
+    """The division is a decision, and a later reader finding the pair checked against the
+    registry would reasonably 'finish the job' by checking it against THIS worktree — turning a
+    legitimate cherry-pick from another lane into a refused push, and inviting exactly the false
+    attribution R-058.2 is about. So the comparison must take its id from the TRAILER."""
     src = _hook()
-    assert "PRESENCE ONLY" in src
+    assert "NEVER AGAINST THIS WORKTREE" in src
     assert "cherry-pick" in src
+    assert 'lane_owns "${v%%/*}" "${v#*/}"' in src, (
+        "the registry check no longer reads the id and branch from the commit's own trailer"
+    )
 
 
 def test_THE_REFUSAL_NAMES_THE_COMMIT_AND_THE_REMEDY():

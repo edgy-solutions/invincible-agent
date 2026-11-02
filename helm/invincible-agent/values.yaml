@@ -856,7 +856,7 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.9.10"
+  meshSdkVersion: "v0.9.12"
   # CLOSED NETWORK (no route to github.com / pypi.org): point the install at a mirror.
   # The SDK is fetched from <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz, so the mirror holds the
   # GitHub tag tarball under that same file name (e.g. an Artifactory generic repo holding
@@ -1617,10 +1617,33 @@ cortexUi:
   image:
     repository: edgy-solutions/cortex-ui/frontend
     tag: ""
-    # DIGEST WINS OVER TAG when set. Empty here on purpose: the default values file must not
-    # pin a digest that only one environment has pulled. Set it per-environment — see
-    # values-sandbox.yaml, and the rationale in `invincible-agent.image` in _helpers.tpl.
-    digest: ""
+    # DIGEST WINS OVER TAG when set; the rationale is `invincible-agent.image` in _helpers.tpl.
+    # PINNED HERE FROM 0.4.71 (architect, 2026-10-28: "cut release 0.4.71 ... with cortex pinned
+    # at e09e2ac (image 57e40789…), so work installs it by version"). Until 0.4.70 this was
+    # empty on purpose, so that the default file would not pin a digest only one environment had
+    # pulled. The ruling replaces that: the release names the frontend it was proved with, and
+    # an environment that installs by version gets those bytes. Measured before pinning:
+    # cortex-ui e09e2acce926966ba32055698628142e2934a98c, the full tag, resolves to this digest,
+    # an OCI index with linux/amd64 and linux/arm64. The abbreviated tag and the full sha with
+    # its last hex altered both answer 404. An environment's own values file still overrides
+    # this pin (values-sandbox.yaml carries the same digest).
+    # RE-PINNED FOR 0.4.72 (architect, 2026-10-30: "pin cortex at fe4d787 ... it is the
+    # case-panel fix and the rehearsal lands on that panel"): cortex-ui
+    # fe4d7879ac4c86a83bbc958565be11688bffd0cf -> 4d6dd208. It carries 42c470c's review_coverage
+    # send (under promotionRuns only) and the case panel's fix (the panel subscribes to the
+    # loaded kind menu; options read the pending task's own when the case omits them). Measured
+    # before pinning, the same three ways as above: the full tag resolves to this digest, an OCI
+    # index with linux/amd64 and linux/arm64; the abbreviated tag and the full sha with its last
+    # hex altered both answer 404. fe4d787 descends from 42c470c, which descends from e09e2ac.
+    # RE-PINNED FOR 0.4.74 (architect, 2026-10-31: "cut 0.4.74 (cortex at c27e6d3 or cortex's
+    # item-form merge if it lands)"; cortex-ui #61, the item form, had not landed): cortex-ui
+    # c27e6d3e3ba2f87e72b4b1f61a8fafec7ab09688 -> fa7e51ff. It adds #59 (an export profile's
+    # format is read verbatim) to fe4d787, and still sends review_coverage in the parts form.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # fe4d787..c27e6d3 leaves .github/workflows/build.yml, Dockerfile and package.json unchanged
+    # and adds no import.meta.env read.
+    digest: "sha256:fa7e51ff10d27b60f61609e4e815917c787e17fb4056621220350a832595dea7"
   port: 8080
   resources:
     requests:
@@ -1957,7 +1980,9 @@ keycloak:
   authzClaim: "email"
   # PUBLIC browser clients (authorization code + PKCE S256, no secret, no password grant), ruled
   # 2026-10-24 for the training workbench. Each gets the authz-id-user mapper when authzClaim is
-  # not email (the BFF falls back to `sub` without it), fullScopeAllowed so a user's realm and
+  # not email (the BFF falls back to `sub` without it), the audience-self mapper putting its own
+  # clientId in the access token's `aud` (ruled b5: the workbench api refuses any other audience;
+  # a public client's stock token carries at most `account`), fullScopeAllowed so a user's realm and
   # cortex-ui roles ride its tokens, and no IdP binding: a realm broker stays available, never
   # required. redirectUris must be https and never a bare "*" (the render fails otherwise).
   # Created in the realm import on a fresh realm, and by the reconcile job on a live one

@@ -4,6 +4,8 @@
 # so the two are not independent sources of truth, just two places the same facts are read from.
 kind: pdn
 domain: sustainment
+# review_shape names the card that renders this kind's reviews (ruled 2026-10-30; platform-owned).
+review_shape: notice
 passes:
   - sustainment.baml::ExtractHeader
   - sustainment.baml::ExtractParts

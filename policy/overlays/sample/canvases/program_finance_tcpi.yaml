@@ -1,0 +1,38 @@
+# SAMPLE -- a deployment's own board for its own measure, kept in its overlay and not in a
+# platform template (ADR-0036; CANVAS_OVERLAY_DIRS). Header shaped like
+# policy/canvases/program_finance.yaml: the same `program` shared slot, the same audience.
+# The anchor is the built-in index series; the pair is the DECLARED measure
+# (policy/overlays/sample/measure_verbs/fin_tcpi.yaml), registered on the same subject.
+---
+template_id: program_finance_tcpi
+title: Program finance - performance and to-complete index
+package:
+  audience: program_office
+description: >-
+  CPI and SPI period by period, with the to-complete performance index beneath it: how
+  efficiently the work has been done, and the efficiency the rest must achieve to finish on budget.
+
+shared_slots:
+  - name: program
+    description: >-
+      Which program this board is about. Asked ONCE at load and bound into both panels.
+    required: true
+    param: program_id
+
+panels:
+  - verb: mesh:finPerformanceIndices
+    role: anchor
+    slots: {}
+    consumes: [program]
+    subject: http://invincible-agent/fin#PerformanceMeasurementBaseline
+    note: >-
+      The built-in index series. REQUIRES program_id; `ca_id` and `window` default to None.
+
+  - verb: mesh:finToCompletePerformanceIndex
+    role: pair
+    slots: {}
+    consumes: [program]
+    subject: http://invincible-agent/fin#PerformanceMeasurementBaseline
+    note: >-
+      The declared measure `fin_tcpi`. REQUIRES program_id; `window` defaults to None. Carries
+      its method name and version in the envelope.

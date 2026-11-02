@@ -1,0 +1,9 @@
+apiVersion: v2
+name: iagent-mesh-mcp
+description: >-
+  Keycloak resource-server client (iagent-mesh, RFC 8693 token exchange) for the MCP server over
+  the BFF, plus the optional server Deployment. Separate from invincible-agent so it needs no flag
+  there and restarts nothing.
+type: application
+version: 0.1.0
+appVersion: "0.0.0"

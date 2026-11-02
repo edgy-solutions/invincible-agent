@@ -17,7 +17,7 @@ def _ids(q):
 
 
 def test_fixture_holds_pn_8802_on_csi_5002():
-    assert {c.csi_id: c.part_number for c in entities.CRITICAL_ITEMS}["CSI-5002"] == "PN-8802"
+    assert {c.csi_id: c.part_number for c in entities.SAFETY_ITEMS}["CSI-5002"] == "PN-8802"
 
 
 def test_exact_part_number_resolves():
@@ -47,9 +47,9 @@ def test_unknown_or_bare_part_number_does_not_resolve(spoken):
 
 
 def _two(monkeypatch, a, b):
-    base = entities.CRITICAL_ITEMS[0]
+    base = entities.SAFETY_ITEMS[0]
     items = (replace(base, csi_id="CSI-7001", part_number=a), replace(base, csi_id="CSI-7002", part_number=b))
-    monkeypatch.setattr(instances, "CRITICAL_ITEMS", items)
+    monkeypatch.setattr(instances, "SAFETY_ITEMS", items)
 
 
 def test_normalised_collision_returns_both_at_one_score_never_one(monkeypatch):

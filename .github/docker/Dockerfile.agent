@@ -142,6 +142,21 @@ COPY setup/ontologies/safety_risk_matrix.ttl /app/safety_risk_matrix.ttl
 # were the half that slipped, the finance engine would not boot at all -- so the data
 # rides in first and the runtime starts depending on it next.
 COPY policy/measures/ /app/policy/measures/
+# THE FIFTH: the measure-verb seed (a README, no rows -- the platform seeds none). The overlay
+# rows reach the image through the `policy/overlays/` COPY above. Proposal: a measure is an
+# overlay row. An absent directory composes to no rows, so this is not a boot dependency.
+COPY policy/measure_verbs/ /app/policy/measure_verbs/
+# THE SIXTH: the CDRL export-profile seed (a README, no rows). A profile and its xlsx template
+# reach the image through the `policy/overlays/` COPY above. An absent directory composes to no
+# profiles, so this is not a boot dependency.
+COPY policy/fin_export_profiles/ /app/policy/fin_export_profiles/
+# THE SEVENTH: the answer-export profile seed, `policy/exports/answers/` (a subdirectory of this
+# COPY), read by `agent_fleet/utils/answer_exports.py` for engine-cost's /answers_export. Without
+# it the engine finds no profile for any recipient and answers 404 `no_profile_for_recipient`. The
+# BFF no longer reads the answers subdirectory: it asks engine-cost for the set it serves
+# (`GET /answers_export/profiles`). The COPY stays because engine-cost needs it. lane/01's
+# review-export profiles (`policy/exports/*.yaml`) ride the same COPY and are not read by this loader.
+COPY policy/exports/ /app/policy/exports/
 # ── THE COST PACKAGE BUILDER AND ITS PINNED RUNTIME ────────────────────────
 #
 # `cost_agent.measures.package_export` builds a self-contained artifact from the

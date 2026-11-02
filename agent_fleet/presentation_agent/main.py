@@ -461,11 +461,13 @@ def _degrade_edgeless_topology_to_document(
 # honest_fallback.py. Flatten-aware imports, same shape as before.
 try:
     from capability_registry import select_presentation as _select_presentation  # type: ignore[no-redef]
+    from capability_registry import select_by_declared_shape as _select_by_declared_shape  # type: ignore[no-redef]
     from capability_validator import validate_chart_payload as _validate_chart_payload  # type: ignore[no-redef]
     from honest_fallback import honest_text_from_response as _honest_text_from_response  # type: ignore[no-redef]
 except ImportError:
     from agent_fleet.presentation_agent.capability_registry import (
         select_presentation as _select_presentation,
+        select_by_declared_shape as _select_by_declared_shape,
     )
     from agent_fleet.presentation_agent.capability_validator import (
         validate_chart_payload as _validate_chart_payload,
@@ -884,19 +886,18 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # canvasSeedFromArtifact in src/lib/canvasSeedFromAnswer.ts — declares the
     # shape and is the single edit point if it ever changes:
     #
-    #     { archetype: "CANVAS_SEED", canvas_type?: string, name?: string,
-    #       artifact_ids: string[] }
+    #     { archetype: "CANVAS_SEED", template_id?: string, canvas_type?: string,
+    #       name?: string, artifact_ids: string[] }
     #
     # ORDER IS THE DECLARATION. Position 0 lands in the full-width anchor and
     # the client never sorts, so the projection must not reorder or dedupe.
     #
-    # BOTH OPTIONAL FIELDS ARE CARRIED AND NEITHER ARRIVES TODAY — a carrier, not an
-    # assertion. `name` has a real reader but no producer fact (the phrase path has no
-    # spoken name, and defaulting one here would invent it). `canvas_type` is the
-    # reverse: declared in cortex's contract but read by nothing, so emitting it would
-    # be a producer-side write with no consumer. Listing them here costs nothing and
-    # asserts nothing; passthrough carries only what a producer actually wrote.
-    "CANVAS_SEED": ("artifact_ids", ("canvas_type", "name")),
+    # THE OPTIONAL FIELDS ARE CARRIERS, passthrough of what a producer actually wrote.
+    # `template_id` now ARRIVES: cortex's canvasSeedFromArtifact prefers it and /canvas/seed
+    # states it on a full success. `canvas_type` is the legacy spelling, still carried but not
+    # sent. `name` has a real reader but no producer fact (the phrase path has no spoken name,
+    # and defaulting one here would invent it).
+    "CANVAS_SEED": ("artifact_ids", ("template_id", "canvas_type", "name")),
     # Landed by Lane 1 the same night as this build (SHORTFALL_GRID — "funding
     # gap needs three quantities, not two"). It is the binding for
     # mesh:FundingGapSet, whose absence made "where is funding short by
@@ -1682,11 +1683,33 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                 "chart_data": _agent_resp.get("data"),
                 "chart_type": None,
             }
-            cap, _sel_prov = _select_presentation(
-                request.frontend_id, request.output_uri, _sel_payload,
-                persona=effective_persona, domain=request.domain,
-                frontend_version=request.frontend_version,
-            )
+            # A SERVED `render.shape` is the producer's declaration of how this answer is
+            # drawn, and it is tried BEFORE the output class: a class an overlay added is on no
+            # menu. With none, or when nothing fits, `select_presentation` runs unchanged.
+            _render = _agent_resp.get("render")
+            _declared_shape = _render.get("shape") if isinstance(_render, dict) else None
+            _declared_prov: Dict[str, Any] = {}
+            if isinstance(_declared_shape, str) and _declared_shape:
+                cap, _sel_prov = _select_by_declared_shape(
+                    request.frontend_id, _declared_shape, _sel_payload,
+                    frontend_version=request.frontend_version,
+                    output_uri=request.output_uri,
+                )
+                if cap is None:
+                    _declared_prov = {"declared_shape": _declared_shape,
+                                      "declared_unfit": _sel_prov.get("declared_unfit")}
+                    logger.info(
+                        "render_ui: declared render shape %s did not fit (%s); falling "
+                        "through to output_uri selection", _declared_shape,
+                        _declared_prov["declared_unfit"],
+                    )
+            if cap is None:
+                cap, _sel_prov = _select_presentation(
+                    request.frontend_id, request.output_uri, _sel_payload,
+                    persona=effective_persona, domain=request.domain,
+                    frontend_version=request.frontend_version,
+                )
+                _sel_prov.update(_declared_prov)
             logger.info(
                 "render_ui: menu-scoped selection frontend_id=%s source=%s basis=%s -> %s",
                 request.frontend_id,

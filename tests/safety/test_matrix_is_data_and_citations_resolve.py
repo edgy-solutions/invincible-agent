@@ -109,7 +109,7 @@ def _resolvable_ids() -> set[str]:
     """Everything a DERIVED_FROM entry may legitimately name, derived from the fixture."""
     ids = {h.hazard_id for h in entities.HAZARDS}
     ids |= {m.mitigation_id for h in entities.HAZARDS for m in h.mitigations}
-    ids |= {c.csi_id for c in entities.CRITICAL_ITEMS}
+    ids |= {c.csi_id for c in entities.SAFETY_ITEMS}
     ids |= {w.work_order_id for w in entities.WORK_ORDERS}
     ids |= {w.write_up_id for w in entities.WRITE_UPS}
     ids |= {"safety_risk_matrix.ttl"}

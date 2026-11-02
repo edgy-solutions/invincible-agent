@@ -1,0 +1,43 @@
+# Both Secrets below are made BY HAND (kubectl create secret generic, never apply, never baked in
+# a values file). Their names are required: an empty name fails the render.
+keycloak:
+  # -- Base URL of Keycloak, as the hook Job and the server reach it. Required.
+  url: ""
+  # -- Realm that holds the client.
+  realm: "invincible-agent"
+  # -- Hand-made Secret holding the Keycloak admin credential. Required (no default): the
+  # invincible-agent chart passes that password as a plaintext chart value, so there is no Secret
+  # to reuse. Read only through secretKeyRef env.
+  adminSecret:
+    name: ""
+    userKey: "admin-user"
+    passwordKey: "admin-password"
+
+client:
+  # -- Client id of the resource server; tokens minted for it carry aud containing it.
+  clientId: "iagent-mesh"
+  # -- Hand-made Secret holding the client's credential. Required.
+  credentialSecret:
+    name: ""
+    key: "client-secret"
+  # -- Client the BFF audience is, which the exchange may target. Required, NO default: which
+  # client the BFF's audience is, is an open finding (spec section 3 item 6); set it per deployment.
+  exchangeAudience: ""
+
+# -- Image used by the hook Job (needs sh and curl).
+hookImage:
+  repository: "docker.io/curlimages/curl"
+  tag: "8.11.0"
+
+# -- Server image, referenced repository@digest, never by tag.
+image:
+  repository: ""
+  digest: ""
+
+# -- BFF URL the server calls. Required when deployment.enabled.
+bffUrl: ""
+
+deployment:
+  # -- Off by default: the server image does not exist yet.
+  enabled: false
+  port: 8000

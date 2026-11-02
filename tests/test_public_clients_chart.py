@@ -41,6 +41,16 @@ def _client(rendered: str, cid: str = _ID) -> list[dict]:
     return [c for c in _realm(rendered)["clients"] if c["clientId"] == cid]
 
 
+#: ruled b5: the workbench api accepts a token only when `aud` names `training-workbench`. A public
+#: client's stock access token carries at most `account`, so the client must put itself there.
+_AUD = {"included.client.audience": _ID, "access.token.claim": "true", "id.token.claim": "false"}
+
+
+def _mapper(c: dict, name: str) -> dict:
+    (m,) = [m for m in c["protocolMappers"] if m["name"] == name]
+    return m
+
+
 def test_import_carries_exactly_one_public_client_with_every_property(sandbox):
     # the import is the fresh-realm path; every property here is one the BFF or the login depends on
     found = _client(sandbox)
@@ -58,8 +68,10 @@ def test_import_carries_exactly_one_public_client_with_every_property(sandbox):
     assert c["attributes"]["pkce.code.challenge.method"] == "S256"
     assert c["attributes"]["post.logout.redirect.uris"] == _URI
     assert "secret" not in c
-    (m,) = c["protocolMappers"]
-    assert m["name"] == "authz-id-user"
+    assert sorted(m["name"] for m in c["protocolMappers"]) == ["audience-self", "authz-id-user"]
+    aud = _mapper(c, "audience-self")
+    assert aud["protocolMapper"] == "oidc-audience-mapper" and aud["config"] == _AUD
+    m = _mapper(c, "authz-id-user")
     assert m["config"]["claim.name"] == "authz_id"
     assert m["config"]["user.attribute"] == "authz_id"
     # the mapper is identical to cortex-ui's, which is the mapper the BFF contract is written against
@@ -83,10 +95,12 @@ def test_reconcile_creates_it_and_the_readback_fails_on_each_condition(sandbox):
         "FAIL $PCID: fullScopeAllowed is not true",
         f"FAIL $PCID: redirectUri {_URI} is not on the live client",
         "FAIL $PCID: no mapper emits claim authz_id",
+        f"FAIL $PCID: no mapper puts {_ID} in the access token's aud",
     ):
         assert needle in s, needle
     assert '"publicClient":true' in s and '"directAccessGrantsEnabled":false' in s
-    assert "ok   $PCID public, pkce S256, emits authz_id" in s
+    assert '"audience-self"' in s and '"oidc-audience-mapper"' in s
+    assert f"ok   $PCID public, pkce S256, emits authz_id, aud {_ID}" in s
     # never PUT the client: an existing client's settings are the operator's
     seg = s[s.index('echo "-- public client'):s.index("== readback ==")]
     assert "-X PUT" not in seg
@@ -100,15 +114,19 @@ def test_default_values_render_no_public_client():
     assert "PCID" not in _script(r)
 
 
-def test_email_claim_has_no_mapper_and_the_script_neither_adds_nor_reads_it_back():
-    # under email the claim IS the email, which the stock token already carries: no mapper to add or check
+def test_email_claim_has_no_authz_mapper_and_the_script_neither_adds_nor_reads_it_back():
+    # under email the claim IS the email, which the stock token already carries: no mapper to add or
+    # check. The audience is not the claim's business: the api refuses a token without it either way.
     r = _render(*_EMAIL)
     (c,) = _client(r)
-    assert "protocolMappers" not in c
+    (aud,) = c["protocolMappers"]
+    assert aud["name"] == "audience-self" and aud["config"] == _AUD
     seg = _script(r)
     pub = seg[seg.index('echo "-- public client'):seg.index("== readback ==")]
     assert "authz-id-user" not in pub
+    assert '"audience-self"' in pub
     assert "no mapper emits claim" not in seg
+    assert "in the access token's aud" in seg
     assert 'echo "-- public client' in seg
 
 
@@ -183,8 +201,9 @@ def test_exec_creates_into_an_empty_realm_and_the_readback_passes(body):
     assert c["publicClient"] is True and c["directAccessGrantsEnabled"] is False
     assert c["attributes"]["pkce.code.challenge.method"] == "S256"
     assert _URI in c["redirectUris"]
-    (m,) = c["protocolMappers"]
-    assert m["config"]["claim.name"] == "authz_id"
+    assert _mapper(c, "authz-id-user")["config"]["claim.name"] == "authz_id"
+    assert _mapper(c, "audience-self")["config"] == _AUD
+    assert f"aud {_ID}" in run.out
 
 
 def test_exec_second_run_is_idempotent(body):
@@ -206,14 +225,26 @@ def _seed_variant(body, mutate, *, drop_mappers=False):
     return _run(body, st)
 
 
-def test_exec_existing_client_without_mapper_gets_exactly_one_mapper_post(body):
-    # a client imported before the claim flip is repaired by adding the mapper, never by rewriting it
-    run = _seed_variant(body, lambda c: None, drop_mappers=True)
+def _drop(*names):
+    def go(c):
+        c["protocolMappers"] = [m for m in c["protocolMappers"] if m["name"] not in names]
+    return go
+
+
+@pytest.mark.parametrize("missing", [("authz-id-user",), ("audience-self",), ("authz-id-user", "audience-self")],
+                         ids=["authz", "audience", "both"])
+def test_exec_existing_client_gets_one_mapper_post_per_missing_mapper(body, missing):
+    # a client imported before a mapper existed is repaired by adding that mapper, never by rewriting
+    # it; the live workbench client was created before audience-self, so "audience" is the 208 case
+    run = _seed_variant(body, _drop(*missing))
     assert run.rc == 0, run.out + run.err
     posts = _client_posts(run)
-    assert len(posts) == 1 and posts[0].endswith("/protocol-mappers/models")
+    assert len(posts) == len(missing) and all(p.endswith("/protocol-mappers/models") for p in posts)
     assert _puts(run) == []
-    assert "ok   training-workbench" in run.out
+    c = _stored(run.state)
+    assert sorted(m["name"] for m in c["protocolMappers"]) == ["audience-self", "authz-id-user"]
+    assert _mapper(c, "audience-self")["config"] == _AUD
+    assert f"ok   training-workbench public, pkce S256, emits authz_id, aud {_ID}" in run.out
 
 
 def test_exec_password_grant_is_refused_by_the_readback_not_overwritten(body):
@@ -254,7 +285,62 @@ def test_exec_narrowed_scope_is_refused(body):
 def test_exec_mapper_named_right_but_emitting_another_claim_is_refused(body):
     # the repair keys on the mapper's name, so only the readback sees a mapper that emits the wrong claim
     def wrong_claim(c):
-        c["protocolMappers"][0]["config"]["claim.name"] = "email"
+        _mapper(c, "authz-id-user")["config"]["claim.name"] = "email"
     run = _seed_variant(body, wrong_claim)
     assert run.rc == 1 and "no mapper emits claim authz_id" in run.out
     assert _client_posts(run) == [] and _puts(run) == []
+
+
+_NO_AUD = f"no mapper puts {_ID} in the access token's aud"
+
+
+def test_exec_audience_kept_out_of_the_access_token_is_refused_not_rewritten(body):
+    # the repair keys on what the mapper emits, so a mapper naming the client but off the access token
+    # is left alone (an existing mapper is the operator's) and the readback refuses it
+    run = _seed_variant(body, lambda c: _mapper(c, "audience-self")["config"].update({"access.token.claim": "false"}))
+    assert run.rc == 1 and _NO_AUD in run.out
+    assert _client_posts(run) == [] and _puts(run) == []
+
+
+def test_exec_access_flag_on_another_mapper_does_not_satisfy_the_audience(body):
+    # the audience and its flag must be judged on ONE mapper: authz-id-user carries access.token.claim
+    # true, so a check over the whole mapper list would pass a client whose aud never reaches the token
+    run = _seed_variant(body, lambda c: _mapper(c, "audience-self")["config"].pop("access.token.claim"))
+    assert run.rc == 1 and _NO_AUD in run.out
+    assert _puts(run) == []
+
+
+def test_exec_audience_naming_another_client_is_refused(body):
+    # a same-named mapper putting someone else in aud: the repair's POST collides on the name, and the
+    # readback refuses the client either way
+    run = _seed_variant(body, lambda c: _mapper(c, "audience-self")["config"].update(
+        {"included.client.audience": "cortex-ui"}))
+    assert run.rc == 1 and _NO_AUD in run.out
+    assert _puts(run) == []
+    assert _mapper(_stored(run.state), "audience-self")["config"]["included.client.audience"] == "cortex-ui"
+
+
+def test_exec_an_audience_under_another_name_is_not_duplicated(body):
+    # the repair keys on what a mapper EMITS: an operator's mapper already putting the client in aud,
+    # under its own name, satisfies it. A repair keyed on the name would POST a second audience mapper.
+    def rename(c):
+        _mapper(c, "audience-self")["name"] = "operator-made-aud"
+    run = _seed_variant(body, rename)
+    assert run.rc == 0, run.out + run.err
+    assert _client_posts(run) == [] and _puts(run) == []
+    assert [m["name"] for m in _stored(run.state)["protocolMappers"] if m["protocolMapper"] == "oidc-audience-mapper"] \
+        == ["operator-made-aud"]
+
+
+def test_exec_readback_does_not_depend_on_the_order_keycloak_serves_config_in(body):
+    # Keycloak holds a mapper's config as a map, so its key order is Keycloak's, not the POST's. The
+    # double saves with sort_keys and serves the order it loaded; a read-only run never re-saves, so
+    # storing the audience mapper's config reversed serves it reversed, and that must still pass.
+    st = copy.deepcopy(_created(body).state)
+    m = _mapper(_stored(st), "audience-self")
+    before = list(m["config"])
+    m["config"] = dict(reversed(list(m["config"].items())))
+    assert list(m["config"]) != before and len(before) == 3  # the fixture differs from what a create stores
+    run = _run(body, st)
+    assert run.rc == 0, run.out + run.err
+    assert f"aud {_ID}" in run.out and _client_posts(run) == []

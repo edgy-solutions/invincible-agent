@@ -31,6 +31,7 @@ Run: uv run --frozen pytest tests/test_the_status_is_the_decision.py -v
 """
 from __future__ import annotations
 
+import ast
 import os
 import re
 import sys
@@ -48,6 +49,15 @@ _HT = _REPO / "src" / "iagent" / "human_tasks.py"
 #: deployment's own overlay is elsewhere, and that is the point: the population must not be the
 #: four seeded species, because those are exactly the ones the old allowlist already covered.
 _SAMPLE_OVERLAY = _REPO / "policy" / "overlays" / "sample" / "task_kinds"
+
+
+def _resolver_body(src: str) -> str:
+    """The WHOLE of `mark_task_resolved`, def to last line. A fixed 3000-character slice stopped
+    short once the function grew: 204's `superseded` refusal pushed the UPDATE past it, which
+    turned the decision-column arm red and left the coercion arm blind to the function's tail."""
+    fn = next(n for n in ast.parse(src).body
+              if isinstance(n, ast.FunctionDef) and n.name == "mark_task_resolved")
+    return ast.get_source_segment(src, fn)
 
 
 def _declared_union() -> set[str]:
@@ -114,8 +124,7 @@ def test_PENDING_IS_REFUSED_because_it_is_the_only_non_terminal_value():
     against a future declaration, not against today's callers.
     """
     src = _HT.read_text(encoding="utf-8")
-    i = src.index("def mark_task_resolved(")
-    body = src[i:i + 3000]
+    body = _resolver_body(src)
     assert 'if decision == "pending":' in body, (
         "nothing refuses `pending` as a resolution; a species declaring it would silently "
         "return resolved tasks to the open queue"
@@ -131,8 +140,7 @@ def test_EVERY_DECLARED_VERB_IS_STORABLE():
     """
     union = _declared_union()
     src = _HT.read_text(encoding="utf-8")
-    i = src.index("def mark_task_resolved(")
-    body = src[i:i + 3000]
+    body = _resolver_body(src)
     coerced = re.search(r'else\s+"rejected"', body)
     assert not coerced, (
         f"a coercion to `rejected` survives in the resolver, so of the {len(union)} declared "
@@ -150,8 +158,7 @@ def test_THE_DECISION_COLUMN_WAS_ALWAYS_RIGHT_and_that_bounded_the_damage():
     would corrupt both.
     """
     src = _HT.read_text(encoding="utf-8")
-    i = src.index("def mark_task_resolved(")
-    body = src[i:i + 3000]
+    body = _resolver_body(src)
     assert "decision = %s" in body, "the decision column is no longer written"
     assert "status = %s" in body, "the status column is no longer written"
 
