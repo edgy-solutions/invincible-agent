@@ -483,7 +483,7 @@ def _registration_calls(base: str) -> list[dict[str, Any]]:
             description=r.description or r.name,
             verb="mesh:" + r.verb,
             input_uri=_declared_input_uri(),
-            output_uri=measures.FIN + r.output_uri,
+            output_uri=measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
             verb_synonyms=list(r.synonyms),
             verb_anti_synonyms=list(r.anti_synonyms) or None,
             endpoint_url=f"{base}/measure/{r.measure_id}",
@@ -775,7 +775,7 @@ def list_verbs() -> dict[str, Any]:
             "verb": "mesh:" + r.verb,
             "fn": r.measure_id,
             "input_uri": _declared_input_uri(),
-            "output_uri": measures.FIN + r.output_uri,
+            "output_uri": measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
             "slots": with_live_vocabularies(_declared_slots(r)),
         }
         for r in DECLARED.values()
@@ -912,7 +912,7 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
     fn = row.measure_id
     envelope = {  # not `return {`: the wire seals select the built-in builder by that anchor
         "measure": fn,
-        "output_uri": measures.FIN + row.output_uri,
+        "output_uri": measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
         "artifact_id": _artifact_id(fn, params, rows),
         "value_label": row.series[0].get("label", row.name),
         "series": [dict(s) for s in row.series],

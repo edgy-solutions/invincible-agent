@@ -2,6 +2,7 @@
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix owl:   <http://www.w3.org/2002/07/owl#> .
 @prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix mesh:  <http://invincible-agent/mesh#> .
 @prefix fin:   <http://invincible-agent/fin#> .
 
@@ -144,17 +145,16 @@ fin:PerformanceIndexSeries a owl:Class ;
     rdfs:label "Performance Index Series" ;
     rdfs:comment "Dimensionless ratios indexed by period, each accompanied by the two quantities it was divided from, and by its cumulative counterpart. Carries no currency and refuses one: a ratio has no unit, and the amounts travelling beside it declare their unit under a separate field so nothing promotes a currency onto the ratio. A period with no reported quantities is ABSENT rather than zero." .
 
-# SAMPLE: output class of the sample overlay measure fin_tcpi (policy/overlays/sample/measure_verbs).
-fin:ToCompletePerformanceIndexSeries a owl:Class ;
+fin:DeclaredMeasureSeries a owl:Class ;
     rdfs:subClassOf mesh:Response ;
-    rdfs:label "To-Complete Performance Index Series" ;
-    rdfs:comment "The dimensionless efficiency the remaining work must achieve to finish on budget, indexed by period, each value accompanied by the method name and version that produced it. A period in which the budget is already spent carries a reason and no number. Carries no currency and refuses one." .
+    rdfs:label "Declared Measure Series" ;
+    rdfs:comment "A figure per period computed by a measure that a deployment declared as a policy row rather than as engine code, each value accompanied by the method name and version that produced it. A period the measure cannot compute carries a reason and no number. Which measure produced the series is told by the measure identifier it carries, never by the class: a deployment adds a measure and adds no class." .
 
-# SAMPLE: output class of the sample overlay measure fin_vac_cpi (policy/overlays/sample/measure_verbs).
-fin:VarianceAtCompletionSeries a owl:Class ;
-    rdfs:subClassOf mesh:Response ;
-    rdfs:label "Variance At Completion Series" ;
-    rdfs:comment "The budget at completion less the estimate at completion, an amount in USD, indexed by period, each value accompanied by the method name and version that produced it. A period in which no work has been performed carries a reason and no number." .
+fin:measureId a owl:DatatypeProperty ;
+    rdfs:domain fin:DeclaredMeasureSeries ;
+    rdfs:range xsd:string ;
+    rdfs:label "measure identifier" ;
+    rdfs:comment "The identifier of the declared measure that computed the series. Carried on the wire as the envelope's measure field and as method.measure_id, the two equal." .
 
 fin:BurnRateSeries a owl:Class ;
     rdfs:subClassOf mesh:Response ;

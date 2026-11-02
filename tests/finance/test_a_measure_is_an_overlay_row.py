@@ -223,7 +223,7 @@ def test_4_registers_beside_the_builtins(declared, monkeypatch):
     assert len(calls) == n_builtin + 2   # the sample ships fin_tcpi and fin_vac_cpi
     c = by_verb["mesh:finToCompletePerformanceIndex"]
     assert c["endpoint_url"] == "http://engine/measure/fin_tcpi"
-    assert c["output_uri"] == measures.FIN + "ToCompletePerformanceIndexSeries"
+    assert c["output_uri"] == measures.FIN + "DeclaredMeasureSeries"
     assert list(c["verb_synonyms"]) == list(row.synonyms)
     assert row.synonyms, "the sample row carries no synonyms"
     twin = by_verb["mesh:finPerformanceIndices"]
@@ -305,7 +305,7 @@ def test_5_one_row_per_period_each_equal_to_the_independent_computation(double, 
         ).hexdigest()}
     assert body["series"] == [dict(s) for s in row.series]
     assert body["reference"] == dict(row.reference)
-    assert body["output_uri"] == measures.FIN + "ToCompletePerformanceIndexSeries"
+    assert body["output_uri"] == measures.FIN + "DeclaredMeasureSeries"
 
 
 def test_5_the_envelope_is_the_builtins_plus_method(double, client):

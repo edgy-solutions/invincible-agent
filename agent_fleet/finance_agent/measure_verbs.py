@@ -115,6 +115,10 @@ COMPUTED_SHAPES = frozenset({"MULTI_SERIES"})
 _MOVED_OUTPUT_KEYS = {
     "archetype": "render.shape", "series": "render.series", "reference": "render.target",
 }
+#: The ONE output class every declared measure registers as (the ruling of 2026-11-02). A row
+#: names no class: the measure is told apart by its id on the wire (`measure`, `method.measure_id`),
+#: so a deployment adds a measure and no ontology.
+DECLARED_OUTPUT_CLASS = "DeclaredMeasureSeries"
 _PACKAGED = "agent_fleet.finance_agent."
 
 
@@ -142,7 +146,6 @@ class MeasureVerbRow:
     transcription: str
     render: Any                     # a deep copy of the row's render block
     archetype: str                  # render.shape
-    output_uri: str
     series: tuple[dict[str, Any], ...]      # render.series
     reference: Optional[dict[str, Any]]     # render.target
     undefined: Optional[dict[str, Any]]
@@ -209,8 +212,13 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
     if moved:
         raise ValueError("; ".join(
             f"outputs.{k} has moved to {_MOVED_OUTPUT_KEYS[k]}: the row declares how it is drawn "
-            f"under a top-level `render:` block (outputs keeps output_uri, unit and undefined)"
+            f"under a top-level `render:` block (outputs keeps only `undefined`)"
             for k in moved))
+    if isinstance(raw.get("outputs"), dict) and "output_uri" in raw["outputs"]:
+        raise ValueError(
+            f"outputs.output_uri {raw['outputs']['output_uri']!r} is refused: every declared "
+            f"measure registers as fin:{DECLARED_OUTPUT_CLASS}, told apart by its measure id, so a "
+            f"row names no class and adds no ontology; the row keeps only `outputs.undefined`")
     unknown = sorted(set(raw) - _TOP_KEYS)
     if unknown:
         raise ValueError(
@@ -221,7 +229,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
                  "computation.module", "computation.function", "computation.version",
                  "computation.derived_from.authority", "computation.derived_from.clause",
                  "computation.derived_from.transcription",
-                 "outputs.output_uri", "render.shape", "render.series",
+                 "render.shape", "render.series",
                  "policy.status", "policy.cells", "policy.granted_by", "policy.reason"):
         _need(raw, path)
     mid, verb = raw["measure_id"], raw["verb"]
@@ -249,7 +257,9 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
             f"inputs.state names quantities outside the closed vocabulary: {bad_state}; "
             f"the vocabulary is {sorted(STATE_VOCABULARY)}")
 
-    out, pol, comp = raw["outputs"], raw["policy"], raw["computation"]
+    out, pol, comp = raw.get("outputs") or {}, raw["policy"], raw["computation"]
+    if not isinstance(out, dict):
+        raise ValueError("outputs must be a mapping")
     rnd = raw["render"]
     if not isinstance(rnd, dict):
         raise ValueError("render must be a mapping")
@@ -257,8 +267,6 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         raise ValueError(
             f"render.shape {rnd['shape']!r}; this engine computes only {sorted(COMPUTED_SHAPES)} "
             f"(one declared series per period)")
-    if "://" in str(out["output_uri"]) or "#" in str(out["output_uri"]):
-        raise ValueError(f"outputs.output_uri {out['output_uri']!r} is a local name, not a URI")
     series = tuple(dict(s) for s in rnd["series"])
     if len({s.get("unit") for s in series}) > 1:
         raise ValueError(
@@ -320,7 +328,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         authority=derived["authority"], clause=derived["clause"],
         citation=derived.get("citation", "unstated"), transcription=derived["transcription"],
         render=copy.deepcopy(rnd), archetype=str(rnd["shape"]),
-        output_uri=str(out["output_uri"]), series=series,
+        series=series,
         reference=dict(rnd["target"]) if rnd.get("target") else None,
         undefined=dict(undefined) if undefined else None,
         status=pol["status"], cells=cells, granted_by=str(pol["granted_by"]),
