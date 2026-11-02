@@ -1365,6 +1365,23 @@ cause as item 2 of run 7.
 The record's confirm was answered "that is not right" in runs 32 and 33, and each carried the stage's
 facts. The selection-table shape that run 28 wrote for `after` did not recur.
 
+#### 2026-11-02: at the merge, an emit may dispose
+
+Merging master reddened the positive control on the shipped rows. Master's `595574c2` gave `emit` an
+optional `disposes`, and `maint_release` now ends that way. The loop's copy of the runner's rule did
+not know the field, so it asked a shipped definition how it ends. The loop now reads the rule as the
+chaining seal does: a declared `disposes` ends the definition, and the table is held to that value.
+
+- **The grammar is unchanged.** The model is not told about `disposes`, so the runs above measure the
+  same dialogue. Run 31's open key, a record with only an emit, is the shape this field could express.
+  Whether the dialogue offers it is the architect's call.
+- **The runs above predate the merge.** They ran at `0c76f6fe` against SDK v0.9.10. The suite after
+  the merge runs against master's pin, v0.9.12. No model run has been taken since.
+
+Seals: `tests/socratic`, 141 passed (5 new). Four mutants, each red with the file restored by `cmp`.
+One of them, reading an undeclared `disposes` as disposing, is red on a `TypeError` in the loop's own
+derivation, not on an assertion.
+
 ## Consequences
 
 - **The process owner describes. A steward reviews a diff.** The steward reviews the same rows a

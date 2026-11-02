@@ -65,6 +65,7 @@ FACETS = ("trigger", "actors", "steps", "approvals", "outputs")
 _FACET_RANK = {f: i for i, f in enumerate(FACETS)}
 
 _DISPOSING = {"human_await", "signal_await", "wait"}
+_DISPOSING_IF_DECLARED = {"direct_call": "outcome_from", "emit": "disposes"}
 _ACTOR_FIELDS = {"audience", "excludes"}
 _APPROVAL_FIELDS = {"task_kind", "deadline_seconds", "approves", "role"}
 _FOLDERS = ("triggers", "decisions", "workflows", "task_kinds")
@@ -292,8 +293,8 @@ def _kinds_for(task_kind: str, kinds: Dict[str, Any]) -> List[str]:
 
 
 def _disposes(step: dict) -> bool:
-    return step.get("kind") in _DISPOSING or (
-        step.get("kind") == "direct_call" and step.get("outcome_from") is not None)
+    field = _DISPOSING_IF_DECLARED.get(step.get("kind"))
+    return step.get("kind") in _DISPOSING or (field is not None and step.get(field) is not None)
 
 
 def _emits(wf: dict, kinds: Dict[str, Tuple[str, dict]]) -> Tuple[Optional[List[str]], Optional[dict]]:
@@ -320,6 +321,8 @@ def _emits(wf: dict, kinds: Dict[str, Tuple[str, dict]]) -> Tuple[Optional[List[
         verbs = list(sets.pop())
     elif k == "signal_await":
         verbs = list(last.get("accepts") or [])
+    elif k == "emit":
+        verbs = [last.get("disposes")]
     else:
         verbs = ["elapsed"]
     if any(s.get("deadline_seconds") for s in steps) and "timed_out" not in verbs:
@@ -1250,7 +1253,8 @@ def runnable(files: Dict[str, dict]) -> List[str]:
                         if not _kinds_for(tk, kinds):
                             errors.append(f"definition {wid}: step {s.id} names task kind {tk!r}, "
                                           "which no row declares")
-                if any(_disposes({"kind": s.kind, "outcome_from": getattr(s, "outcome_from", None)})
+                if any(_disposes({"kind": s.kind, "outcome_from": getattr(s, "outcome_from", None),
+                                  "disposes": getattr(s, "disposes", None)})
                        for s in wf.steps) and wid not in index:
                     errors.append(f"definition {wid}: no table declares `after: {wid}`")
         finally:

@@ -1421,3 +1421,46 @@ def test_the_measure_row_names_nulls_and_denials():
 def test_the_grammar_says_null_is_not_a_deferral_and_never_set_renders_as():
     grammar = " ".join(se._GRAMMAR.split())
     assert "null is not a deferral" in grammar and "Never set `renders_as`" in grammar
+
+
+# ── an emit that declares its disposition: the runner's rule, read the same here ─────────
+
+REC = "workflows/pcn_record.yaml"
+REC_CH = "decisions/pcn_record_chaining.yaml"
+
+
+def _record_only_emits(disposes=None):
+    f = _good()
+    f[REC]["steps"] = [s for s in f[REC]["steps"] if s["kind"] == "emit"]
+    if disposes:
+        f[REC]["steps"][0]["disposes"] = disposes
+    return f
+
+
+def test_an_emit_that_declares_its_disposition_ends_its_definition():
+    f = _record_only_emits("filed")
+    assert "outputs.pcn_record.ends" not in _keys(f)
+    assert se.problems(f) == [] and se.runnable(f) == []
+
+
+def test_control_an_emit_that_declares_nothing_still_disposes_nothing():
+    assert "outputs.pcn_record.ends" in _keys(_record_only_emits())
+
+
+def test_the_table_is_held_to_what_the_emit_declares_not_to_elapsed():
+    keys = _keys(_record_only_emits("sent"))
+    assert "outputs.pcn_record.next.sent" in keys
+    assert "contradiction:chaining.pcn_record_chaining.filed" in keys
+    assert "outputs.pcn_record.next.elapsed" not in keys
+
+
+def test_a_definition_whose_emit_disposes_needs_a_table_after_it():
+    f = _record_only_emits("filed")
+    del f[REC_CH]
+    assert any("no table declares `after: pcn_record`" in e for e in se.runnable(f))
+
+
+def test_control_an_emit_that_disposes_nothing_needs_no_table_after_it():
+    f = _record_only_emits()
+    del f[REC_CH]
+    assert not any("no table declares `after: pcn_record`" in e for e in se.runnable(f))
