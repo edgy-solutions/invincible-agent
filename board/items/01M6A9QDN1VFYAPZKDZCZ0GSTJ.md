@@ -3,7 +3,7 @@ title: A PDP answer is a JSON boolean or an outage (16 readers; #190)
 feature: cross-cutting
 lane: invincible-agent/lane/gov
 repo: invincible-agent
-status: review
+status: done
 priority: next
 blocked_on: []
 pr: [invincible-agent#190]
@@ -15,4 +15,4 @@ Saf seal review found can_read_recipient admits {'check':'false'} (3 of 7 forms)
 
 gov 10-31: #190 is the PDP-answer class (16 readers). CI green at b1b02e93. It also fixes saf's two #194 defects; merge order proposed: #194 first, then #190 drops the two strict xfails.
 
-gov 11-02: the architect ruled that order. #190 waits on #194 (01M6AM7E4V32Q59SYTCPE9C5Z2); once #194 is in, gov merges master, drops the two xfails and tells lane/01 it is ready.
+11-02: the architect ruled that order and both merged: #194, then #190 (cc76a911), with lane/01 dropping the two xfails in the train. Still open and unasked: the fail-closed sites deny on a malformed answer and do not 503.
