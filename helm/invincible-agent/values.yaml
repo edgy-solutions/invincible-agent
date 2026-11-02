@@ -2440,7 +2440,9 @@ topazSeed:
 #   * When networkPolicy.enabled, the git host must be in networkPolicy.extraEgress for engine
 #     pods (engine-fin has a default-deny egress), or the init container times out with no
 #     policy error. cortex-bff has no egress policy.
-#   * A clone failure stops the new pod starting; a rollout then holds on the old pod.
+#   * A clone failure stops the new pod starting; a rollout then holds on the old pod. EVERY pod
+#     start clones, so while the git host is down a restarted pod stays down, cortex-bff included.
+#     No boards to deliver? `components.cortex-bff: null` and cortex-bff never clones.
 #   * Only the listed dirs reach a pod: the repo also holds users and grants, which an engine
 #     must not see. A row without `optional: true` whose dir is missing from the repo is fatal.
 policyOverlay:

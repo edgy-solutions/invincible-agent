@@ -124,10 +124,6 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
-            {{- if $ov }}
-            # policyOverlay: the delivered dirs. A container env beats the configmap's envFrom.
-            {{- include "invincible-agent.policyOverlayEnv" (dict "root" . "component" "cortex-bff") | nindent 12 }}
-            {{- end }}
             # HITL substrate: cortex-bff writes the human_task_projection into the
             # SAME Electric-replicated Postgres the projector uses. Constructed from
             # the shared configmap's BPMN_POSTGRES_* + the secret's
@@ -164,6 +160,12 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            {{- end }}
+            {{- if $ov }}
+            # policyOverlay: the delivered dirs. LAST, as in engines.yaml: a container env beats the
+            # configmap's envFrom, and the last duplicate beats `cortexBff.env`, so a hand-set path
+            # cannot disagree with what the init container delivered.
+            {{- include "invincible-agent.policyOverlayEnv" (dict "root" . "component" "cortex-bff") | nindent 12 }}
             {{- end }}
           {{- if or .Values.cortexBff.tlsTrust.secretName $ov }}
           volumeMounts:

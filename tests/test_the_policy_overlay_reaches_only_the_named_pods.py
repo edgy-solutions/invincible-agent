@@ -179,6 +179,30 @@ def test_d_the_env_names_the_delivered_paths():
 
 
 @needs_helm
+def test_d_a_hand_set_path_cannot_disagree_with_what_was_delivered():
+    """The doc says the chart's value wins. Kubernetes takes the LAST duplicate in a container's env, so
+    the delivered row has to come after the component's own `env` in BOTH pod templates."""
+    deps = _deployments(_render(
+        *_ON,
+        "--set", "engineFinance.env.MEASURE_VERB_OVERLAY_DIRS=/elsewhere",
+        "--set", "cortexBff.env.CANVAS_OVERLAY_DIRS=/elsewhere"))
+    assert _env(deps["t-engine-fin"]["containers"][0])["MEASURE_VERB_OVERLAY_DIRS"] == "/policy-overlay/measure_verbs"
+    assert _env(deps["t-cortex-bff"]["containers"][0])["CANVAS_OVERLAY_DIRS"] == "/policy-overlay/canvases"
+
+
+@needs_helm
+def test_b_a_null_component_never_clones_as_the_doc_promises(tmp_path):
+    """The doc's way out of tying cortex-bff's restarts to the git host. A values FILE, because that is
+    how a deployment writes it, and because `null` is what removes a chart default."""
+    values = tmp_path / "v.yaml"
+    values.write_text("policyOverlay:\n  components:\n    cortex-bff: null\n", encoding="utf-8")
+    deps = _deployments(_render(*_ON, "-f", str(values)))
+    assert _init(deps["t-cortex-bff"]) is None
+    assert _init(deps["t-engine-fin"]) is not None
+    assert "CANVAS_OVERLAY_DIRS" not in _env(deps["t-cortex-bff"]["containers"][0])
+
+
+@needs_helm
 def test_d_the_bff_keeps_its_tls_trust_volume_beside_the_overlay():
     spec = _deployments(_render(
         *_ON, "--set", "cortexBff.tlsTrust.secretName=x", "--set", "cortexBff.tlsTrust.secretKey=k",
