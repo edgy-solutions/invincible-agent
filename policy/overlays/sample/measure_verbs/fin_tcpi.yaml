@@ -43,5 +43,5 @@ render:
 policy:
   status: sample
   cells: [PROGRAM_FINANCE]
-  granted_by: <accountable approver>
+  granted_by: seed
   reason: proves the measure-row contract end to end on synthetic NP-MERIDIAN data

@@ -150,6 +150,12 @@ fin:ToCompletePerformanceIndexSeries a owl:Class ;
     rdfs:label "To-Complete Performance Index Series" ;
     rdfs:comment "The dimensionless efficiency the remaining work must achieve to finish on budget, indexed by period, each value accompanied by the method name and version that produced it. A period in which the budget is already spent carries a reason and no number. Carries no currency and refuses one." .
 
+# SAMPLE: output class of the sample overlay measure fin_vac_cpi (policy/overlays/sample/measure_verbs).
+fin:VarianceAtCompletionSeries a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Variance At Completion Series" ;
+    rdfs:comment "The budget at completion less the estimate at completion, an amount in USD, indexed by period, each value accompanied by the method name and version that produced it. A period in which no work has been performed carries a reason and no number." .
+
 fin:BurnRateSeries a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Burn Rate Series" ;

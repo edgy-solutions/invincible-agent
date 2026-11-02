@@ -42,11 +42,17 @@ SAMPLE_RAW = yaml.safe_load(base.SAMPLE_ROW.read_text(encoding="utf-8"))
 
 # -- a: the loader ----------------------------------------------------------------------------
 
-def test_a_the_sample_loads_and_its_shape_is_the_yamls(tmp_path):
-    (row,) = base._load([base.SAMPLE], tmp=tmp_path)
-    assert row.render["shape"] == SAMPLE_RAW["render"]["shape"]
-    assert row.archetype == SAMPLE_RAW["render"]["shape"]
-    assert dict(row.render) == SAMPLE_RAW["render"]
+def test_a_every_shipped_row_loads_and_its_shape_is_its_yamls(tmp_path):
+    rows = base._load([base.SAMPLE], tmp=tmp_path)
+    files = {r["measure_id"]: r for r in (
+        yaml.safe_load(f.read_text(encoding="utf-8")) for f in base.SAMPLE.glob("*.yaml"))}
+    assert {r.measure_id for r in rows} == set(files)
+    for row in rows:
+        raw = files[row.measure_id]
+        assert row.render["shape"] == raw["render"]["shape"]
+        assert row.archetype == raw["render"]["shape"]
+        assert dict(row.render) == raw["render"]
+        assert raw["render"]["shape"] in measure_verbs.COMPUTED_SHAPES
 
 
 def test_a_the_computed_shapes_are_a_subset_of_the_admission_vocabulary():
