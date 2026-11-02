@@ -73,6 +73,10 @@ except ImportError:  # pragma: no cover - import path differs by runtime
 # Telemetry (ADR-0038): baml_shared is on sys.path (the analyst app adds it at startup).
 # Guarded so the ReviewStarter runs identically when the shim/leaf is absent (no-op
 # primitives) — the witness channel never breaks the composition.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import check_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import check_answer
 try:
     from telemetry import observed_trace, build_trace_values, MAPPING  # type: ignore[no-redef]
 except Exception:  # pragma: no cover — telemetry is never load-bearing
@@ -191,7 +195,7 @@ def can_invoke_start_review(initiator: str) -> bool:  # pragma: no cover - live 
             timeout=5.0,
         )
         resp.raise_for_status()
-        return bool(resp.json().get("check", False))   # absent/not-found/error -> deny (fail-closed)
+        return check_answer(resp)   # absent/not-found/error/malformed -> deny (fail-closed)
     except Exception:  # noqa: BLE001 — fail-closed (deny) on any error, like the ontology gate
         return False
 

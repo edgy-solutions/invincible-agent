@@ -1,0 +1,18 @@
+# THE REGISTRY OF REVIEW SUBJECTS (architect's ruling, 2026-11-02: "validate_policy takes review
+# subjects from a registry list so a misspelt key fails").
+#
+# A `can_review:<S>` capability in capability_grants.yaml is refused by validate_policy unless S is
+# named here. S is what a surface's own check asks Topaz about, so a misspelt key would gate nothing
+# and leave the real subject reviewable by nobody.
+#
+# This file lists the subjects a surface checks. It is not a list of who reviews: that is the row in
+# capability_grants.yaml, and a registered subject with no row is reviewable by nobody. It ships with
+# the product image and is read from there, not from a deployment's policy directory, so it is not in
+# validate_policy.DATA_FILES and a deployment's policy repository does not carry it. A new subject
+# is a new row here, in the same change as the surface that starts asking for it.
+review_subjects:
+  - name: alignment
+    surface: training-consolidation-workbench POST /alignment/proposals/review
+    reason: >-
+      2026-10-31 directive: the workbench's alignment proposals (a concept ALIGNS_TO a canonical).
+      The first ruled subject.

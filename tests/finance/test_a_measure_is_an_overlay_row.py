@@ -167,7 +167,7 @@ def test_2_policy_visibility(tmp_path):
 
 
 def test_2_mixed_units(tmp_path):
-    _refused(tmp_path, lambda r: r["outputs"].update(
+    _refused(tmp_path, lambda r: r["render"].update(
         series=[{"key": "a", "label": "A", "unit": "USD"}, {"key": "b", "label": "B"}]),
         "mixes units")
 
@@ -189,17 +189,17 @@ def test_3_no_overlay_declares_nothing(tmp_path, monkeypatch):
     assert _load([], tmp=tmp_path) == []
 
 
-def test_3_the_sample_overlay_declares_exactly_fin_tcpi(monkeypatch):
+def test_3_the_sample_overlay_declares_exactly_fin_tcpi_and_fin_vac_cpi(monkeypatch):
     monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(SAMPLE))
-    assert list(engine._load_declared()) == ["fin_tcpi"]
+    assert sorted(engine._load_declared()) == ["fin_tcpi", "fin_vac_cpi"]
 
 
 def test_3_a_tombstone_in_a_later_overlay_removes_it(tmp_path):
     second = tmp_path / "second"
     second.mkdir()
     (second / "fin_tcpi.yaml").write_text("measure_id: fin_tcpi\ndeleted: true\n", encoding="utf-8")
-    assert _load([SAMPLE], tmp=tmp_path)[0].measure_id == "fin_tcpi"
-    assert _load([SAMPLE, second], tmp=tmp_path) == []
+    assert sorted(r.measure_id for r in _load([SAMPLE], tmp=tmp_path)) == ["fin_tcpi", "fin_vac_cpi"]
+    assert [r.measure_id for r in _load([SAMPLE, second], tmp=tmp_path)] == ["fin_vac_cpi"]
 
 
 # ── arm 4: registration ──────────────────────────────────────────────────────────────────────
@@ -220,7 +220,7 @@ def test_4_registers_beside_the_builtins(declared, monkeypatch):
     monkeypatch.setattr(engine, "DECLARED", {})
     n_builtin = len(engine._registration_calls("http://engine"))
     monkeypatch.setattr(engine, "DECLARED", declared)
-    assert len(calls) == n_builtin + 1
+    assert len(calls) == n_builtin + 2   # the sample ships fin_tcpi and fin_vac_cpi
     c = by_verb["mesh:finToCompletePerformanceIndex"]
     assert c["endpoint_url"] == "http://engine/measure/fin_tcpi"
     assert c["output_uri"] == measures.FIN + "ToCompletePerformanceIndexSeries"
@@ -313,7 +313,8 @@ def test_5_the_envelope_is_the_builtins_plus_method(double, client):
                           json={"params": {"program_id": PROGRAM}, "user_email": ALICE})
     assert builtin.status_code == 200, builtin.text
     declared_keys = set(_ask(client).json())
-    assert declared_keys == set(builtin.json()) | {"method"}
+    # `render` joined the declared envelope with the row's render block (spec RB); built-ins have none.
+    assert declared_keys == set(builtin.json()) | {"method", "render"}
 
 
 def test_5_a_budget_already_spent_is_undefined_with_its_reason(double, client, monkeypatch):
