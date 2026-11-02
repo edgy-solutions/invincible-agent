@@ -349,7 +349,9 @@ def test_H_a_malformed_delegate_map_fails_closed(route, monkeypatch):
     resp = _act(c, on_behalf_of=PRINCIPAL_ATLANTIA)
 
     assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"]["error"] == "not_a_delegate", resp.json()
+    # With no readable delegate map the caller is a plain service account, so the MCP door
+    # (seal 1) refuses it before the act's own `not_a_delegate` check is reached.
+    assert resp.json()["detail"]["error"] == "service_token_refused", resp.json()
     assert fake.posts == []
     assert calls["list_tasks_for"] == []
 
