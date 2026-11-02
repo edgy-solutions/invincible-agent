@@ -48,11 +48,10 @@ FORMS = {
     "html_200": lambda req: httpx.Response(200, text="<html>gateway</html>", request=req),
     "list_200": lambda req: httpx.Response(200, json=[], request=req),
     "null_200": lambda req: httpx.Response(200, content=b"null", headers={"content-type": "application/json"}, request=req),
-    # A 200 whose `check` is a truthy STRING: not an outage, a DENIAL that reads as a grant (see the xfail below).
+    # A 200 whose `check` is a truthy STRING: not an outage, a DENIAL that reads as a grant.
     "string_false_check": lambda req: httpx.Response(200, json={"check": "false"}, request=req),
 }
-# The two forms `can_invoke_or_unavailable` cannot classify: it catches (httpx.HTTPError, ValueError) and then
-# calls `.get` on the decoded body, so a JSON list / null is an AttributeError -> an unhandled 500, not a 503.
+# A JSON list / null: a decoded body that is not an object. Tested on their own below; they are outages too.
 NON_DICT_BODY = ("list_200", "null_200")
 OUTAGE_FORMS = [f for f in FORMS if f not in NON_DICT_BODY and f != "string_false_check"]
 
@@ -178,10 +177,6 @@ def _matrix(monkeypatch, tmp_path, who, forms, denials):
     return bad, rail_routes
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DEFECT human_tasks.can_invoke_or_unavailable: a Topaz 200 whose JSON body is a list or null is "
-    "`.get` on a non-dict -> AttributeError, which neither it nor the gateway catches, so the export "
-    "routes answer an unhandled 500 where P6 owes 503. Both batch and single rails inherit it."))
 @pytest.mark.parametrize("who", [DROPPER, STRANGER])
 def test_p6_a_non_object_json_200_is_503_not_an_unhandled_500(monkeypatch, tmp_path, who):
     bad, rail_routes = _matrix(monkeypatch, tmp_path, who, NON_DICT_BODY, ())
@@ -189,9 +184,6 @@ def test_p6_a_non_object_json_200_is_503_not_an_unhandled_500(monkeypatch, tmp_p
     assert not bad, f"{len(bad)} cases: {bad}"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DEFECT human_tasks.can_invoke_or_unavailable: `bool(r.json().get('check'))` admits a truthy STRING "
-    "such as \"false\" -- a fail-open on the capability rail (the class gov closed for can_read_recipient)."))
 def test_a_string_check_is_not_a_grant(monkeypatch, tmp_path):
     for path in _routes():
         r, asks = _hit(monkeypatch, tmp_path, path, STRANGER, {})

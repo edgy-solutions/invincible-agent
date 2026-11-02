@@ -49,6 +49,10 @@ from iagent_mesh.interfaces import Initiator
 # The SAME canonicalizer doc-tools' S1000D parser mints its root URI with
 # (`mil#dmc-<canonical>`, s1000d_rdf.parse_data_module), so the label below is
 # read back through the function that wrote it, never re-parsed by hand.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import check_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import check_answer
 try:
     from utils.dmc_canonicalizer import canonicalize_dmc
 except ImportError:
@@ -127,7 +131,7 @@ def _can_read_document(caller_email: str, source_id: str) -> bool:
             timeout=5.0,
         )
         r.raise_for_status()
-        return bool(r.json().get("check", False))
+        return check_answer(r)
     except Exception as e:  # noqa: BLE001 — fail-closed on ANY failure
         print(f"[Engine W] can_read check FAILED (fail-closed deny) src={source_id!r}: {e}")
         return False
