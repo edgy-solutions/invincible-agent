@@ -174,9 +174,12 @@ def test_s2_single_and_batch_agree_on_which_notices_a_caller_may_export(monkeypa
 
 # ── s3: no profile reaches outside the catalogue ──────────────────────────────────────────────────
 
-CATALOGUE_NOTICE = {"attempt", "content_kind", "corrected_by", "ingest_id", "leaf", "leaf_source",
+# Ruled catalogue fields: `item_kind` and `review_shape` were added by architect ruling on 2026-11-02
+# ("item_kind and review_shape are ruled catalogue fields; update the reviewed list"). Any other
+# addition needs its own ruling and its own edit here.
+CATALOGUE_NOTICE = {"attempt", "content_kind", "corrected_by", "ingest_id", "item_kind", "leaf", "leaf_source",
                     "notice.mfr", "notice.mfr_parent", "notice.mfr_source", "notice.notice_date",
-                    "notice_id", "part_count"}
+                    "notice_id", "part_count", "review_shape"}
 CATALOGUE_UNSHARED = {"part_index", "mpn", "row_index"}
 CATALOGUE_SHARED = {"evidence_ref", "extracted_value", "match_confidence", "needs_review",
                     "obtained_via", "review_reason", "source_snippet"}
