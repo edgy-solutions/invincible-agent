@@ -1,7 +1,10 @@
 """A 200 from Topaz whose `check` is not the JSON boolean true must never admit.
 
 Found by lane/saf in the #181 review: `bool(r.json().get("check"))` admitted `"false"`, `"no"` and `"0"`.
-The fix is `is True` (ruled 2026-10-31: applied on #181 before merge).
+The fix was `is True` (ruled 2026-10-31: applied on #181 before merge). A later ruling the same day made a
+malformed answer the outage class (503, never a 403), so the reader is now `pdp_answer.check_answer`, which
+raises on one; this seal accepts either a raise or a False, and the class seal is
+`tests/security/test_a_pdp_answer_is_a_boolean_or_an_outage.py`.
 
 Run:  uv run python -m pytest tests/test_recipient_check_must_be_a_true_boolean.py -q
 """
