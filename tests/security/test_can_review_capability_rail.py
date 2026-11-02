@@ -11,6 +11,9 @@ Run:  uv run python -m pytest tests/security/test_can_review_capability_rail.py 
 """
 from __future__ import annotations
 
+import fnmatch
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -146,14 +149,128 @@ def test_c_a_subject_with_no_row_gets_no_capability_object():
 
 # -- (d) no case in code (2026-10-30 rule) --------------------------------------------------
 
-def test_d_no_review_subject_or_group_is_quoted_outside_policy_and_tests():
+def test_d_no_review_subject_or_group_is_quoted_in_code():
     rows = _rows()
     needles = set(rows) | {g for row in rows.values() for g in row["grant_to_groups"]}
     assert needles
     files = subprocess.run(["git", "ls-files", "*.py", "*.ts", "*.tsx", "*.baml"], cwd=ROOT,
                            capture_output=True, text=True, check=True).stdout.split()
-    files = [f for f in files if not f.startswith(("tests/", "policy/"))]
-    assert files, "positive control: the scan sees code"
+    files = [f for f in files if not f.startswith("tests/")]
+    assert "policy/sync/validate_policy.py" in files, "positive control: the scan sees the validator"
     hits = [(f, n) for f in files
             for n in needles if n in (ROOT / f).read_text(encoding="utf-8", errors="replace")]
     assert hits == [], hits
+
+
+def test_d_the_validator_quotes_no_registered_subject():
+    s = (ROOT / "policy" / "sync" / "validate_policy.py").read_text(encoding="utf-8")
+    part = (s[s.index("def known_review_subjects"):s.index("#: No grantee is named in code")]
+            + s[s.index("# `can_review:<S>` (2026-11-02"):
+                s.index("# recipient_readers.yaml: validated WHEN PRESENT")])
+    literals = {m[1] for m in re.findall(r"""(["'])([^"'\n]*)\1""", part)}
+    assert "review_subjects.yaml" in literals, "positive control: the scan sees the reader"
+    assert not (literals & _registered()), literals & _registered()
+
+
+# -- (e) the registry (2026-11-02 ruling: a misspelt key fails) ------------------------------
+
+def _registered() -> set[str]:
+    return {r["name"] for r in _load("review_subjects.yaml")["review_subjects"]}
+
+
+@pytest.fixture
+def pol(tmp_path):
+    """A deployment's policy dir: the policy with no registry in it."""
+    d = tmp_path / "policy"
+    shutil.copytree(ROOT / "policy", d, ignore=shutil.ignore_patterns("__pycache__", "overlays", "review_subjects.yaml"))
+    return d
+
+
+def _add_row(d, key):
+    p = d / "capability_grants.yaml"
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    data["capabilities"][key] = {"granted_by": "seed", "reason": "t",
+                                 "grant_to_groups": _rows()[FIRST_RULED]["grant_to_groups"]}
+    p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def _drop_row(d, key):
+    p = d / "capability_grants.yaml"
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    del data["capabilities"][key]
+    p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def test_e_the_first_ruled_subject_is_registered():
+    assert FIRST_RULED[len(PREFIX):] in _registered(), sorted(_registered())
+
+
+def test_e_every_registered_subject_names_its_surface_and_reason():
+    rows = _load("review_subjects.yaml")["review_subjects"]
+    assert rows
+    assert [r for r in rows if not (r.get("surface") and r.get("reason"))] == []
+    assert len(rows) == len(_registered()), "a subject is registered twice"
+
+
+def test_e_the_known_set_equals_an_independent_parse():
+    subjects, notes = vp.known_review_subjects()
+    assert subjects == _registered()
+    assert "review_subjects.yaml" in notes[0] and f"({len(subjects)} subject(s))" in notes[0]
+
+
+def test_e_a_registered_subject_validates_from_a_dir_with_no_registry_in_it(pol):
+    assert not (pol / "review_subjects.yaml").exists()
+    assert vp.validate(pol, pol) == []
+
+
+def test_e_a_misspelt_key_is_refused_naming_the_key_and_the_registry(pol):
+    _add_row(pol, f"{FIRST_RULED}nmet")
+    errs = vp.validate(pol, pol)
+    hit = [e for e in errs if f"{FIRST_RULED}nmet" in e]
+    assert hit and "review_subjects.yaml" in hit[0] and "NOT a registered" in hit[0], errs
+    assert len(errs) == 1, errs  # the correctly spelt row beside it stays clean
+
+
+def test_e_an_empty_subject_is_refused(pol):
+    _add_row(pol, PREFIX)
+    errs = vp.validate(pol, pol)
+    assert [e for e in errs if "NOT a registered" in e], errs
+
+
+def test_e_a_registered_subject_with_no_row_still_validates(pol):
+    # The choice, pinned: the row decides who reviews, and no row means nobody, as for `can_call:`.
+    _drop_row(pol, FIRST_RULED)
+    assert vp.validate(pol, pol) == []
+
+
+@pytest.mark.parametrize("body", [None, "not: [yaml", "review_subjects: 7\n", "- a\n",
+                                  "review_subjects:\n  - {surface: s}\n  - b\n  - {name: 7}\n"])
+def test_e_an_absent_or_broken_registry_fails_closed_on_the_shipped_row(pol, tmp_path, monkeypatch, body):
+    reg = tmp_path / "registry.yaml"
+    if body is not None:
+        reg.write_text(body, encoding="utf-8")
+    subjects, notes = vp.known_review_subjects(reg)
+    assert subjects == set()
+    assert "registry.yaml" in notes[0]
+    real = vp.known_review_subjects
+    monkeypatch.setattr(vp, "known_review_subjects", lambda: real(reg))
+    errs = vp.validate(pol, pol)
+    assert [e for e in errs if FIRST_RULED in e and "NOT a registered" in e], errs
+
+
+def test_e_the_registry_reaches_the_job_that_runs_the_validator():
+    # Not a data file: adding one fails the seed of every deployment whose repo lacks it.
+    assert "review_subjects.yaml" not in vp.DATA_FILES
+    # The seed job runs the validator from the cortex-bff image, and that image is the whole repo.
+    values = yaml.safe_load((ROOT / "helm" / "invincible-agent" / "values.yaml").read_text(encoding="utf-8"))
+    assert values["topazSeed"]["image"]["name"] == "cortex-bff"
+    ci = yaml.safe_load((ROOT / ".github" / "workflows" / "build-containers.yml").read_text(encoding="utf-8"))
+    built = [row for job in ci["jobs"].values()
+             for row in ((job.get("strategy") or {}).get("matrix") or {}).get("include") or []
+             if isinstance(row, dict) and row.get("service") == "cortex-bff"]
+    assert built and all(row["path"] == "." for row in built), built
+    ignored = [ln.strip().rstrip("/") for ln in (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+               if ln.strip() and not ln.startswith("#")]
+    assert ignored, "positive control: the scan sees the ignore list"
+    for path in ("policy", "policy/review_subjects.yaml"):
+        assert [p for p in ignored if fnmatch.fnmatch(path, p)] == [], path

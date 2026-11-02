@@ -79,9 +79,10 @@
 # when it is false; that check lives with the surface (the workbench's for `alignment`), never in
 # this repo's code, which names no subject. Deny-by-default: a subject with no row is reviewable by
 # NOBODY, and deleting a row revokes through the invoker-relation prune. Grant through a
-# capability-only group (`grant_to_groups`), never a person. The first ruled subject is
-# `alignment`: the workbench's concept-to-canonical ALIGNS_TO proposals
-# (`POST /alignment/proposals/review`).
+# capability-only group (`grant_to_groups`), never a person. S must be registered in the product's
+# policy/review_subjects.yaml, or validate_policy refuses the key: a misspelt key gates nothing
+# (2026-11-02 ruling). The first ruled subject is `alignment`: the workbench's concept-to-canonical
+# ALIGNS_TO proposals (`POST /alignment/proposals/review`).
 capabilities:
   # ADR-0029 Slice-1 demo fixture: the promotion workflow's publish emit. alice
   # (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) is the initiator authorized to
