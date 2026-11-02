@@ -8,7 +8,7 @@ priority: later
 blocked_on: [01M6A9QDN1KAR37N824W55YGA3]
 pr: []
 ruling_ref: 
-updated: 2026-10-31
+updated: 2026-11-02
 ---
 
-Gov follow-ups wait on SDK v0.9.13, as in earlier handoffs.
+Gov follow-ups wait on SDK v0.9.13: the `seed` literal becomes GRANTED_BY_SEED (ruled 10-31), and the other follow-ups in earlier handoffs.

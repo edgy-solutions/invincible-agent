@@ -1,0 +1,18 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+id: pcn_program_approval
+name: PCN program approval
+steps:
+- kind: human_await
+  id: program_approval
+  audience: pcn_program:SUSTAINMENT
+  task_kind: pcn_program_approval
+  role: program_manager
+  approves:
+  - approved
+  subject_ref: '{trigger.pcn_id}'
+  title: PCN {trigger.pcn_id} -- program approval
+  deadline_seconds: 604800
+  excludes:
+  - '{trigger.submitted_by.authz_id}'
+participants:
+- role: program_manager

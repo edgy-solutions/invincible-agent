@@ -33,7 +33,6 @@ computation:
     citation: name-only
     transcription: TCPI = (BAC - BCWP) / (BAC - ACWP)
 outputs:
-  output_uri: ToCompletePerformanceIndexSeries
   undefined: {reason: budget_spent, when: BAC <= cumulative ACWP (the budget is spent; no efficiency completes the work within it)}
 render:
   shape: MULTI_SERIES
