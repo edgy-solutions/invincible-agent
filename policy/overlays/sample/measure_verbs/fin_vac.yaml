@@ -33,7 +33,6 @@ computation:
     citation: name-only
     transcription: VAC = BAC - BAC * ACWP / BCWP
 outputs:
-  output_uri: VarianceAtCompletionSeries
   undefined: {reason: no_work_performed, when: cumulative BCWP <= 0 (no work performed, so the cost performance index has no value)}
 render:
   shape: MULTI_SERIES

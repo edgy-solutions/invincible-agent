@@ -123,12 +123,12 @@ def fmt_profiles(declared, monkeypatch, tmp_path):
 def _build(profile, out, *, state=None, source=None):
     return cdrl.build_cdrl(
         state or engine.STATE, profile, program_id=PROGRAM, as_of="2026-10-28", out_dir=out,
-        run_source=source or (lambda fn, params: engine._cdrl_source(fn, params)))
+        run_source=source or (lambda fn, params: engine._cdrl_source(fn, params, caller="alice@example.com")))
 
 
 def _drop_last_tcpi(fn, params):
     """The engine's source, except fin_tcpi did not return its last period."""
-    env, method = engine._cdrl_source(fn, params)
+    env, method = engine._cdrl_source(fn, params, caller="alice@example.com")
     if fn == "fin_tcpi":
         env = {**env, "rows": list(env["rows"])[:-1]}
     return env, method

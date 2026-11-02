@@ -175,11 +175,11 @@ def test_3_every_declared_field_is_carried_by_the_rows(fn):
 def _build(profiles, out, state=None):
     return cdrl.build_cdrl(
         state or engine.STATE, profiles[PROFILE], program_id=PROGRAM, as_of="2026-10-28",
-        out_dir=out, run_source=lambda fn, params: engine._cdrl_source(fn, params))
+        out_dir=out, run_source=lambda fn, params: engine._cdrl_source(fn, params, caller="alice@example.com"))
 
 
 def _rows(fn):
-    return {r["period"]: r for r in engine._measure_envelope(fn, {"program_id": PROGRAM})["rows"]}
+    return {r["period"]: r for r in engine._measure_envelope(fn, {"program_id": PROGRAM}, caller="alice@example.com")["rows"]}
 
 
 def test_4_the_title_block(profiles, tmp_path):

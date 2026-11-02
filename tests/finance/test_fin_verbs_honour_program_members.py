@@ -70,9 +70,9 @@ def measured(monkeypatch):
     calls: list[tuple[str, dict]] = []
     real = engine._measure_envelope
 
-    def spy(fn, params):
+    def spy(fn, params, **kw):
         calls.append((fn, dict(params)))
-        return real(fn, params)
+        return real(fn, params, **kw)
 
     monkeypatch.setattr(engine, "_measure_envelope", spy)
     return calls
@@ -258,6 +258,9 @@ def test_7_bff_relays_the_refusal(monkeypatch):
             return _Resp(403, {"detail": envelope})
 
 
+    # The BFF asks the recipient rail before it relays (cff49fcf moved it there); this arm is about
+    # the relay, and a rail with no double answers no, so the post is never sent.
+    monkeypatch.setattr(gw, "_rail_reader", lambda owner, scope, authz_id: True)
     monkeypatch.setattr(gw.httpx, "AsyncClient", _Client)
     body = gw.ExportPackageRequest(template_id="program_finance",
                                    bindings={"program": PROGRAM})

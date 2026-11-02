@@ -65,7 +65,7 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 | `anti_synonyms` | Optional. Phrases that mean a different measure, so the router does not pick this one. |
 | `inputs` | Which program quantities the measure uses. Holds `params` and `state` only. |
 | `computation` | The reviewed module that calculates it, and where the formula comes from. |
-| `outputs` | The result type (`output_uri`) and what "undefined" means. |
+| `outputs` | What "undefined" means. It names no result type: every declared measure is a `fin:DeclaredMeasureSeries`. |
 | `render` | How the result is drawn: the shape, the one series (and its unit), the value label, and a target line. |
 | `policy` | Who may see it, who approved it, and why. |
 
@@ -109,7 +109,6 @@ computation:
     citation: name-only
     transcription: TCPI = (BAC - BCWP) / (BAC - ACWP)
 outputs:
-  output_uri: ToCompletePerformanceIndexSeries
   undefined: {reason: budget_spent, when: BAC <= cumulative ACWP (the budget is spent; no efficiency completes the work within it)}
 render:
   shape: MULTI_SERIES
@@ -141,22 +140,28 @@ product change. A row cannot carry its own query or formula.
 | `derived_from.citation` | Optional, default `unstated`. Write `name-only` where you can name the formula but have no numbered clause. Do not invent a clause number: a precise-looking number nobody checked is worse than an honest "name-only". |
 | `derived_from.transcription` | The formula as the standard writes it. The platform team's tests run it against the module, so the two cannot disagree silently. |
 
-**Outputs.** `output_uri` is a short local name (not a URL) for the result type; the platform team
-registers a matching type in the finance vocabulary, as our sample's `ToCompletePerformanceIndexSeries`
-is. `undefined` is optional; if the function can return nothing for a month, it must give a
+**Outputs.** A row names no result type, and a deployment adds no ontology: every declared measure is a
+`fin:DeclaredMeasureSeries`, told apart by its measure id (carried on the wire as the envelope's `measure`
+and `method.measure_id`) and routed by its verb, description and synonyms. A row that carries
+`outputs.output_uri` is refused at load. `undefined` is optional; if the function can return nothing for a month, it must give a
 `reason`, which is shown instead of a number.
 
 **Render.** `shape` is the name of the archetype the board draws; this engine computes only
 `MULTI_SERIES` (one declared series per period). `series` holds exactly one series (`key`, `label`,
 optional `unit`; leave `unit` out for a ratio). `value_label` names what the values mean. `target` is
 an optional line with a meaning (1.0 here). The engine serves this block with the result, and the
-board draws the declared shape even though your `output_uri` is on no menu. A row with no `render`
+board draws the declared shape even though the shared class is on no menu. A row with no `render`
 is refused at load; a result that is served with none is shown to the viewer as its raw fields.
 `outputs.archetype`, `outputs.series` and `outputs.reference` were the old layout and are refused,
 with a message naming `render.shape`, `render.series` and `render.target`.
 
-**Policy.** `status` is `sample`, `proposed` or `ratified`. `cells` is a non-empty list naming the
-access cells that may see the measure (the sample uses `PROGRAM_FINANCE`). `granted_by` is the
+**Policy.** `status` is `sample`, `proposed` or `ratified`. `cells` is a non-empty list of access
+DOMAINS (the entitlement matrix is persona by domain; the sample uses `PROGRAM_FINANCE`), and it is
+enforced: it is what the verb registers under, and the engine refuses, 403 `measure_not_in_cell`, a
+caller who holds none of them (503 when the directory cannot be asked). That holds on every path:
+`/measure/{fn}`, a package with a panel of this measure, a CDRL whose profile sources it, and the file
+that CDRL build wrote. A program member with no grant in these cells loses this measure, and any CDRL
+sourcing it, and keeps the built-ins. A misspelt cell denies everyone. `granted_by` is the
 person who approved it and `reason` is why. Replace the examples' `<accountable approver>` with a
 real name before you send a row. The rows shipped in the sample overlay say `granted_by: seed`,
 because the repo grants them; a deployment's row names its own approver, as the examples here do.
@@ -204,7 +209,6 @@ computation:
     citation: name-only
     transcription: VAC = BAC - BAC * ACWP / BCWP
 outputs:
-  output_uri: VarianceAtCompletionSeries
   undefined: {reason: no_work_performed, when: cumulative BCWP <= 0 (no work performed, so the cost performance index has no value)}
 render:
   shape: MULTI_SERIES
@@ -237,7 +241,7 @@ What differs from TCPI:
 - You pointed at a module that imports outside the allowed four, declares no `VERSION`, or declares
   one that differs from the row's `version`; or at a function whose keyword arguments are not
   exactly your `state` names.
-- You set `render.shape` to anything but a shape this engine computes (`MULTI_SERIES`), used the old `outputs.archetype`, `outputs.series` or `outputs.reference`, gave an `output_uri` that is a URL, listed
+- You set `render.shape` to anything but a shape this engine computes (`MULTI_SERIES`), used the old `outputs.archetype`, `outputs.series` or `outputs.reference`, wrote an `outputs.output_uri` (no row names a class), listed
   more than one series, or gave an `undefined` with no `reason`.
 - You set a `status` outside the three, left `cells` empty, or added a `visibility` key.
 - You wrote a tombstone for a key no earlier layer ships, or two files with the same `measure_id`.

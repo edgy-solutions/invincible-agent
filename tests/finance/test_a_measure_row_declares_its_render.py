@@ -5,8 +5,8 @@ from the output class, and a class an overlay adds is on no menu. The row now ca
 block (`shape`, `series`, `value_label`, `target`), engine-fin serves it with the envelope, and
 presentation_agent selects by it (tests/planning/test_a_declared_render_selects_the_archetype.py).
 
-RULINGS (Chris, 10-31). 1 `render:` holds shape/series/value_label/target; `outputs:` keeps
-`output_uri`, `unit`, `undefined`; the loader REFUSES the old `outputs.archetype|series|reference`
+RULINGS (Chris, 10-31). 1 `render:` holds shape/series/value_label/target; `outputs:` kept
+`undefined` only (11-02: no `output_uri`, every row is fin:DeclaredMeasureSeries); the loader REFUSES the old `outputs.archetype|series|reference`
 naming the new key. 2 `render.shape` is an archetype name. Coordinator ruling: TCPI is MULTI_SERIES
 (the payload meets that contract; PERIOD_SERIES is planning's capex/expense series), and the
 loader's set is ONE constant, `measure_verbs.COMPUTED_SHAPES`, tied here to
@@ -117,7 +117,6 @@ def test_c_a_second_row_is_served_with_its_render_and_no_code_change(tmp_path, m
     raw = yaml.safe_load(base.SAMPLE_ROW.read_text(encoding="utf-8"))
     raw["measure_id"] = "fin_tcpi_again"
     raw["verb"] = "finToCompletePerformanceIndexAgain"
-    raw["outputs"]["output_uri"] = "AnotherSeries"
     raw["render"]["value_label"] = "Another label"
     d = tmp_path / "ov"
     d.mkdir()
@@ -134,4 +133,4 @@ def test_c_a_second_row_is_served_with_its_render_and_no_code_change(tmp_path, m
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["render"] == raw["render"]
-    assert body["output_uri"] == measures.FIN + "AnotherSeries"
+    assert body["output_uri"] == measures.FIN + "DeclaredMeasureSeries"
