@@ -33,11 +33,13 @@ computation:
     citation: name-only
     transcription: VAC = BAC - BAC * ACWP / BCWP
 outputs:
-  archetype: PERIOD_SERIES
   output_uri: VarianceAtCompletionSeries
-  series: [{key: vac, label: VAC, unit: USD}]          # an amount: a unit
-  reference: {value: 0, label: on budget}
   undefined: {reason: no_work_performed, when: cumulative BCWP <= 0 (no work performed, so the cost performance index has no value)}
+render:
+  shape: MULTI_SERIES
+  value_label: VAC
+  series: [{key: vac, label: VAC, unit: USD}]          # an amount: a unit
+  target: {value: 0, label: on budget}
 policy:
   status: sample
   cells: [PROGRAM_FINANCE]

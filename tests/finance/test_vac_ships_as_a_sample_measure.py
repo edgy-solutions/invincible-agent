@@ -47,7 +47,7 @@ def _doc_example_unit():
     for block in re.findall(r"```yaml\n(# loads-as: measure_verb\n.*?)```", text, re.S):
         doc = yaml.safe_load(block)
         if doc["measure_id"] == "fin_vac_cpi":
-            return doc["outputs"]["series"][0]["unit"]
+            return doc["render"]["series"][0]["unit"]
     raise AssertionError("the doc has no fin_vac_cpi example")
 
 
@@ -101,7 +101,8 @@ def test_b_the_engine_serves_it_and_each_row_equals_the_independent_computation(
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["output_uri"].endswith(ROW_DOC["outputs"]["output_uri"])
-    assert body["series"][0]["unit"] == ROW_DOC["outputs"]["series"][0]["unit"] == _doc_example_unit()
+    assert body["series"][0]["unit"] == ROW_DOC["render"]["series"][0]["unit"] == _doc_example_unit()
+    assert body["render"] == ROW_DOC["render"]  # the shape picks the chart, not the class
     expected = _expected(engine.STATE)
     assert [x["period"] for x in body["rows"]] == [p for p, _ in expected]
     assert len(expected) >= 2
@@ -133,9 +134,9 @@ def test_b_a_period_with_no_work_performed_is_undefined_with_its_reason(double, 
 def test_c_the_verdict_restates_the_last_period_against_the_reference(double, client):
     body = _ask(client).json()
     last = body["rows"][-1]
-    ref = ROW_DOC["outputs"]["reference"]
+    ref = ROW_DOC["render"]["target"]
     side = "above" if last["vac"] > ref["value"] else "below" if last["vac"] < ref["value"] else "at"
-    label = ROW_DOC["outputs"]["series"][0]["label"]
+    label = ROW_DOC["render"]["series"][0]["label"]
     assert body["verdict"] == f"{label} {last['vac']:.2f}, {side} {ref['value']} ({ref['label']}) at {last['period']}"
 
 
