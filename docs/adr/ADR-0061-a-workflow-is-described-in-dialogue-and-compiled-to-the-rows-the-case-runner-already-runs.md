@@ -1,12 +1,11 @@
 # ADR-0061 — A workflow is described in dialogue and compiled to the rows the case runner already runs
 
-**Status:** Proposed, draft. A prototype of the elicitation loop and three synthetic fixtures are
-built and measured (§8). No route, no verb, no canvas. The architect ruled on the first measurement
-on 2026-10-25 (§9). By that ruling, this stays a draft until the model arm produces one runnable
-spec. None of the nine model fixture-runs after the rulings produced one (§9). On 2026-10-27, one
-of three PCN runs was runnable, but it is not the workflow the transcript describes (§10). The
-architect decides whether that meets the ruling. The 10-30 gate is a run that is runnable with the
-planted contradiction caught. Runs 22 to 30 do not meet it (§10).
+**Status:** Proposed. The 10-30 gate is a run that is runnable with the planted contradiction
+caught. Runs 32 and 33 meet it in those words, on 2026-11-02, so this leaves draft under the
+architect's dispatch. Neither bundle is the workflow the transcript describes: run 32 leaves two of
+its four definitions unreachable and run 33 leaves one (§10). `runnable` does not check for that, and
+the architect decides whether it should. A prototype of the elicitation loop and three synthetic
+fixtures are built and measured (§8). No route, no verb, no canvas.
 **Date:** 2026-10-24
 **Deciders:** architect (decision); Chris (review); lane/74 (draft)
 **Related:**
@@ -1309,6 +1308,62 @@ asking. A null not yet asked about is now the next question, not an unsettled an
 Seals: `tests/socratic`, 136 passed (28 new). 28 mutants, each red on an assertion and restored by
 `cmp`. On the first pass one survived, a guard its control never reached, and two were red on a
 `TypeError` and a `KeyError`. The seals were tightened, and those three now die on assertions.
+
+#### 2026-11-02: runs 31 to 33 at the three rulings
+
+Three PCN runs at `0c76f6fe`, with the same model and harness and nothing else in flight.
+
+| run | questions / bank | runnable errors | semantic diffs | open | answered by path | model errors | confirms | rejected | contradiction | deferral | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 31 | 28/15 | 0 | 5 | 1 | 5 | 1 | 7 | 0 | 0/1 | 1/1 | cannot_run | 705 |
+| 32 | 22/15 | 0 | 5 | 0 | 4 | 0 | 9 | 1 | 1/1 | 1/1 | runnable | 596 |
+| 33 | 28/15 | 0 | 4 | 0 | 5 | 0 | 7 | 1 | 1/1 | 1/1 | runnable | 562 |
+
+**The gate is met in its words, by runs 32 and 33. Neither is the workflow the transcript describes.**
+Both finish `runnable` with the planted contradiction caught. In both, a stage the person described
+cannot be reached, because no table routes to it:
+
+- **Run 32: `program_approval` and `record` are unreachable, two of four definitions.** The opening
+  guessed the impact review's `approved` and `rejected` as `completed`. A later bank answer says
+  approval goes to program approval. The model rewrote the whole table, kept those rows and added only
+  `needs_info`.
+- **Run 33: the record definition is unreachable, one of four.** The impact review routes to program
+  approval correctly. Program approval's `approved` goes to a terminal, although the person says the
+  disposition is then recorded.
+
+Nothing in the loop or in `runnable` flags a definition no table routes to. A step or table with no
+path from the trigger is, by design, not asked about, so the question that would catch this is never
+reached. This is the same class as run 7 (above): runnable, and not the workflow. I have not built a
+check, because the ruling on what `runnable` means is the architect's. A reachability refusal would
+turn both runs to `cannot_run`.
+
+**Reasons are lost in all three runs.** `reason_required` is `[]` on the impact review and the
+acknowledgement, although the person states the reasons. Setting them later raises an overwrite
+contradiction. The scripted user has no bank answer for it, the contradiction is deferred, and the
+earlier `[]` stands. The bundle carries the deferral, so a ratifier would see it. This is the same
+cause as item 2 of run 7.
+
+**Run 31 does not meet the gate, for two separate reasons.**
+
+- **The contradiction was never raised.** The opening says whoever logged the notice may take the
+  impact review, so `[]` there is the right reading. At turn 13 the person says that whoever logged
+  the notice may never sign off either review. The model wrote that on program approval only. Nothing
+  overwrote the planted leaf, so the final bar on the impact review is nobody, which is the opposite
+  of what the person said last.
+- **One key stays open.** The record has only an emit step and a chaining table on `dispositioned`, so
+  `outputs.record.ends` is a runtime refusal. The scripted user cannot answer it, and it may not be
+  deferred.
+
+**What the rulings did:**
+
+- **Ruling 1:** run 31 denied both `timed_out` rows it was asked about, and each row was removed.
+  Runs 32 and 33 did not need it. `denied_rows` is empty in both.
+- **Ruling 2:** no `renders_as` problem in any run. Final files carry the declaration's default.
+- **Ruling 3:** each run asked one null, the acknowledgement's stated "no limit", and that null stands.
+  The planted deferral is recorded 1/1 in all three, with the leaf absent. Runs 28 to 30 were 0/1.
+
+The record's confirm was answered "that is not right" in runs 32 and 33, and each carried the stage's
+facts. The selection-table shape that run 28 wrote for `after` did not recur.
 
 ## Consequences
 
