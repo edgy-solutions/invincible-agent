@@ -16,8 +16,8 @@ Entries merged after the 0.4.74 cut (`ab339ceb`). The releaser dates this headin
 
 **Policy changes (who may review: `can_review:<subject>`, 2026-10-31 directive)**
 
-- **New group `alignment-reviewers`** (capability-only, no persona.domain cell); sandbox member bob,
-  the stand-in TRAINING reviewer. **`topaz_sync` precondition**: sync the new group before the roll
+- **New group `alignment-reviewers`** (capability-only, no persona.domain cell); sandbox member alice
+  (architect ruling 2026-11-02). **`topaz_sync` precondition**: sync the new group before the roll
   that carries the row (else the capability leg names an unknown group).
 - **Row `can_review:alignment`**, `grant_to_groups: [alignment-reviewers]`. Deny-by-default: the
   surface that writes a review asks `can_invoke` on `can_review:<S>`, so a subject with no row is
