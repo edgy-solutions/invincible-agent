@@ -41,6 +41,11 @@ from typing import Any, Iterable, List, Tuple
 
 import httpx
 
+try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import check_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import check_answer
+
 logger = logging.getLogger(__name__)
 
 # Read at import, like engine-o's gates: the posture is a deploy-time fact, and the chart's fleet
@@ -133,7 +138,7 @@ def can_invoke(authz_id: str, capability: str) -> bool:
             timeout=5.0,
         )
         r.raise_for_status()
-        return bool(r.json().get("check"))
+        return check_answer(r)
     except Exception as e:  # noqa: BLE001 -- fail-closed on any error
         logger.warning("engine-docs can_invoke failed capability=%s caller=%s (fail-closed deny): %s",
                        capability, authz_id, e)

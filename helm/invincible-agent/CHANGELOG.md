@@ -1,5 +1,33 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.75 — not yet cut
+
+Entries merged after the 0.4.74 cut (`ab339ceb`). The releaser dates this heading at the cut.
+
+**A Topaz answer is a JSON boolean or an outage (every Topaz reader)**
+
+- Ruled 2026-10-31: a non-boolean `check` is a malformed PDP answer, the outage class: 503, never
+  a 403. Sixteen readers of `/api/v3/directory/check` and `/api/v2/authz/is` read the field with
+  `bool(...)`, which admitted `"false"`, `"no"` and `"0"` as a yes. They now read it through
+  `agent_fleet/utils/pdp_answer.py` (`topaz_sync` inline). An absent field is still a no.
+- **Where an outage is a 503** (finance's program door, the BFF's task checks, the three rail
+  checks): a malformed answer is a 503. **Where every failure is a deny** (docs, neo4j, weaviate,
+  ontology, datahub, the SPO executor, the review starter): it is a deny. No values change.
+
+**Policy changes (who may review: `can_review:<subject>`, 2026-10-31 directive)**
+
+- **New group `alignment-reviewers`** (capability-only, no persona.domain cell); sandbox member bob,
+  the stand-in TRAINING reviewer. **`topaz_sync` precondition**: sync the new group before the roll
+  that carries the row (else the capability leg names an unknown group).
+- **Row `can_review:alignment`**, `grant_to_groups: [alignment-reviewers]`. Deny-by-default: the
+  surface that writes a review asks `can_invoke` on `can_review:<S>`, so a subject with no row is
+  reviewable by nobody. **Inert in this chart**: the check belongs to the workbench, which today
+  gates `POST /alignment/proposals/review` only by login and `WB_STORE_WRITES`.
+- **New file `policy/review_subjects.yaml`**, the registry of review subjects (ruled 2026-11-02):
+  `validate_policy` refuses a `can_review:<S>` key whose S is not in it, so a misspelt key fails the
+  seed before any write. It ships in the cortex-bff image and is not a data file: a deployment's
+  policy repository does not carry it. An overlay's `can_review:` row names a subject registered here.
+
 ## 0.4.74 — 2026-10-31
 
 Cut from master `0e6e6862`. It carries every master merge since 0.4.73 (`41230a7e`): #147, #176,

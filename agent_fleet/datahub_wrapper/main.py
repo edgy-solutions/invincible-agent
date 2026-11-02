@@ -28,6 +28,10 @@ import json
 # with no cluster. Container flattens agent_fleet/datahub_wrapper/ into
 # /app, so the flat import wins in-image; the dev checkout uses the package
 # path — same duality as the mesh_registration imports elsewhere.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import decision_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import decision_answer
 try:
     from lineage_filter import (  # type: ignore[no-redef]
         LINEAGE_MAX_HOP_DEPTH,
@@ -451,10 +455,7 @@ async def _topaz_can_view(caller_email: str, domain: str) -> bool:
                 f"{TOPAZ_AUTHORIZER_URL}/api/v2/authz/is", json=payload
             )
             r.raise_for_status()
-            for d in r.json().get("decisions", []):
-                if d.get("decision") == "allowed":
-                    return bool(d.get("is", False))
-        return False
+            return decision_answer(r, "allowed")
     except Exception as e:  # noqa: BLE001 — fail-closed on ANY failure
         logging.error(
             "QUERY_METADATA: Topaz can_view ask FAILED for %r/%s "
