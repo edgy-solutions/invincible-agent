@@ -8,7 +8,7 @@
 # overlay mirrors them (architect, 2026-10-24), so a mirrored row is only checkable against a
 # doc-tools that declares it.
 #
-# Currently doc-tools #194's head at b0af51b0 (2026-11-02), NOT main and NOT a release. It declares ExtractSectionConcepts on `course`.
+# Currently doc-tools #195's head at 02adb97b (2026-11-02), NOT main and NOT a release. It declares concepts.normalise on `course`.
 # The `main` leg reds until doc-tools merges these: that is the report doing its job. Move this
 # onto doc-tools main when they merge, and back onto a release when doc-tools tags one.
-b0af51b0fefd9a51b42517c4f9718df5ef348294
+02adb97b00f2f5c1e74f595e85777a180ab3ef65
