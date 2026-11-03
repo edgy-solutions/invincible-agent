@@ -27,7 +27,7 @@ The relay: the resolver spec against Lane 1's `CortexDataClient` call, then the 
 
 | what | where | who | state |
 | --- | --- | --- | --- |
-| resolver | invincible-agent #219, branch `fin/inputs-resolver`, worktree `<scratchpad>/wt-reds` | Lane 1 merges | read CI first (below) |
+| resolver | invincible-agent #219, branch `fin/inputs-resolver`, worktree `<scratchpad>/wt-reds` | Lane 1 merges | CI passed on `fd617c7c`: image builds and lint, no pytest |
 | EV fixture | dag-tools #7, branch `fin/ev-fixture-asset`, worktree `<scratchpad>/wt-dag` | Chris merges | CI passed on `fd4ee4c` |
 | census fix | #217 | Lane 1 merges | 20 passed, 3 skipped |
 | #213 | comment posted: no finance figure changes | Lane 1 | still open; a live read needs it rolled |
@@ -48,7 +48,7 @@ The relay: the resolver spec against Lane 1's `CortexDataClient` call, then the 
 - `test_NO_FILE_WRITES_SYS_MODULES_WITHOUT_A_RESTORE` is red on `origin/master` `121272dc`, naming six files outside #219's diff. Reported to Lane 1 with no owner identified.
 
 **Your next steps:**
-1. Read #219's CI, as the last read had 19 checks pending. `gh` must run from a worktree.
+1. Nothing is waiting on this lane until Lane 1 or Chris answers. `gh` must run from a worktree.
 2. If Lane 1 drops `fd617c7c`, the join test in `tests/finance/test_fin_inputs_resolver.py` goes red. It belongs with that commit.
 3. A live read follows the order in the Lane 1 packet. Memory under 512Mi is unmeasured, and the first small-table read gives the finance timing number Lane 1 wants.
 
