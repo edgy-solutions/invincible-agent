@@ -231,3 +231,11 @@ sites:
       PROSE — two matches: the module docstring (each chaining decision runs inside ctx.run) and
       an error message refusing a chaining cycle with no human in it. The refusal guards the
       declared tables; it does not choose a next definition.
+
+  - site: scripts/backfill_promotion_origin.py
+    pattern: kind:document_promotion
+    disposition: excluded
+    reason: >-
+      The backfill names the ONE species it repairs, as src/iagent/promotion.py does: it reads
+      that species' decision records and lists its live tasks, and mints no task and chooses no
+      next step.
