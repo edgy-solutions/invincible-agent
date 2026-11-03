@@ -28,6 +28,11 @@ Entries merged after the 0.4.75 cut (`aac9900b`). The releaser dates this headin
   Deny-by-default: the surface that changes a configuration asks `can_invoke` on
   `can_configure:<S>`, so a subject with no row is configurable by nobody. **Inert in this chart**:
   the check belongs to the workbench, which does not ask yet.
+- **New file `policy/configure_subjects.yaml`**, the registry of configure subjects (ruled
+  2026-11-02): `validate_policy` refuses a `can_configure:<S>` key whose S is not in it, so a misspelt
+  key fails the seed before any write. It ships in the cortex-bff image and is not a data file: a
+  deployment's policy repository does not carry it. An overlay's `can_configure:` row names a subject
+  registered here.
 - **`alignment-reviewers`' sandbox member moves from bob to alice** (#204, architect ruling
   2026-11-02). 0.4.75's policy still names bob.
 
