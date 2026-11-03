@@ -1,0 +1,17 @@
+# The cases `_seal_asset_read_denied_at_the_gate.py` runs. Every principal, asset, persona and
+# domain the seal names lives HERE and nowhere in its Python (config names the case, ruled 10-30).
+#
+# A case needs TWO principals who both hold the active cell (persona x domains, through
+# `persona_group`) and differ ONLY in the per-asset grant: `allowed_subject` has a row in
+# policy/asset_grants.yaml, `denied_subject` has none. A principal who cannot hold the cell is
+# refused at the persona gate and proves nothing about the asset gate. The seal's preflight
+# reads the rail and exits 2 if either fact has drifted.
+cases:
+  - name: publog-p-cage
+    asset: "urn:li:dataset:(urn:li:dataPlatform:s3,iagent-minio.publog-lake/publog/p_cage,PROD)"
+    question: "In the publog p_cage dataset, how many distinct CAGE codes are there per state?"
+    active_persona: DATA_STEWARD
+    active_domains: [DATA_ENGINEERING]
+    persona_group: data-engineers
+    allowed_subject: alice@example.com
+    denied_subject: erin@example.com

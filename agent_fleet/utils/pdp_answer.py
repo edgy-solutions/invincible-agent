@@ -12,10 +12,15 @@ An ABSENT field is a "no", not a malformed answer: proto3 JSON may omit a false 
 one way a "no" can arrive. That is read from the encoding, not measured against the live directory.
 
 `MalformedPdpAnswer` is an `httpx.DecodingError`, so every handler that already maps a transport
-failure to a 503 (or, at a fail-closed site, to a deny) catches it with no change of its own. It is
-also a `ValueError`, which is what a body that is not JSON raised before, so a caller that caught
-that still does. Handlers catch those bases, never this class, so the two import paths (`utils.` in
-an engine image, `agent_fleet.utils.` in the source tree) cannot split the catch.
+failure to a 503 catches it with no change of its own. It is also a `ValueError`, which is what a
+body that is not JSON raised before, so a caller that caught that still does. Handlers catch those
+bases, never this class, so the two import paths (`utils.` in an engine image, `agent_fleet.utils.`
+in the source tree) cannot split the catch.
+
+A site that reads a transport failure as a deny still answers a malformed answer as an outage
+(architect ruling 2026-11-02: "a malformed PDP answer is 503 at every site, including the ones that
+already fail closed -- same class as 16"), so `httpx.DecodingError` gets its own arm there, ahead of
+the broad one. Sealed in `tests/security/test_a_malformed_pdp_answer_is_503_at_every_site.py`.
 """
 from __future__ import annotations
 

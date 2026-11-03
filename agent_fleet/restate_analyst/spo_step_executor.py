@@ -96,7 +96,8 @@ class StepFailAndRelease(Exception):
     (a denial is a failure, never a suspend; retrying/parking a denied step is the
     DoS surface). The runner catches this and raises ``restate.TerminalError`` so
     Restate fails the workflow and frees the journal. ``status_code`` carries the
-    denial code (403 access, 400 config, 500 infra)."""
+    denial code (403 access, 400 config, 500 infra), or 503 for a malformed PDP
+    answer, which is the outage class and asserts nothing about policy."""
 
     def __init__(self, message: str, *, status_code: int = 403) -> None:
         super().__init__(message)
@@ -226,7 +227,8 @@ def check_can_invoke(
 ) -> bool:
     """RULING Q3: a direct_call is gated on the SINGLE DECIDER. Topaz
     ``can_invoke(caller, capability)`` on the ``capability`` object namespace.
-    Deny-by-default: empty identity/capability/URL or any error → False."""
+    Deny-by-default: empty identity/capability/URL or any error → False. A malformed
+    answer is the outage class: :class:`StepFailAndRelease` with a 503, not a False."""
     if not caller_authz_id or not capability or not topaz_url:
         return False
     payload = {
@@ -240,6 +242,9 @@ def check_can_invoke(
         r = httpx.post(f"{topaz_url}/api/v3/directory/check", json=payload, timeout=5.0)
         r.raise_for_status()
         return check_answer(r)
+    except httpx.DecodingError as exc:  # a malformed answer: the outage class, never a "no"
+        raise StepFailAndRelease(
+            "the authorizer's answer could not be read", status_code=503) from exc
     except Exception:
         return False  # fail-closed
 
@@ -281,7 +286,9 @@ def check_can_act(
 
     Deny-by-default: empty identity/audience/URL or any error → False. A False is a
     REFUSAL THE CALLER REPORTS, never a reason to proceed quietly — a gate that
-    swallows what it guards is broken-closed, not safe.
+    swallows what it guards is broken-closed, not safe. A malformed answer is the
+    outage class: ``httpx.DecodingError`` propagates, and each caller's wrapper
+    answers it as a terminal 503.
     """
     if not caller_authz_id or not audience or not topaz_url:
         return False
@@ -296,6 +303,8 @@ def check_can_act(
         r = httpx.post(f"{topaz_url}/api/v3/directory/check", json=payload, timeout=5.0)
         r.raise_for_status()
         return check_answer(r)
+    except httpx.DecodingError:  # a malformed answer: the outage class, never a "no"
+        raise
     except Exception:
         return False  # fail-closed
 
