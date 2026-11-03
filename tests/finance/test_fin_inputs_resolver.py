@@ -246,6 +246,27 @@ def test_every_declared_row_computes_the_same_figures_over_rows_as_over_the_seed
         same_figures(got, want)
 
 
+def test_a_source_with_float_amounts_changes_the_audit_strings_and_no_figure(declared):
+    """A real source may hold every amount as a float. The strings then read 12000000.0, and the values are equal."""
+    floats = frame_of().with_columns(pl.col(c).cast(pl.Float64) for c in asset_inputs.NUMERIC_COLUMNS)
+    state = asset_inputs.state_from_rows(floats, PROGRAM)
+    changed = 0
+    for fn, row in declared.items():
+        got = measure_verbs.run_declared(state, row, program_id=PROGRAM)
+        want = measure_verbs.run_declared(seed.build_seed(), row, program_id=PROGRAM)
+        assert len(got) == len(want) and got, fn
+        changed += got != want
+        for g, w in zip(got, want):
+            assert g.keys() == w.keys()
+            assert {k: Decimal(v) for k, v in g["inputs"].items()} == {k: Decimal(v) for k, v in w["inputs"].items()}
+            for k in g.keys() - {"inputs"}:
+                if k.endswith("_exact"):
+                    assert Decimal(g[k]) == Decimal(w[k]), k
+                else:
+                    assert g[k] == w[k], k
+    assert changed, "every amount is a float here, so some audit string must read differently"
+
+
 def test_the_same_figures_seal_can_fail(declared):
     df = frame_of()
     bumped = df.with_columns(

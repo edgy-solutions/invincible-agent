@@ -48,6 +48,8 @@ Fixed names, no column map. File-backed only: a table-backed asset runs `SELECT 
 | `period` (the key) | string | in `FISCAL_PERIODS`; one row per (`work_package`, `period`) |
 | `bcws`, `bcwp`, `acwp` | numeric | period amounts, never cumulative |
 
+Integer or float both compute the same figures. A float budget only prints differently in the audit strings (`12000000.0`, `vac_exact` `-60000.0`), and the sandbox fixture keeps the seed's split so its envelope matches the seed's exactly.
+
 `program_bac` is a column because a window filter can drop a work package, and a sum of package budgets would then quietly shrink TCPI's and VAC's input. Entity fields `run_declared` never reads hold placeholders, and `check_consistency` doesn't run on this state.
 
 ## Outcomes, never a seed fallback
