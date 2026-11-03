@@ -16,6 +16,44 @@ Entries merged after the 0.4.75 cut (`aac9900b`). The releaser dates this headin
 - **The autonomous run's `can_invoke` gate now fails terminally on a deny, as its comment said.** It
   raised inside `ctx.run` and translated outside it, so Restate retried a deny as transient.
 
+**Policy changes (ADR-0062 section 5: the repository-paths rail)**
+
+- **Five new `task_grants.yaml` audiences**: `repo_review:POLICY`, `repo_review:ADR`,
+  `repo_review:FIXTURES`, `repo_review:SESSIONS` and `repo_release:invincible-agent`, each
+  `grant_to` alice and bob; `repo_review:POLICY` and `repo_release:invincible-agent` also carol
+  (ruled 2026-10-29: a two-approver change or release tag keeps two eligible approvers after the
+  proposer).
+- **`access_grant:DATA_ENGINEERING` gains bob** (ruled 2026-10-29), so the rail's
+  `policy/asset_grants.yaml` row (`access_grant:<DOMAIN>`, per changed row, at 2; fallback
+  `repo_review:POLICY`) can be satisfied. bob can now approve DATA_ENGINEERING access requests; the
+  sandbox grantor overlay names alice or bob.
+- **No new group or user, so no `topaz_sync` precondition**: alice, bob and carol already exist in
+  `users.yaml`. The audience changes ride the next planned fleet release.
+- **`policy/repository_paths.yaml` and `policy/grantors/repository_paths.yaml` are new**, consumed
+  by engine-r only (it reads its baked copy; there is no sync). `validate_policy` checks the rail
+  when present.
+
+**Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
+
+- **New group `training-admins`** (capability-only, no persona.domain cell); sandbox member alice.
+- **Row `can_configure:deck_template`**, `granted_by: seed`, `grant_to_groups: [training-admins]`.
+  Deny-by-default: the surface that changes a configuration asks `can_invoke` on
+  `can_configure:<S>`, so a subject with no row is configurable by nobody. **Inert in this chart**:
+  the check belongs to the workbench, which does not ask yet.
+- **`alignment-reviewers`' sandbox member moves from bob to alice** (#204, architect ruling
+  2026-11-02). 0.4.75's policy still names bob.
+
+**⚠ Before installing, in this order:**
+
+1. **`topaz_sync`, by a human, in the form that reads this release's policy** (the command is in
+   0.4.75's entry). It adds `training-admins` with alice, and moves `alignment-reviewers` to alice.
+   Without the group, the hook's capability leg exits 5 and the release fails. Run on an older image
+   with `--policy-dir policy/`, `topaz_sync` deletes the group, because that image's policy does not
+   name it.
+2. **This chart's roll.** Its hook's `capability_grant_sync` writes the row. Until it runs, `can_invoke`
+   is false for everyone, alice included.
+3. **The workbench roll that carries the check.** Before steps 1 and 2, that check refuses everyone.
+
 ## 0.4.75 — 2026-11-02
 
 Cut from master `caf560d9`. It carries every master merge since 0.4.74 (`ab339ceb`): #198, #194,
