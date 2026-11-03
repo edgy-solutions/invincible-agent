@@ -34,6 +34,7 @@ import hashlib
 import os
 from typing import Callable, Optional
 
+import httpx
 import restate
 from restate import Context, Service
 
@@ -180,7 +181,8 @@ def can_invoke_start_review(initiator: str) -> bool:  # pragma: no cover - live 
     capability is "object not found" -> deny.
 
     No-op True when ``ENABLE_DISPOSITION_AUTHZ`` is off (its OWN dark-launch toggle, not the terminal
-    ENABLE_AGENTIC_AUTH flip). Any error / not-found -> deny (a gate must not fail open)."""
+    ENABLE_AGENTIC_AUTH flip). Any error / not-found -> deny (a gate must not fail open). A malformed
+    answer is the outage class: a terminal 503, not a deny."""
     if not ENABLE_DISPOSITION_AUTHZ:
         return True
     if not initiator:
@@ -195,7 +197,10 @@ def can_invoke_start_review(initiator: str) -> bool:  # pragma: no cover - live 
             timeout=5.0,
         )
         resp.raise_for_status()
-        return check_answer(resp)   # absent/not-found/error/malformed -> deny (fail-closed)
+        return check_answer(resp)   # absent/not-found/error -> deny (fail-closed)
+    except httpx.DecodingError as exc:  # the reader's, whichever client asked: never a "no"
+        raise restate.TerminalError(
+            "the authorizer's answer could not be read", status_code=503) from exc
     except Exception:  # noqa: BLE001 — fail-closed (deny) on any error, like the ontology gate
         return False
 

@@ -4,7 +4,7 @@ import httpx
 from types import SimpleNamespace
 from typing import Dict, Any, List, Optional, Tuple
 
-from restate import Context, Service
+from restate import Context, Service, TerminalError
 from smolagents import CodeAgent, ToolCallingAgent, tool
 import weaviate
 from weaviate.connect import ConnectionParams
@@ -114,7 +114,9 @@ def _can_read_document(caller_email: str, source_id: str) -> bool:
     FAIL-CLOSED on empty caller/source, an UNRESOLVABLE source, or ANY error
     → the chunk is DROPPED, never synthesized. An ungated-because-
     unidentifiable chunk is exactly the leak this gate exists to prevent, so
-    "can't identify the source" resolves to deny, not allow.
+    "can't identify the source" resolves to deny, not allow. A MALFORMED answer
+    is the outage class: ``httpx.DecodingError`` propagates, the tool latches
+    it, and the run answers 503 instead of an answer.
     """
     if not caller_email or not source_id:
         return False
@@ -132,6 +134,8 @@ def _can_read_document(caller_email: str, source_id: str) -> bool:
         )
         r.raise_for_status()
         return check_answer(r)
+    except httpx.DecodingError:  # a malformed answer: the outage class, never a "no"
+        raise
     except Exception as e:  # noqa: BLE001 — fail-closed on ANY failure
         print(f"[Engine W] can_read check FAILED (fail-closed deny) src={source_id!r}: {e}")
         return False
@@ -180,6 +184,11 @@ print(
 )
 
 KNOWLEDGE_SEARCH_LIMIT = 5
+
+PDP_MALFORMED_REFUSAL = (
+    "Knowledge search unavailable: the authorizer's answer could not be read, so no document could "
+    "be checked. Do not retry; say the information is unavailable."
+)
 
 KNOWLEDGE_CALLER_REQUIRED_REFUSAL = (
     "Knowledge search refused: it reads on a person's behalf, and this request names no caller "
@@ -400,6 +409,11 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
     caller_email = request.get("user_email") or ""
     print(f"[Engine W] query_knowledge caller_email={caller_email!r} domain={domain}")
 
+    # A malformed PDP answer is 503, but a tool's raise never leaves the agent loop: smolagents
+    # feeds it back to the model as a step error. So the tool latches it here, and run_smolagent
+    # answers 503 after the loop, discarding whatever the model made of the rest.
+    pdp_malformed: List[str] = []
+
     # Safely fetch the persistent client without blocking the async loop
     weaviate_client = await asyncio.to_thread(get_weaviate_client)
 
@@ -596,6 +610,9 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                     f"read access to them — request access to the specific document."
                 )
             return "\n\n".join(results)
+        except httpx.DecodingError as e:
+            pdp_malformed.append(type(e).__name__)
+            return PDP_MALFORMED_REFUSAL
         except Exception as e:
             return f"Error executing semantic search: {str(e)}"
 
@@ -719,6 +736,9 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                 return "\n\n".join(results)
             except CallerRequired:
                 return KNOWLEDGE_CALLER_REQUIRED_REFUSAL
+            except httpx.DecodingError as e:
+                pdp_malformed.append(type(e).__name__)
+                return PDP_MALFORMED_REFUSAL
             except Exception as e:
                 return f"Error executing semantic search: {str(e)}"
 
@@ -757,6 +777,8 @@ final answer so the user knows where the information came from.
 
         full_query = f"{system_prompt}\n{tool_reminder}\n\nUser Query: {user_query}"
         agent_response = str(await asyncio.to_thread(agent.run, full_query))
+        if pdp_malformed:
+            raise TerminalError("the authorizer's answer could not be read", status_code=503)
         # Both pieces of state cross the ctx.run boundary together. On
         # replay the entire dict (including local_sources) is returned
         # from the journal — sources survive.

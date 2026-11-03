@@ -1,5 +1,5 @@
 ---
-title: Gov follow-ups when iagent-mesh v0.9.13 ships (fork 7)
+title: Gov follow-ups on iagent-mesh v0.9.13, once master pins it (fork 7)
 feature: api-sdk-mcp
 lane: invincible-agent/lane/gov
 repo: invincible-agent
@@ -11,4 +11,4 @@ ruling_ref:
 updated: 2026-11-02
 ---
 
-Gov follow-ups wait on SDK v0.9.13: the `seed` literal becomes GRANTED_BY_SEED (ruled 10-31), and the other follow-ups in earlier handoffs.
+v0.9.13 is tagged and carries GRANTED_BY_SEED, but master still pins v0.9.12, so these wait on the pin: the `seed` literal becomes GRANTED_BY_SEED (ruled 10-31), and the other follow-ups in earlier handoffs.

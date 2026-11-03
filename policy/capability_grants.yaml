@@ -83,6 +83,16 @@
 # policy/review_subjects.yaml, or validate_policy refuses the key: a misspelt key gates nothing
 # (2026-11-02 ruling). The first ruled subject is `alignment`: the workbench's concept-to-canonical
 # ALIGNS_TO proposals (`POST /alignment/proposals/review`).
+#
+# THE `can_configure:<subject>` CONVENTION (2026-11-02 ruling: "new capability
+# `can_configure:deck_template` on the rail"). A capability keyed `can_configure:<S>` decides who may
+# change configuration S of a surface. The surface that makes the change asks Topaz `can_invoke` on
+# capability `can_configure:<S>` for the caller and refuses when it is false; that check lives with
+# the surface, never in this repo's code, which names no subject. Deny-by-default: a subject with no
+# row is configurable by NOBODY, and deleting a row revokes through the invoker-relation prune. Grant
+# through a capability-only group (`grant_to_groups`), never a person. S is not checked against a
+# registry, so a misspelt key is not refused: it gates nothing and the real subject stays configurable
+# by nobody. The first ruled subject is `deck_template`: the workbench's deck template.
 capabilities:
   # ADR-0029 Slice-1 demo fixture: the promotion workflow's publish emit. alice
   # (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) is the initiator authorized to
@@ -459,3 +469,12 @@ capabilities:
       writes a review. Deny-by-default: deleting this row leaves alignment reviewable by NOBODY. A
       deployment configures this in its own policy repository.
     grant_to_groups: [alignment-reviewers]
+
+  can_configure:deck_template:
+    granted_by: seed
+    reason: >-
+      2026-11-02 ruling: who may change the workbench's deck template. The workbench asks can_invoke
+      on this capability before it makes the change. Deny-by-default: deleting this row leaves the
+      deck template configurable by NOBODY. A deployment configures this in its own policy
+      repository.
+    grant_to_groups: [training-admins]

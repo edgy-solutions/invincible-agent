@@ -1,5 +1,106 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.77 — not yet cut
+
+**Policy changes (a course is reviewed as a document: `review_shape: document`)**
+
+- **The `course` content kind now declares `review_shape: document`** (it declared `course`, a shape
+  no card keys on). A course's promotion task payload carries `review_shape` and `sections[]`
+  (`{section_id, title, page, page_end?}`), read from the `extraction.json` beside the manifest, ids
+  derived by the training contract (`{ingest_id}_s{i}`, nested `{parent}_s{i}`). A promote's
+  `review_coverage` with `item_kind: section` is verified against exactly that stored list. One bad
+  row, or no readable outline, leaves `sections` absent (never partial, never empty): the card shows
+  its reason line and a coverage answers 503 `review_coverage_unverifiable`. A `notice` task's payload
+  is unchanged. The `course` row in `policy/review_shapes/` stays.
+- **Dormant until doc-tools #172 is deployed**: no course extraction carries the outline before it,
+  so until then every course task files without `sections`.
+
+## 0.4.76 — 2026-11-03
+
+Entries merged after the 0.4.75 cut (`aac9900b`), up to `121272dc`.
+
+**A malformed PDP answer (architect ruling 2026-11-02, the same class as 2026-10-31's non-boolean `check`)**
+
+- **A malformed answer is a 503 at every site** (ruling 2026-11-02), including the ones where every
+  other failure is a deny: docs, neo4j, weaviate, ontology, datahub, the SPO executor, the review
+  starter and the BFF's `check_can_act` / `check_can_invoke`. At a Restate engine it is a terminal
+  failure carrying 503, and neo4j and weaviate discard the model's answer. A transport outage at
+  those sites is still a deny. No values change.
+- **`POST /internal/origin/write` answers 503 when program membership cannot be checked** (Topaz down or a
+  malformed answer); it answered 500.
+- **The autonomous run's `can_invoke` gate now fails terminally on a deny, as its comment said.** It
+  raised inside `ctx.run` and translated outside it, so Restate retried a deny as transient.
+
+**Policy changes (ADR-0062 section 5: the repository-paths rail)**
+
+- **Five new `task_grants.yaml` audiences**: `repo_review:POLICY`, `repo_review:ADR`,
+  `repo_review:FIXTURES`, `repo_review:SESSIONS` and `repo_release:invincible-agent`, each
+  `grant_to` alice and bob; `repo_review:POLICY` and `repo_release:invincible-agent` also carol
+  (ruled 2026-10-29: a two-approver change or release tag keeps two eligible approvers after the
+  proposer).
+- **`access_grant:DATA_ENGINEERING` gains bob** (ruled 2026-10-29), so the rail's
+  `policy/asset_grants.yaml` row (`access_grant:<DOMAIN>`, per changed row, at 2; fallback
+  `repo_review:POLICY`) can be satisfied. bob can now approve DATA_ENGINEERING access requests; the
+  sandbox grantor overlay names alice or bob.
+- **No new group or user, so no `topaz_sync` precondition**: alice, bob and carol already exist in
+  `users.yaml`. The audience changes ride the next planned fleet release.
+- **`policy/repository_paths.yaml` and `policy/grantors/repository_paths.yaml` are new**, consumed
+  by engine-r only (it reads its baked copy; there is no sync). `validate_policy` checks the rail
+  when present.
+
+**Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
+
+- **New group `training-admins`** (capability-only, no persona.domain cell); sandbox member alice.
+- **Row `can_configure:deck_template`**, `granted_by: seed`, `grant_to_groups: [training-admins]`.
+  Deny-by-default: the surface that changes a configuration asks `can_invoke` on
+  `can_configure:<S>`, so a subject with no row is configurable by nobody. **Inert in this chart**:
+  the check belongs to the workbench, which does not ask yet.
+- **`alignment-reviewers`' sandbox member moves from bob to alice** (#204, architect ruling
+  2026-11-02). 0.4.75's policy still names bob.
+
+**⚠ Before installing, in this order:**
+
+1. **`topaz_sync`, by a human, in the form that reads this release's policy** (the command is in
+   0.4.75's entry). It adds `training-admins` with alice, and moves `alignment-reviewers` to alice.
+   Without the group, the hook's capability leg exits 5 and the release fails. Run on an older image
+   with `--policy-dir policy/`, `topaz_sync` deletes the group, because that image's policy does not
+   name it.
+2. **This chart's roll.** Its hook's `capability_grant_sync` writes the row. Until it runs, `can_invoke`
+   is false for everyone, alice included.
+3. **The workbench roll that carries the check.** Before steps 1 and 2, that check refuses everyone.
+
+**Policy changes that ride this chart, with no entry of their own above**
+
+- **`safety_finding_review:SUSTAINMENT`** (#141, ADR-0063 section 2): a new `task_grants.yaml` audience
+  granted to the existing `safety-engineers` group, plus its workflow and task-kind rows. No new group
+  or membership. The row's own comment gives the order: merge, `topaz_sync`, roll.
+- **The `course` overlay row** names `training.baml::ExtractSectionConcepts` and `concepts.normalise`
+  (#209).
+
+**The sync above is the only one owed.** One `topaz_sync` covers `training-admins`,
+`alignment-reviewers` and the new audience. `recipient_reader_sync` is not owed, because its file has
+not changed since 0.4.75. No ontology file changed either, so there is no prime step and no edge to read.
+
+**Images.** A chart bump restarts every pod.
+
+- **cortex-ui** is pinned to `e06e08a` (`sha256:2ed53946…`): #62 on top of `8afc0e7`, the document
+  review card, chosen from the served review-shape list. **Dormant here:** no kind declares
+  `review_shape: document` and no task serves `sections[]` in this chart, so no card changes.
+- **cortex-bff** and every engine the malformed-answer entry names carry that change.
+- **restate-analyst** (#208): the Socratic elicitation's confirm and structural-error rules (ADR-0061).
+  The module still ships with no route, verb or canvas.
+
+**The central gateway's verified identity is configured here, and not yet in force.** Sandbox values
+now set `GATEWAY_JWKS_URL` and `GATEWAY_JWT_ISSUER` on `centralGateway`. **Neither does anything until
+a dag-tools image carrying PR #6 is deployed.** That PR is open for Chris to merge, and this chart does
+not change the gateway's image. When it lands, the posture defaults to `observe`: requests are still
+served and a would-be refusal is logged. Do not set `enforce` before that log reads clean and the
+delegate rail exists.
+
+**Merges with no deploy effect:** #203 and #195 (tests), #212 (tests and a runbook section), #211 and
+#216 (board), #123 (ADR-0062), #214 (docs). **Not in this release:** #206, whose drift gate is still
+red, and #213, which changes who engines are asked as and waits on the owners' replies.
+
 ## 0.4.75 — 2026-11-02
 
 Cut from master `caf560d9`. It carries every master merge since 0.4.74 (`ab339ceb`): #198, #194,
@@ -91,8 +192,8 @@ down while the git host is down.
 
 **Policy changes (who may review: `can_review:<subject>`, 2026-10-31 directive)**
 
-- **New group `alignment-reviewers`** (capability-only, no persona.domain cell); sandbox member alice
-  (architect ruling 2026-11-02). **`topaz_sync` precondition**: sync the new group before the roll
+- **New group `alignment-reviewers`** (capability-only, no persona.domain cell); sandbox member bob,
+  the stand-in TRAINING reviewer. **`topaz_sync` precondition**: sync the new group before the roll
   that carries the row (else the capability leg names an unknown group).
 - **Row `can_review:alignment`**, `grant_to_groups: [alignment-reviewers]`. Deny-by-default: the
   surface that writes a review asks `can_invoke` on `can_review:<S>`, so a subject with no row is
