@@ -12,6 +12,7 @@ import re
 import requests
 import sys
 import time
+import uuid
 import logging
 from contextlib import contextmanager
 from pathlib import Path
@@ -172,7 +173,7 @@ class SupervisorQueryConfig(Config):
 
 
 @op(out=DynamicOut(Dict[str, Any]))
-def create_task_plan(config: SupervisorQueryConfig):
+def create_task_plan(context, config: SupervisorQueryConfig):
     """
     Calls Engine O (Ontology Reasoner) to decompose a complex query into a
     SupervisorTaskPlan containing persona-specific sub-tasks.
@@ -192,6 +193,9 @@ def create_task_plan(config: SupervisorQueryConfig):
         # specialist legs. This site was the odd one out — and the reason it was missed is worth
         # keeping: it sits in the `else:` branch, while the `try` a scanner finds nearby guards the
         # `if config.task_plan_json:` branch above. Proximity is not enclosure.
+        # The person's own token for this call, or "" when no person is behind the run. A vault
+        # refusal raises and fails the op: there is no fallback to the service here.
+        _plan_token = _caller_token_for(context, config, "plan")
         response = requests.post(
             f"{ONTOLOGY_SVC_URL}/plan",
             json={
@@ -199,7 +203,7 @@ def create_task_plan(config: SupervisorQueryConfig):
                 "domain": config.domain
             },
             timeout=300,
-            headers=_telemetry_headers(config),
+            headers=_telemetry_headers(config, _plan_token),
         )
         response.raise_for_status()
         plan = response.json()
@@ -449,10 +453,12 @@ def _resolve_subject(
             payload["user_email"] = user_email
         # SERIALIZED. The wait happens OUTSIDE this call, so the 30s below starts when this
         # subtask gets its turn rather than while it queues. See _resolve_serialized.
+        _tok = _caller_token_for(context, user_email, "resolve")
         with _resolve_serialized(context):
             resp = requests.post(
                 f"{ONTOLOGY_SVC_URL}/resolve",
                 json=payload,
+                **_bearer_kwargs(_tok),
             # 15s was too tight under realistic engine-o load: BAML's
             # ClassifyDomainIntent runs ~5-10s, Recipe v2's
             # instance-resolution fan-out adds 3-5s for engine_d's
@@ -477,6 +483,10 @@ def _resolve_subject(
             )
         resp.raise_for_status()
         data = resp.json()
+    except CallerIdentityUnavailable:
+        # NEVER ABSORBED. Degrading to subject UNKNOWN would answer the person's question as
+        # the service, the silent fallback this exception exists to prevent.
+        raise
     except Exception as exc:
         context.log.warning(
             "resolve_subject failed for query=%r: %s — predicate classifier "
@@ -1179,6 +1189,7 @@ def _classify_route(
         }
 
     try:
+        _tok = _caller_token_for(context, user_email, "classify_predicate")
         resp = requests.post(
             f"{ONTOLOGY_SVC_URL}/classify_predicate",
             json={
@@ -1203,9 +1214,12 @@ def _classify_route(
                 "user_email": user_email,
             },
             timeout=CLASSIFY_PREDICATE_TIMEOUT_S,  # LLM call inside; see the constant.
+            **_bearer_kwargs(_tok),
         )
         resp.raise_for_status()
         data = resp.json()
+    except CallerIdentityUnavailable:
+        raise  # never degraded to an infra-error route; see `_resolve_subject`
     except Exception as exc:
         context.log.error(
             "classify_predicate infrastructure error for query=%r: %s",
@@ -1614,9 +1628,10 @@ _CORTEX_BFF_URL = _cortex_bff_base_url()
 # without the person's token fails as a string of 403s and an empty canvas, which looks like
 # an entitlement problem and is not.
 #
-# Today the redeem is single-use per fan-out slot (see `_redeem_caller_token`). The architect
-# has ruled the vault becomes one reference per run, redeemable per call, so the slot keying
-# in `_redeem_caller_token` is interim and goes in the next PR.
+# THE RULING (2026-11-03): ONE reference per run, redeemed once per outbound call, for as long
+# as the run's budget. Every leg that speaks for the person goes through `_caller_token_for`.
+# A `pipeline:<name>` principal for runs with no person is NOT here; it is a later change with
+# its own rail rows.
 
 
 def _run_has_a_person(config) -> bool:
@@ -1624,7 +1639,8 @@ def _run_has_a_person(config) -> bool:
     is not a service identity (`svc:` prefix, any case). `user_email` is the gateway's
     `current_user.authz_id` (the entitlement key, not necessarily an email address) and
     defaults to blank on a run launched without one."""
-    who = str(config.user_email or "").strip()
+    raw = getattr(config, "user_email", config)
+    who = str(raw or "").strip()
     return bool(who) and not who.lower().startswith("svc:")
 
 
@@ -1675,13 +1691,9 @@ _CALLER_IDENTITY_MESSAGES = {
         "The credential reference for this request was no longer available, so nothing "
         "was attempted. Asking again creates a fresh one."
     ),
-    "expired": (
-        "This request took longer to start than its credential reference lasts, so "
-        "nothing was attempted. Asking again creates a fresh one."
-    ),
     "already_redeemed": (
-        "The credential reference for this request had already been used, so nothing was "
-        "attempted. Asking again creates a fresh one."
+        "This call's credential had already been used, so nothing was attempted. Asking "
+        "again creates a fresh one."
     ),
     "launcher_mismatch": (
         "The credential reference did not match the request that created it, so nothing "
@@ -1710,36 +1722,40 @@ def _verb_local_name(verb_iri: str) -> str:
     return v
 
 
-def _redeem_caller_token(context, config) -> str:
-    """Exchange this run's id for the caller's own token. Once, or not at all.
+def _step_key(context) -> str:
+    """Dagster's own name for this step (never read back from run config)."""
+    try:
+        return str(context.get_step_execution_context().step.key)
+    except Exception:  # noqa: BLE001 -- a context without a step still names its op
+        pass
+    try:
+        _mk = context.get_mapping_key()
+        _op = context.op.name
+        return f"{_op}[{_mk}]" if _mk else str(_op)
+    except Exception:  # noqa: BLE001
+        return "step"
 
-    ``context.run_id`` is DAGSTER'S OWN record of which run this is — not a value read
-    back out of run config, which a caller could have written. Asking with the
-    authoritative id is what makes the BFF's launcher cross-check meaningful rather than
-    a comparison of two caller-supplied strings.
+
+def _redeem_caller_token(context, who, leg: str = "call") -> str:
+    """Redeem the caller's own token from the BFF's vault for ONE outbound call.
+
+    ``who`` is the run config or the launcher's ``user_email``. ``context.run_id`` is
+    DAGSTER'S OWN record of which run this is, not a value read back out of run config,
+    which a caller could have written. Each call carries its own ``call_id``
+    (``<step>/<leg>/<uuid>``): a call seen twice is the replay tell. The token is returned
+    to the one caller and kept nowhere.
+
+    ``awaiting_reauth`` is a pause, not a failure: ask again after
+    ``IDENTITY_REAUTH_POLL_SECONDS`` with a fresh call id. There is no timer here; the
+    bound is the reference's own life, after which the vault answers ``not_found``.
     """
     run_id = str(getattr(context, "run_id", "") or "")
     if not run_id:
         raise CallerIdentityUnavailable(
             "no_run_id", "this op has no run id, so there is no reference to redeem"
         )
-
-    # THE SLOT. The BFF holds one single-use reference per fan-out slot, and this subtask's
-    # slot is its Dagster mapping key (`task_<n>`) -- Dagster's own record, like the run id.
-    # A missing or unparseable key is refused, NEVER defaulted to 0: defaulting would make
-    # every subtask contend for slot 0, which is exactly the replay this exists to remove.
-    _mk = None
-    try:
-        _mk = context.get_mapping_key()
-    except Exception:  # noqa: BLE001 -- a context without a mapping key has no slot
-        _mk = None
-    _m = re.match(r"^task_(\d+)$", str(_mk or ""))
-    if not _m:
-        raise CallerIdentityUnavailable(
-            "no_slot",
-            f"this op's mapping key {_mk!r} is not task_<n>, so it has no vault slot to redeem",
-        )
-    slot = int(_m.group(1))
+    step = _step_key(context)
+    launcher = getattr(who, "user_email", who) or ""
 
     # ── STEP ONE: AUTHENTICATE OURSELVES. A DISTINCT FAILURE FROM A VAULT REFUSAL ──
     #
@@ -1758,37 +1774,49 @@ def _redeem_caller_token(context, config) -> str:
     # the user-code deployment, which injects at POD START. A pod that started while the
     # secret was absent stays broken for its whole life even after the secret is fixed —
     # so the remedy is a RESTART, not only a chart edit.
-    try:
-        from agent_fleet.utils.service_identity import mint_supervisor_token
-        _svc_token = mint_supervisor_token()
-    except Exception as _mint_exc:  # noqa: BLE001
-        raise CallerIdentityUnavailable(
-            "service_identity_unconfigured",
-            f"{type(_mint_exc).__name__}: {_mint_exc}",
-        ) from _mint_exc
+    while True:
+        try:
+            from agent_fleet.utils.service_identity import mint_supervisor_token
+            _svc_token = mint_supervisor_token()
+        except Exception as _mint_exc:  # noqa: BLE001
+            raise CallerIdentityUnavailable(
+                "service_identity_unconfigured",
+                f"{type(_mint_exc).__name__}: {_mint_exc}",
+            ) from _mint_exc
 
-    resp = requests.post(
-        f"{_CORTEX_BFF_URL}/internal/identity/redeem",
-        json={
-            "run_id": run_id,
-            # Invariant 4: the launcher THIS RUN records, cross-checked at the BFF
-            # against the subject of the token that was stashed.
-            "claimed_launcher": getattr(config, "user_email", "") or "",
-            "slot": slot,
-        },
-        headers={"Authorization": f"Bearer {_svc_token}"},
-        timeout=15,
-    )
-    if resp.status_code != 200:
-        # NAME THE CAUSE. The BFF distinguishes not_found / expired / already_redeemed /
-        # launcher_mismatch, and collapsing them into "redemption failed" here would
-        # discard exactly the discrimination the vault was built to make.
+        call_id = f"{step}/{leg}/{uuid.uuid4().hex}"
+        resp = requests.post(
+            f"{_CORTEX_BFF_URL}/internal/identity/redeem",
+            json={
+                "run_id": run_id,
+                "call_id": call_id,
+                # Invariant 4: the launcher THIS RUN records, cross-checked at the BFF
+                # against the subject of the token that was stashed.
+                "claimed_launcher": launcher,
+                "leg": leg,
+            },
+            headers={"Authorization": f"Bearer {_svc_token}"},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            break
+        # NAME THE CAUSE. The BFF distinguishes not_found / already_redeemed /
+        # launcher_mismatch / awaiting_reauth, and collapsing them into "redemption
+        # failed" here would discard exactly the discrimination the vault was built to make.
         try:
             _err = (resp.json() or {}).get("detail") or {}
             _cause = _err.get("error") or f"http_{resp.status_code}"
             _msg = _err.get("message") or ""
         except Exception:  # noqa: BLE001
             _cause, _msg = f"http_{resp.status_code}", (resp.text or "")[:200]
+        if _cause == "awaiting_reauth":
+            _poll = float(os.getenv("IDENTITY_REAUTH_POLL_SECONDS", "10") or 10)
+            context.log.info(
+                "%s/%s: the run is awaiting the person's re-authentication; asking again in %ss",
+                step, leg, _poll,
+            )
+            time.sleep(_poll)
+            continue
         raise CallerIdentityUnavailable(_cause, _msg)
 
     token = str((resp.json() or {}).get("token") or "")
@@ -1800,6 +1828,20 @@ def _redeem_caller_token(context, config) -> str:
             "malformed_vault_response", "the vault answered 200 with no token"
         )
     return token
+
+
+def _caller_token_for(context, who, leg: str) -> str:
+    """The ONE gate every outbound leg goes through. "" when no person is behind the run
+    (unchanged: the call goes as the service); otherwise the person's token, redeemed for
+    this call. A refusal raises ``CallerIdentityUnavailable``, which no leg may absorb."""
+    if not _run_has_a_person(who):
+        return ""
+    return _redeem_caller_token(context, who, leg)
+
+
+def _bearer_kwargs(token: str) -> Dict[str, Any]:
+    """``headers=`` for a leg that sent none before; nothing at all when there is no token."""
+    return {"headers": {"Authorization": f"Bearer {token}"}} if token else {}
 
 
 def _call_engine_a_fallback(
@@ -1948,7 +1990,8 @@ def _call_engine_a_fallback(
     # Forward the request's trace + session ids so Engine A's /analyze proxy adopts them
     # (X-Trace-Id -> the analyst trace's seed; X-Session-Id -> the Langfuse session). The
     # conversation-path leg of ADR-0038: cortex-ui -> BFF -> supervisor -> Engine A.
-    _tele_headers = _telemetry_headers(config)
+    _tele_headers = _telemetry_headers(
+        config, _caller_token_for(context, config, "analyze"))
     response = requests.post(
         f"{RESTATE_ANALYST_URL}/analyze",
         json=payload,
@@ -2272,12 +2315,24 @@ def _make_enumerator(context, *, user_email: str = "",
     _caller = {"user_email": user_email,
                "entitled_domains": list(entitled_domains or [])}
 
+    # THE ENUMERATOR'S CONSUMERS (`slot_disposition`) CATCH `Exception` AROUND THIS CALL and
+    # turn it into a no-provider ask, which would absorb a vault refusal and carry on as if
+    # nothing were wrong. So the refusal is also RECORDED here, on the function, and the
+    # step re-raises it after the consumer returns (`_raise_if_identity_failed`).
+    _identity_failures: list = []
+
     def _enumerate(class_uri: str, *, bound_slots: Dict[str, Any] | None = None) -> Dict[str, Any]:
         _bound = {str(k): str(v) for k, v in (bound_slots or {}).items() if v not in (None, "")}
+        try:
+            _tok = _caller_token_for(context, user_email, "enumerate")
+        except CallerIdentityUnavailable as _exc:
+            _identity_failures.append(_exc)
+            raise
         resp = requests.post(
             _ENUMERATE_URL,
             json={"class_uri": class_uri, "bound_slots": _bound, **_caller},
             timeout=_ENUMERATE_TIMEOUT_S,
+            **_bearer_kwargs(_tok),
         )
         if resp.status_code == 422:
             try:
@@ -2295,7 +2350,15 @@ def _make_enumerator(context, *, user_email: str = "",
         )
         return body
 
+    _enumerate.identity_failures = _identity_failures  # type: ignore[attr-defined]
     return _enumerate
+
+
+def _raise_if_identity_failed(enumerator) -> None:
+    """Re-raise a vault refusal a consumer swallowed on the enumerator's behalf."""
+    _failed = getattr(enumerator, "identity_failures", None)
+    if _failed:
+        raise _failed[0]
 
 
 class _FillResult(NamedTuple):
@@ -2350,6 +2413,7 @@ def _fill_slots_from_query(
     it is deliberately not made here.
     """
     try:
+        _tok = _caller_token_for(context, user_email, "fill_slots")
         resp = requests.post(
             f"{ONTOLOGY_SVC_URL}/fill_slots",
             # `acting_domains` FORWARDED so the resolver fan-out can demote providers outside
@@ -2377,6 +2441,7 @@ def _fill_slots_from_query(
                 "user_email": user_email,
             },
             timeout=_fill_slots_budget(declarations),
+            **_bearer_kwargs(_tok),
         )
         if resp.status_code == 422:
             # A REFUSED PERSON IS NAMED, THEN DEGRADED. engine-o refuses `/fill_slots` with 422
@@ -2402,6 +2467,8 @@ def _fill_slots_from_query(
             )
             return _FillResult({}, {})
         body = resp.json() or {}
+    except CallerIdentityUnavailable:
+        raise  # never "running on defaults": that is the service's answer to a person's question
     except Exception as exc:  # noqa: BLE001
         context.log.warning(
             "fill_slots unavailable verb_iri=%s (%s) — running on defaults", verb_iri, exc
@@ -3014,14 +3081,16 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # extraction and a caller-supplied default — ADR-0033 #5's user-confirmed provenance,
     # applied at the only point that can check it.
     if config.bound_slots and declared:
+        _pick_enum = _make_enumerator(
+            context, user_email=config.user_email,
+            entitled_domains=list(config.entitled_domains or []),
+        )
         picked, refusals, bound_resolution = validate_bound_slots(
             config.bound_slots,
             declared=declared,
-            enumerate_class=_make_enumerator(
-                context, user_email=config.user_email,
-                entitled_domains=list(config.entitled_domains or []),
-            ),
+            enumerate_class=_pick_enum,
         )
+        _raise_if_identity_failed(_pick_enum)
         for refusal in refusals:
             # LOUD. A refused pick is the menu-integrity guard doing its job, and it is the
             # one refusal a user can actually see the consequence of.
@@ -3092,15 +3161,17 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # information the user supplied, and both MUST still route. ADR-0033 #4: a system that
     # asks when it knows is worse than one that guesses when it doesn't.
     # -----------------------------------------------------------------------------------
+    _disp_enum = _make_enumerator(
+        context, user_email=config.user_email,
+        entitled_domains=list(config.entitled_domains or []),
+    )
     disposition = decide_disposition(
         accepted=accepted.params,
         declared=declared,
         resolution=resolution,
-        enumerate_class=_make_enumerator(
-            context, user_email=config.user_email,
-            entitled_domains=list(config.entitled_domains or []),
-        ),
+        enumerate_class=_disp_enum,
     )
+    _raise_if_identity_failed(_disp_enum)
 
     # ── A FLAGGED VERB MAY NOT DISPATCH WITHOUT ITS INSTANCE ────────────────────────────
     #
@@ -3496,7 +3567,6 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # looks like an entitlement problem.
     _caller_token = ""
     if not _run_has_a_person(config):
-        # interim: pipeline:<name> principal is ruled, next PR
         context.log.info(
             "execute_subtask: no person is behind this run (user_email is blank or a service "
             "identity), so %s is dispatched as the service.",
@@ -3504,7 +3574,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         )
     else:
         try:
-            _caller_token = _redeem_caller_token(context, config)
+            _caller_token = _caller_token_for(context, config, "dispatch")
             context.log.info(
                 "execute_subtask: redeemed the caller's identity for %s — dispatching as "
                 "the ORIGINAL caller, exactly as the button path does.",
@@ -3748,6 +3818,7 @@ def synthesize_stateful(context, config: SupervisorQueryConfig, results: List[Di
     successful pipeline — execute_subtask + generate_ui_payload have
     already produced the user-visible payload. Log and return a stub.
     """
+    _tok = _caller_token_for(context, config, "support")
     try:
         response = requests.post(
             f"{LANGGRAPH_SUPPORT_SVC_URL}/support",
@@ -3758,6 +3829,7 @@ def synthesize_stateful(context, config: SupervisorQueryConfig, results: List[Di
                 "dagster_context": results,
             },
             timeout=300,
+            **_bearer_kwargs(_tok),
         )
         response.raise_for_status()
         return response.json()
@@ -3859,6 +3931,7 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
     if _primary is not None:
         results = [_primary] + [r for r in results if r is not _primary]
 
+    _tok = _caller_token_for(context, config, "render_ui")
     response = requests.post(
         f"{PRESENTATION_AGENT_SVC_URL}/render_ui",
         json={
@@ -3877,6 +3950,7 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
             "frontend_version": config.frontend_version or None,
         },
         timeout=300,
+        **_bearer_kwargs(_tok),
     )
     response.raise_for_status()
     ui_payload_dict = response.json()

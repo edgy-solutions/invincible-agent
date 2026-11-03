@@ -75,7 +75,7 @@ def _drive(monkeypatch, verb):
         lambda *a, **k: (ds._ROUTING_MATCHED, _predicate(verb), {}),
     )
 
-    def _redeem(context, config):
+    def _redeem(context, who, leg="call"):
         redeemed.append(1)
         return ALICE_TOKEN
 

@@ -345,7 +345,7 @@ def test_an_unconfigured_service_identity_NEVER_CONTACTS_THE_VAULT(monkeypatch):
 
 
 def test_the_causes_are_DISTINCT_because_their_owners_are(monkeypatch):
-    """A service-identity fault is a deployment matter; an expired reference is 'ask again';
+    """A service-identity fault is a deployment matter; a consumed reference is "ask again";
     a replay is a security event. One shared cause would misdirect two of the three."""
     seen = set()
 
@@ -355,7 +355,7 @@ def test_the_causes_are_DISTINCT_because_their_owners_are(monkeypatch):
     monkeypatch.setattr(
         "agent_fleet.utils.service_identity.mint_supervisor_token", _mint_ok, raising=False
     )
-    for status, cause in [(404, "not_found"), (404, "expired"),
+    for status, cause in [(404, "not_found"), (404, "launcher_mismatch"),
                           (409, "already_redeemed"), (403, "not_the_redeemer")]:
         monkeypatch.setattr(
             ds.requests, "post",
@@ -365,7 +365,7 @@ def test_the_causes_are_DISTINCT_because_their_owners_are(monkeypatch):
             ds._redeem_caller_token(_Ctx(), _Config())
         seen.add(exc.value.cause)
 
-    assert seen == {"not_found", "expired", "already_redeemed", "not_the_redeemer"}
+    assert seen == {"not_found", "launcher_mismatch", "already_redeemed", "not_the_redeemer"}
     assert "service_identity_unconfigured" not in seen
 
 

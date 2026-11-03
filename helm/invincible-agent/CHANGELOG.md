@@ -4,6 +4,27 @@
 
 Entries merged after the 0.4.75 cut (`aac9900b`). The releaser dates this heading at the cut.
 
+**The identity vault is one reference per run, redeemed per call (architect ruling 2026-11-03)**
+
+- **Redemption is per call, not per fan-out slot.** The supervisor sends a `call_id` with each
+  outbound call; two calls with two ids both get the person's token, one id twice is a 409 and an
+  ERROR audit line. Every leg that speaks for the person redeems: `/plan`, `/resolve`,
+  `/classify_predicate`, the analyze call, the enumerator, `/fill_slots`, the dispatch, `/support`
+  and `/render_ui`. A vault refusal fails the step and is never absorbed into a fallback answer.
+- **The 600 s bound is gone.** The reference lives as long as the run's budget:
+  `IDENTITY_VAULT_TTL_SECONDS` on `cortex-bff` renders from `dagster.runMonitoring.maxRuntimeSeconds`
+  (one source). Near the token's expiry the gateway asks Keycloak for a fresh token through
+  `identity_exchange`; if that fails the step pauses as `awaiting_reauth`.
+- **New SSE events** `run_awaiting_reauth` and `run_reauth_resumed`, on the run stream; the status
+  union is unchanged, so an older cortex ignores them.
+- **New door** `POST /orchestrate/{run_id}/reauth`: the person presents their own fresh token. An
+  absent run and another person's run answer the same 404.
+- **`cortex-bff` and the code location roll together.** An old supervisor's redeem sends no `call_id`
+  and gets 422.
+- **The Keycloak exchange is unset by default.** `IDENTITY_EXCHANGE_TOKEN_URL`,
+  `IDENTITY_EXCHANGE_CLIENT_ID` and `IDENTITY_EXCHANGE_CLIENT_SECRET` are set by no values file, so
+  near-expiry goes straight to `awaiting_reauth` until a deployment sets them.
+
 **A malformed PDP answer (architect ruling 2026-11-02, the same class as 2026-10-31's non-boolean `check`)**
 
 - **A malformed answer is a 503 at every site** (ruling 2026-11-02), including the ones where every

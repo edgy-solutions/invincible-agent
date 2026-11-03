@@ -85,7 +85,7 @@ def _drive(monkeypatch, *, user_email, slots=(0,), redeem_status=200, verb=_UNLI
             redeem_calls.append((url, headers, json))
             if redeem_status != 200:
                 return _Resp(redeem_status, {"detail": {"error": "not_found", "message": "x"}})
-            return _Resp(200, {"token": f"CALLER-TOKEN-slot-{json['slot']}"})
+            return _Resp(200, {"token": f"CALLER-TOKEN-{json['call_id'].split('/')[1]}"})
         engine_calls.append((url, headers, json))
         return _Resp(200, {"answer": "ok", "data": {}, "sources": []})
 
@@ -106,7 +106,7 @@ def test_a_person_and_a_verb_never_listed_dispatches_with_the_redeemed_token(mon
     assert len(redeems) == 1
     assert len(engine) == 1
     auth = engine[0][1]["Authorization"]
-    assert auth == "Bearer CALLER-TOKEN-slot-0"
+    assert auth == "Bearer CALLER-TOKEN-dispatch"
     assert SERVICE_TOKEN not in auth, "the engine call used the supervisor's own mint"
 
 
