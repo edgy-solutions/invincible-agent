@@ -1,9 +1,9 @@
 # ADR-0063 — Field kinds from OpenDDIL: FRACAS reports, safety findings, cyber indicators
 
 **Status:** Proposed. This is design only: there is no code and no roll. `lane/01` drafted §1–§4
-against `47502b35`. §2's safety half and §5 are `lane/saf`'s. §1's registry rows were assigned to
-`doc-tools/lane/7f`. An event row has no extractor half (F2a), so 7f reviewed the platform's rows instead (§1).
-**Date:** 2026-10-28; re-measured 2026-10-31 on `0dd53e9d` (SDK pin v0.9.12, citations moved, Q8 and Q10 answered). Open for the architect: questions 1–4.
+against `47502b35`. §2's safety half and §5 are `lane/saf`'s. §1's registry rows are
+`doc-tools/lane/7f`'s (ruled 2026-10-30).
+**Date:** 2026-10-28; re-measured 2026-10-31 on `0dd53e9d` (SDK pin v0.9.12, citations moved, Q8 and Q10 answered); §1 corrected 2026-11-03. Open for the architect: questions 1–4.
 **Deciders:** architect (assigned 2026-10-28); domain owners per section
 **Related:**
   - openddil: the three ADRs being drafted (FRACAS failure records, safety states and interlocks,
@@ -42,17 +42,22 @@ Side note, not a premise: `ADR-0035:94` says `snowflake` where `provenance.py` s
 
 ## §1 — Three kinds, registered where kinds live
 
-The rows are overlay files under `policy/overlays/openddil-lab/content_kinds/`, the same place as
-`maintenance-fault-event.yaml`. They use the pinned SDK model `ContentKindRegistration` (iagent_mesh
-v0.9.12, `ingest.py:249`; master's pin since #172).
+The rows are **registry seed rows** under `policy/content_kinds/`, the seed half of the content-kind
+registry, and not overlay files (ruled 2026-10-30, matching §2 and §5). 7f writes them; the platform
+owns what a kind is. They use the pinned SDK model `ContentKindRegistration` (iagent_mesh v0.9.12,
+`ingest.py:249`; master's pin since #172). The ruling names `safety_finding`; §1 applies it to all
+three, because the three rows share one registration form.
 
-**The rows are wholly the platform's.** The 2026-10-24 ruling splits a kind between two owners. The
-platform owns what a kind IS. doc-tools owns what it RUNS: `passes`, which the overlay mirrors. An event
-row has no passes (F2a), so it has nothing for doc-tools to own or mirror. doc-tools' drift test compares
-shared kinds only, and `maintenance-fault-event` already exists in iagent alone. So doc-tools' generator
-does not need to learn `branch`/`refresh` for these rows to land. That plumbing is 7f's to build if
-doc-tools ever wants to read event kinds. It does not block this ADR. This corrects a "registry seed
-row" reading of §2.
+**What follows from a seed row.**
+- These are the first rows in that directory. Its README calls it "STRUCTURAL, and empty on purpose"
+  and says a platform kind added later ships on arrival, so that sentence changes with the first row.
+- `maintenance-fault-event` stays an overlay row. The ruling does not move it.
+- doc-tools must be able to project event rows (§5's prerequisite): `ContentKindEntry` has no `branch`
+  or `refresh`. This is 7f's work, and it replaces this section's earlier claim that nothing in
+  doc-tools had to change.
+- A seed row ships in every image, while its workflow and task kind stay overlay rows (§2). What a
+  deployment without those overlays does at compose is not measured here. Whoever writes the rows
+  measures it first.
 
 | kind | branch | domain | identity_field | seeds_workflow | refresh |
 | --- | --- | --- | --- | --- | --- |
