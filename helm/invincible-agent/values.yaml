@@ -824,6 +824,9 @@ centralGateway:
   env:
     # Topaz Authorizer URL (Internal K8s DNS) — central-gateway specific
     TOPAZ_AUTHORIZER_URL: "http://topaz-svc:8383"
+    # GATEWAY_JWKS_URL and GATEWAY_JWT_ISSUER are the gateway's verified identity (dag-tools PR #6).
+    # A deployment sets both for its own realm; the sandbox's are in values-sandbox.yaml. The
+    # issuer is what the realm's tokens carry, and the JWKS URL is what this pod can reach.
     # NOTE: DATAHUB_GMS_URL deliberately NOT set here. See engineD for the
     # reasoning — shared infrastructure URLs live in agentFleet.env so the
     # ConfigMap is the single source of truth and remains overridable.
@@ -1651,7 +1654,14 @@ cortexUi:
     # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
     # c27e6d3..8afc0e7 leaves the Dockerfile and package.json unchanged, changes build.yml only at
     # its PRODUCER_REF contract pin, and adds no import.meta.env read.
-    digest: "sha256:8c60760d075b774aa607c0ddabab06ea98e6e6537a3cba3dde32a2436f1268f5"
+    # RE-PINNED FOR 0.4.76 (Chris, 2026-11-03: "cortex 8afc0e7 or newer"): cortex-ui
+    # e06e08aa3f2b6b0f5fbd679041c532717aeda2f8 -> 2ed53946. It adds #62 (the document review card) to
+    # 8afc0e7, dormant until a kind declares `review_shape: document` and a task serves `sections[]`.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # 8afc0e7..e06e08a leaves the Dockerfile, package.json and build.yml unchanged, and adds no
+    # import.meta.env read.
+    digest: "sha256:2ed53946a4c89f5cd68d675522e41009ec8538706e261b7188bdfec3e94a08f5"
   port: 8080
   resources:
     requests:

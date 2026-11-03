@@ -1,8 +1,18 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.76 — not yet cut
+## 0.4.77 — not yet cut
 
-Entries merged after the 0.4.75 cut (`aac9900b`). The releaser dates this heading at the cut.
+Entries merged after the 0.4.76 cut (`ce589473`).
+
+**Policy changes (the grantor a shipped row names)**
+
+- **Every row this rail added says `granted_by: seed`**, as a shipped row must (ruled 2026-10-31).
+  18 rows had reached master naming a person: 12 in `repository_paths.yaml` and 5 in `task_grants.yaml`
+  from #149, and `safety_finding_review:SUSTAINMENT` from #141. 0.4.76 carries them. The field is a record; no answer changes.
+
+## 0.4.76 — 2026-11-03
+
+Entries merged after the 0.4.75 cut (`aac9900b`), up to `121272dc`.
 
 **A malformed PDP answer (architect ruling 2026-11-02, the same class as 2026-10-31's non-boolean `check`)**
 
@@ -32,9 +42,6 @@ Entries merged after the 0.4.75 cut (`aac9900b`). The releaser dates this headin
 - **`policy/repository_paths.yaml` and `policy/grantors/repository_paths.yaml` are new**, consumed
   by engine-r only (it reads its baked copy; there is no sync). `validate_policy` checks the rail
   when present.
-- **Every row this rail added says `granted_by: seed`**, as a shipped row must (ruled 2026-10-31).
-  18 rows had reached master naming a person: 12 in `repository_paths.yaml` and 5 in `task_grants.yaml`
-  from #149, and `safety_finding_review:SUSTAINMENT` from #141. The field is a record; no answer changes.
 
 **Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
 
@@ -56,6 +63,38 @@ Entries merged after the 0.4.75 cut (`aac9900b`). The releaser dates this headin
 2. **This chart's roll.** Its hook's `capability_grant_sync` writes the row. Until it runs, `can_invoke`
    is false for everyone, alice included.
 3. **The workbench roll that carries the check.** Before steps 1 and 2, that check refuses everyone.
+
+**Policy changes that ride this chart, with no entry of their own above**
+
+- **`safety_finding_review:SUSTAINMENT`** (#141, ADR-0063 section 2): a new `task_grants.yaml` audience
+  granted to the existing `safety-engineers` group, plus its workflow and task-kind rows. No new group
+  or membership. The row's own comment gives the order: merge, `topaz_sync`, roll.
+- **The `course` overlay row** names `training.baml::ExtractSectionConcepts` and `concepts.normalise`
+  (#209).
+
+**The sync above is the only one owed.** One `topaz_sync` covers `training-admins`,
+`alignment-reviewers` and the new audience. `recipient_reader_sync` is not owed, because its file has
+not changed since 0.4.75. No ontology file changed either, so there is no prime step and no edge to read.
+
+**Images.** A chart bump restarts every pod.
+
+- **cortex-ui** is pinned to `e06e08a` (`sha256:2ed53946…`): #62 on top of `8afc0e7`, the document
+  review card, chosen from the served review-shape list. **Dormant here:** no kind declares
+  `review_shape: document` and no task serves `sections[]` in this chart, so no card changes.
+- **cortex-bff** and every engine the malformed-answer entry names carry that change.
+- **restate-analyst** (#208): the Socratic elicitation's confirm and structural-error rules (ADR-0061).
+  The module still ships with no route, verb or canvas.
+
+**The central gateway's verified identity is configured here, and not yet in force.** Sandbox values
+now set `GATEWAY_JWKS_URL` and `GATEWAY_JWT_ISSUER` on `centralGateway`. **Neither does anything until
+a dag-tools image carrying PR #6 is deployed.** That PR is open for Chris to merge, and this chart does
+not change the gateway's image. When it lands, the posture defaults to `observe`: requests are still
+served and a would-be refusal is logged. Do not set `enforce` before that log reads clean and the
+delegate rail exists.
+
+**Merges with no deploy effect:** #203 and #195 (tests), #212 (tests and a runbook section), #211 and
+#216 (board), #123 (ADR-0062), #214 (docs). **Not in this release:** #206, whose drift gate is still
+red, and #213, which changes who engines are asked as and waits on the owners' replies.
 
 ## 0.4.75 — 2026-11-02
 
