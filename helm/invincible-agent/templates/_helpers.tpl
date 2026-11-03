@@ -695,3 +695,157 @@ of existingSecret / existingConfigMap; caPem was removed. Called from keycloak.y
   (dict "component" "dagster-webserver" "ports" (list 3000))
 | toJson -}}
 {{- end }}
+
+{{/*
+  policyOverlay -- an initContainer gives NAMED pods NAMED dirs of the private policy repo, at a
+  pinned ref (ruled 2026-11-02: "an initContainer that clones the policy repo at a pinned ref into
+  the pods"). Contract: docs/contracts/finance-overlays.md section 4. Values: `policyOverlay`.
+
+  Five helpers, all taking (dict "root" $ "component" "<component>"). All but the first render
+  NOTHING and are called only behind the first:
+    policyOverlayActive   "true" or "" -- enabled AND the component has a row; the render-time
+                          `fail`s live here
+    policyOverlayInit     the initContainer list item
+    policyOverlayVolumes  the volumes list items
+    policyOverlayMounts   the main container's volumeMounts list item
+    policyOverlayEnv      the main container's env list items
+
+  The repo, image, credential and CA are the SEED's (`topazSeed.policySource.git`): one repo, one
+  credential. The clone lives in `overlay-src`, mounted ONLY in the init container; the main
+  container gets `policy-overlay`, read-only, holding only the dirs its component names -- never
+  the repo's users or grants.
+*/}}
+{{- define "invincible-agent.policyOverlayActive" -}}
+{{- $po := .root.Values.policyOverlay | default (dict) -}}
+{{- if $po.enabled -}}
+{{- if not $po.ref -}}
+{{- fail "policyOverlay.ref is required when policyOverlay.enabled: a full commit sha or a tag (a branch name is refused at clone)" -}}
+{{- end -}}
+{{- if not .root.Values.topazSeed.policySource.git.repoUrl -}}
+{{- fail "topazSeed.policySource.git.repoUrl is required when policyOverlay.enabled: the overlay is cloned from it" -}}
+{{- end -}}
+{{- if index ($po.components | default (dict)) .component -}}true{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "invincible-agent.policyOverlayInit" -}}
+{{- $po := .root.Values.policyOverlay -}}
+{{- $git := .root.Values.topazSeed.policySource.git -}}
+{{- $gitImg := $git.image -}}
+{{- if not (kindIs "string" $gitImg) -}}
+{{- $gitImg = include "invincible-agent.image" (dict "registry" ($gitImg.registry | default "docker.io") "repository" ($gitImg.repository | default "alpine/git") "tag" ($gitImg.tag | default "v2.45.2") "root" .root) -}}
+{{- end -}}
+{{- $mount := $po.mountPath | default "/policy-overlay" | trimSuffix "/" -}}
+{{- $sub := $po.path | default "" | trimAll "/" -}}
+{{- $base := ternary (printf "/overlay-src/repo/%s" $sub) "/overlay-src/repo" (ne $sub "") -}}
+- name: fetch-policy-overlay
+  image: {{ $gitImg | quote }}
+  env:
+    - name: GIT_REPO_URL
+      value: {{ $git.repoUrl | quote }}
+    - name: GIT_REF
+      value: {{ $po.ref | quote }}
+    {{- if $git.caSecretName }}
+    # Verification stays ON against the mounted bundle; there is no skip-verify.
+    - name: GIT_SSL_CAINFO
+      value: /git-ca/ca.crt
+    {{- end }}
+    {{- if $git.authSecretName }}
+    - name: GIT_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: {{ $git.authSecretName | quote }}
+          key: username
+    - name: GIT_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: {{ $git.authSecretName | quote }}
+          key: password
+    {{- end }}
+  command: ["sh", "-c"]
+  args:
+    - |
+      set -e
+      if [ -n "${GIT_USERNAME:-}" ]; then
+        printf '#!/bin/sh\ncase "$1" in\n  Username*) echo "$GIT_USERNAME" ;;\n  Password*) echo "$GIT_PASSWORD" ;;\nesac\n' > /tmp/askpass.sh
+        chmod +x /tmp/askpass.sh
+        export GIT_ASKPASS=/tmp/askpass.sh
+      fi
+      git init -q /overlay-src/repo
+      cd /overlay-src/repo
+      # A full 40-hex sha is fetched as itself; anything else is a TAG. A branch has no
+      # refs/tags/<name>, so a branch name fails at the fetch: the ref is pinned, not tracked.
+      sha=0
+      if printf '%s' "$GIT_REF" | grep -Eq '^[0-9a-f]{40}$'; then
+        sha=1
+        want="$GIT_REF"
+      else
+        want="refs/tags/$GIT_REF"
+      fi
+      git fetch -q --depth 1 -- "$GIT_REPO_URL" "$want"
+      git checkout -q --detach 'FETCH_HEAD^{commit}'
+      if [ "$sha" = 1 ] && [ "$(git rev-parse HEAD)" != "$GIT_REF" ]; then
+        echo "policy overlay: fetched commit $(git rev-parse HEAD) is not the pinned $GIT_REF" >&2
+        exit 1
+      fi
+      echo "policy overlay at commit: $(git rev-parse HEAD)"
+      {{- range index $po.components .component }}
+      {{- if not (regexMatch "^[A-Za-z0-9_.-]+$" .dir) }}
+      {{- fail (printf "policyOverlay.components dir %q must be a plain directory name" .dir) }}
+      {{- end }}
+      if [ -d "{{ $base }}/{{ .dir }}" ]; then
+        cp -R "{{ $base }}/{{ .dir }}" "{{ $mount }}/{{ .dir }}"
+        echo "policy overlay: delivered {{ .dir }}"
+      {{- if .optional }}
+      else
+        echo "policy overlay: {{ .dir }} is absent in the repo (optional); nothing created"
+      {{- else }}
+      else
+        echo "policy overlay: required directory {{ .dir }} is missing from the repo at {{ $base }}" >&2
+        exit 1
+      {{- end }}
+      fi
+      {{- end }}
+  volumeMounts:
+    - name: overlay-src
+      mountPath: /overlay-src
+    - name: policy-overlay
+      mountPath: {{ $mount | quote }}
+    {{- if $git.caSecretName }}
+    - name: git-ca
+      mountPath: /git-ca
+      readOnly: true
+    {{- end }}
+{{- end -}}
+
+{{- define "invincible-agent.policyOverlayVolumes" -}}
+{{- $git := .root.Values.topazSeed.policySource.git -}}
+- name: overlay-src
+  emptyDir: {}
+- name: policy-overlay
+  emptyDir: {}
+{{- if $git.caSecretName }}
+- name: git-ca
+  secret:
+    secretName: {{ $git.caSecretName | quote }}
+    items:
+      - key: ca.crt
+        path: ca.crt
+{{- end }}
+{{- end -}}
+
+{{- define "invincible-agent.policyOverlayMounts" -}}
+- name: policy-overlay
+  mountPath: {{ .root.Values.policyOverlay.mountPath | default "/policy-overlay" | trimSuffix "/" | quote }}
+  readOnly: true
+{{- end -}}
+
+{{- define "invincible-agent.policyOverlayEnv" -}}
+{{- $po := .root.Values.policyOverlay -}}
+{{- $mount := $po.mountPath | default "/policy-overlay" | trimSuffix "/" -}}
+{{- range $i, $row := index $po.components .component -}}
+{{- if $i }}{{ "\n" }}{{ end -}}
+- name: {{ $row.env }}
+  value: {{ printf "%s/%s" $mount $row.dir | quote }}
+{{- end -}}
+{{- end -}}

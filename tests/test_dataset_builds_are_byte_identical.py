@@ -49,7 +49,7 @@ def _fin_inputs():
     for i in range(len(template.panels)):
         verb, _subject, params = panel_dispatch(template, i, {"program": "NP-MERIDIAN"})
         fn = fmain.VERB_TO_FN[verb]
-        env = fmain._measure_envelope(fn, dict(params))
+        env = fmain._measure_envelope(fn, dict(params), caller="alice@example.com")
         panels.append({"panel": i, "verb": verb, "fn": fn, "params": dict(params),
                        "artifact_id": env["artifact_id"], "rows": env["rows"]})
     state_dict = state_codec.state_to_dict(state_codec.narrow(build_seed(), "NP-MERIDIAN"))

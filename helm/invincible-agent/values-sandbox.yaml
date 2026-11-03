@@ -1017,7 +1017,23 @@ cortexUi:
     # index with amd64 and arm64; the abbreviated tag and the full sha with its last hex altered
     # both answer 404. 42c470c..fe4d787 leaves .github/workflows/build.yml, Dockerfile and
     # package.json unchanged.
-    digest: "sha256:4d6dd2085a005ff5790d4104ad6a5c9b1e73525d43e90592be8200df91c58555"
+    # RE-PINNED FOR 0.4.74 (architect, 2026-10-31: "cut 0.4.74 (cortex at c27e6d3 or cortex's
+    # item-form merge if it lands)"; cortex-ui #61, the item form, had not landed): cortex-ui
+    # c27e6d3e3ba2f87e72b4b1f61a8fafec7ab09688 -> fa7e51ff. It adds #59 (an export profile's
+    # format is read verbatim) to fe4d787, and still sends review_coverage in the parts form.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # fe4d787..c27e6d3 leaves .github/workflows/build.yml, Dockerfile and package.json unchanged
+    # and adds no import.meta.env read.
+    # RE-PINNED FOR 0.4.75 (architect, 2026-11-02: "0.4.75 carries ... cortex 8afc0e7"): cortex-ui
+    # 8afc0e7663cdd3dbb2c8edb8792e06192629421a -> 8c60760d. It adds #61 (review_coverage is sent in
+    # the item form) and 6c2f0cc (New Canvas seeds once) to c27e6d3. This BFF still accepts the parts
+    # form, whose deletion waits until this pin has rolled.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # c27e6d3..8afc0e7 leaves the Dockerfile and package.json unchanged, changes build.yml only at
+    # its PRODUCER_REF contract pin, and adds no import.meta.env read.
+    digest: "sha256:8c60760d075b774aa607c0ddabab06ea98e6e6537a3cba3dde32a2436f1268f5"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already

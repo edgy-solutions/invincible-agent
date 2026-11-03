@@ -386,8 +386,11 @@ def test_the_edges_zero_and_one_are_accepted(db):
     assert r.json()["leaf_candidates"][0]["evidence_ref"]["bbox"] == [0, 0, 1, 1]
 
 
-def test_only_the_title_candidate_is_bounded_the_steward_evidence_ref_is_unchanged():
-    gateway.EvidenceRef(page=1, bbox=[300, 200, 1400, 260])
+def test_the_steward_evidence_ref_is_bounded_too_since_the_2026_10_31_ruling():
+    # Was "only the title candidate is bounded"; the SDK rule now binds the steward ref as well
+    # (a 422 evidence_ref_invalid, sealed in test_an_evidence_ref_is_the_sdks_rule_...).
+    with pytest.raises(Exception):
+        gateway.EvidenceRef(page=1, bbox=[300, 200, 1400, 260])
     with pytest.raises(Exception):
         gateway.TitleEvidenceRef(page=1, bbox=[300, 200, 1400, 260])
 
@@ -470,8 +473,8 @@ def test_spec_205_the_steward_evidence_ref_takes_a_null_or_absent_bbox_but_needs
     w = gateway._wire_evidence_ref
     assert w({"page": 3, "bbox": None}) == {"page": 3, "bbox": None}
     assert w({"page": 3}) == {"page": 3, "bbox": None}
-    assert w({"page": 3, "bbox": [1, 2, 3, 4], "note": " n "}) == {
-        "page": 3, "bbox": [1, 2, 3, 4], "note": "n"}
+    assert w({"page": 3, "bbox": [0.1, 0.2, 0.3, 0.4], "note": " n "}) == {
+        "page": 3, "bbox": [0.1, 0.2, 0.3, 0.4], "note": "n"}
     for bad in ({"bbox": None}, {"page": 3, "bbox": [1, 2, 3]}):
         with pytest.raises(Exception):
             w(bad)

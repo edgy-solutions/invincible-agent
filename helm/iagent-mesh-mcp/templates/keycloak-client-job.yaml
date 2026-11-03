@@ -1,0 +1,125 @@
+{{- $kcUrl := required "keycloak.url is required" .Values.keycloak.url }}
+{{- $admin := required "keycloak.adminSecret.name is required (a hand-made Secret)" .Values.keycloak.adminSecret.name }}
+{{- $cred := required "client.credentialSecret.name is required (a hand-made Secret)" .Values.client.credentialSecret.name }}
+{{- $xaud := required "client.exchangeAudience is required (no default)" .Values.client.exchangeAudience }}
+{{- /*
+Creates or updates the confidential resource-server client with standard token exchange (RFC 8693,
+Keycloak V2, GA from 26.2) and two audience mappers. No secret value is echoed, written to a file,
+or traced: credentials arrive only through secretKeyRef env.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-keycloak-client
+  labels:
+    {{- include "iagent-mesh-mcp.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "iagent-mesh-mcp.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: keycloak-client
+          image: "{{ .Values.hookImage.repository }}:{{ .Values.hookImage.tag }}"
+          env:
+            - name: KC_BASE
+              value: {{ $kcUrl | quote }}
+            - name: KC_REALM
+              value: {{ .Values.keycloak.realm | quote }}
+            - name: KC_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $admin | quote }}
+                  key: {{ .Values.keycloak.adminSecret.userKey | quote }}
+            - name: KC_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $admin | quote }}
+                  key: {{ .Values.keycloak.adminSecret.passwordKey | quote }}
+            - name: CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $cred | quote }}
+                  key: {{ .Values.client.credentialSecret.key | quote }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo "== iagent-mesh resource-server client =="
+              CID={{ .Values.client.clientId | quote }}
+              XAUD={{ $xaud | quote }}
+
+              RESP=$(curl -s -w '\n%{http_code}' -X POST \
+                "$KC_BASE/realms/master/protocol/openid-connect/token" \
+                -d "grant_type=password" -d "client_id=admin-cli" \
+                -d "username=$KC_ADMIN" --data-urlencode "password=$KC_ADMIN_PASSWORD")
+              CODE=$(printf '%s' "$RESP" | tail -1)
+              BODY=$(printf '%s' "$RESP" | sed '$d')
+              TOKEN=$(printf '%s' "$BODY" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
+              if [ -z "$TOKEN" ]; then
+                echo "FATAL: admin token mint failed: HTTP $CODE"
+                exit 1
+              fi
+              AUTH="Authorization: Bearer $TOKEN"
+              API="$KC_BASE/admin/realms/$KC_REALM"
+
+              # Version check: standard token exchange V2 is GA from Keycloak 26.2.
+              VER=$(curl -sf -H "$AUTH" "$KC_BASE/admin/serverinfo" \
+                    | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4) || VER=""
+              echo "keycloak version: ${VER:-unknown}"
+              MAJ=$(printf '%s' "$VER" | cut -d. -f1)
+              MIN=$(printf '%s' "$VER" | cut -d. -f2)
+              case "$MAJ$MIN" in ""|*[!0-9]*) echo "FATAL: cannot read Keycloak version"; exit 3 ;; esac
+              if [ "$MAJ" -lt 26 ] || { [ "$MAJ" -eq 26 ] && [ "$MIN" -lt 2 ]; }; then
+                echo "FATAL: Keycloak $VER is older than 26.2 (standard token exchange V2)"
+                exit 3
+              fi
+
+              # JSON-escape the credential (backslash, then double quote) in a pipe; never echoed.
+              SECRET_JSON=$(printf '%s' "$CLIENT_SECRET" | sed 's/\\/\\\\/g; s/"/\\"/g')
+              body() {
+                printf '{"clientId":"%s","enabled":true,"publicClient":false,"standardFlowEnabled":false,"directAccessGrantsEnabled":false,"serviceAccountsEnabled":false,"secret":"%s","attributes":{"standard.token.exchange.enabled":"true"}}' "$CID" "$SECRET_JSON"
+              }
+              UUID=$(curl -sf -H "$AUTH" "$API/clients?clientId=$CID" \
+                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4) || UUID=""
+              if [ -z "$UUID" ]; then
+                echo "client absent -> creating"
+                body | curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                  "$API/clients" -d @- || { echo "FATAL: client create failed"; exit 1; }
+                UUID=$(curl -sf -H "$AUTH" "$API/clients?clientId=$CID" \
+                       | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              else
+                echo "client present -> updating"
+                body | curl -sf -X PUT -H "$AUTH" -H "Content-Type: application/json" \
+                  "$API/clients/$UUID" -d @- || { echo "FATAL: client update failed"; exit 1; }
+              fi
+              [ -n "$UUID" ] || { echo "FATAL: client id not readable after create"; exit 1; }
+
+              ensure_aud() {
+                NAME="$1"; AUDIENCE="$2"
+                if [ "$(curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" | grep -cF "\"included.client.audience\":\"$AUDIENCE\"" || true)" = "0" ]; then
+                  echo "audience mapper $NAME absent -> adding"
+                  curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                    "$API/clients/$UUID/protocol-mappers/models" -d "{
+                      \"name\": \"$NAME\",
+                      \"protocol\": \"openid-connect\",
+                      \"protocolMapper\": \"oidc-audience-mapper\",
+                      \"config\": {
+                        \"included.client.audience\": \"$AUDIENCE\",
+                        \"access.token.claim\": \"true\",
+                        \"id.token.claim\": \"false\"
+                      }
+                    }" || { echo "FATAL: could not add mapper $NAME"; exit 1; }
+                else
+                  echo "audience mapper $NAME present"
+                fi
+              }
+              ensure_aud audience-self "$CID"
+              ensure_aud audience-exchange "$XAUD"
+              echo "done"

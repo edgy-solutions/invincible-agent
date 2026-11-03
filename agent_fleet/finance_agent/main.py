@@ -25,8 +25,10 @@ the first symptom three layers away. Prose names and component names are differe
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 import re
@@ -65,10 +67,21 @@ try:  # same three-shape idiom; `utils` is a sibling top-level module in the fla
     from utils.subject_coverage import dead_end_classes as _dead_end
     from utils.subject_coverage import unroutable_classes as _unroutable
     from utils.program_membership import can_view_program
+    from utils.entitled_domains import entitled_domains
+    from utils.recipient_readers import can_read_recipient
 except ImportError:
     from agent_fleet.utils.subject_coverage import dead_end_classes as _dead_end
     from agent_fleet.utils.subject_coverage import unroutable_classes as _unroutable
     from agent_fleet.utils.program_membership import can_view_program
+    from agent_fleet.utils.entitled_domains import entitled_domains
+    from agent_fleet.utils.recipient_readers import can_read_recipient
+
+log = logging.getLogger(__name__)
+
+# This engine's OWN owner key on the `recipient_readers` rail (policy/recipient_readers.yaml): who may
+# download a package for one of ITS recipient scopes (`export.RECIPIENT_SCOPES`). Identity, not a
+# case; the rows are the rail's.
+_FIN_OWNER = "finance"
 
 FIN = "http://invincible-agent/fin#"
 MESH = "http://invincible-agent/mesh#"
@@ -463,6 +476,7 @@ def _registration_calls(base: str) -> list[dict[str, Any]]:
             verb_anti_synonyms=v.get("anti_synonyms"),
             endpoint_url=f"{base}/measure/{v['fn']}",
             slots=with_live_vocabularies(slots_for(v["fn"]), periods=periods),
+            domains=DOMAINS,
         )
         for v, subject_uri, reg_name in plan
     ]
@@ -472,10 +486,14 @@ def _registration_calls(base: str) -> list[dict[str, Any]]:
             description=r.description or r.name,
             verb="mesh:" + r.verb,
             input_uri=_declared_input_uri(),
-            output_uri=measures.FIN + r.output_uri,
+            output_uri=measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
             verb_synonyms=list(r.synonyms),
             verb_anti_synonyms=list(r.anti_synonyms) or None,
             endpoint_url=f"{base}/measure/{r.measure_id}",
+            # THE ROW'S CELLS, not the engine's: `policy.cells` is the field that excludes. A
+            # built-in keeps DOMAINS; a declared verb registers under exactly what its row says
+            # (a cell outside this engine's own is not refused: the field exists to exclude).
+            domains=list(r.cells),
             slots=with_live_vocabularies(_declared_slots(r), periods=periods),
         ))
     return calls
@@ -580,7 +598,6 @@ async def lifespan(app: FastAPI):
             register_engine_to_mesh(
                 mint=_mint,
                 owner_persona=OWNER_PERSONA,
-                domains=DOMAINS,
                 cost_class="fast",
                 **_call,
             )
@@ -764,15 +781,22 @@ def list_verbs() -> dict[str, Any]:
             "verb": "mesh:" + r.verb,
             "fn": r.measure_id,
             "input_uri": _declared_input_uri(),
-            "output_uri": measures.FIN + r.output_uri,
+            "output_uri": measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
             "slots": with_live_vocabularies(_declared_slots(r)),
         }
         for r in DECLARED.values()
     ]}
 
 
-def _measure_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
+def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[str, Any]:
     """Execute one verb and build the envelope `/measure/{fn}` serves.
+
+    `caller` IS REQUIRED, AND HAS NO DEFAULT, so that no route can reach a declared measure
+    without saying who is asking: the first thing this does is `_require_cell`, which refuses a
+    caller holding none of the row's cells. The routes also check it themselves, earlier
+    (`/package_export` and `/cdrl_export` before ANY panel or source is measured), which is
+    deliberate redundancy: the early check makes a refusal happen before anything is measured,
+    and this one is what no future route can skip.
 
     THE ONE PLACE A VERB IS RUN AND SHAPED. Item 3's rule — "seeding and packageExport read
     the same thing" — has a counterpart on this engine's own side: `package_export` below
@@ -786,6 +810,7 @@ def _measure_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
     registered menu (ADR-0042 §2). An engine that named a view here would re-open
     `archetype-chosen-before-data` from the other end.
     """
+    _require_cell(fn, caller)
     if fn in DECLARED:
         return _declared_envelope(DECLARED[fn], params)
     if fn not in measures.OUTPUT_URI:
@@ -873,8 +898,11 @@ def _measure_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
-    """The envelope of a DECLARED measure: the PERIOD_SERIES shape `fin_performance_indices`
-    answers in, with `series` and `reference` from the row and the method beside the figure.
+    """The envelope of a DECLARED measure: the MULTI_SERIES shape `fin_performance_indices`
+    answers in (cortex's MULTI_SERIES contract: `rows` by `period`, declared `series`, optional
+    `reference`), with `series` and `reference` from the row and the method beside the figure.
+    `render` is a copy of the row's render block: it names the archetype the row declares, so
+    presentation can select it without the output class being on any menu.
 
     `verdict` is the mechanical restatement `measure_verbs.declared_verdict` builds from the row's
     own reference (absent when there are no rows), so the brief never falls back to "reported
@@ -898,10 +926,11 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
     fn = row.measure_id
     envelope = {  # not `return {`: the wire seals select the built-in builder by that anchor
         "measure": fn,
-        "output_uri": measures.FIN + row.output_uri,
+        "output_uri": measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
         "artifact_id": _artifact_id(fn, params, rows),
         "value_label": row.series[0].get("label", row.name),
         "series": [dict(s) for s in row.series],
+        "render": copy.deepcopy(row.render),
         **({"reference": dict(row.reference)} if row.reference else {}),
         "data_provenance": notional_banner(),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
@@ -919,11 +948,17 @@ def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> 
 @app.post("/measure/{fn}")
 def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
     """The ordinary route. A THIN WRAPPER — `_measure_envelope` is the one place a verb is
-    run and shaped; this route and `package_export` below are its only two callers."""
+    run and shaped; this route, `package_export` and `cdrl_export` below are its callers.
+
+    ORDER: an unknown measure is 404; the caller cannot view the program is 403
+    `program_not_visible`; a declared measure whose cells the caller holds none of is 403
+    `measure_not_in_cell`. Visibility first, so a caller outside the program learns nothing about
+    the measure's cells."""
     if fn not in measures.OUTPUT_URI and fn not in DECLARED:  # a verb name is not a program secret: 404 stays first
         raise HTTPException(status_code=404, detail=f"unknown measure {fn!r}")
-    _require_visible(req.params.get("program_id"), _verb_caller(req.user_email))
-    return _measure_envelope(fn, dict(req.params))
+    caller = _verb_caller(req.user_email)
+    _require_visible(req.params.get("program_id"), caller)
+    return _measure_envelope(fn, dict(req.params), caller=caller)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -987,7 +1022,7 @@ class PackageExportRequest(BaseModel):
 def package_export(body: PackageExportRequest) -> dict[str, Any]:
     """Build one recipient's self-contained validation package.
 
-    FIVE ORDERED REFUSALS, each before the next is even asked:
+    SIX ORDERED REFUSALS, each before the next is even asked:
       1. an unknown recipient scope — 403, never 404 (ADR-0049 Ruling 4: "no such recipient"
          and "this recipient has nothing" must not look alike, and this is the former).
       2. the caller cannot view the scope's program — 403 with the refusal envelope. Every
@@ -997,8 +1032,11 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
       5. a panel whose own `program_id` disagrees with the recipient's program — 403, because
          a program embedded in a package another program's recipient can open is exactly the
          cross-program leak the scope exists to prevent.
+      6. a panel naming a DECLARED measure whose cells the caller holds none of — 403
+         `measure_not_in_cell`, the whole request refused, BEFORE any panel is measured (a package
+         with a panel silently missing is worse than a refusal).
 
-    Only once all five pass does this call `_measure_envelope` — THE SAME FUNCTION
+    Only once all six pass does this call `_measure_envelope` — THE SAME FUNCTION
     `/measure/{fn}` calls — once per panel, then hand the served envelopes to
     `scripts.build_fin_package.build` to write the artifact. Nothing here recomputes a row a
     second way.
@@ -1008,12 +1046,13 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
         program_id = export.program_for_recipient(body.recipient_scope)
     except Unentitled as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    _require_visible(program_id, _verb_caller(body.user_email))
+    caller = _verb_caller(body.user_email)
+    _require_visible(program_id, caller)
 
     if not body.canvas.panels:
         raise HTTPException(status_code=422, detail="a package needs at least one panel")
 
-    panels: list[dict[str, Any]] = []
+    resolved: list[tuple[Any, str]] = []
     for p in body.canvas.panels:
         fn = VERB_TO_FN.get(p.verb)
         if fn is None:
@@ -1029,7 +1068,13 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
                        f"{p.params.get('program_id')!r}, not {program_id!r} — "
                        f"{body.recipient_scope!r} may only disclose its own program",
             )
-        envelope = _measure_envelope(fn, dict(p.params))
+        resolved.append((p, fn))
+    for _p, fn in resolved:  # refusal 6: every panel's cells, before ANY panel is measured
+        _require_cell(fn, caller)
+
+    panels: list[dict[str, Any]] = []
+    for p, fn in resolved:
+        envelope = _measure_envelope(fn, dict(p.params), caller=caller)
         panels.append({
             "panel": p.panel, "verb": p.verb, "fn": fn, "params": dict(p.params),
             "artifact_id": envelope["artifact_id"], "rows": envelope["rows"],
@@ -1140,11 +1185,11 @@ class CdrlExportRequest(BaseModel):
         return _valid_as_of(v)
 
 
-def _cdrl_source(fn: str, params: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _cdrl_source(fn: str, params: dict[str, Any], *, caller: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """One source of a CDRL: `_measure_envelope` (THE function `/measure/{fn}` serves) and the
     method identity beside it. A declared measure's envelope carries `method`; a built-in's does
     not, so its identity is its verb's name at version `builtin`."""
-    envelope = _measure_envelope(fn, params)
+    envelope = _measure_envelope(fn, params, caller=caller)
     if fn in DECLARED:
         return envelope, dict(envelope["method"])
     return envelope, {"fn": fn, "name": BY_FN[fn]["verb"].split(":", 1)[-1], "version": "builtin"}
@@ -1157,8 +1202,10 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
     ORDERED REFUSALS, each before the next is even asked: an unknown profile is 404
     `unknown_profile` (a profile name is not a program secret, as an unknown verb is not); the
     caller cannot view the program is 403 with `package_export`'s envelope (`_require_visible`),
-    BEFORE anything is measured and before a byte is written; a deployment that cannot write an
-    artifact here is 503. Only then does `build_cdrl` run each source through `_cdrl_source`.
+    BEFORE anything is measured and before a byte is written; a profile sourcing a DECLARED
+    measure whose cells the caller holds none of is 403 `measure_not_in_cell` for the whole
+    request (a deliverable with a column silently missing is worse than a refusal), also before
+    anything is measured; a deployment that cannot write an artifact here is 503. Only then does `build_cdrl` run each source through `_cdrl_source`.
     """
     profile = PROFILES.get(body.profile)
     if profile is None:
@@ -1167,7 +1214,10 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
             "message": f"no export profile {body.profile!r}",
             "profiles": sorted(PROFILES),
         })
-    _require_visible(body.program_id, _verb_caller(body.user_email))
+    caller = _verb_caller(body.user_email)
+    _require_visible(body.program_id, caller)
+    for fn in profile.sources:  # the early check; `_measure_envelope` holds the one no route skips
+        _require_cell(fn, caller)
     as_of = body.as_of or _request_date()
 
     out_dir = _cdrl_out_dir()
@@ -1175,7 +1225,7 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
         out_dir.mkdir(parents=True, exist_ok=True)
         path, envelope = cdrl.build_cdrl(
             STATE, profile, program_id=body.program_id, as_of=as_of,
-            out_dir=out_dir, run_source=lambda fn, params: _cdrl_source(fn, params),
+            out_dir=out_dir, run_source=lambda fn, params: _cdrl_source(fn, params, caller=caller),
         )
     except OSError as e:
         # THE ONLY 503: the artifact directory cannot be created or written.
@@ -1203,10 +1253,18 @@ def _cdrl_artifact_program(filename: str) -> Optional[str]:
     DERIVED from the composed profiles crossed with the seed's programs through
     `cdrl.artifact_filename`, never parsed out of the string (the closed-set rule `/artifact` keeps
     for packages)."""
+    origin = _cdrl_artifact_origin(filename)
+    return origin[1] if origin else None
+
+
+def _cdrl_artifact_origin(filename: str) -> Optional[tuple[Any, str]]:
+    """`(profile, program_id)` a CDRL artifact name belongs to, or None. The profile matters: the
+    file holds the figures of every measure that profile sources, so fetching it is gated on
+    those measures' cells as well as on the program."""
     for profile in PROFILES.values():
         for program in STATE.programs:
             if filename == cdrl.artifact_filename(profile.name, program.program_id, profile.format):
-                return program.program_id
+                return profile, program.program_id
     return None
 
 
@@ -1217,7 +1275,8 @@ def get_artifact(filename: str) -> FileResponse:
     two engines' packages are indistinguishable risks to whoever fetches them.
     """
     scope = export.scope_of_artifact(filename)
-    cdrl_program = _cdrl_artifact_program(filename) if scope is None else None
+    cdrl_origin = _cdrl_artifact_origin(filename) if scope is None else None
+    cdrl_program = cdrl_origin[1] if cdrl_origin else None
     if scope is None and cdrl_program is None:
         # A NAME NOT IN THE CLOSED SET IS A 404, BEFORE ANY ENTITLEMENT CHECK. Answering an
         # unrecognised name with 403 would confirm that SOME package exists under it.
@@ -1226,11 +1285,22 @@ def get_artifact(filename: str) -> FileResponse:
     if cdrl_program is not None:
         # A CDRL is one program's deliverable: who may fetch it is who may view the program
         # (the check `/cdrl_export` made), not a recipient reader list.
-        _require_visible(cdrl_program, _verb_caller(""))
+        # AND the cells of every declared measure the profile sources: the file holds those figures,
+        # and a caller outside a cell must not read them out of another caller's export.
+        caller = _verb_caller("")
+        _require_visible(cdrl_program, caller)
+        for fn in cdrl_origin[0].sources:
+            _require_cell(fn, caller)
     else:
         caller = _current_caller()
-        readers = export.readers_for_recipient(scope)
-        if caller is None or caller.authz_id not in readers:
+        authz_id = getattr(caller, "authz_id", None) if caller else None
+        try:
+            permitted = bool(authz_id) and bool(can_read_recipient(_FIN_OWNER, scope, authz_id))
+        except Exception as exc:  # noqa: BLE001 -- transport/HTTP failure of the check itself
+            # An outage is not "no readers": a 503 at the door, never a 403 (the plan path's posture).
+            log.warning("recipient_readers check failed: %s", exc)
+            raise HTTPException(status_code=503, detail={"reason": "recipient_readers_unavailable"}) from exc
+        if not permitted:
             # NAMES THE PACKAGE, NEVER ITS READERS — the same asymmetry cost's route keeps.
             raise HTTPException(status_code=403, detail=f"not entitled to {scope!r}'s package")
 
@@ -1531,6 +1601,51 @@ def _require_visible(program_id: Any, caller: str) -> None:
                 "message": "You are not a member of the program this request names.",
             },
         )
+
+
+def _held_domains(caller: str) -> frozenset[str]:
+    """The domains `caller` holds, from the directory. A service holds none (it is never a
+    program member either) and an empty caller holds none, both without a lookup.
+    `httpx.HTTPError` propagates."""
+    caller = (caller or "").strip()
+    if not caller or caller.startswith("svc:"):
+        return frozenset()
+    return frozenset(str(d).upper() for d in entitled_domains(caller))
+
+
+def _require_cell(fn: str, caller: str) -> None:
+    """403 `measure_not_in_cell` unless the caller holds a domain in a DECLARED measure's `cells`;
+    503 on a directory outage. A built-in returns at once, with no directory call.
+
+    The detail names the measure and the cells it is declared for, never who else holds them.
+    No `grantable_by`: the engine holds no grantor map; the BFF completes the envelope with
+    `relay_refusal` (iagent.authz.refusal), as it does `program_not_visible`.
+    """
+    row = DECLARED.get(fn)
+    if row is None:
+        return
+    cells = sorted({str(c).strip().upper() for c in row.cells})
+    try:
+        held = _held_domains(caller)
+    except httpx.HTTPError as e:
+        raise HTTPException(503, f"entitlement check failed: {e}") from e
+    if held & set(cells):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "measure_not_in_cell",
+            "measure": fn,
+            "refusal": {
+                "policy_id": "groups",
+                "missing_binding": ", ".join(f"a_group_granting(<persona>, {d})" for d in cells),
+                "candidates": [],
+            },
+            "missing_domains": cells,
+            "message": (f"{fn} is declared for the access cells {cells}, and you hold none of "
+                        "them."),
+        },
+    )
 
 
 def _visible_to(caller: str, members: list[dict[str, Any]]) -> list[dict[str, Any]]:

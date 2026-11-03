@@ -1952,7 +1952,7 @@
       },
       "EvidenceRef": {
         "additionalProperties": false,
-        "description": "7f's `wire_evidence_ref`, served as is (architect rulings 2026-10-21 and 2026-10-28).\n\n`bbox` is page fractions `[x0, y0, x1, y1]`, origin top-left, `0 <= x0 < x1 <= 1` and\n`0 <= y0 < y1 <= 1`. A null bbox means \"on this page, no box\" (ruling 205). Nothing else\nis served: no `bboxes`, `page_dims`, `units` or `quality`.",
+        "description": "7f's `wire_evidence_ref`, served as is (architect rulings 2026-10-21 and 2026-10-28).\n\n`bbox` is page fractions `[x0, y0, x1, y1]`, origin top-left, `0 <= x0 < x1 <= 1` and\n`0 <= y0 < y1 <= 1`. A null bbox means \"on this page, no box\" (ruling 205). Nothing else\nis served: no `bboxes`, `page_dims`, `units` or `quality`.\n\nThe authority is `iagent_mesh.provenance.EvidenceRef` (architect ruling 2026-10-31: the SDK rule\nwins). This model is imported from it once the SDK (v0.9.13) renders `note` as omitted rather\nthan null and `bbox` as a 4-item array of 0..1 items; until then\n`tests/test_an_evidence_ref_is_the_sdks_rule_page_fractions_or_a_422.py` holds the two to the\nsame verdict (this model may only be STRICTER: no null note, no bool page).",
         "properties": {
           "bbox": {
             "anyOf": [
@@ -5513,20 +5513,15 @@
       },
       "TitleEvidenceRef": {
         "additionalProperties": false,
-        "description": "A title candidate's crop: `EvidenceRef` plus the page-fraction bounds. A SUBCLASS so the\nsteward row_edits / header_edits evidence_ref (not yet converted) keeps `EvidenceRef` as it was.\nCortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422).",
+        "description": "A title candidate's crop: the served `ingest_api.EvidenceRef` (which the equivalence seal holds\nto the SDK verdict) plus the page-fraction bounds. A SUBCLASS of the served model, not of the SDK's,\nso the published title-candidate schema keeps its array-of-numbers bbox and `page` minimum. Steward\nrow_edits / header_edits evidence_ref now go through the SDK model (`_wire_evidence_ref`).\nCortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422).\nStrict, as the request model it replaced was: a coordinate sent as a string is refused, not coerced.",
         "properties": {
           "bbox": {
             "anyOf": [
               {
                 "items": {
-                  "anyOf": [
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ]
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
                 },
                 "maxItems": 4,
                 "minItems": 4,
@@ -5539,15 +5534,9 @@
             "title": "Bbox"
           },
           "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
+            "pattern": "\\S",
+            "title": "Note",
+            "type": "string"
           },
           "page": {
             "minimum": 1.0,
@@ -6755,7 +6744,7 @@
     },
     "/export/package/artifact/{filename}": {
       "get": {
-        "description": "Download proxy for a produced export package. THE GATEWAY-SIDE CHECK the relay asks\nfor: the engine repeats the same check on the same person's token (main.py's /artifact,\n~line 700), and the two agree because both read `seed.readers_for_recipient`. This is not\nredundant — it is the ONLY check between an unentitled browser and the engine's bytes,\nsince the engine sits behind the mesh and is not itself reachable from a browser.",
+        "description": "Download proxy for a produced export package. THE GATEWAY-SIDE CHECK the relay asks\nfor: the engine repeats the same check on the same person's token (main.py's /artifact,\n~line 700), and the two agree because both ask the `recipient_readers` rail. This is not\nredundant — it is the ONLY check between an unentitled browser and the engine's bytes,\nsince the engine sits behind the mesh and is not itself reachable from a browser.",
         "operationId": "export_package_artifact_export_package_artifact__filename__get",
         "parameters": [
           {
@@ -6801,7 +6790,7 @@
     },
     "/export/package/recipients": {
       "get": {
-        "description": "The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller\nsees are exactly the scopes their `authz_id` reads, never the full recipient catalogue.",
+        "description": "The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller\nsees are exactly the scopes their `authz_id` reads, never the full recipient catalogue.\nAn outage (the rail for cost or plan, or engine-cost's profile set) is 503; a caller who reads\nno recipient of any owner listed is 403.",
         "operationId": "export_package_recipients_export_package_recipients_get",
         "responses": {
           "200": {
@@ -6821,7 +6810,7 @@
         "summary": "Export Package Recipients"
       },
       "post": {
-        "description": "The recipient picker for THIS board: for each recipient the caller may export to, which\nof the board's answers that recipient's export takes and which it refuses, with the\nreasons -- so a board no recipient takes is greyed before Export, not refused after it.\n\nRecipients are exactly `_export_recipients_for(current_user)`, in that order: one the\ncaller may not export to is ABSENT, never greyed (ADR-0047 §5). A recipient is `offered`\niff its export would take at least one answer; a partial board stays offered (mixed-board\npartial export is ruled, 2026-10-09/16) and `refused` names the answers that will not go.\nGates, as the export's: no answers is 400 `no_answers`; an id that does not resolve is\n404 (503 when the store is down).",
+        "description": "The recipient picker for THIS board: for each recipient the caller may export to, which\nof the board's answers that recipient's export takes and which it refuses, with the\nreasons -- so a board no recipient takes is greyed before Export, not refused after it.\n\nRecipients are exactly `_export_recipients_for(current_user)`, in that order: one the\ncaller may not export to is ABSENT, never greyed (ADR-0047 §5). A recipient is `offered`\niff its export would take at least one answer; a partial board stays offered (mixed-board\npartial export is ruled, 2026-10-09/16) and `refused` names the answers that will not go.\nGates, as the export's: no answers is 400 `no_answers`; an id that does not resolve is\n404 (503 when the store is down). As the GET picker: an outage is 503, and a caller who reads\nno recipient of any owner listed is 403.",
         "operationId": "export_package_offer_export_package_recipients_post",
         "requestBody": {
           "content": {
@@ -7285,7 +7274,7 @@
     },
     "/ingest/export": {
       "get": {
-        "description": "GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the\nrange (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.\nA service caller (`_is_service_caller`) gets the same 403 before Topaz is asked. The\ncapability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is\none of the caller's entitlement-cell domains are in the set, filtered before the loud-not-\npartial checks and before the 500 cap; a caller with no cells gets the empty export.\nGate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy\nrefusal; Topaz down is 503), AND, in addition, `can_export:<profile>` for the named profile\n(403 `not_entitled_to_export`, a policy refusal; DENY BY DEFAULT: a profile with no row is\nexportable by nobody), checked after the profile resolves (an unknown one stays 422). At most 92 days (both ends counted) and 500 notices. LOUD, NOT\nPARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,\nextraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks\non is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`).",
+        "description": "GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the\nrange (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.\nA service caller (`_is_service_caller`) is refused at the MCP door, 403\n`service_token_refused`, and past the door by the capability gate; Topaz is not asked. The\ncapability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is\none of the caller's entitlement-cell domains are in the set, filtered before the loud-not-\npartial checks and before the 500 cap; a caller with no cells gets the empty export.\nGate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy\nrefusal; Topaz down is 503), AND, in addition, `can_export:<profile>` for the named profile\n(403 `not_entitled_to_export`, a policy refusal; DENY BY DEFAULT: a profile with no row is\nexportable by nobody), checked after the profile resolves (an unknown one stays 422). At most 92 days (both ends counted) and 500 notices. LOUD, NOT\nPARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,\nextraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks\non is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`).",
         "operationId": "ingest_export_batch_route_ingest_export_get",
         "parameters": [
           {

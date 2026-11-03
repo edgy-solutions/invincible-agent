@@ -51,3 +51,4 @@ program); the layout differs. csv and json need no template: a profile alone is 
 `0.0%`. A json absent value is an omitted key, never `null`; keys keep declaration order. Outside
 xlsx the file is exactly the form: the provenance travels in the envelope and `X-Cells-Sha256`.
 Sample: `policy/overlays/sample/fin_export_profiles/cdrl_a001_ev_summary_json.yaml`.
+Docx sample: `policy/overlays/sample/fin_export_profiles/cdrl_a002_cost_performance_docx.yaml` (A002 / DI-NOTIONAL-0002), its template made by `scripts/generate_cdrl_sample_docx_template.py`. The template's table 2 keeps one EMPTY body row so `table.start` lies in its grid; placeholder text there would survive an absent value.

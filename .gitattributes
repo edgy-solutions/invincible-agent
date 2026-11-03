@@ -26,3 +26,4 @@ baml_shared/baml_client/** text eol=lf
 # An xlsx is a zip: never diff, merge or normalise line endings. The CDRL sample template is
 # pinned by sha256 in its profile row, so a changed byte refuses the profile at load.
 *.xlsx binary
+*.docx binary

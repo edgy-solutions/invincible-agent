@@ -100,6 +100,10 @@ b = CoalescingClient(b, log=logging.getLogger(__name__))
 # vector AND the model that served it, which is what the mesh reader compares against a collection
 # marker. It is imported through the same dual-layout dance rather than a second one, so a layout
 # that breaks breaks in one place.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import check_answer, decision_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import check_answer, decision_answer
 try:
     from utils.embed import embed_query, observe_query_embedding  # container flat layout
 except ImportError:
@@ -261,9 +265,7 @@ def _can_view_class(caller_email: str, iri: str) -> bool:
             timeout=5.0,
         )
         resp.raise_for_status()
-        decisions = resp.json().get("decisions") or []
-        return bool(next((d.get("is") for d in decisions
-                          if d.get("decision") == "allowed"), False))
+        return decision_answer(resp, "allowed")
     except Exception as e:  # noqa: BLE001 — fail-closed on any error
         logging.warning("ontology can_view check failed for iri=%s (fail-closed deny): %s", iri, e)
         return False
@@ -326,7 +328,7 @@ def _can_invoke_capability(caller_authz_id: str, capability: str) -> bool:
             timeout=5.0,
         )
         r.raise_for_status()
-        return bool(r.json().get("check"))
+        return check_answer(r)
     except Exception as e:  # noqa: BLE001 — fail-closed on any error
         logging.warning("can_invoke check failed capability=%s caller=%s (fail-closed deny): %s",
                         capability, caller_authz_id, e)

@@ -709,6 +709,10 @@ def _producible_artifact_names() -> set[str]:
 # or "not entitled"). The download (`/artifact/...`) stays reader-only: can_export gates production.
 
 _PLAN_OWNER = "plan"
+# This engine's OWN owner key on the `recipient_readers` rail (policy/recipient_readers.yaml): who may
+# download a package for one of ITS recipient scopes (`measures.RECIPIENT_SCOPES`). Identity, not a
+# case; the rows are the rail's.
+_COST_OWNER = "cost"
 _ANSWER_PROFILES: Optional[dict] = None
 
 
@@ -882,8 +886,13 @@ async def artifact(filename: str) -> Any:
     caller = _current_caller()
     authz_id = getattr(caller, "authz_id", None) if caller else None
     scope = _scope_of_artifact(filename)
-    permitted = measures.readers_for_recipient(scope) if scope else ()
-    if not authz_id or authz_id not in permitted:
+    try:
+        permitted = bool(authz_id) and bool(scope) and can_read_recipient(_COST_OWNER, scope, authz_id)
+    except Exception as exc:  # noqa: BLE001 -- transport/HTTP failure of the check itself
+        # An outage is not "no readers": a 503 at the door, never a 403 (the plan path's posture).
+        log.warning("recipient_readers check failed: %s", exc)
+        raise HTTPException(status_code=503, detail={"reason": "recipient_readers_unavailable"}) from exc
+    if not permitted:
         # 403 NAMING THE PACKAGE, not a bare refusal: the caller is entitled to know WHICH
         # disclosure they were refused, and a 404 here would hide the package's existence from
         # someone who may legitimately hold another one. It does NOT name who may read it —

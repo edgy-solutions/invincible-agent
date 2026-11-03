@@ -11,6 +11,8 @@ Every refusal is at LOAD, names the FILE, and stops the engine booting: a row se
 half would be a verb that exists for some deployments and not others, with no symptom.
 
 * a formula, expression or query (`inputs` carries `params` and `state` only);
+* a top-level key the engine does not read (`_TOP_KEYS`): a `formula` written there would be
+  ignored, and its author would believe it took effect;
 * a quantity outside `STATE_VOCABULARY` (extending it is a code change, reviewed as one);
 * a built-in's `measure_id` or verb name;
 * a module that does I/O: its source is parsed and every import must be in `PURE_IMPORTS`;
@@ -36,6 +38,7 @@ one spelling; this is what lets the same row load in the repo and in the image.
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import importlib
 import importlib.util
@@ -97,6 +100,25 @@ PURE_IMPORTS = frozenset({"decimal", "typing", "__future__", "math", "fractions"
 _STATUSES = frozenset({"sample", "proposed", "ratified"})
 _PARAMS = frozenset({"program_id", "window"})
 _ID_RE = re.compile(r"^fin_[a-z0-9_]+$")
+# Every top-level key `_build` reads, and so every key a row may carry. `deleted` is not here: a
+# tombstone never reaches `_build` (`compose_rows` pops it), and `deleted: false` is not a key an
+# author writes. Docs: `docs/contracts/finance-overlays.md` section 2; the seal compares the two.
+_TOP_KEYS = frozenset({
+    "measure_id", "verb", "name", "description", "synonyms", "anti_synonyms",
+    "inputs", "computation", "outputs", "render", "policy",
+})
+#: The render shapes this engine's runner fills: one declared series per period. A MECHANISM list,
+#: not a vocabulary: the archetype vocabulary is `capability_admission.KNOWN_ARCHETYPES`, which the
+#: flattened image cannot import, so a test ties this set to it (this set must be a subset).
+COMPUTED_SHAPES = frozenset({"MULTI_SERIES"})
+#: Old layout key -> the key that replaced it. Refused, never silently accepted.
+_MOVED_OUTPUT_KEYS = {
+    "archetype": "render.shape", "series": "render.series", "reference": "render.target",
+}
+#: The ONE output class every declared measure registers as (the ruling of 2026-11-02). A row
+#: names no class: the measure is told apart by its id on the wire (`measure`, `method.measure_id`),
+#: so a deployment adds a measure and no ontology.
+DECLARED_OUTPUT_CLASS = "DeclaredMeasureSeries"
 _PACKAGED = "agent_fleet.finance_agent."
 
 
@@ -122,10 +144,10 @@ class MeasureVerbRow:
     clause: str
     citation: str
     transcription: str
-    archetype: str
-    output_uri: str
-    series: tuple[dict[str, Any], ...]
-    reference: Optional[dict[str, Any]]
+    render: Any                     # a deep copy of the row's render block
+    archetype: str                  # render.shape
+    series: tuple[dict[str, Any], ...]      # render.series
+    reference: Optional[dict[str, Any]]     # render.target
     undefined: Optional[dict[str, Any]]
     status: str
     cells: tuple[str, ...]
@@ -185,11 +207,29 @@ def _names(builtins: tuple[Iterable[str], Iterable[str]]) -> tuple[frozenset, fr
 def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureVerbRow:
     # Raises ValueError: `compose_rows` re-raises it as MeasureVerbError WITH THE FILE NAMED.
     fns, verbs = _names(builtins)
+    moved = sorted(k for k in _MOVED_OUTPUT_KEYS if isinstance(raw.get("outputs"), dict)
+                   and k in raw["outputs"])
+    if moved:
+        raise ValueError("; ".join(
+            f"outputs.{k} has moved to {_MOVED_OUTPUT_KEYS[k]}: the row declares how it is drawn "
+            f"under a top-level `render:` block (outputs keeps only `undefined`)"
+            for k in moved))
+    if isinstance(raw.get("outputs"), dict) and "output_uri" in raw["outputs"]:
+        raise ValueError(
+            f"outputs.output_uri {raw['outputs']['output_uri']!r} is refused: every declared "
+            f"measure registers as fin:{DECLARED_OUTPUT_CLASS}, told apart by its measure id, so a "
+            f"row names no class and adds no ontology; the row keeps only `outputs.undefined`")
+    unknown = sorted(set(raw) - _TOP_KEYS)
+    if unknown:
+        raise ValueError(
+            f"row carries {unknown}, which no part of the engine reads; a measure row cannot "
+            f"carry a formula, expression or query -- the computation lives in the named "
+            f"module (ADR-0053 section 3)")
     for path in ("measure_id", "verb", "name", "inputs.params.program_id", "inputs.state",
                  "computation.module", "computation.function", "computation.version",
                  "computation.derived_from.authority", "computation.derived_from.clause",
                  "computation.derived_from.transcription",
-                 "outputs.archetype", "outputs.output_uri", "outputs.series",
+                 "render.shape", "render.series",
                  "policy.status", "policy.cells", "policy.granted_by", "policy.reason"):
         _need(raw, path)
     mid, verb = raw["measure_id"], raw["verb"]
@@ -217,18 +257,23 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
             f"inputs.state names quantities outside the closed vocabulary: {bad_state}; "
             f"the vocabulary is {sorted(STATE_VOCABULARY)}")
 
-    out, pol, comp = raw["outputs"], raw["policy"], raw["computation"]
-    if out["archetype"] != "PERIOD_SERIES":
-        raise ValueError(f"outputs.archetype {out['archetype']!r}; only PERIOD_SERIES is supported")
-    if "://" in str(out["output_uri"]) or "#" in str(out["output_uri"]):
-        raise ValueError(f"outputs.output_uri {out['output_uri']!r} is a local name, not a URI")
-    series = tuple(dict(s) for s in out["series"])
+    out, pol, comp = raw.get("outputs") or {}, raw["policy"], raw["computation"]
+    if not isinstance(out, dict):
+        raise ValueError("outputs must be a mapping")
+    rnd = raw["render"]
+    if not isinstance(rnd, dict):
+        raise ValueError("render must be a mapping")
+    if rnd["shape"] not in COMPUTED_SHAPES:
+        raise ValueError(
+            f"render.shape {rnd['shape']!r}; this engine computes only {sorted(COMPUTED_SHAPES)} "
+            f"(one declared series per period)")
+    series = tuple(dict(s) for s in rnd["series"])
     if len({s.get("unit") for s in series}) > 1:
         raise ValueError(
-            "outputs.series mixes units; series on one card share a unit, and an index beside "
+            "render.series mixes units; series on one card share a unit, and an index beside "
             "an amount is two charts drawn as one")
     if len(series) != 1:
-        raise ValueError("outputs.series must hold exactly one series: the function returns one value per period")
+        raise ValueError("render.series must hold exactly one series: the function returns one value per period")
     if pol["status"] not in _STATUSES:
         raise ValueError(f"policy.status {pol['status']!r} is not one of {sorted(_STATUSES)}")
     if "visibility" in pol:
@@ -282,8 +327,9 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         function=comp["function"], version=str(comp["version"]),
         authority=derived["authority"], clause=derived["clause"],
         citation=derived.get("citation", "unstated"), transcription=derived["transcription"],
-        archetype=out["archetype"], output_uri=str(out["output_uri"]), series=series,
-        reference=dict(out["reference"]) if out.get("reference") else None,
+        render=copy.deepcopy(rnd), archetype=str(rnd["shape"]),
+        series=series,
+        reference=dict(rnd["target"]) if rnd.get("target") else None,
         undefined=dict(undefined) if undefined else None,
         status=pol["status"], cells=cells, granted_by=str(pol["granted_by"]),
         reason=str(pol["reason"]), module_sha256=hashlib.sha256(data).hexdigest(),

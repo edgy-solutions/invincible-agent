@@ -1,0 +1,42 @@
+{{- if .Values.deployment.enabled }}
+{{- $digest := required "image.digest is required when deployment.enabled" .Values.image.digest }}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $digest) }}{{ fail "image.digest must match ^sha256:[0-9a-f]{64}$ (a tag is not accepted)" }}{{ end }}
+{{- $repo := required "image.repository is required when deployment.enabled" .Values.image.repository }}
+{{- $bff := required "bffUrl is required when deployment.enabled" .Values.bffUrl }}
+{{- $kcUrl := required "keycloak.url is required" .Values.keycloak.url }}
+{{- $cred := required "client.credentialSecret.name is required" .Values.client.credentialSecret.name }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- include "iagent-mesh-mcp.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "iagent-mesh-mcp.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: mcp
+          image: "{{ $repo }}@{{ $digest }}"
+          args:
+            - --transport
+            - sse
+            - --bff-url
+            - {{ $bff | quote }}
+            - --issuer
+            - {{ printf "%s/realms/%s" $kcUrl .Values.keycloak.realm | quote }}
+          env:
+            - name: CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $cred | quote }}
+                  key: {{ .Values.client.credentialSecret.key | quote }}
+          ports:
+            - containerPort: {{ .Values.deployment.port }}
+{{- end }}
