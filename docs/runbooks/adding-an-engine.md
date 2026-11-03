@@ -493,7 +493,7 @@ way.)*
 | `MESH_REGISTRAR_URL` | ConfigMap | no | unset → falls back to the **legacy direct-to-DataHub** path. Historically that path reached a RETIRED materialiser — 11 URNs, 0 rows. Prefer the gateway |
 | `DATAHUB_GMS_URL` / `DATAHUB_TOKEN` | ConfigMap / Secret | only on the legacy path | unset → registration logs a warning and returns |
 | `REQUIRE_TRANSPORT_AUTH` | ConfigMap | no | unset → **OBSERVE**: inbound callers logged, none refused. This is the intended posture today |
-| `CENTRAL_GATEWAY_URL` | ConfigMap | only for governed reads | unset → `mesh_ticketed_read` raises `KeyError`. It is **not** consulted on the notional path |
+| `CENTRAL_GATEWAY_URL` | ConfigMap | only when `FIN_DATASET_URN` is set | the gateway the mesh client asks for a ticket. Unset with the flag set, engine-fin refuses to boot. It is **not** consulted on the notional path |
 | `NEO4J_*` | ConfigMap / Secret | **not read by this engine** | listed so the next reader does not add a driver it does not need |
 
 ### The degraded-default law

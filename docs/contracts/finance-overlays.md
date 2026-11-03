@@ -487,6 +487,49 @@ policyOverlay:
 3. **An approver** for each measure and each profile: the person whose name goes in `granted_by`.
 4. **Which format the customer's data item requires:** xlsx, docx, csv or json.
 
+## 5a. Computing a declared measure over a catalogued asset
+
+By default a declared measure computes over the engine's built-in notional model. Setting
+`FIN_DATASET_URN` makes it compute over rows read, as the caller, from one catalogued asset.
+Design: `docs/plans/fin-inputs-resolver.md`. Nothing here has run on a cluster.
+
+**Environment** (on `engineFinance.env`):
+
+| variable | meaning |
+| --- | --- |
+| `FIN_DATASET_URN` | the asset, `urn:li:dataset:...`. Unset: the notional model answers, as before. |
+| `FIN_DATASET_BANNER` | required with the URN. It is shown beside every answer, so a synthetic asset cannot read as real. |
+| `CENTRAL_GATEWAY_URL` | required with the URN: the gateway that issues the read ticket. |
+| `FIN_ASSET_MAX_ROWS` | optional, default 100000. |
+
+With the URN set, the engine refuses to start if the banner or gateway is missing, the URN is not
+of the `urn:li:dataset:` form, or the mesh client cannot be imported.
+
+**Columns.** Fixed names, file-backed assets only, one row per work package and period:
+
+| column | type | rule |
+| --- | --- | --- |
+| `program_id`, `program_name` | string | one name per program |
+| `program_bac` | number | one value per program, repeated on every row |
+| `control_account`, `work_package` | string | one account per work package |
+| `period` | string | a fiscal period the engine knows; one row per work package and period |
+| `bcws`, `bcwp`, `acwp` | number | the period's amounts, not cumulative |
+
+**Outcomes.** A failed read never falls back to the notional figures.
+
+| outcome | status |
+| --- | --- |
+| the caller holds no grant on the asset | 403 `access_denied` |
+| the gateway or the asset cannot be reached | 503 `asset_unavailable` |
+| a column, null, duplicate or period rule is broken | 502 `asset_contract_violation`, naming the rule |
+| more rows than `FIN_ASSET_MAX_ROWS` | 422 `asset_too_large` |
+| no rows for the program or window | 422 `not_in_model` |
+| no user identity on the request | 401 |
+
+Answers carry `data_source: {kind: "asset", urn}` and the banner in place of the notional text.
+Package and CDRL exports naming a declared measure return 409 `asset_export_unsupported` while the
+URN is set; built-in measures still export.
+
 ## 6. Not covered yet
 
 - **Where organisation-specific measure code lives.** A measure's calculating module ships inside
