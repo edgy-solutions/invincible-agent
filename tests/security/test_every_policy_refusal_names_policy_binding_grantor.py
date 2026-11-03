@@ -282,7 +282,6 @@ NOT_POLICY: dict[str, str] = {
     f"{GW}::redeem_caller_identity::not_the_redeemer | The identity vault is redeemable": PINNED,
     f"{GW}::ingest_retry_route::retry_is_pin_driven | a retry is driven only by an ext":
         "a retry is driven by an extractor pin change, never by a person",
-    f"{GW}::get_case::delegate_reads_artifacts_only | a delegate reads the artifacts i": SECTION_5_1,
     f"{GW}::get_case_action._not_your_case::not_your_case | a delegate reads the action reco": SECTION_5_1,
     f"{GW}::_ingest_review_access::not_entitled | a service reads only the drops i": SECTION_5_1,
     f"{RA}::_authorize_resolution::caller {{}} is excluded from deciding promise {{}} b": DUTIES,

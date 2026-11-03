@@ -120,8 +120,11 @@ def test_an_unset_DSN_refuses_to_connect(monkeypatch):
 _SQL = {n: v for n, v in vars(promotion_stores).items() if n.endswith("_SQL")}
 
 
-def test_the_statement_population_is_the_four_known():
-    assert set(_SQL) == {"_MIGRATION_SQL", "_INSERT_SQL", "_EXISTING_SQL", "_RECORD_FOR_SQL"}
+def test_the_statement_population_is_the_five_known():
+    # _PROMOTED_BETWEEN_SQL (a14e21b5, the review export) is a read-only SELECT: it passes the
+    # no-UPDATE/DELETE arm and runs through a module constant like the others.
+    assert set(_SQL) == {"_MIGRATION_SQL", "_INSERT_SQL", "_EXISTING_SQL", "_RECORD_FOR_SQL",
+                         "_PROMOTED_BETWEEN_SQL"}
 
 
 def test_every_statement_is_a_module_constant_the_population_can_see():

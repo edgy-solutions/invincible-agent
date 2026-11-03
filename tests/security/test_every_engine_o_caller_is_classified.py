@@ -129,6 +129,9 @@ ROWS = [
     # MOVED by lane/74 #52 (5902102b, ruling (b); architect 2026-10-12: "row 17 moves with #52"):
     # _smoke_person() reads IA_SMOKE_ON_BEHALF_OF and refuses to run without it.
     Row("17", "src/iagent/defs/agent_routers.py", "trigger_restate_analyst", "/analyze", "TEST_PERSONA"),
+    # ADDED with the canvas seed (473f9c40): the twin of row 3. `_canvas_seed_enumerator` takes `user_email`
+    # from its call site, which passes `current_user.authz_id`, the verified caller.
+    Row("18", "src/iagent/gateway.py", "_enumerate", "/enumerate_instances", "TOKEN"),
 ]
 DOMAINS_WITHOUT_PERSON_ROWS: set[str] = set()  # empty since #48: run_resolver_corpus sends a person with its domains
 EXPECTED_NO_PERSON_SITES = 4  # rows 13, 14 (/resolve) still left to be refused; rows 15, 16 (/fill_slots) now refused (lane/74, 2026-10-16)

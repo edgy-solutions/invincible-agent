@@ -251,5 +251,5 @@ def test_a_delegate_is_still_refused_on_the_whole_case(client_for):
     c = client_for(_user(DELEGATE), runner, {"c-1": [_row(_record())]})
     resp = c.get("/cases/c-1")
     assert resp.status_code == 403
-    assert resp.json()["detail"]["error"] == "delegate_reads_artifacts_only"
+    assert resp.json()["detail"]["error"] == "service_token_refused"  # the MCP door's answer
     assert runner.posts == []

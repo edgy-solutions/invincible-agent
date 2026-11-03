@@ -2,13 +2,25 @@
 
 ## 0.4.77 — not yet cut
 
-Entries merged after the 0.4.76 cut (`ce589473`).
-
 **Policy changes (the grantor a shipped row names)**
 
 - **Every row this rail added says `granted_by: seed`**, as a shipped row must (ruled 2026-10-31).
   18 rows had reached master naming a person: 12 in `repository_paths.yaml` and 5 in `task_grants.yaml`
-  from #149, and `safety_finding_review:SUSTAINMENT` from #141. 0.4.76 carries them. The field is a record; no answer changes.
+  from #149, and `safety_finding_review:SUSTAINMENT` from #141. 0.4.76 carries them. The field is a
+  record; no answer changes.
+
+**Policy changes (a course is reviewed as a document: `review_shape: document`)**
+
+- **The `course` content kind now declares `review_shape: document`** (it declared `course`, a shape
+  no card keys on). A course's promotion task payload carries `review_shape` and `sections[]`
+  (`{section_id, title, page, page_end?}`), read from the `extraction.json` beside the manifest, ids
+  derived by the training contract (`{ingest_id}_s{i}`, nested `{parent}_s{i}`). A promote's
+  `review_coverage` with `item_kind: section` is verified against exactly that stored list. One bad
+  row, or no readable outline, leaves `sections` absent (never partial, never empty): the card shows
+  its reason line and a coverage answers 503 `review_coverage_unverifiable`. A `notice` task's payload
+  is unchanged. The `course` row in `policy/review_shapes/` stays.
+- **Dormant until doc-tools #172 is deployed**: no course extraction carries the outline before it,
+  so until then every course task files without `sections`.
 
 ## 0.4.76 — 2026-11-03
 
