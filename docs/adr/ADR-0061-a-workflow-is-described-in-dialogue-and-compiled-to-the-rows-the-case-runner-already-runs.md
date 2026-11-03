@@ -2023,15 +2023,23 @@ Its other three endings are kept apart. The semantic diff is 0 because `canonica
 because the table's terminal is `info_needed`. The person said at turn 15 that the notice "waits for information
 and that is the end". The model tried to correct the row twice with `rows[when.outcome=needs_info].then`, and both
 patches were refused because no such form exists. It didn't take up the refusal's advice to set `rows` whole. The
-loop then asked for the steps of a stage called `needs_info` at turns 12 and 28, and the person had no answer. **So
-"that is not a stage" has bitten again**, which changes the 11-02 note that it hadn't since run 18.
+loop asked for the steps of a stage called `needs_info` at turn 12, before that, and again at turn 28, and the person
+had no answer either time. **So "that is not a stage" has bitten again**, which changes the 11-02 note that it hadn't
+since run 18.
 
 **Run 44 lost the filing step in a way the build doesn't reach.** Its record is an `emit` with `disposes: approved`.
-The model set that at turn 10, in answer to a `missing` gap on `outputs.record.ends`. The answer changed the leaf
-in a turn that asked about it, so the leaf counts as stated, under my 11-02 departure from what I proposed. No
-confirm was raised, the scripted user never said no, and nothing was rejected to refuse. The person's words
-"Then the records group files it and says so" were in that same answer. So the turn check vouched for the
-model's reading of the person's sentence.
+The model set that at turn 10, in answer to a `missing` gap on `outputs.record.ends`, from "the outcome approved"
+in an answer that goes on "Then the records group files it and says so". The turn check then counts the slot as
+answered, because the question's key is the slot's own (`_attributed`, ruled 10-30). So no confirm on `ends` was
+raised, the scripted user never said no, and nothing was rejected to refuse. I read that cause from the code and
+did not test it alone. Run 45 is the control: it set the value at turn 5 under `steps.record`, and a confirm on `ends`
+was raised at turn 26 and rejected. My 11-02 departure isn't the cause, since it applies only to confirm, contradiction
+and null turns. The rejection rule also reads this turn the opposite way: `_asks` says a `missing` gap "asks how, and
+states nothing".
+
+**Run 44 also lost an answer.** At turn 26 the person said "Once it is filed the notice is dispositioned and that is
+the end". The model's patch was refused on `steps[0].disposes`, its next reply was an empty patch, and the turn closed,
+so that answer changed nothing.
 
 **The refusal did what it was ruled to do, the one time it was reachable.** In run 45 the scripted user rejected
 `disposes` at turn 26. At turn 29 the model wrote it back, as runs 42 and 43 did, and was refused with "record still
@@ -2039,8 +2047,11 @@ has no step that settles it; disposes was rejected at turn 26 and the person has
 or wait step after the send fills it". Its next patch in that turn was an `emit` and a `signal_await`. That is one
 occurrence, not a rate.
 
-**The refused path's forms did not help.** The new text was returned on all three refused paths across the runs, and
-none led to the whole-list write it names. In run 46 this cost nothing, because the row was already right.
+**The refused path's forms helped in one turn of three.** The new text came back four times, in one turn of each run.
+In run 46 the next reply wrote the table whole, as the text says. In run 44 the next reply was the empty patch above.
+In run 45 the model sent the same path again, was refused again, and the row stayed wrong, which is why that run can't
+run. Run 44 also sent `rows[when=outcome=timed_out].then` at turn 18, which parses and got the shape refusal instead,
+and its next reply wrote the table whole.
 
 **The record stage:** held in two of three. Run 45 held it through the refusal. Run 46 held it when the model's
 `human_await` was rejected at its `excludes` confirm and the person's words were given again. Run 44 lost it as above.
@@ -2068,10 +2079,12 @@ changed the instrument or the status.
 
 **For the open list, and not built:**
 1. The record stage was lost in one of three runs. Your next item for that case is the grammar's account of a
-   two-step stage. Run 44 adds a second candidate: a value set at a `missing` gap is vouched for as stated, so the
-   person is never asked. Either may be the fix, and I'd want your ruling before changing "stated".
+   two-step stage. Run 44 adds a second candidate: a value set at a `missing` gap on its own slot counts as answered,
+   so the person is never asked. Either may be the fix. The turn check is your 10-30 rule, so I'd want your ruling
+   before changing it.
 2. "That is not a stage" has bitten in run 45.
 3. A deferral whose slot was later filled stays in the draft.
+4. A turn can close on an empty patch after a refusal, which loses the person's answer (run 44, turn 26).
 
 ## Consequences
 
