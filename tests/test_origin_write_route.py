@@ -290,7 +290,17 @@ def filing(monkeypatch, ingest_fake):
         state.registered.append(kw)
         return {"task_id": kw["task_id"], "recipients": ["steward"]}
 
+    def _open_payload(task_id):
+        # What the real get_open_task_payload returns for an ALREADY-FILED OPEN task: the parsed
+        # payload of its pending row (None when nothing is pending). The filer reads its
+        # `content_kind` to tell "same kind: ALREADY_FILED" from "the leaf moved: rewrite", so an
+        # already-filed task filed for the row's own kind carries the row's content_kind.
+        if not state.exists:
+            return None
+        return {"content_kind": (state.ingest.row or {}).get("content_kind")}
+
     monkeypatch.setattr(ht, "task_exists", _exists)
+    monkeypatch.setattr(ht, "get_open_task_payload", _open_payload)
     monkeypatch.setattr(ht, "register_task", _register)
     state.ingest = ingest_fake
     return state

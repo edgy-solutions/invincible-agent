@@ -70,7 +70,7 @@ def test_a_definition_CANNOT_declare_an_escalation_path():
     Pydantic models here forbid extra fields only if configured to; what matters is that no field
     EXISTS for it, so every definition gets the executor's escalation and none can opt out."""
     assert "escalation" not in DispatchFanoutStep.model_fields
-    assert set(DispatchFanoutStep.model_fields) == {"kind", "id", "capability"}
+    assert set(DispatchFanoutStep.model_fields) == {"kind", "id", "stage", "capability"}
 
 
 def test_generic_direct_call_SURVIVES_unchanged():
