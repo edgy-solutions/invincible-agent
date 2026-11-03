@@ -18,7 +18,8 @@ THE PLANE. Both verbs are the species `document_promotion`, resolved through
 `/human_tasks/{id}/act` like every other task: `can_act` on the task's audience, the verb
 checked against the species' declaration, `acted_by` = the caller. `act` re-asks `can_act`
 itself, because the route's check is one caller's discipline and this function is the effect.
-Any doubt is a refusal: an empty identity, a False, or a raise from the check.
+Any doubt is a refusal: an empty identity, a False, or a raise from the check; a malformed answer
+from the decider refuses 503, not 403.
 
 ORDER, AND WHICH PARTIAL STATE IS SAFE. Every store the verb needs is checked present BEFORE
 anything is written, and a promotion checks that the ingest artifact node exists, so a refusal
@@ -56,6 +57,8 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Protocol
+
+from iagent.authz import AuthorizationUnavailable
 
 from .decision_record import build_decision_record, make_check
 
@@ -383,6 +386,9 @@ def _may_act(can_act: Callable[[str, str], bool], audience: str, acted_by: str) 
         return False
     try:
         return can_act(audience, acted_by) is True
+    except AuthorizationUnavailable as exc:  # `check_can_act` raises this only for a malformed answer
+        raise PromotionRefused("authorization_unavailable",
+                               "the authorizer's answer could not be read", status=503) from exc
     except Exception:  # noqa: BLE001 — fail-closed: an unanswerable check is a no
         return False
 
