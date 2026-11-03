@@ -62,6 +62,8 @@ Integer or float both compute the same figures. A float budget only prints diffe
 | over `FIN_ASSET_MAX_ROWS` | 422 | `asset_too_large` |
 | no rows for the program or window | 422 | `not_in_model` (the seed answers an empty 200 for a window) |
 
+A denial stays a 403 because the board's relay keeps it whole. On the chat path the supervisor's relay carries `status`, `denied_assets`, `subject` and `message` past its refusal dict, since those open the request-access flow.
+
 **Provenance.** When the asset answers, `data_provenance` is the URN plus `FIN_DATASET_BANNER`, never the notional banner, and `data_source: {kind: "asset", urn}` is added. The banner is required so a synthetic asset can't read as real.
 
 **Dependency.** `polars` and `edgy-dag-tools@v0.10.0` in engine-fin's lock, as their own commit: +30 packages, about 242 MB of wheels, imported only when the flag is set. Memory under the 512Mi limit is unmeasured.

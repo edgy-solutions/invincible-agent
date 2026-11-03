@@ -407,6 +407,37 @@ def test_not_entitled_is_a_403_that_names_the_grant_and_carries_no_figure(client
     assert SECRET not in r.text and SECRET not in " ".join(logs.lines)
 
 
+def test_the_denial_this_engine_sends_opens_request_access_on_the_chat_path(client, seam):
+    """The join, on the engine's own body. The supervisor relays a refusal-bearing 403 as a refusal
+    dict, and the request-access flow is keyed on what that dict still carries."""
+    requests = pytest.importorskip("requests")
+    from src.iagent.defs import dynamic_supervisor as ds
+
+    seam.raises = NotEntitled("the gate refused")
+    answer = measure(client)
+    assert answer.status_code == 403, answer.text
+    wire = requests.Response()
+    wire.status_code = answer.status_code
+    wire._content = answer.content
+
+    events = []
+
+    class Ctx:
+        class log:
+            info = error = staticmethod(lambda *a, **k: None)
+
+        log_event = staticmethod(events.append)
+
+    relayed = ds._refusal_from_engine_4xx(Ctx(), "http://engine-fin/measure/fin_tcpi", wire)
+    assert relayed["refused"] is True
+    ds._log_subtask_access_denied_asset(Ctx(), engine_response=relayed, sub_query="q")
+    assert [e.asset_key.path for e in events] == [["subtask_access_denied"]]
+    metadata = events[0].metadata
+    assert json.loads(metadata["denied_assets_json"].value) == [URN]
+    assert metadata["subject"].value == ALICE
+    assert metadata["message"].value == answer.json()["detail"]["message"]
+
+
 def test_mesh_unavailable_is_a_503_and_its_text_reaches_neither_the_answer_nor_the_log(
         client, seam, declared, logs):
     seam.raises = MeshUnavailable(f"could not reach the gateway: Bearer {SECRET}")
