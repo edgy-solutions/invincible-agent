@@ -102,6 +102,8 @@ class Gap:
     proposed: Any = None                       # an overwrite contradiction: the value not applied
     revises: Tuple[Tuple[str, str], ...] = ()  # (file, leaf path) pairs an answer may overwrite
     rewrites: Tuple[Tuple[str, str], ...] = ()  # a confirm: what "that is not right" may rewrite
+    # a confirm: (file, path, the slots that would have asked it), replaced unless the person stated it
+    guesses: Tuple[Tuple[str, str, Tuple[str, ...]], ...] = ()
 
 
 @dataclass
@@ -121,6 +123,15 @@ class Draft:
 
 class PatchError(ValueError):
     """A patch entry that cannot be applied at all (malformed path or shape)."""
+
+
+class StructureError(PatchError):
+    """A patch that leaves a structural error no question can put to the person. ``leaves`` are what
+    its restatement may rewrite to fix it, whatever the question it answers."""
+
+    def __init__(self, message: str, leaves: Tuple[Tuple[str, str], ...]):
+        super().__init__(message)
+        self.leaves = leaves
 
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -400,14 +411,18 @@ def _is_rendering(file: str, path: str) -> bool:
     return file.startswith("task_kinds/") and (path == "renders_as" or path.startswith("renders_as."))
 
 
-def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] = None) -> None:
+def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] = None,
+                fixing: Tuple[Tuple[str, str], ...] = ()) -> None:
     """Apply ``patch`` to ``draft``. A rendering field is dropped, set or unset. A leaf already holding a deep-unequal value is NOT overwritten:
-    it becomes a pending contradiction -- unless ``answering`` names that leaf in its ``revises``.
+    it becomes a pending contradiction -- unless ``answering`` names that leaf in its ``revises``, a
+    confirm's answer replaces a guess there, or ``fixing`` names it (the restatement of a patch
+    refused for its structure).
     An equal re-set is a no-op. Answering an overwrite contradiction always settles it: applied if
     the answer set the leaf, else resolved in favour of the earlier value (``draft.kept_earlier``)."""
     patch = patch or {}
     revisable = set(answering.revises) if answering is not None else set()
-    scope = tuple(answering.rewrites) if answering is not None and answering.kind == "confirm" else ()
+    scope = (tuple(answering.rewrites) if answering is not None and answering.kind == "confirm"
+             else ()) + tuple(fixing)
     for entry in patch.get("unset") or []:
         if not isinstance(entry, dict) or "file" not in entry or "path" not in entry:
             raise PatchError(f"an unset entry needs file and path; got {entry!r}")
@@ -434,7 +449,8 @@ def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] =
                 old = container[key]
                 if old == leaf_value:
                     continue
-                if (file, leaf_path) not in revisable and not _in_scope(scope, file, leaf_path):
+                if ((file, leaf_path) not in revisable and not _in_scope(scope, file, leaf_path)
+                        and not _replaces_guess(draft, answering, file, leaf_path, old, leaf_value)):
                     _pend(draft, file, leaf_path, old, leaf_value)
                     continue
             container[key] = leaf_value
@@ -472,6 +488,25 @@ def _in_scope(scope: Tuple[Tuple[str, str], ...], file: str, path: str, unset: b
         elif path == p or path.startswith(p + ".") or path.startswith(p + "["):
             return True
     return False
+
+
+def _replaces_guess(draft: Draft, answering: Optional[Gap], file: str, path: str, old: Any, new: Any) -> bool:
+    """True iff the answer to a confirm replaces, at ``path`` of ``file``, a value nobody stated: a
+    correction, not a contradiction (architect, 2026-11-02). Runs 35 and 36 asked "you were never
+    asked about this, is it right?", then charged the answer with "earlier you said". A value a
+    question did cover still pends. The list of steps is one leaf, so it lands only when every other
+    step comes through unchanged and in order."""
+    if answering is None or answering.kind != "confirm":
+        return False
+    if path == "steps":
+        sid = next((p[len("steps[id="):-1] for f, p in answering.rewrites
+                    if f == file and p.startswith("steps[id=") and p.endswith("]")), None)
+        if sid is None or not isinstance(old, list) or not isinstance(new, list):
+            return False
+        others = [s for s in old if not (isinstance(s, dict) and str(s.get("id")) == sid)]
+        return [s for s in new if s in others] == others
+    return any(_in_scope(((f, p),), file, path) and not any(_attributed(draft, k, ((file, path),)) for k in keys)
+               for f, p, keys in answering.guesses)
 
 
 def _unset(draft: Draft, file: str, path: str) -> None:
@@ -709,7 +744,9 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
                 sp = f"steps[id={last.get('id')}]"
                 revises += [(f, f"{sp}.accepts"), (f, f"{sp}.reason_required")]
             for v in D:
-                if v not in verbs:
+                # a kind with no answers yet says nothing to contradict: run 37 asked "review's
+                # answers are ." three times, and `contradiction:task_kind` already asks for them
+                if verbs and v not in verbs:
                     out.append(Gap(f"contradiction:chaining.{tname}.{v}", facet, "contradiction",
                                    f"You said what happens when {step_w} ends '{v}', but {step_w}'s "
                                    f"answers are {', '.join(verbs)}. Can it end '{v}'?",
@@ -971,12 +1008,38 @@ def _attributed(draft: Draft, key: str, leaves: Tuple[Tuple[str, str], ...]) -> 
     return True
 
 
+def _built_on_step(files: Dict[str, dict], key: str, scope: Tuple[Tuple[str, str], ...]) -> tuple:
+    """What a step's slot may replace besides the step, each with the slots that would have asked it
+    (architect, 2026-11-02): the answers of the task kind the step names, and the routing table
+    after its definition. Correcting a guessed step changes both; ``_replaces_guess`` keeps what the
+    person stated."""
+    sid = next((p[len("steps[id="):-1] for _, p in scope if p.startswith("steps[id=") and p.endswith("]")), None)
+    if sid is None:
+        return ()
+    wid = key.split(".")[1]
+    wfs, kinds = _workflows(files), _kinds(files)
+    step = next((s for s in _steps(wfs[wid][1]) if str(s.get("id")) == sid), {}) if wid in wfs else {}
+    tk = step.get("task_kind")
+    out: List[Tuple[str, str, Tuple[str, ...]]] = []
+    if tk:
+        naming = [f"approvals.{w}.{s.get('id')}" for w, (_, raw) in wfs.items()
+                  for s in _steps(raw) if s.get("task_kind") == tk]
+        for n in _kinds_for(str(tk), kinds):
+            out += [(kinds[n][0], "accepts", tuple(f"{a}.task_kind" for a in naming)),
+                    (kinds[n][0], "reason_required", tuple(f"{a}.reason_required" for a in naming))]
+    for tf, t in _decisions(files).values():
+        if str(t.get("after")) == wid:
+            out += [(tf, leaf, (f"approvals.{wid}.next", f"outputs.{wid}.next"))
+                    for leaf in ("matches", "domain", "rows", "terminals")]
+    return tuple(out)
+
+
 def confirms(draft: Draft) -> List[Gap]:
     """A required slot the draft holds a value for that the person was never asked about: asked
     once to confirm (ADR-0061 §10). Runs 10 to 18 drafted ``excludes: []`` on every approval
     unasked, so the planted contradiction behind that question was never reached. An answer that
-    differs replaces the slot's own value; one that touches a leaf the person did state is an
-    overwrite contradiction, asked like any other."""
+    differs replaces the slot's own value and what was built on the guess; one that touches a leaf
+    the person did state is an overwrite contradiction, asked like any other."""
     out: List[Gap] = []
     for key, facet, leaves, said, scope in _value_slots(draft.files):
         if _attributed(draft, key, leaves):
@@ -989,7 +1052,7 @@ def confirms(draft: Draft) -> List[Gap]:
                        f"Required, to confirm: the draft says {said}, but you were never asked "
                        "about it." + (f" It is about {step}." if step else "")
                        + " Is that right? If not, what is it?", revises=leaves,
-                       rewrites=scope))
+                       rewrites=scope, guesses=_built_on_step(draft.files, key, scope)))
     return out
 
 
@@ -1404,6 +1467,10 @@ RULES
 - A terminal is what a row points to (`then: <terminal>`), not an outcome: every value in the
   domain still needs its own row, and an outcome that ends the case has a row whose `then` names a
   terminal listed in `terminals`.
+- A stage is never a terminal: a stage is named by a row's `then` and never listed in `terminals`,
+  or a case stops there and never enters it.
+- A selection table has no `after`: `after` belongs to a chaining table and names the workflow it
+  follows. The trigger names its selection table in `selection`.
 - REQUIRED: every human_await step sets excludes: the "{trigger.<field>}" of whoever may not
   answer, or [] when the user says anyone may answer or nobody is barred.
 - REQUIRED: every task kind sets reason_required: the answers that must come with a reason, or []
@@ -1541,16 +1608,48 @@ def _refuse_unreadable(draft: Draft) -> None:
                          "{when: {input: value}, then: name}; each list of names holds only names.") from exc
 
 
+def _structure_errors(files: Dict[str, dict]) -> Dict[str, Tuple[Tuple[str, str], ...]]:
+    """Each structural error the person cannot answer, as what the model is told and what it may
+    rewrite (architect, 2026-11-02). Run 36 listed a stage as a terminal of the table that routes to
+    it. Run 37 put `after` on a selection table, and no slot asks about either."""
+    triggers = _of(files, "triggers")
+    selection = {str(t.get("selection")) for _, t in triggers if t.get("selection")}
+    stages = set(_workflows(files))
+    for _, t in triggers:
+        if isinstance(t.get(_STAGES), list):
+            stages.update(map(str, t[_STAGES]))
+    out: Dict[str, Tuple[Tuple[str, str], ...]] = {}
+    for name, (tf, t) in _decisions(files).items():
+        if name in selection and t.get("after"):
+            out[f"{tf} is the selection table, and a selection table has no `after`: remove it"] = ((tf, "after"),)
+        for x in t.get("terminals") or []:
+            if str(x) in stages:
+                out[f"`terminals` of {tf} lists {x}, which is also a stage, so a case stops there and "
+                    "never enters it: a stage is named only by a row's `then`, so set `terminals` "
+                    "without it"] = ((tf, "terminals"),)
+    return out
+
+
+def _refuse_structure(before: Draft, trial: Draft) -> None:
+    """A structural error this patch introduced goes back to the model naming the cause. Asking the
+    person would get nowhere. An error the draft already held does not block a later patch."""
+    had = _structure_errors(before.files)
+    new = {c: leaves for c, leaves in _structure_errors(trial.files).items() if c not in had}
+    if new:
+        raise StructureError("; ".join(new), tuple(x for leaves in new.values() for x in leaves))
+
+
 def _apply_or_charge(draft: Draft, extractor: Callable[[dict, Draft, Optional[Gap]], dict],
                      entry: dict, gap: Optional[Gap], turn: int, charged: List[dict],
                      log: Optional[List[dict]] = None) -> None:
     """Apply the extractor's patch for one turn. A patch the loop cannot apply is a model error
     charged to that turn (architect, 2026-10-30): it is recorded, the model is asked to restate it
     with the refusal in hand, and the loop continues. A run never crashes on model output: a patch
-    that leaves the draft unreadable is refused. The
+    that leaves the draft unreadable is refused, and so is one that leaves a structural error. The
     patch is tried on a copy, so nothing of a refused patch lands in the draft. Each reply goes to
     ``log``: the patch, the model's own text when it has one, and the refusal if any."""
     ask = entry
+    fixing: Tuple[Tuple[str, str], ...] = ()
     for _ in range(1 + PATCH_RESTATES):
         trial = copy.deepcopy(draft)
         reply: dict = {}
@@ -1561,9 +1660,11 @@ def _apply_or_charge(draft: Draft, extractor: Callable[[dict, Draft, Optional[Ga
             reply["patch"] = copy.deepcopy(patch)
             if getattr(extractor, "last_raw", None) is not None:
                 reply["raw"] = extractor.last_raw  # type: ignore[attr-defined]
-            apply_patch(trial, patch, turn, answering=gap)
+            apply_patch(trial, patch, turn, answering=gap, fixing=fixing)
             _refuse_unreadable(trial)
+            _refuse_structure(draft, trial)
         except PatchError as exc:
+            fixing = getattr(exc, "leaves", fixing)
             reply["refused"] = str(exc)
             charged.append({"turn": turn, "error": str(exc)})
             ask = {**entry, "refused": str(exc)}

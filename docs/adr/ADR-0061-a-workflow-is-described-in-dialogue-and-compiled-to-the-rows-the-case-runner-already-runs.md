@@ -2,8 +2,8 @@
 
 **Status:** Proposed, ruled 2026-11-02: this ADR records the design and its measurements, including
 the gap below. **The bar for "the loop works" is not met.** It is met when a run is runnable with all
-four stages reachable. `runnable` now refuses any definition no table routes to from the trigger, and
-of runs 35 to 37 none is runnable, though two have all four stages reachable (§10).
+four stages reachable and each stage has the steps the person described (ruled 2026-11-02).
+`runnable` now refuses any definition no table routes to from the trigger, and of runs 35 to 37 none is runnable, though two have all four stages reachable (§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -1578,6 +1578,74 @@ three:
 
 The fourth is a question, not a recommendation: should the bar also ask that a run's stages have the steps
 the person described? As worded, run 37 clears it with one line changed.
+
+#### 2026-11-02: the architect's rulings on runs 35 to 37
+
+1. Yes: a value nobody stated, corrected at its own confirm, is a correction, not a contradiction. The
+   answer replaces the guess and its table.
+2. Yes: a structural error the person can't answer goes back to the model as a refused patch naming the
+   cause. Both cases go into the grammar.
+3. Yes, after (1).
+4. Yes: the bar requires each stage to have the steps the person described. A runnable spec that drops a
+   step is not the workflow.
+
+The refusal of a value of the wrong shape, which I had marked as my call, is accepted. So is the suite's
+time of about 45 seconds.
+
+#### 2026-11-02: the four rulings, built
+
+**Ruling 1, the correction.** A confirm now carries what was built on the guess, and its answer may
+replace those values without pending a contradiction. For a step's slot that is the answers and reasons
+of the task kind the step names, and the routing table after its definition. Each is listed with the
+slots that would have asked it. If one of those slots was answered, the person stated the value, and a
+different answer still pends as a contradiction. "Stated" is the turn check this ADR already uses for
+confirms. So a value that arrived inside a stage answer, or in the opening, counts as unstated unless a
+question covered it. That reading is mine, for review: it is the existing standard, not a new one.
+
+A workflow's `steps` is one list and so one leaf. A patch that rewrites the whole list lands only if every
+other step comes through unchanged and in order, so correcting a guessed step cannot change one the
+person described.
+
+The empty-answers form is gone: a kind with no answers yet raises no "can it end" contradiction, and
+`contradiction:task_kind` still asks for the answers. **What remains:** the ruling covers a confirm, so a
+false "earlier you said" outside one still happens. Runs 35 and 37 raised `#accepts` after
+`steps.<id>.routed`, run 35 raised `chaining.<t>.needs_info` with non-empty answers, and run 37 raised
+`steps[id=ack].excludes`. Ruling 3 answers these; it does not stop them being asked.
+
+**Ruling 2, the refusal.** A patch that lists a stage in a table's `terminals`, or puts `after` on the
+table the trigger names in `selection`, is refused with the cause named, and the model restates it. The
+grammar has both lines. "A stage" is a definition or a name in the trigger's `stages`, so a terminal is
+refused even before that stage's definition is drafted. Two things beyond the ruling's words, for review:
+
+- Only an error the patch introduces is refused. An error the draft already held does not block every
+  later patch.
+- The restatement may rewrite the leaf the refusal named, even one the person stated, because the error
+  may come from a later patch: a new stage that an old terminal already names. Without this the restated
+  patch would pend the terminal, keep the error and be refused again.
+
+**Ruling 3, the scripted user.** It now answers a contradiction the loop raised, from the expected bundle,
+and each is recorded in the row's `answered_contradictions`. Its answers are words only, with no facts
+shown to the model, so the model is measured on the words as it is for any other answer. That is my
+reading of "as it already rejects a routing row", which does carry facts; tell me if you meant the same
+here. A single value is said as "It is a, b." or "It is none." A value with a structure, such as steps or
+rows, is said in the person's own words from the entry that asks for it. An outcome the expected table
+routes gets "Yes, it can end x. It can end: a, b." The trigger's form, a selection table's rows and a
+value the bundle does not hold stay unanswered, and count as they did. A planted contradiction is banked
+and never reaches this code, so detection is unchanged.
+
+**Ruling 4, the bar.** The row gains `dropped_steps` and `bar_met`. An expected stage has dropped a step
+if its step kinds are not an in-order subsequence of the paired draft stage's. Steps compare by kind, so
+a step of the right kind with the wrong content is not counted, and `semantic_diffs` carries it. An added
+step is not a dropped one. The pairing walk stops at a terminal, so a stage it can't pair counts as having
+dropped all its steps, and such a stage is usually counted as unreachable too. The two columns can
+therefore overlap on one stage.
+
+**Checks.** `tests/socratic` 234 passed and the gov ratchet 24 passed, both with
+`LOCKED_SDK=sdk_0912`, so the ratchet counts no new refusal site. The shape
+census is unchanged, with the new reader included: 469 refused, 2003 passed, 0 crash sites over the three
+fixtures. All 33 mutants are red on a named test, each restored and checked byte for byte. One was
+first written so that the file failed to import, which is not a kill; rewritten, it went red on the test it
+was written for.
 
 ## Consequences
 
