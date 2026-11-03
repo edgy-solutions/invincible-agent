@@ -3,10 +3,10 @@
 **Status:** Proposed, ruled 2026-11-02: this ADR records the design and its measurements, including
 the gap below. **The bar for "the loop works" is not met.** It is met when a run is runnable with all
 four stages reachable and each stage has the steps the person described (ruled 2026-11-02).
-`runnable` now refuses any definition no table routes to from the trigger. Runs 41 to 43 are all
-runnable with all four stages reachable, and all three have the impact review's `render` step. None meets
-the bar, which now reads routing as well as steps (instrument v2): two lost the record's filing step, and
-the third has every step and five wrong routes (§10).
+`runnable` now refuses any definition no table routes to from the trigger. Runs 44 to 46, on
+instrument v2, whose bar reads routing as well as steps, do not meet it. One can't run, one lost the record's
+filing step, and one has every step and ends two stages the person named separately at one terminal, which
+leaves a question for the architect (§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -1998,6 +1998,80 @@ one end in the same place. That is the case ruling 3 names.
    pair nothing and read `no`, even if both are right.
 7. **A known way around the refusal.** Renaming a step in one patch and setting the rejected leaf on the renamed
    step in a later patch is not caught. A rename and the leaf in the same patch is.
+
+#### 2026-11-03: runs 44 to 46, and the bar is not met
+
+Three complete PCN runs at `94532250`, instrument v2, one at a time, with the same model and harness on the
+0.9.12 overlay. Dagster listed no active run before each one.
+
+| run | questions / bank | runnable errors | unreachable | stages that dropped a step | wrong routes | bar | semantic diffs | open | answered by path | refused patches | confirms | rejected | contradiction | deferral | reasons | contradictions answered | deferrals dropped | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 44 | 26/18 | 0 | 0 of 4 | 1 | 3 | no | 2 | 0 | 6 | 2 | 13 | 0 | 1/1 | 1/1 | held | 1 | 0 | runnable | 721 |
+| 45 | 29/18 | 1 | 0 of 4 | 0 | 1 | no | 4 | 1 | 6 | 3 | 15 | 1 | 1/1 | 1/1 | held | 1 | 0 | cannot_run | 752 |
+| 46 | 27/18 | 0 | 0 of 4 | 0 | 2 | no | 0 | 0 | 5 | 1 | 12 | 1 | 1/1 | 1/1 | held | 2 | 1 | runnable | 682 |
+
+**The bar for Proposed is not met as built: no run reads `yes`.** Runs 44 and 45 read `no` and should, so that
+half is there. Run 46 is the open question, because its `no` rests on one reading of mine (below).
+
+**Run 46 is the closest yet.** It is runnable, every stage is reachable, it dropped no step, and it has no
+semantic diff. The planted contradiction was caught. Its record stage is an `emit` and a `signal_await`, as
+described. It reads `no` on two routes, which are one fault: the person says "the notice is acknowledged and
+that is the end" and "the notice is dispositioned and that is the end", and the model ended both at `completed`.
+Its other three endings are kept apart. The semantic diff is 0 because `canonical` collapses every terminal.
+
+**Run 45 can't run.** The impact review's `needs_info` row names a target that is neither a stage nor a terminal,
+because the table's terminal is `info_needed`. The person said at turn 15 that the notice "waits for information
+and that is the end". The model tried to correct the row twice with `rows[when.outcome=needs_info].then`, and both
+patches were refused because no such form exists. It didn't take up the refusal's advice to set `rows` whole. The
+loop then asked for the steps of a stage called `needs_info` at turns 12 and 28, and the person had no answer. **So
+"that is not a stage" has bitten again**, which changes the 11-02 note that it hadn't since run 18.
+
+**Run 44 lost the filing step in a way the build doesn't reach.** Its record is an `emit` with `disposes: approved`.
+The model set that at turn 10, in answer to a `missing` gap on `outputs.record.ends`. The answer changed the leaf
+in a turn that asked about it, so the leaf counts as stated, under my 11-02 departure from what I proposed. No
+confirm was raised, the scripted user never said no, and nothing was rejected to refuse. The person's words
+"Then the records group files it and says so" were in that same answer. So the turn check vouched for the
+model's reading of the person's sentence.
+
+**The refusal did what it was ruled to do, the one time it was reachable.** In run 45 the scripted user rejected
+`disposes` at turn 26. At turn 29 the model wrote it back, as runs 42 and 43 did, and was refused with "record still
+has no step that settles it; disposes was rejected at turn 26 and the person has not stated it again; a signal_await
+or wait step after the send fills it". Its next patch in that turn was an `emit` and a `signal_await`. That is one
+occurrence, not a rate.
+
+**The refused path's forms did not help.** The new text was returned on all three refused paths across the runs, and
+none led to the whole-list write it names. In run 46 this cost nothing, because the row was already right.
+
+**The record stage:** held in two of three. Run 45 held it through the refusal. Run 46 held it when the model's
+`human_await` was rejected at its `excludes` confirm and the person's words were given again. Run 44 lost it as above.
+
+**One stale deferral.** Run 46 still holds a deferral on `outputs.record` from turn 5, "user could not answer", though
+turns 8 and 20 filled that stage. The stale-deferral drop only looks at whether a slot exists. It compiles to nothing
+and isn't in the bar, but a ratifier would be shown it.
+
+#### 2026-11-03: the question the runs leave, for the architect
+
+**Do two endings the person named separately have to stay separate?** This is reading 2 above, and it now decides
+the bar. The options:
+
+| reading | run 41 | run 43 | run 46 | bar for Proposed |
+| --- | --- | --- | --- | --- |
+| Any end counts ("or to a terminal", literally) | `yes` | `no`, on its step | `yes` | not usable: it passes run 41, which the order expected to fail on routing |
+| Some ends may share a terminal, and a rejection may not share with a success | `no` | `no`, on its step | `yes` | met by 46 with 44 and 45, but the instrument must be told which ends may share, so it is a v3 and 41 to 46 are re-read |
+| Every end the person named stays apart (as built) | `no` | `no` | `no` | not met |
+
+My recommendation is to keep it as built. The person named each ending, and in run 46 a reader can't tell an
+acknowledged minor change from a dispositioned one. Loosening the bar for the one run it blocks is also what the
+guard on the walk was there to prevent. The cost is low, because the fault looks like a naming fault: a grammar line
+saying an ending the person names keeps the person's name, then three more runs. This is your call, and I have not
+changed the instrument or the status.
+
+**For the open list, and not built:**
+1. The record stage was lost in one of three runs. Your next item for that case is the grammar's account of a
+   two-step stage. Run 44 adds a second candidate: a value set at a `missing` gap is vouched for as stated, so the
+   person is never asked. Either may be the fix, and I'd want your ruling before changing "stated".
+2. "That is not a stage" has bitten in run 45.
+3. A deferral whose slot was later filled stays in the draft.
 
 ## Consequences
 
