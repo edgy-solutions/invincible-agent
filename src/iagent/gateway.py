@@ -1624,9 +1624,15 @@ async def file_triage_task(
     """
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
-    allowed = await run_in_threadpool(
-        lambda: human_tasks.check_can_invoke(_MESH_FILE_TRIAGE, current_user.authz_id)
-    )
+    try:
+        allowed = await run_in_threadpool(
+            lambda: human_tasks.check_can_invoke(_MESH_FILE_TRIAGE, current_user.authz_id)
+        )
+    except human_tasks.AuthorizationUnavailable as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the authorizer's answer could not be read",
+        }) from exc
     if not allowed:
         raise HTTPException(status_code=403, detail={
             "error": "not_entitled_to_file_triage",
@@ -5767,7 +5773,13 @@ async def act_on_human_task(
     audience = match["audience"]
     # can_act is asked about the ACTOR (the principal for a delegated act; R-089) — NEVER about
     # the delegate. A delegate speaks only as far as the principal it names is itself entitled.
-    allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, actor))
+    try:
+        allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, actor))
+    except human_tasks.AuthorizationUnavailable as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the authorizer's answer could not be read",
+        }) from exc
     if not allowed:
         raise HTTPException(status_code=403, detail={"error": "not_authorized_to_act", "audience": audience})
 
@@ -16149,9 +16161,15 @@ async def write_origin_route(
 
     dropped_by_authz_id = req.dropped_by.authz_id
     program = req.origin.get("program")
-    dropper_is_program_member = (
-        human_tasks.check_can_view_program(program, dropped_by_authz_id) if program else False
-    )
+    try:
+        dropper_is_program_member = (
+            human_tasks.check_can_view_program(program, dropped_by_authz_id) if program else False
+        )
+    except httpx.HTTPError as exc:  # Topaz down, or its answer malformed: not "not a member"
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify program membership",
+        }) from exc
 
     try:
         from agent_fleet.utils.mesh_writers.neo4j_graph import Neo4jGraphWriter  # noqa: PLC0415

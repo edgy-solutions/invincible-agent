@@ -237,8 +237,9 @@ def _can_view_class(caller_email: str, iri: str) -> bool:
 
     Single-decider: evaluates the ``invincible_agent.ontology.can_view`` rego
     (compartment grant OR unassigned+releasable). Fail-CLOSED (deny) on any
-    error — a security gate must not fail open. No-op (True) when the flag is
-    off, so /resolve is unaffected until ENABLE_AGENTIC_AUTH flips.
+    error — a security gate must not fail open. A malformed answer is a 503 (the
+    outage class), not a deny. No-op (True) when the flag is off, so /resolve is
+    unaffected until ENABLE_AGENTIC_AUTH flips.
     """
     if not ENABLE_AGENTIC_AUTH:
         return True
@@ -266,6 +267,12 @@ def _can_view_class(caller_email: str, iri: str) -> bool:
         )
         resp.raise_for_status()
         return decision_answer(resp, "allowed")
+    except httpx.DecodingError as e:  # a malformed answer: the outage class, never a "no"
+        logging.warning("ontology can_view answer malformed for iri=%s: %s", iri, e)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the authorizer's answer could not be read",
+        }) from e
     except Exception as e:  # noqa: BLE001 — fail-closed on any error
         logging.warning("ontology can_view check failed for iri=%s (fail-closed deny): %s", iri, e)
         return False
@@ -310,6 +317,7 @@ def _can_invoke_capability(caller_authz_id: str, capability: str) -> bool:
     ``_can_view_class`` uses, and the reason this gate lands before the flip without
     breaking a write that works today. Fail-CLOSED (deny) on empty identity, empty
     capability, unset directory URL, or any error: a security gate must not fail open.
+    A malformed answer is a 503 (the outage class), not a deny.
     """
     if not ENABLE_AGENTIC_AUTH:
         return True
@@ -329,6 +337,12 @@ def _can_invoke_capability(caller_authz_id: str, capability: str) -> bool:
         )
         r.raise_for_status()
         return check_answer(r)
+    except httpx.DecodingError as e:  # a malformed answer: the outage class, never a "no"
+        logging.warning("can_invoke answer malformed capability=%s: %s", capability, e)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the authorizer's answer could not be read",
+        }) from e
     except Exception as e:  # noqa: BLE001 — fail-closed on any error
         logging.warning("can_invoke check failed capability=%s caller=%s (fail-closed deny): %s",
                         capability, caller_authz_id, e)
@@ -5560,9 +5574,9 @@ def _iri_is_safe(iri: str) -> bool:
 
 
 # WHAT THE VISIBILITY CHECK'S STORES RAISE WHEN THEY ARE DOWN, and nothing else. The two routes
-# that run `_filter_sustainment_candidates` answer 503 for exactly these; every other exception
-# (TypeError, KeyError, AttributeError, a ValueError from a garbled Topaz body, ...) is a DEFECT
-# and answers 500. A defect filed as "the lookup failed" is a defect nobody looks for in the code
+# that run `_filter_sustainment_candidates` answer 503 for exactly these (a garbled Topaz body is
+# one: `MalformedPdpAnswer` is an `httpx.HTTPError`); every other exception (TypeError, KeyError,
+# AttributeError, a ValueError from our own code, ...) is a DEFECT and answers 500. A defect filed as "the lookup failed" is a defect nobody looks for in the code
 # (same reasoning as the NARROWED ON PURPOSE catch in enumerate_instances). Each 500 still fails
 # closed: no candidate list is returned. Sealed in
 # tests/security/test_the_visibility_check_answers_503_only_for_an_outage.py.
