@@ -8,9 +8,7 @@
 # overlay mirrors them (architect, 2026-10-24), so a mirrored row is only checkable against a
 # doc-tools that declares it.
 #
-# Currently doc-tools #172's head at 12eed082 (2026-10-30), NOT main and NOT a release. It is the
-# only doc-tools commit that declares structural.outline on `course`, and #172's own CI needs this
-# overlay row, so each side pins the other's commit. The `main` leg reds until #172 merges: that is
-# the report doing its job. Move this onto doc-tools main when #172 merges, and back onto a release
-# when doc-tools tags one.
-12eed082b3552296cc18706ae022a755136893a1
+# Currently doc-tools #194's head at b0af51b0 (2026-11-02), NOT main and NOT a release. It declares ExtractSectionConcepts on `course`.
+# The `main` leg reds until doc-tools merges these: that is the report doing its job. Move this
+# onto doc-tools main when they merge, and back onto a release when doc-tools tags one.
+b0af51b0fefd9a51b42517c4f9718df5ef348294
