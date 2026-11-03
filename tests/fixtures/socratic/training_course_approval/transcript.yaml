@@ -404,6 +404,24 @@ answers:
         path: steps[id=security].deadline_seconds
         value: null
       defer: []
+  approvals.course_security_review.security.reason_required:
+    says: Not releasable needs a reason.
+    facts:
+      set:
+      - file: task_kinds/course_security_review.yaml
+        path: reason_required
+        value:
+        - not_releasable
+      defer: []
+  approvals.course_accreditation.accreditation.reason_required:
+    says: Declining needs a reason.
+    facts:
+      set:
+      - file: task_kinds/course_accreditation.yaml
+        path: reason_required
+        value:
+        - declined
+      defer: []
 planted:
   contradictions:
   - contradiction:chaining.course_content_review_chaining.deferred
