@@ -21,7 +21,8 @@ worksite inside engine-docs, ruled 2026-09-30 on the three forks the 09-29 repor
 
 DARK UNTIL THE FLIP. `ENABLE_AGENTIC_AUTH` off -> the gate is not consulted and the response is
 byte-for-byte what it was. On -> fail-CLOSED: no verified identity, no directory URL, or any
-Topaz error is a deny, never an allow.
+Topaz error is a deny, never an allow. A MALFORMED Topaz answer is the outage class and answers
+503, neither an allow nor a claim that policy said no (architect ruling 2026-11-02).
 
 TWO PRECONDITIONS OF THE FLIP, both outside this engine, both recorded in
 `docs/plans/enable-agentic-auth-flip-packet.md` (named consequence 3):
@@ -40,6 +41,7 @@ import os
 from typing import Any, Iterable, List, Tuple
 
 import httpx
+from fastapi import HTTPException
 
 try:  # pragma: no cover - import path differs by runtime
     from utils.pdp_answer import check_answer  # type: ignore[no-redef]
@@ -122,7 +124,8 @@ def asker_of(caller: Any) -> str:
 def can_invoke(authz_id: str, capability: str) -> bool:
     """Ask the single decider. Mirrors engine-o's `_can_invoke_capability` exactly.
 
-    Fail-CLOSED on empty identity, empty capability, unset directory URL, or any error."""
+    Fail-CLOSED on empty identity, empty capability, unset directory URL, or any error. A malformed
+    answer is a 503 (the outage class), not a deny."""
     if not authz_id or not capability or not TOPAZ_DIRECTORY_URL:
         return False
     try:
@@ -139,6 +142,12 @@ def can_invoke(authz_id: str, capability: str) -> bool:
         )
         r.raise_for_status()
         return check_answer(r)
+    except httpx.DecodingError as e:  # a malformed answer: the outage class, never a "no"
+        logger.warning("engine-docs can_invoke answer malformed capability=%s: %s", capability, e)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the authorizer's answer could not be read",
+        }) from e
     except Exception as e:  # noqa: BLE001 -- fail-closed on any error
         logger.warning("engine-docs can_invoke failed capability=%s caller=%s (fail-closed deny): %s",
                        capability, authz_id, e)

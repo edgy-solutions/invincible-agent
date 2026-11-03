@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import httpx
 import restate
 from restate import Workflow, WorkflowContext, WorkflowSharedContext
 
@@ -57,6 +58,9 @@ def _check_can_act(audience: str, caller_authz_id: str) -> bool:
         return _gate_helpers()[1](audience, caller_authz_id)
     except ImportError:  # pragma: no cover
         return False  # fail-closed: no decider, no approval
+    except httpx.DecodingError as exc:  # a malformed answer: the outage class, never a "no"
+        raise restate.TerminalError(
+            "the authorizer's answer could not be read", status_code=503) from exc
 
 try:  # lazy-import dance (container flattens the dir)
     from workflow_bulk_resolve import BulkDecision, Override, PartItem, ReviewBatch, resolve_batch  # type: ignore[no-redef]
