@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **154 of 166 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **155 of 167 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## in-flight
 
@@ -103,10 +103,6 @@ _Coverage: **154 of 166 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **a-resolved-relative-period-must-be-disclosed** — THE ANCHOR STEP IS NOT DONE WITHOUT THIS. "what does spend look like this quarter" now resolves to window=["FY26-Q4"] using a fiscal calendar the user never saw and cannot check. That is an assumption the system made on the user's behalf, and an undisclosed assumption is the silent-narrowing failure the carry work removed, reintroduced one layer up. The strip already renders resolved ROUTING (subject, verb, confidence); it must also render resolved PARAMETERS, at minimum any whose value the user did not literally say. Nothing in invincible-agent blocks this — the resolved value is in `params` on the dispatch payload today.
   status: open · owner: cortex · repo: cortex-ui (strip), invincible-agent (the resolved value is already on the wire)
   → [docs/plans/a-resolved-relative-period-must-be-disclosed.md](plans/a-resolved-relative-period-must-be-disclosed.md)
-
-- **a-skip-reason-that-reads-the-substrate-makes-the-suite-uncountable** — MEASURED 2026-09-28 on two runs of `pytest tests/` at one fixed tree with nothing varied: 5147 total outcomes against 5146. Not a test changing outcome — the NUMBER OF TESTS moved. So no count-to-count comparison of this suite is evidence, including the many that came out zero and were read as agreement; only identity comparison is sound, and the suite reports counts far more prominently than identities. Cause: a skip reason is supposed to be a DECLARED CONDITION, and several are a SUBSTRATE READ — `names no lot: 'what rates are we using in FY2021'` (cost), `every seeded project carries a requirement — nothing to discriminate` (planning producers), seven parametrised `plan_* declares no route-supplied slots` (slot coverage). 130 files can skip and 104 gate on REACHABILITY rather than importability, so the suite's shape is a function of the cluster's shape. The consequence is not flakiness, which announces itself: it is that every before/after figure this month was computed from an instrument that does not repeat, and a zero delta read as corroboration.
-  status: open · owner: invincible-agent-01 — ia-01 / lane/01 · related: no-ci-gate-on-the-suite (a gate on an uncountable suite gates on nothing)
-  → measured in [docs/measurements/2026-09-27-overnight-the-lineage-split-and-a-stub-harness-whose-dispatched-cause-was-wrong.md](measurements/2026-09-27-overnight-the-lineage-split-and-a-stub-harness-whose-dispatched-cause-was-wrong.md)
 
 - **a-sparql-failure-is-read-as-an-empty-graph** — engine-o's execute_sparql returns [] on any Jena failure, so five routes and two internal gates read "the substrate failed" as "the graph holds nothing". One of them is the cold-start fallback that exists to cover a Weaviate failure.
   status: open · owner: invincible-agent-28 [5401d7] — ia-eo / lane/eo · blocked-on: the MeshOntology/MeshVectors contract — this changes what seven consumers see, and they change with it
@@ -475,6 +471,10 @@ _Coverage: **154 of 166 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **undeclared-routes** — RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.
   status: open · owner: agent · blocked-on: nothing in this packet — the gate is wired and inert until ENABLE_AGENTIC_AUTH flips, which is [[transport-flip]]'s item, not this one. (A 2026-08-13 note claiming TOPAZ_DIRECTORY_URL was unwired was WRONG and is corrected: it is set to http://topaz-svc:9393 on both engines via iagent-config, verified in the running pods.) Everything else is done: dispositions given, /workflow/start retired (410, 2026-08-11), ALL 12 ROWS DECLARED (2026-08-12), and the two engine-o WRITE residuals CLOSED endpoint-side 2026-08-13 (can_invoke on the single decider, discriminating pair sealed, break-on-purpose verified; both rows now class: gated).
   → [docs/plans/endpoint-gating-undeclared-routes-recommendation.md](plans/endpoint-gating-undeclared-routes-recommendation.md)
+
+- **user-token-reaches-specialists** — Gov Q3 asked whether specialists may keep identifying the caller by a body-asserted user_email. Short answer: no, but the obvious fix (widen _CALLER_IDENTITY_VERBS) breaks every multi-subtask run. The vault reference is single-use, and every subtask is its own process. Phase 1 makes one reference per fan-out slot. Phase 2 widens the verbs with the engine lanes. Phase 3 has engines verify what they receive.
+  status: open · owner: lane/01 · blocked-on: phase 2 needs the engine lanes' consent (it changes who cost, finance, safety and docs see); phase 3 needs an SDK change (lane ca)
+  → [docs/plans/user-token-reaches-specialists.md](plans/user-token-reaches-specialists.md)
 
 ## parked
 

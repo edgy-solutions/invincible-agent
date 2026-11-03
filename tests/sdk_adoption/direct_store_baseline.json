@@ -1,0 +1,54 @@
+{
+  "rule": "direct store-client count per engine and surface may only fall; lower it with --write",
+  "generated_from": "e2c03799df59fab650a475fbefc5e84736bde91a",
+  "counts": {
+    "bff-orchestrator": {
+      "graph": {
+        "imports": 3,
+        "constructions": 3
+      }
+    },
+    "mesh_registrar": {
+      "graph": {
+        "imports": 1,
+        "constructions": 1
+      },
+      "vector": {
+        "imports": 3,
+        "constructions": 0
+      }
+    },
+    "neo4j_expert": {
+      "graph": {
+        "imports": 1,
+        "constructions": 1
+      },
+      "vector": {
+        "imports": 1,
+        "constructions": 0
+      }
+    },
+    "ontology_service": {
+      "graph": {
+        "imports": 2,
+        "constructions": 1
+      },
+      "vector": {
+        "imports": 2,
+        "constructions": 0
+      }
+    },
+    "utils": {
+      "vector": {
+        "imports": 6,
+        "constructions": 1
+      }
+    },
+    "weaviate_expert": {
+      "vector": {
+        "imports": 3,
+        "constructions": 0
+      }
+    }
+  }
+}

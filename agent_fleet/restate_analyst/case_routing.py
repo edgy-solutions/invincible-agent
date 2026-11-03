@@ -34,7 +34,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from pydantic import Field, model_validator
 
@@ -310,6 +310,48 @@ def chain(definition_id: str, facts: Mapping[str, Any],
         raise CaseRoutingError(f"after {definition_id}: {exc}") from exc
     return {"then": d.then, "terminal": d.terminal, "row": d.row, "table": table.get("decision"),
             "refresh_input": d.refresh_input}
+
+
+def verb_consequences(definition_id: str, verbs: Sequence[str], facts: Mapping[str, Any],
+                      index: Optional[Mapping[str, Mapping[str, Any]]] = None) -> List[Dict[str, Any]]:
+    """What each verb leads to, READ from the table that chains after `definition_id`.
+
+    The card a human answers must say what the answer does, and the routing rule has ONE home --
+    this table -- so the text is derived from it, never restated. Per verb, in the given order:
+    the single `then` its rows agree on (``conditional`` False); else, when every other fact its
+    rows read is in `facts`, the one `then` ``decide`` picks; else every row's
+    ``{"when": <when minus outcome>, "then": ...}`` with ``conditional`` True. A verb no row names
+    yields ``then: []`` so the renderer can refuse it rather than drop it. ``[]`` when no table
+    declares `after: definition_id`, or its `matches` has no `outcome`."""
+    index = chaining_index() if index is None else index
+    table = index.get(definition_id)
+    if table is None or "outcome" not in (table.get("matches") or []):
+        return []
+    out: List[Dict[str, Any]] = []
+    for v in verbs:
+        rows = [r for r in (table.get("rows") or []) if (r.get("when") or {}).get("outcome") == v]
+        if not rows:
+            # A row that does not read `outcome` at all (a catch-all) routes every verb no row names.
+            rows = [r for r in (table.get("rows") or []) if "outcome" not in (r.get("when") or {})]
+        if not rows:
+            out.append({"verb": v, "then": [], "conditional": False})
+            continue
+        thens = [r.get("then") for r in rows]
+        if all(t == thens[0] for t in thens):
+            out.append({"verb": v, "then": [thens[0]], "conditional": False})
+            continue
+        others = {k for r in rows for k in (r.get("when") or {}) if k != "outcome"}
+        if all(_carried(facts, k) or k in facts for k in others):
+            try:
+                d = _dt.decide(table, {**facts, "outcome": v})
+            except _dt.DecisionError as exc:
+                raise CaseRoutingError(f"after {definition_id}: {exc}") from exc
+            out.append({"verb": v, "then": [d.then], "conditional": False})
+            continue
+        out.append({"verb": v, "conditional": True, "then": [
+            {"when": {k: c for k, c in (r.get("when") or {}).items() if k != "outcome"},
+             "then": r.get("then")} for r in rows]})
+    return out
 
 
 # ── INPUT REVISIONS ─────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,19 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+decision: maint_case_release_record_chaining
+after: maint_case_release_record
+matches:
+- outcome
+domain:
+  outcome:
+  - acknowledged
+  - refused
+terminals:
+- released
+- returned_to_maintenance
+rows:
+- when:
+    outcome: acknowledged
+  then: released
+- when:
+    outcome: refused
+  then: returned_to_maintenance

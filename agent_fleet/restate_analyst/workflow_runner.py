@@ -95,7 +95,8 @@ def _routing():
 
 
 #: The outcome at which the runner stamps `seeded_by` on the case's artifacts: `released`, the
-#: `tier_ack` outcome that closes the case in
+#: disposition `maint_release`'s `action` emit declares (`disposes`; the supervisor's approval is
+#: the release, ruled 2026-10-28), which closes the case in
 #: `policy/overlays/openddil-lab/decisions/maint_release_chaining.yaml`. RULED 2026-10-08 (Chris):
 #: `seeded_by` is stamped at `released` by the runner, not at open.
 SEEDED_BY_STAMP_OUTCOME = "released"
@@ -351,6 +352,15 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
             term = R.termination_facts(flat, env, definition_id, case["transitions"])
             nxt = await ctx.run(f"chain_{n}", _terminal(lambda: R.chain(definition_id, term), 422))
             step = (outputs.get(definition_id) or {}).get(env.get("outcome_step_id")) or {}
+            by = step.get("acted_by")
+            deciding = next((r.get("kind") for r in env.get("step_results") or []
+                             if r.get("step_id") == env.get("outcome_step_id")), None)
+            if not by and deciding == "emit":
+                # THE APPROVAL IS THE RELEASE (ruled 2026-10-28): an emit that disposes acts on
+                # the approval chain that reached it, so its actor is that chain's last approver,
+                # not "system". A timer or a system step still has none.
+                by = next((e.get("approver_sub") for e in reversed(chain)
+                           if e.get("approver_sub")), None)
             refreshed: dict = {}
             if nxt.get("refresh_input") and not nxt["terminal"]:
                 fresh = await _refresh(ctx, trig, case, episode, current, facts, n)
@@ -361,7 +371,7 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
                 ctx, case, frm=definition_id, outcome=env.get("outcome"), to=nxt["then"],
                 # WHO: the actor the gate VERIFIED for the deciding step; a timer or a system
                 # step has none, and the record says so rather than borrowing the trigger's.
-                by=step.get("acted_by") or "system", reason=step.get("comments") or None,
+                by=by or "system", reason=step.get("comments") or None,
                 at_name=f"at_{n}", instance_id=instance,
                 decided_by=f"{nxt['table']} row {nxt['row']}", **refreshed)
             if env.get("outcome") == SEEDED_BY_STAMP_OUTCOME:

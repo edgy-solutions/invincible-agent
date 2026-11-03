@@ -53,7 +53,7 @@ def harness(monkeypatch):
     h = types.SimpleNamespace(members=[_MERIDIAN], enum_error=None, enum_calls=[],
                               seeded=[], portfolio=[], user=_User())
 
-    def _make_enum(user_email, entitled_domains):
+    def _make_enum(*, user_email, entitled_domains):
         def _enum(class_uri, *, bound_slots=None):
             h.enum_calls.append({"class": class_uri, "email": user_email,
                                  "domains": list(entitled_domains),

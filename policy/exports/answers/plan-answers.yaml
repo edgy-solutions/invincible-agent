@@ -1,0 +1,30 @@
+# SAMPLE: a notional plan office. It names no real organisation.
+# The header and column keys are the review export's (policy/exports/*.yaml); see README.md here.
+column_map_version: 1
+name: plan-answers
+label: Plan answers (synthetic)
+format: csv
+granularity: answer
+# Report verbs only, listed explicitly (ruled 10-29): no wildcard, no "all". The session/scenario-state
+# verbs mesh:planCommitScenario, mesh:planDiff and mesh:planSessionChanges are excluded.
+kinds:
+  - mesh:planCostCurve
+  - mesh:planFundingGap
+  - mesh:planSiteLoad
+  - mesh:planDependencyViolations
+  - mesh:planDependencyNeighborhood
+  - mesh:planMaturityGrid
+  - mesh:planCapabilityPath
+  - mesh:planProcessEvolution
+  - mesh:planTechFootprint
+  - mesh:planSchedule
+  - mesh:planCoverageGap
+recipients: [notional-plan-office]
+columns:
+  - {output: Answer, source: {field: answer_id}}
+  - {output: Question, source: {field: question}}
+  - {output: Summary, source: {field: summary}}
+  - {output: Verb, source: {field: verb}}
+  - {output: Subject, source: {field: subject}}
+  - {output: Program, source: {field: program}}
+  - {output: As of, source: {field: valid_as_of}}

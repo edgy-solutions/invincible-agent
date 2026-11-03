@@ -1,0 +1,11 @@
+# Platform seed for the review_shape registry (architect ruling 10-30): one row per card.
+# Overlaid per deployment by policy/overlays/<name>/review_shapes/; see README.md here.
+review_shape: notice
+item_kind: part
+rules_version: notice.v1
+params: {}
+rules:
+  - id: same_shape_run
+    params: { min_run: 3, per_run: 2, sample_all_up_to: 4 }
+  - id: same_inherited_crop
+    params: { min_shared: 3 }

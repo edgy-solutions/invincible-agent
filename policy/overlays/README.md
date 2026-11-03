@@ -69,6 +69,14 @@ being read: a seed-only read cannot produce that error.
 
     TASK_KIND_OVERLAY_DIRS=/app/policy/overlays/sample/task_kinds:/app/policy/overlays/openddil-lab/task_kinds
     GRAPH_OVERLAY_DIRS=/app/policy/overlays/sample/graphs
+    MEASURE_VERB_OVERLAY_DIRS=/app/policy/overlays/sample/measure_verbs
+    CANVAS_OVERLAY_DIRS=/app/policy/overlays/sample/canvases
+
+`measure_verbs` and `canvases` are the two kinds a finance MEASURE needs: the row that declares
+the verb (`agent_fleet/finance_agent/measure_verbs.py`, seed `policy/measure_verbs/`, which ships
+no rows) and the board that holds it (`src/iagent/canvas_template.py`, seed `policy/canvases/`).
+Both default to no overlay; the sandbox values file sets them. See
+`docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md`.
 
 **UNSET IS NOT THE SAME CLAIM AS EMPTY**, and the task-kind gate turns on the difference: unset
 means *"I was not told where to look"* and leaves the declared set unknowable, so the gate does

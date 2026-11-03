@@ -1,0 +1,40 @@
+# Review export profile: default-csv
+# Vocabulary: doc-tools 7f's contract `batch-column-map.md` (contract_version 1) -- `granularity`,
+# the `source` selector (field / row_field / absent_row), `on_unresolvable` + `landing`, ISO-8601
+# dates that LAND rather than being guessed, and the `no_parts` row. Validated against what
+# GET /ingest/{id}/extraction serves (src/iagent/export_profiles.py).
+column_map_version: 1
+name: default-csv
+label: "Default CSV, one row per notice part"
+format: csv
+granularity: notice_part
+columns:
+  - output: "Ingest"
+    source: {field: ingest_id}
+  - output: "Notice"
+    source: {field: notice_id}
+  - output: "Leaf"
+    source: {field: leaf}
+  - output: "Manufacturer"
+    source: {field: notice.mfr}
+  - output: "Manufacturer source"
+    source: {field: notice.mfr_source}
+  - output: "Notice date"
+    source: {field: notice.notice_date}
+    format: iso8601
+    on_unresolvable: land
+    landing: notice_date_ambiguous
+  - output: "Part"
+    source: {field: part_index}
+  - output: "Affected MPN"
+    source: {field: extracted_value, row_field: affected_mpn, absent_row: empty_cell}
+  - output: "Replacement MPN"
+    source: {field: extracted_value, row_field: replacement_mpn, absent_row: empty_cell}
+  - output: "LTB date"
+    source: {field: extracted_value, row_field: ltb_date, absent_row: empty_cell}
+    format: iso8601
+    on_unresolvable: land
+    landing: ltb_date_ambiguous
+  - output: "notice_date_ambiguous"
+  - output: "ltb_date_ambiguous"
+  - output: "no_parts"

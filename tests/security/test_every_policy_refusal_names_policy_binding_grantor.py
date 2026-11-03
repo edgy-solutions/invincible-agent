@@ -243,11 +243,17 @@ SECTION_5_1 = "ADR-0047 §5.1: a delegate reads what it seeded; no grant widens 
 DUTIES = "separation of duties declared by the definition; no grant lifts it"
 STATE = "workflow protocol state, not a caller's binding"
 NO_AUDIENCE = "integrity: no journalled audience to check against; fails closed"
+SERVICE_NOT_PERSON = "the MCP surface answers a person; a service account is never granted a person's identity, so no grant lifts it"
 #: A 409 is a refusal only when it asks the caller to CHOOSE or REQUEST something (architect,
 #: 2026-10-25). These two are the 409s that ask neither.
 CONFLICT = "a 409 on the target's state: it asks the caller to choose nothing and request nothing"
 NAMED = "a 409 whose body names its one resolution (the value or call to send); nothing to choose"
 NOT_BUILT = "a 409 for a verb not built yet (awaiting a ruling); no grant makes it exist"
+#: engine-r's pre-receive checks (ADR-0062 §2). A RepoRefusal's status is WRITTEN in the library,
+#: which PR B's route forwards, so it is counted here.
+REPO_CHECK = "an ADR-0062 §2 pre-receive check on the proposal's content: the diff must change; no grant lifts it"
+REPO_UNCONFIGURED = "integrity: the deployment's check-4 term list is absent; engine-r fails closed and no grant lifts it"
+ER = "agent_fleet/repository_agent/repo_core.py"
 
 #: No binding could lift these, so they keep their bodies. Value = why.
 NOT_POLICY: dict[str, str] = {
@@ -264,6 +270,7 @@ NOT_POLICY: dict[str, str] = {
     f"{RA}::_authorize_resolution::approve requires `acted_by` (the caller's authz_": AUTHN,
     f"{RA}::approve_task::identity_required | approving a task requires a veri": AUTHN,
     f"{SPO}::execute_direct_call::direct_call {{}}: no acting identity for capabilit": AUTHN,
+    f"{GW}::_mcp_door.door::service_token_refused": SERVICE_NOT_PERSON,
     f"{GW}::ingest_title_leaf_route::not_doc_tools | POST /ingest/{{ingest_id}}/title_l": PINNED,
     f"{GW}::list_ingest_retries::not_doc_tools | GET /ingest/retries is callable": PINNED,
     f"{GW}::put_processable_kinds::not_doc_tools | PUT /ingest/processable-kinds is": PINNED,
@@ -295,6 +302,8 @@ NOT_POLICY: dict[str, str] = {
     'agent_fleet/restate_analyst/workflow_runner.py::keep_revision::case {} does not hold this episode (open: {}); a': CONFLICT,
     'agent_fleet/restate_analyst/workflow_runner.py::keep_revision::case {} holds this episode with no revision 1 to': CONFLICT,
     "agent_fleet/restate_analyst/workflow_runner.py::revise::case {}'s trigger declares no episode, so a revi": CONFLICT,
+    'src/iagent/gateway.py::_export_notice_extraction::export_corrections_not_applied | the promotion carries steward co': NAMED,
+    'src/iagent/gateway.py::_export_notice_extraction::ingest_not_promoted | only a promoted notice can be ex': CONFLICT,
     'src/iagent/gateway.py::_export_package_from_template::recipient_scope_disagrees_with_canvas_audience | the recipient_scope you sent dis': NAMED,
     'src/iagent/gateway.py::_file_or_find_document_promotion_task::leaf_moves_audience | the new kind {} routes to {}, no': CONFLICT,
     'src/iagent/gateway.py::_stale_extraction::stale_extraction | <msg>': NAMED,
@@ -324,10 +333,31 @@ NOT_POLICY: dict[str, str] = {
     'src/iagent/promotion.py::act::promotion_already_decided': CONFLICT,
     'src/iagent/promotion.py::act::promotion_reviewed_set_unknown': CONFLICT,
     'src/iagent/promotion.py::act::row_edits_differ_from_the_record': CONFLICT,
+    'src/iagent/promotion.py::act::review_coverage_differs_from_the_record': CONFLICT,
     'src/iagent/gateway.py::_decide_empty::add_missed_part_not_built | <_ADD_MISSED_PART_MSG>': NOT_BUILT,
     'src/iagent/gateway.py::_decide_empty::no_open_empty_task | no open confirmation for this do': CONFLICT,
     'src/iagent/gateway.py::_decide_empty::no_open_empty_task | the document moved while the dec': CONFLICT,
     'src/iagent/gateway.py::act_on_human_task::no_open_empty_task | the task names no ingest': CONFLICT,
+    # -- engine-r (#133, ADR-0062 §2), classified 2026-10-28 --
+    f"{ER}::Repo._check_approvals::proposer_cannot_approve": DUTIES,
+    f"{ER}::Repo._check_approvals::approval_of_another_sha": STATE,
+    f"{ER}::Repo._check_approvals::no_approval": STATE,
+    f"{ER}::Repo.proposal::unknown_proposal": CONFLICT,
+    f"{ER}::Repo.merge::proposal_closed": CONFLICT,
+    f"{ER}::Repo.merge::reviewed_sha_is_not_head": CONFLICT,
+    f"{ER}::Repo.merge::target_missing": CONFLICT,
+    f"{ER}::Repo.merge::target_moved": CONFLICT,
+    f"{ER}::Repo.merge::merge_conflict": CONFLICT,
+    f"{ER}::Repo.merge::missing_trailers": REPO_CHECK,
+    f"{ER}::Repo.merge::secret_in_diff": REPO_CHECK,
+    f"{ER}::Repo.merge::customer_context_in_diff": REPO_CHECK,
+    f"{ER}::Repo.merge::customer_terms_absent": REPO_UNCONFIGURED,
+    f"{ER}::validate_policy_check.validate_policy_check::policy_invalid": REPO_CHECK,
+    f"{ER}::Repo._tag_common::unknown_sha": CONFLICT,
+    f"{ER}::Repo._tag_common::target_moved": CONFLICT,
+    f"{ER}::Repo.tag::tag_exists": CONFLICT,
+    f"{ER}::Repo.tag::release_tag_immutable": CONFLICT,
+    f"{ER}::Repo.repair_tag::unknown_tag": CONFLICT,
 }
 
 RELAY = "relay"
@@ -378,6 +408,16 @@ PENDING: dict[str, str] = {
     f"{SPO}::dispatch_spo_step::access denied ({{}}) dispatching {{}} to {{}} — the PE": RELAY,
     f"{SPO}::execute_declared_query::access denied ({{}}) on declared query {{}} -> {{}}; f": RELAY,
     f"{SPO}::execute_direct_call::access denied ({{}}) on direct_call {{}} -> {{}}; fail": RELAY,
+    # 2026-10-28: the CDRL export routes relay engine-fin's 403 (program_not_visible) through here;
+    # `tests/test_bff_cdrl_export.py::test_8_an_engine_403_is_relayed_with_grantable_by` is its seal.
+    f"{GW}::_engine_failure::<relay_refusal>": RELAY,
+    # 2026-10-31: the same relay passes an engine 409/422 through with the engine's own body (the
+    # declared refusals, not policy ones); `tests/mcp_seals/test_a_relayed_refusal_passes_through.py`.
+    f"{GW}::_engine_failure::<detail>": RELAY,
+    # engine-r check 6 (#133). ADR-0062 §5 names the family `repository_paths`, but its rail file
+    # and grantor row arrive with engine-r's engine PR; until then the governed rows are held in
+    # code, which is what `code` names. That PR moves this row to `repository_paths` and builds it.
+    f"{ER}::Repo.merge::path_not_governed": "code",
 }
 
 
@@ -539,7 +579,7 @@ def test_an_overlay_row_replaces_the_seed_grantor(R, tmp_path, monkeypatch):
 
 def test_an_object_scoped_family_is_named_without_its_key(R):
     scoped = sorted(f for f, g in R.grantors().items() if g.object_scoped)
-    assert scoped == ["asset_grants", "ontology_compartments", "program_members"]
+    assert scoped == ["asset_grants", "ontology_compartments", "program_members", "recipient_readers"]
     for fam in scoped:
         assert R.refusal(fam, "member_of(program)")["policy_id"] == fam
         with pytest.raises(ValueError, match="object-scoped"):

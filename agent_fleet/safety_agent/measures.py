@@ -32,6 +32,7 @@ try:  # flat in the image (/app), packaged in the repo — runbook §5, flat FIR
         Severity,
     )
     import failure_source
+    import served_kinds
     from matrix import resolve_risk_level
 except ImportError:
     from agent_fleet.safety_agent.entities import (  # type: ignore[no-redef]
@@ -46,6 +47,7 @@ except ImportError:
         Severity,
     )
     from agent_fleet.safety_agent import failure_source  # type: ignore[no-redef]
+    from agent_fleet.safety_agent import served_kinds  # type: ignore[no-redef]
     from agent_fleet.safety_agent.matrix import resolve_risk_level  # type: ignore[no-redef]
 
 
@@ -504,9 +506,17 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
     # (acceptance_request.py:118 falls back to the same expression). Sealed by
     # tests/safety/test_the_card_case_id_equals_the_minted_case_key.py, which calls the real function.
     level_slug = level.lower()
+    # THE KIND AND THE REASON VERBS ARE THE DEPLOYMENT'S DECLARATIONS, READ HERE, NOT RESTATED
+    # (standing rule 2026-10-30). The kind is the head of the matrix's own `acceptanceAudience`;
+    # `reason_required` is that kind's composed task-kind row. See `served_kinds`.
+    try:
+        card_kind = served_kinds.kind_of_audience(audience)
+        reason_required = served_kinds.reason_required_of(card_kind)
+    except served_kinds.ServedDeclarationUnavailable as exc:
+        return {"refused": True, "reason": str(exc)}
     out["review_request"] = {
         "case_id": _case_id(h.hazard_id, level_slug),
-        "kind": f"risk_acceptance_{level.lower()}",
+        "kind": card_kind,
         "task_id": f"risk-acceptance-{h.hazard_id}",
         "audience": audience,
         "title": f"Accept {level} risk — {h.hazard_id}",
@@ -527,7 +537,7 @@ def draft_risk_assessment(state: Any = None, *, hazard_id: str) -> Dict[str, Any
             "derived_from": derived_from,
             # STATED IN THE PAYLOAD, not only in this ADR: the disposer must see that a
             # reason is required before they act, not discover it from a refusal.
-            "reason_required": ["accepted", "rejected"],
+            "reason_required": reason_required,
         },
     }
     return out

@@ -31,8 +31,8 @@ can reach the cluster API.
   suite (ownership, freshness, lineage, schema, downstream impact)
   via Engine A's `search_datahub` tool.
 - `test_mrad_case_walks_to_closed.py` — a maintenance-fault case renders, is decided and
-  walks to `closed` through product routes only, as three people (`--initiator-token`,
-  `--decider-token`, `--releaser-token`, each a file); the release is `tier_ack` by the case id.
+  walks to `closed` through product routes only, as two people (`--initiator-token`,
+  `--decider-token`, each a file); the case closes on the decider's approval, with no signal sent.
   WRITES to the sandbox: run by hand after a roll, never from a unit run.
 
 ## Running

@@ -49,6 +49,14 @@ hook fails the release, exactly as intended. program_member_sync.py's main() use
 exit-code scheme (0 ok, 2 malformed program_members.yaml, 4 readback/can_view_program failed),
 so `set -e` gates it identically — a failure in the program leg fails the Job before
 task_grant_sync ever runs.
+
+RECIPIENT READER SYNC IS THE LAST LEG (2026-10-28, architect ruling 4: the recipient_readers
+policy rail). recipient_reader_sync.py uses the same exit codes (0 ok, 2 malformed, 4 readback
+failed), gated by `set -e`. In the overlay modes recipient_readers.yaml is OPTIONAL: absent
+means no reader is asserted and every recipient check denies (fail-closed), so the Job WARNs
+and skips the leg rather than exiting 2. Whether absence becomes FATAL is open with the
+architect. The runner image (cortex-bff) copies the whole repo, so the script and the seed yaml
+are already present in it.
 */ -}}
 {{- if .Values.taskGrantSync.enabled }}
 {{- $src := .Values.topazSeed.policySource }}
@@ -185,6 +193,7 @@ spec:
               cd /app
               {{- if eq $mode "image" }}
               POLICY_DIR=/app/policy
+              RECIPIENT_READERS_PRESENT=1
               {{- else }}
               {{- if eq $mode "git" }}
               OVERLAY="/overlay-src/repo/{{ $src.git.path | default "policy" }}"
@@ -207,14 +216,46 @@ spec:
               fi
               cp "$OVERLAY/task_grants.yaml" /work/policy/
               cp "$OVERLAY/program_members.yaml" /work/policy/
+              # capability_grants.yaml: the `can_drop:<kind>` rows are the declaration that a kind is
+              # gated (the ingest door reads the Topaz object each row creates). Missing = FATAL, as in
+              # topaz-seed-cronjob.yaml: no fallback to the image's sandbox copy.
+              if [ ! -f "$OVERLAY/capability_grants.yaml" ]; then
+                echo "FATAL: policy overlay is missing capability_grants.yaml — refusing (no fallback to the image's sandbox copy)" >&2
+                exit 2
+              fi
+              cp "$OVERLAY/capability_grants.yaml" /work/policy/
+              # recipient_readers.yaml is OPTIONAL here, unlike the two above: ABSENT means no
+              # reader is asserted, so every recipient check denies (fail-closed) -- a loud WARN
+              # and the leg is skipped, not a FATAL. Whether absence becomes FATAL is OPEN with
+              # the architect. Never fall back to the image's copy for the same reason as above.
+              if [ -f "$OVERLAY/recipient_readers.yaml" ]; then
+                cp "$OVERLAY/recipient_readers.yaml" /work/policy/
+                RECIPIENT_READERS_PRESENT=1
+              else
+                echo "WARN: policy overlay has no recipient_readers.yaml -- recipient_reader_sync SKIPPED; no recipient reader is asserted, every recipient check denies (fail-closed)" >&2
+                RECIPIENT_READERS_PRESENT=0
+              fi
               POLICY_DIR=/work/policy
               {{- end }}
               export TASK_GRANTS_FILE="$POLICY_DIR/task_grants.yaml"
               export PROGRAM_MEMBERS_FILE="$POLICY_DIR/program_members.yaml"
+              export RECIPIENT_READERS_FILE="$POLICY_DIR/recipient_readers.yaml"
+              export CAPABILITY_GRANTS_FILE="$POLICY_DIR/capability_grants.yaml"
               echo "===== PROGRAM MEMBER SYNC (program_member_sync — program membership, startup sync, runs BEFORE grants) ====="
               python policy/sync/program_member_sync.py
               echo "===== TASK GRANT SYNC (task_grant_sync — HITL fifth namespace, startup sync) ====="
               python policy/sync/task_grant_sync.py
+              echo "===== RECIPIENT READER SYNC (recipient_reader_sync — recipient disclosure readers, startup sync, runs AFTER program_member_sync) ====="
+              if [ "$RECIPIENT_READERS_PRESENT" = "1" ]; then
+                python policy/sync/recipient_reader_sync.py
+              else
+                echo "WARN: recipient_reader_sync skipped (no recipient_readers.yaml in the overlay)" >&2
+              fi
+              echo "===== CAPABILITY GRANT SYNC (capability_grant_sync — writes capability:can_drop:<kind>, the ingest door's gate) ====="
+              # Same invocation as topaz-seed-cronjob.yaml (no arguments: prune of can_drop:* objects
+              # whose row is gone is the script's own default). `set -e` fails the Job on any non-zero
+              # exit: 2 malformed rail, 4 readback failed, 5 granted group absent from Topaz.
+              python policy/sync/capability_grant_sync.py
           {{- if ne $mode "image" }}
           volumeMounts:
             {{- if eq $mode "git" }}

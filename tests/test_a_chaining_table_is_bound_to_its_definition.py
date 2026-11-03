@@ -62,8 +62,8 @@ _DOCKERFILE = _REPO / ".github" / "docker" / "Dockerfile.agent"
 #: carries one only when they declare the named field, and steps whose record never does. Their
 #: union must be the model's step union -- see the partition arm.
 _DISPOSING = {"human_await", "signal_await", "wait"}
-_DISPOSING_IF_DECLARED = {"direct_call": "outcome_from"}
-_SILENT = {"spo_operation", "dispatch_fanout", "render", "emit"}
+_DISPOSING_IF_DECLARED = {"direct_call": "outcome_from", "emit": "disposes"}
+_SILENT = {"spo_operation", "dispatch_fanout", "render"}
 
 
 def _disposes(step) -> bool:
@@ -124,12 +124,16 @@ def _emits(definition_id: str) -> "typing.Optional[set[str]]":
     disposing = [s for s in wf.steps if _disposes(s)]
     assert disposing, f"{definition_id} has no disposing step, so its outcome is always None"
     last = disposing[-1]
-    if last.kind in _DISPOSING_IF_DECLARED:
+    if last.kind == "emit":
+        # An emit disposes exactly what it declares (`disposes`, ruled 2026-10-28): a closed
+        # vocabulary of one, unlike a call's.
+        verbs = {last.disposes}
+    elif last.kind in _DISPOSING_IF_DECLARED:
         assert not any(getattr(s, "deadline_seconds", None) for s in wf.steps), (
             f"{definition_id}: a deadline beside a call's open vocabulary; this seal does not "
             "derive that, and an undecided case must fail rather than pass")
         return None
-    if last.kind == "human_await":
+    elif last.kind == "human_await":
         assert last.completion.mode != "grouped", (
             f"{definition_id}: the last disposing step is GROUPED; this seal does not yet derive a "
             "grouped vocabulary, and an undecided case must fail rather than pass")
@@ -252,6 +256,28 @@ def test_A_CALL_DISPOSES_ONLY_WHEN_IT_DECLARES_WHERE(tmp_path, monkeypatch):
     _judge("t", on)
     with pytest.raises(AssertionError, match="declares no outcome domain"):
         _judge("t", {**on, "domain": {}})
+
+
+_EMIT = "  - {kind: emit, id: e, channel: c, template: {a: b}%s}\n"
+
+
+def test_AN_EMIT_DISPOSES_EXACTLY_WHAT_IT_DECLARES(tmp_path, monkeypatch):
+    """Declared, the emit's `disposes` is the whole vocabulary (and it is the last disposer when
+    it follows a signal). Undeclared, it disposes nothing: the signal before it decides, and
+    alone it has no outcome at all."""
+    d = _write(tmp_path / "defs", {
+        "decided.yaml": "id: decided\nname: decided\nsteps:\n" + _ACK + _EMIT % ", disposes: released",
+        "mute.yaml": "id: mute\nname: mute\nsteps:\n" + _ACK + _EMIT % "",
+        "alone.yaml": "id: alone\nname: alone\nsteps:\n" + _EMIT % ""})
+    monkeypatch.setenv("WORKFLOW_DEFINITIONS_DIR", str(d))
+    assert _emits("decided") == {"released"}
+    assert _emits("mute") == {"fine"}
+    with pytest.raises(AssertionError, match="no disposing step"):
+        _emits("alone")
+    _judge("t", {"after": "decided", "matches": ["outcome"], "domain": {"outcome": ["released"]}})
+    with pytest.raises(AssertionError, match="can never"):
+        _judge("t", {"after": "decided", "matches": ["outcome"],
+                     "domain": {"outcome": ["released", "refused"]}})
 
 
 def test_A_TEMPLATED_KIND_NAMES_ONLY_ITS_OWN_TIER():

@@ -40,6 +40,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from tests.graph_host._engine_deps import needs_langgraph
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -404,6 +406,20 @@ def test_the_content_test_reads_the_key_engine_fin_ACTUALLY_EMITS():
 # tests above, built from hand-made payloads that always supplied `artifact_id`, stayed green
 # throughout. These seals are driven against the REAL engine-fin app — a hand-made payload
 # cannot catch a join defect between two sides that each individually test clean.
+
+class _Initiator:
+    authz_id = "alice@example.com"
+
+
+@pytest.fixture(autouse=True)
+def _the_initiators_bearer_is_a_member(monkeypatch):
+    """engine-fin answers `/measure` only to a caller who can view the program, and reads the
+    caller from the bearer the brief forwards. The brief's bearer here resolves to a member."""
+    m = _engine()
+    monkeypatch.setattr(m, "can_view_program",
+                        lambda program, caller_id, **kw: caller_id == _Initiator.authz_id)
+    monkeypatch.setattr(m, "_current_caller", lambda: _Initiator())
+
 
 def _engine():
     from agent_fleet.finance_agent import main as m

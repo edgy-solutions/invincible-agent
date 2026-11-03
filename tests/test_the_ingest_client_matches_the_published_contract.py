@@ -118,7 +118,7 @@ def client(monkeypatch):
 
 
 def test_the_routes_are_the_names_the_client_documents(client):
-    assert set(client.ROUTES) == {"drop", "status", "mine", "extraction", "tasks", "act"}
+    assert set(client.ROUTES) == {"drop", "status", "mine", "extraction", "tasks", "act", "shapes"}
     assert set(client.READS) == set(client.ROUTES)
 
 
@@ -296,7 +296,7 @@ def world(monkeypatch):
 
     w = SimpleNamespace(row=None, stages=[], s3=S3(), ledger=Ledger(), resolved=[], gateway=gateway)
     reg = SimpleNamespace(kind="notice", branch="document", domain="SUSTAINMENT",
-                          seeds_workflow=None, identity_field=None)
+                          seeds_workflow=None, identity_field=None, review_shape="notice")
     monkeypatch.setattr(ck, "by_kind", lambda k: reg)
     monkeypatch.setattr(gateway, "_build_s3_client", lambda: w.s3)
     monkeypatch.setattr(gateway, "_create_ingest_node", lambda **kw: None)
@@ -317,6 +317,13 @@ def world(monkeypatch):
                         lambda i, *, caller_id: w.row if w.row and w.row["id"] == i
                         and caller_id == w.row["submitted_by"] else None)
     monkeypatch.setattr(ist, "update_status", lambda iid, stage, **kw: w.stages.append(stage))
+    # the authorization directory: the kind is gated (its `can_drop:` object exists) and only WHO
+    # holds the grant. The real `capability_object_exists` is kept by the 503 arm below.
+    w.real_exists = ht.capability_object_exists
+    w.drop_checks = []
+    monkeypatch.setattr(ht, "capability_object_exists", lambda cap: True)
+    monkeypatch.setattr(ht, "can_invoke_or_unavailable",
+                        lambda cap, who: w.drop_checks.append((cap, who)) or who == WHO)
     monkeypatch.setattr(ht, "get_open_task_payload", lambda t: None)
     monkeypatch.setattr(ht, "latest_task_for_subject", lambda *a, **k: None)
     monkeypatch.setattr(ht, "get_task_open_state", lambda t: None)
@@ -376,6 +383,7 @@ def test_arm6_the_client_drives_drop_poll_extraction_promote_against_the_real_ap
     # the client's default: a blank on_behalf_of, which the doc says means the caller
     ingest_id = client.drop(api, base, str(f), kind="pdf", content_kind="notice")
     assert ingest_id == world.row["id"] and ingest_id.startswith("sha256:")
+    assert world.drop_checks == [("can_drop:notice", WHO)]     # the door asked the directory
     assert world.row["submitted_by"] == WHO
 
     # the row moves on its own between polls: received -> extracting -> review
@@ -420,6 +428,73 @@ def test_arm7_a_poll_that_runs_out_of_time_returns_the_last_body(client, world, 
     body = client.poll(world.api, Adapter.BASE, ingest_id, timeout_s=5, sleep=lambda s: None,
                        clock=lambda: next(ticks))
     assert client.field(body, "status", "stage") == "received"
+
+
+def test_arm7b_a_deployment_with_no_authorization_directory_answers_the_drop_503(
+        client, world, tmp_path, monkeypatch):
+    """The door fails closed: with no directory declared the client's drop surfaces the 503
+    `authorization_unconfigured` as its RuntimeError (the client has no typed error), and nothing
+    is stored."""
+    from src.iagent import human_tasks as ht  # noqa: PLC0415
+    monkeypatch.setattr(ht, "capability_object_exists", world.real_exists)
+    monkeypatch.setattr(ht, "_TOPAZ_DIRECTORY_URL", "")
+    f = tmp_path / "n.pdf"
+    f.write_bytes(PDF_BYTES + b"3")
+    with pytest.raises(RuntimeError, match=r"drop: expected \(200,\), got 503.*authorization_unconfigured"):
+        client.drop(world.api, Adapter.BASE, str(f), kind="pdf", content_kind="notice")
+    assert world.row is None and world.s3.objects == {}
+
+
+def _to_review(client, world, tmp_path, tail=b"4"):
+    """Drop a file and move it to `review` with its extraction in place; return (ingest_id, status)."""
+    f = tmp_path / "n.pdf"
+    f.write_bytes(PDF_BYTES + tail)
+    ingest_id = client.drop(world.api, Adapter.BASE, str(f), kind="pdf", content_kind="notice")
+    world.row["status"] = "review"
+    _extract_in_place(world)
+    status = client.poll(world.api, Adapter.BASE, ingest_id, sleep=lambda s: None)
+    return ingest_id, status
+
+
+def test_arm10_a_promote_with_the_item_form_coverage_is_recorded_in_the_item_form(
+        client, world, tmp_path):
+    ingest_id, status = _to_review(client, world, tmp_path)
+    api, base = world.api, Adapter.BASE
+    ex = client.extraction(api, base, ingest_id)
+    cov = client.coverage_all_opened(ex, client.review_shapes(api, base))
+    assert cov["review_shape"] == "notice" and cov["item_kind"] == "part"
+    assert cov["rules_version"] and cov["looked_at"] == ["0"] and cov["groups"] == []
+    assert "parts" not in cov
+    act = client.promote(api, base, client.review_task(status), cov)
+    assert client.ledger_entry(act)["decision"] == "promoted"
+    from src.iagent import promotion  # noqa: PLC0415
+    stored = promotion._recorded_review_coverage(next(iter(world.ledger.records.values()))["record"])
+    assert stored["item_kind"] == "part" and stored["review_shape"] == "notice"
+    assert stored["rules_version"] == cov["rules_version"] and "parts" not in stored
+
+
+def test_arm11_a_coverage_with_an_item_missing_is_422_uncovered(client, world, tmp_path):
+    ingest_id, status = _to_review(client, world, tmp_path, b"5")
+    api, base = world.api, Adapter.BASE
+    cov = client.coverage_all_opened(client.extraction(api, base, ingest_id),
+                                     client.review_shapes(api, base))
+    cov["looked_at"] = []
+    with pytest.raises(RuntimeError, match=r"got 422") as exc:
+        client.promote(api, base, client.review_task(status), cov)
+    text = str(exc.value)
+    assert "review_coverage_invalid" in text and '"check":"uncovered"' in text.replace(" ", "")
+    assert world.ledger.records == {}
+
+
+def test_arm12_the_helper_refuses_a_null_shape_and_a_shape_with_no_row(client):
+    shapes = [{"review_shape": "notice", "rules_version": "notice.v1"}]
+    body = {"review_shape": None, "item_kind": None, "rows": []}
+    with pytest.raises(ValueError):
+        client.coverage_all_opened(body, shapes)
+    with pytest.raises(ValueError):
+        client.coverage_all_opened({**body, "review_shape": "ghost", "item_kind": "x"}, shapes)
+    with pytest.raises(ValueError):
+        client.coverage_all_opened({**body, "review_shape": "notice", "item_kind": "part"}, [])
 
 
 def test_arm8_reject_refuses_a_code_the_api_does_not_take(client):

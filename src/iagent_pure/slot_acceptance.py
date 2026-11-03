@@ -145,6 +145,28 @@ UNDECLARED = "undeclared"
 ROUTE_SUPPLIED = "route-supplied"
 NOT_A_PERMITTED_VALUE = "not-a-permitted-value"
 WRONG_SHAPE = "wrong-shape"
+EMPTY_MANDATORY = "empty-mandatory"
+
+#: The kind an ask is owed for. Defined HERE, beside the acceptance that drops an empty one,
+#: and read by `slot_disposition.mandatory_slots`, so the slot this module refuses as empty
+#: and the slot the disposition asks about are one set, never two predicates that drift.
+SPOKEN_MANDATORY = "spoken-mandatory"
+
+
+def is_spoken_mandatory(decl: Mapping[str, Any]) -> bool:
+    return decl.get("kind") == SPOKEN_MANDATORY
+
+
+def is_empty_value(value: Any) -> bool:
+    """None, a blank string, or an empty collection: a value that names nothing. NOT `0` and
+    NOT `False`, which are answers."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set, frozenset, dict)):
+        return not value
+    return False
 
 
 def accept_slots(
@@ -290,6 +312,16 @@ def accept_slots(
             if bad:
                 refusals.append(Refusal(name, NOT_A_PERMITTED_VALUE, value))
                 continue
+
+        if is_spoken_mandatory(decl) and is_empty_value(value):
+            # A REQUIRED SLOT NEVER TAKES THE SAFE-EMPTY VALUE. The disposition asks for a
+            # mandatory slot ABSENT from `params`; `""` or `null` is PRESENT, so accepted it
+            # would route as filled and the verb would run on nothing. Refused, it is absent,
+            # and absent is an ask. LAST, at the two accepting exits that can carry an empty
+            # (this pass-through, and `[]` through the elementwise check above): every earlier
+            # branch already refuses an empty string under its own, more specific reason.
+            refusals.append(Refusal(name, EMPTY_MANDATORY, value))
+            continue
 
         params[name] = value
 

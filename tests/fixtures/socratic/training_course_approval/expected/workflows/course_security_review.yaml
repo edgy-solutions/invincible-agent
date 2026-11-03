@@ -1,0 +1,18 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+id: course_security_review
+name: Course security review
+steps:
+- kind: human_await
+  id: security
+  audience: training_security:TRAINING
+  task_kind: course_security_review
+  role: security_officer
+  approves:
+  - cleared
+  subject_ref: '{trigger.course_id}'
+  title: Course {trigger.course_id} -- security
+  excludes:
+  - '{trigger.author.authz_id}'
+  deadline_seconds: null
+participants:
+- role: security_officer

@@ -25,8 +25,10 @@ the first symptom three layers away. Prose names and component names are differe
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 import re
@@ -39,13 +41,19 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
+    import cdrl
     import export
+    import export_profiles
+    import measure_verbs
     import measures
     from entities import FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled
     from seed import build_seed, check_consistency, notional_banner
     from slots import missing_mandatory, refusal_for, slots_for, with_live_vocabularies
 except ImportError:
+    from agent_fleet.finance_agent import cdrl
     from agent_fleet.finance_agent import export
+    from agent_fleet.finance_agent import export_profiles
+    from agent_fleet.finance_agent import measure_verbs
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent.entities import (
         FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled,
@@ -59,10 +67,21 @@ try:  # same three-shape idiom; `utils` is a sibling top-level module in the fla
     from utils.subject_coverage import dead_end_classes as _dead_end
     from utils.subject_coverage import unroutable_classes as _unroutable
     from utils.program_membership import can_view_program
+    from utils.entitled_domains import entitled_domains
+    from utils.recipient_readers import can_read_recipient
 except ImportError:
     from agent_fleet.utils.subject_coverage import dead_end_classes as _dead_end
     from agent_fleet.utils.subject_coverage import unroutable_classes as _unroutable
     from agent_fleet.utils.program_membership import can_view_program
+    from agent_fleet.utils.entitled_domains import entitled_domains
+    from agent_fleet.utils.recipient_readers import can_read_recipient
+
+log = logging.getLogger(__name__)
+
+# This engine's OWN owner key on the `recipient_readers` rail (policy/recipient_readers.yaml): who may
+# download a package for one of ITS recipient scopes (`export.RECIPIENT_SCOPES`). Identity, not a
+# case; the rows are the rail's.
+_FIN_OWNER = "finance"
 
 FIN = "http://invincible-agent/fin#"
 MESH = "http://invincible-agent/mesh#"
@@ -138,6 +157,29 @@ def _dist_dir(root: pathlib.Path) -> pathlib.Path:
     """THE ONE PLACE the artifact directory is named, so a test can redirect every
     writer and reader by monkeypatching this function alone."""
     return root / "dist"
+
+
+#: WHERE A CDRL IS WRITTEN WHEN THERE IS NO CHECKOUT -- the deployed pod. The finance image ships
+#: neither the package builder nor the Pyodide runtime, so `_repo_root()` is None there; an xlsx
+#: needs neither. `/app/agent_workspace` is the image's own workspace (`SWARMS_WORKSPACE`,
+#: `Dockerfile.agent`: created and chowned to `appuser` before `USER appuser`), and the chart sets no
+#: securityContext / readOnlyRootFilesystem and mounts no volume on engine pods, so the container
+#: filesystem under /app is writable.
+_CDRL_FALLBACK_DIR = pathlib.Path("/app/agent_workspace/fin_cdrl")
+_CDRL_DIR_ENV = "FIN_CDRL_ARTIFACT_DIR"
+
+
+def _cdrl_out_dir() -> pathlib.Path:
+    """THE ONE PLACE a CDRL artifact's directory is named, for BOTH `/cdrl_export` (writer) and
+    `/artifact` (reader): the env override, else the checkout's `dist/` (dev and tests), else the
+    pod-writable fallback. A package is unchanged: it still needs `_repo_root()`."""
+    override = os.getenv(_CDRL_DIR_ENV)
+    if override:
+        return pathlib.Path(override)
+    root = _repo_root()
+    if root is not None:
+        return _dist_dir(root)
+    return _CDRL_FALLBACK_DIR
 
 
 def _in_a_checkout(root: pathlib.Path) -> bool:
@@ -366,6 +408,97 @@ VERBS: list[dict[str, Any]] = [
 BY_FN = {v["fn"]: v for v in VERBS}
 
 
+def _load_declared() -> dict[str, "measure_verbs.MeasureVerbRow"]:
+    """The measures a deployment DECLARED as overlay rows (proposal: a measure is an overlay row).
+
+    Read from `MEASURE_VERB_OVERLAY_DIRS` at call time; none declared is the default and an
+    empty dict. A malformed row set RAISES, so the engine does not boot half a catalogue.
+    """
+    return {r.measure_id: r for r in measure_verbs.load_measure_verbs(
+        builtins=(measures.OUTPUT_URI, [v["verb"].split(":", 1)[-1] for v in VERBS]),
+    )}
+
+
+#: measure_id -> row. Loaded ONCE, here, like every other compose loader. The routes read this
+#: name at call time, so a test that replaces it replaces what the engine serves.
+DECLARED: dict[str, "measure_verbs.MeasureVerbRow"] = _load_declared()
+
+
+def _load_profiles() -> dict[str, "export_profiles.ExportProfile"]:
+    """The CDRL export profiles a deployment declared (proposal: a CDRL is an export profile).
+
+    Read from `FIN_EXPORT_PROFILE_OVERLAY_DIRS`; none declared is the default and an empty dict. A
+    malformed set RAISES (naming the file and the reason), so the engine does not boot with half a
+    catalogue of deliverables. A profile may source from a declared measure, so this reads
+    `DECLARED`.
+    """
+    return {p.name: p for p in export_profiles.load_export_profiles(declared=DECLARED)}
+
+
+#: name -> profile. Loaded ONCE, here, like every other compose loader. The routes read this name
+#: at call time, so a test that replaces it replaces what the engine serves.
+PROFILES: dict[str, "export_profiles.ExportProfile"] = _load_profiles()
+
+
+def _declared_input_uri() -> str:
+    """The subject a declared measure registers on: the one `fin_performance_indices` uses, so a
+    declared PERIOD_SERIES is asked of what that series is asked of, never a hand-typed URI."""
+    return BY_FN["fin_performance_indices"]["input_uri"]
+
+
+def _declared_slots(row: "measure_verbs.MeasureVerbRow") -> list[dict[str, Any]]:
+    """`program_id` / `window` slots EQUAL to `fin_performance_indices`'s, filtered to the row's
+    params. Derived, never hand-written: a slot typed here is a second declaration of a fact
+    the signature already makes."""
+    return [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
+
+
+def _registration_calls(base: str) -> list[dict[str, Any]]:
+    """The keyword arguments of every `register_engine_to_mesh` call this engine makes for its
+    verbs (built-in then declared), minus the `mint`. One list, read by the lifespan and by the
+    seal that pins what is registered -- the loop that registered and the test that checked it
+    were two copies of one fact."""
+    periods = [p for p in FISCAL_PERIODS if any(f.period == p for f in STATE.facts)]
+    plan = [
+        (v, v["input_uri"], "engine_fin_finance") for v in VERBS
+    ] + [
+        (v, subj, "engine_fin_finance_by_subject")
+        for v in VERBS for subj in v.get("also_askable_of", ())
+    ]
+    calls: list[dict[str, Any]] = [
+        dict(
+            name=reg_name,
+            description=v["desc"],
+            verb=v["verb"],
+            input_uri=subject_uri,
+            output_uri=measures.OUTPUT_URI[v["fn"]],
+            verb_synonyms=v["synonyms"],
+            verb_anti_synonyms=v.get("anti_synonyms"),
+            endpoint_url=f"{base}/measure/{v['fn']}",
+            slots=with_live_vocabularies(slots_for(v["fn"]), periods=periods),
+            domains=DOMAINS,
+        )
+        for v, subject_uri, reg_name in plan
+    ]
+    for r in DECLARED.values():
+        calls.append(dict(
+            name="engine_fin_finance",
+            description=r.description or r.name,
+            verb="mesh:" + r.verb,
+            input_uri=_declared_input_uri(),
+            output_uri=measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
+            verb_synonyms=list(r.synonyms),
+            verb_anti_synonyms=list(r.anti_synonyms) or None,
+            endpoint_url=f"{base}/measure/{r.measure_id}",
+            # THE ROW'S CELLS, not the engine's: `policy.cells` is the field that excludes. A
+            # built-in keeps DOMAINS; a declared verb registers under exactly what its row says
+            # (a cell outside this engine's own is not refused: the field exists to exclude).
+            domains=list(r.cells),
+            slots=with_live_vocabularies(_declared_slots(r), periods=periods),
+        ))
+    return calls
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Register every verb as its own predicate edge, then the two provider verbs.
@@ -460,41 +593,18 @@ async def lifespan(app: FastAPI):
     # (tool_urn, verb_iri). The precedent for doing it correctly is Engine A's `findSchema`,
     # which carries BOTH idp:Column and idp:Dataset under `engine_a_find_schema_column` and
     # `engine_a_find_schema`. This follows that idiom rather than inventing one.
-    _registrations = [
-        (v, v["input_uri"], "engine_fin_finance") for v in VERBS
-    ] + [
-        (v, subj, "engine_fin_finance_by_subject")
-        for v in VERBS for subj in v.get("also_askable_of", ())
-    ]
-    for v, _subject_uri, _reg_name in _registrations:
+    for _call in _registration_calls(base):
         try:
             register_engine_to_mesh(
                 mint=_mint,
-                name=_reg_name,
-                description=v["desc"],
-                verb=v["verb"],
-                input_uri=_subject_uri,
-                output_uri=measures.OUTPUT_URI[v["fn"]],
-                verb_synonyms=v["synonyms"],
-                verb_anti_synonyms=v.get("anti_synonyms"),
-                endpoint_url=f"{base}/measure/{v['fn']}",
                 owner_persona=OWNER_PERSONA,
-                domains=DOMAINS,
                 cost_class="fast",
-                # DECLARED FROM DAY ONE. This engine is the first to register slots on its
-                # first registration rather than acquire them later — which is what makes
-                # `fin_eac_calculation`'s refusal reachable by the router at all, instead of
-                # a rule only this process knows.
-                slots=with_live_vocabularies(
-                    slots_for(v["fn"]),
-                    periods=[p for p in FISCAL_PERIODS
-                             if any(f.period == p for f in STATE.facts)],
-                ),
+                **_call,
             )
         except Exception as exc:  # pragma: no cover
             # Best-effort, matching the fleet's posture: a failed registration means this
             # verb is not routable yet, NOT that the engine is down.
-            print(f"[engine-fin] registration failed for {v['verb']}: {exc}")
+            print(f"[engine-fin] registration failed for {_call['verb']}: {exc}")
 
     # THE RESOLVER PROVIDER — without it, four of six verbs cannot be filled from a phrase.
     #
@@ -616,6 +726,9 @@ class MeasureRequest(BaseModel):
     is asked of what was reported; there is no forkable state, so there is nothing to name.
     """
     params: dict[str, Any] = Field(default_factory=dict)
+    # Defaulted so an old-shape caller does not 422 at the roll; an empty `user_email` sees
+    # nothing, so the default fails closed.
+    user_email: str = ""
 
 
 @app.get("/health")
@@ -663,11 +776,27 @@ def list_verbs() -> dict[str, Any]:
             "slots": with_live_vocabularies(slots_for(v["fn"])),
         }
         for v in VERBS
+    ] + [
+        {
+            "verb": "mesh:" + r.verb,
+            "fn": r.measure_id,
+            "input_uri": _declared_input_uri(),
+            "output_uri": measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
+            "slots": with_live_vocabularies(_declared_slots(r)),
+        }
+        for r in DECLARED.values()
     ]}
 
 
-def _measure_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
+def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[str, Any]:
     """Execute one verb and build the envelope `/measure/{fn}` serves.
+
+    `caller` IS REQUIRED, AND HAS NO DEFAULT, so that no route can reach a declared measure
+    without saying who is asking: the first thing this does is `_require_cell`, which refuses a
+    caller holding none of the row's cells. The routes also check it themselves, earlier
+    (`/package_export` and `/cdrl_export` before ANY panel or source is measured), which is
+    deliberate redundancy: the early check makes a refusal happen before anything is measured,
+    and this one is what no future route can skip.
 
     THE ONE PLACE A VERB IS RUN AND SHAPED. Item 3's rule — "seeding and packageExport read
     the same thing" — has a counterpart on this engine's own side: `package_export` below
@@ -681,6 +810,9 @@ def _measure_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
     registered menu (ADR-0042 §2). An engine that named a view here would re-open
     `archetype-chosen-before-data` from the other end.
     """
+    _require_cell(fn, caller)
+    if fn in DECLARED:
+        return _declared_envelope(DECLARED[fn], params)
     if fn not in measures.OUTPUT_URI:
         raise HTTPException(status_code=404, detail=f"unknown measure {fn!r}")
     func = getattr(measures, fn, None)
@@ -765,11 +897,68 @@ def _measure_envelope(fn: str, params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
+    """The envelope of a DECLARED measure: the MULTI_SERIES shape `fin_performance_indices`
+    answers in (cortex's MULTI_SERIES contract: `rows` by `period`, declared `series`, optional
+    `reference`), with `series` and `reference` from the row and the method beside the figure.
+    `render` is a copy of the row's render block: it names the archetype the row declares, so
+    presentation can select it without the output class being on any menu.
+
+    `verdict` is the mechanical restatement `measure_verbs.declared_verdict` builds from the row's
+    own reference (absent when there are no rows), so the brief never falls back to "reported
+    (see artifact)". `method` carries the module's bytes' hash, so the
+    figure names the exact code that computed it (ADR-0053 section 5).
+    """
+    unknown = sorted(set(params) - set(row.params))
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"bad params for {row.measure_id}: {unknown}")
+    missing = [n for n in row.params if _declared_param_required(row, n) and params.get(n) is None]
+    if missing:
+        raise HTTPException(status_code=422, detail={
+            "needs_slots": missing, "question": refusal_for(
+                "fin_performance_indices", [s for s in slots_for("fin_performance_indices")
+                                            if s["name"] in missing]),
+        })
+    try:
+        rows = measure_verbs.run_declared(STATE, row, **params)
+    except NotInModel as exc:
+        raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
+    fn = row.measure_id
+    envelope = {  # not `return {`: the wire seals select the built-in builder by that anchor
+        "measure": fn,
+        "output_uri": measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
+        "artifact_id": _artifact_id(fn, params, rows),
+        "value_label": row.series[0].get("label", row.name),
+        "series": [dict(s) for s in row.series],
+        "render": copy.deepcopy(row.render),
+        **({"reference": dict(row.reference)} if row.reference else {}),
+        "data_provenance": notional_banner(),
+        "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
+                   "module_sha256": row.module_sha256},
+        **({"verdict": _v} if (_v := measure_verbs.declared_verdict(row, rows)) is not None else {}),
+        "rows": rows,
+    }
+    return envelope
+
+
+def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
+    return name == "program_id"
+
+
 @app.post("/measure/{fn}")
 def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
     """The ordinary route. A THIN WRAPPER — `_measure_envelope` is the one place a verb is
-    run and shaped; this route and `package_export` below are its only two callers."""
-    return _measure_envelope(fn, dict(req.params))
+    run and shaped; this route, `package_export` and `cdrl_export` below are its callers.
+
+    ORDER: an unknown measure is 404; the caller cannot view the program is 403
+    `program_not_visible`; a declared measure whose cells the caller holds none of is 403
+    `measure_not_in_cell`. Visibility first, so a caller outside the program learns nothing about
+    the measure's cells."""
+    if fn not in measures.OUTPUT_URI and fn not in DECLARED:  # a verb name is not a program secret: 404 stays first
+        raise HTTPException(status_code=404, detail=f"unknown measure {fn!r}")
+    caller = _verb_caller(req.user_email)
+    _require_visible(req.params.get("program_id"), caller)
+    return _measure_envelope(fn, dict(req.params), caller=caller)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -783,6 +972,7 @@ def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
 #: verb -> fn, DERIVED from VERBS so a verb added above is immediately packageable and this
 #: map cannot itself name a verb the catalogue does not hold.
 VERB_TO_FN: dict[str, str] = {v["verb"]: v["fn"] for v in VERBS}
+VERB_TO_FN.update({"mesh:" + r.verb: r.measure_id for r in DECLARED.values()})
 
 
 class PackagePanel(BaseModel):
@@ -804,36 +994,49 @@ def _request_date() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
+def _valid_as_of(v: Optional[str]) -> Optional[str]:
+    """`as_of` is a calendar date or absent. Shared by every export request."""
+    if v is None:
+        return v
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
+    date.fromisoformat(v)  # a ValueError here is a 422 too
+    return v
+
+
 class PackageExportRequest(BaseModel):
     recipient_scope: str
     canvas: PackageCanvas
     as_of: Optional[str] = None
+    # Defaulted so an old-shape caller does not 422 at the roll; an empty `user_email` sees
+    # nothing, so the default fails closed.
+    user_email: str = ""
 
     @field_validator("as_of")
     @classmethod
     def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
-            raise ValueError(f"as_of {v!r} is not YYYY-MM-DD")
-        date.fromisoformat(v)  # a ValueError here is a 422 too
-        return v
+        return _valid_as_of(v)
 
 
 @app.post("/package_export")
 def package_export(body: PackageExportRequest) -> dict[str, Any]:
     """Build one recipient's self-contained validation package.
 
-    FOUR ORDERED REFUSALS, each before the next is even asked:
+    SIX ORDERED REFUSALS, each before the next is even asked:
       1. an unknown recipient scope — 403, never 404 (ADR-0049 Ruling 4: "no such recipient"
          and "this recipient has nothing" must not look alike, and this is the former).
-      2. an empty panel list — 422, nothing to disclose.
-      3. a panel naming a verb this engine does not serve — 422, named by verb.
-      4. a panel whose own `program_id` disagrees with the recipient's program — 403, because
+      2. the caller cannot view the scope's program — 403 with the refusal envelope. Every
+         panel equals the scope's program (refusal 5), so one check covers the package.
+      3. an empty panel list — 422, nothing to disclose.
+      4. a panel naming a verb this engine does not serve — 422, named by verb.
+      5. a panel whose own `program_id` disagrees with the recipient's program — 403, because
          a program embedded in a package another program's recipient can open is exactly the
          cross-program leak the scope exists to prevent.
+      6. a panel naming a DECLARED measure whose cells the caller holds none of — 403
+         `measure_not_in_cell`, the whole request refused, BEFORE any panel is measured (a package
+         with a panel silently missing is worse than a refusal).
 
-    Only once all four pass does this call `_measure_envelope` — THE SAME FUNCTION
+    Only once all six pass does this call `_measure_envelope` — THE SAME FUNCTION
     `/measure/{fn}` calls — once per panel, then hand the served envelopes to
     `scripts.build_fin_package.build` to write the artifact. Nothing here recomputes a row a
     second way.
@@ -843,11 +1046,13 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
         program_id = export.program_for_recipient(body.recipient_scope)
     except Unentitled as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    caller = _verb_caller(body.user_email)
+    _require_visible(program_id, caller)
 
     if not body.canvas.panels:
         raise HTTPException(status_code=422, detail="a package needs at least one panel")
 
-    panels: list[dict[str, Any]] = []
+    resolved: list[tuple[Any, str]] = []
     for p in body.canvas.panels:
         fn = VERB_TO_FN.get(p.verb)
         if fn is None:
@@ -863,7 +1068,13 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
                        f"{p.params.get('program_id')!r}, not {program_id!r} — "
                        f"{body.recipient_scope!r} may only disclose its own program",
             )
-        envelope = _measure_envelope(fn, dict(p.params))
+        resolved.append((p, fn))
+    for _p, fn in resolved:  # refusal 6: every panel's cells, before ANY panel is measured
+        _require_cell(fn, caller)
+
+    panels: list[dict[str, Any]] = []
+    for p, fn in resolved:
+        envelope = _measure_envelope(fn, dict(p.params), caller=caller)
         panels.append({
             "panel": p.panel, "verb": p.verb, "fn": fn, "params": dict(p.params),
             "artifact_id": envelope["artifact_id"], "rows": envelope["rows"],
@@ -945,6 +1156,118 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /cdrl_profiles, POST /cdrl_export -- a CDRL is an export profile
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Proposal docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md, Part 2.
+# Like `package_export` this is NOT a mesh verb: a deliverable is asked for by name from the BFF's
+# export route, never routed to by a phrase.
+
+@app.get("/cdrl_profiles")
+def cdrl_profiles() -> list[dict[str, str]]:
+    """The composed profiles' shared header (`name, format, scope, label`) and NOTHING else: no
+    template path, no hash, no sources. A catalogue of what can be asked for, not of how."""
+    return [p.header() for p in sorted(PROFILES.values(), key=lambda p: p.name)]
+
+
+class CdrlExportRequest(BaseModel):
+    profile: str
+    program_id: str
+    as_of: Optional[str] = None
+    # Defaulted so an old-shape caller does not 422 at the roll; an empty `user_email` sees
+    # nothing, so the default fails closed.
+    user_email: str = ""
+
+    @field_validator("as_of")
+    @classmethod
+    def _as_of_is_a_date(cls, v: Optional[str]) -> Optional[str]:
+        return _valid_as_of(v)
+
+
+def _cdrl_source(fn: str, params: dict[str, Any], *, caller: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """One source of a CDRL: `_measure_envelope` (THE function `/measure/{fn}` serves) and the
+    method identity beside it. A declared measure's envelope carries `method`; a built-in's does
+    not, so its identity is its verb's name at version `builtin`."""
+    envelope = _measure_envelope(fn, params, caller=caller)
+    if fn in DECLARED:
+        return envelope, dict(envelope["method"])
+    return envelope, {"fn": fn, "name": BY_FN[fn]["verb"].split(":", 1)[-1], "version": "builtin"}
+
+
+@app.post("/cdrl_export")
+def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
+    """Build one program's CDRL from a profile and its template.
+
+    ORDERED REFUSALS, each before the next is even asked: an unknown profile is 404
+    `unknown_profile` (a profile name is not a program secret, as an unknown verb is not); the
+    caller cannot view the program is 403 with `package_export`'s envelope (`_require_visible`),
+    BEFORE anything is measured and before a byte is written; a profile sourcing a DECLARED
+    measure whose cells the caller holds none of is 403 `measure_not_in_cell` for the whole
+    request (a deliverable with a column silently missing is worse than a refusal), also before
+    anything is measured; a deployment that cannot write an artifact here is 503. Only then does `build_cdrl` run each source through `_cdrl_source`.
+    """
+    profile = PROFILES.get(body.profile)
+    if profile is None:
+        raise HTTPException(status_code=404, detail={
+            "error": "unknown_profile",
+            "message": f"no export profile {body.profile!r}",
+            "profiles": sorted(PROFILES),
+        })
+    caller = _verb_caller(body.user_email)
+    _require_visible(body.program_id, caller)
+    for fn in profile.sources:  # the early check; `_measure_envelope` holds the one no route skips
+        _require_cell(fn, caller)
+    as_of = body.as_of or _request_date()
+
+    out_dir = _cdrl_out_dir()
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path, envelope = cdrl.build_cdrl(
+            STATE, profile, program_id=body.program_id, as_of=as_of,
+            out_dir=out_dir, run_source=lambda fn, params: _cdrl_source(fn, params, caller=caller),
+        )
+    except OSError as e:
+        # THE ONLY 503: the artifact directory cannot be created or written.
+        raise HTTPException(
+            status_code=503,
+            detail="this deployment cannot write an artifact — the CDRL artifact directory "
+                   f"cannot be created or written ({type(e).__name__})",
+        ) from e
+    data = path.read_bytes()
+    print(f"[engine-fin] cdrlExport: {json.dumps({'profile': profile.name, 'program_id': body.program_id, 'cells_sha256': envelope['cells_sha256']})}")
+    return {
+        "artifact_filename": path.name,
+        "artifact_sha256": "sha256:" + hashlib.sha256(data).hexdigest(),
+        "artifact_bytes": len(data),
+        "artifact_uri": _artifact_uri(path.name),
+        "profile": profile.name,
+        "program_id": body.program_id,
+        "as_of": as_of,
+        "envelope": envelope,
+    }
+
+
+def _cdrl_artifact_program(filename: str) -> Optional[str]:
+    """The program a CDRL artifact name belongs to, or None if it is no CDRL this engine produces.
+    DERIVED from the composed profiles crossed with the seed's programs through
+    `cdrl.artifact_filename`, never parsed out of the string (the closed-set rule `/artifact` keeps
+    for packages)."""
+    origin = _cdrl_artifact_origin(filename)
+    return origin[1] if origin else None
+
+
+def _cdrl_artifact_origin(filename: str) -> Optional[tuple[Any, str]]:
+    """`(profile, program_id)` a CDRL artifact name belongs to, or None. The profile matters: the
+    file holds the figures of every measure that profile sources, so fetching it is gated on
+    those measures' cells as well as on the program."""
+    for profile in PROFILES.values():
+        for program in STATE.programs:
+            if filename == cdrl.artifact_filename(profile.name, program.program_id, profile.format):
+                return profile, program.program_id
+    return None
+
+
 @app.get("/artifact/{filename}")
 def get_artifact(filename: str) -> FileResponse:
     """Serve a produced package file — CLOSED SET, then ENTITLEMENT, mirroring
@@ -952,25 +1275,48 @@ def get_artifact(filename: str) -> FileResponse:
     two engines' packages are indistinguishable risks to whoever fetches them.
     """
     scope = export.scope_of_artifact(filename)
-    if scope is None:
+    cdrl_origin = _cdrl_artifact_origin(filename) if scope is None else None
+    cdrl_program = cdrl_origin[1] if cdrl_origin else None
+    if scope is None and cdrl_program is None:
         # A NAME NOT IN THE CLOSED SET IS A 404, BEFORE ANY ENTITLEMENT CHECK. Answering an
         # unrecognised name with 403 would confirm that SOME package exists under it.
         raise HTTPException(status_code=404, detail="no such artifact")
 
-    caller = _current_caller()
-    readers = export.readers_for_recipient(scope)
-    if caller is None or caller.authz_id not in readers:
-        # NAMES THE PACKAGE, NEVER ITS READERS — the same asymmetry cost's route keeps.
-        raise HTTPException(status_code=403, detail=f"not entitled to {scope!r}'s package")
+    if cdrl_program is not None:
+        # A CDRL is one program's deliverable: who may fetch it is who may view the program
+        # (the check `/cdrl_export` made), not a recipient reader list.
+        # AND the cells of every declared measure the profile sources: the file holds those figures,
+        # and a caller outside a cell must not read them out of another caller's export.
+        caller = _verb_caller("")
+        _require_visible(cdrl_program, caller)
+        for fn in cdrl_origin[0].sources:
+            _require_cell(fn, caller)
+    else:
+        caller = _current_caller()
+        authz_id = getattr(caller, "authz_id", None) if caller else None
+        try:
+            permitted = bool(authz_id) and bool(can_read_recipient(_FIN_OWNER, scope, authz_id))
+        except Exception as exc:  # noqa: BLE001 -- transport/HTTP failure of the check itself
+            # An outage is not "no readers": a 503 at the door, never a 403 (the plan path's posture).
+            log.warning("recipient_readers check failed: %s", exc)
+            raise HTTPException(status_code=503, detail={"reason": "recipient_readers_unavailable"}) from exc
+        if not permitted:
+            # NAMES THE PACKAGE, NEVER ITS READERS — the same asymmetry cost's route keeps.
+            raise HTTPException(status_code=403, detail=f"not entitled to {scope!r}'s package")
 
-    root = _repo_root()
-    if root is None:
+    if cdrl_program is not None:
+        directory: Optional[pathlib.Path] = _cdrl_out_dir()
+    else:
+        root = _repo_root()
+        directory = _dist_dir(root) if root is not None else None
+    if directory is None:
         raise HTTPException(status_code=404, detail="no such artifact")
-    path = _dist_dir(root) / filename
+    path = directory / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail="no such artifact")
 
-    media = "text/html" if filename.endswith(".html") else "application/octet-stream"
+    media = ("text/html" if filename.endswith(".html")
+             else cdrl.MEDIA_TYPES.get(filename.rpartition(".")[2], "application/octet-stream"))
     # NO STARLETTE FALLBACK: `FileResponse` comes from `fastapi.responses` (imported at the
     # top of this module), never from `starlette.responses` directly — the same dependency
     # seal cost's route holds, because the two classes are not guaranteed interchangeable
@@ -1197,17 +1543,117 @@ def _program_of(class_uri: str, instance_id: str) -> str | None:
     return getattr(item, "program_id", None) or None
 
 
-def _visible_to(caller: str, members: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The members whose program the caller may view. Withheld is unknown: no marker is added.
+def _can_view(program: Any, caller: str) -> bool:
+    """THE ONE PREDICATE every route uses: may `caller` view `program`? Deny by default.
 
-    A service sees nothing (ADR-0047 5.1: a service is never a program member). An empty caller
-    sees nothing because `can_view_program` answers False for one without a lookup; a check of
-    our own here was measured redundant (its removal mutant stayed green), so there is none.
-    One check per distinct program. `httpx.HTTPError` propagates.
+    A service sees nothing (ADR-0047 5.1: a service is never a program member), and is refused
+    here without a lookup. A program that is not a non-empty string is no program. An empty
+    caller sees nothing because `can_view_program` answers False for one without a lookup; a
+    check of our own here was measured redundant (its removal mutant stayed green), so there
+    is none. `httpx.HTTPError` propagates.
     """
     caller = (caller or "").strip()
     if caller.startswith("svc:"):
-        return []
+        return False
+    if not isinstance(program, str) or not program:
+        return False
+    return can_view_program(program, caller)
+
+
+def _verb_caller(body_user_email: str) -> str:
+    """The subject `/measure/{fn}` and `/package_export` decide program visibility for.
+
+    ORDER: the BEARER FIRST. A user bearer IS the caller (graph_host's identity ruling; the
+    same read `/artifact` makes), and a body `user_email` NEVER overrides it, even a different
+    one. The body is only a SERVICE's delegation: when there is no bearer, or the bearer is a
+    `svc:` principal (the supervisor), the body names who the service acts for. `_can_view`
+    still refuses a `svc:` result. Under OBSERVE the bearer's claim is unverified, the same
+    trust as the body field; it is verified once REQUIRE flips.
+    """
+    c = _current_caller()
+    if c is not None and c.authz_id and not c.authz_id.startswith("svc:"):
+        return c.authz_id
+    return body_user_email or ""
+
+
+def _require_visible(program_id: Any, caller: str) -> None:
+    """403 with the refusal envelope unless the caller may view the program; 503 on an outage.
+
+    The detail is a CONSTANT: no program id, so a program that does not exist and one that
+    exists but is not granted answer byte-identically (that is what object-scoped means).
+    No `grantable_by`: the engine holds no grantor map and cannot speak for the deployment;
+    the BFF completes the envelope with `relay_refusal` (iagent.authz.refusal).
+    """
+    try:
+        ok = _can_view(program_id, caller)
+    except httpx.HTTPError as e:
+        raise HTTPException(503, f"program membership check failed: {e}") from e
+    if not ok:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "program_not_visible",
+                "refusal": {
+                    "policy_id": "program_members",
+                    "missing_binding": "can_view_program(program)",
+                    "candidates": [],
+                },
+                "message": "You are not a member of the program this request names.",
+            },
+        )
+
+
+def _held_domains(caller: str) -> frozenset[str]:
+    """The domains `caller` holds, from the directory. A service holds none (it is never a
+    program member either) and an empty caller holds none, both without a lookup.
+    `httpx.HTTPError` propagates."""
+    caller = (caller or "").strip()
+    if not caller or caller.startswith("svc:"):
+        return frozenset()
+    return frozenset(str(d).upper() for d in entitled_domains(caller))
+
+
+def _require_cell(fn: str, caller: str) -> None:
+    """403 `measure_not_in_cell` unless the caller holds a domain in a DECLARED measure's `cells`;
+    503 on a directory outage. A built-in returns at once, with no directory call.
+
+    The detail names the measure and the cells it is declared for, never who else holds them.
+    No `grantable_by`: the engine holds no grantor map; the BFF completes the envelope with
+    `relay_refusal` (iagent.authz.refusal), as it does `program_not_visible`.
+    """
+    row = DECLARED.get(fn)
+    if row is None:
+        return
+    cells = sorted({str(c).strip().upper() for c in row.cells})
+    try:
+        held = _held_domains(caller)
+    except httpx.HTTPError as e:
+        raise HTTPException(503, f"entitlement check failed: {e}") from e
+    if held & set(cells):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "measure_not_in_cell",
+            "measure": fn,
+            "refusal": {
+                "policy_id": "groups",
+                "missing_binding": ", ".join(f"a_group_granting(<persona>, {d})" for d in cells),
+                "candidates": [],
+            },
+            "missing_domains": cells,
+            "message": (f"{fn} is declared for the access cells {cells}, and you hold none of "
+                        "them."),
+        },
+    )
+
+
+def _visible_to(caller: str, members: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The members whose program the caller may view. Withheld is unknown: no marker is added.
+
+    One check per distinct program, through `_can_view` (which holds the svc/empty rules).
+    `httpx.HTTPError` propagates.
+    """
     verdict: dict[str, bool] = {}
     out: list[dict[str, Any]] = []
     for m in members:
@@ -1215,7 +1661,7 @@ def _visible_to(caller: str, members: list[dict[str, Any]]) -> list[dict[str, An
         if prog is None:
             continue
         if prog not in verdict:
-            verdict[prog] = can_view_program(prog, caller)
+            verdict[prog] = _can_view(prog, caller)
         if verdict[prog]:
             out.append(m)
     return out

@@ -552,6 +552,43 @@
         "title": "ArtifactResponse",
         "type": "object"
       },
+      "AuthorizationUnavailableBody": {
+        "additionalProperties": false,
+        "description": "The 503 body when the authorization directory cannot say whether a kind is gated.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/AuthorizationUnavailableDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "AuthorizationUnavailableBody",
+        "type": "object"
+      },
+      "AuthorizationUnavailableDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "enum": [
+              "authorization_unavailable",
+              "authorization_unconfigured"
+            ],
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "AuthorizationUnavailableDetail",
+        "type": "object"
+      },
       "BPMNGateway": {
         "properties": {
           "id": {
@@ -1438,6 +1475,92 @@
         "title": "CorrectedRow",
         "type": "object"
       },
+      "CoverageGroup": {
+        "additionalProperties": false,
+        "description": "One group of parts a steward folded without opening: the grouping rule, its key, and the\nmembers NOT opened (part_index values).",
+        "properties": {
+          "key": {
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "parts": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "rule": {
+            "minLength": 1,
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "key",
+          "parts"
+        ],
+        "title": "CoverageGroup",
+        "type": "object"
+      },
+      "CoverageShared": {
+        "additionalProperties": false,
+        "description": "One evidence crop that many parts cite (recorded, not re-derived).",
+        "properties": {
+          "bbox": {
+            "items": {
+              "anyOf": [
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "integer"
+                }
+              ]
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "title": "Bbox",
+            "type": "array"
+          },
+          "confirmed": {
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "parts": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Parts",
+            "type": "array"
+          },
+          "rule": {
+            "minLength": 1,
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "page",
+          "bbox",
+          "parts",
+          "confirmed"
+        ],
+        "title": "CoverageShared",
+        "type": "object"
+      },
       "DecisionSubgraphRequest": {
         "description": "The captured decision's node identities, sent by the frontend. The\nmatch key is IDENTITY (uri/iri) — strict; a renamed/re-URI'd node is a\nDIFFERENT node and must read as gone, never fuzzy-matched to a\nsuccessor (that would conceal a divergence).",
         "properties": {
@@ -1774,6 +1897,13 @@
               }
             ]
           },
+          "droppable_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Droppable Kinds",
+            "type": "array"
+          },
           "email": {
             "anyOf": [
               {
@@ -1814,14 +1944,15 @@
           "email",
           "cells",
           "default",
-          "source"
+          "source",
+          "droppable_kinds"
         ],
         "title": "Entitlements",
         "type": "object"
       },
       "EvidenceRef": {
         "additionalProperties": false,
-        "description": "7f's `wire_evidence_ref`, served as is (architect rulings 2026-10-21 and 2026-10-28).\n\n`bbox` is page fractions `[x0, y0, x1, y1]`, origin top-left, `0 <= x0 < x1 <= 1` and\n`0 <= y0 < y1 <= 1`. A null bbox means \"on this page, no box\" (ruling 205). Nothing else\nis served: no `bboxes`, `page_dims`, `units` or `quality`.",
+        "description": "7f's `wire_evidence_ref`, served as is (architect rulings 2026-10-21 and 2026-10-28).\n\n`bbox` is page fractions `[x0, y0, x1, y1]`, origin top-left, `0 <= x0 < x1 <= 1` and\n`0 <= y0 < y1 <= 1`. A null bbox means \"on this page, no box\" (ruling 205). Nothing else\nis served: no `bboxes`, `page_dims`, `units` or `quality`.\n\nThe authority is `iagent_mesh.provenance.EvidenceRef` (architect ruling 2026-10-31: the SDK rule\nwins). This model is imported from it once the SDK (v0.9.13) renders `note` as omitted rather\nthan null and `bbox` as a 4-item array of 0..1 items; until then\n`tests/test_an_evidence_ref_is_the_sdks_rule_page_fractions_or_a_422.py` holds the two to the\nsame verdict (this model may only be STRICTER: no null note, no bool page).",
         "properties": {
           "bbox": {
             "anyOf": [
@@ -1869,6 +2000,21 @@
           "artifact_id"
         ],
         "title": "ExportAnswer",
+        "type": "object"
+      },
+      "ExportOfferRequest": {
+        "description": "`POST /export/package/recipients`'s body: the same answer items `ExportPackageRequest`\ntakes (`ExportAnswer`), and nothing else -- the offer names no recipient, it lists them.",
+        "properties": {
+          "answers": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExportAnswer"
+            },
+            "title": "Answers",
+            "type": "array"
+          }
+        },
+        "title": "ExportOfferRequest",
         "type": "object"
       },
       "ExportPackageRequest": {
@@ -1930,6 +2076,44 @@
         "title": "ExportPackageRequest",
         "type": "object"
       },
+      "ExportProfile": {
+        "additionalProperties": false,
+        "description": "One row of GET /ingest/export/profiles (a valid `policy/exports/<name>.yaml`).",
+        "properties": {
+          "format": {
+            "enum": [
+              "csv",
+              "json"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "granularity": {
+            "enum": [
+              "notice_part",
+              "notice"
+            ],
+            "title": "Granularity",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "format",
+          "granularity",
+          "label"
+        ],
+        "title": "ExportProfile",
+        "type": "object"
+      },
       "Extraction": {
         "additionalProperties": false,
         "description": "GET /ingest/{id}/extraction.",
@@ -1970,6 +2154,17 @@
           "ingest_id": {
             "title": "Ingest Id",
             "type": "string"
+          },
+          "item_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Kind"
           },
           "leaf": {
             "anyOf": [
@@ -2034,6 +2229,17 @@
           "review_ref": {
             "title": "Review Ref",
             "type": "string"
+          },
+          "review_shape": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Shape"
           },
           "rows": {
             "items": {
@@ -2261,6 +2467,19 @@
           "failed_at"
         ],
         "title": "Failure",
+        "type": "object"
+      },
+      "FinanceMeasureBody": {
+        "description": "Only `params`. There is no `state_ref`, deliberately: finance_agent's `MeasureRequest`\n(agent_fleet/finance_agent/main.py) carries `params` and `user_email` and nothing else, so a\n`state_ref` here would be accepted and silently dropped.",
+        "properties": {
+          "params": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Params",
+            "type": "object"
+          }
+        },
+        "title": "FinanceMeasureBody",
         "type": "object"
       },
       "FrontendCapability": {
@@ -2648,6 +2867,20 @@
             ],
             "title": "Reason Code"
           },
+          "review_coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemReviewCoverage"
+              },
+              {
+                "$ref": "#/components/schemas/ReviewCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Coverage"
+          },
           "row_edits": {
             "anyOf": [
               {
@@ -2663,6 +2896,30 @@
           "decision"
         ],
         "title": "HumanTaskActRequest",
+        "type": "object"
+      },
+      "HumanTaskExpireRequest": {
+        "properties": {
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          }
+        },
+        "required": [
+          "task_id"
+        ],
+        "title": "HumanTaskExpireRequest",
         "type": "object"
       },
       "HumanTaskRegisterRequest": {
@@ -3312,6 +3569,161 @@
         "title": "InterviewRequest",
         "type": "object"
       },
+      "ItemCoverageGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "key": {
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "rule": {
+            "minLength": 1,
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "key"
+        ],
+        "title": "ItemCoverageGroup",
+        "type": "object"
+      },
+      "ItemCoverageShared": {
+        "additionalProperties": false,
+        "properties": {
+          "bbox": {
+            "maxItems": 4,
+            "minItems": 4,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Bbox",
+            "type": "array"
+          },
+          "confirmed": {
+            "title": "Confirmed",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "rule": {
+            "minLength": 1,
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "page",
+          "bbox",
+          "confirmed"
+        ],
+        "title": "ItemCoverageShared",
+        "type": "object"
+      },
+      "ItemReviewCoverage": {
+        "additionalProperties": false,
+        "description": "The SDK form: `review_shape`, `item_kind`, `rules_version`, string item ids.",
+        "properties": {
+          "flagged": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flagged",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/ItemCoverageGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "item_kind": {
+            "title": "Item Kind",
+            "type": "string"
+          },
+          "looked_at": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Looked At",
+            "type": "array"
+          },
+          "review_shape": {
+            "title": "Review Shape",
+            "type": "string"
+          },
+          "rules_version": {
+            "minLength": 1,
+            "title": "Rules Version",
+            "type": "string"
+          },
+          "sample": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample"
+          },
+          "sampled": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sampled",
+            "type": "array"
+          },
+          "shared": {
+            "items": {
+              "$ref": "#/components/schemas/ItemCoverageShared"
+            },
+            "title": "Shared",
+            "type": "array"
+          }
+        },
+        "required": [
+          "review_shape",
+          "item_kind",
+          "rules_version"
+        ],
+        "title": "ItemReviewCoverage",
+        "type": "object"
+      },
       "LeafResponse": {
         "additionalProperties": false,
         "description": "POST /ingest/{id}/leaf: the full status body; at review it adds the new task and the one superseded.",
@@ -3645,6 +4057,50 @@
         "title": "MineListing",
         "type": "object"
       },
+      "NotEntitledToDrop": {
+        "additionalProperties": false,
+        "description": "The 403 body of a door that refused a kind the dropper is not granted.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/NotEntitledToDropDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "NotEntitledToDrop",
+        "type": "object"
+      },
+      "NotEntitledToDropDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "const": "not_entitled_to_drop",
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "refusal": {
+            "$ref": "#/components/schemas/RefusalEnvelope"
+          }
+        },
+        "required": [
+          "error",
+          "refusal"
+        ],
+        "title": "NotEntitledToDropDetail",
+        "type": "object"
+      },
       "Notice": {
         "additionalProperties": false,
         "description": "The notice header read from review.json; the values are LLM-extracted, so unconstrained.",
@@ -3973,12 +4429,50 @@
           "run_id": {
             "title": "Run Id",
             "type": "string"
+          },
+          "slot": {
+            "default": 0,
+            "title": "Slot",
+            "type": "integer"
           }
         },
         "required": [
           "run_id"
         ],
         "title": "RedeemIdentityBody",
+        "type": "object"
+      },
+      "RefusalEnvelope": {
+        "additionalProperties": false,
+        "description": "`authz.refusal.refusal`'s envelope: what the caller lacks and who can grant it.",
+        "properties": {
+          "candidates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "grantable_by": {
+            "title": "Grantable By",
+            "type": "string"
+          },
+          "missing_binding": {
+            "title": "Missing Binding",
+            "type": "string"
+          },
+          "policy_id": {
+            "title": "Policy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "missing_binding",
+          "grantable_by",
+          "candidates"
+        ],
+        "title": "RefusalEnvelope",
         "type": "object"
       },
       "RegisterFrontendCapabilitiesRequest": {
@@ -4243,6 +4737,144 @@
           "attempt"
         ],
         "title": "RetryReopened",
+        "type": "object"
+      },
+      "ReviewCoverage": {
+        "additionalProperties": false,
+        "description": "DEPRECATED, accepted for 0.4.73 only: the 1.4.0 `parts` form; it is read as items (see\n`review_coverage.py`). The item form is `ItemReviewCoverage`.\n\nWhat the steward looked at on a document promotion (ruled 2026-10-29: a sampled promote is\nlegal if it is recorded). Ids are the extraction's integer `part_index`. The route checks every\npart was opened or folded into a group (`review_coverage_invalid`); `sampled`, `flagged`,\n`shared` and `sample` are recorded as sent.",
+        "properties": {
+          "flagged": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Flagged",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "looked_at": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Looked At",
+            "type": "array"
+          },
+          "rules_version": {
+            "minLength": 1,
+            "title": "Rules Version",
+            "type": "string"
+          },
+          "sample": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample"
+          },
+          "sampled": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Sampled",
+            "type": "array"
+          },
+          "shared": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageShared"
+            },
+            "title": "Shared",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rules_version",
+          "looked_at",
+          "sampled",
+          "flagged",
+          "groups",
+          "shared"
+        ],
+        "title": "ReviewCoverage",
+        "type": "object"
+      },
+      "ReviewShapeRow": {
+        "description": "One ``policy/review_shapes/<shape>.yaml`` registry row, as served by ``GET /review-shapes``\n(Lane 1's wire answer, §4) — the registry ``ReviewCoverage.review_shape``/``.item_kind`` are\nvalidated against, server-side. This SDK types the row so a client that reads the served\nregistry has a shape to deserialize into; it does not serve, cache, or validate against the\nregistry itself — same split every registry-adjacent type in this SDK draws between declaring\na shape and arbitrating on it.",
+        "properties": {
+          "item_kind": {
+            "title": "Item Kind",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          },
+          "review_shape": {
+            "title": "Review Shape",
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewShapeRule"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "rules_version": {
+            "title": "Rules Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "review_shape",
+          "item_kind",
+          "rules_version"
+        ],
+        "title": "ReviewShapeRow",
+        "type": "object"
+      },
+      "ReviewShapeRule": {
+        "description": "One rule a review-shape row admits — a MECHANISM id cortex (or any consumer) implements,\nwith config-carried parameters. \"A rule id names a mechanism that [the consumer] implements\n... Config: which rules apply to a shape, and with what parameters\" (Lane 1's wire answer,\n§4).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ReviewShapeRule",
         "type": "object"
       },
       "ReviewStartRequest": {
@@ -4881,20 +5513,15 @@
       },
       "TitleEvidenceRef": {
         "additionalProperties": false,
-        "description": "A title candidate's crop: `EvidenceRef` plus the page-fraction bounds. A SUBCLASS so the\nsteward row_edits / header_edits evidence_ref (not yet converted) keeps `EvidenceRef` as it was.\nCortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422).",
+        "description": "A title candidate's crop: the served `ingest_api.EvidenceRef` (which the equivalence seal holds\nto the SDK verdict) plus the page-fraction bounds. A SUBCLASS of the served model, not of the SDK's,\nso the published title-candidate schema keeps its array-of-numbers bbox and `page` minimum. Steward\nrow_edits / header_edits evidence_ref now go through the SDK model (`_wire_evidence_ref`).\nCortex drops a whole candidate list on any out-of-bounds box, so the BFF refuses it (422).\nStrict, as the request model it replaced was: a coordinate sent as a string is refused, not coerced.",
         "properties": {
           "bbox": {
             "anyOf": [
               {
                 "items": {
-                  "anyOf": [
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ]
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
                 },
                 "maxItems": 4,
                 "minItems": 4,
@@ -4907,15 +5534,9 @@
             "title": "Bbox"
           },
           "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
+            "pattern": "\\S",
+            "title": "Note",
+            "type": "string"
           },
           "page": {
             "minimum": 1.0,
@@ -5686,7 +6307,10 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Canvas Seed"
+        "summary": "Canvas Seed",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/cases/{case_id}": {
@@ -5729,7 +6353,10 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Get Case"
+        "summary": "Get Case",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/cases/{case_id}/action": {
@@ -5777,7 +6404,7 @@
     },
     "/cases/{case_id}/signals/{signal}": {
       "post": {
-        "description": "POST /cases/{case_id}/signals/{signal} -- a person answers a case's human-audience\nsignal (a `signal_await` step, e.g. maint_release's `tier_ack`). A human acknowledgment is\na cortex action (architect ruling 2026-10-10).\n\nGENERIC over the signal name, GATED by the journalled audience: this route names no signal.\nengine-a's `WorkflowRunner.signal` checks `accepts`, `reason_required` and the authority\ngate (`_authorize_resolution`: actor present, not excluded, audience journalled, `can_act`).\nThe actor is `current_user.authz_id`, never the body.\n\nNot checked here: the audience / `can_act` (the `case` projection does not expose the\nawaiting signal's audience, so the BFF cannot re-check it without inventing a read).\n\nTHE SIGNAL GOES TO THE INSTANCE, NOT THE CASE (D1, lane/74 live walk 10-17, case\n712382d7-00c2-5610-a3cf-0e1c9ef5ea70). A `signal_await` journals `signal_accepts:<name>` on\nthe INSTANCE key `{case}~{n}`, so the runner refused every post to the bare case key with\n\"no signal ... is awaited\". A `case_id` with no instance separator is therefore resolved\nfirst: the awaiting instance is the LAST entry of the case record's `instances` (`run`\nappends an instance before it calls it and runs them one at a time). A `case_id` that\nalready carries the separator is forwarded unchanged.",
+        "description": "POST /cases/{case_id}/signals/{signal} -- a person answers a case's human-audience\nsignal (a `signal_await` step; no committed definition declares one since 2026-10-28, when the supervisor's approval became the release). A human acknowledgment is\na cortex action (architect ruling 2026-10-10).\n\nGENERIC over the signal name, GATED by the journalled audience: this route names no signal.\nengine-a's `WorkflowRunner.signal` checks `accepts`, `reason_required` and the authority\ngate (`_authorize_resolution`: actor present, not excluded, audience journalled, `can_act`).\nThe actor is `current_user.authz_id`, never the body.\n\nNot checked here: the audience / `can_act` (the `case` projection does not expose the\nawaiting signal's audience, so the BFF cannot re-check it without inventing a read).\n\nTHE SIGNAL GOES TO THE INSTANCE, NOT THE CASE (D1, lane/74 live walk 10-17, case\n712382d7-00c2-5610-a3cf-0e1c9ef5ea70). A `signal_await` journals `signal_accepts:<name>` on\nthe INSTANCE key `{case}~{n}`, so the runner refused every post to the bare case key with\n\"no signal ... is awaited\". A `case_id` with no instance separator is therefore resolved\nfirst: the awaiting instance is the LAST entry of the case record's `instances` (`run`\nappends an instance before it calls it and runs them one at a time). A `case_id` that\nalready carries the separator is forwarded unchanged.",
         "operationId": "answer_case_signal_cases__case_id__signals__signal__post",
         "parameters": [
           {
@@ -5990,6 +6617,86 @@
         "summary": "Electric Shape Proxy"
       }
     },
+    "/export/cdrl": {
+      "get": {
+        "description": "One program's CDRL in the profile's format (xlsx, docx, csv or json). `X-Cells-Sha256` is the hash of every cell the producer\nwrote (the reproducibility claim; the file's own bytes are not claimed reproducible).\n\nRefusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with\n`grantable_by` filled); any other engine failure is a 502 naming the engine's status.",
+        "operationId": "export_cdrl_export_cdrl_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "profile",
+            "required": true,
+            "schema": {
+              "title": "Profile",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "program_id",
+            "required": true,
+            "schema": {
+              "title": "Program Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Cdrl",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
+    "/export/cdrl/profiles": {
+      "get": {
+        "description": "The CDRL picker's option list: the engine's `[{name, format, scope, label}]`, relayed. The\nheader keys only; the engine never sends a template path, a hash or a source.",
+        "operationId": "export_cdrl_profiles_export_cdrl_profiles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Cdrl Profiles",
+        "tags": [
+          "mcp"
+        ]
+      }
+    },
     "/export/package": {
       "post": {
         "description": "Produce a recipient's disclosure package — THE GOVERNED EMIT, run synchronously.\n\nProduction never returns `\"status\": \"producing\"`: `measures.package_export` runs and\nwrites to disk inline, in the same request, so there is no async job to poll. A caller\ngets `\"exists\"` or `\"failed\"` in the same response that asked for the build.\n\n`template_id` and `answers` are MUTUALLY EXCLUSIVE — a canvas template's own panels decide\nwhat is exported, so naming one while also handing over cost `answers` is ambiguous about\nwhich governs, and is refused rather than guessed at (422). Given `template_id`, this\ndispatches to `_export_package_from_template` (ITEM 3's path) and nothing below runs.\n\nAbsent `template_id`, a request naming no answers (`answers` omitted or `[]`) is 400\n`no_answers` (RULED 2026-10-17), BEFORE the recipient checks below: it is a shape fault,\nrefused ahead of entitlement, so a no-answers request with no recipient is a 400, not a 409.\nThe whole-program export through this route is gone.\n\nThen four hard stops, in order, each refusing before the next is even attempted:\n  1. no `recipient_scope` -> 409 (ADR-0047 §1: no default recipient)\n  2. `recipient_scope` the caller may not export to -> 403 (see below)\n  3. any canvas answer id that does not resolve -> 404, refused rather than dropped\n  4. the engine unreachable, or the engine's own refusal, forwarded verbatim\n\nA board that mixes engines' answers is SPLIT per engine (ruled 2026-10-09): `answers` are\npartitioned by `_partition_export_answers` (engine-fin's verbs vs. everything else, which is\nengine-cost's), each engine is given only its own, and when any engine-fin answer is\npresent the response is a 200 carrying `documents`, one section per engine: a refused engine\n(engine-cost's refusal or unreachability, or engine-fin, which exports ratified templates\nonly -- RULED 2026-10-10 Q1, the finance control) renders as a refusal section and the others still export. Hard stop 4 then\napplies to a section, not the response. RULED 2026-10-16: a refused answer is its own\n`failed` entry in `documents[]` with a `reason_code` and the refusal prose (never on the\ncustomer page); a cost-only board switches to `documents[]` only when engine-cost refused\nsomething, and otherwise answers exactly as before. The top-level `reason` counts answers\n(\"r of n answers refused\"), not engines.",
@@ -6029,12 +6736,15 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Export Package"
+        "summary": "Export Package",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/export/package/artifact/{filename}": {
       "get": {
-        "description": "Download proxy for a produced export package. THE GATEWAY-SIDE CHECK the relay asks\nfor: the engine repeats the same check on the same person's token (main.py's /artifact,\n~line 700), and the two agree because both read `seed.readers_for_recipient`. This is not\nredundant — it is the ONLY check between an unentitled browser and the engine's bytes,\nsince the engine sits behind the mesh and is not itself reachable from a browser.",
+        "description": "Download proxy for a produced export package. THE GATEWAY-SIDE CHECK the relay asks\nfor: the engine repeats the same check on the same person's token (main.py's /artifact,\n~line 700), and the two agree because both ask the `recipient_readers` rail. This is not\nredundant — it is the ONLY check between an unentitled browser and the engine's bytes,\nsince the engine sits behind the mesh and is not itself reachable from a browser.",
         "operationId": "export_package_artifact_export_package_artifact__filename__get",
         "parameters": [
           {
@@ -6072,12 +6782,15 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Export Package Artifact"
+        "summary": "Export Package Artifact",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/export/package/recipients": {
       "get": {
-        "description": "The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller\nsees are exactly the scopes their `authz_id` reads, never the full recipient catalogue.",
+        "description": "The card's recipient picker. Entitlement-driven (ADR-0047 §5): the options a caller\nsees are exactly the scopes their `authz_id` reads, never the full recipient catalogue.\nAn outage (the rail for cost or plan, or engine-cost's profile set) is 503; a caller who reads\nno recipient of any owner listed is 403.",
         "operationId": "export_package_recipients_export_package_recipients_get",
         "responses": {
           "200": {
@@ -6095,6 +6808,46 @@
           }
         ],
         "summary": "Export Package Recipients"
+      },
+      "post": {
+        "description": "The recipient picker for THIS board: for each recipient the caller may export to, which\nof the board's answers that recipient's export takes and which it refuses, with the\nreasons -- so a board no recipient takes is greyed before Export, not refused after it.\n\nRecipients are exactly `_export_recipients_for(current_user)`, in that order: one the\ncaller may not export to is ABSENT, never greyed (ADR-0047 §5). A recipient is `offered`\niff its export would take at least one answer; a partial board stays offered (mixed-board\npartial export is ruled, 2026-10-09/16) and `refused` names the answers that will not go.\nGates, as the export's: no answers is 400 `no_answers`; an id that does not resolve is\n404 (503 when the store is down). As the GET picker: an outage is 503, and a caller who reads\nno recipient of any owner listed is 403.",
+        "operationId": "export_package_offer_export_package_recipients_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportOfferRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Export Package Offer"
       }
     },
     "/federated_image": {
@@ -6140,6 +6893,63 @@
           }
         ],
         "summary": "Federated Image"
+      }
+    },
+    "/finance/measure/{fn}": {
+      "post": {
+        "description": "A thin relay to finance_agent `/measure/{fn}` (architect ruling 10-30, ruling 1: \"add a\nthin BFF relay for /measure/{fn} (it's what cortex calls anyway). No engine route is exposed\ndirectly.\").\n\nUnlike `plan_measure`, this relay forwards the caller's bearer and `authz_id`, so the engine's\nprogram-visibility check (`_require_visible`) decides for the real caller. The engine's 422\n`needs_slots` is relayed unchanged (it is the declared refusal for a missing slot, not a\npolicy refusal); every other >= 400 goes through `relay_refusal` as `export_package` does.\nA 200 is the engine's envelope, untouched.",
+        "operationId": "finance_measure_finance_measure__fn__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fn",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]*$",
+              "title": "Fn",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinanceMeasureBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Finance Measure",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/fleet/version": {
@@ -6303,7 +7113,8 @@
         ],
         "summary": "Act On Human Task",
         "tags": [
-          "ingest-v1"
+          "ingest-v1",
+          "mcp"
         ]
       }
     },
@@ -6340,6 +7151,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6349,6 +7170,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6358,7 +7197,8 @@
         ],
         "summary": "Ingest Document",
         "tags": [
-          "ingest-v1"
+          "ingest-v1",
+          "mcp"
         ]
       }
     },
@@ -6385,6 +7225,116 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Event"
+      }
+    },
+    "/ingest/export": {
+      "get": {
+        "description": "GET /ingest/export?profile=&from=YYYY-MM-DD&to=YYYY-MM-DD -- every notice PROMOTED in the\nrange (UTC days, both ends inclusive, by the decision record's `acted_at`), one profile.\nA service caller (`_is_service_caller`) is refused at the MCP door, 403\n`service_token_refused`, and past the door by the capability gate; Topaz is not asked. The\ncapability is DOMAIN-SCOPED (architect 2026-10-29): only notices whose promotion domain is\none of the caller's entitlement-cell domains are in the set, filtered before the loud-not-\npartial checks and before the 500 cap; a caller with no cells gets the empty export.\nGate: the `ingest:exportBatch` capability (403 `not_entitled_to_export_batch`, a policy\nrefusal; Topaz down is 503), AND, in addition, `can_export:<profile>` for the named profile\n(403 `not_entitled_to_export`, a policy refusal; DENY BY DEFAULT: a profile with no row is\nexportable by nobody), checked after the profile resolves (an unknown one stays 422). At most 92 days (both ends counted) and 500 notices. LOUD, NOT\nPARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,\nextraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks\non is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`).",
+        "operationId": "ingest_export_batch_route_ingest_export_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "profile",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6401,7 +7351,43 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Ingest Event"
+        "summary": "Ingest Export Batch Route",
+        "tags": [
+          "ingest-export",
+          "mcp"
+        ]
+      }
+    },
+    "/ingest/export/profiles": {
+      "get": {
+        "description": "GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:\n`[{name, format, granularity, label}]`. An invalid profile is logged at ERROR and left out.\nAny authenticated caller (a name and a label are not notice content).",
+        "operationId": "ingest_export_profiles_route_ingest_export_profiles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExportProfile"
+                  },
+                  "title": "Response 200 Ingest Export Profiles Route Ingest Export Profiles Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Export Profiles Route",
+        "tags": [
+          "ingest-export",
+          "mcp"
+        ]
       }
     },
     "/ingest/mine": {
@@ -6631,6 +7617,68 @@
         "x-stability": "preview"
       }
     },
+    "/ingest/{ingest_id}/export": {
+      "get": {
+        "description": "GET /ingest/<id>/export?profile=<name> -- one PROMOTED notice rendered through a profile\n(`policy/exports/`, 7f's batch-column-map vocabulary). A service caller never reaches the\ncapability: the original 403 is re-raised and Topaz is not asked. The capability is\nDOMAIN-SCOPED: a notice whose promotion domain (`promotion.recorded_domain`) is not one of the\ncaller's cell domains, or has none, re-raises the original 403 (audit `out_of_domain`). Gate: `_ingest_review_access` (the\ndropper, or a holder of the open task), and a caller it would 403 is admitted when they hold\nthe `ingest:exportBatch` capability (reason `export_capability`); a Topaz failure while that\nis consulted is 503, a False re-raises the ORIGINAL 403. 422 `export_profile_unknown` /\n`export_profile_invalid`. IN ADDITION to the gates above, for EVERY caller who reaches it (the\nreview-access path and the exportBatch path alike, a service caller that passed review access\ntoo): the `can_export:<profile>` capability, checked after the profile resolves; 403\n`not_entitled_to_export` (a policy refusal, DENY BY DEFAULT), Topaz down is 503. 409 `ingest_not_promoted`; 409 `export_corrections_not_applied` (the\nexport serves review.json's values, so a promotion carrying steward row or header edits would\nexport the uncorrected ones; refused until a later slice applies corrections); 503\n`decision_ledger_unreachable`; 422 `export_blocked` (naming notice, part, column).",
+        "operationId": "ingest_export_route_ingest__ingest_id__export_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ingest_id",
+            "required": true,
+            "schema": {
+              "title": "Ingest Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "profile",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Profile"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Export Route",
+        "tags": [
+          "ingest-export"
+        ]
+      }
+    },
     "/ingest/{ingest_id}/extraction": {
       "get": {
         "description": "GET /ingest/<id>/extraction -- the extracted part rows of a dropped notice, with the\nevidence reference (7f's `wire_evidence_ref`: page, bbox in page fractions, optional note) the review card draws. Gate: `_ingest_review_access`\n(the dropper, or a holder of the OPEN promotion task). `rows` are the `parts[i].*` items of\nreview.json in file order; a row with no usable page/bbox carries `evidence_ref: null` and\nis counted in `rows_without_evidence`. 422 `no_extraction_ref` / `extraction_unbound` /\n`extraction_rows_absent` / `extraction_unreadable`, 503 `artifact_store_unreachable`.\n`leaf` / `leaf_source` / `corrected_by` are the notice's pcn|pdn and where it came from, read from\nthe ROW only (`_row_leaf`); a row with no leaf shows `leaf: null` whatever review.json says.\nA REJECTED row's evidence was moved to `rejected/<id>/`; it is read there through the\nrejection record (`relocated_to` says where; `review_ref` stays the original key). Also 404\n`rejected_evidence_unlocated`, 503 `decision_ledger_unreachable`.",
@@ -6715,6 +7763,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -6724,6 +7782,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -6996,6 +8072,16 @@
             },
             "description": "Successful Response"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                }
+              }
+            },
+            "description": "the dropper is not granted can_drop:<kind>"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -7005,6 +8091,24 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -7219,6 +8323,48 @@
           }
         ],
         "summary": "Write Case Summary Route"
+      }
+    },
+    "/internal/human_tasks/expire": {
+      "post": {
+        "description": "Retire the still-`pending` queue row(s) of a task whose human_await TIMED OUT, so neither\nREST nor the feed offers a task nobody can act on. INTERNAL seam, same gate as register\n(get_current_user). `expired == 0` is a 200: an already-resolved task stays resolved.",
+        "operationId": "expire_human_task_internal_human_tasks_expire_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HumanTaskExpireRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Expire Human Task"
       }
     },
     "/internal/human_tasks/register": {
@@ -7465,6 +8611,24 @@
               }
             },
             "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationUnavailableBody"
+                }
+              }
+            },
+            "description": "the directory could not say whether the kind is gated; nothing was recorded",
+            "headers": {
+              "Retry-After": {
+                "description": "seconds to wait before retrying; sent with `authorization_unavailable` (a transient directory failure), not with `authorization_unconfigured`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -7501,7 +8665,8 @@
         ],
         "summary": "Get My Human Tasks",
         "tags": [
-          "ingest-v1"
+          "ingest-v1",
+          "mcp"
         ]
       }
     },
@@ -7652,7 +8817,10 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Orchestrate"
+        "summary": "Orchestrate",
+        "tags": [
+          "mcp"
+        ]
       }
     },
     "/plan/baseline/op": {
@@ -8068,6 +9236,37 @@
           }
         ],
         "summary": "Register Frontend Capabilities"
+      }
+    },
+    "/review-shapes": {
+      "get": {
+        "description": "GET /review-shapes -- the valid review-shape registry rows (`policy/review_shapes`, the\nseed plus the deployment overlays), sorted by `review_shape`. An invalid row is logged at\nERROR and left out. Any authenticated caller: a shape row is policy configuration, not\ncontent.",
+        "operationId": "review_shapes_route_review_shapes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ReviewShapeRow"
+                  },
+                  "title": "Response 200 Review Shapes Route Review Shapes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Review Shapes Route",
+        "tags": [
+          "ingest-export"
+        ]
       }
     },
     "/reviews": {

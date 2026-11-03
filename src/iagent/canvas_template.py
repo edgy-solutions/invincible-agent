@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -204,6 +206,25 @@ def template_ref(t: CanvasTemplate) -> str:
 
 _CANVAS_DIR = Path(__file__).resolve().parents[2] / "policy" / "canvases"
 
+_log = logging.getLogger(__name__)
+_LOGGED_LAYERS: set[tuple[str, str]] = set()
+
+
+def canvas_overlay_dirs() -> list[Path]:
+    """`CANVAS_OVERLAY_DIRS` (os.pathsep-separated, default EMPTY), read at call time.
+
+    ADR-0036 for canvases: a deployment's panel for its own measure lives in its own overlay
+    (`policy/overlays/<name>/canvases/`), not in a platform template. An overlay `<id>.yaml`
+    REPLACES the seed template of that id whole -- no field-level merge -- and passes the same
+    schema validation as a seed one. An explicit `directory=` argument keeps its old meaning:
+    that directory alone, no overlays.
+    """
+    return [Path(p) for p in os.getenv("CANVAS_OVERLAY_DIRS", "").split(os.pathsep) if p]
+
+
+def _layers(directory: "Path | None") -> list[Path]:
+    return [directory] if directory else [_CANVAS_DIR, *canvas_overlay_dirs()]
+
 
 def ratified_template_ids(directory: "Path | None" = None) -> list[str]:
     """Every ratified template id, sorted. Derived from the directory each call.
@@ -212,10 +233,7 @@ def ratified_template_ids(directory: "Path | None" = None) -> list[str]:
     offers a menu that no longer matches the substrate — the same staleness that makes a
     registration outlive the thing it registered.
     """
-    d = directory or _CANVAS_DIR
-    if not d.is_dir():
-        return []
-    return sorted(p.stem for p in d.glob("*.yaml"))
+    return sorted({p.stem for d in _layers(directory) if d.is_dir() for p in d.glob("*.yaml")})
 
 
 def load_template(template_id: str, directory: "Path | None" = None) -> CanvasTemplate:
@@ -228,13 +246,17 @@ def load_template(template_id: str, directory: "Path | None" = None) -> CanvasTe
     """
     import yaml  # local: the gateway imports this module at startup and yaml is not free
 
-    d = directory or _CANVAS_DIR
-    path = d / f"{template_id}.yaml"
-    if not template_id or not path.is_file():
+    # THE LAST LAYER HOLDING THE ID WINS (seed first, then each overlay in order).
+    path = next((d / f"{template_id}.yaml" for d in reversed(_layers(directory))
+                 if template_id and (d / f"{template_id}.yaml").is_file()), None)
+    if path is None:
         raise KeyError(
             f"no ratified canvas template {template_id!r}; ratified: "
-            f"{ratified_template_ids(d)}"
+            f"{ratified_template_ids(directory)}"
         )
+    if directory is None and path.parent != _CANVAS_DIR and (template_id, str(path)) not in _LOGGED_LAYERS:
+        _LOGGED_LAYERS.add((template_id, str(path)))
+        _log.info("canvas template %s read from overlay layer %s", template_id, path.parent)
     t = CanvasTemplate.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
     if t.template_id != template_id:
         # Offerable under one name, loadable under the other — the menu and the substrate

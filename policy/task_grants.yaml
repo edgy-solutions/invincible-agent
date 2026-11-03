@@ -28,7 +28,7 @@
 # wrong-grant, since a workflow then suspends awaiting an approver who cannot exist.
 # `validate_policy` REFUSES a grant_to not in users.yaml.
 #
-# GROUP AUDIENCES, RULED 2026-10-10 (architect; Chris chose "build group audiences"). An
+# GROUP AUDIENCES (architect ruling 2026-10-10: "build group audiences"). An
 # audience may instead (or also) carry `grant_to_groups: [<group>]`. Each names a group from
 # `policy/groups.yaml`; its members come from `users.yaml`; the sync writes
 # `task_audience:<aud>#actor@group:<G>#member` (the manifest already allows
@@ -55,7 +55,7 @@ audiences:
   # receive the task in their subscription), the same honest-denial-as-demo-asset
   # posture as the content gates.
   promotion:DATA_ENGINEERING:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Demo fixture: exercises the HITL queue's fifth-namespace can_act gate. alice
       (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) may approve promotions in this
@@ -69,7 +69,7 @@ audiences:
   # approver; approving writes an asset_grants.yaml reader grant (granted_by=alice)
   # through the sealed grant_sync. Same fifth-namespace can_act gate as promotions.
   access_grant:DATA_ENGINEERING:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Demo fixture: alice (DATA_STEWARD - DATA_ENGINEERING) approves per-asset read
       access requests for DATA_ENGINEERING assets. Approving automates the manual
@@ -113,7 +113,7 @@ audiences:
   # identical-looking strings, one authz key and one render contract — the inconsistency
   # below is a decision, not an oversight.
   disposition_review:SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The disposition-review audience for the SUSTAINMENT compartment. The
       extraction→review sensor auto-starts the grouped review; these actors are the
@@ -128,7 +128,7 @@ audiences:
   # witness); these actors act them. Same not-gated-by-the-env, deny-by-default routing
   # as the reviewer audience above; same drift-closure (live-only from M1 until now).
   qualification:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The dispatch-actor audience. On approval the review fans out a qualification task
       per affected part; these actors act it. Sandbox = bob; bind to the qualifier's
@@ -152,7 +152,7 @@ audiences:
   # last-time-buy disposition routes here, so this audience is reachable from the live UI the
   # moment a reviewer picks that option.
   procurement:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The dispatch-actor audience for last-time-buy dispositions. dispatch_plan routes
       `dispatchLTB` -> `procurement`; on approval the review fans out one procurement task
@@ -192,7 +192,7 @@ audiences:
   # VERIFIED NON-EMPTY BEFORE THE FIRST EMISSION, never by watching it fail — the serial-failures-
   # mask rule applied to this fix's own precondition.
   dispatch_failure:SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The effect-failure audience for the SUSTAINMENT compartment. When a per-item dispatch fails
       TERMINALLY after a human already approved the disposition, the driver files a triage row here
@@ -237,7 +237,7 @@ audiences:
   # and the split between levels is whatever that programme's system-safety plan says
   # — which is exactly why the ladder is data in the matrix rather than code here.
   risk_acceptance_high:SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0051 §5. Who may ACCEPT a High residual risk in the SUSTAINMENT compartment.
       Acceptance is a task disposition, never a verb (§7) — the engine drafts and
@@ -248,7 +248,7 @@ audiences:
       - alice@example.com
 
   risk_acceptance_serious:SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0051 §5. Serious residual risk. Same senior authority as High in sandbox,
       and deliberately NOT bob — a caller one tier down must be refused, or seal 7
@@ -257,7 +257,7 @@ audiences:
       - alice@example.com
 
   risk_acceptance_medium:SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0051 §5. Medium residual risk, accepted a tier lower. Sandbox = bob, who is
       also the drafting author below — which is correct and is the point: an engineer
@@ -266,7 +266,7 @@ audiences:
       - bob@example.com
 
   risk_acceptance_low:SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0051 §5. Low residual risk. Sandbox = bob.
     grant_to:
@@ -304,7 +304,7 @@ audiences:
   # (ADR-0051 §7). Three write-ups of one condition must resolve to one hazard and two
   # links rather than three hazards, and a human makes that call.
   hazard_link_review:SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0051 §5. Who may confirm that a write-up describes an EXISTING hazard rather
       than a new one. Lower stakes than acceptance and deliberately a different
@@ -337,7 +337,7 @@ audiences:
   # identity that exists only to be refused: bob is refused because he is the WRONG TIER, which is
   # the refusal a real fleet produces, rather than because he was never given anything.
   risk_acceptance_concurrence_high:SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0051 §5.1 / MIL-STD-882E §4.3.7. The user representative's formal concurrence, required
       BEFORE a High risk acceptance decision. Disposed `concurred` or `not_concurred`, both
@@ -348,7 +348,7 @@ audiences:
       - carol@example.com
 
   risk_acceptance_concurrence_serious:SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0051 §5.1 / MIL-STD-882E §4.3.7. As above, for Serious. Sandbox = carol.
       NO CONCURRENCE AUDIENCE EXISTS FOR MEDIUM OR LOW, and that is the standard rather than an
@@ -371,7 +371,7 @@ audiences:
   # engineer — correct on today's substrate, and the same set in sandbox when per-instance routing
   # lands. What changes then is precision, not direction.
   risk_redraft:SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0051. The author of a risk assessment the user representative declined to concur with.
       Sandbox = bob, who drafts. Deliberately NOT alice: an assessment returned for redraft goes
@@ -387,7 +387,7 @@ audiences:
   #
   # A domain with no audience here has no recipient, and its promotion task is visible to nobody.
   document_promotion:SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0041 §5. The reviewer who promotes or rejects a contributed SUSTAINMENT document.
       Sandbox = bob, who already holds the SUSTAINMENT acceptance role. Bind to the domain's
@@ -395,7 +395,7 @@ audiences:
     grant_to:
       - bob@example.com
   document_promotion:TRAINING:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0041 §5. The reviewer who promotes or rejects a contributed TRAINING document (doc-tools'
       `course` kind, ADR-0059). Sandbox = bob, as for SUSTAINMENT, until the training domain's
@@ -403,7 +403,7 @@ audiences:
     grant_to:
       - bob@example.com
   document_promotion:MAINTENANCE:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0041 §5. The reviewer who promotes or rejects a contributed MAINTENANCE document
       (s1000d-data-module). MAINTENANCE -> liaison, ruled 2026-10-02 and granted 2026-10-06; now
@@ -412,7 +412,7 @@ audiences:
     grant_to:
       - 33333333-3333-4333-8333-333333333333
   document_promotion:MANUFACTURING:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0041 §5. The reviewer who promotes or rejects a contributed MANUFACTURING document
       (work-instruction). Ruled 2026-10-14 (architect): granted through the manufacturing-stewards
@@ -424,7 +424,7 @@ audiences:
   # `maint_fault_approval:{trigger.owning_tier}`. Sandbox tier = ORG. Granted THROUGH THE GROUP
   # (2026-10-10 ruling), never to bob directly, for the #15 walks.
   maint_fault_approval:ORG:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The OpenDDIL-lab `maint_fault_propose` `decide` await (audience
       `maint_fault_approval:{trigger.owning_tier}`), sandbox tier ORG. Granted through the
@@ -434,7 +434,7 @@ audiences:
 
   # `maint_release`'s `tier_ack` signal, same tier and same group as above.
   maint_tier_ack:ORG:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The OpenDDIL-lab `maint_release` `tier_ack` signal, sandbox tier ORG. Granted through the
       maintenance-tier-org group per the 2026-10-10 ruling, for the #15 walks. Sandbox member = bob.
@@ -443,7 +443,7 @@ audiences:
 
   # 2026-10-11 ruling: sandbox tier edge-01 audiences, granted through groups.
   maint_fault_approval:edge-01:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The OpenDDIL-lab `maint_fault_approval` task (maint_release workflow), sandbox tier edge-01.
       Ruling 2026-10-11, via the maint-approvers-edge-01 group. Sandbox members = operator.atlantia
@@ -452,7 +452,7 @@ audiences:
       - maint-approvers-edge-01
 
   maint_tier_ack:edge-01:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The OpenDDIL-lab `maint_release` `tier_ack` signal, sandbox tier edge-01. Ruling 2026-10-11,
       via the maint-tier-ack-edge-01 group. Sandbox member = alice (the MECHANIC/MAINTENANCE fixture).
@@ -460,7 +460,7 @@ audiences:
       - maint-tier-ack-edge-01
 
   maint_supervisor_approval:edge-01:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The audience of the maint_supervisor_review workflow (overlays/openddil-lab/workflows/
       maint_supervisor_review.yaml), sandbox tier edge-01. Ruling 2026-10-11, via the
@@ -473,7 +473,7 @@ audiences:
   # tier (the maint_fault_escalate audience is `maint_escalation:{trigger.owning_tier}`). One tier up
   # only where a supervisor group exists -- that is maint_supervisor_review's own audience, not this.
   maint_escalation:ORG:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The OpenDDIL-lab `maint_fault_escalate` `escalation` await, sandbox tier ORG. Ruling
       2026-10-12: escalation goes to the approvers, so the same maintenance-tier-org group as
@@ -482,7 +482,7 @@ audiences:
       - maintenance-tier-org
 
   maint_escalation:edge-01:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The OpenDDIL-lab `maint_fault_escalate` `escalation` await, sandbox tier edge-01. Ruling
       2026-10-12: escalation goes to the approvers, so the same maint-approvers-edge-01 group as
@@ -495,7 +495,7 @@ audiences:
   # 1010 at edge-02; with no `maint_fault_approval:edge-02` the `decide` register answered 422 and
   # case da479c74 failed on arrival (2026-10-25).
   maint_fault_approval:edge-02:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The OpenDDIL-lab `maint_fault_approval` task (maint_release workflow), sandbox tier edge-02.
       Mirror of maint_fault_approval:edge-01 (2026-10-27), via the maint-approvers-edge-02 group.
@@ -504,7 +504,7 @@ audiences:
       - maint-approvers-edge-02
 
   maint_tier_ack:edge-02:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The OpenDDIL-lab `maint_release` `tier_ack` signal, sandbox tier edge-02. Mirror of
       maint_tier_ack:edge-01 (2026-10-27), via the maint-tier-ack-edge-02 group. Sandbox members =
@@ -513,7 +513,7 @@ audiences:
       - maint-tier-ack-edge-02
 
   maint_supervisor_approval:edge-02:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The audience of the maint_supervisor_review workflow, sandbox tier edge-02. Mirror of
       maint_supervisor_approval:edge-01 (2026-10-27), via the maint-supervisors-edge-02 group.
@@ -522,7 +522,7 @@ audiences:
       - maint-supervisors-edge-02
 
   maint_escalation:edge-02:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       The OpenDDIL-lab `maint_fault_escalate` `escalation` await, sandbox tier edge-02. Mirror of
       maint_escalation:edge-01 (2026-10-27): the approvers, via the maint-approvers-edge-02 group.

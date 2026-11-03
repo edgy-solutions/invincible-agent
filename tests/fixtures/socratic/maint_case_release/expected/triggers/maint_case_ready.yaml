@@ -1,0 +1,15 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+trigger: maint_case_ready
+selection: maint_case_ready_selection
+key: case_id
+episode:
+- asset_id
+- work_order_id
+requires:
+- kind
+- case_id
+- asset_id
+- work_order_id
+- mission_essential
+- requested_by.authz_id
+- owning_tier

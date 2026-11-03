@@ -856,7 +856,7 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.9.10"
+  meshSdkVersion: "v0.9.12"
   # CLOSED NETWORK (no route to github.com / pypi.org): point the install at a mirror.
   # The SDK is fetched from <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz, so the mirror holds the
   # GitHub tag tarball under that same file name (e.g. an Artifactory generic repo holding
@@ -1627,7 +1627,31 @@ cortexUi:
     # an OCI index with linux/amd64 and linux/arm64. The abbreviated tag and the full sha with
     # its last hex altered both answer 404. An environment's own values file still overrides
     # this pin (values-sandbox.yaml carries the same digest).
-    digest: "sha256:57e4078925d3b1fe44724c207c262c0fb3e8315a718bba20eb564b67f8eea43a"
+    # RE-PINNED FOR 0.4.72 (architect, 2026-10-30: "pin cortex at fe4d787 ... it is the
+    # case-panel fix and the rehearsal lands on that panel"): cortex-ui
+    # fe4d7879ac4c86a83bbc958565be11688bffd0cf -> 4d6dd208. It carries 42c470c's review_coverage
+    # send (under promotionRuns only) and the case panel's fix (the panel subscribes to the
+    # loaded kind menu; options read the pending task's own when the case omits them). Measured
+    # before pinning, the same three ways as above: the full tag resolves to this digest, an OCI
+    # index with linux/amd64 and linux/arm64; the abbreviated tag and the full sha with its last
+    # hex altered both answer 404. fe4d787 descends from 42c470c, which descends from e09e2ac.
+    # RE-PINNED FOR 0.4.74 (architect, 2026-10-31: "cut 0.4.74 (cortex at c27e6d3 or cortex's
+    # item-form merge if it lands)"; cortex-ui #61, the item form, had not landed): cortex-ui
+    # c27e6d3e3ba2f87e72b4b1f61a8fafec7ab09688 -> fa7e51ff. It adds #59 (an export profile's
+    # format is read verbatim) to fe4d787, and still sends review_coverage in the parts form.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # fe4d787..c27e6d3 leaves .github/workflows/build.yml, Dockerfile and package.json unchanged
+    # and adds no import.meta.env read.
+    # RE-PINNED FOR 0.4.75 (architect, 2026-11-02: "0.4.75 carries ... cortex 8afc0e7"): cortex-ui
+    # 8afc0e7663cdd3dbb2c8edb8792e06192629421a -> 8c60760d. It adds #61 (review_coverage is sent in
+    # the item form) and 6c2f0cc (New Canvas seeds once) to c27e6d3. This BFF still accepts the parts
+    # form, whose deletion waits until this pin has rolled.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # c27e6d3..8afc0e7 leaves the Dockerfile and package.json unchanged, changes build.yml only at
+    # its PRODUCER_REF contract pin, and adds no import.meta.env read.
+    digest: "sha256:8c60760d075b774aa607c0ddabab06ea98e6e6537a3cba3dde32a2436f1268f5"
   port: 8080
   resources:
     requests:
@@ -2412,6 +2436,35 @@ topazSeed:
         registry: "docker.io"
         repository: "alpine/git"
         tag: "v2.45.2"
+
+# DELIVER DIRS OF THE PRIVATE POLICY REPO TO NAMED PODS, at a pinned ref (ruled 2026-11-02).
+# An initContainer (`fetch-policy-overlay`) clones the repo and copies ONLY the dirs listed below
+# for that component into a read-only emptyDir; the pod's overlay env (the loader's own variable)
+# is then set to the copied path. Contract: docs/contracts/finance-overlays.md section 4.
+#   * ONE repo, ONE credential: `repoUrl`, `image`, `authSecretName` and `caSecretName` are
+#     REUSED from topazSeed.policySource.git. Nothing is repeated here.
+#   * `ref` is a full 40-hex commit sha or a tag. No default. A branch name fails at the fetch.
+#     The ref is in the pod template, so a changed ref ROLLS the component.
+#   * When networkPolicy.enabled, the git host must be in networkPolicy.extraEgress for engine
+#     pods (engine-fin has a default-deny egress), or the init container times out with no
+#     policy error. cortex-bff has no egress policy.
+#   * A clone failure stops the new pod starting; a rollout then holds on the old pod. EVERY pod
+#     start clones, so while the git host is down a restarted pod stays down, cortex-bff included.
+#     No boards to deliver? `components.cortex-bff: null` and cortex-bff never clones.
+#   * Only the listed dirs reach a pod: the repo also holds users and grants, which an engine
+#     must not see. A row without `optional: true` whose dir is missing from the repo is fatal.
+policyOverlay:
+  enabled: false          # bare defaults and sandbox: OFF. Sandbox keeps the baked sample.
+  ref: ""                 # REQUIRED when enabled: a full commit sha or a tag. No default.
+  path: ""                # repo subdirectory holding the dirs below; "" is the repo root
+  mountPath: /policy-overlay
+  # component -> the dirs that component is given, and the env its loader reads.
+  components:
+    engine-fin:
+      - {dir: measure_verbs, env: MEASURE_VERB_OVERLAY_DIRS}
+      - {dir: fin_export_profiles, env: FIN_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
+    cortex-bff:
+      - {dir: canvases, env: CANVAS_OVERLAY_DIRS, optional: true}
 
 # STARTUP sync for task_grant_sync ONLY (task_audience `actor` relations —
 # policy/sync/task_grant_sync.py), as a post-install/post-upgrade helm hook Job. Narrower than

@@ -8,7 +8,7 @@ no Topaz object for THAT half) AND they are a `program` `member` of `origin.prog
 (THIS half, Topaz-decided, git-asserted, deny-by-default — the SAME model as the
 other six namespaces, on a SEVENTH).
 
-SEVEN SYNCS, ONE DIRECTORY, DISJOINT SCOPE (no two prune the same relation):
+EIGHT SYNCS, ONE DIRECTORY, DISJOINT SCOPE (no two prune the same relation):
   - topaz_sync.py                 — persona/cell/group/member/user
   - datahub_topaz_sync.py         — dataset `owner`
   - grant_sync.py                 — dataset `reader`
@@ -16,6 +16,7 @@ SEVEN SYNCS, ONE DIRECTORY, DISJOINT SCOPE (no two prune the same relation):
   - task_grant_sync.py            — task_audience `actor`
   - capability_grant_sync.py      — capability `invoker`
   - program_member_sync.py        — program `member` (THIS)
+  - recipient_reader_sync.py      — recipient_scope `reader`
 This tool owns the `program` `member` relations; it ensures grantee `user` objects
 exist (never pruned — the ADR-0026 sync owns `user`) and PRUNES program member
 relations not asserted in git (removing a grant REVOKES can_view_program — an

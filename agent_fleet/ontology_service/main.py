@@ -100,6 +100,10 @@ b = CoalescingClient(b, log=logging.getLogger(__name__))
 # vector AND the model that served it, which is what the mesh reader compares against a collection
 # marker. It is imported through the same dual-layout dance rather than a second one, so a layout
 # that breaks breaks in one place.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import check_answer, decision_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import check_answer, decision_answer
 try:
     from utils.embed import embed_query, observe_query_embedding  # container flat layout
 except ImportError:
@@ -261,9 +265,7 @@ def _can_view_class(caller_email: str, iri: str) -> bool:
             timeout=5.0,
         )
         resp.raise_for_status()
-        decisions = resp.json().get("decisions") or []
-        return bool(next((d.get("is") for d in decisions
-                          if d.get("decision") == "allowed"), False))
+        return decision_answer(resp, "allowed")
     except Exception as e:  # noqa: BLE001 — fail-closed on any error
         logging.warning("ontology can_view check failed for iri=%s (fail-closed deny): %s", iri, e)
         return False
@@ -326,7 +328,7 @@ def _can_invoke_capability(caller_authz_id: str, capability: str) -> bool:
             timeout=5.0,
         )
         r.raise_for_status()
-        return bool(r.json().get("check"))
+        return check_answer(r)
     except Exception as e:  # noqa: BLE001 — fail-closed on any error
         logging.warning("can_invoke check failed capability=%s caller=%s (fail-closed deny): %s",
                         capability, caller_authz_id, e)
@@ -4797,6 +4799,18 @@ def _decode_declarations(raw: Any) -> list[dict]:
     return [d for d in raw if isinstance(d, dict) and d.get("name")]
 
 
+def _is_empty_slot_value(value: Any) -> bool:
+    """Mirror of iagent_pure.slot_acceptance.is_empty_value, for the reason above: None, a
+    blank string, or an empty collection names nothing; `0` and `False` are answers."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set, frozenset, dict)):
+        return not value
+    return False
+
+
 def _bound_value(decl: dict, cand: dict) -> str:
     """What a slot receives for a resolved candidate. Mirror of iagent_pure.slot_disposition.bound_value.
 
@@ -4940,6 +4954,13 @@ async def fill_slots(request: FillSlotsRequest):
         decl = by_name.get(name)
         if decl is None:
             refused.append(f"{name} (not declared by {request.verb_iri})")
+            continue
+        if decl.get("kind") == "spoken-mandatory" and _is_empty_slot_value(value):
+            # A REQUIRED SLOT NEVER TAKES THE SAFE-EMPTY VALUE. Accepted, `""` is PRESENT, and
+            # the supervisor's `ask` fires only on an ABSENT mandatory slot; on a referent slot
+            # it would go on to `resolveInstance("")`, whose `empty` is an ABSTAIN, not an ask.
+            # Left absent with no resolution, the disposition asks for it (`slot-unfilled`).
+            refused.append(f"{name}={value!r} (required; empty is never its answer, so it is asked)")
             continue
         values = decl.get("values")
         if values:
