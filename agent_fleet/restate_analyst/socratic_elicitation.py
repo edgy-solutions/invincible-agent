@@ -104,6 +104,9 @@ class Gap:
     rewrites: Tuple[Tuple[str, str], ...] = ()  # a confirm: what "that is not right" may rewrite
     # a confirm: (file, path, the slots that would have asked it), replaced unless the person stated it
     guesses: Tuple[Tuple[str, str, Tuple[str, ...]], ...] = ()
+    # a question that may overwrite more than it asks about: the leaves it asks. Its answer vouches
+    # for those and for what it changed among the rest. Empty means it asks every leaf of ``revises``.
+    asks: Tuple[Tuple[str, str], ...] = ()
 
 
 @dataclass
@@ -119,6 +122,7 @@ class Draft:
     vouched: Dict[Tuple[str, str], int] = field(default_factory=dict)  # (file, leaf) -> turn the
     #   person answered a question naming that leaf (a confirm, a null, or an overwrite contradiction)
     null_asked: set = field(default_factory=set)              # gap keys asked as "defer this?"
+    dropped_deferrals: List[dict] = field(default_factory=list)  # deferrals whose slot went away
 
 
 class PatchError(ValueError):
@@ -737,12 +741,18 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
             D = list((table.get("domain") or {}).get("outcome") or [])
             step_w = _words(last.get("id"))
             revises: List[Tuple[str, str]] = [(tfile, "domain.outcome"), (tfile, "rows"), (tfile, "terminals")]
+            # "can it end this way?" asks about the row and the answers, never the reasons: runs 39
+            # and 40 vouched a guessed reason_required here, and the kind's confirm then said
+            # "earlier you said" of what the opening guessed
+            asks = list(revises[:2])
             if last.get("kind") == "human_await":
                 for n in _kinds_for(str(last.get("task_kind") or ""), kinds):
                     revises += [(kinds[n][0], "accepts"), (kinds[n][0], "reason_required")]
+                    asks.append((kinds[n][0], "accepts"))
             elif last.get("kind") == "signal_await":
                 sp = f"steps[id={last.get('id')}]"
                 revises += [(f, f"{sp}.accepts"), (f, f"{sp}.reason_required")]
+                asks.append((f, f"{sp}.accepts"))
             for v in D:
                 # a kind with no answers yet says nothing to contradict: run 37 asked "review's
                 # answers are ." three times, and `contradiction:task_kind` already asks for them
@@ -750,7 +760,7 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
                     out.append(Gap(f"contradiction:chaining.{tname}.{v}", facet, "contradiction",
                                    f"You said what happens when {step_w} ends '{v}', but {step_w}'s "
                                    f"answers are {', '.join(verbs)}. Can it end '{v}'?",
-                                   revises=tuple(revises)))
+                                   revises=tuple(revises), asks=tuple(asks)))
             for v in verbs:
                 if v not in D:
                     out.append(Gap(f"{facet}.{wid}.next.{v}", facet, "missing",
@@ -939,6 +949,12 @@ def _value_slots(files: Dict[str, dict]) -> List[_Slot]:
             out.append((f"trigger.{_STAGES}", "trigger", ((f, _STAGES),),
                         f"a {_words(t.get('trigger') or _stem(f))} case passes through "
                         f"{', '.join(_words(x) for x in stages)}, in that order", ((f, _STAGES),)))
+        if t.get("requires") == []:
+            # an empty list reads as "nothing is required", and nobody said that: run 39 kept one
+            # no question asked about (architect, 2026-11-02)
+            out.append(("trigger.requires", "trigger", ((f, "requires"),),
+                        f"a {_words(t.get('trigger') or _stem(f))} event need carry no particular "
+                        "details", ((f, "requires"),)))
     for wid, (f, raw) in wfs.items():
         for s in _steps(raw):
             sid = s.get("id")
@@ -1100,6 +1116,50 @@ def _drop_deferred_nulls(draft: Draft) -> None:
         for key, _, file, leaf, _ in _null_slots(draft.files):
             if key in draft.deferrals:
                 _unset(draft, file, leaf)
+
+
+_PENDING_RX = re.compile(r"^contradiction:([^#]+)#(.*)$")
+_STEP_SLOT_LEAVES = {"deadline", "task_kind", "excludes", "reason_required"}
+
+
+def _slot_exists(files: Dict[str, dict], key: str) -> bool:
+    """False iff the gap ``key`` names a definition, step or leaf the draft no longer holds. A step's
+    slot needs a ``human_await`` of that id, the only kind those slots are asked of. A key in any
+    other form names nothing the draft could have lost, so it stands."""
+    m = _PENDING_RX.match(key)
+    if m:
+        try:
+            return _get(files, m.group(1), m.group(2))[0]
+        except PatchError:  # a model's defer may name any string
+            return True
+    s = key.split(".")
+    wfs = _workflows(files)
+    if len(s) >= 3 and s[0] in ("approvals", "outputs") and s[2] in ("next", "ends"):
+        return s[1] in wfs
+    if len(s) == 4 and s[0] in ("approvals", "actors") and s[3] in _STEP_SLOT_LEAVES:
+        return s[1] in wfs and any(str(st.get("id")) == s[2] and st.get("kind") == "human_await"
+                                   for st in _steps(wfs[s[1]][1]))
+    if len(s) == 3 and s[0] == "approvals" and s[2] in ("accepts", "reason_required"):
+        return s[1] in _kinds(files) or s[1] in wfs
+    return True
+
+
+def _vouch(draft: Draft, g: Gap, before: Dict[str, dict], turn: int) -> None:
+    """The leaves the answer to ``g`` speaks for: what ``g`` asked, and what the answer changed among
+    what ``g`` may revise. A leaf it may revise and left alone was not spoken of: runs 39 and 40
+    answered "can it end" and left the opening's guessed reasons standing."""
+    if g.kind in ("confirm", "contradiction", "null"):
+        for file, path in g.revises:
+            if not g.asks or (file, path) in g.asks or _get(before, file, path) != _get(draft.files, file, path):
+                draft.vouched[(file, path)] = turn
+
+
+def _drop_stale_deferrals(draft: Draft, turn: int) -> None:
+    """A deferral whose slot no longer exists is dropped, and the drop recorded (architect,
+    2026-11-02): run 40 kept a deadline deferred on a ``human_await`` the confirm had replaced, so a
+    ratifier would have been shown a slot the spec does not have."""
+    for key in [k for k in draft.deferrals if not _slot_exists(draft.files, k)]:
+        draft.dropped_deferrals.append({"key": key, "reason": draft.deferrals.pop(key), "turn": turn})
 
 
 _BARRED_RX = re.compile(r"actors\.[^.]+\.[^.]+\.excludes")
@@ -1475,6 +1535,9 @@ RULES
   answer, or [] when the user says anyone may answer or nobody is barred.
 - REQUIRED: every task kind sets reason_required: the answers that must come with a reason, or []
   only when the user says none do.
+- When the user says someone looks at, reviews or sees named fields before an approval, that is a
+  render step just before that human_await: its template maps each named field to the event field
+  that holds it, as "{trigger.<field>}".
 - An emit step that is itself what settles its workflow sets disposes: the outcome it settles with,
   and that workflow's chaining table routes that value. When someone or something confirms it
   afterwards, that is a signal_await and the emit has no disposes. Only an emit step has disposes.
@@ -1718,6 +1781,7 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
 
     while turn < max_turns:
         note()
+        _drop_stale_deferrals(draft, turn)
         prune_open()
         pending_gaps = gaps(draft)
         if not pending_gaps:
@@ -1746,9 +1810,7 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
         before = copy.deepcopy((draft.files, draft.deferrals))
         _apply_or_charge(draft, extractor, entry, g, turn, model_errors, messages[-1]["replies"])
         draft.answered[g.key] = turn
-        if g.kind in ("confirm", "contradiction", "null"):
-            for leaf in g.revises:
-                draft.vouched[leaf] = turn
+        _vouch(draft, g, before[0], turn)
         # a null the answer just wrote has not been asked about: it is the next question, not an
         # answer that failed to settle this one (runs 28 to 30)
         live = g.key not in draft.deferrals and any(
@@ -1764,6 +1826,7 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
             leave(g, "answer did not settle it")
             draft.pending = [p for p in draft.pending if p.key != g.key]
     note()
+    _drop_stale_deferrals(draft, turn)
     prune_open()
     final = finalize(draft.files)
     gaps_left = [x.key for x in gaps(draft)]
@@ -1779,6 +1842,7 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
         "kept_earlier": list(draft.kept_earlier),
         "contradictions_asked": contradictions_asked,
         "deferrals": dict(draft.deferrals),
+        "dropped_deferrals": list(draft.dropped_deferrals),
         "gaps_left": gaps_left,
         "files": final,
         "runnable": errors,
