@@ -32,6 +32,9 @@ Entries merged after the 0.4.75 cut (`aac9900b`). The releaser dates this headin
 - **`policy/repository_paths.yaml` and `policy/grantors/repository_paths.yaml` are new**, consumed
   by engine-r only (it reads its baked copy; there is no sync). `validate_policy` checks the rail
   when present.
+- **Every row this rail added says `granted_by: seed`**, as a shipped row must (ruled 2026-10-31).
+  18 rows had reached master naming a person: 12 in `repository_paths.yaml` and 5 in `task_grants.yaml`
+  from #149, and `safety_finding_review:SUSTAINMENT` from #141. The field is a record; no answer changes.
 
 **Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
 
