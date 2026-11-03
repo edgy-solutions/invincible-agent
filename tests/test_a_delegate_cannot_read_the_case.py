@@ -4,12 +4,19 @@ A "delegate" is any caller acting under a delegate client -- a key of DELEGATE_O
 svc:openddil). It reads the artifacts it seeded (GET /artifacts/{id}), never the whole case. The
 refusal comes BEFORE the runner fetch, so an existing and an absent case answer identically.
 
+The ruling is enforced by the MCP door (`_mcp_door()` on the route): it refuses every service
+caller 403 `service_token_refused`, and a GET has no body `on_behalf_of`, so its delegate
+exemption cannot apply. (The route once carried its own `delegate_reads_artifacts_only` guard;
+the door runs first, so it was dead and is gone.)
+
 Arms:
-  refuse   svc:openddil -> 403 delegate_reads_artifacts_only; the fetch is never made; same body
+  refuse   svc:openddil -> 403 service_token_refused; the fetch is never made; same body
            for an existing and an absent case.
   admit    the same svc:openddil still reads an artifact it seeded (200).
-  control  a non-delegate service, the submitter and a stranger keep their pre-change answers.
-  control  with the map unset svc:openddil is not refused 403: the arm keys on the map, not the name.
+  control  the submitter and a stranger keep their pre-change answers.
+  control  every service is refused by the door, delegate or not: a non-delegate service, and
+           svc:openddil with the map unset, get the same 403 (the door keys on `svc:`/the map).
+  mutant   take `dependencies=_mcp_door()` off the route and the refuse arms go red.
 
 Run: uv run pytest tests/test_a_delegate_cannot_read_the_case.py -v
 """
@@ -76,7 +83,7 @@ def test_a_delegate_is_refused_the_case_before_the_fetch(client_for, fetches):
     c = client_for(_user(DELEGATE), _present())
     r = c.get("/cases/c-1")
     assert r.status_code == 403, r.text
-    assert r.json()["detail"]["error"] == "delegate_reads_artifacts_only"
+    assert r.json()["detail"]["error"] == "service_token_refused"
     assert fetches == [], "the runner was asked about the case before the delegate was refused"
 
 
@@ -117,15 +124,17 @@ def test_a_stranger_still_gets_the_404(client_for):
     assert r.json()["detail"] == "case not found"
 
 
-def test_a_non_delegate_service_is_not_refused_as_a_delegate(client_for):
+def test_a_non_delegate_service_is_refused_by_the_door_too(client_for, fetches):
     r = client_for(_user("svc:other-service"), _present()).get("/cases/c-1")
-    assert r.status_code == 404  # the existing gate: not the submitter, no entitled domain
-    assert r.json()["detail"] == "case not found"
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["error"] == "service_token_refused"
+    assert fetches == []
 
 
-def test_with_the_map_unset_the_same_name_falls_through_to_the_existing_gate(
-        client_for, monkeypatch):
+def test_with_the_map_unset_the_same_name_is_still_refused_by_the_door(
+        client_for, monkeypatch, fetches):
     monkeypatch.delenv("DELEGATE_ON_BEHALF_OF")
     r = client_for(_user(DELEGATE), _present()).get("/cases/c-1")
-    assert r.status_code == 404, r.text
-    assert r.json()["detail"] == "case not found"
+    assert r.status_code == 403, r.text  # `svc:` is a service caller with or without the map
+    assert r.json()["detail"]["error"] == "service_token_refused"
+    assert fetches == []
