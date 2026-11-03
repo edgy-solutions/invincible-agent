@@ -1,0 +1,23 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+decision: pcn_program_approval_chaining
+after: pcn_program_approval
+matches:
+- outcome
+domain:
+  outcome:
+  - approved
+  - rejected
+  - timed_out
+terminals:
+- pcn_rejected
+- pcn_program_overdue
+rows:
+- when:
+    outcome: approved
+  then: pcn_record
+- when:
+    outcome: rejected
+  then: pcn_rejected
+- when:
+    outcome: timed_out
+  then: pcn_program_overdue

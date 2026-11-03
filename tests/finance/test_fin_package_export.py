@@ -31,6 +31,7 @@ for _p in (ROOT, ROOT / "src", ROOT / "scripts"):
 from agent_fleet.finance_agent import export as fin_export  # noqa: E402
 from agent_fleet.finance_agent import state_codec  # noqa: E402
 from agent_fleet.finance_agent.seed import build_seed  # noqa: E402
+from tests.recipient_rail_double import install as install_rail  # noqa: E402
 from iagent.canvas_template import (  # noqa: E402
     Package, load_template, panel_dispatch, recipient_scope_for, template_ref,
 )
@@ -86,6 +87,7 @@ def posts(monkeypatch):
     """Record every POST the gateway makes; answer with a valid engine body."""
     import iagent.gateway as gw
 
+    install_rail(monkeypatch)  # Topaz, doubled with the SHIPPED policy/recipient_readers.yaml rows
     calls: list[dict] = []
 
     class _Client:
@@ -224,23 +226,38 @@ def test_gates_7_and_8_CONTROL_a_valid_request_posts_once_and_is_shaped(posts):
     assert out["artifact_uri"] == f"/export/package/artifact/fin-package-{SCOPE}.html"
 
 
-def test_both_export_routes_shape_through_the_ONE_helper():
-    """"exists" is decided in one place, so the cost path and the finance-template path cannot
-    drift into reporting it under different rules. Callers are DERIVED from the AST, not named
-    by what they happen to be called today, and the rule's own text is counted, so a route that
-    grows a private copy reds here even while still calling the helper somewhere."""
+def test_every_export_path_shapes_through_the_ONE_helper():
+    """"exists" is decided in one place, so the cost path, the finance-template path and the
+    plan-answers path (`_export_plan_answers`, a third path since b73d3400) cannot drift into
+    reporting it under different rules. Nothing here names a route: the TRANSPORTS are derived
+    (every function that posts to an engine's `package_export` / `answers_export`), the SHAPERS are
+    derived (every function that calls the helper), and the rule is that a transport shapes, or
+    every caller of it does. A fourth path that calls an engine and builds its response by hand
+    reds here; the rule's own text is counted too, so a private copy reds even while the route
+    still calls the helper somewhere."""
     import ast
+    import re
 
     src = (ROOT / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
-    callers = {
-        fn.name for fn in ast.walk(ast.parse(src))
-        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-                and n.func.id == "_shape_export_package_response" for n in ast.walk(fn))
-    }
-    # the cost path shapes inside `_call_engine_cost_package`, which export_package (single path
-    # and per-engine sections alike) calls: still one shaping call per route.
-    assert callers == {"_call_engine_cost_package", "_export_package_from_template"}, sorted(callers)
+    fns = [f for f in ast.walk(ast.parse(src))
+           if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+    def calls(fn, name):
+        return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == name
+                   for n in ast.walk(fn))
+
+    url = re.compile(r"/(package_export|answers_export)$")
+    shapers = {f.name for f in fns if calls(f, "_shape_export_package_response")}
+    transports = {f.name for f in fns
+                  if any(isinstance(n, ast.Constant) and isinstance(n.value, str)
+                         and url.search(n.value) for n in ast.walk(f))}
+    assert shapers and transports, (sorted(shapers), sorted(transports))
+    unshaped = {}
+    for t in transports - shapers:
+        callers = {f.name for f in fns if calls(f, t)}
+        if not callers or not callers <= shapers:
+            unshaped[t] = sorted(callers - shapers)
+    assert not unshaped, f"an engine export path builds its response without the helper: {unshaped}"
     assert src.count("engine returned no verifiable artifact hash") == 1
     assert src.count("_SHA256_LOCATOR_RE.match(sha)") == 1
 
@@ -379,7 +396,7 @@ def _served_panels():
     out = []
     for i, (verb, _s, params) in enumerate(_dispatches()):
         fn = fmain.VERB_TO_FN[verb]
-        env = fmain._measure_envelope(fn, dict(params))
+        env = fmain._measure_envelope(fn, dict(params), caller="alice@example.com")
         out.append({"panel": i, "verb": verb, "fn": fn, "params": dict(params),
                     "artifact_id": env["artifact_id"], "rows": env["rows"]})
     return out

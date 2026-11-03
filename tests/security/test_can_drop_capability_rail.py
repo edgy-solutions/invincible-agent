@@ -36,7 +36,7 @@ def _rows() -> dict:
 
 
 def _row(group=(GROUP,), users=()):
-    r = {"granted_by": "cnogradi", "reason": "test"}
+    r = {"granted_by": "seed", "reason": "test"}
     if group:
         r["grant_to_groups"] = list(group)
     if users:
@@ -188,7 +188,7 @@ def test_the_repo_pins_exactly_two_can_drop_rows_pcn_and_pdn_group_only():
     for k, v in drops.items():
         assert v["grant_to_groups"] == [GROUP], k
         assert "grant_to" not in v, k
-        assert v["granted_by"] == "cnogradi", k
+        assert v["granted_by"] == "seed", k
 
 
 def test_alert_processors_grants_no_cell_and_alice_is_a_member():

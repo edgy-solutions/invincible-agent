@@ -1,0 +1,3 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+deferrals:
+  approvals.maint_case_supervisor_release.supervisor.deadline: supervisor turnaround not decided

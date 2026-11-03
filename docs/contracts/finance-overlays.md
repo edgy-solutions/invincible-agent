@@ -65,7 +65,8 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 | `anti_synonyms` | Optional. Phrases that mean a different measure, so the router does not pick this one. |
 | `inputs` | Which program quantities the measure uses. Holds `params` and `state` only. |
 | `computation` | The reviewed module that calculates it, and where the formula comes from. |
-| `outputs` | What is shown: one series, its unit, a reference line, and what "undefined" means. |
+| `outputs` | What "undefined" means. It names no result type: every declared measure is a `fin:DeclaredMeasureSeries`. |
+| `render` | How the result is drawn: the shape, the one series (and its unit), the value label, and a target line. |
 | `policy` | Who may see it, who approved it, and why. |
 
 The worked example, copied from the sample file. TCPI (to-complete performance index) is the
@@ -108,11 +109,12 @@ computation:
     citation: name-only
     transcription: TCPI = (BAC - BCWP) / (BAC - ACWP)
 outputs:
-  archetype: PERIOD_SERIES
-  output_uri: ToCompletePerformanceIndexSeries
-  series: [{key: tcpi, label: TCPI}]          # dimensionless: no unit key
-  reference: {value: 1.0, label: at budgeted efficiency}
   undefined: {reason: budget_spent, when: BAC <= cumulative ACWP (the budget is spent; no efficiency completes the work within it)}
+render:
+  shape: MULTI_SERIES
+  value_label: TCPI
+  series: [{key: tcpi, label: TCPI}]          # dimensionless: no unit key
+  target: {value: 1.0, label: at budgeted efficiency}
 policy:
   status: sample
   cells: [PROGRAM_FINANCE]
@@ -138,28 +140,43 @@ product change. A row cannot carry its own query or formula.
 | `derived_from.citation` | Optional, default `unstated`. Write `name-only` where you can name the formula but have no numbered clause. Do not invent a clause number: a precise-looking number nobody checked is worse than an honest "name-only". |
 | `derived_from.transcription` | The formula as the standard writes it. The platform team's tests run it against the module, so the two cannot disagree silently. |
 
-**Outputs.** `archetype` is always `PERIOD_SERIES`. `output_uri` is a short local name (not a URL)
-for the result type; the platform team registers a matching type in the finance vocabulary, as our
-sample's `ToCompletePerformanceIndexSeries` is. `series` holds exactly one series (`key`, `label`,
-optional `unit`; leave `unit` out for a ratio). `reference` is an optional line with a meaning (1.0
-here). `undefined` is optional; if the function can return nothing for a month, it must give a
+**Outputs.** A row names no result type, and a deployment adds no ontology: every declared measure is a
+`fin:DeclaredMeasureSeries`, told apart by its measure id (carried on the wire as the envelope's `measure`
+and `method.measure_id`) and routed by its verb, description and synonyms. A row that carries
+`outputs.output_uri` is refused at load. `undefined` is optional; if the function can return nothing for a month, it must give a
 `reason`, which is shown instead of a number.
 
-**Policy.** `status` is `sample`, `proposed` or `ratified`. `cells` is a non-empty list naming the
-access cells that may see the measure (the sample uses `PROGRAM_FINANCE`). `granted_by` is the
-person who approved it and `reason` is why. Replace the sample's `<accountable approver>` with a
-real name before you send a row. There is no visibility key: a measure is only ever shown for a
-program the user has been granted, and nothing in a row can widen that.
+**Render.** `shape` is the name of the archetype the board draws; this engine computes only
+`MULTI_SERIES` (one declared series per period). `series` holds exactly one series (`key`, `label`,
+optional `unit`; leave `unit` out for a ratio). `value_label` names what the values mean. `target` is
+an optional line with a meaning (1.0 here). The engine serves this block with the result, and the
+board draws the declared shape even though the shared class is on no menu. A row with no `render`
+is refused at load; a result that is served with none is shown to the viewer as its raw fields.
+`outputs.archetype`, `outputs.series` and `outputs.reference` were the old layout and are refused,
+with a message naming `render.shape`, `render.series` and `render.target`.
 
-A second example, a cost amount, shows what changes when the measure is money. This row is not in
-the sample overlay; the sample ships TCPI alone. It is shown for its shape, and this doc's own
+**Policy.** `status` is `sample`, `proposed` or `ratified`. `cells` is a non-empty list of access
+DOMAINS (the entitlement matrix is persona by domain; the sample uses `PROGRAM_FINANCE`), and it is
+enforced: it is what the verb registers under, and the engine refuses, 403 `measure_not_in_cell`, a
+caller who holds none of them (503 when the directory cannot be asked). That holds on every path:
+`/measure/{fn}`, a package with a panel of this measure, a CDRL whose profile sources it, and the file
+that CDRL build wrote. A program member with no grant in these cells loses this measure, and any CDRL
+sourcing it, and keeps the built-ins. A misspelt cell denies everyone. `granted_by` is the
+person who approved it and `reason` is why. Replace the examples' `<accountable approver>` with a
+real name before you send a row. The rows shipped in the sample overlay say `granted_by: seed`,
+because the repo grants them; a deployment's row names its own approver, as the examples here do.
+There is no visibility key: a measure is only ever shown for a program the user has been granted,
+and nothing in a row can widen that.
+
+A second example, a cost amount, shows what changes when the measure is money. This row is in
+the sample overlay too: the sample ships TCPI and VAC. It is shown for its shape, and this doc's own
 test loads it through the real loader. VAC (variance at completion) is the budget less the
 estimate at completion, with the estimate worked out by the CPI method.
 
 ```yaml
 # loads-as: measure_verb
-# SAMPLE -- invented in this repo to show the shape of a measure that is an amount. Not in the
-# sample overlay (policy/overlays/sample/); a deployment replaces it with its own.
+# SAMPLE -- invented in this repo to show the shape of a measure that is an amount. Also shipped
+# in the sample overlay (policy/overlays/sample/); a deployment replaces it with its own.
 measure_id: fin_vac_cpi
 verb: finVarianceAtCompletion
 name: Variance at completion (CPI method)
@@ -192,11 +209,12 @@ computation:
     citation: name-only
     transcription: VAC = BAC - BAC * ACWP / BCWP
 outputs:
-  archetype: PERIOD_SERIES
-  output_uri: VarianceAtCompletionSeries
-  series: [{key: vac, label: VAC, unit: USD}]          # an amount: a unit
-  reference: {value: 0, label: on budget}
   undefined: {reason: no_work_performed, when: cumulative BCWP <= 0 (no work performed, so the cost performance index has no value)}
+render:
+  shape: MULTI_SERIES
+  value_label: VAC
+  series: [{key: vac, label: VAC, unit: USD}]          # an amount: a unit
+  target: {value: 0, label: on budget}
 policy:
   status: sample
   cells: [PROGRAM_FINANCE]
@@ -223,7 +241,7 @@ What differs from TCPI:
 - You pointed at a module that imports outside the allowed four, declares no `VERSION`, or declares
   one that differs from the row's `version`; or at a function whose keyword arguments are not
   exactly your `state` names.
-- You set `archetype` to anything but `PERIOD_SERIES`, gave an `output_uri` that is a URL, listed
+- You set `render.shape` to anything but a shape this engine computes (`MULTI_SERIES`), used the old `outputs.archetype`, `outputs.series` or `outputs.reference`, wrote an `outputs.output_uri` (no row names a class), listed
   more than one series, or gave an `undefined` with no `reason`.
 - You set a `status` outside the three, left `cells` empty, or added a `visibility` key.
 - You wrote a tombstone for a key no earlier layer ships, or two files with the same `measure_id`.
@@ -401,6 +419,43 @@ agentFleet:
     MEASURE_VERB_OVERLAY_DIRS: "/path/to/finance-policy/measure_verbs"
     FIN_EXPORT_PROFILE_OVERLAY_DIRS: "/path/to/finance-policy/fin_export_profiles"
 ```
+
+**How a deployment delivers the directories to the pods.** The chart can fetch them from your
+private policy repo itself, so nothing is baked into an image. In the chart values:
+
+```yaml
+policyOverlay:
+  enabled: true
+  ref: "<a full 40-character commit sha, or a tag>"
+  path: ""            # the repo subdirectory holding the directories above; "" is the repo root
+```
+
+- The repository, its credential and its CA are the ones already given under
+  `topazSeed.policySource.git` (`repoUrl`, `authSecretName`, `caSecretName`). There is one repo and
+  one credential. `repoUrl` must be set.
+- An init container clones the repo at `ref` and copies only the directories each service is
+  named for: `measure_verbs` and `fin_export_profiles` to the finance service, `canvases` to
+  cortex-bff. The repo's other directories, users and grants among them, never reach those pods.
+- The chart sets `MEASURE_VERB_OVERLAY_DIRS`, `FIN_EXPORT_PROFILE_OVERLAY_DIRS` and
+  `CANVAS_OVERLAY_DIRS` to the in-pod paths (`/policy-overlay/<dir>`). Do not set them by hand when
+  this is on; the chart's value wins. `fin_export_profiles` and `canvases` may be absent from the
+  repo; `measure_verbs` may not.
+- `ref` is a sha or a tag, never a branch: a branch name is refused when the pod starts. To change a
+  row, commit it, tag or note the new sha, and change `ref`. The new `ref` rolls the pods; a row
+  edited in place under the same `ref` is not picked up.
+- Prefer a sha. A tag is only as fixed as your git host keeps it: if a tag moves, a pod that restarts
+  gets the new rows while its neighbours keep the old ones. Some git servers refuse a fetch by bare
+  sha (the error names an unadvertised object); on those, use a tag and protect it.
+- A clone that fails (bad credential, unknown ref, a required directory missing) stops the new pod
+  from starting. A rollout then holds on the old pod, which keeps serving the previous rows.
+- **Every pod start clones, not only a rollout.** While the git host is down, a pod that restarts or
+  moves to another node stays down until the host returns. This covers cortex-bff, which serves
+  everything, even though its `canvases` directory is optional. If you ship no boards, set
+  `policyOverlay.components.cortex-bff: null` so cortex-bff does not clone at all.
+- Where `networkPolicy.enabled` is on, the git host must be listed in `networkPolicy.extraEgress`.
+  The finance service has a default-deny egress, and without the entry the init container times
+  out with no message about policy.
+- It is off by default.
 
 **Before you send it.**
 
