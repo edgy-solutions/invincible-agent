@@ -150,7 +150,7 @@ def test_an_overlay_content_kind_is_checked_against_the_seed_plus_its_own_shapes
     assert not [e for e in validate(pol, pol) if "mine" in e]
 
 
-@pytest.mark.parametrize("kind,shape", [("pcn", "notice"), ("pdn", "notice"), ("course", "course")])
+@pytest.mark.parametrize("kind,shape", [("pcn", "notice"), ("pdn", "notice"), ("course", "document")])
 def test_the_overlay_rows_name_a_registered_shape(kind, shape):
     declared = yaml.safe_load((OVERLAY_KINDS / f"{kind}.yaml").read_text(encoding="utf-8"))["review_shape"]
     assert declared == shape

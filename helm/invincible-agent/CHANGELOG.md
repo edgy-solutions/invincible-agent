@@ -2,14 +2,25 @@
 
 ## 0.4.77 — not yet cut
 
-Entries merged after the 0.4.76 cut (`ce589473`).
-
 **Policy changes (which service may name a person on a central-gateway route)**
 
 - **`policy/gateway_delegates.yaml` and `policy/grantors/gateway_delegates.yaml` are new.** No reader
   yet: the gateway's `is_delegate` seam still answers no, so this release changes no answer.
   `validate_policy` checks the rail when present. A row's `service` must be a seeded `svc:` identity
   and each route a known one. First row: `svc:data-analyst` on `assets.authorize`.
+
+**Policy changes (a course is reviewed as a document: `review_shape: document`)**
+
+- **The `course` content kind now declares `review_shape: document`** (it declared `course`, a shape
+  no card keys on). A course's promotion task payload carries `review_shape` and `sections[]`
+  (`{section_id, title, page, page_end?}`), read from the `extraction.json` beside the manifest, ids
+  derived by the training contract (`{ingest_id}_s{i}`, nested `{parent}_s{i}`). A promote's
+  `review_coverage` with `item_kind: section` is verified against exactly that stored list. One bad
+  row, or no readable outline, leaves `sections` absent (never partial, never empty): the card shows
+  its reason line and a coverage answers 503 `review_coverage_unverifiable`. A `notice` task's payload
+  is unchanged. The `course` row in `policy/review_shapes/` stays.
+- **Dormant until doc-tools #172 is deployed**: no course extraction carries the outline before it,
+  so until then every course task files without `sections`.
 
 ## 0.4.76 — 2026-11-03
 

@@ -16,3 +16,5 @@ Red on master at e0a2ab9b, full suite and alone.
 tests/test_the_stub_harness_puts_sys_modules_back.py names `test_bff_openapi_is_current.py:24` (95db114b), `test_ingest_v1_is_stable.py:35` (1fb9e242), `test_the_board_renders…:20` (83850d98) and `test_the_mcp_surface_is_stable.py:25` (5924135f).
 
 The fifth file is on saf's item, so the test stays red until both are done.
+
+Re-measured at fd45d864: the test names six files. These four are this item; `_mcp_surface_derived.py` is saf's and the malformed-PDP seal is gov's new item.
