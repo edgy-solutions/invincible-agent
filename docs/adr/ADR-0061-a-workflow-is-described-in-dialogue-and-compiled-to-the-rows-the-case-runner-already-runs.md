@@ -1,8 +1,9 @@
 # ADR-0061 — A workflow is described in dialogue and compiled to the rows the case runner already runs
 
 **Status:** Proposed, ruled 2026-11-02: this ADR records the design and its measurements, including
-the gap below. **The bar for "the loop works" is not met.** It is met when `runnable` refuses any
-definition no table routes to from the trigger, and a run is runnable with all four stages reachable.
+the gap below. **The bar for "the loop works" is not met.** It is met when a run is runnable with all
+four stages reachable and each stage has the steps the person described (ruled 2026-11-02).
+`runnable` now refuses any definition no table routes to from the trigger, and of runs 35 to 37 none is runnable, though two have all four stages reachable (§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -1395,6 +1396,256 @@ derivation, not on an assertion.
 
 Both interpretations stand: a null for who is barred reads as absent, and a stated "no limit" null is
 asked. Three runs follow (2), (3) and (4).
+
+#### 2026-11-02: rulings 2, 3 and 4, built
+
+**Ruling 2, the refusal.** `runnable` reports `definition <id>: no table routes to it from the
+trigger` for each definition the walk from the trigger does not reach. Read against the stored
+drafts: run 32 now refuses two definitions and run 33 one, so both are `cannot_run`, as ruled. Run 31
+was already `cannot_run` on its open slots, and all its definitions are reached.
+
+The walk had to change first. `_reachable` held one list of terminals across all tables, while
+`runnable` reads a row's `then` against its own table's terminals. A value that was a terminal in
+one table therefore stopped a row in another, and the walk could refuse a bundle the runner runs. It
+now reads each table's own terminals.
+
+**A question ruling 2 did not name: my call, for review.** A refusal the person never hears can't be
+answered, and §9 says a refusal is never deferred: the loop keeps asking, or stops with "cannot run,
+missing X". So `required_slots` also asks `steps.<id>.routed`: "no stage leads to X, so a case can
+never reach it. Which stage's ending leads to it, and on which outcome?" It is asked only when no
+other required slot is open, because a table still being drafted is asked for by name first, and it
+may not be deferred. The answer may rewrite a table's rows, its terminals and its input's domain. The
+model writes the row; the loop inserts nothing. The ruling did not ask for this. Without it, a run
+that reaches the refusal can only end `cannot_run`.
+
+There is one limit. The person can't yet answer "that is not a stage": a definition the model invented
+stays open, and the run stays `cannot_run`. That is the honest result, and the runs below may show it.
+
+**Ruling 3, the reasons.** Each approval step now has the required slot
+`approvals.<definition>.<step>.reason_required`, built as `excludes` is. A null reads as absent. A
+value nobody stated is confirmed once, and the answer may replace it, so a stated reason is no longer
+charged as an overwrite of a `[]` nobody asked for; that charge is what lost the reasons in runs 31
+to 33. The per-kind question and the per-kind null are gone. The grammar now says `reason_required`
+is required, and that `[]` means no answer needs one.
+
+The cost is in the fixtures. Each person's reasons used to arrive inside a stage answer, which is not
+attributed to the step, so each is now confirmed:
+
+| fixture | questions before | questions now | new entries in the person's words |
+| --- | --- | --- | --- |
+| `pcn_review` | 15 | 18 | 3 |
+| `maint_case_release` | 12 | 14 | 2 |
+| `training_course_approval` | 16 | 18 | 2 |
+
+The training content review adds no question: its reasons are answered in its own contradiction.
+
+**Ruling 4, `disposes`.** The grammar says an emit step that is itself what settles its workflow sets
+`disposes`, that its chaining table routes that value, that a later confirmation is a `signal_await`,
+and that only an emit step has `disposes`. A definition that only sends is asked "does sending X
+settle it, and with what outcome, or does someone confirm it afterwards?". A definition with no emit
+keeps "who or what confirms it?". A `disposes` nobody stated is confirmed under
+`outputs.<id>.ends`, and one on any other kind of step is refused by `runnable` and never confirmed.
+
+**The instrument.** The scripted user answers the three new slot forms from the expected bundle:
+reasons from the kind the step names, a routed question from the first table with a row into that
+stage, and an ending from that stage's last disposing step. It also rejects a reason confirm on a step
+the process does not have. The measure row gains `unreachable`.
+
+**Seals and mutants.** `tests/socratic` has 171 passing at `LOCKED_SDK=sdk_0912`, and the gov ratchet
+24. All 19 mutants of the new behaviour went red. Three survived the first pass:
+
+- Removing the reason line from the grammar survived, and now has a seal.
+- Confirming a `disposes` on any kind of step survived, and now has a seal.
+- Removing `_slot_target` from the scripted user's rejection survived because it decided nothing.
+  The target always comes from the expected bundle, so the check always holds. That call is removed,
+  and its mutant is replaced by one on the reason form of a step slot.
+
+One red is a `KeyError`, not an assertion: treating a null as held, where the test indexes the slot
+that should be open. The slot's absence is the failure the test exists to catch.
+
+#### 2026-11-02: run 34 crashed, and a value of the wrong shape is now refused
+
+The first run after rulings 2, 3 and 4 did not finish. The model wrote a row's `when` as a string, and
+`decide` raised `AttributeError` from inside `problems`, `required_slots` and `runnable`. No output was
+written, so what else run 34 held is lost, and it counts as none of the three runs. Rulings 2 to 4 did
+not introduce this. `_apply_or_charge` already promised that a run never crashes on model output, and
+the promise covered only a `PatchError`.
+
+**The census.** One row is a sample, so I put eight wrong-typed values at every node of the PCN bundle
+and called each reader: 3264 calls, 20 distinct crash sites, across the tables, the kinds, the steps and
+the trigger.
+
+**The refusal.** This defends the class rather than the 20 sites. A patch is already tried on a copy, so
+`_refuse_unreadable` reads that copy with `_all_gaps` and `runnable`. If either raises anything, the
+patch is refused and the model restates it with the refusal in hand, under the existing restate limit.
+This goes beyond the rulings' words: it is my call, for review. `decision_table.py`, the production
+evaluator, is deliberately unchanged, so a broken row reaching it directly still raises.
+
+The instrument needed its own guards. Values the loop tolerates still reach the measure, so
+`semantic_diffs` records a draft with no canonical form as a difference, and `_steps_of` reads a `steps`
+that isn't a list as empty. The first pass of the census found 7 such sites in the instrument.
+
+| fixture | wrong-typed values refused | passed the refusal | crash sites in later readers |
+| --- | --- | --- | --- |
+| `pcn_review` | 135 | 681 | 0 |
+| `maint_case_release`, `training_course_approval` | 334 | 1322 | 0 |
+
+The later readers are `finalize`, `semantic_diffs`, the reachability walk and the scripted user on each
+open gap. This census covers one wrong value at one node of a complete bundle. It does not cover a
+wrong value in a partial draft, or two at once. A reader the refusal does not call, reached only from a
+partial draft, could still raise.
+
+**The cost.** `runnable` now runs on every patch, so `tests/socratic` takes about 40 to 47 seconds, up
+from about 9.5. In a model run this is small beside the model's own time. I have not measured it there.
+
+**Seals and mutants.** `tests/socratic` has 189 passing at `LOCKED_SDK=sdk_0912`, and the gov ratchet
+24. All six mutants of the refusal and the guards went red: not reading the draft at all, catching only
+`AttributeError`, not calling `_all_gaps`, not calling `runnable`, and removing each instrument guard.
+Removing `runnable` from the refusal is held by one seal only.
+
+**A correction to the runs through 33.** They ran under `-I`, which ignores `PYTHONPATH`, so they
+imported the venv's `iagent_mesh` 0.9.5 and not the 0.9.12 overlay. The loop imports only `task_kinds`
+from the SDK, and that file is byte-identical in the two versions, so their results stand. The runs below
+use the 0.9.12 overlay.
+
+#### 2026-11-02: runs 35 to 37, and the bar is not met
+
+Three complete PCN runs at `6122cf6f`, one at a time, with the same model and harness, on the 0.9.12
+overlay. Run 34 is not one of them: it crashed, as the section above says.
+
+| run | questions / bank | runnable errors | unreachable | semantic diffs | open | answered by path | model errors | confirms | rejected | contradiction | deferral | reasons | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 35 | 27/18 | 0 | 0 of 4 | 3 | 1 | 4 | 0 | 12 | 1 | 1/1 | 1/1 | held | cannot_run | 569 |
+| 36 | 26/18 | 2 | 2 of 4 | 6 | 3 | 8 | 0 | 11 | 1 | 1/1 | 1/1 | lost on one kind | cannot_run | 645 |
+| 37 | 30/18 | 1 | 0 of 4 | 3 | 0 | 6 | 0 | 11 | 0 | 1/1 | 1/1 | held | cannot_run | 563 |
+
+**The bar is not met: no run is runnable.** Two of the three have all four stages reachable. Runs 31
+to 33 had the planted contradiction in two of three and lost the reasons in all three. These three
+report it every time and hold the reasons in two.
+
+**Why each stopped:**
+
+- **Runs 35 and 36: the loop charged the model's correct answer as a contradiction.** The opening
+  guessed the acknowledgement as an emit that settles itself. The loop then asked, correctly, "the
+  draft says sending it settles the stage, but you were never asked. Is that right?" The person said a
+  component engineer answers it. The model rewrote the stage as a `human_await` with both outcomes,
+  which is what the fixture expects. The loop charged that as "Earlier you said {emit}; now
+  {human_await}. Which holds?". The person never said emit, and the question before it had just said
+  so. The scripted user could not answer, the contradiction was deferred, and the guess stayed. This
+  is the mechanism that lost the reasons in runs 31 to 33, at a wider site: ruling 3 cured it for
+  `reason_required` alone. Its last effect is the open slot: the confirm on the guessed table is one
+  the scripted user cannot answer, and it may not be deferred.
+- **Run 36 also: the refusal is true and the model could not act on it.** The model listed
+  `program_approval` as a terminal of the table whose row routes to it, so a case stops there and the
+  stage and the one after it are unreachable. The routed question says "no stage leads to program
+  approval", which names no cause. The model rewrote the same table with the same terminal, and the
+  slot stalled.
+- **Run 37: an error no question reaches.** The selection table carries `after` naming the trigger,
+  and `runnable` refuses it. The grammar says what `after` means on a chaining table and is silent on
+  a selection. No slot asks about it, so with nothing open the run ended `cannot_run`. Nothing is wrong
+  with that ending, but one line of the draft decided it, and neither the person nor the model was told.
+
+**Run 37 shows the bar is not the workflow either.** With `after` removed from the stored draft,
+`runnable` reports nothing and all four stages are reachable, so it would clear the bar as worded. Its
+record stage is still wrong: the person says the disposition is sent and then filed, and the draft has
+one emit that settles itself as `recorded`, with no step that waits for the filing. Asked whether sending
+settles it, the person said "then the records group files it and says so", and the model changed only the
+emit's template. I have not examined the other semantic differences in these runs.
+
+**Most contradictions the loop asks are not contradictions.** The planted one was reported in every
+run. Besides it, the scripted user could not answer 7, 4 and 8 contradictions, all raised by the loop,
+and each became a deferral. Run 37 opens with three of the form "you said what happens when review ends
+'approved', but review's answers are empty. Can it end 'approved'?", asked before the task kind exists.
+A person could answer these, and the scripted user answers only what its transcript holds, so these
+figures understate what a person would get done. They also mean a person would be asked a false "earlier
+you said" several times per run.
+
+**What did not show up.** The shape refusal never fired in these three: no refused patches and no model
+errors. It is held by its seals and the census, not by a live run. Run time is within the 562 to 705
+seconds of runs 31 to 33, so the per-patch read adds nothing visible beside the model's own time.
+
+**Asked of the architect.** Each is a change beyond the rulings, so none is built. I recommend yes to all
+three:
+
+1. A value nobody stated, corrected in the answer to its own confirm, is not a contradiction: the answer
+   may replace what was guessed, including the step and its table. A contradiction needs something the
+   person said. This also removes the false "earlier you said" and the empty-answers form.
+2. A structural error the person can't answer goes back to the model as a refused patch, naming the
+   cause: a terminal that is also a stage, or an `after` on a selection. The grammar gains both lines.
+3. The scripted user answers a contradiction the loop raised, from the expected bundle, as it already
+   rejects a routing row for an outcome a stage lacks. This follows (1) and does not replace it: on its
+   own it would raise the score and leave the person being told what they never said.
+
+The fourth is a question, not a recommendation: should the bar also ask that a run's stages have the steps
+the person described? As worded, run 37 clears it with one line changed.
+
+#### 2026-11-02: the architect's rulings on runs 35 to 37
+
+1. Yes: a value nobody stated, corrected at its own confirm, is a correction, not a contradiction. The
+   answer replaces the guess and its table.
+2. Yes: a structural error the person can't answer goes back to the model as a refused patch naming the
+   cause. Both cases go into the grammar.
+3. Yes, after (1).
+4. Yes: the bar requires each stage to have the steps the person described. A runnable spec that drops a
+   step is not the workflow.
+
+The refusal of a value of the wrong shape, which I had marked as my call, is accepted. So is the suite's
+time of about 45 seconds.
+
+#### 2026-11-02: the four rulings, built
+
+**Ruling 1, the correction.** A confirm now carries what was built on the guess, and its answer may
+replace those values without pending a contradiction. For a step's slot that is the answers and reasons
+of the task kind the step names, and the routing table after its definition. Each is listed with the
+slots that would have asked it. If one of those slots was answered, the person stated the value, and a
+different answer still pends as a contradiction. "Stated" is the turn check this ADR already uses for
+confirms. So a value that arrived inside a stage answer, or in the opening, counts as unstated unless a
+question covered it. That reading is mine, for review: it is the existing standard, not a new one.
+
+A workflow's `steps` is one list and so one leaf. A patch that rewrites the whole list lands only if every
+other step comes through unchanged and in order, so correcting a guessed step cannot change one the
+person described.
+
+The empty-answers form is gone: a kind with no answers yet raises no "can it end" contradiction, and
+`contradiction:task_kind` still asks for the answers. **What remains:** the ruling covers a confirm, so a
+false "earlier you said" outside one still happens. Runs 35 and 37 raised `#accepts` after
+`steps.<id>.routed`, run 35 raised `chaining.<t>.needs_info` with non-empty answers, and run 37 raised
+`steps[id=ack].excludes`. Ruling 3 answers these; it does not stop them being asked.
+
+**Ruling 2, the refusal.** A patch that lists a stage in a table's `terminals`, or puts `after` on the
+table the trigger names in `selection`, is refused with the cause named, and the model restates it. The
+grammar has both lines. "A stage" is a definition or a name in the trigger's `stages`, so a terminal is
+refused even before that stage's definition is drafted. Two things beyond the ruling's words, for review:
+
+- Only an error the patch introduces is refused. An error the draft already held does not block every
+  later patch.
+- The restatement may rewrite the leaf the refusal named, even one the person stated, because the error
+  may come from a later patch: a new stage that an old terminal already names. Without this the restated
+  patch would pend the terminal, keep the error and be refused again.
+
+**Ruling 3, the scripted user.** It now answers a contradiction the loop raised, from the expected bundle,
+and each is recorded in the row's `answered_contradictions`. Its answers are words only, with no facts
+shown to the model, so the model is measured on the words as it is for any other answer. That is my
+reading of "as it already rejects a routing row", which does carry facts; tell me if you meant the same
+here. A single value is said as "It is a, b." or "It is none." A value with a structure, such as steps or
+rows, is said in the person's own words from the entry that asks for it. An outcome the expected table
+routes gets "Yes, it can end x. It can end: a, b." The trigger's form, a selection table's rows and a
+value the bundle does not hold stay unanswered, and count as they did. A planted contradiction is banked
+and never reaches this code, so detection is unchanged.
+
+**Ruling 4, the bar.** The row gains `dropped_steps` and `bar_met`. An expected stage has dropped a step
+if its step kinds are not an in-order subsequence of the paired draft stage's. Steps compare by kind, so
+a step of the right kind with the wrong content is not counted, and `semantic_diffs` carries it. An added
+step is not a dropped one. The pairing walk stops at a terminal, so a stage it can't pair counts as having
+dropped all its steps, and such a stage is usually counted as unreachable too. The two columns can
+therefore overlap on one stage.
+
+**Checks.** `tests/socratic` 234 passed and the gov ratchet 24 passed, both with
+`LOCKED_SDK=sdk_0912`, so the ratchet counts no new refusal site. The shape
+census is unchanged, with the new reader included: 469 refused, 2003 passed, 0 crash sites over the three
+fixtures. All 33 mutants are red on a named test, each restored and checked byte for byte. One was
+first written so that the file failed to import, which is not a kill; rewritten, it went red on the test it
+was written for.
 
 ## Consequences
 
