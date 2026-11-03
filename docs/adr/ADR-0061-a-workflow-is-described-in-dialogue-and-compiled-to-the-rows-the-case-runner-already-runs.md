@@ -1,8 +1,9 @@
 # ADR-0061 — A workflow is described in dialogue and compiled to the rows the case runner already runs
 
 **Status:** Proposed, ruled 2026-11-02: this ADR records the design and its measurements, including
-the gap below. **The bar for "the loop works" is not met.** It is met when `runnable` refuses any
-definition no table routes to from the trigger, and a run is runnable with all four stages reachable.
+the gap below. **The bar for "the loop works" is not met.** It is met when a run is runnable with all
+four stages reachable. `runnable` now refuses any definition no table routes to from the trigger, and
+of runs 35 to 37 none is runnable, though two have all four stages reachable (§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -1506,6 +1507,77 @@ Removing `runnable` from the refusal is held by one seal only.
 imported the venv's `iagent_mesh` 0.9.5 and not the 0.9.12 overlay. The loop imports only `task_kinds`
 from the SDK, and that file is byte-identical in the two versions, so their results stand. The runs below
 use the 0.9.12 overlay.
+
+#### 2026-11-02: runs 35 to 37, and the bar is not met
+
+Three complete PCN runs at `6122cf6f`, one at a time, with the same model and harness, on the 0.9.12
+overlay. Run 34 is not one of them: it crashed, as the section above says.
+
+| run | questions / bank | runnable errors | unreachable | semantic diffs | open | answered by path | model errors | confirms | rejected | contradiction | deferral | reasons | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 35 | 27/18 | 0 | 0 of 4 | 3 | 1 | 4 | 0 | 12 | 1 | 1/1 | 1/1 | held | cannot_run | 569 |
+| 36 | 26/18 | 2 | 2 of 4 | 6 | 3 | 8 | 0 | 11 | 1 | 1/1 | 1/1 | lost on one kind | cannot_run | 645 |
+| 37 | 30/18 | 1 | 0 of 4 | 3 | 0 | 6 | 0 | 11 | 0 | 1/1 | 1/1 | held | cannot_run | 563 |
+
+**The bar is not met: no run is runnable.** Two of the three have all four stages reachable. Runs 31
+to 33 had the planted contradiction in two of three and lost the reasons in all three. These three
+report it every time and hold the reasons in two.
+
+**Why each stopped:**
+
+- **Runs 35 and 36: the loop charged the model's correct answer as a contradiction.** The opening
+  guessed the acknowledgement as an emit that settles itself. The loop then asked, correctly, "the
+  draft says sending it settles the stage, but you were never asked. Is that right?" The person said a
+  component engineer answers it. The model rewrote the stage as a `human_await` with both outcomes,
+  which is what the fixture expects. The loop charged that as "Earlier you said {emit}; now
+  {human_await}. Which holds?". The person never said emit, and the question before it had just said
+  so. The scripted user could not answer, the contradiction was deferred, and the guess stayed. This
+  is the mechanism that lost the reasons in runs 31 to 33, at a wider site: ruling 3 cured it for
+  `reason_required` alone. Its last effect is the open slot: the confirm on the guessed table is one
+  the scripted user cannot answer, and it may not be deferred.
+- **Run 36 also: the refusal is true and the model could not act on it.** The model listed
+  `program_approval` as a terminal of the table whose row routes to it, so a case stops there and the
+  stage and the one after it are unreachable. The routed question says "no stage leads to program
+  approval", which names no cause. The model rewrote the same table with the same terminal, and the
+  slot stalled.
+- **Run 37: an error no question reaches.** The selection table carries `after` naming the trigger,
+  and `runnable` refuses it. The grammar says what `after` means on a chaining table and is silent on
+  a selection. No slot asks about it, so with nothing open the run ended `cannot_run`. Nothing is wrong
+  with that ending, but one line of the draft decided it, and neither the person nor the model was told.
+
+**Run 37 shows the bar is not the workflow either.** With `after` removed from the stored draft,
+`runnable` reports nothing and all four stages are reachable, so it would clear the bar as worded. Its
+record stage is still wrong: the person says the disposition is sent and then filed, and the draft has
+one emit that settles itself as `recorded`, with no step that waits for the filing. Asked whether sending
+settles it, the person said "then the records group files it and says so", and the model changed only the
+emit's template. I have not examined the other semantic differences in these runs.
+
+**Most contradictions the loop asks are not contradictions.** The planted one was reported in every
+run. Besides it, the scripted user could not answer 7, 4 and 8 contradictions, all raised by the loop,
+and each became a deferral. Run 37 opens with three of the form "you said what happens when review ends
+'approved', but review's answers are empty. Can it end 'approved'?", asked before the task kind exists.
+A person could answer these, and the scripted user answers only what its transcript holds, so these
+figures understate what a person would get done. They also mean a person would be asked a false "earlier
+you said" several times per run.
+
+**What did not show up.** The shape refusal never fired in these three: no refused patches and no model
+errors. It is held by its seals and the census, not by a live run. Run time is within the 562 to 705
+seconds of runs 31 to 33, so the per-patch read adds nothing visible beside the model's own time.
+
+**Asked of the architect.** Each is a change beyond the rulings, so none is built. I recommend yes to all
+three:
+
+1. A value nobody stated, corrected in the answer to its own confirm, is not a contradiction: the answer
+   may replace what was guessed, including the step and its table. A contradiction needs something the
+   person said. This also removes the false "earlier you said" and the empty-answers form.
+2. A structural error the person can't answer goes back to the model as a refused patch, naming the
+   cause: a terminal that is also a stage, or an `after` on a selection. The grammar gains both lines.
+3. The scripted user answers a contradiction the loop raised, from the expected bundle, as it already
+   rejects a routing row for an outcome a stage lacks. This follows (1) and does not replace it: on its
+   own it would raise the score and leave the person being told what they never said.
+
+The fourth is a question, not a recommendation: should the bar also ask that a run's stages have the steps
+the person described? As worded, run 37 clears it with one line changed.
 
 ## Consequences
 
