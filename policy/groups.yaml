@@ -151,9 +151,14 @@ groups:
 
   # REVIEW-CAPABILITY GROUP ONLY (2026-10-31 directive). Grants NO persona.domain cell; named in
   # policy/capability_grants.yaml `grant_to_groups` for `can_review:alignment`. A member may accept
-  # or reject the workbench's alignment proposals. Sandbox member = bob, the stand-in TRAINING
-  # reviewer (as for document_promotion:TRAINING) until the training domain's reviewer is ruled.
+  # or reject the workbench's alignment proposals. Sandbox member = alice (2026-11-02 ruling), until
+  # the training domain's production reviewer is ruled.
   alignment-reviewers: {}
+
+  # CONFIGURE-CAPABILITY GROUP ONLY (2026-11-02 ruling). Grants NO persona.domain cell; named in
+  # policy/capability_grants.yaml `grant_to_groups` for `can_configure:deck_template`. A member may
+  # change the workbench's deck template. Sandbox member = alice.
+  training-admins: {}
 
   # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-11 ruling). Grants NO persona.domain cell; named in
   # task_grants.yaml `grant_to_groups` for maint_supervisor_approval:edge-01.
