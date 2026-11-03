@@ -4,6 +4,18 @@
 
 Entries merged after the 0.4.75 cut (`aac9900b`). The releaser dates this heading at the cut.
 
+**A malformed PDP answer (architect ruling 2026-11-02, the same class as 2026-10-31's non-boolean `check`)**
+
+- **A malformed answer is a 503 at every site** (ruling 2026-11-02), including the ones where every
+  other failure is a deny: docs, neo4j, weaviate, ontology, datahub, the SPO executor, the review
+  starter and the BFF's `check_can_act` / `check_can_invoke`. At a Restate engine it is a terminal
+  failure carrying 503, and neo4j and weaviate discard the model's answer. A transport outage at
+  those sites is still a deny. No values change.
+- **`POST /internal/origin/write` answers 503 when program membership cannot be checked** (Topaz down or a
+  malformed answer); it answered 500.
+- **The autonomous run's `can_invoke` gate now fails terminally on a deny, as its comment said.** It
+  raised inside `ctx.run` and translated outside it, so Restate retried a deny as transient.
+
 **Policy changes (ADR-0062 section 5: the repository-paths rail)**
 
 - **Five new `task_grants.yaml` audiences**: `repo_review:POLICY`, `repo_review:ADR`,

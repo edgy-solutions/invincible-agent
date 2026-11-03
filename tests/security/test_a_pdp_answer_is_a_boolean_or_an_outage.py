@@ -13,8 +13,9 @@ Three legs:
      a control that the parse saw every textual mention, and a control that the detector sees each
      defect form;
   3. the consumers: a malformed answer is a 503 where an outage is a 503 (finance's door, the
-     gateway's raising checks, the three engine rail checks) and a deny where every failure is a
-     deny (a fail-closed site), each against a control that the same double can admit.
+     gateway's raising checks, the three engine rail checks), each against a control that the same
+     double can admit. The sites where an outage is a deny answer it as a 503 too (ruled 2026-11-02);
+     `test_a_malformed_pdp_answer_is_503_at_every_site.py` seals those, and the whole class.
 
 Run:  uv run python -m pytest tests/security/test_a_pdp_answer_is_a_boolean_or_an_outage.py -q
 """
@@ -369,15 +370,3 @@ def test_the_gateway_check_is_unavailable_on_a_malformed_answer(topaz, monkeypat
     topaz["body"] = body
     with pytest.raises(AuthorizationUnavailable):
         call("subject", "alice@example.com")
-
-
-@pytest.mark.parametrize("body", CONSUMER_BODIES, ids=repr)
-def test_a_fail_closed_site_denies_a_malformed_answer(monkeypatch, body):
-    from agent_fleet.docs_agent import entitlement
-    state = {"body": {"check": True}}
-    monkeypatch.setattr(entitlement, "TOPAZ_DIRECTORY_URL", URL)
-    monkeypatch.setattr(entitlement.httpx, "post",
-                        lambda url, **k: httpx.Response(200, json=state["body"], request=httpx.Request("POST", url)))
-    assert entitlement.can_invoke("alice@example.com", "cap") is True  # control
-    state["body"] = body
-    assert entitlement.can_invoke("alice@example.com", "cap") is False
