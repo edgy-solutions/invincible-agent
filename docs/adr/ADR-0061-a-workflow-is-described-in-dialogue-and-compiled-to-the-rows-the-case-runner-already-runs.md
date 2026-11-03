@@ -3,9 +3,10 @@
 **Status:** Proposed, ruled 2026-11-02: this ADR records the design and its measurements, including
 the gap below. **The bar for "the loop works" is not met.** It is met when a run is runnable with all
 four stages reachable and each stage has the steps the person described (ruled 2026-11-02).
-`runnable` now refuses any definition no table routes to from the trigger. Runs 38 to 40 are all
-runnable with all four stages reachable, and none has every step: all three lost the impact review's
-`render` step, and two lost the record's filing step (§10).
+`runnable` now refuses any definition no table routes to from the trigger. Runs 41 to 43 are all
+runnable with all four stages reachable, and all three have the impact review's `render` step. None meets
+the bar: two lost the record's filing step, and the third has it in a stage the bar's walk can't pair
+(§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -1745,6 +1746,144 @@ affected. The answer should use the draft's names, or stay unanswered when it ha
 
 I will fix the two defects with whatever you rule, seal both, and measure them in the same three runs.
 They need no ruling unless you want the scripted `terminals` form left unanswered.
+
+#### 2026-11-02: the architect's rulings on runs 38 to 40
+
+1. Yes: "looks at the part, the maker and the change class" is a render step, because a human reads
+   declared fields before deciding. It goes in the grammar: a render applies when the person says someone
+   looks at, reviews or sees named fields before an approval.
+2. Yes: the scripted user rejects `ends` when the expected emit has no `disposes`.
+3. Yes: an unstated `requires: []` is confirmed once.
+4. Yes: a deferral whose slot no longer exists is dropped, and the drop is recorded in the run.
+
+The two defects are to be fixed with these and sealed, then three runs. The five things I marked as going
+beyond the words of the earlier rulings are all accepted: "stated" uses the existing turn check; only an
+error the patch introduces is refused; the restatement may rewrite the leaf a refusal named; the scripted
+answers to contradictions are words only; and dropped steps compare by kind and in order.
+
+#### 2026-11-02: the rulings and the two defects, built
+
+Built at `53f26235`.
+
+**Ruling 1.** The grammar has the line, and nothing else changed. The loop does not ask for a render or
+insert one, so the model is measured on that line alone.
+
+**Ruling 2.** The scripted user answers the confirm at `outputs.<stage>.ends` with "No, that is not right."
+and the stage's words, and unsets that step's `disposes`, when the expected emit has none. It does this
+only at a confirm. It does not do this at a `missing` gap on the same key, which matters below.
+
+**Ruling 3.** `requires == []` is confirmed once, under the key `trigger.requires`.
+
+**Ruling 4.** The loop drops a deferral when its slot no longer exists, and records it in
+`dropped_deferrals` with its reason and turn. A key the loop can't parse counts as existing, so it stays.
+
+**The false "earlier you said".** A "can it end" contradiction now records what it asks about: the routing
+table's domain and rows, and the answers. Answering it marks those leaves as stated, and no longer the
+kind's reasons.
+
+**A departure from what I proposed.** I proposed marking only what the question asked. That was too narrow:
+the training fixture's answer says "they must say why" and writes the reasons, so the person did state them.
+A leaf the answer changed now counts as stated too. A guess the answer left alone does not.
+
+**The bundle's names.** The scripted answer to a contradiction now uses the draft's names, pairing them only
+within the table it was asked about, because other tables share terminals. A value with no counterpart stays
+unanswered. An empty value is said as "It is none."
+
+**Checks.** `tests/socratic` 284 passed and the gov ratchet 24 passed, both with `LOCKED_SDK=sdk_0912`. The
+shape census read 469 refused, 2003 passed and 0 crash sites over the three fixtures. There are 39 new
+mutants, each restored and checked byte for byte. The first pass had one survivor, which showed that a
+`kind != "emit"` check could never fire, since steps pair only within a kind. I removed the check and
+replaced that mutant with two that went red. The other 37 ran before that one-line removal and were not
+rerun. Of the earlier 33, 32 are red; the other no longer matches the line it mutated, so it was skipped,
+and `names-none-unsaid` covers that behaviour.
+
+#### 2026-11-02: runs 41 to 43, and the bar is not met
+
+Three complete PCN runs at `53f26235`, one at a time, with the same model and harness, on the 0.9.12
+overlay.
+
+| run | questions / bank | runnable errors | unreachable | stages that dropped a step | bar | semantic diffs | open | answered by path | refused patches | confirms | rejected | contradiction | deferral | reasons | contradictions answered | deferrals dropped | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 41 | 25/18 | 0 | 0 of 4 | 1 | no | 4 | 0 | 5 | 1 | 11 | 1 | 1/1 | 1/1 | held | 2 | 1 | runnable | 652 |
+| 42 | 34/18 | 0 | 0 of 4 | 1 | no | 4 | 0 | 9 | 2 | 14 | 1 | 1/1 | 1/1 | held | 5 | 0 | runnable | 875 |
+| 43 | 25/18 | 0 | 0 of 4 | 1 | no | 2 | 0 | 6 | 0 | 14 | 1 | 1/1 | 1/1 | held | 1 | 0 | runnable | 665 |
+
+**The bar is not met: all three read `no`.** Every run is runnable with all four stages reachable, and every
+run now has the impact review's `render` step. The one stage counted in each is the record, and the three
+cases differ:
+
+- **Runs 42 and 43 really lost the filing step.** The person says "Then the records group files it and says
+  so". Run 42's record is an emit and a render, and run 43's is an emit alone. Neither has a `signal_await`.
+- **Run 41 reads `no`, and it has every step.** Its record is an emit and a `signal_await`, and every other
+  stage has its steps too. It reads `no` because of the bar's pairing. The person says of the program approval
+  "They can approve it or reject it", and the model wrote `approve` and `reject` where the expected table has
+  `approved` and `rejected`. The walk pairs stages through a row's outcome, so it stops there, and a stage it
+  can't pair counts as having dropped all its steps. With `record` paired by hand, `dropped_steps` is empty,
+  and by the bar's definition the run would read `yes`. I have not changed the walk, because that would move
+  a reading towards met on a run already taken. It is question 2.
+
+**Why ruling 2 did not hold.** It fired in runs 42 and 43, and the model obeyed it: at the confirm it unset
+`disposes` (run 42 turn 29, run 43 turn 23). It added no `signal_await`. With nothing settling the stage, the
+`missing` gap on the same key asked again two turns later. The scripted user answered by path with the stage's
+words, not a no, and the model wrote `disposes` back (`approved`, `disposition_sent`). That confirm had already
+been asked, so it did not ask again, and the stage closed with what the person had just rejected.
+
+The filing step survived only by another route. Runs 40 and 41 are the two that kept it, and each first wrote
+filing as a `human_await`, which the rejection at that step's `excludes` replaced with the `signal_await`. A
+draft that starts from an emit has now lost the step in all four such runs: 38, 39, 42 and 43.
+
+**What the rulings changed:**
+
+- **Ruling 1 worked.** All three runs wrote the `render`, with the part number, manufacturer and change class
+  from `{trigger.*}`. It was 0 of 3 in runs 38 to 40. Three runs is few, but the grammar line is the only
+  thing that changed there.
+- **Ruling 2** fired in both runs it could, and did not hold, as above.
+- **Ruling 3** fired once, in run 43 at turn 8, and the final `requires` is correct. Runs 41 and 42 left the
+  key out of the opening, so it was asked as missing. All three end with the expected five fields.
+- **Ruling 4** fired once, in run 41 at turn 17: `approvals.record.record.deadline`, whose step the
+  `signal_await` replaced. It was dropped with its reason, and only the impact review's deferral remains. Runs
+  42 and 43 had nothing to drop.
+
+**The two defects:**
+
+- **The false "earlier you said" did not come back.** No run raised a contradiction on the reasons. "Earlier
+  you said" appears 2, 4 and 1 times, each count including the planted contradiction. All are about `excludes`,
+  and in each the person did say it, at that leaf's confirm. Run 42's last two repeat because the model wrote
+  `excludes: []` while answering an unrelated confirm at turn 25.
+- **The bundle's names did not fire live.** No `terminals` contradiction arose, so these runs say nothing about
+  that fix. No bundle name appears in any contradiction answer. It is covered by its tests, and replaying run
+  39's final files gives "It is rejected, program_overdue".
+
+**Also seen, none of it counted by the bar:**
+
+- **Runs 41 and 42 send a rejection to `completed`.** The person says "the notice is rejected and that is the
+  end". A rejected notice and a filed one end the same way. Run 43 keeps `rejected`.
+- **Run 42 lost the escalation.** Its `escalated` routes to `completed`, not back to the impact review. The
+  model tried to fix that at the routing confirm on turn 24, and both patches were refused, because they used
+  `rows[when.outcome=escalated]`, a path form the loop can't parse. Run 42 also has one denied row.
+- **Run 42 added steps:** a `render` on the record and an `emit` on the impact review. An added step is not a
+  dropped one.
+- **Run 41's one refusal** is the `steps[0]` path form again.
+
+**Questions for the architect:**
+
+1. Should the loop refuse a patch that writes back a value the person just rejected? I recommend yes: a refused
+   patch that names the cause, like the structural refusals. The person said no and the model wrote it back, so
+   this detects and inserts nothing. If the model can't restate the patch, the gap stays open, and the run reads
+   that way. The other option is for the scripted user to say no at the `missing` gap as well. That changes only
+   the instrument, and the model could still write the value back a third time.
+2. How should a stage be read when the walk can't pair it because the verbs differ? Today it counts as having
+   dropped everything, so run 41 reads `no` with every step present. If you want that changed, I recommend
+   pairing a table's rows by which ones route on to another stage, not by the verb. It changes how the bar reads,
+   so it's your call, and I have not built it. Runs 42 and 43 read `no` either way.
+3. Should the bar read routing as well as steps? A run whose steps are all present can still end a rejected
+   notice as `completed`, or lose the escalation, as runs 41 and 42 do. The ruling covers steps only, so I have
+   not counted these. If run 41's reading changes under question 2, this decides whether it is the workflow the
+   person described.
+4. Should a refused path name the forms the loop accepts? I recommend yes, and no new form. The refusal says only
+   that it can't parse the segment. Run 42 made the same mistake twice in a row and lost a routing fix to it.
+
+I have built none of these, and ADR-0061's status is unchanged.
 
 ## Consequences
 
