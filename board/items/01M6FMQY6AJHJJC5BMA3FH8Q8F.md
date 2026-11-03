@@ -6,7 +6,7 @@ repo: invincible-agent
 status: done
 priority: next
 blocked_on: []
-pr: []
+pr: [invincible-agent#222]
 ruling_ref: none; found by gov's consumer run for #210, triaged by Chris's 11-02 instruction
 updated: 2026-11-03
 ---
