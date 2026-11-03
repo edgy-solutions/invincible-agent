@@ -66,6 +66,8 @@ _FACET_RANK = {f: i for i, f in enumerate(FACETS)}
 
 _DISPOSING = {"human_await", "signal_await", "wait"}
 _DISPOSING_IF_DECLARED = {"direct_call": "outcome_from", "emit": "disposes"}
+# what settles a stage once its send may not: the confirmation that comes after the send
+_SETTLES_AFTER_A_SEND = ("signal_await", "wait")
 _ACTOR_FIELDS = {"audience", "excludes"}
 _APPROVAL_FIELDS = {"task_kind", "deadline_seconds", "approves", "role"}
 _FOLDERS = ("triggers", "decisions", "workflows", "task_kinds")
@@ -123,6 +125,8 @@ class Draft:
     #   person answered a question naming that leaf (a confirm, a null, or an overwrite contradiction)
     null_asked: set = field(default_factory=set)              # gap keys asked as "defer this?"
     dropped_deferrals: List[dict] = field(default_factory=list)  # deferrals whose slot went away
+    rejected: Dict[Tuple[str, str], int] = field(default_factory=dict)  # (file, leaf) -> the turn
+    #   the answer took it out; a later patch may not put it back until a turn asks that leaf
 
 
 class PatchError(ValueError):
@@ -143,6 +147,10 @@ class StructureError(PatchError):
 # ═════════════════════════════════════════════════════════════════════════════════════════════
 
 _SEG = re.compile(r"^([A-Za-z0-9_\-]+)(?:\[([A-Za-z0-9_\-]+)=([^\]]*)\])?$")
+
+
+_PATH_FORMS = ("a path is dotted keys, and a list element is picked by a key it holds directly, as in "
+               "steps[id=a].excludes; a list whose elements hold no such key, like rows, is set whole")
 
 
 def parse_path(path: str) -> List[Tuple[str, Optional[Tuple[str, str]]]]:
@@ -166,7 +174,7 @@ def parse_path(path: str) -> List[Tuple[str, Optional[Tuple[str, str]]]]:
     for p in parts:
         m = _SEG.match(p)
         if not m:
-            raise PatchError(f"cannot parse path segment {p!r} in {path!r}")
+            raise PatchError(f"cannot parse path segment {p!r} in {path!r}: {_PATH_FORMS}")
         out.append((m.group(1), (m.group(2), m.group(3)) if m.group(2) else None))
     return out
 
@@ -1154,6 +1162,61 @@ def _vouch(draft: Draft, g: Gap, before: Dict[str, dict], turn: int) -> None:
                 draft.vouched[(file, path)] = turn
 
 
+def _asks(g: Optional[Gap], file: str, path: str) -> bool:
+    """True iff ``g`` is a turn that asks the person about this leaf, the standard ``_vouch`` holds a
+    stated value to. A ``missing`` gap on the same key asks how, and states nothing."""
+    return (g is not None and g.kind in ("confirm", "contradiction", "null")
+            and (file, path) in (g.asks or g.revises))
+
+
+def _note_rejected(draft: Draft, g: Gap, before: Dict[str, dict], turn: int) -> None:
+    """The leaves the answer to ``g`` took out, and those a turn asking them has now stated again."""
+    if g.kind in ("confirm", "contradiction", "null"):
+        for file, path in g.revises:
+            if _get(before, file, path)[0] and not _get(draft.files, file, path)[0]:
+                draft.rejected[(file, path)] = turn
+    for file, path in list(draft.rejected):
+        if _asks(g, file, path) and _get(draft.files, file, path)[0]:
+            del draft.rejected[(file, path)]
+
+
+def _restores(draft: Draft, trial: Draft, file: str, path: str) -> bool:
+    """True iff ``trial`` holds the leaf again: at its own path, or on a list element this patch
+    added, since a list is one leaf and a whole-list rewrite can rename the element it came from."""
+    if _get(trial.files, file, path)[0]:
+        return True
+    m = re.match(r"^(.*?)\[([A-Za-z0-9_\-]+)=[^\]]*\]\.(.+)$", path)
+    if not m or file not in trial.files:
+        return False
+
+    def holders(files: Dict[str, dict]) -> Dict[str, dict]:
+        loc = _locate(files.get(file) or {}, parse_path(m.group(1)), create=False)
+        held = loc[0].get(loc[1]) if loc else None
+        return {str(e.get(m.group(2))): e for e in held if isinstance(e, dict)} if isinstance(held, list) else {}
+    had = holders(draft.files)
+    return any(k not in had and _get({file: e}, file, m.group(3))[0] for k, e in holders(trial.files).items())
+
+
+def _refuse_rejected(draft: Draft, trial: Draft, gap: Optional[Gap]) -> None:
+    """A value the person rejected is a constraint on the next patch, not a suggestion (architect,
+    2026-11-03): runs 42 and 43 wrote it back after a ``no``, so a grammar line was not enough. The
+    leaf is refused whatever value it comes back with, and the refusal carries what the gap still
+    needs, or the model has nowhere to go but the rejected answer again."""
+    for (file, path), turn in draft.rejected.items():
+        if _asks(gap, file, path) or not _restores(draft, trial, file, path):
+            continue
+        leaf = path.rsplit(".", 1)[-1]
+        said = f"{leaf} was rejected at turn {turn} and the person has not stated it again"
+        if leaf in _DISPOSING_IF_DECLARED.values():
+            forms = " or ".join(_SETTLES_AFTER_A_SEND)
+            need = (f"{_words((draft.files.get(file) or {}).get('id') or file)} still has no step that "
+                    f"settles it; {said}; a {forms} step after the send fills it")
+        else:
+            asked = f"; still needed: {gap.question}" if gap is not None else ""
+            need = f"{_describe(file, path)}: {said}, so leave it unset{asked}"
+        raise StructureError(need, ((file, parse_path(path)[0][0]),))
+
+
 def _drop_stale_deferrals(draft: Draft, turn: int) -> None:
     """A deferral whose slot no longer exists is dropped, and the drop recorded (architect,
     2026-11-02): run 40 kept a deadline deferred on a ``human_await`` the confirm had replaced, so a
@@ -1726,6 +1789,7 @@ def _apply_or_charge(draft: Draft, extractor: Callable[[dict, Draft, Optional[Ga
             apply_patch(trial, patch, turn, answering=gap, fixing=fixing)
             _refuse_unreadable(trial)
             _refuse_structure(draft, trial)
+            _refuse_rejected(draft, trial, gap)
         except PatchError as exc:
             fixing = getattr(exc, "leaves", fixing)
             reply["refused"] = str(exc)
@@ -1811,6 +1875,7 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
         _apply_or_charge(draft, extractor, entry, g, turn, model_errors, messages[-1]["replies"])
         draft.answered[g.key] = turn
         _vouch(draft, g, before[0], turn)
+        _note_rejected(draft, g, before[0], turn)
         # a null the answer just wrote has not been asked about: it is the next question, not an
         # answer that failed to settle this one (runs 28 to 30)
         live = g.key not in draft.deferrals and any(

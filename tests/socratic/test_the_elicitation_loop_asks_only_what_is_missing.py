@@ -2158,16 +2158,21 @@ def test_a_stage_nothing_pairs_with_has_dropped_its_steps():
 def test_the_oracle_meets_the_bar_on_every_fixture(name):
     row = sm.measure(name, se.OracleExtractor(), aligned=True)
     assert row["bar_met"] is True and row["dropped_steps"] == [] and row["answered_contradictions"] == []
+    assert row["dropped_routes"] == []
 
 
-@pytest.mark.parametrize("edit", ["drop", "unreachable", "cannot_run"])
-def test_the_bar_needs_all_three(monkeypatch, edit):
+@pytest.mark.parametrize("edit", ["drop", "route", "unreachable", "cannot_run"])
+def test_the_bar_needs_all_four(monkeypatch, edit):
     real = se.run
 
     def result(*a, **k):
         r = real(*a, **k)
         if edit == "drop":
             r["files"] = _record_only_emits("filed")
+        elif edit == "route":
+            r["files"] = copy.deepcopy(r["files"])
+            r["files"][ACK_CH]["rows"] = [{**x, "then": "elsewhere"} if x["when"]["outcome"] == "escalated" else x
+                                          for x in r["files"][ACK_CH]["rows"]]
         elif edit == "unreachable":
             r["files"] = {**r["files"], "workflows/orphan.yaml": {"id": "orphan", "steps": []}}
         else:
@@ -2177,6 +2182,7 @@ def test_the_bar_needs_all_three(monkeypatch, edit):
     row = sm.measure("pcn_review", se.OracleExtractor())
     assert row["bar_met"] is False
     assert bool(row["dropped_steps"]) is (edit == "drop") and bool(row["unreachable"]) is (edit == "unreachable")
+    assert bool(row["dropped_routes"]) is (edit == "route")
 
 
 # ── a render step is what someone looks at before an approval (architect, 2026-11-02) ─────────
@@ -2566,3 +2572,302 @@ def test_a_terminal_is_said_as_the_table_asked_about_names_it():
     u = _pcn_user()
     assert u._in_draft_names(terminal, f, PROGRAM_CH) == "my_" + terminal
     assert u._in_draft_names(terminal, f, CH) != "my_" + terminal
+
+
+# ── a value the person rejected is a constraint on the next patch (architect, 2026-11-03) ─────
+
+ENDS = "outputs.pcn_record.ends"
+SENT = _record_only_emits()[REC]["steps"][0]["id"]
+DISPOSES = f"steps[id={SENT}].disposes"
+
+
+def _writes_back(value, then=None):
+    """Says "filed" on the send, unsets it at the confirm, writes ``value`` back at the ``missing``
+    gap on the same key, and answers a refusal with ``then``, or with the same patch again."""
+    def ex(entry, draft, gap):
+        if gap is None:
+            return {"set": [{"file": f, "path": "", "value": v} for f, v in _record_only_emits("filed").items()]}
+        if gap.key != ENDS:
+            return {}
+        if gap.kind == "confirm":
+            return {"unset": [{"file": REC, "path": DISPOSES}]}
+        if entry.get("refused") and then is not None:
+            return then
+        return {"set": [{"file": REC, "path": DISPOSES, "value": value}]}
+    return ex
+
+
+def _run_rejected(ex):
+    return se.run({"opening": {"says": "x"}}, ex, answer=lambda g, d: {"says": NO})
+
+
+@pytest.mark.parametrize("value", ["filed", "something_else"])
+def test_a_rejected_leaf_written_back_is_refused_whatever_its_value(value):
+    # run 43 wrote back the value it was told no about, and run 42 a different one
+    r = _run_rejected(_writes_back(value))
+    assert [m["error"] for m in r["model_errors"]][:1] and "was rejected at turn" in r["model_errors"][0]["error"]
+    assert not any("disposes" in s for s in r["files"][REC]["steps"])
+    assert r["status"] == "cannot_run"
+
+
+def test_the_refusal_names_the_gap_the_turn_and_the_forms_that_fill_it():
+    r = _run_rejected(_writes_back("filed"))
+    said = r["model_errors"][0]["error"]
+    turn = next(q for q, m in enumerate(r["questions"], 1) if m["key"] == ENDS and m["kind"] == "confirm")
+    assert f"disposes was rejected at turn {turn}" in said
+    assert "pcn record still has no step that settles it" in said
+    assert "signal_await or wait" in said
+
+
+def test_the_forms_a_refusal_names_are_forms_that_settle_a_stage():
+    assert set(se._SETTLES_AFTER_A_SEND) <= se._DISPOSING
+    assert "human_await" not in se._SETTLES_AFTER_A_SEND
+
+
+def test_a_patch_that_takes_the_named_form_lands_on_the_restatement():
+    # the list of steps is one leaf: the restatement may rewrite it whole
+    fixed = {"set": [{"file": REC, "path": "steps", "value": _good()[REC]["steps"]}]}
+    r = _run_rejected(_writes_back("filed", then=fixed))
+    assert len(r["model_errors"]) == 1
+    assert r["files"][REC]["steps"] == _good()[REC]["steps"]
+    assert ENDS not in r["gaps_left"]
+
+
+def _after_the_no():
+    draft = se.Draft(files=_record_only_emits())
+    draft.rejected[(REC, DISPOSES)] = 7
+    return draft
+
+
+def _asked(*revises, kind="contradiction", asks=()):
+    return se.Gap(key="k", facet="outputs", kind=kind, question="what now?", revises=tuple(revises), asks=tuple(asks))
+
+
+def _with_disposes(sid=SENT):
+    trial = copy.deepcopy(_after_the_no())
+    trial.files[REC]["steps"][0].update(id=sid, disposes="filed")
+    return trial
+
+
+def test_a_renamed_step_does_not_carry_the_rejected_leaf_past_the_refusal():
+    with pytest.raises(se.StructureError, match="was rejected at turn 7"):
+        se._refuse_rejected(_after_the_no(), _with_disposes("renamed"), _asked())
+
+
+def test_control_a_step_already_there_that_holds_the_same_key_is_not_a_restoration():
+    draft = _after_the_no()
+    draft.files[REC]["steps"].append({"kind": "emit", "id": "other", "disposes": "other"})
+    se._refuse_rejected(draft, copy.deepcopy(draft), _asked())
+
+
+def test_control_a_patch_that_leaves_the_leaf_alone_is_not_refused():
+    draft = _after_the_no()
+    trial = copy.deepcopy(draft)
+    trial.files[REC]["note"] = "kept"
+    se._refuse_rejected(draft, trial, _asked())
+
+
+def test_a_turn_that_asks_the_leaf_may_state_it_again_and_that_ends_the_refusal():
+    draft, trial = _after_the_no(), _with_disposes()
+    g = _asked((REC, DISPOSES))
+    se._refuse_rejected(draft, trial, g)
+    se._note_rejected(trial, g, draft.files, 9)
+    assert trial.rejected == {}
+    se._refuse_rejected(trial, copy.deepcopy(trial), _asked())
+
+
+def test_control_asked_and_left_unset_it_stays_rejected():
+    draft = _after_the_no()
+    se._note_rejected(draft, _asked((REC, DISPOSES)), _record_only_emits("filed"), 9)
+    assert draft.rejected == {(REC, DISPOSES): 9}
+
+
+@pytest.mark.parametrize("g", [
+    _asked((REC, DISPOSES), kind="missing"),  # a `missing` gap on the same key asks how
+    _asked((REC, DISPOSES), (REC, "other"), asks=((REC, "other"),)),  # may revise it, and asks another
+    _asked((REC, "other")),
+    None,
+])
+def test_a_turn_that_does_not_ask_the_leaf_does_not_lift_the_refusal(g):
+    with pytest.raises(se.StructureError):
+        se._refuse_rejected(_after_the_no(), _with_disposes(), g)
+
+
+def test_control_only_what_the_answer_took_out_is_rejected():
+    files = _record_only_emits("filed")
+    draft = se.Draft(files=copy.deepcopy(files))
+    se._note_rejected(draft, _asked((REC, DISPOSES), kind="confirm"), files, 3)
+    assert draft.rejected == {}
+
+
+def test_control_what_a_missing_gap_took_out_is_not_a_rejection():
+    draft = se.Draft(files=_record_only_emits())
+    se._note_rejected(draft, _asked((REC, DISPOSES), kind="missing"), _record_only_emits("filed"), 3)
+    assert draft.rejected == {}
+
+
+def test_a_leaf_that_settles_nothing_is_refused_with_the_question_still_open():
+    draft = se.Draft(files=_good())
+    draft.rejected[(REC, "note")] = 4
+    trial = copy.deepcopy(draft)
+    trial.files[REC]["note"] = "back"
+    with pytest.raises(se.StructureError) as e:
+        se._refuse_rejected(draft, trial, se.Gap(key="k", facet="outputs", kind="missing", question="what now?"))
+    assert "note was rejected at turn 4" in str(e.value) and "still needed: what now?" in str(e.value)
+    assert "signal_await" not in str(e.value)
+
+
+def test_a_refusal_names_the_draft_s_own_stage():
+    draft = se.Draft(files={"workflows/q.yaml": {"id": "some_stage", "steps": []}})
+    draft.rejected[("workflows/q.yaml", "steps[id=a].disposes")] = 2
+    trial = copy.deepcopy(draft)
+    trial.files["workflows/q.yaml"]["steps"] = [{"kind": "emit", "id": "a", "disposes": "x"}]
+    with pytest.raises(se.StructureError, match="some stage still has no step"):
+        se._refuse_rejected(draft, trial, None)
+
+
+# ── a refused path names the forms the loop accepts, and no new form (architect, 2026-11-03) ──
+
+@pytest.mark.parametrize("path", ["steps[0].excludes", "rows[when.outcome=escalated].then"])
+def test_a_refused_path_names_the_forms_and_stays_refused(path):
+    with pytest.raises(se.PatchError) as e:
+        se.parse_path(path)
+    assert "steps[id=a].excludes" in str(e.value) and "set whole" in str(e.value)
+
+
+# ── the walk pairs a table's rows by what they route to (architect, 2026-11-03, instrument v2) ──
+
+def _verbs(files, table, **said):
+    for r in files[table]["rows"]:
+        r["when"]["outcome"] = said.get(r["when"]["outcome"], r["when"]["outcome"])
+    return files
+
+
+def _final(files):
+    files[TRIG].pop("stages", None)  # the served draft has none, so the walk stands alone
+    return files
+
+
+def _pairs(files):
+    return _pcn_user()._pair_definitions(sm._index(files), sm._index(_good()))
+
+
+def _route(files, table, verb, then):
+    t = files[table]
+    next(r for r in t["rows"] if r["when"]["outcome"] == verb)["then"] = then
+    t["terminals"] = sorted({r["then"] for r in t["rows"] if r["then"] not in STAGES})
+    return files
+
+
+def test_control_rows_that_spell_their_outcome_alike_pair_as_they_did():
+    assert _pairs(_final(_good())) == SAME
+
+
+def test_a_person_s_own_verb_does_not_lose_the_stage_behind_it():
+    assert _pairs(_final(_verbs(_good(), PROGRAM_CH, approved="approve", rejected="reject"))) == SAME
+
+
+def test_an_outcome_that_goes_on_never_pairs_with_one_that_ends():
+    f = _final(_verbs(_good(), PROGRAM_CH, approved="approve"))
+    _route(f, PROGRAM_CH, "approve", "somewhere_it_ends")
+    assert "pcn_record" not in _pairs(f).values()
+
+
+def test_two_outcomes_left_on_a_side_pair_nothing():
+    f = _final(_verbs(_good(), CH, rejected="refuse", needs_info="ask"))
+    assert sm._paired_rows(f[CH]["rows"], _good()[CH]["rows"], sm._index(f), sm._index(_good())) == [
+        (f[CH]["rows"][0], _good()[CH]["rows"][0])]
+
+
+def test_two_outcomes_that_go_on_pair_nothing():
+    f = _final(_good())
+    f[PROGRAM_CH]["rows"] = [{"when": {"outcome": "a"}, "then": "pcn_record"},
+                             {"when": {"outcome": "b"}, "then": "pcn_record"}]
+    assert "pcn_record" not in _pairs(f).values()
+
+
+def test_a_selection_s_value_is_not_a_verb_and_stays_literal():
+    f = _final(_good())
+    next(r for r in f[SEL]["rows"] if r["then"] == "pcn_acknowledge")["when"] = {"change_class": "other"}
+    assert "pcn_acknowledge" not in _pairs(f).values()
+
+
+def test_a_terminal_a_person_names_pairs_by_the_row_that_reaches_it_whatever_its_verb():
+    f = _final(_verbs(_good(), PROGRAM_CH, rejected="reject"))
+    _route(f, PROGRAM_CH, "reject", "my_end")
+    assert _pcn_user()._in_draft_names("pcn_rejected", f, PROGRAM_CH) == "my_end"
+
+
+# ── the bar reads routing as well as steps (architect, 2026-11-03) ────────────────────────────
+
+def _drafted(files, pairs=SAME):
+    return sorted((x["table"], x["when"]["outcome"] if "outcome" in x["when"] else str(x["when"]))
+                  for x in sm.dropped_routes(files, _good(), pairs))
+
+
+def test_control_the_expected_bundle_routes_as_expected():
+    assert _drafted(_good()) == []
+
+
+def test_two_ends_of_a_table_on_one_end_of_the_draft_are_dropped_routes():
+    f = _route(_route(_good(), CH, "rejected", "done"), CH, "needs_info", "done")
+    assert _drafted(f) == [(CH[len("decisions/"):-len(".yaml")], "needs_info"),
+                           (CH[len("decisions/"):-len(".yaml")], "rejected")]
+
+
+def test_a_rejected_notice_that_ends_where_a_filed_one_ends_reads_on_both_rows():
+    f = _route(_good(), PROGRAM_CH, "rejected", "pcn_dispositioned")
+    assert _drafted(f) == [("pcn_program_approval_chaining", "rejected"), ("pcn_record_chaining", "filed")]
+
+
+def test_control_an_end_s_name_is_the_model_s_own():
+    f = _route(_route(_good(), CH, "rejected", "refused"), PROGRAM_CH, "rejected", "refused")
+    assert _drafted(f) == []
+
+
+def test_control_one_end_named_twice_loses_nothing_the_person_described():
+    f = _route(_route(_good(), CH, "rejected", "refused_early"), PROGRAM_CH, "rejected", "refused_late")
+    assert _drafted(f) == []
+
+
+def test_an_outcome_that_goes_on_to_the_wrong_stage_is_a_dropped_route():
+    assert _drafted(_route(_good(), ACK_CH, "escalated", "pcn_record")) == [("pcn_acknowledge_chaining", "escalated")]
+
+
+def test_an_outcome_that_goes_on_and_now_ends_is_a_dropped_route():
+    # run 42 lost the escalation this way
+    assert _drafted(_route(_good(), ACK_CH, "escalated", "elsewhere")) == [("pcn_acknowledge_chaining", "escalated")]
+
+
+def test_an_outcome_that_ends_and_now_goes_on_is_a_dropped_route():
+    assert _drafted(_route(_good(), CH, "rejected", "pcn_record")) == [("pcn_impact_review_chaining", "rejected")]
+
+
+def test_a_selection_that_routes_a_value_elsewhere_is_a_dropped_route():
+    f = _good()
+    for r in f[SEL]["rows"]:
+        r["then"] = "pcn_acknowledge" if r["then"] == "pcn_impact_review" else "pcn_impact_review"
+    assert [x[0] for x in _drafted(f)] == ["pcn_received_selection"] * 2
+
+
+def test_a_stage_nothing_pairs_with_has_no_row_to_route_by():
+    out = _drafted(_good(), {w: w for w in STAGES if w != "pcn_acknowledge"})
+    assert out == [("pcn_acknowledge_chaining", "acknowledged"), ("pcn_acknowledge_chaining", "escalated"),
+                   ("pcn_received_selection", str({"change_class": "minor"}))]
+
+
+def test_control_a_row_the_draft_added_is_not_a_dropped_route():
+    f = _good()
+    f[PROGRAM_CH]["rows"].append({"when": {"outcome": "extra"}, "then": "pcn_rejected"})
+    assert _drafted(f) == []
+
+
+def test_every_step_present_and_every_end_on_one_name_is_not_the_workflow():
+    # run 41's shape: the walk reaches each stage, and the bar still reads no for what it reaches
+    f = _final(_verbs(_good(), PROGRAM_CH, approved="approve", rejected="reject"))
+    for table, verb in ((CH, "rejected"), (CH, "needs_info"), (ACK_CH, "acknowledged"),
+                        (PROGRAM_CH, "reject"), (REC_CH, "filed")):
+        _route(f, table, verb, "completed")
+    pairs = _pairs(f)
+    assert pairs == SAME and sm.dropped_steps(f, _good(), pairs) == []
+    assert len(sm.dropped_routes(f, _good(), pairs)) == 5

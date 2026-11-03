@@ -257,7 +257,8 @@ does measure:
 
 **Model arm, three runs.** In run 1 the user looked answers up by the exact gap key. In runs 2 and
 3 the user aligned the model's names to the expected ones by structure, never by string similarity:
-- a definition by the selection or chaining row with the same `when` that reaches it;
+- a definition by the selection or chaining row that reaches it, a chaining row by its `when` where
+  both spell it alike and otherwise by what it routes to (instrument v2, §10);
 - a step by its position among steps of the same kind;
 - a task kind by the step that names it.
 
