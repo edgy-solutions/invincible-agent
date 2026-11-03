@@ -8,7 +8,9 @@
 kind: course
 domain: training
 # review_shape names the card that renders this kind's reviews (ruled 2026-10-30; platform-owned).
-review_shape: course
+# The row names the card (`document`: a section list left, the page right); the review's item_kind
+# (`section`) comes from that shape's row in policy/review_shapes/, not from here.
+review_shape: document
 passes:
   - structural.outline
   - core.baml::ExtractOutline

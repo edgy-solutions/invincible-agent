@@ -683,6 +683,12 @@ centralGateway:
   # in its hypercorn invocation). Chart default of 8000 caused
   # readiness/liveness probes to hit a closed port — pod stuck 0/1 Running.
   port: 8090
+  env:
+    # The gateway's verified identity (dag-tools PR #6). The issuer is what a realm token carries,
+    # so it is the public realm URL. JWKS is fetched inside the cluster, like every other realm read.
+    # Inert until an image carrying that PR is deployed; the posture defaults to observe.
+    GATEWAY_JWKS_URL: "http://iagent-keycloak:8080/realms/invincible-agent/protocol/openid-connect/certs"
+    GATEWAY_JWT_ISSUER: "https://keycloak.edgy-solutions.com/realms/invincible-agent"
 
 cortexUi:
   # Enabled 2026-06-04. cortex-ui CI now builds multi-arch
@@ -1033,7 +1039,14 @@ cortexUi:
     # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
     # c27e6d3..8afc0e7 leaves the Dockerfile and package.json unchanged, changes build.yml only at
     # its PRODUCER_REF contract pin, and adds no import.meta.env read.
-    digest: "sha256:8c60760d075b774aa607c0ddabab06ea98e6e6537a3cba3dde32a2436f1268f5"
+    # RE-PINNED FOR 0.4.76 (Chris, 2026-11-03: "cortex 8afc0e7 or newer"): cortex-ui
+    # e06e08aa3f2b6b0f5fbd679041c532717aeda2f8 -> 2ed53946. It adds #62 (the document review card) to
+    # 8afc0e7, dormant until a kind declares `review_shape: document` and a task serves `sections[]`.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # 8afc0e7..e06e08a leaves the Dockerfile, package.json and build.yml unchanged, and adds no
+    # import.meta.env read.
+    digest: "sha256:2ed53946a4c89f5cd68d675522e41009ec8538706e261b7188bdfec3e94a08f5"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already

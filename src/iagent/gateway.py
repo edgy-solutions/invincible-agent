@@ -6154,8 +6154,11 @@ async def act_on_human_task(
                     # kind declares no shape is parts.
                     _kind = _declared_row.item_kind if _declared_row else cov.get("item_kind", "part")
                     _read = _rcov.universe_for(_kind)
-                    _universe = await run_in_threadpool(lambda: _read(
-                        lambda: _review_parts_for_payload(_cov_subject)))
+                    # A section universe is the task's own stored list; a part's is the extraction's.
+                    _raw = ((lambda: (match.get("payload") or {}).get("sections"))
+                            if _kind in _rcov.PAYLOAD_SERVED
+                            else (lambda: _review_parts_for_payload(_cov_subject)))
+                    _universe = await run_in_threadpool(lambda: _read(_raw))
                     _bad = _rcov.problem(cov, _universe, _rows.get(cov.get("review_shape")),
                                          arrived_new=_arrived_new, declared_shape=_declared)
             except HTTPException as exc:
@@ -12721,22 +12724,17 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
     The pure projection and the entitlement gate live in `case_projection`; this route only
     fetches runner/DB state and calls them.
 
-    A DELEGATE IS NOT A SUBMITTER (ruled 2026-10-16): any caller acting under a delegate client
+    A DELEGATE IS NOT A SUBMITTER (ruled 2026-10-16): a caller acting under a delegate client
     (a key of `_delegate_principals()`, e.g. svc:openddil) reads the artifacts it seeded
-    (GET /artifacts/{id}), never the whole case. Refused 403 BEFORE the fetch, so the answer is
-    identical whether or not the case exists (no existence oracle). R-089: the delegate map
-    is asserted by configuration this pass.
+    (GET /artifacts/{id}), never the whole case. The MCP door (`_mcp_door()`, on this route's
+    decorator) enforces the ruling: every service caller is refused 403 `service_token_refused`
+    BEFORE the fetch, and a GET has no body `on_behalf_of`, so the door's delegate exemption
+    cannot apply. The answer is the door's, identical whether or not the case exists (no
+    existence oracle). R-089: the delegate map is asserted by configuration this pass.
     """
     from starlette.concurrency import run_in_threadpool
 
     from . import case_projection, human_tasks
-
-    # R-089: the delegate map is asserted by configuration this pass, not verified.
-    if current_user.authz_id in _delegate_principals():
-        raise HTTPException(status_code=403, detail={
-            "error": "delegate_reads_artifacts_only",
-            "message": "a delegate reads the artifacts it seeded (GET /artifacts/{id}), "
-                       "never the whole case"})
 
     case, definitions = await _load_viewable_case(case_id, current_user)
 
@@ -14651,11 +14649,12 @@ def _read_extraction_manifest(key: str) -> dict:
 _PART_FIELD_RE = re.compile(r"^parts\[(\d+)\]\.(.+)$")
 
 
-def _review_json_key(manifest: dict, extraction_ref: str) -> Optional[str]:
-    """The key of the review.json doc-tools wrote beside the manifest's `text_location` (same
-    directory), or None when `text_location` is an s3:// URL for another bucket. `text_location`
-    is a bare key or an `s3://<bucket>/<key>` URL; blank falls back to the directory of the
-    manifest itself (`extraction_ref`), which is the same generated/<base>/<version>/ directory."""
+def _beside_manifest_key(manifest: dict, extraction_ref: str, name: str) -> Optional[str]:
+    """The key of `name` (review.json, extraction.json) doc-tools wrote beside the manifest's
+    `text_location` (same directory), or None when `text_location` is an s3:// URL for another
+    bucket. `text_location` is a bare key or an `s3://<bucket>/<key>` URL; blank falls back to the
+    directory of the manifest itself (`extraction_ref`), which is the same
+    generated/<base>/<version>/ directory."""
     import posixpath
     from urllib.parse import urlparse
 
@@ -14667,13 +14666,33 @@ def _review_json_key(manifest: dict, extraction_ref: str) -> Optional[str]:
         key = u.path.lstrip("/")
     else:
         key = loc or str(extraction_ref or "").strip()
-    return posixpath.dirname(key) + "/review.json"
+    return posixpath.dirname(key) + "/" + name
+
+
+def _review_json_key(manifest: dict, extraction_ref: str) -> Optional[str]:
+    """The key of the review.json beside the manifest's `text_location`; see `_beside_manifest_key`."""
+    return _beside_manifest_key(manifest, extraction_ref, "review.json")
+
+
+def _extraction_json_key(manifest: dict, extraction_ref: str) -> Optional[str]:
+    """The key of the extraction.json beside the manifest's `text_location` (doc-tools writes it
+    for every kind); bound exactly as `_review_json_key` is."""
+    return _beside_manifest_key(manifest, extraction_ref, "extraction.json")
 
 
 def _read_review_json(key: str) -> dict:
     """Read review.json at `key` (sync; threadpool). Same mapping as `_read_extraction_manifest`
     but its own error names: 422 `extraction_rows_absent` (store said NoSuchKey), 503
     `artifact_store_unreachable`, 422 `extraction_unreadable` (not a JSON object)."""
+    return _read_beside_json(key, "review.json")
+
+
+def _read_extraction_json(key: str) -> dict:
+    """Read extraction.json at `key`; the errors are `_read_review_json`'s."""
+    return _read_beside_json(key, "extraction.json")
+
+
+def _read_beside_json(key: str, name: str) -> dict:
     import json as _j
 
     try:
@@ -14686,7 +14705,7 @@ def _read_review_json(key: str) -> dict:
         if code in ("NoSuchKey", "404") or "NoSuchKey" in str(exc):
             raise HTTPException(status_code=422, detail={
                 "error": "extraction_rows_absent",
-                "message": "the store answered that this extraction has no review.json"})
+                "message": f"the store answered that this extraction has no {name}"})
         raise HTTPException(status_code=503, detail={
             "error": "artifact_store_unreachable",
             "message": f"the artifact store did not answer: {type(exc).__name__}"})
@@ -14696,7 +14715,7 @@ def _read_review_json(key: str) -> dict:
         doc = None
     if not isinstance(doc, dict):
         raise HTTPException(status_code=422, detail={
-            "error": "extraction_unreadable", "message": "review.json is not a JSON object"})
+            "error": "extraction_unreadable", "message": f"{name} is not a JSON object"})
     return doc
 
 
@@ -14911,6 +14930,34 @@ async def _soft_review_summary(manifest: dict, extraction_ref: str, prefix: str)
     return _review_notice_summary(review)
 
 
+async def _soft_document_sections(manifest: dict, extraction_ref: str, prefix: str,
+                                  ingest_id: str) -> Optional[list]:
+    """The served section list of a document, from the extraction.json beside the manifest, or
+    None (with one WARNING naming the ingest id and why) when it is absent, unbound, unreadable or
+    has no valid outline. NEVER a refusal: the task must still file. Read from the store and not
+    the graph: the graph is replaced on re-ingest, and a coverage verifies against what was shown."""
+    from starlette.concurrency import run_in_threadpool
+
+    def none(why: str):
+        logger.warning("document %s: no sections served (%s)", ingest_id, why)
+        return None
+
+    key = _extraction_json_key(manifest, extraction_ref)
+    if not key or not key.startswith(prefix):
+        return none("extraction.json is not under the document's directory")
+    try:
+        doc = await run_in_threadpool(lambda: _read_extraction_json(key))
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        return none(f"extraction.json unreadable: {detail.get('error') or exc.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        return none(f"extraction.json unreadable: {type(exc).__name__}")
+    sections = _rcov.sections_from_extraction(doc, ingest_id)
+    if sections is None:
+        return none("extraction.json carries no single valid outline")
+    return sections
+
+
 def _promotion_task_id(ingest_id: str, generation: int) -> str:
     """The `document_promotion` task id for a document at a promotion GENERATION (spec 204): the
     legacy `document_promotion:<id>` at generation 0, `document_promotion:<id>:g<n>` after. A leaf
@@ -14978,7 +15025,7 @@ async def _file_or_find_document_promotion_task(
     """
     from starlette.concurrency import run_in_threadpool
 
-    from . import content_kinds, human_tasks, promotion
+    from . import content_kinds, human_tasks, promotion, review_shapes
 
     domain = str(domain or "").strip() or None
     if domain is None:
@@ -15063,6 +15110,17 @@ async def _file_or_find_document_promotion_task(
         "notice_date": summ["notice_date"] if summ else None,
         "part_count": summ["part_count"] if summ else None,
         "attempt": attempt}
+    # A kind whose shape row's item_kind is served from the payload (`section`) carries the card's
+    # shape and the section universe it will be verified against. Any other kind's payload is
+    # untouched. Keyed on the shape row's item_kind, never on a kind's name.
+    _kreg = content_kinds.by_kind(row.get("content_kind"))
+    _shape = getattr(_kreg, "review_shape", None) if _kreg is not None else None
+    _shape_row = review_shapes.valid_review_shapes().get(_shape) if _shape else None
+    if _shape_row is not None and _shape_row.item_kind in _rcov.PAYLOAD_SERVED:
+        payload["review_shape"] = _shape
+        _sections = await _soft_document_sections(manifest, ref, prefix, ingest_id)
+        if _sections is not None:
+            payload["sections"] = _sections
     notice_id_ = str(payload.get("notice_id") or "").strip()
     ck_ = str(payload.get("content_kind") or "").strip()
     kind_label = ck_.upper() if ck_.lower() in ("pcn", "pdn") else (ck_ or "Document")
