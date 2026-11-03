@@ -434,6 +434,29 @@ class AligningUser:
                 "facts": self._correction(gap, maps, w, m.group(1), m.group(2), counterpart),
                 "corrects": gap.key}
 
+    def _settled_by_sending(self, gap, draft_files: dict, t: str) -> Optional[dict]:
+        """A person asked whether sending a stage's emit settles it, when someone confirms afterwards,
+        says no, in the words they used for that stage (architect 2026-11-02). Runs 38 and 39 repeated
+        the stage's description here and the confirm closed. Only a confirm, and only of an emit that
+        pairs with an expected emit holding no ``disposes``: ``_maps`` pairs an emit only with an emit,
+        and a value the bundle holds is never denied."""
+        m = _ENDS_SLOT.match(t)
+        if gap.kind != "confirm" or m is None:
+            return None
+        wf_file, base = next(((f, p) for f, p in gap.rewrites if p.startswith("steps[id=")), (None, None))
+        if base is None:
+            return None
+        paired = self._maps(draft_files)["steps"].get((gap.key.split(".")[1], base[len("steps[id="):-1]))
+        step = next((s for s in _steps_of(_index(self.expected)["wfs"].get(m.group(1)) or {})
+                     if str(s.get("id")) == paired), None)
+        if step is None or step.get("disposes") is not None:
+            return None
+        self.rejected.append(gap.key)
+        stage = self.bank.get(f"steps.{m.group(1)}") or {}
+        return {"says": "No, that is not right." + (f" {stage['says']}" if stage.get("says") else ""),
+                "facts": {"unset": [{"file": wf_file, "path": f"{base}.disposes"}]},
+                "corrects": gap.key}
+
     def _correction(self, gap, maps: dict, w: str, dw: str, sid: str, counterpart) -> dict:
         """The stage's facts for a rejected step, in the draft's own names (architect 2026-10-31).
         A step with a counterpart of its kind loses only the slot's value the expected step does
@@ -517,6 +540,31 @@ class AligningUser:
                 return (entry or {}).get("says")
         return None
 
+    def _in_draft_names(self, value, draft_files: dict, file: str):
+        """``value`` with each name of a definition, task kind, table or terminal in the draft's
+        spelling, or None when the draft has no counterpart for one. A person says what the draft
+        calls it: run 39 answered in the expected bundle's names and the model wrote names no row
+        used. A terminal pairs by the row that reaches it in the table at ``file``, the one asked
+        about: tables may share a terminal. A verb, field or audience is literal."""
+        m = self._maps(draft_files)
+        d, e = m["d"], _index(self.expected)
+        names = set(e["wfs"]) | set(e["kinds"]) | set(e["decisions"]) | set(e["terminals"])
+        theirs = {v: k for pairs in (m["defs"], m["kinds"], m["tables"]) for k, v in pairs.items()}
+        for dt, et in m["tables"].items():
+            if se._decisions(self.expected)[et][0] != file:
+                continue
+            by_when = {_when_key(r.get("when")): r.get("then")
+                       for r in e["decisions"][et].get("rows") or [] if isinstance(r, dict)}
+            for r in d["decisions"][dt].get("rows") or []:
+                then = by_when.get(_when_key(r.get("when"))) if isinstance(r, dict) else None
+                if then and r.get("then"):
+                    theirs.setdefault(then, r["then"])
+        held = value if isinstance(value, list) else [value]
+        if any(isinstance(v, str) and v in names and v not in theirs for v in held):
+            return None
+        said = [theirs.get(v, v) if isinstance(v, str) and v in names else v for v in held]
+        return list(dict.fromkeys(said)) if isinstance(value, list) else said[0]
+
     def _contradiction(self, gap, draft_files: dict, t: Optional[str]) -> Optional[dict]:
         """A person who knows their process answers a contradiction the loop raised, from the
         expected bundle (architect 2026-11-02), in words. No facts: the model is measured on the
@@ -541,8 +589,13 @@ class AligningUser:
                 says = self._described(tgt[0])
                 if not says:
                     return None
+            elif value in ([], None):
+                says = "It is none."
             else:
-                says = f"It is {se._fmt(value, tgt[1]) if value not in ([], None) else 'none'}."
+                said = self._in_draft_names(value, draft_files, tgt[0])
+                if said is None:
+                    return None
+                says = f"It is {se._fmt(said, tgt[1])}."
         self.answered_contradictions.append(gap.key)
         return {"says": says}
 
@@ -554,6 +607,9 @@ class AligningUser:
                 return rejection
             self.unaligned.append(gap.key)
             return None
+        settled = self._settled_by_sending(gap, draft.files, t)
+        if settled is not None:
+            return settled
         entry = self.bank.get(t)
         if entry is None:
             tgt = _fact_target(t) or _chain_target(t, self.expected) or _slot_target(t, self.expected)
@@ -657,6 +713,7 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "stalled": r["stalled"],
         "contradictions_asked": r["contradictions_asked"],
         "deferrals": r["deferrals"],
+        "dropped_deferrals": r["dropped_deferrals"],
         "files": r["files"],
         "turns": r["messages"],
         "seconds": secs,
