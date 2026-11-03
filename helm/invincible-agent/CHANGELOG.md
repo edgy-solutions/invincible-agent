@@ -21,6 +21,27 @@ Entries merged after the 0.4.75 cut (`aac9900b`). The releaser dates this headin
   by engine-r only (it reads its baked copy; there is no sync). `validate_policy` checks the rail
   when present.
 
+**Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
+
+- **New group `training-admins`** (capability-only, no persona.domain cell); sandbox member alice.
+- **Row `can_configure:deck_template`**, `granted_by: seed`, `grant_to_groups: [training-admins]`.
+  Deny-by-default: the surface that changes a configuration asks `can_invoke` on
+  `can_configure:<S>`, so a subject with no row is configurable by nobody. **Inert in this chart**:
+  the check belongs to the workbench, which does not ask yet.
+- **`alignment-reviewers`' sandbox member moves from bob to alice** (#204, architect ruling
+  2026-11-02). 0.4.75's policy still names bob.
+
+**⚠ Before installing, in this order:**
+
+1. **`topaz_sync`, by a human, in the form that reads this release's policy** (the command is in
+   0.4.75's entry). It adds `training-admins` with alice, and moves `alignment-reviewers` to alice.
+   Without the group, the hook's capability leg exits 5 and the release fails. Run on an older image
+   with `--policy-dir policy/`, `topaz_sync` deletes the group, because that image's policy does not
+   name it.
+2. **This chart's roll.** Its hook's `capability_grant_sync` writes the row. Until it runs, `can_invoke`
+   is false for everyone, alice included.
+3. **The workbench roll that carries the check.** Before steps 1 and 2, that check refuses everyone.
+
 ## 0.4.75 — 2026-11-02
 
 Cut from master `caf560d9`. It carries every master merge since 0.4.74 (`ab339ceb`): #198, #194,
@@ -112,8 +133,8 @@ down while the git host is down.
 
 **Policy changes (who may review: `can_review:<subject>`, 2026-10-31 directive)**
 
-- **New group `alignment-reviewers`** (capability-only, no persona.domain cell); sandbox member alice
-  (architect ruling 2026-11-02). **`topaz_sync` precondition**: sync the new group before the roll
+- **New group `alignment-reviewers`** (capability-only, no persona.domain cell); sandbox member bob,
+  the stand-in TRAINING reviewer. **`topaz_sync` precondition**: sync the new group before the roll
   that carries the row (else the capability leg names an unknown group).
 - **Row `can_review:alignment`**, `grant_to_groups: [alignment-reviewers]`. Deny-by-default: the
   surface that writes a review asks `can_invoke` on `can_review:<S>`, so a subject with no row is
