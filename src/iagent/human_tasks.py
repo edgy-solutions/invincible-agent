@@ -242,9 +242,14 @@ def check_can_act(audience: str, caller_id: str) -> bool:
     """Application-layer gate: re-check Topaz `can_act` for this caller on this
     audience at resolve time (defense in depth over the replication filter).
     `caller_id` is the authz_id (Topaz's key). Deny-by-default: any error or empty
-    identity -> False."""
+    identity -> False. A MALFORMED answer is the outage class and raises
+    `AuthorizationUnavailable`, which the caller answers 503 (architect ruling 2026-11-02)."""
     try:
         return can_act_or_unavailable(audience, caller_id)
+    except AuthorizationUnavailable as exc:
+        if isinstance(exc.__cause__, httpx.DecodingError):
+            raise
+        return False  # fail-closed
     except Exception:
         return False  # fail-closed
 
@@ -289,7 +294,8 @@ def check_can_invoke(capability: str, caller_id: str) -> bool:
     INVOKING an effect is not ACTING on a task.
 
     Deny-by-default: an ungranted capability is "object not found" -> False, and any
-    error -> False. Callers must treat a False as a REFUSAL THEY REPORT LOUDLY, never
+    error -> False. A MALFORMED answer is the outage class and raises
+    `AuthorizationUnavailable`, which the caller answers 503. Callers must treat a False as a REFUSAL THEY REPORT LOUDLY, never
     as a reason to skip quietly — a gate that silently swallows the thing it was
     guarding is the broken-closed failure, not a safety property.
     """
@@ -307,6 +313,8 @@ def check_can_invoke(capability: str, caller_id: str) -> bool:
             r = c.post("/api/v3/directory/check", json=payload)
             r.raise_for_status()
             return check_answer(r)
+    except httpx.DecodingError as exc:  # a malformed answer: the outage class, never a "no"
+        raise AuthorizationUnavailable(type(exc).__name__) from exc
     except Exception:
         return False  # fail-closed
 

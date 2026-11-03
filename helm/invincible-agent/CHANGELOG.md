@@ -85,9 +85,15 @@ down while the git host is down.
   a 403. Sixteen readers of `/api/v3/directory/check` and `/api/v2/authz/is` read the field with
   `bool(...)`, which admitted `"false"`, `"no"` and `"0"` as a yes. They now read it through
   `agent_fleet/utils/pdp_answer.py` (`topaz_sync` inline). An absent field is still a no.
-- **Where an outage is a 503** (finance's program door, the BFF's task checks, the three rail
-  checks): a malformed answer is a 503. **Where every failure is a deny** (docs, neo4j, weaviate,
-  ontology, datahub, the SPO executor, the review starter): it is a deny. No values change.
+- **A malformed answer is a 503 at every site** (ruling 2026-11-02), including the ones where every
+  other failure is a deny: docs, neo4j, weaviate, ontology, datahub, the SPO executor, the review
+  starter and the BFF's `check_can_act` / `check_can_invoke`. At a Restate engine it is a terminal
+  failure carrying 503, and neo4j and weaviate discard the model's answer. A transport outage at
+  those sites is still a deny. No values change.
+- **`POST /internal/origin/write` answers 503 when program membership cannot be checked** (Topaz down or a
+  malformed answer); it answered 500.
+- **The autonomous run's `can_invoke` gate now fails terminally on a deny, as its comment said.** It
+  raised inside `ctx.run` and translated outside it, so Restate retried a deny as transient.
 
 **Policy changes (who may review: `can_review:<subject>`, 2026-10-31 directive)**
 
