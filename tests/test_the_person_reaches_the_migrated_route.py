@@ -140,6 +140,12 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
     # whose reader check keys on it. Numbered 22 because #145 took hops 18-21.
     ("22 · onto the wire to engine-cost's /answers_export",
      GATEWAY, "_export_plan_answers", "<dict>", ("current_user.authz_id",)),
+    # Hop 23: the finance measure relay (e4ef4735, ruling 1 of 10-30). The BFF names the caller to
+    # engine-fin's /measure/{fn}, which uses it only for the program-visibility check
+    # (_require_visible) and reaches no mint -- a hop like 20-21, not a second chain. Shipped
+    # without registration; fin found it red on master 2a042971.
+    ("23 · onto the wire to engine-fin /measure/{fn} (the finance measure relay)",
+     GATEWAY, "finance_measure", "<dict>", ("current_user.authz_id",)),
 ]
 
 #: Hops whose identity parameter has NO default, so omission is a TypeError at the call, which is
