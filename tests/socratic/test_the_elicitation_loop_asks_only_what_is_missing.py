@@ -1434,7 +1434,6 @@ def test_the_grammar_says_null_is_not_a_deferral_and_never_set_renders_as():
 
 # ── an emit that declares its disposition: the runner's rule, read the same here ─────────
 
-REC = "workflows/pcn_record.yaml"
 REC_CH = "decisions/pcn_record_chaining.yaml"
 
 
@@ -2576,7 +2575,6 @@ def test_a_terminal_is_said_as_the_table_asked_about_names_it():
 
 # ── a value the person rejected is a constraint on the next patch (architect, 2026-11-03) ─────
 
-ENDS = "outputs.pcn_record.ends"
 SENT = _record_only_emits()[REC]["steps"][0]["id"]
 DISPOSES = f"steps[id={SENT}].disposes"
 
