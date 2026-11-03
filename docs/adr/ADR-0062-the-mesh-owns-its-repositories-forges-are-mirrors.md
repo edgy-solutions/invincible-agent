@@ -1,8 +1,8 @@
 # ADR-0062 — The mesh owns its repositories; forges are mirrors
 
-**Status:** Draft. On 2026-10-28 the architect accepted §1–§3, §6 and §7 and ruled on the open
-questions. The rulings are folded in here. The ADR moves to Proposed when lane/74 writes §4 and
-lane/gov writes §5. Nothing is built.
+**Status:** Proposed. On 2026-10-28 the architect accepted §1–§3, §6 and §7 and ruled on the open
+questions; those rulings are folded in here. lane/74 wrote §4 and lane/gov wrote §5, and they await
+the architect's ruling. Nothing is built.
 **Date:** 2026-10-28
 **Deciders:** architect (decision); Chris (review); Lane 1 (draft: §1–§3, §6–§8); lane/74 (§4);
 lane/gov (§5)
