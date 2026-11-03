@@ -100,7 +100,7 @@ def test_b_the_engine_serves_it_and_each_row_equals_the_independent_computation(
     r = _ask(client)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["output_uri"].endswith(ROW_DOC["outputs"]["output_uri"])
+    assert body["output_uri"] == measures.FIN + "DeclaredMeasureSeries"
     assert body["series"][0]["unit"] == ROW_DOC["render"]["series"][0]["unit"] == _doc_example_unit()
     assert body["render"] == ROW_DOC["render"]  # the shape picks the chart, not the class
     expected = _expected(engine.STATE)
@@ -144,7 +144,7 @@ def test_d_registration_carries_the_verb_with_the_rows_cells_as_domains(declared
     calls = {c["verb"]: c for c in engine._registration_calls("http://engine")}
     c = calls["mesh:" + ROW_DOC["verb"]]
     assert c["endpoint_url"] == "http://engine/measure/fin_vac_cpi"
-    assert c["output_uri"] == measures.FIN + ROW_DOC["outputs"]["output_uri"]
+    assert c["output_uri"] == measures.FIN + "DeclaredMeasureSeries"
     assert list(declared["fin_vac_cpi"].cells) == ROW_DOC["policy"]["cells"]  # the registration call carries no cells key
 
 

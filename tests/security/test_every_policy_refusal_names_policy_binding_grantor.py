@@ -243,6 +243,7 @@ SECTION_5_1 = "ADR-0047 §5.1: a delegate reads what it seeded; no grant widens 
 DUTIES = "separation of duties declared by the definition; no grant lifts it"
 STATE = "workflow protocol state, not a caller's binding"
 NO_AUDIENCE = "integrity: no journalled audience to check against; fails closed"
+SERVICE_NOT_PERSON = "the MCP surface answers a person; a service account is never granted a person's identity, so no grant lifts it"
 #: A 409 is a refusal only when it asks the caller to CHOOSE or REQUEST something (architect,
 #: 2026-10-25). These two are the 409s that ask neither.
 CONFLICT = "a 409 on the target's state: it asks the caller to choose nothing and request nothing"
@@ -269,6 +270,7 @@ NOT_POLICY: dict[str, str] = {
     f"{RA}::_authorize_resolution::approve requires `acted_by` (the caller's authz_": AUTHN,
     f"{RA}::approve_task::identity_required | approving a task requires a veri": AUTHN,
     f"{SPO}::execute_direct_call::direct_call {{}}: no acting identity for capabilit": AUTHN,
+    f"{GW}::_mcp_door.door::service_token_refused": SERVICE_NOT_PERSON,
     f"{GW}::ingest_title_leaf_route::not_doc_tools | POST /ingest/{{ingest_id}}/title_l": PINNED,
     f"{GW}::list_ingest_retries::not_doc_tools | GET /ingest/retries is callable": PINNED,
     f"{GW}::put_processable_kinds::not_doc_tools | PUT /ingest/processable-kinds is": PINNED,

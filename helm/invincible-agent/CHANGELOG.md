@@ -1,8 +1,83 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.75 — not yet cut
+## 0.4.75 — 2026-11-02
 
-Entries merged after the 0.4.74 cut (`ab339ceb`). The releaser dates this heading at the cut.
+Cut from master `caf560d9`. It carries every master merge since 0.4.74 (`ab339ceb`): #198, #194,
+#190, #191, #196, #193, #201, #199, #200, #202, #192, #187 and #205. Not in it: #203 (saf, open),
+#204 (gov, open), #206 (the drift workflow's exit code, open, CI only), #195, #149, #141 and #123.
+
+**Images.** A chart bump restarts every pod.
+
+- **cortex-ui** is pinned to `8afc0e7` (`sha256:8c60760d…`). That is #61, where `review_coverage` is
+  sent in the **item** form, plus `6c2f0cc` (New Canvas seeds once). Nothing changed in the Dockerfile
+  or `package.json`, `build.yml` changed only at its `PRODUCER_REF` contract pin, and no new
+  `import.meta.env` read was added.
+- **The legacy `review_coverage` parts form is still accepted.** Fork 3, which deletes it, lands only
+  after this pin has rolled, because the cortex in 0.4.74 still sends parts behind `promotionRuns`.
+  #173's "for 0.4.73 only" is extended by one more release.
+- **cortex-bff** (#187, with #192): the MCP door. A service token on an MCP-tagged route gets 403
+  `service_token_refused`. A declared delegate passes only where the body has `on_behalf_of`.
+  `/interview/stream` and `/seed/portfolio_canvas` are not behind the door yet; that is with the
+  architect.
+- **engine-fin** (#193, #202):
+  - One shared class for every declared measure, `fin:DeclaredMeasureSeries`, with the measure id as
+    a property. A row can no longer name a class: `outputs.output_uri` is refused at load.
+  - VAC ships as the second sample measure.
+  - `policy.cells` is enforced on `/measure/{fn}`, `/package_export`, `/cdrl_export` and
+    `/artifact/{filename}`: 403 `measure_not_in_cell`, 503 on a directory outage.
+    **A program member with no grant in a row's cells loses that measure** and any CDRL sourcing it,
+    and keeps the built-ins. On sandbox the sample rows' cell is `PROGRAM_FINANCE`, granted by
+    `finance-analysts`.
+- **restate-analyst** (#201): `socratic_elicitation.py` ships inert, with no route, verb or canvas.
+  ADR-0061 stands at Proposed.
+
+**⚠ Before installing:** three hand syncs, by a human, **in the form that reads this release's
+policy.**
+
+1. **`topaz_sync`** for `mcp-callers` (if the 0.4.74 sync has not landed it) and for
+   `alignment-reviewers` (#196). Without them, the hook's capability leg exits 5 and the release fails.
+2. **`recipient_reader_sync`**, run the same way.
+
+**Run in a live pod with `--policy-dir policy/`, these read the OLD image's `/app/policy`.** There,
+"(no changes)" and "SYNC OK" say nothing about a group only this release names. **`topaz_sync` also
+prunes groups, so that form deletes a group only a newer release names.** Stream the release's policy
+into the pod instead, and read the group back from the directory before rolling:
+
+```
+git archive <release sha> policy | kubectl exec -i deploy/iagent-cortex-bff -- sh -c \
+  'rm -rf /tmp/p && mkdir /tmp/p && tar -xf - -C /tmp/p && cd /tmp/p \
+   && python policy/sync/topaz_sync.py --topaz-url "$TOPAZ_DIRECTORY_URL" --policy-dir policy/ \
+   && RECIPIENT_READERS_FILE=policy/recipient_readers.yaml python policy/sync/recipient_reader_sync.py; \
+   echo rc=$?; rm -rf /tmp/p'
+```
+
+**⚠ The ontology changed (#202): prime, then restart engine-fin, then read the edges.** Registration
+needs the class ingested. Without it the declared verbs get a 422 that is never retried, and the pod
+still reads healthy.
+
+- **Where `primeSubstrate.enabled` is true (sandbox):** the chart does this order itself. The prime is
+  a post-upgrade hook that reads the TTL baked into this release's image, and the re-register hook then
+  restarts `iagent-engine-fin`. A prime run by hand before the roll cannot help, because the old image
+  does not hold the new class. This order is from reading the chart. It has not run on a cluster.
+- **Where it is false (the bare default):** prime from this release's TTLs yourself, then restart
+  engine-fin.
+- **Then read the edges, not the pod status.** On a cluster that has served a declared measure, run
+  this once, because re-registering does not retire an edge whose output class changed:
+
+```
+MATCH ()-[r]->(o:OntologyClass)
+WHERE o.uri ENDS WITH '#ToCompletePerformanceIndexSeries'
+   OR o.uri ENDS WITH '#VarianceAtCompletionSeries'
+DELETE r
+```
+
+**Values.** `cortexUi.image.digest` changes (`values.yaml` and `values-sandbox.yaml`). New block
+`policyOverlay` (#200) is off by default and in sandbox; fin measured renders byte-identical with it
+off. When on, every pod start clones the policy repository at a pinned `ref`, so a restarted pod stays
+down while the git host is down.
+
+**No deploy effect:** #191 and #194 (tests), #198 and #199 (`board/`), and #205 (the `course` row in the
+`openddil-lab` overlay, which `values-sandbox.yaml` does not name, and its doc-tools pin).
 
 **A Topaz answer is a JSON boolean or an outage (every Topaz reader)**
 

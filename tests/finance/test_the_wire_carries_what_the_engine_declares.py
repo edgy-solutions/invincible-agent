@@ -2315,7 +2315,7 @@ def test_a_declared_measure_carries_its_rows_declaration_on_the_wire(monkeypatch
         body = _envelope(fn)
         assert body["series"] == [dict(s) for s in row.series], fn
         assert body["reference"] == dict(row.reference), fn
-        assert body["output_uri"] == measures.FIN + row.output_uri, fn
+        assert body["output_uri"] == measures.FIN + "DeclaredMeasureSeries", fn
         assert body["value_label"] == row.series[0]["label"], fn
         assert body["method"]["module_sha256"] == row.module_sha256, fn
         assert body["verdict"] == measure_verbs.declared_verdict(row, body["rows"]), fn

@@ -8,8 +8,9 @@
 # overlay mirrors them (architect, 2026-10-24), so a mirrored row is only checkable against a
 # doc-tools that declares it.
 #
-# Currently doc-tools main's head at 8a47f601 (2026-10-24), NOT a release. It carries #100's
-# merge 7434021e, which gave doors-export its second pass, doors.requirements_rows. The
-# last release, v0.2.1 (b95a550e, paired by docs/releases/0.4.66.md), declares one pass, so the
-# mirrored row reds against it. Move this back onto a release when doc-tools tags one.
-8a47f601bea8d6d028eecde4c431c837e5f1aff4
+# Currently doc-tools #172's head at 12eed082 (2026-10-30), NOT main and NOT a release. It is the
+# only doc-tools commit that declares structural.outline on `course`, and #172's own CI needs this
+# overlay row, so each side pins the other's commit. The `main` leg reds until #172 merges: that is
+# the report doing its job. Move this onto doc-tools main when #172 merges, and back onto a release
+# when doc-tools tags one.
+12eed082b3552296cc18706ae022a755136893a1
