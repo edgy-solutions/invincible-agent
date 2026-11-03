@@ -6,7 +6,7 @@ worksite resolves the IRI, asks the one decider, and honours the answer. This mo
 worksite inside engine-docs, ruled 2026-09-30 on the three forks the 09-29 report left open:
 
   * WHO IS ASKED ABOUT -- the asker, on the on-behalf-of token. That is the token the supervisor
-    redeems from the vault and dispatches with (`_CALLER_IDENTITY_VERBS`), which the SDK's
+    redeems from the vault and dispatches with (every dispatch for a run that has a person does, architect ruling 2026-11-02), which the SDK's
     transport dependency verifies into `CallerIdentity.authz_id`. It is NOT
     `Initiator.on_behalf_of`: that field is provenance only and never a gate input (ruling
     2026-09-26 §4), and a value the caller types into an envelope is the forgeable-actor shape
@@ -25,8 +25,10 @@ Topaz error is a deny, never an allow.
 
 TWO PRECONDITIONS OF THE FLIP, both outside this engine, both recorded in
 `docs/plans/enable-agentic-auth-flip-packet.md` (named consequence 3):
-  1. `explain` is not in `_CALLER_IDENTITY_VERBS`, so today the supervisor dispatches it as
-     `svc:supervisor`, and the gate would decide for the service, not the asker.
+  1. (Resolved 2026-11-02.) The supervisor used to dispatch `explain` as `svc:supervisor`
+     because it was outside a per-verb allow-list; the dispatch now forwards the caller's token
+     on every verb for a run that has a person, so the gate decides for the asker. A run with
+     no person still arrives as the service, and the gate would refuse it correctly.
   2. The capability namespace holds no mesh verb a page explains (`capability_grant_sync`
      carries the direct_call grants and `mesh:startReview`). Every verb-bearing page would be
      withheld from every caller.

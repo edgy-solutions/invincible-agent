@@ -170,6 +170,14 @@ record, the same reasoning `_redeem_caller_token` already applies to `context.ru
 
 ### Phase 2 — widen the verbs (needs the engine lanes)
 
+> **2026-11-02, architect ruling:** "Every engine call the supervisor makes forwards the user's
+> token; 'five hard-coded verbs' is a defect: the forwarding is in the dispatch, not per verb."
+> For the subtask leg this REPLACES the per-verb decision below: `_CALLER_IDENTITY_VERBS` and
+> `_verb_needs_caller_identity` are gone, and a run with a person redeems on every verb. The other
+> dispatch legs (`/plan`, `/resolve`, `/classify_predicate`, `/fill_slots`, the enumerator,
+> `/analyze`, `/support`, `/render_ui`) wait on an open question to the architect. The text
+> below is the history of the earlier decision.
+
 - **The decision is per verb, not "all verbs".** For each verb, putting it in the set makes its
   engine see the person instead of `svc:supervisor`. That changes the engine's answers, and
   usually that is the point:

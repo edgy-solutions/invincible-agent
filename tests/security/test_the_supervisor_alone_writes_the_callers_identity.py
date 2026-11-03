@@ -185,6 +185,9 @@ def _specialist(monkeypatch, task_def):
                  "owner_persona": "SUSTAINMENT_LEAD", "domains": ["SUSTAINMENT"], "slots": []}
     telemetry = {"subject_uri": "http://x#Thing", "subject_instance_id": "",
                  "subject_instance_label": ""}
+    # The run has a person, so the dispatch redeems on every verb (architect, 2026-11-02); this
+    # file is about the payload, so the redemption is a stub.
+    monkeypatch.setattr(sup, "_redeem_caller_token", lambda *a, **k: "CALLER-TOKEN")
     monkeypatch.setattr(sup, "_classify_route",
                         lambda *a, **k: ("matched", dict(predicate), dict(telemetry)))
     out = sup.execute_subtask.compute_fn.decorated_fn(_ctx(), _Cfg(), task_def)

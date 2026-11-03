@@ -1479,7 +1479,7 @@ def _telemetry_headers(config, caller_token: str = "") -> Dict[str, str]:
     """
     headers: Dict[str, str] = {}
 
-    # ── THE CALLER'S OWN IDENTITY, WHEN THE VERB REQUIRES IT ───────────────────────
+    # ── THE CALLER'S OWN IDENTITY, WHEN A PERSON IS BEHIND THE RUN ───────────────────────
     # `caller_token` is alice's own Ping-rooted token, redeemed from the BFF's identity
     # vault over the live in-cluster hop (see `_redeem_caller_token`). When present it
     # REPLACES the service identity, because the whole point of the ruled design is that
@@ -1592,41 +1592,40 @@ from iagent.service_urls import cortex_bff_base_url as _cortex_bff_base_url
 
 _CORTEX_BFF_URL = _cortex_bff_base_url()
 
-# WHICH VERBS NEED THE CALLER'S OWN IDENTITY — an ALLOW-LIST, deliberately.
+# THE DISPATCH FORWARDS THE CALLER — ON EVERY VERB, NOT A LIST OF THEM.
 #
-# Scoped rather than universal because flipping every specialist dispatch from
-# svc:supervisor to alice's token is a behaviour change far beyond the seed: it would
-# move every engine off the service identity at once and take the OBSERVE-phase
-# caller-readiness gauge with it. That may well be the eventual destination, but it is a
-# separate ruling with its own blast radius, not a side effect of shipping the canvas.
+# Architect ruling 2026-11-02: "Every engine call the supervisor makes forwards the user's
+# token; 'five hard-coded verbs' is a defect: the forwarding is in the dispatch, not per
+# verb." This replaces the 2026-10-17 ruling that scoped the forwarding to an allow-list.
 #
-# Stored COMPACT to match the registry. Verified convention (mesh_registrar/main.py, from
-# 24 live rows on 2026-08-21): the verb position is stored compact, subject/object full.
-# The local-name comparison below tolerates either form anyway — a registry that later
-# expands verbs must not silently turn this gate off, and a silently-off gate here means
-# a seed that 403s exactly the way it did before the fix.
-# `seedCanvas` is `seedPortfolioCanvas` with the template as a slot (ADR-0050 §4). BOTH
-# are listed: the older verb is superseded, not removed, because cortex calls its route
-# today and a live surface must not break for a rename. A successor added here without
-# its predecessor would silently drop caller identity on every phrase still in use.
+# A run that has a person behind it redeems that person's own token and dispatches with it,
+# whatever the verb. A run with no person (a blank `user_email`, or a service identity such
+# as `svc:...`) dispatches as svc:supervisor, as it always did. That arm is INTERIM: the
+# architect has ruled a run with no person is a declared `pipeline:<name>` machine principal,
+# landing in the next PR. There is no third case, and
+# above all no fallback: a person's run whose redemption fails is REFUSED
+# (`caller_identity_unavailable`), never sent on as the service. Dispatched as the service the
+# engine would decide about the wrong subject, and grant or deny for everyone at once.
 #
-# `explain` (engine-docs) joins because its page gate decides on the ASKER: a page is withheld
-# unless the asker may invoke every verb it explains. Dispatched as svc:supervisor, the asker
-# is the service, so the gate would decide about the wrong subject: it would grant or deny
-# for everyone at once. It is listed before that gate turns on (ENABLE_AGENTIC_AUTH), because
-# the identity has to be right on the day the gate starts to read it.
+# Why a list was the defect: every verb added since needed someone to remember to add it, and
+# a verb that was not listed silently dropped the asker (the engine saw svc:supervisor, so a
+# gate that decides on the asker, e.g. a page gate or a program filter, answered for nobody).
+# The canvas seed's inner asks each re-check the caller's Topaz cell, so a seed dispatched
+# without the person's token fails as a string of 403s and an empty canvas, which looks like
+# an entitlement problem and is not.
 #
-# `whatFailedOnThisPart` and `failureTrendForThisPlatformByMonth` (Engine S) join because
-# Engine S's program filter (ADR-0056 Q2) decides on the ASKER, read only from the bearer: a
-# service identity is never a member of a program, so dispatched as svc:supervisor the answer
-# is a 422 `no_person` (lane saf's 192 walk, FRACAS 5530-184). These are the measures that reach
-# `_visible_records` (derived, and sealed by tests/identity/
-# test_the_per_person_verb_call_carries_the_caller.py). Architect ruling 2026-10-17: the verb
-# CALL carries the acting identity, through this set, not by flipping every dispatch.
-_CALLER_IDENTITY_VERBS = frozenset({
-    "seedPortfolioCanvas", "seedCanvas", "explain",
-    "whatFailedOnThisPart", "failureTrendForThisPlatformByMonth",
-})
+# Today the redeem is single-use per fan-out slot (see `_redeem_caller_token`). The architect
+# has ruled the vault becomes one reference per run, redeemable per call, so the slot keying
+# in `_redeem_caller_token` is interim and goes in the next PR.
+
+
+def _run_has_a_person(config) -> bool:
+    """True when this run was launched for a person: `user_email`, stripped, is non-blank and
+    is not a service identity (`svc:` prefix, any case). `user_email` is the gateway's
+    `current_user.authz_id` (the entitlement key, not necessarily an email address) and
+    defaults to blank on a run launched without one."""
+    who = str(config.user_email or "").strip()
+    return bool(who) and not who.lower().startswith("svc:")
 
 
 class CallerIdentityUnavailable(Exception):
@@ -1709,10 +1708,6 @@ def _verb_local_name(verb_iri: str) -> str:
         if sep in v:
             v = v.rsplit(sep, 1)[-1]
     return v
-
-
-def _verb_needs_caller_identity(predicate: Dict[str, Any]) -> bool:
-    return _verb_local_name(str((predicate or {}).get("verb_iri") or "")) in _CALLER_IDENTITY_VERBS
 
 
 def _redeem_caller_token(context, config) -> str:
@@ -3493,14 +3488,21 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # counted. If a run-level red is wanted back, it belongs in a final op that reads the
     # collected results and fails when all of them are `engine_unreachable` — after the payload
     # has been produced, never instead of it.
-    # ── REDEEM THE CALLER'S IDENTITY, for the verbs that require it ────────────────
+    # ── REDEEM THE CALLER'S IDENTITY, when a person is behind the run ──────────────
     # This runs BEFORE the POST so a redemption failure never reaches the engine as an
     # under-privileged call. The seed's five inner asks each re-check the caller's Topaz
     # cell, so dispatching without alice's token does not fail open — it fails as five
     # 403s and an empty canvas, which is a WORSE failure than not dispatching, because it
     # looks like an entitlement problem.
     _caller_token = ""
-    if _verb_needs_caller_identity(predicate):
+    if not _run_has_a_person(config):
+        # interim: pipeline:<name> principal is ruled, next PR
+        context.log.info(
+            "execute_subtask: no person is behind this run (user_email is blank or a service "
+            "identity), so %s is dispatched as the service.",
+            predicate.get("verb_iri"),
+        )
+    else:
         try:
             _caller_token = _redeem_caller_token(context, config)
             context.log.info(

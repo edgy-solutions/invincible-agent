@@ -39,34 +39,23 @@ class _Config:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
-# The gate: an ALLOW-LIST, not a blanket switch
+# The gate: a PERSON behind the run (architect ruling 2026-11-02), not a list of verbs
 # ══════════════════════════════════════════════════════════════════════════════════
 
-@pytest.mark.parametrize("verb,expected", [
-    ("mesh:seedPortfolioCanvas", True),
-    ("http://invincible-agent/mesh#seedPortfolioCanvas", True),   # tolerated, see below
-    ("mesh:queryKnowledgeGraph", False),
-    ("mesh:resolveInstance", False),
-    ("mesh:startReview", False),
+@pytest.mark.parametrize("who,expected", [
+    ("alice@example.com", True),
+    ("  alice@example.com  ", True),
     ("", False),
+    ("   ", False),
     (None, False),
+    ("svc:supervisor", False),
+    ("SVC:supervisor", False),
 ])
-def test_only_the_seed_verb_asks_for_the_callers_identity(verb, expected):
-    """SCOPED, DELIBERATELY. Flipping every specialist dispatch from `svc:supervisor` to the
-    caller's token is a behaviour change far beyond the seed — it would move every engine off
-    the service identity at once and take the OBSERVE-phase caller-readiness gauge with it.
-    That may be the destination, but it is a separate ruling with its own blast radius.
-
-    Both IRI forms are accepted because the registry stores verbs COMPACT today (verified
-    convention, 24 live rows) and a later expansion must not silently switch this gate OFF —
-    a silently-off gate here means a seed that 403s exactly the way it did before the fix.
-    """
-    assert ds._verb_needs_caller_identity({"verb_iri": verb}) is expected
-
-
-def test_a_missing_predicate_does_not_ask_for_an_identity():
-    assert ds._verb_needs_caller_identity({}) is False
-    assert ds._verb_needs_caller_identity(None) is False
+def test_a_run_has_a_person_when_user_email_is_a_non_service_identity(who, expected):
+    cfg = type("C", (), {"user_email": who})()
+    assert ds._run_has_a_person(cfg) is expected
+    # (the per-verb allow-list this replaced is sealed absent in
+    # tests/identity/test_the_dispatch_forwards_the_caller.py)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════

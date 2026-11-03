@@ -3,15 +3,16 @@
 Engine S reads the person only from the bearer (`measures._caller_authz_id`), and
 `_visible_records` refuses a service identity (`NoPerson`, a 422 `no_person`). Lane saf's 192
 walk: "what failures are recorded for part 5530-184" routed to `whatFailedOnThisPart` and was
-dispatched as `svc:supervisor`. The fix goes through the existing `_CALLER_IDENTITY_VERBS` set;
-this file seals the instance (arms 1-2) and the class (arm 3: every measure that reaches the
-person filter is in the set, derived from measures.py rather than restated).
+dispatched as `svc:supervisor`. Since the architect ruling of 2026-11-02 the dispatch forwards the caller on EVERY verb for a
+run that has a person, so there is no set to list a verb in: this file keeps the instance (arm 1)
+and a control that an ordinary verb of the same engine is forwarded too (arm 2). The old arm 3,
+which derived "every measure reaching `_visible_records`" from measures.py and checked each was
+listed, had nothing left to check against and is gone with its detector and control.
 
 Run:  uv run --frozen python -m pytest tests/identity/test_the_per_person_verb_call_carries_the_caller.py -q
 """
 from __future__ import annotations
 
-import ast
 import sys
 from pathlib import Path
 
@@ -25,9 +26,6 @@ from src.iagent.defs import dynamic_supervisor as ds  # noqa: E402
 
 ALICE_TOKEN = "eyJhbGciOiJSUzI1NiJ9.ALICE-PING-ROOTED.signature"
 SERVICE_TOKEN = "eyJhbGciOiJSUzI1NiJ9.SVC-SUPERVISOR.signature"
-
-_MEASURES = _ROOT / "agent_fleet" / "safety_agent" / "measures.py"
-_PERSON_READERS = {"_visible_records", "_caller_authz_id"}
 
 
 class _Ctx:
@@ -103,31 +101,6 @@ def _drive(monkeypatch, verb):
     return sent.get("headers"), redeemed
 
 
-# ── the production fn -> verb mapping, read from the engine's own VERBS table ─────
-
-def _verb_by_fn():
-    from agent_fleet.safety_agent import main as engine_s
-
-    return {v["fn"]: ds._verb_local_name(v["verb"]) for v in engine_s.VERBS}
-
-
-def _reaching_person_filter(source: str) -> set:
-    """Measure functions that reach `_visible_records`/`_caller_authz_id`, transitively."""
-    fns = {n.name: n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
-    calls = {
-        name: {c.func.id for c in ast.walk(n)
-               if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
-        for name, n in fns.items()
-    }
-    reach = {name for name, cs in calls.items() if cs & _PERSON_READERS}
-    reach -= _PERSON_READERS
-    while True:
-        more = {name for name, cs in calls.items() if cs & reach} - reach
-        if not more:
-            return reach
-        reach |= more
-
-
 # ── arm 1: the instance ───────────────────────────────────────────────────────────
 
 def test_what_failed_on_this_part_is_dispatched_with_the_callers_token(monkeypatch):
@@ -139,40 +112,10 @@ def test_what_failed_on_this_part_is_dispatched_with_the_callers_token(monkeypat
 
 # ── arm 2: control, differs from arm 1 ONLY in the verb ───────────────────────────
 
-def test_an_ordinary_engine_s_verb_stays_on_the_service_identity(monkeypatch):
+def test_an_ordinary_engine_s_verb_is_dispatched_with_the_callers_token_too(monkeypatch):
+    """The ruling (architect, 2026-11-02): the forwarding is in the dispatch, not per verb. A
+    verb that never read the person before is forwarded all the same."""
     headers, redeemed = _drive(monkeypatch, "assessDeferralRisk")
 
-    assert redeemed == [], "a verb that never reads the person must not redeem"
-    assert headers["Authorization"] == f"Bearer {SERVICE_TOKEN}"
-
-
-# ── arm 3: the class ──────────────────────────────────────────────────────────────
-
-def test_every_measure_that_reaches_the_person_filter_is_a_caller_identity_verb():
-    reach = _reaching_person_filter(_MEASURES.read_text(encoding="utf-8"))
-    by_fn = _verb_by_fn()
-    verbs = {by_fn[f] for f in reach}
-
-    assert "whatFailedOnThisPart" in verbs, "detector positive control: the known verb"
-    assert verbs, "detector positive control: a non-empty derived set"
-    assert not (reach - set(by_fn)), "a measure reaches the person filter with no verb"
-    missing = verbs - ds._CALLER_IDENTITY_VERBS
-    assert not missing, f"per-person verbs dispatched as svc:supervisor: {sorted(missing)}"
-
-
-def test_the_detector_sees_a_person_read_added_to_the_control_verb():
-    """Mutant on a COPY of the source: the control measure now reads the person -> it joins
-    the derived set, so arm 3 would go red on it."""
-    src = _MEASURES.read_text(encoding="utf-8")
-    assert "assess_deferral_risk" not in _reaching_person_filter(src)
-    mutated = src.replace(
-        "def assess_deferral_risk(state: Any = None, *, work_order_id: str) -> Dict[str, Any]:\n",
-        "def assess_deferral_risk(state: Any = None, *, work_order_id: str) -> Dict[str, Any]:\n"
-        "    _visible_records([])\n",
-        1,
-    )
-    assert mutated != src
-    reach = _reaching_person_filter(mutated)
-    assert "assess_deferral_risk" in reach
-    assert ds._verb_local_name(_verb_by_fn()["assess_deferral_risk"]) not in \
-        ds._CALLER_IDENTITY_VERBS
+    assert redeemed == [1], "an ordinary verb of a run with a person did not redeem"
+    assert headers["Authorization"] == f"Bearer {ALICE_TOKEN}"

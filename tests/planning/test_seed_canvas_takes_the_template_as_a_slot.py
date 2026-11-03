@@ -130,31 +130,18 @@ def test_the_SUPERSEDED_verb_is_still_registered():
 
 # ── RULING (a): the governance half, which survives ─────────────────────────
 
-def test_BOTH_verbs_carry_the_callers_own_identity():
-    """RULING (a)'s entitlement requirement, and the replacement the ADR demands.
+def test_the_dispatch_forwards_the_caller_on_every_verb_so_both_seed_verbs_carry_it():
+    """RULING (a)'s entitlement requirement, restated under the architect ruling of 2026-11-02:
+    there is no per-verb list any more, so the predecessor/successor drift this arm used to
+    guard (a successor listed without its predecessor) cannot occur. The claim now is that the
+    list is GONE and a run with a person carries the person for any verb, seeds included."""
+    import iagent.defs.dynamic_supervisor as ds
 
-    A successor added to `_CALLER_IDENTITY_VERBS` without its predecessor would silently drop
-    caller identity on every phrase still in use — and the predecessor is the one people are
-    actually saying. Both, or the governance half is lost for the live path while everyone
-    believes it was preserved."""
-    from iagent.defs.dynamic_supervisor import _CALLER_IDENTITY_VERBS
-
-    assert {"seedPortfolioCanvas", "seedCanvas"} <= set(_CALLER_IDENTITY_VERBS), (
-        f"a seeding verb dispatches WITHOUT the caller's own token: "
-        f"{sorted(_CALLER_IDENTITY_VERBS)}"
-    )
-
-
-def test_the_identity_list_is_not_merely_NON_EMPTY():
-    """The control. `<=` against a set that contained everything would pass; this pins that
-    the list is a short allowlist rather than a catch-all that grants identity broadly."""
-    from iagent.defs.dynamic_supervisor import _CALLER_IDENTITY_VERBS
-
-    # The fifth slot is Engine S's per-person verbs, architect ruling 2026-10-17 (FRACAS no_person).
-    assert len(_CALLER_IDENTITY_VERBS) <= 5, (
-        f"the caller-identity allowlist has grown to {len(_CALLER_IDENTITY_VERBS)} — it "
-        f"dispenses the caller's own token and is meant to be short and argued"
-    )
+    assert not hasattr(ds, "_CALLER_IDENTITY_VERBS")
+    assert not hasattr(ds, "_verb_needs_caller_identity")
+    assert ds._run_has_a_person(type("C", (), {"user_email": "alice@example.com"})())
+    assert not ds._run_has_a_person(type("C", (), {"user_email": "svc:supervisor"})())
+    assert not ds._run_has_a_person(type("C", (), {"user_email": "  "})())
 
 
 # ── the route: refuse by name, and refuse EARLY ─────────────────────────────
