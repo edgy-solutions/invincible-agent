@@ -87,7 +87,8 @@ def normalise(cov: Optional[dict], *, content_kind: Optional[str]) -> Optional[d
 
 
 #: item_kind -> the reader of that kind's id universe. A MECHANISM the code implements, not a
-#: case: review.json addresses an item as `parts[N]`, so `part` is read from `part_index`. A new
+#: case: review.json addresses an item as `parts[N]`, so `part` is read from `part_index`; a
+#: `section` is read from the task's served sections. A new
 #: item_kind needs ONE entry here plus its reader; the shape row names which kind a shape uses.
 #: An unknown item_kind raises LookupError, which the gateway answers 503
 #: `review_coverage_unverifiable`.
@@ -95,7 +96,76 @@ def _part_universe(read_parts: Callable[[], list]) -> set:
     return {str(i) for i in read_parts()}
 
 
-_UNIVERSES: dict[str, Callable[[Callable[[], list]], set]] = {"part": _part_universe}
+#: A `section` universe is NOT read from the extraction: it is the task's own stored
+#: `payload["sections"]`, the list the card was shown, so a coverage is verified against exactly
+#: what was served. Its raw reader returns that list (or None when the task has none), and a task
+#: with no valid list is a LookupError -> 503, never an empty universe (which would pass anything).
+def _section_universe(read_sections: Callable[[], Any]) -> set:
+    rows = read_sections()
+    if not isinstance(rows, list) or not rows:
+        raise LookupError("the task carries no valid sections to verify a coverage against")
+    ids = [r.get("section_id") if isinstance(r, dict) else None for r in rows]
+    if any(not isinstance(i, str) or not i for i in ids) or len(set(ids)) != len(ids):
+        raise LookupError("the task's sections are not a list of unique section ids")
+    return set(ids)
+
+
+_UNIVERSES: dict[str, Callable[[Callable[[], Any]], set]] = {
+    "part": _part_universe, "section": _section_universe}
+
+#: The item_kinds whose universe is served on the task payload (its raw reader is the payload's
+#: `sections`, not the extraction's review.json). A mechanism the code implements, keyed on the
+#: shape row's item_kind and never on a content kind's name.
+PAYLOAD_SERVED: frozenset = frozenset({"section"})
+
+
+def _page(v: Any) -> Optional[int]:
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 1 else None
+
+
+def _flatten_outline(rows: Any, parent_id: str, out: list) -> bool:
+    """Depth-first, outline order; False on the first invalid row (the caller drops the list)."""
+    if not isinstance(rows, list):
+        return False
+    for i, r in enumerate(rows):
+        if not isinstance(r, dict):
+            return False
+        sid = f"{parent_id}_s{i}"                      # contract v3: `{parent.id}_s{i}`
+        title = r.get("title")
+        page = _page(r.get("start_page"))
+        if not isinstance(title, str) or not title.strip() or page is None:
+            return False
+        item = {"section_id": sid, "title": title, "page": page}
+        end = r.get("end_page")
+        if end is not None:
+            if _page(end) is None or end < page:
+                return False
+            item["page_end"] = end
+        out.append(item)
+        sub = r.get("subsections")
+        if sub is not None and not _flatten_outline(sub, sid, out):
+            return False
+    return True
+
+
+def sections_from_extraction(extraction: Any, ingest_id: str) -> Optional[list]:
+    """The served section list for a document, from the `extraction.json` doc-tools wrote beside
+    the manifest, or None. Pure. The outline is the one augmentation carrying a list `sections`
+    plus `outline_source`; zero or several such augmentations is None. Ids are the contract's
+    (`{ingest_id}_s{i}`, nested `{parent}_s{i}`), so they equal the graph's `Section.id`. ONE
+    invalid row makes the whole list None: a partial list makes a partial review look complete."""
+    augs = extraction.get("augmentations") if isinstance(extraction, dict) else None
+    if not isinstance(augs, list) or not ingest_id:
+        return None
+    found = [a for a in augs if isinstance(a, dict) and isinstance(a.get("sections"), list)
+             and "outline_source" in a]
+    if len(found) != 1:
+        return None
+    out: list = []
+    if not _flatten_outline(found[0]["sections"], ingest_id, out) or not out:
+        return None
+    ids = [s["section_id"] for s in out]
+    return out if len(set(ids)) == len(ids) else None
 
 
 def universe_for(item_kind: str) -> Callable[[Callable[[], list]], set]:

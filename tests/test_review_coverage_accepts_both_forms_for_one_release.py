@@ -166,8 +166,8 @@ def test_an_item_kind_with_no_reader_is_a_503(world, monkeypatch, tmp_path):
     review_shapes.clear_cache()
 
 
-def test_universe_for_has_exactly_the_part_reader():
-    assert set(review_coverage._UNIVERSES) == {"part"}
+def test_universe_for_has_exactly_the_part_and_section_readers():
+    assert set(review_coverage._UNIVERSES) == {"part", "section"}   # section: the task's served list
     with pytest.raises(LookupError):
         review_coverage.universe_for("page")
 
