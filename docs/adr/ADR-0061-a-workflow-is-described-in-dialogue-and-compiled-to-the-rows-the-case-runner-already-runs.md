@@ -3,7 +3,9 @@
 **Status:** Proposed, ruled 2026-11-02: this ADR records the design and its measurements, including
 the gap below. **The bar for "the loop works" is not met.** It is met when a run is runnable with all
 four stages reachable and each stage has the steps the person described (ruled 2026-11-02).
-`runnable` now refuses any definition no table routes to from the trigger, and of runs 35 to 37 none is runnable, though two have all four stages reachable (§10).
+`runnable` now refuses any definition no table routes to from the trigger. Runs 38 to 40 are all
+runnable with all four stages reachable, and none has every step: all three lost the impact review's
+`render` step, and two lost the record's filing step (§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -1646,6 +1648,103 @@ census is unchanged, with the new reader included: 469 refused, 2003 passed, 0 c
 fixtures. All 33 mutants are red on a named test, each restored and checked byte for byte. One was
 first written so that the file failed to import, which is not a kill; rewritten, it went red on the test it
 was written for.
+
+#### 2026-11-02: runs 38 to 40, and the bar is not met
+
+Three complete PCN runs at `5f7628d6`, one at a time, with the same model and harness, on the 0.9.12
+overlay.
+
+| run | questions / bank | runnable errors | unreachable | stages that dropped a step | bar | semantic diffs | open | answered by path | refused patches | confirms | rejected | contradiction | deferral | reasons | contradictions answered | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 38 | 27/18 | 0 | 0 of 4 | 2 | no | 3 | 0 | 8 | 1 | 11 | 0 | 1/1 | 1/1 | held | 1 | runnable | 669 |
+| 39 | 29/18 | 0 | 0 of 4 | 2 | no | 4 | 0 | 5 | 2 | 12 | 0 | 1/1 | 1/1 | held | 6 | runnable | 677 |
+| 40 | 27/18 | 0 | 0 of 4 | 1 | no | 3 | 0 | 5 | 0 | 12 | 1 | 1/1 | 1/1 | held | 3 | runnable | 603 |
+
+**The bar is not met: every run is runnable with all four stages reachable, and none has every step
+the person described.** These are the first runnable runs since `runnable` began to refuse a stage
+nothing reaches. Runs 35 to 37 were all `cannot_run`.
+
+**What is missing:**
+
+- **The impact review's `render` step, in all three runs.** The person says an engineer "looks at the
+  part, the maker and the change class and gives a disposition". Each run wrote one `human_await`. The
+  grammar names `render` in a list of step kinds and says nothing about when one applies, and no gap
+  or refusal asks for it, so nothing in the loop can catch this.
+- **The record's `signal_await`, in runs 38 and 39.** The person says "Then the records group files it
+  and says so". Both runs wrote an emit with `disposes`, which the grammar says not to do when someone
+  confirms afterwards. The loop then asked, correctly, whether sending settles the stage. The scripted
+  user repeated the stage's description instead of saying no, because its confirm rejection covers
+  only a step's slots and this key is `outputs.record.ends`. The model answered with an empty patch in
+  run 38 and changed only the template in run 39, and the confirm closed.
+- **Run 40 kept that step, and shows ruling 1 working.** Its first draft made filing a `human_await`.
+  The confirm rejection at `actors.record.file.excludes` replaced it with the `signal_await` and raised
+  no contradiction.
+
+**What the rulings changed:**
+
+- **Ruling 1.** Questions saying "Earlier you said" went from 7, 5 and 5 to 3, 6 and 3, each count
+  including the planted contradiction. Most of those left are outside a confirm, as the section above
+  said they would be: run 39's six include three on a chaining table the model rewrote while answering
+  another stage. Two are not, and they are a defect, below.
+- **Ruling 2.** The structural refusal did not fire in any run: all three refused patches are the
+  `steps[0]` path form. Neither error from runs 36 and 37 came back. Three runs can't separate the
+  grammar lines from chance.
+- **Ruling 3.** Ten contradictions were answered and one row was denied, and no run ended with one
+  open. The trigger's form in run 38 stayed unanswered, as designed, and each planted contradiction
+  was answered from the bank.
+- **Ruling 4.** The bar now reads `no` on specs that `runnable` accepts, which is what it was ruled to
+  do.
+
+**Two defects in my build.** Neither changes whether the bar is met. I have not fixed either, so the code
+stays what these runs measured.
+
+**The first breaks ruling 1 at a confirm.** Runs 39 and 40 asked "Earlier you said nobody (empty); now
+rejected, needs_info" about the impact review's reasons, straight after that kind's confirm. Nobody said
+that: the opening guessed `[]`. A "can it end" contradiction lists the kind's `accepts` and
+`reason_required` as what it revises, and answering a contradiction marks those leaves as stated, so the
+later confirm treats the guess as something the person said. Run 38 answered the same contradiction after
+the confirm and did not ask. I read this from the code and the order of the turns in all three runs; I did
+not replay it. Ruling 3 exposed it, since that contradiction used to go unanswered. The fix is to mark only
+what the question asked about. It costs one question in each of those two runs, and the reasons still held
+because ruling 3 answered it.
+
+**The second is in the scripted user.** The scripted answer to run 39's `terminals` contradiction said
+"It is pcn_rejected, pcn_program_overdue": the expected bundle's names, not the draft's. The model wrote
+them, the rows still named `rejected` and `program_overdue`, and the loop asked what those two were.
+Neither question could be answered. So run 39's 29 questions include 2 my instrument caused, and its
+contradiction count includes that answer. The model restored its own names, so the final table is not
+affected. The answer should use the draft's names, or stay unanswered when it has none to use.
+
+**Also seen, none of it counted by the bar:**
+
+- Run 39's opening wrote `requires: []`. The slot is asked only when the key is absent, so the empty
+  list was never asked or confirmed. It is that run's fourth semantic diff.
+- Run 40 wrote the acknowledgement's and the program approval's `audience` without the `:SUSTAINMENT`
+  qualifier the expected bundle holds, which accounts for two of its semantic diffs.
+- Run 40 also wrote a `completion` block nobody stated on its `human_await` steps. Removing it from the
+  stored files leaves the semantic diffs unchanged, so the comparison does not read it.
+- Run 40's deferrals still hold `approvals.record.file.deadline`, a slot of the `human_await` that the
+  `signal_await` replaced.
+- Run 40 has one answer that did not settle its question. The row counts it and does not name it.
+
+**Questions for the architect:**
+
+1. Does "looks at the part, the maker and the change class" describe a `render` step? The fixture says
+   yes, and so the bar does. If so, I recommend a grammar line: what someone looks at before they answer
+   is a `render` step holding those fields. The model would be measured on that line alone, because the
+   loop inserts nothing. If not, the fixture is wrong, and changing it is your call, since it would
+   lower what the bar requires.
+2. Should the scripted user reject `outputs.<stage>.ends` when the expected emit holds no `disposes`, as
+   it rejects a step's slot now? I recommend yes: a person asked whether sending settles the stage, when
+   someone files afterwards, says no. It would answer with the same words and facts as that rejection,
+   so it would measure the same thing.
+3. Should an unstated `requires: []` be confirmed once, as an unstated `excludes` is? I recommend yes. An
+   empty list reads as "nothing is required", and nobody said that.
+4. Should a deferral be dropped when its slot no longer exists? I recommend yes, so that a ratifier isn't
+   shown a slot the spec doesn't have.
+
+I will fix the two defects with whatever you rule, seal both, and measure them in the same three runs.
+They need no ruling unless you want the scripted `terminals` form left unanswered.
 
 ## Consequences
 
