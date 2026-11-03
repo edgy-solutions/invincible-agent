@@ -33,6 +33,13 @@ Entries merged after the 0.4.75 cut (`aac9900b`). The releaser dates this headin
   by engine-r only (it reads its baked copy; there is no sync). `validate_policy` checks the rail
   when present.
 
+**Policy changes (which service may name a person on a central-gateway route)**
+
+- **`policy/gateway_delegates.yaml` and `policy/grantors/gateway_delegates.yaml` are new.** No reader
+  yet: the gateway's `is_delegate` seam still answers no, so this release changes no answer.
+  `validate_policy` checks the rail when present. A row's `service` must be a seeded `svc:` identity
+  and each route a known one. First row: `svc:data-analyst` on `assets.authorize`.
+
 **Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
 
 - **New group `training-admins`** (capability-only, no persona.domain cell); sandbox member alice.
