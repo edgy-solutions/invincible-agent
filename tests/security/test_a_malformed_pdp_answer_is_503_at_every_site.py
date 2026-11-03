@@ -1,17 +1,23 @@
-"""A malformed PDP answer is 503 at every site, including the ones that already fail closed.
+"""An authorizer outage is 503 at every site, including the ones that already fail closed.
 
 Architect ruling 2026-11-02, fork 22: "a malformed PDP answer is 503 at every site, including the
 ones that already fail closed — same class as 16." Fork 16 (2026-10-31) gave the reason: "a 403
 asserts policy said no". #190 made the reader strict; `MalformedPdpAnswer` is an
 `httpx.DecodingError`, so each site's broad fail-closed handler read it as a no.
 
+Fork 24, ruled yes the same day: a transport outage at those sites is 503 too. So is a non-2xx, with
+one exception: a 404 from a DIRECTORY check stays a no, as `can_invoke_or_unavailable` and
+`export_capability` already read it. An authorizer DECISION has no not-found form, so any non-2xx
+there is an outage. The broad arm stays a deny for a defect, and an unset URL or an empty identity
+stays a no. Read live against the sandbox's Topaz, an ungranted or unknown subject answers 200
+`check: false`, so none of this turns an ordinary "no" into a 503. That is one Topaz version.
+
 Two legs:
   1. the CLASS, found by form: every function that reads a PDP answer, and every caller of it,
      walked by first-matching handler. Nothing swallows the answer and nothing translates it to
      anything but a 503. Undecided forms fail, and the detector has its own positive controls;
-  2. the sites, driven: a malformed answer against a control that the same double can admit, a real
-     no that stays a no, and a transport outage, which at these sites is still a no. That last row
-     pins today's scope; the ruling is about a malformed answer and did not move it.
+  2. the sites, driven: a malformed answer, an unreachable Topaz and a non-2xx, each against a control
+     that the same double can admit, and a real no that stays a no.
 
 What "503" means differs by surface, and each surface is driven as what it is:
   - a route answers an HTTP 503;
@@ -20,7 +26,7 @@ What "503" means differs by surface, and each surface is driven as what it is:
     the ingress turns the code into an HTTP 503 is not measured here;
   - a tool inside a smolagents loop cannot raise out of it (`execute_tool_call` wraps the raise and
     the loop feeds it to the model), so engines W and E latch it and fail after the loop,
-    discarding the model's answer.
+    discarding the model's answer. A retrieval failure in the same `try` is not latched.
 
 Run:  uv run python -m pytest tests/security/test_a_malformed_pdp_answer_is_503_at_every_site.py -q
 """
@@ -51,14 +57,22 @@ READER_HOME = "agent_fleet/utils/pdp_answer.py"
 # ── leg 1: the class, by form ──────────────────────────────────────────────────────────────────
 
 DECODING = "DecodingError"
+CONNECT = "ConnectError"
+BAD_STATUS = "HTTPStatusError"
+# One per way of being out, walked separately so that an arm catching only one of them cannot hide
+# the other two.
+OUTAGES = (DECODING, CONNECT, BAD_STATUS)
 # What each class is caught by, beyond its own name. The httpx ladder is DecodingError < RequestError
-# < HTTPError; MalformedPdpAnswer is also a ValueError, and TransportError is a sibling, not a parent.
+# < HTTPError and ConnectError < TransportError < RequestError; HTTPStatusError < HTTPError alone.
+# MalformedPdpAnswer is also a ValueError, and TransportError is a sibling of DecodingError.
 _ALWAYS = {"Exception", "BaseException", "<bare>"}
 _CAUGHT_BY = {DECODING: {DECODING, "MalformedPdpAnswer", "RequestError", "HTTPError", "ValueError"},
+              CONNECT: {CONNECT, "TransportError", "RequestError", "HTTPError"},
+              BAD_STATUS: {BAD_STATUS, "HTTPError"},
               "PromotionRefused": {"PromotionRefused", "RuntimeError"}}
 # The classes a translation may land on. Anything else is undecided, and undecided fails.
 TRANSLATIONS = {"HTTPException", "TerminalError", "StepFailAndRelease", "AuthorizationUnavailable",
-                "PromotionRefused", "ProgramAuthorizationUnavailable"}
+                "PromotionRefused", "ProgramAuthorizationUnavailable", "_AuthorizerUnavailable"}
 # The ones that carry a status, and must name it: an unnamed TerminalError is a 500. Where a positional
 # status is the class's own signature, the position.
 _CARRIES_STATUS = {"HTTPException": 0, "TerminalError": 1, "StepFailAndRelease": None, "PromotionRefused": None}
@@ -316,7 +330,7 @@ class Census:
                 if fn.key in self.answered_later:
                     self.used_tables.add(("answered_later", fn.key))
                     return
-                bad.append(f"{at}: `{cls}` is swallowed, so a malformed answer reads as something else")
+                bad.append(f"{at}: `{cls}` is swallowed, so an outage reads as something else")
                 return
             for raised in top:
                 next_cls = self._raised(raised, arm, cls, at, bad)
@@ -404,7 +418,8 @@ class Census:
     def problems(self, root: tuple[_Fn, list, int]) -> list[str]:
         fn, tries, line = root
         bad: list[str] = []
-        self._through(fn, tries, DECODING, set(), bad, line)
+        for cls in OUTAGES:
+            self._through(fn, tries, cls, set(), bad, line)
         return sorted(set(bad))
 
 
@@ -435,8 +450,9 @@ ANSWERED_LATER = {
 # Each of these arms re-raises the case that matters and turns the rest into something else, so the
 # row holds the guard a person read: any other raise in the arm would pass for this one.
 CONDITIONAL = {
-    # `except AuthorizationUnavailable` re-raises the malformed cause: an outage stays a no here.
-    "src/iagent/human_tasks.py::check_can_act": "isinstance(exc.__cause__, httpx.DecodingError)",
+    # `except AuthorizationUnavailable` re-raises everything but the directory's not-found.
+    "src/iagent/human_tasks.py::check_can_act":
+        "not (isinstance(exc.__cause__, httpx.HTTPStatusError) and exc.__cause__.response.status_code == 404)",
     # `except HTTPException` re-raises everything but a 403, so a 503 passes.
     "src/iagent/gateway.py::ingest_export_route": "exc.status_code != 403",
 }
@@ -487,20 +503,23 @@ def test_a_latched_row_appends_to_the_latch(key):
     path, qual = key.split("::")
     fn = CENSUS.walks[path].fns[qual]
     arms = [h for n in ast.walk(fn) if isinstance(n, ast.Try) for h in n.handlers
-            if "DecodingError" in _names(h.type)]
-    assert arms, f"{key} has no arm for a malformed answer"
-    assert "pdp_malformed.append" in ast.unparse(arms[0]), f"{key} swallows without latching"
+            if {"HTTPError", "_AuthorizerUnavailable"} & set(_names(h.type))]
+    assert arms, f"{key} has no arm for an outage"
+    assert "pdp_unavailable.append" in ast.unparse(arms[0]), f"{key} swallows without latching"
 
 
 @pytest.mark.parametrize("path", sorted({k.split("::")[0] for k in LATCHED}))
 def test_a_latching_engine_fails_after_the_loop(path):
-    """The latch is only worth what reads it: `if pdp_malformed: raise TerminalError(... 503)`."""
+    """The latch is only worth what reads it: `if pdp_unavailable: raise TerminalError(... 503)`.
+    The one other reading allowed is the exact short-circuit that stops asking once the run is lost,
+    which can only withhold; anything else reading the latch is red."""
     tree = ast.parse(SOURCES[path])
-    tests = [n for n in ast.walk(tree) if isinstance(n, ast.If) and isinstance(n.test, ast.Name)
-             and n.test.id == "pdp_malformed"]
+    tests = [ast.unparse(n) for n in ast.walk(tree) if isinstance(n, ast.If)
+             and isinstance(n.test, ast.Name) and n.test.id == "pdp_unavailable"]
     assert tests, f"{path} latches and never reads the latch"
-    for n in tests:
-        assert "TerminalError" in ast.unparse(n) and "status_code=503" in ast.unparse(n)
+    terminal = [t for t in tests if "TerminalError" in t and "status_code=503" in t]
+    assert terminal, f"{path} reads the latch and never fails the run"
+    assert [t for t in tests if t not in terminal and t != "if pdp_unavailable:\n    return False"] == []
 
 
 def test_the_safety_dispatch_answers_503():
@@ -633,6 +652,33 @@ def gate():
     except httpx.DecodingError:
         raise HTTPException(status_code=pick())
 """, "cannot read"),
+    "an arm for a malformed answer alone, so an outage is a no": ("""
+def gate():
+    try:
+        return check_answer(r)
+    except httpx.DecodingError as e:
+        raise HTTPException(status_code=503) from e
+    except Exception:
+        return False
+""", "`ConnectError` is swallowed"),
+    "an arm for a transport failure alone, so a 5xx is a no": ("""
+def gate():
+    try:
+        return check_answer(r)
+    except (httpx.RequestError) as e:
+        raise HTTPException(status_code=503) from e
+    except Exception:
+        return False
+""", "`HTTPStatusError` is swallowed"),
+    "an arm for a status alone, so an unreachable Topaz is a no": ("""
+def gate():
+    try:
+        return check_answer(r)
+    except (httpx.HTTPStatusError, httpx.DecodingError) as e:
+        raise HTTPException(status_code=503) from e
+    except Exception:
+        return False
+""", "`ConnectError` is swallowed"),
     "an imported alias whose caller swallows": ("""
 from pkg.other import gate as _g
 
@@ -651,7 +697,7 @@ _CLEAN = {
 def gate():
     try:
         return check_answer(r)
-    except httpx.DecodingError as e:
+    except httpx.HTTPError as e:
         raise TerminalError("x", status_code=503) from e
 
 async def handler(ctx):
@@ -664,28 +710,28 @@ def gate():
 async def route():
     try:
         return await run_in_threadpool(gate)
-    except httpx.DecodingError:
+    except httpx.HTTPError:
         raise HTTPException(status_code=503)
 """,
     "a door that returns its 503": """
 def gate():
     try:
         return check_answer(r)
-    except httpx.DecodingError:
+    except httpx.HTTPError:
         return HTTPException(status_code=503)
 """,
     "a positional 503": """
 def gate():
     try:
         return check_answer(r)
-    except httpx.DecodingError:
+    except httpx.HTTPError:
         raise HTTPException(503, "no")
 """,
     "a local that shares a walked name": """
 def gate():
     try:
         return check_answer(r)
-    except httpx.DecodingError:
+    except httpx.HTTPError:
         raise HTTPException(status_code=503)
 
 def other():
@@ -696,7 +742,7 @@ def other():
 def gate():
     try:
         return check_answer(r)
-    except httpx.DecodingError as e:
+    except httpx.HTTPError as e:
         raise HTTPException(status_code=503) from e
     except Exception:
         return False
@@ -708,7 +754,7 @@ def gate():
 def route():
     try:
         return gate()
-    except httpx.DecodingError as e:
+    except httpx.HTTPError as e:
         raise TerminalError("x", status_code=503) from e
     except Exception:
         return None
@@ -717,9 +763,9 @@ def route():
 def gate():
     try:
         return check_answer(r)
-    except httpx.TransportError:
+    except KeyError:
         return False
-    except httpx.DecodingError as e:
+    except httpx.HTTPError as e:
         raise HTTPException(status_code=503) from e
 """,
 }
@@ -739,7 +785,7 @@ def test_a_conditional_row_holds_the_guard_a_person_read(guard, word):
 def gate():
     try:
         return check_answer(r)
-    except httpx.DecodingError as e:
+    except httpx.HTTPError as e:
         if {guard}:
             raise
         return False
@@ -747,7 +793,7 @@ def gate():
 def door():
     try:
         return gate()
-    except httpx.DecodingError as e:
+    except httpx.HTTPError as e:
         raise HTTPException(status_code=503) from e
 """
     c = Census({"x.py": src}, conditional={"x.py::gate": "e.request"})
@@ -767,7 +813,24 @@ URL = "http://topaz.test"
 CHECK_MALFORMED = [{"check": "false"}, {"check": "0"}, {"check": None}, {"check": 1}, [], b"<html>"]
 DECISION_MALFORMED = [{"decisions": [{"decision": "allowed", "is": "false"}]},
                       {"decisions": "allowed"}, {"decisions": [1]}, [], b"<html>"]
-OUTAGE = object()
+
+
+class _Outage:
+    def __repr__(self):
+        return "unreachable"
+
+
+class _Status:
+    def __init__(self, code: int):
+        self.code = code
+
+    def __repr__(self):
+        return f"HTTP {self.code}"
+
+
+OUTAGE = _Outage()
+# Not an answer, by any client: what the sites read as an outage, on either form.
+UNANSWERED = [OUTAGE, _Status(500), _Status(503), _Status(401)]
 ADMIT = {"check": {"check": True},
          "decision": {"decisions": [{"decision": "allowed", "is": True}]}}
 DENY = {"check": {"check": False},
@@ -779,14 +842,15 @@ def pdp(monkeypatch):
     """One answer behind every client a site uses, so a control and its case share a double. It sits
     under httpx's own client, at the transport, so `httpx.post`, `httpx.Client` and `AsyncClient` all
     run for real, and `TestClient`, which brings its own transport, is untouched."""
-    import requests
-
-    state = {"body": None}
+    state = {"body": None, "asks": 0}
 
     def _answer(request):
+        state["asks"] += 1
         if state["body"] is OUTAGE:
             raise httpx.ConnectError("down", request=request)
         body = state["body"]
+        if isinstance(body, _Status):
+            return httpx.Response(body.code, json={"message": "x"}, request=request)
         if isinstance(body, bytes):
             return httpx.Response(200, content=body, request=request)
         return httpx.Response(200, json=body, request=request)
@@ -794,19 +858,9 @@ def pdp(monkeypatch):
     async def _async_answer(request):
         return _answer(request)
 
-    def _requests_post(url, **_k):
-        if state["body"] is OUTAGE:
-            raise requests.ConnectionError("down")
-        resp = requests.models.Response()
-        resp.status_code = 200
-        body = state["body"]
-        resp._content = body if isinstance(body, bytes) else httpx.Response(200, json=body).content
-        return resp
-
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", lambda _self, request: _answer(request))
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request",
                         lambda _self, request: _async_answer(request))
-    monkeypatch.setattr(requests, "post", _requests_post)
     return state
 
 
@@ -923,8 +977,8 @@ def _is_step_503(exc):
     return isinstance(exc, _spo().StepFailAndRelease) and exc.status_code == 503
 
 
-def _is_decoding(exc):
-    return isinstance(exc, httpx.DecodingError)
+def _is_http_error(exc):
+    return isinstance(exc, httpx.HTTPError)
 
 
 def _is_unavailable(exc):
@@ -937,7 +991,7 @@ def _is_refused_503(exc):
     return isinstance(exc, PromotionRefused) and exc.status == 503
 
 
-# name: (answer form, the site, what a malformed answer must raise there)
+# name: (answer form, the site, what an outage must raise there)
 SITES = {
     "docs.can_invoke": ("check", _docs, _is_http_503),
     "datahub._topaz_can_view": ("decision", _datahub, _is_http_503),
@@ -945,7 +999,7 @@ SITES = {
     "ontology._can_invoke_capability": ("check", _ontology_invoke, _is_http_503),
     "review_starter.can_invoke_start_review": ("check", _review_starter, _is_terminal_503),
     "spo.check_can_invoke": ("check", _spo_invoke, _is_step_503),
-    "spo.check_can_act": ("check", _spo_act, _is_decoding),
+    "spo.check_can_act": ("check", _spo_act, _is_http_error),
     "main._check_can_act": ("check", _main_act, _is_terminal_503),
     "grouped._check_can_act": ("check", _grouped_act, _is_terminal_503),
     "human_tasks.check_can_act": ("check", _ht_act, _is_unavailable),
@@ -976,14 +1030,44 @@ def test_a_real_no_is_still_a_no_here(pdp, monkeypatch, site):
     assert call() is False
 
 
-@pytest.mark.parametrize("site", sorted(SITES))
-def test_a_transport_outage_is_still_a_no_here(pdp, monkeypatch, site):
-    """Today's scope, pinned so that moving it is a decision: the ruling names a malformed answer,
-    and a Topaz that cannot be reached still reads as a no at these sites."""
+_OUTAGE_CASES = [(s, b) for s in SITES for b in UNANSWERED]
+
+
+@pytest.mark.parametrize("site, body", _OUTAGE_CASES, ids=[f"{s}-{b!r}" for s, b in _OUTAGE_CASES])
+def test_an_outage_is_the_outage_class_here(pdp, monkeypatch, site, body):
+    """Ruled yes: a 403 asserts policy said no, and policy said nothing."""
+    form, make, is_expected = SITES[site]
+    call = make(monkeypatch)
+    pdp["body"] = ADMIT[form]
+    assert call() is True, "control: the same double admits"
+    pdp["body"] = body
+    with pytest.raises(BaseException) as raised:
+        call()
+    assert is_expected(raised.value), repr(raised.value)
+
+
+@pytest.mark.parametrize("site", sorted(s for s, (form, *_r) in SITES.items() if form == "check"))
+def test_a_directory_not_found_is_still_a_no_here(pdp, monkeypatch, site):
+    """The reading `can_invoke_or_unavailable` and `export_capability` already have. The sandbox's
+    Topaz answers an absent object as 200 `check: false`, so this is parity and a guard for another
+    version, and a misrouted proxy's 404 reads as a no too. That choice is the PR's to state."""
     _form, make, _ = SITES[site]
     call = make(monkeypatch)
-    pdp["body"] = OUTAGE
+    pdp["body"] = _Status(404)
     assert call() is False
+
+
+@pytest.mark.parametrize("code", [404, 400], ids=repr)
+@pytest.mark.parametrize("site", sorted(s for s, (form, *_r) in SITES.items() if form == "decision"))
+def test_a_decision_has_no_not_found(pdp, monkeypatch, site, code):
+    """A policy path the authorizer does not know answers 400 when read live: misconfiguration, not
+    a no. A decision's "no" is a 200."""
+    _form, make, is_expected = SITES[site]
+    call = make(monkeypatch)
+    pdp["body"] = _Status(code)
+    with pytest.raises(BaseException) as raised:
+        call()
+    assert is_expected(raised.value), repr(raised.value)
 
 
 # ── the routes ─────────────────────────────────────────────────────────────────────────────────
@@ -1050,12 +1134,12 @@ def test_the_act_route(act_world):
     assert _act(c).status_code == 200, "control: the same double admits"
     state["body"] = DENY["check"]
     assert _act(c).status_code == 403
-    state["body"] = OUTAGE
-    assert _act(c).status_code == 403, "today's scope: an outage at this site is a no"
+    state["body"] = _Status(404)
+    assert _act(c).status_code == 403, "the directory's not-found is a no"
 
 
-@pytest.mark.parametrize("body", CHECK_MALFORMED, ids=repr)
-def test_the_act_route_answers_503_on_a_malformed_answer(act_world, body):
+@pytest.mark.parametrize("body", [*CHECK_MALFORMED, *UNANSWERED], ids=repr)
+def test_the_act_route_answers_503_on_an_outage(act_world, body):
     c, state = act_world
     state["body"] = body
     r = _act(c)
@@ -1066,8 +1150,8 @@ def test_the_act_route_answers_503_on_a_malformed_answer(act_world, body):
 TRIAGE = {"subject_ref": "s3://x", "title": "t", "summary": "s"}
 
 
-@pytest.mark.parametrize("body", CHECK_MALFORMED, ids=repr)
-def test_the_triage_route_answers_503_on_a_malformed_answer(client, monkeypatch, body):
+@pytest.mark.parametrize("body", [*CHECK_MALFORMED, *UNANSWERED], ids=repr)
+def test_the_triage_route_answers_503_on_an_outage(client, monkeypatch, body):
     c, _gateway, ht, state = client
     monkeypatch.setattr(ht, "task_exists", lambda tid: True)
     state["body"] = ADMIT["check"]
@@ -1196,7 +1280,7 @@ def test_the_autonomous_gate_denies_terminally(pdp, monkeypatch):
     assert raised.value.status_code == 403
 
 
-@pytest.mark.parametrize("body", CHECK_MALFORMED, ids=repr)
+@pytest.mark.parametrize("body", [*CHECK_MALFORMED, *UNANSWERED], ids=repr)
 def test_the_autonomous_gate_fails_terminally_with_503(pdp, monkeypatch, body):
     import restate
     pdp["body"] = body
@@ -1246,7 +1330,7 @@ def _agent_double(calls: dict, seen: list):
     return _Agent
 
 
-def _engine_w(monkeypatch, seen):
+def _engine_w(monkeypatch, seen, search=None):
     with _Stubbed():
         import agent_fleet.weaviate_expert.service as w
     hit = types.SimpleNamespace(uuid="u-1", metadata=types.SimpleNamespace(score=1.0, distance=None),
@@ -1254,7 +1338,7 @@ def _engine_w(monkeypatch, seen):
     monkeypatch.setattr(w, "ENABLE_AGENTIC_AUTH", True)
     monkeypatch.setattr(w, "TOPAZ_DIRECTORY_URL", URL)
     monkeypatch.setattr(w, "KNOWLEDGE_SEARCH_VIA_MESH", False)
-    monkeypatch.setattr(w, "_search_direct", lambda *a, **k: [hit])
+    monkeypatch.setattr(w, "_search_direct", search or (lambda *a, **k: [hit]))
     monkeypatch.setattr(w, "get_weaviate_client", lambda: object())
     monkeypatch.setattr(w, "fetch_weaviate_schema", lambda *a: "schema")
     monkeypatch.setattr(w, "get_smolagent_model", lambda *a, **k: object())
@@ -1265,7 +1349,7 @@ def _engine_w(monkeypatch, seen):
     return ctx
 
 
-def _engine_e(monkeypatch, seen):
+def _engine_e(monkeypatch, seen, uris=("u-1",)):
     pytest.importorskip("baml_py")
     with _Stubbed():
         import agent_fleet.neo4j_expert.service as e
@@ -1292,7 +1376,7 @@ def _engine_e(monkeypatch, seen):
     monkeypatch.setattr(e, "get_neo4j_driver",
                         lambda: types.SimpleNamespace(session=lambda: _Session()))
     monkeypatch.setattr(e, "get_smolagent_model", lambda *a, **k: object())
-    monkeypatch.setattr(e, "ToolCallingAgent", _agent_double({"fetch_content": {"uris": ["u-1"]}}, seen))
+    monkeypatch.setattr(e, "ToolCallingAgent", _agent_double({"fetch_content": {"uris": list(uris)}}, seen))
     monkeypatch.setattr(e, "emit_boundary", lambda *a, **k: None)
     ctx = _SdkCtx("emit-engine-e-boundary")
     asyncio.run(e.query_graph(ctx, {"user_query": "q", "domain": "X", "user_email": "a@x"}))
@@ -1311,19 +1395,18 @@ def test_a_tool_loop_engine_reaches_the_model_on_a_grant(pdp, monkeypatch, engin
     assert "SECRET" in str(seen), "control: the same double lets the chunk through"
 
 
-@pytest.mark.parametrize("answer", [DENY["check"], OUTAGE], ids=["no", "outage"])
 @pytest.mark.parametrize("engine", sorted(ENGINES))
-def test_a_tool_loop_engine_drops_the_chunk_on_a_no(pdp, monkeypatch, engine, answer):
+def test_a_tool_loop_engine_drops_the_chunk_on_a_no(pdp, monkeypatch, engine):
     seen: list = []
-    pdp["body"] = answer
+    pdp["body"] = DENY["check"]
     with pytest.raises(_Past):
         ENGINES[engine](monkeypatch, seen)
     assert "SECRET" not in str(seen)
 
 
-@pytest.mark.parametrize("body", CHECK_MALFORMED, ids=repr)
+@pytest.mark.parametrize("body", [*CHECK_MALFORMED, *UNANSWERED], ids=repr)
 @pytest.mark.parametrize("engine", sorted(ENGINES))
-def test_a_tool_loop_engine_discards_the_answer_on_a_malformed_one(pdp, monkeypatch, engine, body):
+def test_a_tool_loop_engine_discards_the_answer_on_an_outage(pdp, monkeypatch, engine, body):
     import restate
     seen: list = []
     pdp["body"] = body
@@ -1331,3 +1414,27 @@ def test_a_tool_loop_engine_discards_the_answer_on_a_malformed_one(pdp, monkeypa
         ENGINES[engine](monkeypatch, seen)
     assert raised.value.status_code == 503
     assert "SECRET" not in str(seen)
+
+
+def test_engine_w_does_not_blame_the_authorizer_for_retrieval(pdp, monkeypatch):
+    """W's tool `try` also encloses retrieval, so its arm catches the gate's own class. A retrieval
+    `httpx.ConnectError` stays what it was, the tool's error text, and fails no run."""
+    def _down(*_a, **_k):
+        raise httpx.ConnectError("the store is down")
+
+    seen: list = []
+    pdp["body"] = ADMIT["check"]
+    with pytest.raises(_Past):
+        _engine_w(monkeypatch, seen, search=_down)
+    assert "Error executing semantic search" in str(seen), seen
+    assert pdp["asks"] == 0, "control: the authorizer was never reached"
+
+
+def test_engine_e_stops_asking_once_the_run_is_lost(pdp, monkeypatch):
+    """Latched, the run fails whatever the rest answer, so no later chunk waits out a timeout."""
+    import restate
+    seen: list = []
+    pdp["body"] = OUTAGE
+    with pytest.raises(restate.TerminalError):
+        _engine_e(monkeypatch, seen, uris=("u-1", "u-2", "u-3"))
+    assert pdp["asks"] == 1

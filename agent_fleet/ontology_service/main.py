@@ -267,11 +267,11 @@ def _can_view_class(caller_email: str, iri: str) -> bool:
         )
         resp.raise_for_status()
         return decision_answer(resp, "allowed")
-    except httpx.DecodingError as e:  # a malformed answer: the outage class, never a "no"
-        logging.warning("ontology can_view answer malformed for iri=%s: %s", iri, e)
+    except httpx.HTTPError as e:  # unreachable, a non-2xx or a malformed answer: the outage class, never a "no"
+        logging.warning("ontology can_view unavailable for iri=%s: %r", iri, e)
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unavailable",
-            "message": "the authorizer's answer could not be read",
+            "message": "the authorizer could not be asked, or its answer could not be read",
         }) from e
     except Exception as e:  # noqa: BLE001 — fail-closed on any error
         logging.warning("ontology can_view check failed for iri=%s (fail-closed deny): %s", iri, e)
@@ -316,8 +316,9 @@ def _can_invoke_capability(caller_authz_id: str, capability: str) -> bool:
     NO-OP (True) while ``ENABLE_AGENTIC_AUTH`` is off — the same phase discipline
     ``_can_view_class`` uses, and the reason this gate lands before the flip without
     breaking a write that works today. Fail-CLOSED (deny) on empty identity, empty
-    capability, unset directory URL, or any error: a security gate must not fail open.
-    A malformed answer is a 503 (the outage class), not a deny.
+    capability, unset directory URL, a 404, or a defect here: a security gate must not fail open.
+    A Topaz that cannot be reached, answers another non-2xx or answers malformed is a 503 (the
+    outage class), not a deny.
     """
     if not ENABLE_AGENTIC_AUTH:
         return True
@@ -335,13 +336,15 @@ def _can_invoke_capability(caller_authz_id: str, capability: str) -> bool:
             },
             timeout=5.0,
         )
+        if r.status_code == 404:
+            return False
         r.raise_for_status()
         return check_answer(r)
-    except httpx.DecodingError as e:  # a malformed answer: the outage class, never a "no"
-        logging.warning("can_invoke answer malformed capability=%s: %s", capability, e)
+    except httpx.HTTPError as e:  # unreachable, a non-2xx or a malformed answer: the outage class, never a "no"
+        logging.warning("can_invoke unavailable capability=%s: %r", capability, e)
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unavailable",
-            "message": "the authorizer's answer could not be read",
+            "message": "the authorizer could not be asked, or its answer could not be read",
         }) from e
     except Exception as e:  # noqa: BLE001 — fail-closed on any error
         logging.warning("can_invoke check failed capability=%s caller=%s (fail-closed deny): %s",
