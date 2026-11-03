@@ -1,0 +1,19 @@
+# SAMPLE -- OVERLAY layer (ADR-0036). Invented in this repo; a deployment replaces the values.
+#
+# ADR-0063 section 2. The one human act on a `safety_finding`. APPROVAL_TASK: one decision on one
+# finding. An overlay row is a FULL REPLACEMENT by key, not a field-level merge.
+#
+# `confirmed`, not `accepted`: in `risk_acceptance_*` `accepted` means RESIDUAL RISK ACCEPTED and
+# must keep meaning only that. There is no risk-level verb here, so this task cannot accept risk.
+#
+# `dismissed` and `new_hazard` are reason-required, the same as on `hazard_link_review`:
+# dismissing a reported finding with no stated rationale is the erasure this domain cares about
+# most, and opening a new hazard needs the reason a later reader will look for. `confirmed` needs
+# none. `new_hazard` opens the hazard for the human's later draft; the task drafts no level.
+kind: safety_finding_review
+renders_as:
+  badge: FINDING
+  title: Safety finding review
+  archetype: APPROVAL_TASK
+accepts: [confirmed, dismissed, new_hazard]
+reason_required: [dismissed, new_hazard]
