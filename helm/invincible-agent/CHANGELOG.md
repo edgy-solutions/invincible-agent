@@ -4,6 +4,23 @@
 
 Entries merged after the 0.4.75 cut (`aac9900b`). The releaser dates this heading at the cut.
 
+**Policy changes (ADR-0062 section 5: the repository-paths rail)**
+
+- **Five new `task_grants.yaml` audiences**: `repo_review:POLICY`, `repo_review:ADR`,
+  `repo_review:FIXTURES`, `repo_review:SESSIONS` and `repo_release:invincible-agent`, each
+  `grant_to` alice and bob; `repo_review:POLICY` and `repo_release:invincible-agent` also carol
+  (ruled 2026-10-29: a two-approver change or release tag keeps two eligible approvers after the
+  proposer).
+- **`access_grant:DATA_ENGINEERING` gains bob** (ruled 2026-10-29), so the rail's
+  `policy/asset_grants.yaml` row (`access_grant:<DOMAIN>`, per changed row, at 2; fallback
+  `repo_review:POLICY`) can be satisfied. bob can now approve DATA_ENGINEERING access requests; the
+  sandbox grantor overlay names alice or bob.
+- **No new group or user, so no `topaz_sync` precondition**: alice, bob and carol already exist in
+  `users.yaml`. The audience changes ride the next planned fleet release.
+- **`policy/repository_paths.yaml` and `policy/grantors/repository_paths.yaml` are new**, consumed
+  by engine-r only (it reads its baked copy; there is no sync). `validate_policy` checks the rail
+  when present.
+
 **Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
 
 - **New group `training-admins`** (capability-only, no persona.domain cell); sandbox member alice.
