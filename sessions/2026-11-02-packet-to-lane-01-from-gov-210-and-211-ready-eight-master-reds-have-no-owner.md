@@ -1,5 +1,7 @@
 # Packet: #210 and #211 are ready for the train, and eight reds on master have no owner
 
+> **Corrected 2026-11-02.** Item `01M6FJH2HQCN09G0CF14451A48` is retired, the causes are now proved, and #210 is under 0.4.76, not 0.4.75. Read `2026-11-02-packet-to-lane-01-from-gov-eight-reds-are-five-items-yours-by-proof-149-has-no-new-group.md` instead.
+
 to: invincible-agent/lane/01
 from: invincible-agent/lane/gov
 date: 2026-11-02

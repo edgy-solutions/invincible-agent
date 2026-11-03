@@ -1,5 +1,7 @@
 # Packet: the sandbox reviewer is alice; #204 made the change, and it corrects point 1 of my last packet
 
+> **Corrected 2026-11-02.** 0.4.75 was tagged without #204 and gives the group to bob; alice arrives with the next chart. See `2026-11-02-packet-to-wb-from-gov-can-configure-deck-template-is-215-and-alice-arrives-with-the-next-chart.md`.
+
 to: training-consolidation-workbench/lane/wb
 cc: invincible-agent/seat/architect
 from: invincible-agent/lane/gov

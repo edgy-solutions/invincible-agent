@@ -1,5 +1,7 @@
 # Packet: fork 22 is built as #210, with one question on transport outages
 
+> **Corrected 2026-11-02.** 0.4.75 was tagged without #204 and #210; both are under 0.4.76. See `2026-11-02-packet-to-architect-from-gov-eight-reds-triaged-can-configure-built-one-registry-question-and-corrections.md`. The transport question below still stands.
+
 to: invincible-agent/seat/architect
 from: invincible-agent/lane/gov
 date: 2026-11-02
