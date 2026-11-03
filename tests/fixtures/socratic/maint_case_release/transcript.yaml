@@ -317,6 +317,24 @@ answers:
         value:
         - '{trigger.requested_by.authz_id}'
       defer: []
+  approvals.maint_case_inspection.inspection.reason_required:
+    says: Rework needs a reason.
+    facts:
+      set:
+      - file: task_kinds/maint_release_inspection.yaml
+        path: reason_required
+        value:
+        - rework
+      defer: []
+  approvals.maint_case_supervisor_release.supervisor.reason_required:
+    says: A hold needs a reason.
+    facts:
+      set:
+      - file: task_kinds/maint_release_supervisor.yaml
+        path: reason_required
+        value:
+        - held
+      defer: []
 planted:
   contradictions:
   - contradiction:workflows/maint_case_inspection.yaml#steps[id=inspection].deadline_seconds

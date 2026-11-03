@@ -127,7 +127,11 @@ def _walk(prefix: str, a, b, out: list) -> None:
 
 def semantic_diffs(final: dict, expected: dict) -> list:
     out: list = []
-    _walk("", canonical(final), canonical(expected), out)
+    try:
+        drafted = canonical(final)
+    except (AttributeError, TypeError) as exc:  # a shape the loop tolerates must not lose the run's row
+        return [f"the draft has no canonical form ({type(exc).__name__}: {exc})"]
+    _walk("", drafted, canonical(expected), out)
     return out
 
 
@@ -156,7 +160,8 @@ def _index(files: dict) -> dict:
 
 
 def _steps_of(wf: dict) -> list:
-    return [s for s in (wf.get("steps") or []) if isinstance(s, dict)]
+    steps = wf.get("steps")
+    return [s for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
 
 
 def _fact_target(key: str) -> Optional[Tuple[str, str]]:
@@ -168,13 +173,14 @@ def _fact_target(key: str) -> Optional[Tuple[str, str]]:
         return f"workflows/{s[1]}.yaml", f"steps[id={s[2]}].task_kind"
     if len(s) == 4 and s[0] == "approvals" and s[3] == "deadline":
         return f"workflows/{s[1]}.yaml", f"steps[id={s[2]}].deadline_seconds"
-    if len(s) == 3 and s[0] == "approvals" and s[2] == "reason_required":
-        return f"task_kinds/{s[1]}.yaml", "reason_required"
     return None
 
 
 _CHAIN_SLOT = re.compile(r"^(?:approvals|outputs)\.([^.]+)\.next\.(.+)$")
-_STEP_SLOT = re.compile(r"^(?:actors|approvals)\.([^.]+)\.([^.]+)\.(?:excludes|task_kind)$")
+_STEP_SLOT = re.compile(r"^(?:actors|approvals)\.([^.]+)\.([^.]+)\.(?:excludes|task_kind|reason_required)$")
+_REASON_SLOT = re.compile(r"^approvals\.([^.]+)\.([^.]+)\.reason_required$")
+_ROUTED_SLOT = re.compile(r"^steps\.([^.]+)\.routed$")
+_ENDS_SLOT = re.compile(r"^outputs\.([^.]+)\.ends$")
 _CHAIN_ROW = re.compile(r"^contradiction:chaining\.([^.]+)\.(.+)$")
 
 
@@ -190,6 +196,31 @@ def _chain_target(key: str, expected: dict) -> Optional[Tuple[str, str]]:
     if f is None:
         return None
     return f, (m.group(2) if m.group(2).startswith("domain.") else "rows")
+
+
+def _slot_target(key: str, expected: dict) -> Optional[Tuple[str, str]]:
+    """(file, path) a TRANSLATED slot asks about when only the expected bundle can say where: a
+    step's reasons sit on the task kind it names, a stage is routed to by whichever table has a row
+    for it, and a stage ends at its last disposing step."""
+    wfs, kinds = se._workflows(expected), se._kinds(expected)
+    m = _REASON_SLOT.match(key)
+    if m:
+        wf = wfs.get(m.group(1))
+        step = next((s for s in _steps_of(wf[1]) if str(s.get("id")) == m.group(2)), None) if wf else None
+        named = se._kinds_for(str(step.get("task_kind") or ""), kinds) if step else []
+        return (kinds[named[0]][0], "reason_required") if named else None
+    m = _ROUTED_SLOT.match(key)
+    if m:
+        f = next((f for f, d in sorted(expected.items()) if f.startswith("decisions/")
+                  and isinstance(d, dict) and any(isinstance(r, dict) and r.get("then") == m.group(1)
+                                                  for r in d.get("rows") or [])), None)
+        return (f, "rows") if f else None
+    m = _ENDS_SLOT.match(key)
+    if m and m.group(1) in wfs:
+        f, wf = wfs[m.group(1)]
+        ending = [s for s in _steps_of(wf) if se._disposes(s)]
+        return (f, f"steps[id={ending[-1].get('id')}].kind") if ending else None
+    return None
 
 
 def _sets_path(entry: dict, file: str, path: str) -> bool:
@@ -238,6 +269,7 @@ class AligningUser:
         self.answered_by_path: list = []
         self.rejected: list = []
         self.denied_rows: list = []
+        self.answered_contradictions: list = []
         self.opening = transcript.get("opening")
         # the person's own list of stages, from the entry that declares it: `finalize` drops the
         # list from the served trigger, so the expected bundle does not carry it
@@ -455,6 +487,65 @@ class AligningUser:
                                   {"file": file, "path": "rows", "value": copy.deepcopy(rows)}]},
                 "corrects": gap.key}
 
+    def _contradiction_target(self, t: str) -> Optional[Tuple[str, str]]:
+        """(file, path) of the expected bundle a TRANSLATED contradiction asks about; None for a
+        form with no one value."""
+        body = t[len("contradiction:"):]
+        if "#" in body:
+            file, path = body.split("#", 1)
+            return file, path
+        kind, _, name = body.partition(".")
+        table = se._decisions(self.expected).get(name)
+        wf, task = se._workflows(self.expected).get(name), se._kinds(self.expected).get(name)
+        if kind in ("chaining", "routing") and table:
+            return table[0], "rows"
+        if kind == "workflow" and wf:
+            return wf[0], "steps"
+        if kind == "task_kind" and task:
+            return task[0], "accepts"
+        return None
+
+    def _described(self, file: str) -> Optional[str]:
+        """What the person said of the definition or routing table in ``file``, from the entry that
+        asks for it."""
+        for w, (f, _) in se._workflows(self.expected).items():
+            if f == file:
+                return (self.bank.get(f"steps.{w}") or {}).get("says")
+        for f, t in se._decisions(self.expected).values():
+            if f == file:
+                entry = self.bank.get(f"approvals.{t.get('after')}.next") or self.bank.get(f"outputs.{t.get('after')}.next")
+                return (entry or {}).get("says")
+        return None
+
+    def _contradiction(self, gap, draft_files: dict, t: Optional[str]) -> Optional[dict]:
+        """A person who knows their process answers a contradiction the loop raised, from the
+        expected bundle (architect 2026-11-02), in words. No facts: the model is measured on the
+        words, as for any other answer. A value with a structure is said as the person described it,
+        by the entry that asks for it. A value the bundle does not hold stays unanswerable, and a
+        planted contradiction is banked and never comes here."""
+        if gap.kind != "contradiction" or t is None:
+            return None
+        row = _CHAIN_ROW.match(t)
+        table = se._decisions(self.expected).get(row.group(1)) if row else None
+        if table:
+            domain = (table[1].get("domain") or {}).get(se._CHAIN_INPUT) or []
+            if row.group(2) not in domain:
+                return None
+            says = f"Yes, it can end '{row.group(2)}'. It can end: {', '.join(map(str, domain))}."
+        else:
+            tgt = self._contradiction_target(t)
+            held, value = se._get(self.expected, *tgt) if tgt else (False, None)
+            if not held:
+                return None
+            if isinstance(value, dict) or (isinstance(value, list) and any(isinstance(v, dict) for v in value)):
+                says = self._described(tgt[0])
+                if not says:
+                    return None
+            else:
+                says = f"It is {se._fmt(value, tgt[1]) if value not in ([], None) else 'none'}."
+        self.answered_contradictions.append(gap.key)
+        return {"says": says}
+
     def __call__(self, gap, draft) -> Optional[dict]:
         t = self.translate(gap.key, draft.files)
         if t is None:
@@ -465,12 +556,13 @@ class AligningUser:
             return None
         entry = self.bank.get(t)
         if entry is None:
-            tgt = _fact_target(t) or _chain_target(t, self.expected)
+            tgt = _fact_target(t) or _chain_target(t, self.expected) or _slot_target(t, self.expected)
             hit = self.entry_for_path(*tgt) if tgt else None
             if hit is not None:
                 self.answered_by_path.append((gap.key, hit[0]))
                 return _narrowed(hit[1], *tgt)
-            rejection = self._rejection(gap, draft.files, t) or self._no_such_outcome(gap, draft.files, t)
+            rejection = (self._rejection(gap, draft.files, t) or self._no_such_outcome(gap, draft.files, t)
+                         or self._contradiction(gap, draft.files, t))
             if rejection is not None:
                 return rejection
             self.unbanked.append(gap.key)
@@ -481,6 +573,23 @@ class AligningUser:
 
 
 # ── the measurement ─────────────────────────────────────────────────────────────────────────
+
+def dropped_steps(files: dict, expected: dict, pairs: dict) -> list:
+    """Each expected stage whose draft counterpart lacks a step the person described (architect
+    2026-11-02: a runnable spec that drops a step is not the workflow). ``pairs`` is draft stage ->
+    expected stage. Steps compare by kind, in order; a step the draft added is not a dropped one,
+    and ``semantic_diffs`` carries it. A stage nothing pairs with has dropped all of its steps."""
+    d, e = _index(files), _index(expected)
+    back = {v: k for k, v in pairs.items()}
+    out = []
+    for ew, wf in sorted(e["wfs"].items()):
+        described = [str(s.get("kind")) for s in _steps_of(wf)]
+        drafted = [str(s.get("kind")) for s in _steps_of(d["wfs"].get(back.get(ew)) or {})]
+        rest = iter(drafted)
+        if not all(k in rest for k in described):
+            out.append({"stage": ew, "draft": back.get(ew), "described": described, "drafted": drafted})
+    return out
+
 
 def _as_expected(keys, user: Optional[AligningUser], files: dict) -> set:
     """The recorded ``keys`` in the expected bundle's spelling, aligned against the final ``files``
@@ -507,6 +616,9 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
     asked_c, recorded_d = _as_expected(r["contradictions_asked"], user, r["files"]), \
         _as_expected(r["deferrals"], user, r["files"])
     ld, sd = leaf_diffs(r["files"], expected), semantic_diffs(r["files"], expected)
+    unreachable = sorted(set(se._workflows(r["files"])) - se._reachable(r["files"]))
+    dropped = dropped_steps(r["files"], expected, AligningUser(transcript, expected)._pair_definitions(
+        _index(r["files"]), _index(expected)))
     return {
         "fixture": name,
         "questions": len(keys), "bank": len(bank),
@@ -522,6 +634,9 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "missing": {"count": len(r["missing"]), "first": r["missing"][:10]},
         "open": r["open"],
         "runnable_errors": {"count": len(r["runnable"]), "first": r["runnable"][:5]},
+        "unreachable": unreachable,
+        "dropped_steps": dropped,
+        "bar_met": r["status"] == "runnable" and not unreachable and not dropped,
         "exact": r["files"] == expected,
         "leaf_diffs": {"count": len(ld), "first": ld[:20]},
         "semantic_diffs": {"count": len(sd), "first": sd[:20]},
@@ -530,6 +645,7 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "answered_by_path": [list(p) for p in user.answered_by_path] if user else [],
         "rejected": list(user.rejected) if user else [],
         "denied_rows": list(user.denied_rows) if user else [],
+        "answered_contradictions": list(user.answered_contradictions) if user else [],
         "unbanked": list(user.unbanked) if user else sorted(k for k in keys if k not in set(bank)),
         "deferred_refusals": [k for k in r["deferred_refusals"] if k in r["deferrals"]],
         "model_errors": errors_of(extractor) + len(r["model_errors"]),
@@ -572,7 +688,7 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"arm": args.arm, "fixtures": rows}, indent=2, default=str), encoding="utf-8")
     hdr = f"{'fixture':26} {'q':>3} {'bank':>4} {'red':>3} {'unans':>5} {'unres':>5} {'contra':>6} {'defer':>5} " \
-          f"{'left':>4} {'rn_err':>6} {'exact':>5} {'leaf':>4} {'sem':>4} {'mdl_err':>7} {'alg':>3} {'unal':>4} {'unbk':>4} {'path':>4} {'dref':>4} {'status':>10} {'sec':>6}"
+          f"{'left':>4} {'rn_err':>6} {'exact':>5} {'leaf':>4} {'sem':>4} {'mdl_err':>7} {'alg':>3} {'unal':>4} {'unbk':>4} {'path':>4} {'dref':>4} {'drop':>4} {'bar':>5} {'status':>10} {'sec':>6}"
     print(hdr)
     for r in rows:
         print(f"{r['fixture']:26} {r['questions']:>3} {r['bank']:>4} {len(r['redundant']):>3} "
@@ -581,7 +697,7 @@ def main() -> int:
               f"{r['deferrals_recorded']}/{r['deferrals_planted']:>3} {len(r['gaps_left']):>4} "
               f"{r['runnable_errors']['count']:>6} {str(r['exact']):>5} {r['leaf_diffs']['count']:>4} "
               f"{r['semantic_diffs']['count']:>4} {r['model_errors']:>7} {len(r['aligned_answers']):>3} {len(r['unaligned']):>4} "
-              f"{len(r['unbanked']):>4} {len(r['answered_by_path']):>4} {len(r['deferred_refusals']):>4} {r['status']:>10} {r['seconds']:>6}")
+              f"{len(r['unbanked']):>4} {len(r['answered_by_path']):>4} {len(r['deferred_refusals']):>4} {len(r['dropped_steps']):>4} {str(r['bar_met']):>5} {r['status']:>10} {r['seconds']:>6}")
     return 0
 
 
