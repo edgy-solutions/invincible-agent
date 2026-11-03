@@ -4,6 +4,19 @@
 
 Entries merged after the 0.4.75 cut (`aac9900b`). The releaser dates this heading at the cut.
 
+**Policy changes (a course is reviewed as a document: `review_shape: document`)**
+
+- **The `course` content kind now declares `review_shape: document`** (it declared `course`, a shape
+  no card keys on). A course's promotion task payload carries `review_shape` and `sections[]`
+  (`{section_id, title, page, page_end?}`), read from the `extraction.json` beside the manifest, ids
+  derived by the training contract (`{ingest_id}_s{i}`, nested `{parent}_s{i}`). A promote's
+  `review_coverage` with `item_kind: section` is verified against exactly that stored list. One bad
+  row, or no readable outline, leaves `sections` absent (never partial, never empty): the card shows
+  its reason line and a coverage answers 503 `review_coverage_unverifiable`. A `notice` task's payload
+  is unchanged. The `course` row in `policy/review_shapes/` stays.
+- **Dormant until doc-tools #172 is deployed**: no course extraction carries the outline before it,
+  so until then every course task files without `sections`.
+
 **Policy changes (ADR-0062 section 5: the repository-paths rail)**
 
 - **Five new `task_grants.yaml` audiences**: `repo_review:POLICY`, `repo_review:ADR`,
