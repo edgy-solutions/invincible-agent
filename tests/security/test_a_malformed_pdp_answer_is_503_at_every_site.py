@@ -40,9 +40,13 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 _RA = REPO / "agent_fleet" / "restate_analyst"
-for _p in (str(REPO / "src"), str(REPO / "agent_fleet"), str(_RA), str(REPO)):
+# Not agent_fleet/ itself: with it on the path `utils` imports flat, and any file collected after this
+# one gets a second origin_entitlement. Every engine here falls back to the repo layout.
+for _p in (str(REPO / "src"), str(_RA), str(REPO)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+from tests.conftest import stub_modules  # noqa: E402
 
 READERS = {"check_answer", "decision_answer"}
 SCANNED = ("agent_fleet", "src")
@@ -1207,22 +1211,12 @@ def test_the_autonomous_gate_fails_terminally_with_503(pdp, monkeypatch, body):
 
 # ── the tool-loop engines: the answer is discarded ─────────────────────────────────────────────
 
-class _Stubbed:
+def _stubbed():
     """`baml_client` is generated and not importable from a checkout. Stubbed for the import ONLY,
     and restored, so no later file in the session sees the stub."""
-
-    def __enter__(self):
-        self.saved = sys.modules.get("baml_client")
-        stub = types.ModuleType("baml_client")
-        stub.b = types.SimpleNamespace(with_options=lambda **_k: None)
-        sys.modules["baml_client"] = stub
-
-    def __exit__(self, *_a):
-        if self.saved is None:
-            sys.modules.pop("baml_client", None)
-        else:
-            sys.modules["baml_client"] = self.saved
-        return False
+    stub = types.ModuleType("baml_client")
+    stub.b = types.SimpleNamespace(with_options=lambda **_k: None)
+    return stub_modules({"baml_client": stub})
 
 
 def _agent_double(calls: dict, seen: list):
@@ -1247,7 +1241,7 @@ def _agent_double(calls: dict, seen: list):
 
 
 def _engine_w(monkeypatch, seen):
-    with _Stubbed():
+    with _stubbed():
         import agent_fleet.weaviate_expert.service as w
     hit = types.SimpleNamespace(uuid="u-1", metadata=types.SimpleNamespace(score=1.0, distance=None),
                                 properties={"source_url": "doc-1", "text": "SECRET", "doc_id": "d"})
@@ -1267,7 +1261,7 @@ def _engine_w(monkeypatch, seen):
 
 def _engine_e(monkeypatch, seen):
     pytest.importorskip("baml_py")
-    with _Stubbed():
+    with _stubbed():
         import agent_fleet.neo4j_expert.service as e
 
     async def _mem0():
