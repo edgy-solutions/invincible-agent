@@ -19,6 +19,47 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-11-03 (overnight): the inputs resolver is #219, the EV fixture is dag-tools #7. Read this first
+
+The relay: the resolver spec against Lane 1's `CortexDataClient` call, then the code behind a flag; the sandbox EV asset as a dag-tools PR for Chris; the asset contract packet to Chris; a reply to #213. All four are done. Nothing has run on a cluster, and nothing here is merged.
+
+**Open, waiting on others:**
+
+| what | where | who | state |
+| --- | --- | --- | --- |
+| resolver | invincible-agent #219, branch `fin/inputs-resolver`, worktree `<scratchpad>/wt-reds` | Lane 1 merges | read CI first (below) |
+| EV fixture | dag-tools #7, branch `fin/ev-fixture-asset`, worktree `<scratchpad>/wt-dag` | Chris merges | CI passed on `fd4ee4c` |
+| census fix | #217 | Lane 1 merges | 20 passed, 3 skipped |
+| #213 | comment posted: no finance figure changes | Lane 1 | still open; a live read needs it rolled |
+
+**Packets placed, untracked, in the master tree's `sessions/`:**
+- `2026-11-02-packet-to-chris-the-ev-asset-contract-urn-columns-period-key-cadence-tags.md`
+- `2026-11-03-packet-to-lane-01-from-fin-213-changes-no-finance-figure-and-217-clears-your-census-red.md`
+- `2026-11-03-packet-to-lane-01-from-fin-the-resolver-is-219-and-one-commit-in-it-is-yours-to-read.md`
+
+**What the checks found that the implementer's report didn't:**
+- **The fixture and the seed differed in the audit strings.** All-Float64 gave `12000000.0` and `vac_exact` `-60000.0`, with every figure equal. The fixture now keeps the seed's split (`program_bac` and `bcws` Int64). Over its real parquet: 12 of 12 comparisons identical, and the control differs. `test_a_source_with_float_amounts_changes_the_audit_strings_and_no_figure` pins that a float source changes only the strings. The join itself was run by hand across two repos; no CI runs it.
+- **A type mutation stayed green.** The fixture's type test read the asset's own tuples, so moving a column between them passed. It now writes the schema out, and two mutants fail.
+- **The denial never reached request-access on the chat path.** `_refusal_from_engine_4xx` dropped `status`, `denied_assets`, `subject` and `message`. Fixed in `fd617c7c`, in Lane 1's file, as its own commit that they can drop. The 403 stays, because the board's relay keeps it whole and a 200 would reach a board with no rows. Read, not run: the SSE event and the UI card.
+
+**Corrections to what others hold:**
+- Lane 1's spec assumed a restart delivers the fixture. The sandbox pins that image by digest (`sha-6609fe6`), so it takes a merge, the new digest, the values diff and a roll of two pods, and brings all 8 dag-tools commits.
+- `policy/asset_grants.yaml` grants `...dagster,mesh_demo_customers,PROD`; the live route is `...s3,...`. `p_cage`'s row uses `s3`, and that's the read Chris ran. Reported, not changed.
+- `test_NO_FILE_WRITES_SYS_MODULES_WITHOUT_A_RESTORE` is red on `origin/master` `121272dc`, naming six files outside #219's diff. Reported to Lane 1 with no owner identified.
+
+**Your next steps:**
+1. Read #219's CI, as the last read had 19 checks pending. `gh` must run from a worktree.
+2. If Lane 1 drops `fd617c7c`, the join test in `tests/finance/test_fin_inputs_resolver.py` goes red. It belongs with that commit.
+3. A live read follows the order in the Lane 1 packet. Memory under 512Mi is unmeasured, and the first small-table read gives the finance timing number Lane 1 wants.
+
+**Forks for the architect, not yet sent as a packet:** built-ins on the seed beside real declared figures; exports from an asset; `FISCAL_PERIODS` FY26 only, in code; a program only in the asset can't be named in chat. They're in the design and Chris's packet.
+
+**Still open from before:** #181's deploy order (ask Chris before the roll); the TCPI sandbox render and cortex's captured-envelope request need the sandbox; Fork 16 is the architect's; #202's deploy order is re-prime, roll, read edges, one-time edge delete.
+
+**Traps from this session:**
+- `git worktree list` shows every session's worktrees. A `wt-base` at `5034aa05` belongs to another session; mine is removed. Check the path before removing anything.
+- Prefixing `MSYS_NO_PATHCONV=1` onto `git -C` with a `/c/...` path fails with "No such file"; use a Windows path.
+
 ## Update 2026-11-02: Chris's overlay rulings. #200 and #202 open, #191 and #193 merged. Read this first
 
 The relay: "Q1: B, an initContainer that clones the policy repo at a pinned ref into the pods. Q2: rows
