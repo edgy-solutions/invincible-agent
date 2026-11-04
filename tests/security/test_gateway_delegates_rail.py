@@ -275,3 +275,47 @@ def test_the_read_at_record_is_a_full_commit_and_digest():
     rec = vp.GATEWAY_ROUTES_READ_AT
     assert len(rec["dag_tools"]) == 40 and int(rec["dag_tools"], 16) >= 0
     assert rec["central_gateway_digest"].startswith("sha256:") and len(rec["central_gateway_digest"]) == 71
+
+
+# ---- doors: a row's routes are the routes of ITS door (architect 11-04) ---------------------------
+
+_BFF_ROUTE = vp.BFF_DELEGATE_ROUTES[0]
+
+
+def test_a_bff_row_for_a_bff_route_is_clean():
+    assert _b(_rows(_row(door="bff", routes=[_BFF_ROUTE]))) == []
+
+
+def test_a_bff_row_for_a_gateway_route_is_refused_naming_the_door():
+    _red(_rows(_row(door="bff", routes=[_ROUTE])), "unknown route 'assets.authorize' for door bff")
+
+
+def test_a_gateway_row_for_a_bff_route_is_refused_naming_the_door():
+    _red(_rows(_row(routes=[_BFF_ROUTE])), "unknown route 'human_tasks.register' for door gateway")
+
+
+@pytest.mark.parametrize("door", ["side", "", None, ["bff"]], ids=["unknown", "blank", "none", "list"])
+def test_an_unknown_door_is_one_error_and_no_route_error(door):
+    errs = _b(_rows(_row(door=door, routes=[_ROUTE, "no.such.route"])))
+    assert len(errs) == 1 and "unknown door" in errs[0] and "gateway, bff" in errs[0], errs
+
+
+def test_the_same_service_twice_on_one_door_is_refused():
+    _red(_rows(_row(door="bff", routes=[_BFF_ROUTE]), _row(door="bff", routes=[_BFF_ROUTE])),
+         "more than one row names this service on door bff")
+
+
+def test_the_same_service_once_per_door_is_clean():
+    assert _b(_rows(_row(), _row(door="bff", routes=[_BFF_ROUTE]))) == []
+
+
+def test_the_shipped_rail_has_bff_rows_and_still_validates_clean():
+    bff = [r["service"] for r in _SEED["gateway_delegates"] if r.get("door") == "bff"]
+    assert {"svc:review-starter", "svc:case-runner"} <= set(bff)       # control: the rows are read
+    assert vp.gateway_delegates_errors(_SEED, _USERS) == []
+
+
+def test_SEAL_the_bff_register_route_is_one_the_validator_admits_on_door_bff():
+    pytest.importorskip("fastapi")
+    from src.iagent import gateway
+    assert gateway._REGISTER_DELEGATE_ROUTE in vp.BFF_DELEGATE_ROUTES

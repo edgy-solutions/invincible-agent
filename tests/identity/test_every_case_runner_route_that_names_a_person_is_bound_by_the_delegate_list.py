@@ -28,6 +28,8 @@ Run: uv run pytest tests/identity/test_every_case_runner_route_that_names_a_pers
 from __future__ import annotations
 
 import inspect
+import json
+import logging
 import re
 import types
 
@@ -232,7 +234,7 @@ def _drive_origin_approver(monkeypatch, who, named):
     monkeypatch.setattr(gateway, "_file_promotion_if_ready", no_filing)
     _login(who)
     r = _client().post("/internal/origin/write", json={
-        "artifact_id": "ing-1", "dropped_by": {"authz_id": PERSON},
+        "case_id": "c-1", "artifact_id": "ing-1", "dropped_by": {"authz_id": PERSON},
         "origin": {"program": "p-1"}, "evidence": {},
         "approval_chain": [{"role": "steward", "approver_sub": named}]})
     return r, fx
@@ -252,7 +254,7 @@ def _drive_origin_dropper(monkeypatch, who, named):
     steward, _ = pair_and_outsider(served, RUNNER)
     _login(who)
     r = _client().post("/internal/origin/write", json={
-        "artifact_id": "ing-1", "dropped_by": {"authz_id": named},
+        "case_id": "c-1", "artifact_id": "ing-1", "dropped_by": {"authz_id": named},
         "origin": {"program": "p-1"}, "evidence": {},
         "approval_chain": [{"role": "steward", "approver_sub": steward}]})
     return r, fx
@@ -276,8 +278,8 @@ DRIVEN = {
     (AR, "on_behalf_of"): None,      # driven in test_a_service_token_cannot_name_a_user_outside_... (xfail there)
     (AR, "seeded_by"): (_drive_action_record_seeded_by, "delegate", REFUSES),
     (SB, "seeded_by"): (_drive_seeded_by_stamp, "delegate", REFUSES),
-    (SM, "seeded_by"): (_drive_summary_seeded_by, "delegate", RED),
-    (OW, "approval_chain"): (_drive_origin_approver, "principal", RED),
+    (SM, "seeded_by"): (_drive_summary_seeded_by, "delegate", REFUSES),
+    (OW, "approval_chain"): (_drive_origin_approver, "principal", REFUSES),
 }
 
 # Decided, NOT driven, each with the reason and the check that backs it.
@@ -393,12 +395,9 @@ def test_a_caller_that_is_not_the_case_runner_is_refused_at_the_gate(monkeypatch
 # -- /internal/human_tasks/register: RULED IN as a separate defect ------------------------------------
 REG_RULING = ("RULED DEFECT (architect via Chris 2026-11-03, a separate defect from the case-runner "
               "routes): /internal/human_tasks/register needs TWO fixes -- ")
-FIX_A = REG_RULING + ("(a) THE CALLER: gate the route on the delegate list / service identity as its "
-                      "docstring promises, not on get_current_user alone. Turned by fix (a). "
-                      "Lane 1's fix PR removes this marker.")
-FIX_B = REG_RULING + ("(b) THE FIELD: requested_by comes from the token, never the body; a differing body "
-                      "value is refused with the refusal envelope. Turned by fix (b). "
-                      "Lane 1's fix PR removes this marker.")
+FIX_B = ("(b) THE FIELD, ruled 2026-11-04: register is called by a service for a person, so the rule is "
+         "the five routes' rule: a user token must equal requested_by; a service token may name "
+         "requested_by only if the delegate list lists it.")
 
 
 def _served_refusal(caller, on_behalf_of):
@@ -422,23 +421,63 @@ def test_register_control_a_declared_service_identity_naming_itself_is_admitted(
     assert r.status_code < 400 and fx.has(svc), (svc, r.status_code, r.text[:200], fx.seen)
 
 
-@pytest.mark.xfail(strict=True, reason=FIX_A)
-def test_register_a_plain_user_token_is_refused_at_the_route(monkeypatch):
-    """Fix (a). The token is a person (declared, but not a delegate); requested_by is its own, so only
-    the CALLER is in question."""
+AUDIT = "iagent.audit.delegate_named"
+
+
+def _audited(caplog, caller):
+    return [r.getMessage() for r in caplog.records
+            if r.name == AUDIT and f"caller={caller} " in r.getMessage()
+            and "route=/internal/human_tasks/register" in r.getMessage()]
+
+
+def test_register_a_user_token_naming_itself_is_admitted(monkeypatch, caplog, register_rail):
+    caplog.set_level(logging.INFO, logger=AUDIT)
     served = install_delegates(monkeypatch)
     person, _ = pair_and_outsider(served, RUNNER)
     assert person not in served
+    register_rail([])
     r, fx = _drive_register_requested_by(monkeypatch, person, person)
-    want_status, want_detail = _served_refusal(person, "someone-else")
-    assert not fx.has(person) and r.status_code == want_status and r.json()["detail"]["error"] == \
-        want_detail["error"], (r.status_code, r.text[:200], fx.seen)
+    assert r.status_code < 400 and fx.has(person), (r.status_code, r.text[:200], fx.seen)
+    lines = _audited(caplog, person)
+    assert len(lines) == 1, lines
+    line = lines[0]
+    assert line.endswith("outcome=admitted:self"), line
 
 
-@pytest.mark.xfail(strict=True, reason=FIX_B)
+def test_register_a_user_token_naming_someone_else_is_refused(monkeypatch, caplog, register_rail):
+    caplog.set_level(logging.INFO, logger=AUDIT)
+    served = install_delegates(monkeypatch)
+    person, other = pair_and_outsider(served, RUNNER)
+    assert person not in served
+    register_rail([])
+    r, fx = _drive_register_requested_by(monkeypatch, person, other)
+    want_status, want_detail = _served_refusal(person, other)
+    assert not fx.has(other) and not fx.seen and r.status_code == want_status and         r.json()["detail"]["error"] == want_detail["error"], (r.status_code, r.text[:200], fx.seen)
+    lines = _audited(caplog, person)
+    assert len(lines) == 1, lines
+    line = lines[0]
+    assert line.endswith("outcome=refused:" + want_detail["error"]), line
+
+
+def test_register_a_listed_service_may_name_any_person(monkeypatch, caplog, register_rail):
+    caplog.set_level(logging.INFO, logger=AUDIT)
+    served = install_delegates(monkeypatch)
+    person, outsider = pair_and_outsider(served, RUNNER)
+    listed = "svc:listed-register-service"
+    assert listed not in served and outsider not in served
+    register_rail([listed])
+    r, fx = _drive_register_requested_by(monkeypatch, listed, outsider)
+    assert r.status_code < 400 and fx.has(outsider), (r.status_code, r.text[:200], fx.seen)
+    lines = _audited(caplog, listed)
+    assert len(lines) == 1, lines
+    line = lines[0]
+    assert line.endswith("outcome=admitted:register_service"), line
+
+
 def test_register_a_body_requested_by_that_differs_from_the_token_is_refused(monkeypatch):
-    """Fix (b). The caller IS a declared service identity (passes any gate); the body names someone
-    else. register_task must receive the token's identity or nothing."""
+    # FIX_B (above) is the ruling this test holds: 2026-11-04, the five routes' rule.
+    # The caller IS a declared delegate (not listed); the body names a principal declared for ANOTHER
+    # delegate. register_task must not receive it.
     served = install_delegates(monkeypatch)
     svc = next(d for d in sorted(served) if d != RUNNER)
     _own, outsider = pair_and_outsider(served, svc)

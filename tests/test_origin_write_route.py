@@ -42,6 +42,7 @@ from src.iagent import origin_writer  # noqa: E402
 from tests.test_a_case_runs_from_trigger_to_terminal import wd  # noqa: E402
 
 BODY = {
+    "case_id": "case-9",
     "artifact_id": "ART-9",
     "dropped_by": {"authz_id": "dropper@x"},
     "origin": {"owner_domain": "aviation", "program": "PRG-1",
@@ -98,6 +99,15 @@ def ingest_fake(monkeypatch):
 class _Calls(list):
     """A list of captured `write_origin` calls that can also hold the canned result the fake
     returns -- so a test can flip to `write_refused` without a second fixture."""
+
+
+@pytest.fixture(autouse=True)
+def steward_holds_a_task_on_the_case(monkeypatch):
+    """The route admits the steward it is told of only if the case can vouch for them. These tests
+    are about the write, so the steward holds a task on the case (the production shape); the
+    refusal of a non-holder is tests/identity/test_the_internal_routes_bound_who_they_name.py."""
+    from src.iagent import human_tasks
+    monkeypatch.setattr(human_tasks, "holds_task_on_case", lambda case_id, person: True)
 
 
 @pytest.fixture(autouse=True)
@@ -238,7 +248,7 @@ def test_THE_WRITTEN_STEP_IS_A_GATED_direct_call_NOT_A_signal_await():
     assert step.capability == "origin.write", step
     assert step.endpoint == "{origin_write_endpoint}", step
     assert set(step.extra_payload) == {
-        "artifact_id", "dropped_by", "origin", "evidence", "approval_chain",
+        "artifact_id", "dropped_by", "origin", "evidence", "approval_chain", "case_id",
     }, step.extra_payload
 
 

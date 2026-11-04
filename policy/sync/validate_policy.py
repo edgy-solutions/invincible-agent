@@ -689,7 +689,14 @@ GATEWAY_ROUTES_READ_AT = {
     "central_gateway_digest": "sha256:ac93ba19f96718cdad6dd40dabd8dc51934db4796ccfd767b5da732b19edf498",
 }
 
-_GD_ROW_FIELDS = ("service", "routes", "granted_by", "reason", "ratified_by")
+#: The BFF's route ids a `door: bff` row may name (architect 11-04). The BFF owns them
+#: (`src/iagent/gateway.py`); tests/security/test_gateway_delegates_rail.py goes red when
+#: `gateway._REGISTER_DELEGATE_ROUTE` is not in this list.
+BFF_DELEGATE_ROUTES = ("human_tasks.register",)
+#: A row's door is `row.get("door", "gateway")`; each door has its own route list.
+_GD_DOORS = {"gateway": GATEWAY_ROUTES, "bff": BFF_DELEGATE_ROUTES}
+
+_GD_ROW_FIELDS = ("service", "door", "routes", "granted_by", "reason", "ratified_by")
 #: A run with no person behind it (architect 11-04). It acts as itself, so it is never a delegate.
 _PIPELINE_PREFIX = "pipeline:"
 
@@ -702,7 +709,11 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
     `service` must be a seeded service identity (a person holds their own token) and each route a
     known one (a wildcard is an unknown route). Every row says why (`reason`) and which seat
     ratified it (`ratified_by`, e.g. `owner`: a seat, never an identity). Unknown keys are refused
-    by name, so a typo (`route:`) cannot pass silently."""
+    by name, so a typo (`route:`) cannot pass silently.
+
+    A row's `door` is `gateway` (the default) or `bff`; its routes are checked against THAT door's
+    list, and an unknown door is one error with no route errors. A service is unique per
+    `(service, door)`: it may hold one gateway row and one bff row."""
     pre = "gateway_delegates.yaml"
     if not isinstance(raw, dict) or set(raw) != {"gateway_delegates"}:
         extra = sorted(map(str, set(raw) - {"gateway_delegates"})) if isinstance(raw, dict) else []
@@ -714,7 +725,7 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
 
     seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
     out: list[str] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for i, row in enumerate(rows):
         if not isinstance(row, dict):
             out.append(f"{pre}: row {i}: must be a mapping")
@@ -724,6 +735,12 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
         for k in row:
             if k not in _GD_ROW_FIELDS:
                 out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_GD_ROW_FIELDS)})")
+
+        door = row.get("door", "gateway")
+        door_key = door if isinstance(door, str) else repr(door)
+        door_known = isinstance(door, str) and door in _GD_DOORS
+        if not door_known:
+            out.append(f"{where}: unknown door {door!r} (known: {', '.join(_GD_DOORS)})")
 
         if not isinstance(service, str) or not service.strip():
             out.append(f"{where}: `service` must be a non-empty string")
@@ -736,17 +753,20 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
                            "a person holds their own token and is no delegate")
             elif service not in seeded:
                 out.append(f"{where}: `service` is not a seeded identity in users.yaml")
-            if service in seen:
-                out.append(f"{where}: more than one row names this service")
-            seen.add(service)
+            if (service, door_key) in seen:
+                out.append(f"{where}: more than one row names this service on door {door_key}")
+            seen.add((service, door_key))
 
         routes = row.get("routes")
         if not isinstance(routes, list) or not routes:
             out.append(f"{where}: `routes` must be a non-empty list")
+        elif not door_known:
+            pass  # one error for the door, not one per route
         else:
+            known = _GD_DOORS[door]
             for j, r in enumerate(routes):
-                if r not in GATEWAY_ROUTES:
-                    out.append(f"{where}: unknown route {r!r} (known: {', '.join(GATEWAY_ROUTES)})")
+                if r not in known:
+                    out.append(f"{where}: unknown route {r!r} for door {door} (known: {', '.join(known)})")
                 elif r in routes[:j]:
                     out.append(f"{where}: route {r!r} is listed more than once")
 

@@ -103,7 +103,8 @@ def test_the_queue_read_selects_case_id():
 # -- route -----------------------------------------------------------------------------------
 
 @pytest.fixture
-def route(monkeypatch):
+def route(monkeypatch, register_rail):
+    register_rail(["svc"])
     from src.iagent import human_tasks
     seen = []
     monkeypatch.setattr(human_tasks, "register_task",

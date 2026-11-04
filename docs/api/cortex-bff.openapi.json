@@ -4154,6 +4154,10 @@
             "title": "Artifact Id",
             "type": "string"
           },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
           "dropped_by": {
             "$ref": "#/components/schemas/_OriginWriteDroppedBy"
           },
@@ -4173,7 +4177,8 @@
           "dropped_by",
           "origin",
           "evidence",
-          "approval_chain"
+          "approval_chain",
+          "case_id"
         ],
         "title": "OriginWriteRequest",
         "type": "object"
@@ -8399,7 +8404,7 @@
     },
     "/internal/human_tasks/register": {
       "post": {
-        "description": "Register a task and materialize one queue row per Topaz-authorized actor.\nINTERNAL seam — Slice 1b restricts callers to the workflow/service identity;\nat the foundation checkpoint it is exercised directly to prove the identity\nbridge. Returns the resolved recipient set (the Topaz decision).",
+        "description": "Register a task and materialize one queue row per Topaz-authorized actor.\nINTERNAL seam — Slice 1b restricts callers to the workflow/service identity;\nat the foundation checkpoint it is exercised directly to prove the identity\nbridge. Returns the resolved recipient set (the Topaz decision).\n\nR-089, ruled 2026-11-04: register is called by a service for a person, so the caller is bound\nto `requested_by` by the same rule as the five case-runner routes, in this order: (1) a caller\nthat IS `requested_by` is admitted (a person naming themselves, or a service naming itself);\n(2) a caller listed for `human_tasks.register` on a `door: bff` row of\n`policy/gateway_delegates.yaml` may name any person; (3) otherwise\n`_admit_on_behalf_of` decides: a declared delegate naming a principal declared for it is\nadmitted, anyone else is 403 `not_a_delegate` or `principal_not_declared_for_delegate`.\n`requested_by` is passed through as sent.",
         "operationId": "register_human_task_internal_human_tasks_register_post",
         "requestBody": {
           "content": {
