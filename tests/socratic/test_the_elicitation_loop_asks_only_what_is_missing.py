@@ -2184,6 +2184,26 @@ def test_the_bar_needs_all_four(monkeypatch, edit):
     assert bool(row["dropped_routes"]) is (edit == "route")
 
 
+# ── an ending the person names keeps their word (architect, 2026-11-03) ───────────────────────
+
+def test_the_grammar_says_endings_named_apart_stay_apart():
+    line = next((x for x in se._GRAMMAR.split("\n- ") if x.startswith("An ending the user names")), None)
+    assert line is not None
+    said = " ".join(line.split())
+    for word in ("keeps the user's word", "name differently", "two terminals", "never one word of your own"):
+        assert word in said
+
+
+def test_the_grammar_says_two_acts_in_a_row_are_two_steps():
+    line = next((x for x in se._GRAMMAR.split("\n- ") if x.startswith("Two acts the user describes")), None)
+    assert line is not None
+    said = " ".join(line.split())
+    for word in ("two steps of one stage", "in the same statement", "never draft the first act alone",
+                 "an emit followed by a signal_await", "not a human_await", "the emit has no disposes",
+                 "the user's word for what was done"):
+        assert word in said
+
+
 # ── a render step is what someone looks at before an approval (architect, 2026-11-02) ─────────
 
 def test_the_grammar_says_what_someone_looks_at_before_an_approval_is_a_render_step():
