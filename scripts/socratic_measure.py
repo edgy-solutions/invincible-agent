@@ -706,6 +706,85 @@ def dropped_routes(files: dict, expected: dict, pairs: dict) -> list:
     return out
 
 
+def wrong_excludes(files: dict, expected: dict, pairs: dict) -> list:
+    """Each described step whose bar on who may answer is not the draft's (architect, 2026-11-03: a
+    bar that can't see the self-signoff exclusion read ``yes`` on a workflow the person ruled out).
+    The value is read, since ``canonical`` keeps only whether there is one. Steps pair by kind, in
+    order, as ``dropped_steps`` reads them, and a step with no counterpart reads here too."""
+    d, e = _index(files), _index(expected)
+    back = {v: k for k, v in pairs.items()}
+    out = []
+    for ew, wf in sorted(e["wfs"].items()):
+        rest = iter(_steps_of(d["wfs"].get(back.get(ew)) or {}))
+        for step in _steps_of(wf):
+            if "excludes" not in step:
+                continue
+            drafted = next((s for s in rest if s.get("kind") == step.get("kind")), None)
+            held = drafted.get("excludes") if drafted is not None else None
+            if drafted is None or _names(held) != _names(step["excludes"]):
+                out.append({"stage": ew, "step": step.get("id"), "expected": step["excludes"], "drafted": held})
+    return out
+
+
+def wrong_requires(files: dict, expected: dict) -> list:
+    """The trigger's required details, when they are not the ones the person named (architect,
+    2026-11-03). An absent list reads as empty, as ``canonical`` reads it."""
+    d, e = _index(files)["trigger"].get("requires"), _index(expected)["trigger"].get("requires")
+    return [] if _names(d) == _names(e) else [{"expected": e, "drafted": d}]
+
+
+def _names(value) -> list:
+    return sorted(map(str, value)) if isinstance(value, list) else [] if value is None else [str(value)]
+
+
+def rewritten_slots(turns: list) -> list:
+    """Each value the person stated that the model took out on a turn that didn't put it to them
+    (architect, 2026-11-03: run 47's outcome reverted, and the confirm check didn't fire). Replays
+    what landed from the stored turns alone, so a stored run re-reads with no model time: a write a
+    later ``contradiction:<file>#<path>`` turn asks about pended, and a refused reply never landed.
+    What an answer on a confirm, contradiction or null turn wrote is stated. A stored turn doesn't
+    say what its question asked, so a value confirmed and left unchanged isn't read here, and the
+    loop's own check holds more than this reads. Adding to a leaf takes nothing out."""
+    talk = ("confirm", "contradiction", "null")
+    draft, stated, out = se.Draft(), {}, []
+    for i, t in enumerate(turns):
+        patch = next((r.get("patch") for r in t.get("replies") or [] if not r.get("refused")), None) or {}
+        for e in patch.get("unset") or []:
+            if isinstance(e, dict) and "file" in e and "path" in e and not se._is_rendering(str(e["file"]), str(e["path"])):
+                se._unset(draft, str(e["file"]), str(e["path"]))
+        wrote = []
+        for e in patch.get("set") or []:
+            if not (isinstance(e, dict) and "file" in e and "path" in e and "value" in e):
+                continue
+            f = str(e["file"])
+            for path, value in se._leaves(str(e["path"]), copy.deepcopy(e["value"])):
+                if path == "" or se._is_rendering(f, path):
+                    continue
+                c, k = se._locate(draft.files.setdefault(f, {}), se.parse_path(path), create=True)
+                if k in c:
+                    if c[k] == value:
+                        continue
+                    asked = f"contradiction:{f}#{path}"
+                    if t.get("key") != asked and any(x.get("key") == asked for x in turns[i + 1:]):
+                        continue
+                was = se._values(c[k]) if k in c else []
+                c[k] = value
+                wrote.append((f, path, [x for x in se._values(value) if x not in was]))
+        for (f, path), (said_at, values) in list(stated.items()):
+            ok, now = se._get(draft.files, f, path)
+            gone = [x for x in values if not ok or x not in se._values(now)]
+            if gone and t.get("kind") not in talk:
+                out.append({"turn": t.get("turn"), "key": t.get("key"), "file": f, "path": path,
+                            "stated_at": said_at, "gone": gone})
+            stated[(f, path)] = (said_at, [x for x in values if x not in gone])
+        if t.get("kind") in talk:
+            for f, path, new in wrote:
+                if new:
+                    was = stated.get((f, path), (None, []))[1]
+                    stated[(f, path)] = (t.get("turn"), was + [x for x in new if x not in was])
+    return out
+
+
 def _as_expected(keys, user: Optional[AligningUser], files: dict) -> set:
     """The recorded ``keys`` in the expected bundle's spelling, aligned against the final ``files``
     as the scripted user aligns a question. A planted key is named in the expected bundle's ids; a
@@ -734,6 +813,10 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
     unreachable = sorted(set(se._workflows(r["files"])) - se._reachable(r["files"]))
     pairs = AligningUser(transcript, expected)._pair_definitions(_index(r["files"]), _index(expected))
     dropped, routes = dropped_steps(r["files"], expected, pairs), dropped_routes(r["files"], expected, pairs)
+    barred, required = wrong_excludes(r["files"], expected, pairs), wrong_requires(r["files"], expected)
+    rewritten = rewritten_slots(r["messages"])
+    route_bar = r["status"] == "runnable" and not unreachable and not dropped and not routes
+    slot_bar = not barred and not required and not rewritten
     return {
         "fixture": name,
         "questions": len(keys), "bank": len(bank),
@@ -752,7 +835,13 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "unreachable": unreachable,
         "dropped_steps": dropped,
         "dropped_routes": routes,
-        "bar_met": r["status"] == "runnable" and not unreachable and not dropped and not routes,
+        "wrong_excludes": barred,
+        "wrong_requires": required,
+        "rewritten_slots": rewritten,
+        "rewrites_refused": [m for m in r["model_errors"] if m.get("fault") == "rewrite"],
+        "route_bar": route_bar,
+        "slot_bar": slot_bar,
+        "bar_met": route_bar and slot_bar,
         "exact": r["files"] == expected,
         "leaf_diffs": {"count": len(ld), "first": ld[:20]},
         "semantic_diffs": {"count": len(sd), "first": sd[:20]},
@@ -805,7 +894,7 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"arm": args.arm, "fixtures": rows}, indent=2, default=str), encoding="utf-8")
     hdr = f"{'fixture':26} {'q':>3} {'bank':>4} {'red':>3} {'unans':>5} {'unres':>5} {'contra':>6} {'defer':>5} " \
-          f"{'left':>4} {'rn_err':>6} {'exact':>5} {'leaf':>4} {'sem':>4} {'mdl_err':>7} {'alg':>3} {'unal':>4} {'unbk':>4} {'path':>4} {'dref':>4} {'drop':>4} {'bar':>5} {'status':>10} {'sec':>6}"
+          f"{'left':>4} {'rn_err':>6} {'exact':>5} {'leaf':>4} {'sem':>4} {'mdl_err':>7} {'alg':>3} {'unal':>4} {'unbk':>4} {'path':>4} {'dref':>4} {'drop':>4} {'route':>5} {'slot':>5} {'status':>10} {'sec':>6}"
     print(hdr)
     for r in rows:
         print(f"{r['fixture']:26} {r['questions']:>3} {r['bank']:>4} {len(r['redundant']):>3} "
@@ -814,7 +903,7 @@ def main() -> int:
               f"{r['deferrals_recorded']}/{r['deferrals_planted']:>3} {len(r['gaps_left']):>4} "
               f"{r['runnable_errors']['count']:>6} {str(r['exact']):>5} {r['leaf_diffs']['count']:>4} "
               f"{r['semantic_diffs']['count']:>4} {r['model_errors']:>7} {len(r['aligned_answers']):>3} {len(r['unaligned']):>4} "
-              f"{len(r['unbanked']):>4} {len(r['answered_by_path']):>4} {len(r['deferred_refusals']):>4} {len(r['dropped_steps']):>4} {len(r['dropped_routes']):>4} {str(r['bar_met']):>5} {r['status']:>10} {r['seconds']:>6}")
+              f"{len(r['unbanked']):>4} {len(r['answered_by_path']):>4} {len(r['deferred_refusals']):>4} {len(r['dropped_steps']):>4} {len(r['dropped_routes']):>4} {str(r['route_bar']):>5} {str(r['slot_bar']):>5} {r['status']:>10} {r['seconds']:>6}")
     return 0
 
 

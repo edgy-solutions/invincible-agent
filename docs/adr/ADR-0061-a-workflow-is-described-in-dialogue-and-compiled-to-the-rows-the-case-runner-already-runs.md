@@ -1,12 +1,13 @@
 # ADR-0061 — A workflow is described in dialogue and compiled to the rows the case runner already runs
 
 **Status:** Proposed, ruled 2026-11-02: this ADR records the design and its measurements, including
-the gap below. **The bar for "the loop works" is not called met.** It is met when a run is runnable with
-all four stages reachable and each stage has the steps the person described (ruled 2026-11-02).
-`runnable` now refuses any definition no table routes to from the trigger. Runs 47 to 49, on
-instrument v2, whose bar reads routing as well as steps, all read `yes`, and one of those is false: run 48 lets the
-person who logged a notice sign off its impact review, which the person barred, and the bar doesn't read `excludes`.
-Run 49 lost the required details to a model timeout. Whether the bar is met is the architect's call (§10).
+the gap below. **The bar for "the loop works" is not met: no run from 47 to 49 is clean (ruled 2026-11-03).**
+It is met when a run is runnable with all four stages reachable, each stage has the steps the person described
+(ruled 2026-11-02), and the draft holds what the person stated (ruled 2026-11-03).
+`runnable` now refuses any definition no table routes to from the trigger. Instrument v3 reads routes and slots as two
+bars. Runs 47 to 49 all read `yes` on routes and `no` on slots: run 47 put back an outcome the person had corrected,
+run 48 lets the person who logged a notice sign off its impact review, which the person barred, and run 49 lost the
+required details to a model timeout (§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2160,6 +2161,8 @@ nine stored runs, and the rule would be chosen after seeing them, as v2's was.
 | 48 | yes | **impact review bars nobody** | right | **not raised** | no | `dispositioned` |
 | 49 | yes | right | **absent** (timeout) | caught | no | `dispositioned` |
 
+Superseded by the ruling below: run 47 reads `no` on slots, so no run of these reads `yes` on both.
+
 **The grammar line did what it was for, on routes.** Wrong routes went from 3, 1 and 2 in runs 44 to 46 to 0, 0 and 0.
 The only code change between the two batches is that line and a docstring, but three runs each is a count, not a rate.
 The ends are apart in all three. The person's own word is used in one: run 49 has `acknowledged` and `dispositioned`,
@@ -2189,6 +2192,8 @@ diff sees it, and the grammar doesn't mention the form.
 
 #### 2026-11-03: the questions runs 47 to 49 leave, for the architect
 
+All three are ruled below. Question 2's recommendation was overruled: run 47's `recorded` counts, as a slot fault.
+
 1. **Is the bar met?** My recommendation is no, not on this instrument. Have the bar read `excludes` and `requires`,
    as instrument v3, and re-read 41 to 49 together. It needs no model time. If you accept the table above, run 47 is
    the `yes` with the contradiction caught and run 48 is the run that should read `no` and does, which is both halves.
@@ -2209,11 +2214,13 @@ diff sees it, and the grammar doesn't mention the form.
    whether that was meant.
 4. The record's `approval_chain` is a fixed list, and the grammar doesn't mention `{case.…}`.
 5. The record's outcome word isn't covered by the endings line. The two-step line below speaks to it for a
-   `signal_await`, and that is not measured.
+   `signal_await`, and that is not measured. Where the model puts back a word the person corrected, it is now ruled a
+   slot fault and refused (below).
 
 #### 2026-11-03: where the bar stands, and the two-step grammar
 
-**Bar status: not called met, and with the architect.** As instrument v2 reads it, run 47 is the first half, `yes` with
+**Bar status when this was written: not called met, and with the architect. The ruling below says not met.** As
+instrument v2 reads it, run 47 is the first half, `yes` with
 the contradiction caught. No run from 47 to 49 is the second half. Runs 44 and 45 read `no` on the same instrument, one
 grammar line earlier. Run 48 should read `no` and reads `yes`. The status above is not flipped and the instrument is
 not changed.
@@ -2228,6 +2235,121 @@ disposes, and the signal_await accepts the user's word for what was done."
 
 Its seal only shows the text is there. Only model runs can show that the first draft changes, and none has run on this
 line. It does nothing for run 48's lost bar or run 49's timeout. The refusal stays as the backstop.
+
+#### 2026-11-03: the rulings on runs 47 to 49
+
+1. **Instrument v3 reads `excludes` and `requires` alongside step kinds and routes.** "A bar that can't see the
+   self-signoff exclusion was reading `yes` on a workflow the person ruled out — that is the finding of this batch."
+2. **Run 47's `recorded` counts, as a slot fault and not a route fault.** "The outcome name is a slot the person set and
+   the model reverted it. The confirm/turn check exists for exactly this; it didn't fire." So run 47 reads `yes` on
+   routes and `no` on the confirm. "Bar not met this batch; no run is clean." The table records the route bar and the
+   slot bar apart.
+3. **v3 first, then the two-step runs.** Added to the confirm check: "a slot the person has stated is not rewritten by
+   the model without a confirm turn; a rewrite is a fault, not a deferral."
+
+#### 2026-11-03: instrument v3 and the rewrite check, built
+
+**The bar is now two bars, and `yes` needs both.** The route bar is what v2's bar was: runnable, every stage reachable,
+no stage that dropped a step, no wrong route. The slot bar reads three things:
+
+- `wrong_excludes`: a step whose bar on who may answer isn't the expected one. It compares the values, where `canonical`
+  keeps only whether there is a bar, so a bar on the wrong field reads too. Steps pair by kind and in order, as
+  `dropped_steps` pairs them.
+- `wrong_requires`: the trigger's required details, in any order, with an absent list read as empty.
+- `rewritten_slots`: a value the person stated that the model took out on a turn that didn't put it to them, replayed
+  from the stored turns.
+
+**Runs 41 to 49 re-read, with no model time.**
+
+| run | route bar | slot bar | bar | what the route bar reads | what the slot bar reads |
+| --- | --- | --- | --- | --- | --- |
+| 41 | no | yes | no | 5 wrong routes | |
+| 42 | no | yes | no | 1 dropped step, 6 wrong routes | |
+| 43 | no | yes | no | 1 dropped step, 2 wrong routes | |
+| 44 | no | yes | no | 1 dropped step, 3 wrong routes | |
+| 45 | no | yes | no | `cannot_run`, 1 wrong route | |
+| 46 | no | yes | no | 2 wrong routes | |
+| 47 | **yes** | **no** | no | | `filed` taken out of the record's outcomes and rows at turn 32 |
+| 48 | **yes** | **no** | no | | the impact review's `excludes` is `[]`, expected the person who logged the notice |
+| 49 | **yes** | **no** | no | | `trigger.requires` absent |
+
+The route bar equals the stored `bar_met` on all nine, which is the control that v2's reading survived the split. Runs
+48 and 49 flip as ruled, and run 47 reads `no` as ruled in item 2. Nothing else moved: 41 to 46 have nothing on the slot
+bar and already read `no` on routes.
+
+**Where that leaves the bar for Proposed: not met.** It needs one run `yes` with the contradiction caught, and one that
+should read `no` and does. Runs 48 and 49 are now the second half. No run is the first. Nothing is flipped.
+
+**Why the check didn't fire on run 47.** Turn 32 was a `missing` gap, asking what follows `recorded`, because the
+`signal_await` still accepted that word. That gap's `revises` names the table's `domain.outcome` and `rows`, so the write
+didn't pend. `_refuse_rejected` didn't apply either, because it stops a value the person took out from coming back, and
+this took out a value the person had put in. Nothing read that direction.
+
+**The check.** `Draft.stated` holds, per leaf, the values the person stated and the turn. A patch that takes one out is
+refused unless the turn puts that leaf to the person, meaning a confirm, contradiction or null whose `revises` or
+`rewrites` names it, or a structural fix a refusal asked for. The refusal is charged to the turn in `model_errors` with
+`fault: rewrite`, and it says what the turn may still change, because otherwise the model has nowhere to go but the same
+value. The patch gets the one restatement every refused patch gets. If that is refused too, the gap goes to `open`, so
+the run is `cannot_run`, and `leave` isn't called, so it is never a deferral. An open key can be asked once more, and an
+answer that settles it then closes it.
+
+**The stored replies put back through the loop, with no model.** This shows where the check fires on real patches. Each
+stored reply went through `run` with the check on:
+
+| run | turns stored / replayed | rewrite faults | status stored → replayed |
+| --- | --- | --- | --- |
+| 41 | 25 / 25 | 0 | runnable → runnable |
+| 42 | 34 / 31 | 0 | runnable → `cannot_run` |
+| 43 | 25 / 25 | 0 | runnable → `cannot_run` |
+| 44 | 26 / 26 | 0 | runnable → runnable |
+| 45 | 29 / 29 | 0 | `cannot_run` → `cannot_run` |
+| 46 | 27 / 27 | 0 | runnable → runnable |
+| 47 | 32 / 34 | **2, both at turn 32** | runnable → `cannot_run` |
+| 48 | 27 / 27 | 0 | runnable → runnable |
+| 49 | 27 / 27 | 0 | runnable → runnable |
+
+At turn 32 of run 47 the outcome stays `filed`, and the model would read: "the possible outcomes of record chaining: the
+person stated ["filed"] at turn 30 and this turn does not put it to them, so it stays; this turn may change the possible
+answers for await record in record, which answers need a reason for await record in record; still needed: When record
+ends 'recorded', what happens next?" The two faults are one patch tried twice, since a replay has no second reply to
+give. Its two extra turns are `contradiction:chaining.record_chaining.filed` and `outputs.record.next.recorded` asked
+again, and nothing is stored to answer them, so its `cannot_run` is what a replay can show, not what a live run would do.
+Runs 42 and 43 change status because of the write-back refusal, `bc357427`, not because of this check. That refusal came
+after they ran. Each wrote `disposes` back on its second `ends` turn after the person rejected it (run 42's turn 31, run
+43's turn 25), that patch is now refused, and the gap stays open. A replay can't say whether a model given the rewrite
+text takes the way out. Only runs 50 to 52 can.
+
+**The replay found a defect the seals had passed.** My first version compared a whole `domain` dict as one value. It
+refused run 45's turn 18, which only grew the outcome list, because a confirm had put `domain` to the person at turn 16.
+That was a false fault on a correct turn. The check now reads a dict one leaf at a time, and it drops a stated value once
+a turn that put it to the person has changed it. Both have seals, and run 45 now replays clean.
+
+#### 2026-11-03: readings in the rewrite check, for the architect's review
+
+1. **"Stated" is what the turn check already means by it.** It is what the answer on a confirm, contradiction or null
+   turn wrote, one value at a time within a list. A confirm or overwrite contradiction also states what it asked about
+   and left standing. A contradiction over one chaining value states only what its answer changed: run 42 answered "can
+   it end this way" with the opening's guessed rows still in place, and the turns that then routed them were right.
+2. **A value set at a `missing` gap isn't stated, for this check.** The ruling that the
+   gap's question is the ask was about the turn check. Read here as well, it would add ten readings on the stored runs,
+   across 42, 44, 45, 46, 47, 48 and 49. Eight of them are `routed` gaps, where a stage no table reached gets routed and
+   the table an earlier `missing` turn drafted has to change, so the check would refuse the turn that makes a stage
+   reachable. Run 47's turn 32 reads under both. If you want the wider reading, it is one condition in `_note_stated`
+   and in `rewritten_slots`, and it needs that exemption ruled.
+3. **Adding to a leaf isn't a rewrite.** Only a value taken out is. So a person's `excludes: []` states nothing, and a bar
+   the model adds to it later isn't refused here. `wrong_excludes` would read it if it landed.
+4. **A rewrite that was refused and repaired doesn't fail the slot bar.** The check fired and the slot is intact. It shows
+   in `rewrites_refused`. Only one that landed fails.
+5. **The instrument reads less than the loop holds.** A stored turn doesn't record what its question asked, so
+   `rewritten_slots` reads only what an answer wrote. The loop also holds a value confirmed and left unchanged. Its seal
+   is `test_what_an_answer_wrote_at_a_confirm_is_stated_and_a_leaf_it_left_alone_is_not`.
+
+**What v3 still doesn't read.** The slot bar reads a reverted word, not a wrong one. Runs 48 and 49 end with the record's
+outcome `dispositioned`, where the expected bundle has `filed`. Both wrote it at turn 26, the confirm answered "Once it is
+filed the notice is dispositioned and that is the end", so nothing was reverted and neither reading is about it. Only
+runs 41 and 46 end on `filed`. The semantic diff sees the difference, and the bar doesn't. The fixed `approval_chain`
+isn't read either. Runs 48 and 49 read `no` for other reasons, so neither of these moved a reading in this batch. It could
+in the next one.
 
 ## Consequences
 

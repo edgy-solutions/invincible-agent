@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -2889,3 +2890,365 @@ def test_every_step_present_and_every_end_on_one_name_is_not_the_workflow():
     pairs = _pairs(f)
     assert pairs == SAME and sm.dropped_steps(f, _good(), pairs) == []
     assert len(sm.dropped_routes(f, _good(), pairs)) == 5
+
+
+# ── a stated value is not rewritten, and the bar reads routes and slots apart (architect, 2026-11-03) ─
+
+_TBL = "decisions/some_stage_chaining.yaml"
+_OUT, _ROWS, _ACC = "domain.outcome", "rows", "steps[id=wait].accepts"
+_WF = "workflows/some_stage.yaml"
+_MISSING = se.Gap("next.other", "outputs", "missing", "When it ends 'other', what happens next?",
+                  revises=((_TBL, _OUT), (_TBL, _ROWS), (_WF, _ACC)))
+_CONFIRM = se.Gap("confirm.table", "outputs", "confirm", "Is that right?", revises=((_TBL, _OUT), (_TBL, _ROWS)))
+
+
+def _row(v, then="done"):
+    return {"when": {"outcome": v}, "then": then}
+
+
+def _table(*values):
+    return {_TBL: {"decision": "some_stage_chaining", "domain": {"outcome": list(values)},
+                   "rows": [_row(v) for v in values], "terminals": ["done"]},
+            _WF: {"id": "some_stage", "steps": [{"kind": "signal_await", "id": "wait", "accepts": ["other"]}]}}
+
+
+def _stated(*values):
+    draft = se.Draft(files=_table(*values))
+    draft.stated[(_TBL, _OUT)] = (5, list(values))
+    return draft
+
+
+def _rewritten(*values):
+    return se.Draft(files=_table(*values))
+
+
+def test_a_stated_value_rewritten_at_a_missing_gap_is_refused_and_says_what_may_change():
+    with pytest.raises(se.RewriteError) as e:
+        se._refuse_rewrite(_stated("said"), _rewritten("other"), _MISSING)
+    said = str(e.value)
+    assert '["said"]' in said and "turn 5" in said and _MISSING.question in said
+    assert se._describe(_WF, _ACC) in said and se._describe(_TBL, _OUT) in said
+
+
+def test_the_refusal_is_a_model_error_and_not_a_structure_refusal():
+    assert issubclass(se.RewriteError, se.PatchError) and not issubclass(se.RewriteError, se.StructureError)
+
+
+@pytest.mark.parametrize("kind", ["confirm", "contradiction", "null"])
+def test_control_a_turn_that_puts_the_leaf_to_the_person_may_rewrite_it(kind):
+    g = se.Gap("k", "outputs", kind, "q", revises=((_TBL, _OUT),))
+    se._refuse_rewrite(_stated("said"), _rewritten("other"), g)
+
+
+def test_control_a_turn_that_puts_another_leaf_to_the_person_may_not():
+    g = se.Gap("k", "outputs", "confirm", "q", revises=((_TBL, _ROWS),))
+    with pytest.raises(se.RewriteError):
+        se._refuse_rewrite(_stated("said"), _rewritten("other"), g)
+
+
+def test_a_confirm_may_rewrite_what_its_rewrite_scope_names():
+    g = se.Gap("k", "outputs", "confirm", "q", rewrites=((_TBL, ""),))
+    se._refuse_rewrite(_stated("said"), _rewritten("other"), g)
+
+
+def test_control_adding_to_a_stated_leaf_takes_nothing_out():
+    se._refuse_rewrite(_stated("said"), _rewritten("said", "other"), _MISSING)
+
+
+def test_control_a_value_nobody_stated_may_be_replaced_at_a_missing_gap():
+    se._refuse_rewrite(_rewritten("guess"), _rewritten("other"), _MISSING)
+
+
+def test_control_a_structural_fix_the_refusal_named_may_rewrite():
+    se._refuse_rewrite(_stated("said"), _rewritten("other"), _MISSING, fixing=((_TBL, "domain"),))
+
+
+def test_taking_the_stated_leaf_away_is_a_rewrite():
+    trial = _rewritten("said")
+    del trial.files[_TBL]["domain"]["outcome"]
+    with pytest.raises(se.RewriteError):
+        se._refuse_rewrite(_stated("said"), trial, _MISSING)
+
+
+def test_a_rewrite_by_a_whole_list_reads_on_the_leaf_inside_it():
+    draft = se.Draft(files=_table("said"))
+    draft.stated[(_WF, _ACC)] = (5, ["other"])
+    trial = copy.deepcopy(draft)
+    trial.files[_WF]["steps"] = [{"kind": "signal_await", "id": "wait", "accepts": ["changed"]}]
+    with pytest.raises(se.RewriteError):
+        se._refuse_rewrite(draft, trial, se.Gap("k", "outputs", "missing", "q", revises=((_WF, "steps"),)))
+
+
+def test_a_rewrite_refusal_names_no_case():
+    table = "decisions/any_name_chaining.yaml"
+    draft = se.Draft(files={table: {"domain": {"outcome": ["said"]}}})
+    draft.stated[(table, _OUT)] = (2, ["said"])
+    trial = se.Draft(files={table: {"domain": {"outcome": ["other"]}}})
+    g = se.Gap("k", "outputs", "missing", "what next?", revises=((table, _OUT),))
+    with pytest.raises(se.RewriteError) as e:
+        se._refuse_rewrite(draft, trial, g)
+    assert not re.search(r"pcn|record|filed|notice", str(e.value), re.I)
+
+
+def test_what_an_answer_wrote_at_a_confirm_is_stated_and_a_leaf_it_left_alone_is_not():
+    g = se.Gap("k", "outputs", "confirm", "q", revises=((_TBL, _OUT), (_TBL, _ROWS)), asks=((_TBL, _OUT),))
+    draft = se.Draft(files=_table("said"))
+    se._note_stated(draft, g, _table("said"), 7)
+    assert draft.stated == {(_TBL, _OUT): (7, ["said"])}
+
+
+def test_a_contradiction_over_one_value_states_what_it_wrote_and_not_the_rest_of_the_leaf():
+    g = se.Gap("contradiction:chaining.some_stage_chaining.new", "outputs", "contradiction", "q",
+               revises=((_TBL, _ROWS),), asks=((_TBL, _ROWS),))
+    draft = se.Draft(files=_table("guess", "new"))
+    se._note_stated(draft, g, _table("guess"), 7)
+    assert draft.stated == {(_TBL, _ROWS): (7, [_row("new")])}
+    se._refuse_rewrite(draft, _rewritten("other", "new"), _MISSING)
+
+
+def test_control_an_overwrite_contradiction_states_the_whole_of_what_it_asks():
+    g = se.Gap(f"contradiction:{_TBL}#{_OUT}", "outputs", "contradiction", "q", revises=((_TBL, _OUT),))
+    draft = se.Draft(files=_table("kept", "other"))
+    se._note_stated(draft, g, _table("kept", "other"), 7)
+    assert draft.stated == {(_TBL, _OUT): (7, ["kept", "other"])}
+
+
+def test_a_missing_gap_states_nothing():
+    draft = se.Draft(files=_table("said"))
+    se._note_stated(draft, _MISSING, {}, 7)
+    assert draft.stated == {}
+
+
+def test_a_value_the_answer_took_out_is_no_longer_stated():
+    draft = _stated("said", "gone")
+    draft.files = _table("said")
+    se._note_stated(draft, se.Gap("k", "outputs", "confirm", "q", revises=((_TBL, _OUT),)), _table("said", "gone"), 7)
+    assert draft.stated == {(_TBL, _OUT): (7, ["said"])}
+
+
+def test_a_stated_dict_reads_one_leaf_at_a_time_so_growing_it_is_not_a_rewrite():
+    g = se.Gap("k", "outputs", "confirm", "q", revises=((_TBL, "domain"),))
+    draft = se.Draft(files=_table("said"))
+    se._note_stated(draft, g, _table("said"), 7)
+    assert draft.stated == {(_TBL, _OUT): (7, ["said"])}
+    se._refuse_rewrite(draft, _rewritten("said", "other"), _MISSING)
+    with pytest.raises(se.RewriteError):
+        se._refuse_rewrite(draft, _rewritten("other"), _MISSING)
+
+
+def test_an_empty_dict_states_nothing_so_filling_it_is_not_a_rewrite():
+    empty = _table("said")
+    empty[_TBL]["domain"] = {}
+    g = se.Gap("k", "outputs", "confirm", "q", revises=((_TBL, "domain"),))
+    draft = se.Draft(files=empty)
+    se._note_stated(draft, g, copy.deepcopy(empty), 7)
+    assert draft.stated == {}
+
+
+def test_a_value_changed_on_a_turn_that_put_it_to_the_person_is_not_held_against_a_later_turn():
+    g = se.Gap("k", "outputs", "confirm", "q", rewrites=((_TBL, ""),))
+    draft = _stated("said")
+    draft.files = _table("other")
+    se._note_stated(draft, g, _table("said"), 7)
+    assert draft.stated == {}
+    se._refuse_rewrite(draft, _rewritten("elsewhere"), _MISSING)
+
+
+def test_control_a_stated_value_a_turn_did_not_put_to_the_person_stays_stated():
+    draft = _stated("said")
+    se._note_stated(draft, se.Gap("k", "outputs", "confirm", "q", revises=((_TBL, _ROWS),)), _table("said"), 7)
+    assert draft.stated[(_TBL, _OUT)] == (5, ["said"])
+
+
+def test_a_value_left_standing_keeps_the_turn_that_stated_it():
+    g = se.Gap("contradiction:chaining.some_stage_chaining.new", "outputs", "contradiction", "q", revises=((_TBL, _OUT),))
+    draft = _stated("said")
+    se._note_stated(draft, g, _table("said"), 7)
+    assert draft.stated[(_TBL, _OUT)] == (5, ["said"])
+
+
+def test_a_leaf_that_no_longer_reads_holds_nothing_and_does_not_raise():
+    assert se._held(_table("said"), _WF, "steps[id=wait]") == {}
+    assert se._held(_table("said"), _WF, "steps[id=gone].accepts") == {}
+    assert se._held(_table("said"), "nowhere.yaml", _OUT) == {}
+    assert se._held(_table("said"), _TBL, "domain") == {_OUT: ["said"]}
+
+
+def _one_rewrite(restate=None):
+    """Writes ``said`` at the confirm, then rewrites it at the missing gap; ``restate`` answers the refusal."""
+    def ex(entry, draft, gap):
+        if gap is None:
+            return {"set": [{"file": f, "path": "", "value": v} for f, v in _table("guess").items()]}
+        if gap.kind == "confirm":
+            return {"set": [{"file": _TBL, "path": _OUT, "value": ["said"]}]}
+        if entry.get("refused") and restate is not None:
+            return restate
+        return {"set": [{"file": _TBL, "path": _OUT, "value": ["other"]}]}
+    return ex
+
+
+def _script(monkeypatch):
+    """Two turns, the confirm and then the gap, whose gap stays live until nothing reads ``other``."""
+    def live(draft):
+        wait = draft.files[_WF]["steps"][0]["accepts"] if _WF in draft.files else []
+        return [_CONFIRM] + ([_MISSING] if "other" in wait else [])
+    monkeypatch.setattr(se, "_all_gaps", live)
+    monkeypatch.setattr(se, "gaps", lambda d: [g for g in live(d) if d.asked[g.key] < (1 if g.kind == "confirm" else 2)])
+
+
+def test_a_rewrite_refused_on_both_tries_leaves_the_gap_open_and_never_deferred(monkeypatch):
+    _script(monkeypatch)
+    r = se.run({"opening": {"says": "x"}}, _one_rewrite(), answer=lambda g, d: {"says": "it is said"})
+    assert r["files"][_TBL]["domain"]["outcome"] == ["said"]
+    assert _MISSING.key in r["open"] and "rewriting a stated value" in r["open"][_MISSING.key]
+    assert _MISSING.key not in r["deferrals"] and r["status"] == "cannot_run"
+    assert {m["fault"] for m in r["model_errors"]} == {"rewrite"}
+    assert sum(1 for t in r["messages"] for x in t["replies"] if x.get("refused")) == 4
+
+
+def test_control_a_restatement_that_changes_what_the_turn_may_change_closes_the_gap(monkeypatch):
+    _script(monkeypatch)
+    moved = {"set": [{"file": _WF, "path": _ACC, "value": ["said"]}]}
+    r = se.run({"opening": {"says": "x"}}, _one_rewrite(moved), answer=lambda g, d: {"says": "it is said"})
+    assert r["files"][_TBL]["domain"]["outcome"] == ["said"] and r["open"] == {}
+    assert r["files"][_WF]["steps"][0]["accepts"] == ["said"]
+    assert [m.get("fault") for m in r["model_errors"]] == ["rewrite"]
+
+
+def test_a_turn_that_ends_refused_states_nothing(monkeypatch):
+    def ex(entry, draft, gap):
+        if gap is None:
+            return {"set": [{"file": f, "path": "", "value": v} for f, v in _table("guess").items()]}
+        return {"set": "not a list of entries"}
+    monkeypatch.setattr(se, "_all_gaps", lambda d: [_CONFIRM])
+    monkeypatch.setattr(se, "gaps", lambda d: [_CONFIRM] if d.asked[_CONFIRM.key] < 1 else [])
+    seen = {}
+    real = se._note_stated
+    monkeypatch.setattr(se, "_note_stated", lambda *a: seen.setdefault("called", True) and real(*a))
+    se.run({"opening": {"says": "x"}}, ex, answer=lambda g, d: {"says": "no, it is something else"})
+    assert "called" not in seen
+
+
+def _t(turn, kind, key, *sets, refused=False):
+    reply = {"patch": {"set": [{"file": _TBL, "path": p, "value": v} for p, v in sets]}}
+    return {"turn": turn, "kind": kind, "key": key, "replies": [{**reply, "refused": "no"} if refused else reply]}
+
+
+_OPEN = _t(0, "opening", None, (_OUT, ["guess"]))
+
+
+def test_the_instrument_reads_a_stated_value_rewritten_on_a_missing_turn():
+    out = sm.rewritten_slots([_OPEN, _t(1, "confirm", "c", (_OUT, ["said"])), _t(2, "missing", "m", (_OUT, ["other"]))])
+    assert [(x["turn"], x["path"], x["stated_at"], x["gone"]) for x in out] == [(2, _OUT, 1, ["said"])]
+
+
+@pytest.mark.parametrize("kind", ["confirm", "contradiction", "null"])
+def test_control_the_instrument_passes_a_rewrite_on_a_turn_that_asks(kind):
+    assert sm.rewritten_slots([_OPEN, _t(1, "confirm", "c", (_OUT, ["said"])), _t(2, kind, "k", (_OUT, ["other"]))]) == []
+
+
+def test_control_the_instrument_passes_a_guess_replaced_and_a_leaf_added_to():
+    assert sm.rewritten_slots([_OPEN, _t(1, "missing", "m", (_OUT, ["other"]))]) == []
+    assert sm.rewritten_slots([_OPEN, _t(1, "confirm", "c", (_OUT, ["said"])), _t(2, "missing", "m", (_OUT, ["said", "x"]))]) == []
+
+
+def test_control_the_instrument_passes_a_write_that_pended_and_was_then_asked():
+    asked = f"contradiction:{_TBL}#{_OUT}"
+    out = sm.rewritten_slots([_OPEN, _t(1, "confirm", "c", (_OUT, ["said"])), _t(2, "missing", "m", (_OUT, ["other"])),
+                              _t(3, "contradiction", asked, (_OUT, ["said"]))])
+    assert out == []
+
+
+def test_control_the_instrument_passes_a_refused_reply():
+    assert sm.rewritten_slots([_OPEN, _t(1, "confirm", "c", (_OUT, ["said"])),
+                               _t(2, "missing", "m", (_OUT, ["other"]), refused=True)]) == []
+
+
+def test_the_instrument_reads_a_stated_value_inside_a_whole_list_rewrite():
+    leaf = "steps[id=wait].excludes"
+    steps = [{"kind": "human_await", "id": "wait", "excludes": ["said"]}]
+    turns = [_t(0, "opening", None, ("steps", copy.deepcopy(steps))), _t(1, "confirm", "c", (leaf, ["said", "more"])),
+             _t(2, "missing", "m", ("steps", [{"kind": "human_await", "id": "wait", "excludes": []}]))]
+    assert [x["gone"] for x in sm.rewritten_slots(turns)] == [["more"]]
+
+
+def test_a_wrong_field_in_excludes_reads_though_there_is_still_a_bar():
+    f = _good()
+    _step(f, IR, "engineering_disposition")["excludes"] = ["{trigger.someone_else}"]
+    assert [x["stage"] for x in sm.wrong_excludes(f, _good(), SAME)] == ["pcn_impact_review"]
+    assert sm.canonical(f) == sm.canonical(_good())
+
+
+def test_a_bar_lost_from_one_review_reads_on_that_review_alone():
+    f = _good()
+    _step(f, IR, "engineering_disposition")["excludes"] = []
+    assert [x["stage"] for x in sm.wrong_excludes(f, _good(), SAME)] == ["pcn_impact_review"]
+
+
+def test_a_bar_nobody_described_reads_too():
+    f = _good()
+    _step(f, ACK, next(s["id"] for s in f[ACK]["steps"] if s["kind"] == "human_await"))["excludes"] = ["{trigger.x}"]
+    assert [x["stage"] for x in sm.wrong_excludes(f, _good(), SAME)] == ["pcn_acknowledge"]
+
+
+def test_control_excludes_in_another_order_and_an_absent_empty_read_the_same():
+    f = _good()
+    del _step(f, ACK, next(s["id"] for s in f[ACK]["steps"] if s["kind"] == "human_await"))["excludes"]
+    assert sm.wrong_excludes(f, _good(), SAME) == [] and sm.wrong_excludes(_good(), _good(), SAME) == []
+
+
+def test_a_stage_nothing_pairs_with_reads_its_bars():
+    out = sm.wrong_excludes(_good(), _good(), {w: w for w in STAGES if w != "pcn_impact_review"})
+    assert [(x["stage"], x["drafted"]) for x in out] == [("pcn_impact_review", None)]
+
+
+def test_required_details_gone_or_changed_read_and_their_order_does_not():
+    f = _good()
+    named = list(f[TRIG]["requires"])
+    assert sm.wrong_requires(f, _good()) == []
+    f[TRIG]["requires"] = list(reversed(named))
+    assert sm.wrong_requires(f, _good()) == []
+    f[TRIG]["requires"] = named[:-1]
+    assert sm.wrong_requires(f, _good()) == [{"expected": named, "drafted": named[:-1]}]
+    del f[TRIG]["requires"]
+    assert sm.wrong_requires(f, _good()) == [{"expected": named, "drafted": None}]
+
+
+_REWROTE = [_OPEN, _t(1, "confirm", "c", (_OUT, ["said"])), _t(2, "missing", "m", (_OUT, ["other"]))]
+
+
+@pytest.mark.parametrize("edit,route,slot", [
+    ("none", True, True), ("excludes", True, False), ("requires", True, False), ("rewrite", True, False),
+    ("drop", False, True), ("route", False, True), ("cannot_run", False, True)])
+def test_the_two_bars_read_apart_and_the_bar_needs_both(monkeypatch, edit, route, slot):
+    real = se.run
+
+    def result(*a, **k):
+        r = real(*a, **k)
+        r["files"] = copy.deepcopy(r["files"])
+        if edit == "excludes":
+            _step(r["files"], IR, "engineering_disposition")["excludes"] = []
+        elif edit == "requires":
+            r["files"][TRIG]["requires"] = r["files"][TRIG]["requires"][:-1]
+        elif edit == "rewrite":
+            r["messages"] = _REWROTE
+        elif edit == "drop":
+            r["files"] = {**r["files"], **_record_only_emits("filed")}
+        elif edit == "route":
+            r["files"][ACK_CH]["rows"] = [{**x, "then": "elsewhere"} if x["when"]["outcome"] == "escalated" else x
+                                          for x in r["files"][ACK_CH]["rows"]]
+        elif edit == "cannot_run":
+            r["status"] = "cannot_run"
+        return r
+    monkeypatch.setattr(sm.se, "run", result)
+    row = sm.measure("pcn_review", se.OracleExtractor(), aligned=True)
+    assert row["route_bar"] is route and row["slot_bar"] is slot
+    assert row["bar_met"] is (route and slot)
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_the_oracle_meets_both_bars_with_nothing_refused_on_every_fixture(name):
+    row = sm.measure(name, se.OracleExtractor(), aligned=True)
+    assert row["route_bar"] is True and row["slot_bar"] is True
+    assert row["wrong_excludes"] == [] and row["wrong_requires"] == []
+    assert row["rewritten_slots"] == [] and row["rewrites_refused"] == []
