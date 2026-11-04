@@ -674,11 +674,24 @@ def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> 
 
 
 #: The central gateway's route ids a delegate row may name. The gateway owns them (dag-tools,
-#: `central_gateway.identity`); that is another repository, so this list is restated and nothing
-#: here can seal the two equal. A misspelt route fails here, not as a delegate who never matches.
+#: `central_gateway.identity`). A misspelt route fails here, not as a delegate who never matches.
+#:
+#: A COPY, AND IT SAYS WHERE FROM (architect 11-04). The ruled form is dag-tools publishing the list
+#: as data (`gateway_routes.json`, item 01M6KF821P2C3KRQN86FF0N61N) and this importing it. Until then the list was
+#: read at the commit and image in GATEWAY_ROUTES_READ_AT, and
+#: tests/security/test_gateway_delegates_rail.py goes red when the chart pins another gateway image.
+#: Read at 4096a11: `ROUTE_AUTHORIZE` is the one route the delegate table is keyed on.
+#: `broker.resolve` and `gateway.register` (`internal_door.py`) are doors with their own caller
+#: lists; they never consult this table, so they are not here.
 GATEWAY_ROUTES = ("assets.authorize",)
+GATEWAY_ROUTES_READ_AT = {
+    "dag_tools": "4096a112eb3fbc91afdf7e0784a12973e72f00e7",
+    "central_gateway_digest": "sha256:ac93ba19f96718cdad6dd40dabd8dc51934db4796ccfd767b5da732b19edf498",
+}
 
-_GD_ROW_FIELDS = ("service", "routes", "granted_by", "reason")
+_GD_ROW_FIELDS = ("service", "routes", "granted_by", "reason", "ratified_by")
+#: A run with no person behind it (architect 11-04). It acts as itself, so it is never a delegate.
+_PIPELINE_PREFIX = "pipeline:"
 
 
 def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
@@ -687,8 +700,9 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
     `raw` is the parsed file, `users` the users.yaml list. Each error reads
     `gateway_delegates.yaml: <service>: ...`. A delegate names a person on a route, so a row's
     `service` must be a seeded service identity (a person holds their own token) and each route a
-    known one (a wildcard is an unknown route). Unknown keys are refused by name, so a typo
-    (`route:`) cannot pass silently."""
+    known one (a wildcard is an unknown route). Every row says why (`reason`) and which seat
+    ratified it (`ratified_by`, e.g. `owner`: a seat, never an identity). Unknown keys are refused
+    by name, so a typo (`route:`) cannot pass silently."""
     pre = "gateway_delegates.yaml"
     if not isinstance(raw, dict) or set(raw) != {"gateway_delegates"}:
         extra = sorted(map(str, set(raw) - {"gateway_delegates"})) if isinstance(raw, dict) else []
@@ -714,7 +728,10 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
         if not isinstance(service, str) or not service.strip():
             out.append(f"{where}: `service` must be a non-empty string")
         else:
-            if not service.startswith(SERVICE_SUBJECT_PREFIX):
+            if service.startswith(_PIPELINE_PREFIX):
+                out.append(f"{where}: a `{_PIPELINE_PREFIX}<name>` run acts for no person and is "
+                           "never a delegate row")
+            elif not service.startswith(SERVICE_SUBJECT_PREFIX):
                 out.append(f"{where}: `service` must be a `{SERVICE_SUBJECT_PREFIX}` identity; "
                            "a person holds their own token and is no delegate")
             elif service not in seeded:
@@ -733,10 +750,13 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
                 elif r in routes[:j]:
                     out.append(f"{where}: route {r!r} is listed more than once")
 
-        for k in ("granted_by", "reason"):
+        for k in ("granted_by", "reason", "ratified_by"):
             v = row.get(k)
             if not isinstance(v, str) or not v.strip():
                 out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and v.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
     return out
 
 

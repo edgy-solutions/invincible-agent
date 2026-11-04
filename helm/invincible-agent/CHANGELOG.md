@@ -25,6 +25,18 @@ Entries merged after the 0.4.78 cut (`8a2717e0`).
   error; it was a 500 or an odd envelope. A blank or non-string candidate at a BFF site is omitted and
   logged.
 
+**A gateway delegate row says who ratified it (architect 11-04, on #224)**
+
+- **Every row in `policy/gateway_delegates.yaml` carries `reason` and `ratified_by`,** and
+  `ratified_by` names a seat such as `owner`, never a person. `validate_policy` refuses a row
+  without either. Nothing reads the file yet, so no answer changes; a deployment's own overlay
+  rows need the field before their next sync.
+- **A `pipeline:<name>` service gets its own refusal:** a run with no person acts as itself and is
+  never a delegate row.
+- **`GATEWAY_ROUTES` records the dag-tools commit and gateway image it was copied from,** and a seal
+  goes red when the chart pins another gateway image without the list being re-read. It stays a
+  copy until dag-tools publishes `gateway_routes.json` (01M6KF821P2C3KRQN86FF0N61N).
+
 ## 0.4.78 — 2026-11-04
 
 **0.4.77 stands as cut at `8fc02746` and rolls nowhere. The sandbox goes from 0.4.75 to this chart.** This
