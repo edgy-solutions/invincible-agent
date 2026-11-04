@@ -1,5 +1,27 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.79 — not yet cut
+
+**The case-runner routes bound the person they name.** `POST /internal/origin/write`,
+`/internal/cases/{id}/action-record`, `/summary` and `/seeded-by` check the name they are given against what
+can vouch for it: the caller's declared delegate list, the case's seeding delegate, or a person who holds a
+task on that case. Each admit and refusal logs one line on `iagent.audit.delegate_named`. A missing `program`
+(and `owner_domain`, `obtained_via`) on an origin body is now a `write_refused`, not a 500. The runner's
+action-record write retries on a 503.
+
+**⚠ A case in flight at the roll has no `case_id` on its `written` step and will be refused** (422): the
+`origin_record` definition now sends `case_id`, and `origin/write` requires it. List the in-flight
+`origin_record` cases first, and let them finish or re-run them after the roll.
+
+**`/internal/human_tasks/register` is gated on a service identity.** The caller must be a declared delegate
+or listed in the new `keycloak.taskRegisterServices` (rendered as `TASK_REGISTER_SERVICES`, default
+`svc:review-starter`, `svc:case-runner`); anyone else is 403 `not_a_delegate`, logged on
+`iagent.audit.delegate_named`. The route's `requested_by` field is not bound yet: it passes through as sent,
+and its binding is held for the architect's ruling.
+
+**`cortex-bff` and the code location must roll together.** The route needs the field the new definition sends,
+and the definition sends it to the route.
+
 ## 0.4.78 — 2026-11-04
 
 **0.4.77 stands as cut at `8fc02746` and rolls nowhere. The sandbox goes from 0.4.75 to this chart.** This
@@ -8,7 +30,7 @@ notes all reach the sandbox with this chart, as 0.4.76's do.
 
 **⚠ This chart carries the identity vault (#229), and by the architect's ruling of 2026-11-03 it does not
 roll until cortex's paused-run card ships or the Keycloak exchange is configured.** Neither is true at this
-cut. No values file sets `IDENTITY_EXCHANGE_*`, and the card (`docs/specs/run-reauth-card.md` in cortex-ui)
+cut. No values file sets `IDENTITY_EXCHANGE_*`, and the card (spec: `run-reauth-card.md` in cortex-ui)
 is not in the cortex pin below. Without one of them, a run whose token nears expiry pauses with nothing to
 show the person, and it holds one of the two run slots until its budget ends.
 
