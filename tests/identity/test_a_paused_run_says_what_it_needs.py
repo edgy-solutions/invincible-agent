@@ -55,7 +55,7 @@ async def test_the_event_carries_paused_call_and_instruction(harness):
     harness["script"] = script
     blob = await _drive(harness)
     datas = re.findall(r"event: run_awaiting_reauth\ndata: (.*)\n", blob)
-    assert len(datas) == 1, (harness["polls"], re.findall(r"event: (w+)", blob))
+    assert len(datas) == 1, (harness["polls"], re.findall(r"event: (\w+)", blob))
     data = json.loads(datas[0])
     assert data == {"run_id": STREAM_RUN, "reason": "token_near_expiry_and_not_refreshable",
                     "paused_call": PAUSED_CALL, "instruction": INSTRUCTION}
