@@ -26,7 +26,7 @@ The relay: "fin: asset-contract packet for Chris's work Dagster assets (URN, col
 **Done:**
 - **The packet:** `sessions/2026-11-02-packet-to-chris-the-ev-asset-contract-urn-columns-period-key-cadence-tags.md`, master tree, untracked. One question back: is the work asset `dagster-dlt`?
 - **#243** `fin/variance-set-live-test`, head `49213943`, base master, not a draft. Tests only: `tests/sandbox_e2e/test_variance_set_reads_the_ev_fixture.py`, its yaml, and `tests/finance/test_the_variance_live_test_can_go_red.py`. Off-cluster proof: 41 passed, all 31 mutations killed. It skips today. It goes first because #245 cites its path.
-- **#245** `fin/adr-0052-accepted`, head `afd99e76`, **draft**. Stays one until `enforce` is live. Its body has the before-merge checklist.
+- **#245** `fin/adr-0052-accepted`, head `3eeea7a1`, still a **draft**. The architect ruled on 2026-11-04: "Accepted as 'first slice', with a status table of §1–§6 met/not met in the ADR itself. #243 before #245." Applied: §4 met, §1, §2, §3 and §6 not met, §5 in part. It no longer waits on `enforce`. Marking it ready was blocked by the permission check, so that is Chris's.
 - **Packet to the architect and Lane 1:** `sessions/2026-11-03-packet-to-architect-and-lane-01-from-fin-adr-0052-draft-245-and-the-variance-test-243.md`. The ruling on #245, bob's error in Lane 1's EV spec, and the citation reds on master.
 
 **Moved under me:**
@@ -40,7 +40,7 @@ The relay: "fin: asset-contract packet for Chris's work Dagster assets (URN, col
 1. Materialize `ev_fixture` by hand and do the pod acceptance.
 2. Chris syncs the two rows: alice's grant, erin in NP-MERIDIAN.
 3. Set the flag and banner, then run #243's test. Its docstring has the three settings. Its skip reason says what's still missing.
-4. Update #245 from what it measured, per its checklist. It leaves draft only on the architect's ruling and `enforce` live.
+4. Update ADR-0052's §3, §5 and §6 rows from what it measured, in a follow-up PR.
 
 ## Update 2026-11-03 (late): #219 merged, the digest is #240, 0.4.77 was cut without it. Read this first
 
