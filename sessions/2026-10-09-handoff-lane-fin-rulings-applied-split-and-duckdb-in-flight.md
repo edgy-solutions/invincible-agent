@@ -19,6 +19,31 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-11-03 (late): #219 merged, the digest is #240, 0.4.77 was cut without it. Read this first
+
+The relay: "#219 merges once Lane 1 has read its supervisor commit; #7 is Chris's; the two-pod roll with the new dag-tools digest rides 0.4.77."
+
+**Done:**
+- **#219** merged at `fb60ae20` (head `fc0440de`). The corpus defect of mine is fixed in that head.
+- **dag-tools #6, #7, #8** merged by Chris; master `4096a112`, build run `41768309688`.
+- **The tag `invincible-agent-0.4.77` is at `8fc02746`,** cut about two minutes before #219 merged, with the old digest. A tag never moves, so the digest can't ride it, and this relay's last clause can't be met as written. Lane 1 has that in a packet.
+
+**Open, waiting on others:**
+- **#240** `fin/dag-tools-digest`, head `117143fa`: moves the pin to `sha-4096a11` (`sha256:44c54e5a...9266`) and opens `0.4.78 — not yet cut` in the changelog, holding its entry and the resolver's. Lane 1 merges and cuts. Don't roll.
+- **#238** `fin/census-reds`, head `60e6c0de`: the five census reds. Lane 1 merges and decides `c66f04ca`.
+- **Chris:** an `s3fs` floor in dag-tools (below). No PR opened.
+
+**Measured on the image's versions** (`layers.py` read both images' arm64 layers; the rest in a venv with those versions):
+- 59 of 156 packages changed: polars 1.44 to 2.1, protobuf 6 to 7, pyarrow 25 to 26, multidict 6 to 7, sqlalchemy 2.0.54 to 2.0.57, still psycopg2 and no `psycopg`.
+- dag-tools tests 817 passed, 50 skipped, 1 failed, 2 errors (`restate` isn't in the install line).
+- The code location serves; a dagster 1.12.20 client decodes its snapshot with `ev_fixture` in it. `ev_fixture` materialized on polars 2.1 and joined through the resolver: 12 compared, 0 differ, control differs.
+
+**Not measured:** a write to the object store on pyarrow 26; any sensor (no `DATAHUB_SERVER` in my run, so none registered); the live daemon's dagster version. The roll's acceptance stays the pod reading plus a sensor tick.
+
+**`s3fs==0.4.2` is in the live pin too,** so it isn't this digest's. The floor sits in the `orchestrator` extra and the image's install line names bare `s3fs`. `FsspecS3FSConfig` raises `TypeError` on any endpoint; the demo assets use `S3FSConfig` (`pyarrow.fs`) and don't reach it.
+
+**Next:** when Lane 1 cuts the next chart, check the values diff shows only the expected digest line for dag-tools. After the roll, materialize `ev_fixture` by hand. `FIN_DATASET_URN` stays unset until #213 is merged and rolled, the grant is synced, egress is measured, and `docs/plans/broker-advertises-unminted-credential.md` is read. The resolver's forks for the architect (built-ins on the seed, exports from an asset, `FISCAL_PERIODS` FY26 only, chat naming) still need a packet.
+
 ## Update 2026-11-03 (overnight): the inputs resolver is #219, the EV fixture is dag-tools #7. Read this first
 
 The relay: the resolver spec against Lane 1's `CortexDataClient` call, then the code behind a flag; the sandbox EV asset as a dag-tools PR for Chris; the asset contract packet to Chris; a reply to #213. All four are done. Nothing has run on a cluster, and nothing here is merged.
