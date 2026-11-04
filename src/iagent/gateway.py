@@ -5686,6 +5686,70 @@ def _admit_on_behalf_of(current_user, on_behalf_of: Optional[str]) -> tuple[str,
     return on_behalf_of, caller
 
 
+# One line per admit and per refusal at the case-runner routes that name a person: route, caller,
+# the name, the basis or the refusal. Never a token. Dedicated so it slices out of a log search,
+# and it must ARRIVE: the BFF's root handler sits at WARNING (see identity_vault).
+from iagent.identity_vault import _ensure_the_audit_line_actually_ARRIVES as _arrives  # noqa: E402
+
+_delegate_named_audit_log = logging.getLogger("iagent.audit.delegate_named")
+_arrives(_delegate_named_audit_log)
+
+
+def _audit_delegate_named(route: str, caller: str, named: object, outcome: str) -> None:
+    """The audit line naming BOTH identities: the service that called and the person it named."""
+    _delegate_named_audit_log.info(
+        "delegate_named route=%s caller=%s named=%s outcome=%s", route, caller, named, outcome)
+
+
+async def _admit_named_on_case(caller: str, case_id: str, named: Optional[str],
+                               seeded_by: Optional[str], *, route: str = "") -> str:
+    """Admit (or refuse) a person a case-runner route NAMES. Returns the basis, or raises.
+
+    A plain check against `_delegate_principals()[caller]` would refuse every real call: the
+    runner's own list is only the platform registrar, and the people it names on a case are the
+    case's. So the name is checked against what can actually vouch for it:
+
+    * `declared`          -- on the caller's own delegate list;
+    * `seeding_delegate`  -- the case's `seeded_by`, itself a declared delegate;
+    * `task_holder`       -- holds a task on THIS case (`human_tasks.holds_task_on_case`).
+
+    A holder lookup that cannot run is 503 `authorization_unavailable`, never "not a holder".
+    Blank or whitespace `named` is never admitted. Every outcome leaves one audit line."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    name = (named or "").strip() if isinstance(named, str) else ""
+    if name:
+        delegates = _delegate_principals()
+        basis = None
+        if name in delegates.get(caller, ()):
+            basis = "declared"
+        elif seeded_by is not None and name == seeded_by and seeded_by in delegates:
+            basis = "seeding_delegate"
+        else:
+            try:
+                held = await run_in_threadpool(human_tasks.holds_task_on_case, case_id, name)
+            except Exception as exc:  # noqa: BLE001 -- unknown is not "not a holder"
+                logger.warning("holder lookup failed on case %s: %s", case_id, exc)
+                _audit_delegate_named(route, caller, named, "refused:authorization_unavailable")
+                raise HTTPException(status_code=503, detail={
+                    "error": "authorization_unavailable",
+                    "message": "could not verify who this case may name",
+                }) from exc
+            if held:
+                basis = "task_holder"
+        if basis is not None:
+            _audit_delegate_named(route, caller, named, f"admitted:{basis}")
+            return basis
+    _audit_delegate_named(route, caller, named, "refused:principal_not_declared_for_delegate")
+    raise HTTPException(status_code=403, detail={
+        "error": "principal_not_declared_for_delegate",
+        "delegate": caller,
+        "on_behalf_of": named,
+    })
+
+
 def _promotion_stores(acted_by: str):
     """The stores a document_promotion act needs (ADR-0041 Open §1, ruled 2026-09-30).
 
@@ -16275,6 +16339,8 @@ class OriginWriteRequest(_BaseModel):
     origin: dict
     evidence: dict
     approval_chain: list[dict]
+    # The case the steward's task was filed on: who may be named as the steward is decided on it.
+    case_id: str
 
 
 @app.post("/internal/origin/write")
@@ -16326,6 +16392,13 @@ async def write_origin_route(
                        "-- refusing to write under nobody's provenance.",
         })
     on_behalf_of = steward_entries[-1]["approver_sub"]
+    # The steward is a person this service NAMES, so the name must be one the case can vouch for
+    # (a declared principal, or one who holds a task on this very case). `dropped_by.authz_id` is
+    # NOT checked here: it is verified against program membership below, not acted for (see
+    # tests/identity/test_origin_write_refuses_a_dropper_who_is_not_a_program_member.py ::
+    # test_the_excluded_dropper_is_verified_against_membership_not_acted_for).
+    await _admit_named_on_case(caller, req.case_id, on_behalf_of, None,
+                               route="/internal/origin/write")
 
     dropped_by_authz_id = req.dropped_by.authz_id
     program = req.origin.get("program")
@@ -16483,7 +16556,11 @@ async def stamp_seeded_by_route(
             "message": "POST /internal/cases/{case_id}/seeded-by is callable only by the case "
                        "runner's own service identity.",
         })
-    if req.seeded_by not in _delegate_principals():
+    declared = req.seeded_by in _delegate_principals()
+    _audit_delegate_named("/internal/cases/{case_id}/seeded-by", caller, req.seeded_by,
+                          "admitted:declared_delegate" if declared
+                          else "refused:seeded_by_not_a_declared_delegate")
+    if not declared:
         raise HTTPException(status_code=422, detail={"error": "seeded_by_not_a_declared_delegate"})
 
     def _stamp() -> int:
@@ -16554,6 +16631,15 @@ async def write_case_summary_route(
         })
     if not req.state.strip():
         raise HTTPException(status_code=422, detail={"error": "state_is_blank"})
+    # The seeding delegate is a person-shaped name this route stores: it must be a declared
+    # delegate, as at the seeded-by stamp. None is a case with no seeding delegate.
+    if req.seeded_by is not None:
+        declared = req.seeded_by in _delegate_principals()
+        _audit_delegate_named("/internal/cases/{case_id}/summary", caller, req.seeded_by,
+                              "admitted:declared_delegate" if declared
+                              else "refused:seeded_by_not_a_declared_delegate")
+        if not declared:
+            raise HTTPException(status_code=422, detail={"error": "seeded_by_not_a_declared_delegate"})
 
     def _write() -> list:
         released = _case_released(req.transitions)
@@ -16617,10 +16703,13 @@ async def write_action_record_route(
     if not (req.on_behalf_of or "").strip():
         raise HTTPException(status_code=422, detail={"error": "on_behalf_of_required"})
     # R-089: `seeded_by` must be a DECLARED delegate (the configured map, asserted not verified
-    # this pass), as at the seeded-by stamp; `on_behalf_of` is the case's principal as the runner
-    # read it from the case, RECORDED as the owner, not an act this route authorises.
+    # this pass), as at the seeded-by stamp.
     if req.seeded_by is not None and req.seeded_by not in _delegate_principals():
         raise HTTPException(status_code=422, detail={"error": "seeded_by_not_a_declared_delegate"})
+    # `on_behalf_of` becomes the OWNER the read gate admits, so it is a name this route acts on:
+    # the seeding delegate, a declared principal, or someone who holds a task on this case.
+    await _admit_named_on_case(caller, case_id, req.on_behalf_of, req.seeded_by,
+                               route="/internal/cases/{case_id}/action-record")
     provenance = req.record.get("provenance")
     if not isinstance(provenance, dict) or provenance.get("case_id") != case_id:
         raise HTTPException(status_code=422, detail={"error": "case_id_mismatch"})

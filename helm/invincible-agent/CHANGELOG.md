@@ -1,5 +1,21 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.79 — not yet cut
+
+**The case-runner routes bound the person they name.** `POST /internal/origin/write`,
+`/internal/cases/{id}/action-record`, `/summary` and `/seeded-by` check the name they are given against what
+can vouch for it: the caller's declared delegate list, the case's seeding delegate, or a person who holds a
+task on that case. Each admit and refusal logs one line on `iagent.audit.delegate_named`. A missing `program`
+(and `owner_domain`, `obtained_via`) on an origin body is now a `write_refused`, not a 500. The runner's
+action-record write retries on a 503.
+
+**⚠ A case in flight at the roll has no `case_id` on its `written` step and will be refused** (422): the
+`origin_record` definition now sends `case_id`, and `origin/write` requires it. List the in-flight
+`origin_record` cases first, and let them finish or re-run them after the roll.
+
+**`cortex-bff` and the code location must roll together.** The route needs the field the new definition sends,
+and the definition sends it to the route.
+
 ## 0.4.78 — 2026-11-04
 
 **0.4.77 stands as cut at `8fc02746` and rolls nowhere. The sandbox goes from 0.4.75 to this chart.** This

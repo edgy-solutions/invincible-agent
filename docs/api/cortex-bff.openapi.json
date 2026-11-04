@@ -4154,6 +4154,10 @@
             "title": "Artifact Id",
             "type": "string"
           },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
           "dropped_by": {
             "$ref": "#/components/schemas/_OriginWriteDroppedBy"
           },
@@ -4173,7 +4177,8 @@
           "dropped_by",
           "origin",
           "evidence",
-          "approval_chain"
+          "approval_chain",
+          "case_id"
         ],
         "title": "OriginWriteRequest",
         "type": "object"

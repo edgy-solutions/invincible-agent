@@ -74,6 +74,9 @@ def write_origin(
     unresolved artifact, never a new grant.
     """
     o = resolution["origin"]
+    # A body that omits a key this function reads is a refusal, not a KeyError (a 500 at the route).
+    if "obtained_via" not in o:
+        return {"status": "write_refused", "reason": "origin carries no `obtained_via`"}
     try:
         resolved_by = _RESOLVED_BY_BY_OBTAINED_VIA[o["obtained_via"]]
     except KeyError:
@@ -101,6 +104,10 @@ def write_origin(
             }
         return {"status": "written", "reason": None}
 
+    missing = [k for k in ("owner_domain", "program") if k not in o]
+    if missing:
+        return {"status": "write_refused",
+                "reason": f"a resolved origin carries no {', '.join('`' + k + '`' for k in missing)}"}
     origin_obj = origin.Origin(
         owner_domain=o["owner_domain"], program=o["program"], obtained_via=o["obtained_via"],
     )

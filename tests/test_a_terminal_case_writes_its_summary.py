@@ -52,6 +52,12 @@ def _no_case_summary_wire(monkeypatch):
     return sent
 
 
+@pytest.fixture(autouse=True)
+def _the_seeding_delegate_is_declared(monkeypatch):
+    """The summary route now refuses a `seeded_by` that is not a declared delegate (422)."""
+    monkeypatch.setenv("DELEGATE_ON_BEHALF_OF", '{"svc:openddil": ["operator.atlantia@example.com"]}')
+
+
 @pytest.fixture
 def sent(_no_case_summary_wire):
     return _no_case_summary_wire
