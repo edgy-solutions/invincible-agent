@@ -5,10 +5,12 @@ lane: invincible-agent/lane/gov
 repo: invincible-agent
 status: blocked
 priority: later
-blocked_on: [01M6A9QDN1KAR37N824W55YGA3]
+blocked_on: [01M6A9QDN1M16XMBNHHWVK9EHJ]
 pr: []
 ruling_ref: 
-updated: 2026-11-02
+updated: 2026-11-04
 ---
 
 v0.9.13 is tagged and carries GRANTED_BY_SEED, but master still pins v0.9.12, so these wait on the pin: the `seed` literal becomes GRANTED_BY_SEED (ruled 10-31), and the other follow-ups in earlier handoffs.
+
+v0.9.13 is tagged. What this waits on now is master pinning it, which is 01M6A9QDN1M16XMBNHHWVK9EHJ (#247).
