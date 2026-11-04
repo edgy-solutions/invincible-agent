@@ -179,7 +179,8 @@ def test_a_coverage_body_against_a_card_only_row_is_refused_not_a_500():
 
 
 def test_validate_names_the_file_of_a_row_that_does_not_validate(pol):
-    (pol / "review_shapes" / "bad.yaml").write_text("review_shape: bad\n", encoding="utf-8")
+    (pol / "review_shapes" / "bad.yaml").write_text(
+        "review_shape: bad\nitem_kind: part\n", encoding="utf-8")
     assert any("bad.yaml" in e for e in validate(pol, pol))
 
 
