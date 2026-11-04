@@ -3252,3 +3252,97 @@ def test_the_oracle_meets_both_bars_with_nothing_refused_on_every_fixture(name):
     assert row["route_bar"] is True and row["slot_bar"] is True
     assert row["wrong_excludes"] == [] and row["wrong_requires"] == []
     assert row["rewritten_slots"] == [] and row["rewrites_refused"] == []
+
+
+# ── an approval step names who approves and in what role (architect, 2026-11-04) ─────────────
+
+def _await(files, wf):
+    return next(s for s in files[wf]["steps"] if s["kind"] == "human_await")
+
+
+def test_the_grammar_says_an_approval_step_names_who_approves_and_in_what_role():
+    line = next((x for x in se._GRAMMAR.split("\n- ") if x.startswith("An approval step names")), None)
+    assert line is not None
+    said = " ".join(line.split())
+    for word in ("names who approves and in what role", "lists those answers in approves",
+                 "its role is the approver's capacity in the user's words", "has no approves"):
+        assert word in said
+
+
+def test_an_approval_step_with_no_approves_reads_and_canonical_cannot_see_it():
+    f = _good()
+    del _step(f, IR, "engineering_disposition")["approves"]
+    assert [(x["stage"], x["drafted"]["approves"]) for x in sm.wrong_approvals(f, _good(), SAME)] == [("pcn_impact_review", [])]
+    assert sm.canonical(f) == sm.canonical(_good())
+
+
+def test_a_role_absent_or_another_one_reads():
+    f = _good()
+    del _await(f, PROGRAM)["role"]
+    _await(f, ACK)["role"] = "engineer"
+    out = {x["stage"]: x["drafted"]["role"] for x in sm.wrong_approvals(f, _good(), SAME)}
+    assert out == {"pcn_program_approval": None, "pcn_acknowledge": "engineer"}
+
+
+def test_an_answer_counted_as_approval_that_the_person_did_not_count_reads():
+    f = _good()
+    _step(f, IR, "engineering_disposition")["approves"] = ["approved", "needs_info"]
+    assert [x["stage"] for x in sm.wrong_approvals(f, _good(), SAME)] == ["pcn_impact_review"]
+
+
+def test_an_approval_nobody_described_reads_too():
+    e = _good()
+    del _await(e, ACK)["approves"], _await(e, ACK)["role"]
+    assert [x["stage"] for x in sm.wrong_approvals(_good(), e, SAME)] == ["pcn_acknowledge"]
+    assert sm.wrong_approvals(e, e, SAME) == []
+
+
+def test_control_a_role_in_the_persons_spelling_and_verbs_in_another_order_read_the_same():
+    f, e = _good(), _good()
+    _await(f, PROGRAM)["role"] = "Program Manager"
+    _step(e, IR, "engineering_disposition")["approves"] = ["approved", "needs_info"]
+    _step(f, IR, "engineering_disposition")["approves"] = ["needs_info", "approved"]
+    assert sm.wrong_approvals(f, e, SAME) == []
+
+
+def test_an_approval_step_nothing_pairs_with_reads():
+    out = sm.wrong_approvals(_good(), _good(), {w: w for w in STAGES if w != "pcn_program_approval"})
+    assert [(x["stage"], x["drafted"]) for x in out] == [("pcn_program_approval", None)]
+
+
+def test_an_approval_step_the_draft_lacks_reads_and_a_render_before_it_does_not_shift_the_pairing():
+    f = _good()
+    f[IR]["steps"] = [s for s in f[IR]["steps"] if s["kind"] != "render"]
+    assert sm.wrong_approvals(f, _good(), SAME) == []
+    f[IR]["steps"] = [s for s in f[IR]["steps"] if s["kind"] != "human_await"]
+    assert [(x["stage"], x["drafted"]) for x in sm.wrong_approvals(f, _good(), SAME)] == [("pcn_impact_review", None)]
+
+
+@pytest.mark.parametrize("edit,route,slot,approval", [
+    ("none", True, True, True), ("approves", True, True, False), ("role", True, True, False),
+    ("excludes", True, False, True), ("drop", False, True, True)])
+def test_the_three_bars_read_apart_and_the_bar_needs_all_three(monkeypatch, edit, route, slot, approval):
+    real = se.run
+
+    def result(*a, **k):
+        r = real(*a, **k)
+        r["files"] = copy.deepcopy(r["files"])
+        if edit == "approves":
+            del _step(r["files"], IR, "engineering_disposition")["approves"]
+        elif edit == "role":
+            _await(r["files"], PROGRAM)["role"] = "someone_else"
+        elif edit == "excludes":
+            _step(r["files"], IR, "engineering_disposition")["excludes"] = []
+        elif edit == "drop":
+            r["files"] = {**r["files"], **_record_only_emits("filed")}
+        return r
+    monkeypatch.setattr(sm.se, "run", result)
+    row = sm.measure("pcn_review", se.OracleExtractor(), aligned=True)
+    assert (row["route_bar"], row["slot_bar"], row["approval_bar"]) == (route, slot, approval)
+    assert row["bar_met"] is (route and slot and approval)
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_the_oracle_meets_the_approval_bar_on_every_fixture(name):
+    row = sm.measure(name, se.OracleExtractor(), aligned=True)
+    assert row["approval_bar"] is True and row["wrong_approvals"] == [] and row["bar_met"] is True

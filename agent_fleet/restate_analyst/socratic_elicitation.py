@@ -1688,6 +1688,10 @@ RULES
   on it and says so, that is an emit followed by a signal_await for that audience, not a human_await,
   since nobody is asked to decide: the emit has no disposes, and the signal_await accepts the user's
   word for what was done.
+- An approval step names who approves and in what role: when the user says which answers count as
+  approval, that human_await lists those answers in approves, and its role is the approver's capacity
+  in the user's words, the one they give whoever answers. A human_await none of whose answers the
+  user calls an approval has no approves.
 - A step with a deadline_seconds can also end timed_out (the runner's outcome when the deadline
   expires), so its workflow's chaining table routes timed_out as well.
 - A row matches an event field only with one of its listed event values; map the user's words to

@@ -733,6 +733,33 @@ def wrong_requires(files: dict, expected: dict) -> list:
     return [] if _names(d) == _names(e) else [{"expected": e, "drafted": d}]
 
 
+def wrong_approvals(files: dict, expected: dict, pairs: dict) -> list:
+    """Each described approval step whose draft doesn't name the answers that count as approval and
+    the role the approver signs in (architect, 2026-11-04: ``approves`` and ``role`` ruled in). The
+    executor appends an approval-chain entry only for a verb in ``approves``, so a step without it
+    records no approver, and ``canonical`` keeps neither field. The verbs read in any order. A role
+    reads in the person's words, with case and separators ignored. The awaits pair in order, and an
+    await with no counterpart reads here too, as does one whose answers nobody called an approval."""
+    d, e = _index(files), _index(expected)
+    back = {v: k for k, v in pairs.items()}
+    out = []
+    for ew, wf in sorted(e["wfs"].items()):
+        rest = iter([s for s in _steps_of(d["wfs"].get(back.get(ew)) or {}) if s.get("kind") == "human_await"])
+        for step in _steps_of(wf):
+            if step.get("kind") != "human_await":
+                continue
+            drafted = next(rest, None)
+            want = {"approves": _names(step.get("approves")), "role": _role(step.get("role"))}
+            held = None if drafted is None else {"approves": _names(drafted.get("approves")), "role": _role(drafted.get("role"))}
+            if held != want:
+                out.append({"stage": ew, "step": step.get("id"), "expected": want, "drafted": held})
+    return out
+
+
+def _role(value) -> Optional[str]:
+    return re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_") or None if value else None
+
+
 def _names(value) -> list:
     return sorted(map(str, value)) if isinstance(value, list) else [] if value is None else [str(value)]
 
@@ -815,8 +842,10 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
     dropped, routes = dropped_steps(r["files"], expected, pairs), dropped_routes(r["files"], expected, pairs)
     barred, required = wrong_excludes(r["files"], expected, pairs), wrong_requires(r["files"], expected)
     rewritten = rewritten_slots(r["messages"])
+    approvals = wrong_approvals(r["files"], expected, pairs)
     route_bar = r["status"] == "runnable" and not unreachable and not dropped and not routes
     slot_bar = not barred and not required and not rewritten
+    approval_bar = not approvals
     return {
         "fixture": name,
         "questions": len(keys), "bank": len(bank),
@@ -839,9 +868,11 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "wrong_requires": required,
         "rewritten_slots": rewritten,
         "rewrites_refused": [m for m in r["model_errors"] if m.get("fault") == "rewrite"],
+        "wrong_approvals": approvals,
         "route_bar": route_bar,
         "slot_bar": slot_bar,
-        "bar_met": route_bar and slot_bar,
+        "approval_bar": approval_bar,
+        "bar_met": route_bar and slot_bar and approval_bar,
         "exact": r["files"] == expected,
         "leaf_diffs": {"count": len(ld), "first": ld[:20]},
         "semantic_diffs": {"count": len(sd), "first": sd[:20]},
@@ -894,7 +925,7 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"arm": args.arm, "fixtures": rows}, indent=2, default=str), encoding="utf-8")
     hdr = f"{'fixture':26} {'q':>3} {'bank':>4} {'red':>3} {'unans':>5} {'unres':>5} {'contra':>6} {'defer':>5} " \
-          f"{'left':>4} {'rn_err':>6} {'exact':>5} {'leaf':>4} {'sem':>4} {'mdl_err':>7} {'alg':>3} {'unal':>4} {'unbk':>4} {'path':>4} {'dref':>4} {'drop':>4} {'route':>5} {'slot':>5} {'status':>10} {'sec':>6}"
+          f"{'left':>4} {'rn_err':>6} {'exact':>5} {'leaf':>4} {'sem':>4} {'mdl_err':>7} {'alg':>3} {'unal':>4} {'unbk':>4} {'path':>4} {'dref':>4} {'drop':>4} {'route':>5} {'slot':>5} {'appr':>5} {'status':>10} {'sec':>6}"
     print(hdr)
     for r in rows:
         print(f"{r['fixture']:26} {r['questions']:>3} {r['bank']:>4} {len(r['redundant']):>3} "
@@ -903,7 +934,7 @@ def main() -> int:
               f"{r['deferrals_recorded']}/{r['deferrals_planted']:>3} {len(r['gaps_left']):>4} "
               f"{r['runnable_errors']['count']:>6} {str(r['exact']):>5} {r['leaf_diffs']['count']:>4} "
               f"{r['semantic_diffs']['count']:>4} {r['model_errors']:>7} {len(r['aligned_answers']):>3} {len(r['unaligned']):>4} "
-              f"{len(r['unbanked']):>4} {len(r['answered_by_path']):>4} {len(r['deferred_refusals']):>4} {len(r['dropped_steps']):>4} {len(r['dropped_routes']):>4} {str(r['route_bar']):>5} {str(r['slot_bar']):>5} {r['status']:>10} {r['seconds']:>6}")
+              f"{len(r['unbanked']):>4} {len(r['answered_by_path']):>4} {len(r['deferred_refusals']):>4} {len(r['dropped_steps']):>4} {len(r['dropped_routes']):>4} {str(r['route_bar']):>5} {str(r['slot_bar']):>5} {str(r['approval_bar']):>5} {r['status']:>10} {r['seconds']:>6}")
     return 0
 
 

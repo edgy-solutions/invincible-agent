@@ -9,7 +9,9 @@ bars. Runs 47 to 49 all read `yes` on routes and `no` on slots: run 47 put back 
 run 48 lets the person who logged a notice sign off its impact review, which the person barred, and run 49 lost the
 required details to a model timeout (§10). Runs 50 to 52 then read the bar for Proposed as met on instrument v3: run 50
 reads `yes` on both bars with the contradiction caught, and runs 51 and 52 read `no` as they should. That is with the
-architect, because v3 doesn't read `approves`, and no run from 41 to 52 drafted it (§10). Nothing is flipped.
+architect, because v3 doesn't read `approves`, and no run from 41 to 52 drafted it (§10). The architect ruled `approves` and
+`role` into the bar. Instrument v4 reads them as a third bar, and all twelve runs read `no` on it, so run 50 no longer
+meets the bar and the bar is not met (§10). Nothing is flipped.
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2410,6 +2412,36 @@ description again, and the model wrote `disposes: approved` on the emit. The rej
 turn 26 and the write-back refusal told it a `signal_await` after the send would fill it. Its next reply wrote one, at
 `steps[1]`. The path grammar refused that form and it was the last try, so the gap stayed open and the run is `cannot_run`.
 That reading is right, since nothing landed. It goes on the open list.
+
+#### 2026-11-04: the ruling on approves and role, and instrument v4
+
+The architect ruled: "`approves`/`role` ruled in — instrument v4 reads them; add the grammar line ("an approval step names
+who approves and in what role"); three runs, go. Bar not met until a run reads yes on route, slot and approval."
+
+**Built.** `wrong_approvals` in `scripts/socratic_measure.py` lists each described `human_await` whose draft doesn't
+carry the same `approves` and `role`. The awaits pair in order, and only with awaits, so a render before one doesn't shift
+the pairing. A described await the draft lacks reads, and so does an `approves` on a step whose answers the person didn't
+call an approval. The approval bar is that list being empty. `bar_met` now needs the route bar, the slot bar and the
+approval bar. The grammar gained a line: an approval step names who approves and in what role. When the user says which
+answers count as approval, that `human_await` lists them in `approves`, and its `role` is the approver's capacity in the
+user's words. A step none of whose answers the user calls an approval has no `approves`. The scripted person in
+`pcn_review` says all of it: "Only an approval counts as an approval", "Acknowledging counts as an approval", "Any
+component engineer", "Program approval goes to the program manager".
+
+Ten seals, and ten mutants that each die on one: `approves` ignored, `role` ignored, the role read verbatim, the role read
+with case folded but not separators, an unpaired step passing, only described approvals read, awaits paired with any step
+kind, the approval bar always true, `bar_met` without it, and the grammar line taken out. The suite, gov's refusal
+ratchet and the corpus check pass. The census is unchanged at 469 refused, 2003 passed, no crash sites.
+
+**A reading for the architect's review: the role compares by its words, not its spelling.** "Program Manager",
+`program-manager` and `program_manager` read the same. Anything else is a different role. That includes a synonym, or
+the group the person named in place of the capacity. So a draft saying `engineer` for "any component engineer" reads
+`no`. If the architect wants a role read against the grants rather than the words, that is another instrument.
+
+**Runs 41 to 52, re-read under v4 with no model time.** Route and slot equal v3's on all twelve, checked by assertion.
+Every run reads `no` on approval. Each of its three `human_await` steps has neither `approves` nor `role`. So run 50, which
+read `yes` on v3, reads `no`, and no stored run meets the bar. The bar for Proposed is not met. Runs 53 to 55 are next, on
+the grammar line. Nothing is flipped.
 
 ## Consequences
 
