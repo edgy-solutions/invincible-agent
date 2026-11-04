@@ -300,6 +300,20 @@ workbench copy `scripts/roll-lock.sh` into their own roll scripts.
 `helm upgrade` is **not** a documented path: the script carries the killed-client trap and the
 resolved-timeout guard, and neither exists on the raw command.
 
+**An upgrade runs from a worktree checked out at the release tag, never from master's working
+tree.** `scripts/require-release-tree.sh` runs first and refuses (exit 4) unless HEAD is the tag
+named by `Chart.yaml` and the tree is clean. The secret overlay is ignored by git, so copy it in:
+
+```bash
+git worktree add --detach <path> invincible-agent-<version>
+cp helm/invincible-agent/values-sandbox.secret.yaml <path>/helm/invincible-agent/
+<path>/scripts/upgrade-sandbox.sh
+```
+
+There is no escape hatch and no ref argument. `--dry-run` still renders from any tree and says
+when that tree could not roll, so the values diff can be taken anywhere. `scripts/roll-litany.sh`
+rolls a service under a chart already released and is not covered by this guard.
+
 `helm upgrade --timeout 10m` marked release 100 **failed** while the prime hook ran on
 healthily underneath — the third instance across two lanes. The guard now resolves what helm
 will actually receive (the env value, then the *last* `--timeout` in `"$@"`, both flag forms)

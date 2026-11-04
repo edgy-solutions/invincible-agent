@@ -122,6 +122,9 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
   effective values against the live release (`helm get values`); put the diff — not "no
   change expected" — in front of whoever approves the roll. Secret-bearing keys appear by
   length and hash prefix only (the rule above).
+- **An upgrade rolls from the release tag.** `scripts/upgrade-sandbox.sh` runs from a worktree
+  checked out at the release tag, never from master's working tree; `scripts/require-release-tree.sh`
+  refuses anything else (recipe in its header). `--dry-run` renders from any tree.
 - **Python through this worktree's venv only**: `uv run …` or `.venv/Scripts/python`. Never a
   bare `python`/`py` from PATH, never another worktree's venv — a name on PATH is not the
   program you mean. AGENTS.md:101–102 is the check that the venv imports this tree.

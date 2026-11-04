@@ -20,6 +20,11 @@
 # the new ones, so a value removed from a file survives in the release — which is precisely how
 # a stale declaration outlives the commit that deleted it. Every render is computed from the
 # files as they are now.
+#
+# NOTE ON THE TREE. An upgrade runs from a worktree checked out at the release tag, never from
+# master's working tree (scripts/require-release-tree.sh refuses anything else, exit 4). Master
+# moves under a shared tree, and a chart rendered from it is no release anyone cut. A --dry-run
+# renders from any tree and says when that tree could not roll.
 set -euo pipefail
 
 RELEASE="${RELEASE:-iagent}"
@@ -185,9 +190,15 @@ fi
 _dry=""
 for _arg in "$@"; do case "${_arg}" in --dry-run|--dry-run=*) _dry=1 ;; esac; done
 _lock="$(dirname "${BASH_SOURCE[0]}")/roll-lock.sh"
+# THE TREE IS THE RELEASE, ruled 2026-11-03: a roll runs from a worktree at the release tag, never
+# from a working tree. `CHART` above is this file's own tree, so where the script is run from is what
+# gets rendered. A dry run rolls nothing and may render anything; it still says what it rendered.
+_tree="$(dirname "${BASH_SOURCE[0]}")/require-release-tree.sh"
 if [ -n "${_dry}" ]; then
+  bash "${_tree}" "${CHART}" || echo "(dry run: rendering this tree anyway, and it could not roll)" >&2
   bash "${_lock}" show || true
 else
+  bash "${_tree}" "${CHART}" || exit 4
   bash "${_lock}" acquire --minutes "${_mins:-90}" || exit 3
 fi
 
