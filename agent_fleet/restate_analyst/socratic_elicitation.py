@@ -127,6 +127,8 @@ class Draft:
     dropped_deferrals: List[dict] = field(default_factory=list)  # deferrals whose slot went away
     rejected: Dict[Tuple[str, str], int] = field(default_factory=dict)  # (file, leaf) -> the turn
     #   the answer took it out; a later patch may not put it back until a turn asks that leaf
+    stated: Dict[Tuple[str, str], Tuple[int, list]] = field(default_factory=dict)  # (file, leaf) -> the
+    #   turn the person last stated it and the values stated; only a turn putting it to them changes those
 
 
 class PatchError(ValueError):
@@ -140,6 +142,10 @@ class StructureError(PatchError):
     def __init__(self, message: str, leaves: Tuple[Tuple[str, str], ...]):
         super().__init__(message)
         self.leaves = leaves
+
+
+class RewriteError(PatchError):
+    """A patch that takes out a value the person stated, on a turn that did not put it to them."""
 
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -1198,6 +1204,76 @@ def _restores(draft: Draft, trial: Draft, file: str, path: str) -> bool:
     return any(k not in had and _get({file: e}, file, m.group(3))[0] for k, e in holders(trial.files).items())
 
 
+def _values(value: Any) -> list:
+    """What a leaf holds, one value at a time: a list is one leaf, and a person states what is in it."""
+    return list(value) if isinstance(value, list) else [] if value is None or value == {} else [value]
+
+
+def _held(files: Dict[str, dict], file: str, path: str) -> Dict[str, Any]:
+    """What ``path`` holds, one leaf at a time: a table's whole ``domain`` holds its ``domain.outcome``,
+    so growing that list leaves what was stated standing (the stored run 45, turn 18). A path that no
+    longer reads holds nothing."""
+    try:
+        ok, value = _get(files, file, path)
+    except PatchError:
+        return {}
+    return dict(_leaves(path, value)) if ok else {}
+
+
+def _note_stated(draft: Draft, g: Gap, before: Dict[str, dict], turn: int) -> None:
+    """The values the answer to ``g`` stated: what the answer wrote among what ``g`` may revise, and,
+    on a turn that puts the whole of a leaf to the person, what it asked and left standing. A
+    contradiction over one value of a table speaks of that value, so the rest of the leaf was not
+    spoken of: run 42 answered "can it end this way" with the opening's guessed rows still in place,
+    and the turns routing them were right to replace them. A value the answer took out, from any leaf
+    this turn put to the person, is no longer stated."""
+    if g.kind not in ("confirm", "contradiction", "null"):
+        return
+    for (file, path), (at, values) in list(draft.stated.items()):
+        if _puts_to_person(g, file, path):
+            now = _values(_held(draft.files, file, path).get(path))
+            draft.stated.pop((file, path))
+            if [x for x in values if x in now]:
+                draft.stated[(file, path)] = (at, [x for x in values if x in now])
+    whole = g.kind != "contradiction" or _PENDING_RX.match(g.key) is not None
+    for file, path in g.revises:
+        asked = whole and (not g.asks or (file, path) in g.asks)
+        was = _held(before, file, path)
+        for leaf, value in _held(draft.files, file, path).items():
+            said = _values(value) if asked else [x for x in _values(value) if x not in _values(was.get(leaf))]
+            at, kept = draft.stated.get((file, leaf), (turn, []))
+            told = kept + [x for x in said if x not in kept]
+            if told:
+                draft.stated[(file, leaf)] = (turn if said else at, told)
+
+
+def _puts_to_person(g: Optional[Gap], file: str, path: str) -> bool:
+    """True iff ``g`` is a turn that puts this leaf to the person, so their answer may change it."""
+    return (g is not None and g.kind in ("confirm", "contradiction", "null")
+            and any(f == file and (not p or _related(p, path)) for f, p in g.revises + g.rewrites))
+
+
+def _refuse_rewrite(draft: Draft, trial: Draft, gap: Optional[Gap],
+                    fixing: Tuple[Tuple[str, str], ...] = ()) -> None:
+    """A value the person stated is not rewritten by the model without a turn that puts it to them,
+    and a rewrite is a fault, not a deferral (architect, 2026-11-03). Run 47 wrote a stated value over
+    at a ``missing`` gap, whose ``revises`` let it through, when what had to change was what the gap
+    read it against. Adding to a leaf takes nothing out, so filling a gap is not a rewrite, and a
+    structural fix the refusal asked for has already been told it may. The refusal says what this
+    turn may still change, or the model has nowhere to go but the same value."""
+    for (file, path), (turn, values) in draft.stated.items():
+        if _in_scope(fixing, file, path) or _puts_to_person(gap, file, path):
+            continue
+        now = _values(_held(trial.files, file, path).get(path))
+        gone = [x for x in values if x not in now]
+        if gone:
+            free = [_describe(f, p) for f, p in (gap.revises if gap is not None else ()) if (f, p) not in draft.stated]
+            may = f"; this turn may change {', '.join(free)}" if free else ""
+            asked = f"; still needed: {gap.question}" if gap is not None else ""
+            raise RewriteError(f"{_describe(file, path)}: the person stated {json.dumps(gone, default=str)} at "
+                               f"turn {turn} and this turn does not put it to them, so it stays{may}{asked}")
+
+
 def _refuse_rejected(draft: Draft, trial: Draft, gap: Optional[Gap]) -> None:
     """A value the person rejected is a constraint on the next patch, not a suggestion (architect,
     2026-11-03): runs 42 and 43 wrote it back after a ``no``, so a grammar line was not enough. The
@@ -1612,6 +1688,10 @@ RULES
   on it and says so, that is an emit followed by a signal_await for that audience, not a human_await,
   since nobody is asked to decide: the emit has no disposes, and the signal_await accepts the user's
   word for what was done.
+- An approval step names who approves and in what role: when the user says which answers count as
+  approval, that human_await lists those answers in approves, and its role is the approver's capacity
+  in the user's words, the one they give whoever answers. A human_await none of whose answers the
+  user calls an approval has no approves.
 - A step with a deadline_seconds can also end timed_out (the runner's outcome when the deadline
   expires), so its workflow's chaining table routes timed_out as well.
 - A row matches an event field only with one of its listed event values; map the user's words to
@@ -1775,15 +1855,17 @@ def _refuse_structure(before: Draft, trial: Draft) -> None:
 
 def _apply_or_charge(draft: Draft, extractor: Callable[[dict, Draft, Optional[Gap]], dict],
                      entry: dict, gap: Optional[Gap], turn: int, charged: List[dict],
-                     log: Optional[List[dict]] = None) -> None:
+                     log: Optional[List[dict]] = None) -> Optional[RewriteError]:
     """Apply the extractor's patch for one turn. A patch the loop cannot apply is a model error
     charged to that turn (architect, 2026-10-30): it is recorded, the model is asked to restate it
     with the refusal in hand, and the loop continues. A run never crashes on model output: a patch
     that leaves the draft unreadable is refused, and so is one that leaves a structural error. The
     patch is tried on a copy, so nothing of a refused patch lands in the draft. Each reply goes to
-    ``log``: the patch, the model's own text when it has one, and the refusal if any."""
+    ``log``: the patch, the model's own text when it has one, and the refusal if any. Returns the
+    refusal when the turn ends on a rewrite of what the person stated, which is a fault to its caller."""
     ask = entry
     fixing: Tuple[Tuple[str, str], ...] = ()
+    last: Optional[PatchError] = None
     for _ in range(1 + PATCH_RESTATES):
         trial = copy.deepcopy(draft)
         reply: dict = {}
@@ -1798,14 +1880,18 @@ def _apply_or_charge(draft: Draft, extractor: Callable[[dict, Draft, Optional[Ga
             _refuse_unreadable(trial)
             _refuse_structure(draft, trial)
             _refuse_rejected(draft, trial, gap)
+            _refuse_rewrite(draft, trial, gap, fixing)
         except PatchError as exc:
             fixing = getattr(exc, "leaves", fixing)
+            last = exc
             reply["refused"] = str(exc)
-            charged.append({"turn": turn, "error": str(exc)})
+            charged.append({"turn": turn, "error": str(exc),
+                            **({"fault": "rewrite"} if isinstance(exc, RewriteError) else {})})
             ask = {**entry, "refused": str(exc)}
             continue
         draft.__dict__.update(trial.__dict__)
-        return
+        return None
+    return last if isinstance(last, RewriteError) else None
 
 
 def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict],
@@ -1880,10 +1966,18 @@ def run(transcript: dict, extractor: Callable[[dict, Draft, Optional[Gap]], dict
                 draft.pending = [p for p in draft.pending if p.key != g.key]
             continue
         before = copy.deepcopy((draft.files, draft.deferrals))
-        _apply_or_charge(draft, extractor, entry, g, turn, model_errors, messages[-1]["replies"])
+        fault = _apply_or_charge(draft, extractor, entry, g, turn, model_errors, messages[-1]["replies"])
         draft.answered[g.key] = turn
         _vouch(draft, g, before[0], turn)
         _note_rejected(draft, g, before[0], turn)
+        if not messages[-1]["replies"][-1].get("refused"):
+            _note_stated(draft, g, before[0], turn)
+        if fault is not None:
+            # a fault, not a deferral (architect, 2026-11-03): the person answered, and the model would
+            # only write it by undoing what they said, so the run may not read runnable
+            draft.open[g.key] = f"the model would only answer this by rewriting a stated value: {fault}"
+            draft.pending = [p for p in draft.pending if p.key != g.key]
+            continue
         # a null the answer just wrote has not been asked about: it is the next question, not an
         # answer that failed to settle this one (runs 28 to 30)
         live = g.key not in draft.deferrals and any(
