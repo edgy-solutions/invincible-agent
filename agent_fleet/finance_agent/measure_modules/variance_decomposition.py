@@ -10,10 +10,12 @@ NODES ARE PATHS. A node is `[root]`, then `[root, v1]`, then `[root, v1, v2]` an
 nodes that share a name under different parents stay two nodes. The signed value of a node is the
 exact sum of the amounts beneath it.
 
-EDGES. One per (parent, child): `{source, target, value, sign, level}`. `source` and `target` are
+EDGES. One per (parent, child): `{source, target, value, sign, level, node_kind}`. `source` and `target` are
 the two paths (lists of strings), `value` is the ABSOLUTE signed sum of the child (Decimal), `sign`
-is 1 or -1, and `level` is the child's depth (1 for the root's children). A child whose signed sum
-is exactly zero carries no flow and gets no edge.
+is 1 or -1, `level` is the child's depth (1 for the root's children), and `node_kind` is `"other"`
+for the sink edge the collapse emits and `"item"` for every other edge. The sink is marked by
+`node_kind`, never recognised by its label; its path element is `OTHER_LABEL`, which is for display.
+A child whose signed sum is exactly zero carries no flow and gets no edge.
 
 CONSERVATION is the invariant: at every node, the signed children (the sink included) sum to the
 node's signed value.
@@ -37,7 +39,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Sequence
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 OTHER_LABEL = "All other"
 
 
@@ -60,10 +62,10 @@ def flow_edges(
 
     edges: list[dict[str, Any]] = []
 
-    def emit(source: tuple[str, ...], target: tuple[str, ...], net: Decimal) -> None:
+    def emit(source: tuple[str, ...], target: tuple[str, ...], net: Decimal, node_kind: str) -> None:
         edges.append({
             "source": list(source), "target": list(target), "value": abs(net),
-            "sign": 1 if net > 0 else -1, "level": len(target) - 1,
+            "sign": 1 if net > 0 else -1, "level": len(target) - 1, "node_kind": node_kind,
         })
 
     stack: list[tuple[str, ...]] = [(root,)]
@@ -82,12 +84,12 @@ def flow_edges(
         for child, net in live.items():
             if child in below:
                 continue
-            emit(parent, child, net)
+            emit(parent, child, net, "item")
             stack.append(child)
         if below:
             sink_net = sum((live[c] for c in below), Decimal(0))
             if sink_net != 0:
-                emit(parent, parent + (OTHER_LABEL,), sink_net)
+                emit(parent, parent + (OTHER_LABEL,), sink_net, "other")
 
     edges.sort(key=lambda e: (e["level"], e["source"], -e["value"], e["target"]))
     return edges

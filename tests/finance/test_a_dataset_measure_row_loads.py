@@ -103,7 +103,8 @@ def test_each_invalid_field_is_refused_naming_the_file(case, tmp_path):
 def test_a_function_with_other_keywords_is_refused(tmp_path):
     """The signature must be exactly keyword-only root, paths, other_threshold."""
     mod = tmp_path / "wrong_flow_mod.py"
-    mod.write_text('VERSION = "1.0.0"\n\ndef flow_edges(*, root, paths):\n    return []\n', encoding="utf-8")
+    mod.write_text('VERSION = "1.1.0"\nOTHER_LABEL = "x"\n\ndef flow_edges(*, root, paths):\n    return []\n',
+                   encoding="utf-8")
     sys.path.insert(0, str(tmp_path))
     try:
         raw = mutated(lambda r: r["computation"].update(module="wrong_flow_mod"))
@@ -115,8 +116,9 @@ def test_a_function_with_other_keywords_is_refused(tmp_path):
 
 
 def test_a_state_function_wired_to_a_dataset_row_is_refused(tmp_path):
+    from agent_fleet.finance_agent.measure_modules import vac
     raw = mutated(lambda r: r["computation"].update(
-        module="agent_fleet.finance_agent.measure_modules.vac", function="vac_cpi"))
+        module="agent_fleet.finance_agent.measure_modules.vac", function="vac_cpi", version=vac.VERSION))
     with pytest.raises(measure_verbs.MeasureVerbError, match="exactly"):
         load(raw, tmp_path)
 
@@ -142,3 +144,27 @@ def test_a_dataset_row_needs_no_series(tmp_path):
 
 def test_the_shape_is_in_the_runners_set():
     assert "FLOW_DECOMPOSITION" in measure_verbs.COMPUTED_SHAPES
+
+
+def test_a_row_declaring_other_label_is_refused(tmp_path):
+    raw = mutated(set_("render.other_label", "Misc"))
+    with pytest.raises(measure_verbs.MeasureVerbError, match="OTHER_LABEL") as e:
+        load(raw, tmp_path)
+    assert "render.other_label" in str(e.value)
+
+
+@pytest.mark.parametrize("body", [
+    "", "OTHER_LABEL = ''\n", "OTHER_LABEL = 7\n", "OTHER_LABEL = None\n"],
+    ids=["absent", "empty", "not-a-str", "none"])
+def test_a_module_without_a_usable_other_label_is_refused(body, tmp_path):
+    mod = tmp_path / "no_label_flow_mod.py"
+    mod.write_text('VERSION = "1.1.0"\n' + body + "\ndef flow_edges(*, root, paths, other_threshold):\n"
+                   "    return []\n", encoding="utf-8")
+    sys.path.insert(0, str(tmp_path))
+    try:
+        raw = mutated(lambda r: r["computation"].update(module="no_label_flow_mod"))
+        with pytest.raises(measure_verbs.MeasureVerbError, match="OTHER_LABEL"):
+            load(raw, tmp_path)
+    finally:
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("no_label_flow_mod", None)

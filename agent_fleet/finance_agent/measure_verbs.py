@@ -332,6 +332,10 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
     rnd = raw["render"]
     if not isinstance(rnd, dict):
         raise ValueError("render must be a mapping")
+    if kind == KIND_DATASET and "other_label" in rnd:
+        raise ValueError(
+            "render.other_label is declared by the row; the engine serves render.other_label from "
+            "the module's OTHER_LABEL, so a row does not declare it")
     if rnd["shape"] not in COMPUTED_SHAPES:
         raise ValueError(
             f"render.shape {rnd['shape']!r}; this engine computes only {sorted(COMPUTED_SHAPES)} "
@@ -393,6 +397,11 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
             raise ValueError(
                 f"{comp['function']} takes keyword-only {sorted(sig.parameters)}; a dataset row's "
                 f"function takes exactly {sorted(_DATASET_FN_KEYWORDS)}")
+        other = getattr(mod, "OTHER_LABEL", None)
+        if not isinstance(other, str) or not other:
+            raise ValueError(
+                f"module {module!r} must define OTHER_LABEL as a non-empty str: it is the label the "
+                f"engine serves as render.other_label for the collapse's sink")
     elif kw_only != set(state) or len(sig.parameters) != len(kw_only):
         raise ValueError(
             f"{comp['function']} takes keyword-only {sorted(sig.parameters)}, the row's "
@@ -535,9 +544,8 @@ def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]]) -> Optional
     never whether that is acceptable. ABSENT (None) when there are no edges."""
     if not rows:
         return None
-    sink = getattr(importlib.import_module(row.resolved_module), "OTHER_LABEL", None)
     net = sum((Decimal(e["value_exact"]) * e["sign"] for e in rows if e["level"] == 1), Decimal(0))
-    sinks = sum(1 for e in rows if sink is not None and e["target"][-1] == sink)
+    sinks = sum(1 for e in rows if e.get("node_kind") == "other")
     label = row.render.get("value_label", row.name)
     return (f"{label}: net {net:.2f} across {len(rows)} edges over {len(row.levels) - 1} levels, "
             f"{sinks} 'All other' sink(s) from the collapse")

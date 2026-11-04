@@ -94,9 +94,9 @@ def test_nodes_are_paths_so_one_name_under_two_parents_stays_two_nodes():
     assert signed(xs)[(ROOT, "C", "c1", "x")] == D("-20")
 
 
-def test_edges_carry_exactly_source_target_value_sign_level():
+def test_edges_carry_exactly_source_target_value_sign_level_node_kind():
     for e in edges_of():
-        assert set(e) == {"source", "target", "value", "sign", "level"}
+        assert set(e) == {"source", "target", "value", "sign", "level", "node_kind"}
         assert isinstance(e["source"], list) and isinstance(e["target"], list)
         assert e["target"][:-1] == e["source"] and e["level"] == len(e["target"]) - 1
         assert e["value"] > 0 and e["sign"] in (1, -1)
@@ -131,7 +131,26 @@ def test_amounts_are_exact_decimals_with_no_float_in_the_way():
 def test_the_module_is_versioned_and_names_no_case():
     import inspect
     src = inspect.getsource(vd)
-    assert vd.VERSION == "1.0.0"
+    assert vd.VERSION == "1.1.0"
     import re
     for word in ("EAC", "WBS", "control account", "work package", "program", "cost"):
         assert not re.search(rf"b{word}", src, re.I), word
+
+
+def test_every_edge_has_a_node_kind_and_the_sinks_are_exactly_the_other_edges():
+    edges = edges_of()
+    assert {e["node_kind"] for e in edges} <= {"item", "other"}
+    sinks = [e for e in edges if e["target"][-1] == vd.OTHER_LABEL]
+    others = [e for e in edges if e["node_kind"] == "other"]
+    assert sinks and sinks == others
+    assert all(e["target"][-1] == vd.OTHER_LABEL for e in others)
+    assert all(e["target"][-1] != vd.OTHER_LABEL for e in edges if e["node_kind"] == "item")
+
+
+def test_a_lone_child_below_the_threshold_is_an_item():
+    (b3,) = [e for e in edges_of() if e["target"][-1] == "b3"]
+    assert b3["node_kind"] == "item"
+
+
+def test_a_zero_threshold_makes_no_other_edge():
+    assert not [e for e in edges_of(threshold="0") if e["node_kind"] == "other"]

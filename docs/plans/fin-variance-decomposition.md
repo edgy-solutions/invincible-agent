@@ -58,8 +58,11 @@ render:
 - A node is a path: `[root]`, then `[root, v1]`, and so on. Its signed value is the exact sum of
   `value` over the rows beneath it.
 - There's one edge per (parent, child): `source` and `target` are the two paths, `value` is the
-  absolute value of the child's signed sum, `sign` is `1` or `-1`, and `level` is the child's depth
-  (1 for the root's children).
+  absolute value of the child's signed sum, `sign` is `1` or `-1`, `level` is the child's depth
+  (1 for the root's children), and `node_kind` is `other` for a sink and `item` for anything else.
+- **The sink is marked, never matched by label** (ruled 2026-11-04). A consumer finds it by
+  `node_kind`. The engine serves `render.other_label` for display, taken from the module's
+  `OTHER_LABEL`, which is also the sink path's last element. A row doesn't declare it.
 - **Conservation is the invariant.** At every node, the signed children, the sink included, sum to
   the node's signed value. A child whose signed sum is exactly zero carries no flow and gets no edge,
   and its whole subtree drops with it, even where its own children are nonzero and offset each other.
@@ -81,15 +84,24 @@ render:
 | 4 | `source`/`target` | **paths** (lists of strings), unique by construction; the renderer labels by the last element | joined strings, which can collide |
 | 5 | the shape's name | `FLOW_DECOMPOSITION`, because the vocabulary is upper case and the key is `render.shape` | `archetype: flow_decomposition` as written |
 | 6 | the period axis | **none**: the sum is over every row of the program, and `window` is refused | a `period:` column and the `window` param |
+| 7 | how the sink is marked | **ruled 2026-11-04:** `node_kind: item \| other` on each edge, and `render.other_label` for display | a label match, which cortex refused |
 
 ## Not met by this change
 
 - **EAC.** No dataset carries an EAC-variance column. The EV fixture has period amounts
   (`bcws`, `bcwp`, `acwp`), and a row can't carry a formula. So the test overlay decomposes `acwp`
   over `[program_id, control_account, work_package]`, which proves the mechanics, not EAC. That
-  overlay never shows a negative sign, so the signs are sealed in the module's tests. The first EAC
-  row needs a dataset with that column: at work, a column in Chris's asset; on the sandbox, a
-  fixture change in dag-tools.
+  overlay never shows a negative sign, so the signs are sealed in the module's tests.
+  **Ruled 2026-11-04:** the EV fixture gets `bac` and `eac` columns (dag-tools, on asset #7's
+  contract), and the EAC row declares value = `eac − bac`. Two things that ruling needs, neither
+  built:
+  - **The value is an expression.** Today `value:` names one column. The proposed form is
+    `value: {minus: [eac, bac]}`: two numeric columns, each checked as `value` is now.
+  - **A work-package figure must not be summed over its periods.** The fixture has one row per
+    work package per period. If `bac` and `eac` are carried on every row, as `program_bac` is,
+    a plain sum counts each work package once per period. The proposal is
+    `inputs.dataset.per_path: once`: the value must be the same on every row of a terminal path,
+    and it's taken once. Otherwise the read is a 502.
 - **The archetype.** `FLOW_DECOMPOSITION` has to be in `capability_admission.KNOWN_ARCHETYPES` for
   the row to load (`test_a_measure_row_declares_its_render`). That's Lane 1's file. The ontology,
   binding and cortex contract registries are cortex's build, which comes after this.

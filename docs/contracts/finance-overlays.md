@@ -85,6 +85,10 @@ differences under `inputs` and `render`:
   `paths` and `other_threshold`.
 - `render.shape` is `FLOW_DECOMPOSITION` (a state row is `MULTI_SERIES`, and a mismatch is refused
   either way); `render.series` is not required.
+- Each edge carries `node_kind`, `item` or `other` (the "All other" sink the collapse makes).
+  `render.other_label` is served by the engine from the module's `OTHER_LABEL`; a row does not
+  declare it (a row that does is refused at load). A consumer marks the sink by `node_kind`, never
+  by matching the label.
 - A level value named "All other" under a parent that gets a sink is a 502 `asset_contract_violation`
   with rule `refused_by_module`; the message names no row value.
 

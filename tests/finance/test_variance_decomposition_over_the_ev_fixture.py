@@ -167,7 +167,7 @@ def test_the_envelope_names_the_shape_the_source_and_the_method(post, gate, flow
     assert env["data_provenance"].startswith("SYNTHETIC") and ROW_URN in env["data_provenance"]
     assert env["measure"] == FN and env["output_uri"].endswith("DeclaredMeasureSeries")
     assert env["artifact_id"].startswith(f"fin:{FN}:")
-    assert env["method"]["version"] == "1.0.0" and env["method"]["module_sha256"] == flow_rows[FN].module_sha256
+    assert env["method"]["version"] == "1.1.0" and env["method"]["module_sha256"] == flow_rows[FN].module_sha256
     assert env["verdict"] and "net" in env["verdict"] and "All other" in env["verdict"]
     assert "series" not in env and "reference" not in env
     assert all(isinstance(e["value"], float) and e["value_exact"] for e in env["rows"])
@@ -298,3 +298,15 @@ def test_the_verb_registers_like_a_state_row(flow_rows):
     (c,) = calls
     assert c["verb"] == "mesh:" + flow_rows[FN].verb and c["output_uri"].endswith("DeclaredMeasureSeries")
     assert [s["name"] for s in c["slots"]] == ["program_id"] and c["domains"] == ["PROGRAM_FINANCE"]
+
+
+def test_the_envelope_serves_the_label_and_the_sink_is_marked_by_node_kind(post):
+    status, env = post()
+    assert status == 200, env
+    assert env["render"]["other_label"] == "All other"
+    for e in env["rows"]:
+        assert (e["node_kind"] == "other") == (e["target"][-1] == env["render"]["other_label"]), e
+    others = [e for e in env["rows"] if e["node_kind"] == "other"]
+    assert len(others) == 1 and others[0]["level"] == 1          # accounts 4.1, 1.1, 5.1 collapse
+    assert others[0]["source"] == [PROGRAM]
+    assert f"{len(others)} 'All other' sink(s)" in env["verdict"]

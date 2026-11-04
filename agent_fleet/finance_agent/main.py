@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib
 import json
 import logging
 import os
@@ -1041,7 +1042,8 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
         "output_uri": measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
         "artifact_id": _artifact_id(fn, params, rows),
         "value_label": row.render.get("value_label", row.name),
-        "render": copy.deepcopy(row.render),
+        "render": {**copy.deepcopy(row.render),
+                   "other_label": importlib.import_module(row.resolved_module).OTHER_LABEL},
         "data_provenance": asset_inputs.dataset_provenance(row.banner, urn),
         "data_source": {"kind": "asset", "urn": urn},
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
