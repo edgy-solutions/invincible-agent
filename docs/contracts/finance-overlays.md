@@ -69,6 +69,25 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 | `render` | How the result is drawn: the shape, the one series (and its unit), the value label, and a target line. |
 | `policy` | Who may see it, who approved it, and why. |
 
+**A second kind of row: a dataset row.** A row whose `inputs` holds `dataset` instead of `state` is
+a flow decomposition: it reads named columns of one asset and answers once, with an edge table.
+Design: `docs/plans/fin-variance-decomposition.md`. It uses the same top-level keys, with these
+differences under `inputs` and `render`:
+
+- `inputs.params` is `program_id` only (`window` is refused: this kind has no period axis).
+- `inputs.dataset` holds `urn` (a `urn:li:dataset:...` URN, read as the caller; `FIN_DATASET_URN` is
+  not consulted), `banner` (required, shown beside every answer), `levels` (at least two distinct
+  column names, root first; the root column is selected by `program_id`) and `value` (a numeric
+  column that is not one of the levels).
+- `inputs.other_threshold` is a Decimal string, 0 up to but not including 1: the share below which
+  two or more siblings collapse into an "All other" sink. `0` collapses nothing.
+- `inputs.state` is refused, and the module's function takes exactly the keyword-only `root`,
+  `paths` and `other_threshold`.
+- `render.shape` is `FLOW_DECOMPOSITION` (a state row is `MULTI_SERIES`, and a mismatch is refused
+  either way); `render.series` is not required.
+- A level value named "All other" under a parent that gets a sink is a 502 `asset_contract_violation`
+  with rule `refused_by_module`; the message names no row value.
+
 The worked example, copied from the sample file. TCPI (to-complete performance index) is the
 efficiency the remaining work must achieve to finish on budget.
 
@@ -528,7 +547,8 @@ of the `urn:li:dataset:` form, or the mesh client cannot be imported.
 
 Answers carry `data_source: {kind: "asset", urn}` and the banner in place of the notional text.
 Package and CDRL exports naming a declared measure return 409 `asset_export_unsupported` while the
-URN is set; built-in measures still export.
+URN is set; built-in measures still export. A dataset-kind measure (section 2) always reads its own
+asset, so an export naming one is refused the same way whether or not the URN is set.
 
 ## 6. Not covered yet
 

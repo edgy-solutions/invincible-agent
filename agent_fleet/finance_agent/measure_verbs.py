@@ -110,7 +110,13 @@ _TOP_KEYS = frozenset({
 #: The render shapes this engine's runner fills: one declared series per period. A MECHANISM list,
 #: not a vocabulary: the archetype vocabulary is `capability_admission.KNOWN_ARCHETYPES`, which the
 #: flattened image cannot import, so a test ties this set to it (this set must be a subset).
-COMPUTED_SHAPES = frozenset({"MULTI_SERIES"})
+COMPUTED_SHAPES = frozenset({"MULTI_SERIES", "FLOW_DECOMPOSITION"})
+#: The two kinds of row, told apart by `inputs.dataset`, and the one shape each kind draws as.
+KIND_STATE, KIND_DATASET = "state", "dataset"
+_SHAPE_OF_KIND = {KIND_STATE: "MULTI_SERIES", KIND_DATASET: "FLOW_DECOMPOSITION"}
+_DATASET_PARAMS = frozenset({"program_id"})   # no period axis: `window` is refused for this kind
+_URN_PREFIX = "urn:li:dataset:"               # `asset_inputs.URN_PREFIX`; the flat image cannot import it
+_DATASET_FN_KEYWORDS = frozenset({"root", "paths", "other_threshold"})
 #: Old layout key -> the key that replaced it. Refused, never silently accepted.
 _MOVED_OUTPUT_KEYS = {
     "archetype": "render.shape", "series": "render.series", "reference": "render.target",
@@ -154,6 +160,13 @@ class MeasureVerbRow:
     granted_by: str
     reason: str
     module_sha256: str
+    # The dataset kind (`inputs.dataset`); a state row carries the defaults.
+    kind: str = KIND_STATE
+    dataset_urn: str = ""
+    banner: str = ""
+    levels: tuple[str, ...] = ()
+    value_column: str = ""
+    other_threshold: Optional[Decimal] = None
 
     @property
     def series_key(self) -> str:
@@ -204,6 +217,45 @@ def _names(builtins: tuple[Iterable[str], Iterable[str]]) -> tuple[frozenset, fr
     return frozenset(builtins[0]), frozenset(builtins[1])
 
 
+def _check_dataset(inputs: dict) -> dict:
+    """The validated `inputs.dataset` / `inputs.other_threshold` of a dataset row. ValueError."""
+    ds = inputs["dataset"]
+    if not isinstance(ds, dict):
+        raise ValueError("inputs.dataset must be a mapping")
+    unknown = sorted(set(ds) - {"urn", "banner", "levels", "value"})
+    if unknown:
+        raise ValueError(f"inputs.dataset carries {unknown}; it holds urn, banner, levels and value only")
+    urn = ds.get("urn")
+    if not isinstance(urn, str) or not urn.startswith(_URN_PREFIX) or len(urn) == len(_URN_PREFIX):
+        raise ValueError(f"inputs.dataset.urn must be a '{_URN_PREFIX}...' URN")
+    banner = ds.get("banner")
+    if not isinstance(banner, str) or not banner.strip():
+        raise ValueError(
+            "inputs.dataset.banner is required: it is what stops a synthetic asset reading as real")
+    levels = ds.get("levels")
+    if (not isinstance(levels, list) or len(levels) < 2
+            or not all(isinstance(c, str) and c.strip() for c in levels)
+            or len(set(levels)) != len(levels)):
+        raise ValueError("inputs.dataset.levels must be a list of at least two distinct, non-empty column names")
+    value = ds.get("value")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("inputs.dataset.value must be a column name")
+    if value in levels:
+        raise ValueError(f"inputs.dataset.value {value!r} is also one of the levels")
+    raw_t = inputs.get("other_threshold")
+    if raw_t is None:
+        raise ValueError("missing required key 'inputs.other_threshold'")
+    try:
+        threshold = Decimal(raw_t) if isinstance(raw_t, str) else None
+        if threshold is None or not (0 <= threshold < 1):
+            raise ArithmeticError
+    except ArithmeticError:  # InvalidOperation is one
+        raise ValueError(
+            f"inputs.other_threshold {raw_t!r} must be a Decimal string with 0 <= t < 1") from None
+    return {"urn": urn, "banner": banner.strip(), "levels": tuple(levels), "value": value,
+            "other_threshold": threshold}
+
+
 def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureVerbRow:
     # Raises ValueError: `compose_rows` re-raises it as MeasureVerbError WITH THE FILE NAMED.
     fns, verbs = _names(builtins)
@@ -225,11 +277,14 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
             f"row carries {unknown}, which no part of the engine reads; a measure row cannot "
             f"carry a formula, expression or query -- the computation lives in the named "
             f"module (ADR-0053 section 3)")
-    for path in ("measure_id", "verb", "name", "inputs.params.program_id", "inputs.state",
+    kind = (KIND_DATASET if isinstance(raw.get("inputs"), dict) and "dataset" in raw["inputs"]
+            else KIND_STATE)
+    for path in ("measure_id", "verb", "name", "inputs.params.program_id",
+                 "inputs.dataset" if kind == KIND_DATASET else "inputs.state",
                  "computation.module", "computation.function", "computation.version",
                  "computation.derived_from.authority", "computation.derived_from.clause",
                  "computation.derived_from.transcription",
-                 "render.shape", "render.series",
+                 "render.shape", *(("render.series",) if kind == KIND_STATE else ()),
                  "policy.status", "policy.cells", "policy.granted_by", "policy.reason"):
         _need(raw, path)
     mid, verb = raw["measure_id"], raw["verb"]
@@ -241,21 +296,35 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         raise ValueError(f"verb {verb!r} is a built-in finance verb's name")
 
     inputs = raw["inputs"]
-    extra = sorted(set(inputs) - {"params", "state"})
+    if kind == KIND_DATASET:
+        if "state" in inputs:
+            raise ValueError(
+                "inputs carries both `dataset` and `state`; a row is one kind or the other: "
+                "`state` names engine quantities per period, `dataset` names columns of an asset")
+        extra = sorted(set(inputs) - {"params", "dataset", "other_threshold"})
+    else:
+        extra = sorted(set(inputs) - {"params", "state"})
     if extra:
         raise ValueError(
             f"inputs carries {extra}; a row names quantities from the vocabulary and holds no "
             f"formula, expression or query (ADR-0053 section 3)")
     params = tuple(inputs["params"])
-    unknown_params = sorted(set(params) - _PARAMS)
+    allowed_params = _DATASET_PARAMS if kind == KIND_DATASET else _PARAMS
+    unknown_params = sorted(set(params) - allowed_params)
     if unknown_params:
-        raise ValueError(f"inputs.params names {unknown_params}; this engine fills only {sorted(_PARAMS)}")
-    state = dict(inputs["state"])
-    bad_state = sorted(f"{k}: {v}" for k, v in state.items() if v not in STATE_VOCABULARY)
-    if bad_state:
-        raise ValueError(
-            f"inputs.state names quantities outside the closed vocabulary: {bad_state}; "
-            f"the vocabulary is {sorted(STATE_VOCABULARY)}")
+        raise ValueError(f"inputs.params names {unknown_params}; this engine fills only {sorted(allowed_params)}"
+                         + (" for a dataset row (it has no period axis)" if kind == KIND_DATASET else ""))
+    dataset: dict = {}
+    if kind == KIND_DATASET:
+        dataset = _check_dataset(inputs)
+        state: dict = {}
+    else:
+        state = dict(inputs["state"])
+        bad_state = sorted(f"{k}: {v}" for k, v in state.items() if v not in STATE_VOCABULARY)
+        if bad_state:
+            raise ValueError(
+                f"inputs.state names quantities outside the closed vocabulary: {bad_state}; "
+                f"the vocabulary is {sorted(STATE_VOCABULARY)}")
 
     out, pol, comp = raw.get("outputs") or {}, raw["policy"], raw["computation"]
     if not isinstance(out, dict):
@@ -267,13 +336,20 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         raise ValueError(
             f"render.shape {rnd['shape']!r}; this engine computes only {sorted(COMPUTED_SHAPES)} "
             f"(one declared series per period)")
-    series = tuple(dict(s) for s in rnd["series"])
-    if len({s.get("unit") for s in series}) > 1:
+    if rnd["shape"] != _SHAPE_OF_KIND[kind]:
         raise ValueError(
-            "render.series mixes units; series on one card share a unit, and an index beside "
-            "an amount is two charts drawn as one")
-    if len(series) != 1:
-        raise ValueError("render.series must hold exactly one series: the function returns one value per period")
+            f"render.shape {rnd['shape']!r} does not match a {kind} row, which draws as "
+            f"{_SHAPE_OF_KIND[kind]!r}")
+    if kind == KIND_STATE:
+        series = tuple(dict(s) for s in rnd["series"])
+        if len({s.get("unit") for s in series}) > 1:
+            raise ValueError(
+                "render.series mixes units; series on one card share a unit, and an index beside "
+                "an amount is two charts drawn as one")
+        if len(series) != 1:
+            raise ValueError("render.series must hold exactly one series: the function returns one value per period")
+    else:
+        series = ()
     if pol["status"] not in _STATUSES:
         raise ValueError(f"policy.status {pol['status']!r} is not one of {sorted(_STATUSES)}")
     if "visibility" in pol:
@@ -312,7 +388,12 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         raise ValueError(f"module {module!r} has no function {comp['function']!r}")
     sig = inspect.signature(fn)
     kw_only = {n for n, p in sig.parameters.items() if p.kind is inspect.Parameter.KEYWORD_ONLY}
-    if kw_only != set(state) or len(sig.parameters) != len(kw_only):
+    if kind == KIND_DATASET:
+        if kw_only != _DATASET_FN_KEYWORDS or len(sig.parameters) != len(kw_only):
+            raise ValueError(
+                f"{comp['function']} takes keyword-only {sorted(sig.parameters)}; a dataset row's "
+                f"function takes exactly {sorted(_DATASET_FN_KEYWORDS)}")
+    elif kw_only != set(state) or len(sig.parameters) != len(kw_only):
         raise ValueError(
             f"{comp['function']} takes keyword-only {sorted(sig.parameters)}, the row's "
             f"inputs.state names {sorted(state)}; they must be the same set")
@@ -333,6 +414,9 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         undefined=dict(undefined) if undefined else None,
         status=pol["status"], cells=cells, granted_by=str(pol["granted_by"]),
         reason=str(pol["reason"]), module_sha256=hashlib.sha256(data).hexdigest(),
+        kind=kind, dataset_urn=dataset.get("urn", ""), banner=dataset.get("banner", ""),
+        levels=dataset.get("levels", ()), value_column=dataset.get("value", ""),
+        other_threshold=dataset.get("other_threshold"),
     )
 
 
@@ -426,3 +510,34 @@ def declared_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]]) -> Optiona
     ref = row.reference["value"]
     side = "above" if value > ref else "below" if value < ref else "at"
     return f"{label} {value:.2f}, {side} {ref} ({row.reference.get('label', 'reference')}) at {last['period']}"
+
+
+# ── THE DATASET KIND ─────────────────────────────────────────────────────────────────────────
+
+def run_dataset(df, row: MeasureVerbRow, *, program_id: str) -> list[dict[str, Any]]:
+    """The edge table of one program's rows. Pure over `df`; no I/O.
+
+    `df` holds the row's columns only (the reader's select) and the program's rows only: its
+    `levels[0]` column is the root, so every path below it starts at `levels[1]`. Amounts are read
+    as `Decimal(str(x))`, which is exact for an integer or a decimal and the shortest repr for a
+    float, as the state kind reads `program.bac`. The module is called once; each edge's `value` is
+    emitted as `_emit_money` emits money (a cent-quantized float beside `value_exact`).
+    """
+    paths = [(tuple(str(v) for v in r[:-1]), Decimal(str(r[-1])))
+             for r in df.select([*row.levels[1:], row.value_column]).iter_rows()]
+    edges = row.resolve()(root=program_id, paths=paths, other_threshold=row.other_threshold)
+    return _measures._emit_money(edges, money_fields=("value",))
+
+
+def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]]) -> Optional[str]:
+    """A MECHANICAL restatement of the edge table: the root's net signed value, how many edges,
+    over how many levels, and how many sinks the collapse made. It states where the figure stands,
+    never whether that is acceptable. ABSENT (None) when there are no edges."""
+    if not rows:
+        return None
+    sink = getattr(importlib.import_module(row.resolved_module), "OTHER_LABEL", None)
+    net = sum((Decimal(e["value_exact"]) * e["sign"] for e in rows if e["level"] == 1), Decimal(0))
+    sinks = sum(1 for e in rows if sink is not None and e["target"][-1] == sink)
+    label = row.render.get("value_label", row.name)
+    return (f"{label}: net {net:.2f} across {len(rows)} edges over {len(row.levels) - 1} levels, "
+            f"{sinks} 'All other' sink(s) from the collapse")

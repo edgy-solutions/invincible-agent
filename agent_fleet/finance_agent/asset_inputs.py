@@ -115,6 +115,11 @@ def provenance(urn: str) -> str:
     return f"{dataset_banner()} Source: {urn}"
 
 
+def dataset_provenance(banner: str, urn: str) -> str:
+    """`provenance` for a dataset-kind row, whose banner is the row's own, not the environment's."""
+    return f"{banner} Source: {urn}"
+
+
 def _load_client() -> tuple[Any, type, type]:
     """THE SEAM: `(CortexDataClient, NotEntitled, MeshUnavailable)`. Tests replace this function;
     nothing replaces a module in `sys.modules`. Imported here and nowhere else, so an unset
@@ -287,6 +292,60 @@ def read_rows(read: Callable[[str], Any], urn: str, program_id: str,
              round((t1 - t0) * 1000), round((t2 - t1) * 1000), df.height, df.estimated_size(), urn)
     if df.height > cap:
         raise AssetTooLarge(cap)
+    return df
+
+
+def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, ...], value: str,
+                      program_id: str) -> Any:
+    """`read_rows` for a dataset-kind row: the rows of ONE program of the ROW'S columns.
+
+    The contract is the row's own columns, not the fixed finance ones. All of `levels` and `value`
+    must be present and `value` numeric (checked on the schema, before a row is collected); the
+    level columns are read as strings, and the filter keeps the rows whose `levels[0]` is
+    `program_id`. Only those columns are selected, and the row cap is applied before collect. Every
+    outcome maps as `read_rows` maps it. An empty frame raises `NotInModel`, as `state_from_rows`
+    does for a program the asset does not hold. Nulls and non-finite values are checked on the
+    collected frame; a message names the rule and the column, never a row's value."""
+    import polars as pl
+
+    t0 = time.perf_counter()
+    try:
+        lf = read(urn)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _raise_for_read_failure(exc)
+    t1 = time.perf_counter()
+    try:
+        schema = lf.collect_schema()
+    except Exception as exc:
+        log.warning("asset scan failed: %s", type(exc).__name__)
+        raise AssetUnavailable("the asset could not be scanned") from None
+    missing = [c for c in (*levels, value) if c not in schema]
+    if missing:
+        raise ContractViolation("missing_column", "missing column(s): " + ", ".join(missing))
+    if not schema[value].is_numeric():
+        raise ContractViolation("wrong_type", f"column(s) of the wrong type: {value}")
+    cap = max_rows()
+    as_text = [pl.col(c).cast(pl.String) for c in levels]
+    q = lf.filter(pl.col(levels[0]).cast(pl.String) == program_id)
+    try:
+        df = q.select([*as_text, pl.col(value)]).head(cap + 1).collect()
+    except Exception as exc:
+        log.warning("asset scan failed: %s", type(exc).__name__)
+        raise AssetUnavailable("the asset could not be scanned") from None
+    t2 = time.perf_counter()
+    log.info("asset read ticket_ms=%d scan_ms=%d sql_ms=0 rows=%d bytes=%d urn=%s",
+             round((t1 - t0) * 1000), round((t2 - t1) * 1000), df.height, df.estimated_size(), urn)
+    if df.height > cap:
+        raise AssetTooLarge(cap)
+    for c in (*levels, value):
+        if df[c].null_count():
+            raise ContractViolation("null_value", f"null value(s) in column {c}")
+    if df[value].dtype.is_float() and not df[value].is_finite().all():
+        raise ContractViolation("non_finite", f"non-finite number(s) in column {value}")
+    if df.height == 0:
+        raise NotInModel(f"the asset holds no rows for program {program_id!r}")
     return df
 
 
