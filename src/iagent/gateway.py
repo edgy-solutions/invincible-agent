@@ -57,6 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
+from iagent_mesh import Refusal as _Refusal
 from iagent_mesh.review_coverage import ReviewShapeRow
 from iagent_mesh.provenance import EvidenceRef  # the SDK model; the one EvidenceRef (ruling 2026-10-31)
 from pydantic import ValidationError as _PydanticValidationError
@@ -1200,7 +1201,7 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
 # authorized them, so the two cannot diverge. Keyed on authz_id end-to-end (email
 # in sandbox, employee-ID at work-deploy) — display uses .email, authz uses authz_id.
 
-from pydantic import BaseModel as _BaseModel  # noqa: E402
+from pydantic import BaseModel as _BaseModel, ConfigDict as _ConfigDict  # noqa: E402
 from pydantic import BeforeValidator as _BeforeValidator, StrictFloat as _StrictFloat  # noqa: E402
 from pydantic import StrictInt as _StrictInt  # noqa: E402
 from pydantic import StrictBool as _StrictBool, StrictStr as _StrictStr  # noqa: E402
@@ -4848,8 +4849,11 @@ class CanvasSeedAskUnavailable(_BaseModel):
     detail: str = Field(description="The builder's exception class name.")
 
 
-class CanvasSeedRefusal(_BaseModel):
+class CanvasSeedRefusal(_Refusal):
     """`authz.refusal.refusal`'s envelope (ca's `iagent_mesh.refusal.Refusal` field names)."""
+    # This published schema has no `additionalProperties: false`, so it keeps the wider config.
+    model_config = _ConfigDict(extra="ignore", frozen=True)
+
     policy_id: str = Field(description="The policy family that refused, e.g. `groups` or `program_members`.")
     missing_binding: str = Field(description="What the caller lacks, e.g. `can_view_program(program)`.")
     grantable_by: str = Field(description="Who can grant it and how, from policy/grantors/.")
@@ -12655,9 +12659,6 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
 
     return case_projection.project_workflow_case(
         case, definitions, task_rows, output_artifact)
-
-
-from pydantic import ConfigDict as _ConfigDict  # noqa: E402
 
 
 class CaseSignalRequest(_BaseModel):
