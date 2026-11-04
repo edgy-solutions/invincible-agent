@@ -17,10 +17,11 @@ body that is not JSON raised before, so a caller that caught that still does. Ha
 bases, never this class, so the two import paths (`utils.` in an engine image, `agent_fleet.utils.`
 in the source tree) cannot split the catch.
 
-A site that reads a transport failure as a deny still answers a malformed answer as an outage
-(architect ruling 2026-11-02: "a malformed PDP answer is 503 at every site, including the ones that
-already fail closed -- same class as 16"), so `httpx.DecodingError` gets its own arm there, ahead of
-the broad one. Sealed in `tests/security/test_a_malformed_pdp_answer_is_503_at_every_site.py`.
+A site that used to read a failure as a deny answers a malformed answer as an outage (architect
+ruling 2026-11-02: "a malformed PDP answer is 503 at every site, including the ones that already fail
+closed -- same class as 16"), and a transport failure the same way (ruled yes the same day), so
+`httpx.HTTPError` gets its own arm there, ahead of the broad one, which stays a deny for a defect.
+Sealed in `tests/security/test_a_malformed_pdp_answer_is_503_at_every_site.py`.
 """
 from __future__ import annotations
 

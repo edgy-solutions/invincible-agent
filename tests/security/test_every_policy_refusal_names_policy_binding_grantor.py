@@ -266,6 +266,7 @@ NOT_POLICY: dict[str, str] = {
     f"{GW}::_entitled_artifact_rec::no caller identity on this request": AUTHN,
     f"{GW}::answer_case_signal::no_actor | a case signal needs an authentic": AUTHN,
     f"{FIN}::mesh_ticketed_read::a governed finance read requires the caller's id": AUTHN,
+    f"{FIN}::_refuse_asset_exports::asset_export_unsupported | An export cannot carry figures r": NOT_BUILT,
     "agent_fleet/graph_host/main.py::run_graph::{} runs as the INITIATOR and this request carrie": AUTHN,
     f"{GRW}::submit_decision::submit_decision requires `acted_by` (the caller'": AUTHN,
     f"{RA}::_authorize_resolution::approve requires `acted_by` (the caller's authz_": AUTHN,

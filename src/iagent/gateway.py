@@ -1632,7 +1632,7 @@ async def file_triage_task(
     except human_tasks.AuthorizationUnavailable as exc:
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unavailable",
-            "message": "the authorizer's answer could not be read",
+            "message": "the authorizer could not be asked, or its answer could not be read",
         }) from exc
     if not allowed:
         raise HTTPException(status_code=403, detail={
@@ -2923,7 +2923,8 @@ def _picker_unavailable(exc: HTTPException, owner: str) -> HTTPException:
     `can_export` check) passes through as it was."""
     detail = exc.detail
     if isinstance(detail, dict) and detail.get("reason") == "recipient_readers_unavailable":
-        return HTTPException(status_code=exc.status_code, detail={**detail, "owner": owner})
+        return HTTPException(status_code=exc.status_code,
+                             detail=_detail_with_message(exc.status_code, {**detail, "owner": owner}))
     return exc
 
 
@@ -3623,7 +3624,8 @@ async def _call_engine_cost_answers_export(payload: dict, bearer: str) -> dict:
             detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
         except Exception:
             detail = getattr(rr, "text", "engine refused")
-        raise HTTPException(status_code=rr.status_code, detail=detail)
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, detail))
     return rr.json()
 
 
@@ -5851,7 +5853,7 @@ async def act_on_human_task(
     except human_tasks.AuthorizationUnavailable as exc:
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unavailable",
-            "message": "the authorizer's answer could not be read",
+            "message": "the authorizer could not be asked, or its answer could not be read",
         }) from exc
     if not allowed:
         raise HTTPException(status_code=403, detail={"error": "not_authorized_to_act", "audience": audience})

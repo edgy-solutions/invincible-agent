@@ -1,0 +1,9 @@
+# SEED -- deployment-neutral. A deployment names its own approvers in an overlay row
+# (GRANTOR_OVERLAY_DIRS), which replaces this row whole (ADR-0036).
+family: gateway_delegates
+rail_file: policy/gateway_delegates.yaml
+object_scoped: false
+who: the approvers of policy/gateway_delegates.yaml in this deployment's policy repository
+how: >-
+  a reviewed change adding or changing the row that names the service and its routes (granted_by,
+  reason)

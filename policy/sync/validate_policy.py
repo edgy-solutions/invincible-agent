@@ -28,9 +28,13 @@ definition of "valid", never a parallel re-implementation):
     (see known_call_tags); no row is required per tag (deny-by-default: no row, nobody calls)
   - capability_grants.yaml        → also: a `can_review:<S>` key names a registered review subject
     (see known_review_subjects); no row is required per subject (no row, nobody reviews)
+  - capability_grants.yaml        → also: a `can_configure:<S>` key names a registered configure
+    subject (see known_configure_subjects); no row is required per subject (no row, nobody configures)
   - recipient_readers.yaml        → recipient_reader_sync.load_readers (WHEN PRESENT; not in
     DATA_FILES -- see the note there)
   - repository_paths.yaml         → repository_paths_errors (WHEN PRESENT; not in
+    DATA_FILES -- see the note there)
+  - gateway_delegates.yaml        → gateway_delegates_errors (WHEN PRESENT; not in
     DATA_FILES -- see the note there)
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
     no sync of its own — can_consume is evaluated in-process)
@@ -104,6 +108,10 @@ DATA_FILES = (
 #
 # repository_paths.yaml (ADR-0062 section 5) is likewise NOT in DATA_FILES: only engine-r reads it,
 # and a deployment's policy repository may not run engine-r. Validated WHEN PRESENT.
+#
+# gateway_delegates.yaml is likewise NOT in DATA_FILES: a deployment with no delegate has nothing to
+# assert, and an absent file means the same as an empty one, no service names a person. Validated
+# WHEN PRESENT.
 
 
 def known_content_kinds() -> tuple[set[str], list[str]]:
@@ -160,22 +168,32 @@ def known_call_tags() -> tuple[set[str], list[str]]:
     return tags, [f"{f.as_posix()} ({len(tags)} tag(s))"]
 
 
-def known_review_subjects(path: Path | None = None) -> tuple[set[str], list[str]]:
-    """The subjects a `can_review:<S>` capability key may name: the `name` of every row of
-    policy/review_subjects.yaml (the product's registry, read from beside this script and never
-    from a deployment's policy dir), and a note `<path> (<n> subject(s))` or `<path> (absent)`.
-    An absent or unreadable registry is an empty set, which refuses every `can_review:` row."""
-    f = path or Path(__file__).resolve().parents[2] / "policy" / "review_subjects.yaml"
+def _registered_subjects(name: str, path: Path | None) -> tuple[set[str], list[str]]:
+    """The `name` of every row under the key `<stem>` of policy/`<stem>.yaml` (a registry of the
+    product, read from beside this script and never from a deployment's policy dir), and a note
+    `<path> (<n> subject(s))` or `<path> (absent)`. An absent or unreadable registry is an empty
+    set, which refuses every key that must name a subject in it."""
+    f = path or Path(__file__).resolve().parents[2] / "policy" / name
     if not f.is_file():
         return set(), [f"{f.as_posix()} (absent)"]
     try:
         doc = yaml.safe_load(f.read_text(encoding="utf-8"))
     except (OSError, ValueError, yaml.YAMLError):
         return set(), [f"{f.as_posix()} (absent)"]
-    rows = doc.get("review_subjects") if isinstance(doc, dict) else None
+    rows = doc.get(Path(name).stem) if isinstance(doc, dict) else None
     subjects = {r["name"].strip() for r in (rows if isinstance(rows, list) else [])
                 if isinstance(r, dict) and isinstance(r.get("name"), str) and r["name"].strip()}
     return subjects, [f"{f.as_posix()} ({len(subjects)} subject(s))"]
+
+
+def known_review_subjects(path: Path | None = None) -> tuple[set[str], list[str]]:
+    """The subjects a `can_review:<S>` capability key may name: policy/review_subjects.yaml."""
+    return _registered_subjects("review_subjects.yaml", path)
+
+
+def known_configure_subjects(path: Path | None = None) -> tuple[set[str], list[str]]:
+    """The subjects a `can_configure:<S>` capability key may name: policy/configure_subjects.yaml."""
+    return _registered_subjects("configure_subjects.yaml", path)
 
 
 #: No grantee is named in code (architect's standing rule, 2026-10-30: a group is configuration).
@@ -647,6 +665,73 @@ def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> 
     return out
 
 
+#: The central gateway's route ids a delegate row may name. The gateway owns them (dag-tools,
+#: `central_gateway.identity`); that is another repository, so this list is restated and nothing
+#: here can seal the two equal. A misspelt route fails here, not as a delegate who never matches.
+GATEWAY_ROUTES = ("assets.authorize",)
+
+_GD_ROW_FIELDS = ("service", "routes", "granted_by", "reason")
+
+
+def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
+    """Validate policy/gateway_delegates.yaml. PURE.
+
+    `raw` is the parsed file, `users` the users.yaml list. Each error reads
+    `gateway_delegates.yaml: <service>: ...`. A delegate names a person on a route, so a row's
+    `service` must be a seeded service identity (a person holds their own token) and each route a
+    known one (a wildcard is an unknown route). Unknown keys are refused by name, so a typo
+    (`route:`) cannot pass silently."""
+    pre = "gateway_delegates.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"gateway_delegates"}:
+        extra = sorted(map(str, set(raw) - {"gateway_delegates"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `gateway_delegates`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    rows = raw["gateway_delegates"]
+    if not isinstance(rows, list):
+        return [f"{pre}: `gateway_delegates` must be a list of rows (an empty list names no delegate)"]
+
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    seen: set[str] = set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        service = row.get("service")
+        where = f"{pre}: {service if isinstance(service, str) and service.strip() else f'row {i}'}"
+        for k in row:
+            if k not in _GD_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_GD_ROW_FIELDS)})")
+
+        if not isinstance(service, str) or not service.strip():
+            out.append(f"{where}: `service` must be a non-empty string")
+        else:
+            if not service.startswith(SERVICE_SUBJECT_PREFIX):
+                out.append(f"{where}: `service` must be a `{SERVICE_SUBJECT_PREFIX}` identity; "
+                           "a person holds their own token and is no delegate")
+            elif service not in seeded:
+                out.append(f"{where}: `service` is not a seeded identity in users.yaml")
+            if service in seen:
+                out.append(f"{where}: more than one row names this service")
+            seen.add(service)
+
+        routes = row.get("routes")
+        if not isinstance(routes, list) or not routes:
+            out.append(f"{where}: `routes` must be a non-empty list")
+        else:
+            for j, r in enumerate(routes):
+                if r not in GATEWAY_ROUTES:
+                    out.append(f"{where}: unknown route {r!r} (known: {', '.join(GATEWAY_ROUTES)})")
+                elif r in routes[:j]:
+                    out.append(f"{where}: route {r!r} is listed more than once")
+
+        for k in ("granted_by", "reason"):
+            v = row.get(k)
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+    return out
+
+
 def validate(
     policy_dir: Path,
     enums_dir: Path,
@@ -797,16 +882,20 @@ def validate(
                 f"real tag stays uncallable through a door. Known tags ({len(_ctags)}): "
                 + ", ".join(sorted(_ctags)) + "; composed from " + "; ".join(_cnotes))
 
-    # `can_review:<S>` (2026-11-02 ruling, deny-by-default): the surface asks can_invoke on
-    # `can_review:<S>`; a misspelt key gates nothing. No row is required per subject.
-    _rsubjects, _rnotes = known_review_subjects()
-    for c in caps:
-        if c.key.startswith("can_review:") and c.key[len("can_review:"):] not in _rsubjects:
-            errors.append(
-                f"capability_grants.yaml: {c.key!r} names {c.key[len('can_review:'):]!r}, which is "
-                f"NOT a registered review subject -- a misspelt key gates nothing and the real "
-                f"subject stays reviewable by nobody. Known subjects ({len(_rsubjects)}): "
-                + ", ".join(sorted(_rsubjects)) + "; composed from " + "; ".join(_rnotes))
+    # `can_review:<S>` (2026-11-02 ruling, deny-by-default) and `can_configure:<S>` (ruled the same
+    # way): the surface asks can_invoke on the key; a misspelt key gates nothing. No row is required
+    # per subject.
+    for _prefix, _known, _noun, _able in (
+            ("can_review:", known_review_subjects, "review", "reviewable"),
+            ("can_configure:", known_configure_subjects, "configure", "configurable")):
+        _subjects, _notes = _known()
+        for c in caps:
+            if c.key.startswith(_prefix) and c.key[len(_prefix):] not in _subjects:
+                errors.append(
+                    f"capability_grants.yaml: {c.key!r} names {c.key[len(_prefix):]!r}, which is "
+                    f"NOT a registered {_noun} subject -- a misspelt key gates nothing and the real "
+                    f"subject stays {_able} by nobody. Known subjects ({len(_subjects)}): "
+                    + ", ".join(sorted(_subjects)) + "; composed from " + "; ".join(_notes))
 
     # recipient_readers.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note
     # there; required-or-not is open with the architect). Absent = no reader asserted = every
@@ -833,6 +922,14 @@ def validate(
         _m = len(_repos)
         print(f"  repository_paths.yaml: {_n_rows} row(s) across {_m} "
               f"{'repository' if _m == 1 else 'repositories'}")
+
+    # gateway_delegates.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note there).
+    _gd_path = policy_dir / "gateway_delegates.yaml"
+    if _gd_path.is_file():
+        gd_raw = _read_yaml(_gd_path, errors)
+        errors.extend(gateway_delegates_errors(gd_raw, users_raw.get("users") or []))
+        _gd_rows = gd_raw.get("gateway_delegates")
+        print(f"  gateway_delegates.yaml: {len(_gd_rows) if isinstance(_gd_rows, list) else 0} row(s)")
 
     # ADMISSION POSTURE (ADR-0034). Validated through the SAME parser the runtime loads with, so
     # there is ONE definition of a well-formed table and this gate cannot drift from the loader.

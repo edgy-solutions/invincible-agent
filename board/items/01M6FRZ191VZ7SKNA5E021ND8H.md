@@ -3,10 +3,10 @@ title: Master red: ten cost export tests stop at the recipient check
 feature: finance
 lane: invincible-agent/lane/fin
 repo: invincible-agent
-status: open
+status: review
 priority: next
 blocked_on: []
-pr: []
+pr: [invincible-agent#238]
 ruling_ref: none; 11-03 full-suite census, triaged by Chris's 11-02 instruction
 updated: 2026-11-03
 ---

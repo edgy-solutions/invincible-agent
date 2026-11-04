@@ -90,9 +90,10 @@
 # capability `can_configure:<S>` for the caller and refuses when it is false; that check lives with
 # the surface, never in this repo's code, which names no subject. Deny-by-default: a subject with no
 # row is configurable by NOBODY, and deleting a row revokes through the invoker-relation prune. Grant
-# through a capability-only group (`grant_to_groups`), never a person. S is not checked against a
-# registry, so a misspelt key is not refused: it gates nothing and the real subject stays configurable
-# by nobody. The first ruled subject is `deck_template`: the workbench's deck template.
+# through a capability-only group (`grant_to_groups`), never a person. S must be registered in
+# policy/configure_subjects.yaml, or validate_policy refuses the key: a misspelt key gates nothing and
+# the real subject stays configurable by nobody. The first ruled subject is `deck_template`: the
+# workbench's deck template.
 capabilities:
   # ADR-0029 Slice-1 demo fixture: the promotion workflow's publish emit. alice
   # (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) is the initiator authorized to

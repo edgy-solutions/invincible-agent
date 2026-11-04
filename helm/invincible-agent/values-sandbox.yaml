@@ -109,7 +109,7 @@ agentFleet:
     # Telemetry (ADR-0038): tags every trace with the cluster it ran in. The LANGFUSE_*
     # creds ride in via agentFleet.secrets (values-sandbox.secret.yaml, gitignored).
     DEPLOY_ENV: "sandbox"
-    # A MEASURE IS AN OVERLAY ROW (proposal docs/proposals/a-measure-is-an-overlay-row-...md).
+    # A MEASURE IS AN OVERLAY ROW (proposal docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md).
     # SANDBOX ONLY, not the chart's default configmap: the sample TCPI row and its board are
     # invented to prove the contract. engine-fin reads the first, cortex-bff the second; the
     # shared agentFleet configmap carries both and each service reads only its own.
@@ -1046,7 +1046,15 @@ cortexUi:
     # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
     # 8afc0e7..e06e08a leaves the Dockerfile, package.json and build.yml unchanged, and adds no
     # import.meta.env read.
-    digest: "sha256:2ed53946a4c89f5cd68d675522e41009ec8538706e261b7188bdfec3e94a08f5"
+    # RE-PINNED FOR 0.4.77 (Chris, 2026-11-03: "cortex pin 26a2049"): cortex-ui
+    # 26a204990572f7d46cb8ee208abb31c0d7327fe9 -> 3077dfa6. It adds to e06e08a: a payload that claims
+    # the document shape and cannot be read says why; k of n holds the first total and names refused
+    # panels; a card the answer declared no longer reads NOT declared.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # e06e08a..26a2049 leaves the Dockerfile and package.json unchanged, changes build.yml only at
+    # its PRODUCER_REF contract pin, and adds no import.meta.env read.
+    digest: "sha256:3077dfa6e73a42658116faf27d29aaf4ad8a8b27f9df82bda192c30722e79104"
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already

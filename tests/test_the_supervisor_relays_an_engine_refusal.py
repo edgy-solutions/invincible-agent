@@ -146,3 +146,18 @@ def test_a_grantor_map_that_will_not_load_still_relays_the_refusal(monkeypatch):
     assert er["refused"] is True
     assert er["refusal"] == {"policy_id": FAMILY, "missing_binding": "x"}
     assert er.get("status") != "engine_unreachable"
+
+
+def test_only_a_typed_denial_carries_its_status_past_the_relay(monkeypatch):
+    """`status` is what opens the request-access flow, so another engine's word must not travel."""
+    body = _refusal_body()
+    body["detail"].update(status="blocked", denied_assets=["urn:x"], subject="alice@example.com")
+    er = _drive(monkeypatch, _returning(_response(403, body)))["expert_response"]
+    assert er["refused"] is True
+    assert not {"status", "denied_assets", "subject", "message"} & er.keys()
+
+    body["detail"]["status"] = "access_denied"
+    er = _drive(monkeypatch, _returning(_response(403, body)))["expert_response"]
+    assert er["refused"] is True
+    assert (er["status"], er["denied_assets"], er["subject"], er["message"]) == (
+        "access_denied", ["urn:x"], "alice@example.com", "m")

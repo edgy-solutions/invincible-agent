@@ -37,7 +37,7 @@ grants:
   # full git-sync doesn't prune it. Deliberate + user-authorized (test
   # sandbox), NOT reactive-on-denial.
   - subject: alice@example.com
-    asset: "urn:li:dataset:(urn:li:dataPlatform:dagster,mesh_demo_customers,PROD)"
+    asset: "urn:li:dataset:(urn:li:dataPlatform:s3,mesh_demo_customers,PROD)"
     granted_by: seed
     reason: >-
       Demo: alice reads the mesh_demo_customers dataset (region breakdown) to

@@ -275,8 +275,9 @@ users:
   # SERVICE is calling, not WHOSE data may be read. DA serves every caller, so a read grant
   # on svc:data-analyst would entitle EVERY caller to whatever it can reach — the confused
   # deputy the per-caller conjunction exists to prevent. The acting human currently rides
-  # separately (X-Originator-Email; the can_read gate is keyed on that), and formalising
-  # that delegation is an open design decision, not something to settle with a grant here.
+  # separately (X-Originator-Email; the can_read gate is keyed on that). Naming that human on a
+  # central-gateway route is policy/gateway_delegates.yaml's, which grants no read; never settle
+  # it with a grant here.
   # Replaces the hand-created sandbox client `engine-da-svc`, whose token carried no claim
   # mapper at all — its authz_id fell back to the opaque Keycloak `sub` UUID, which is
   # precisely the not-human-reviewable key this file exists to refuse.

@@ -1434,7 +1434,6 @@ def test_the_grammar_says_null_is_not_a_deferral_and_never_set_renders_as():
 
 # ── an emit that declares its disposition: the runner's rule, read the same here ─────────
 
-REC = "workflows/pcn_record.yaml"
 REC_CH = "decisions/pcn_record_chaining.yaml"
 
 
@@ -2158,16 +2157,21 @@ def test_a_stage_nothing_pairs_with_has_dropped_its_steps():
 def test_the_oracle_meets_the_bar_on_every_fixture(name):
     row = sm.measure(name, se.OracleExtractor(), aligned=True)
     assert row["bar_met"] is True and row["dropped_steps"] == [] and row["answered_contradictions"] == []
+    assert row["dropped_routes"] == []
 
 
-@pytest.mark.parametrize("edit", ["drop", "unreachable", "cannot_run"])
-def test_the_bar_needs_all_three(monkeypatch, edit):
+@pytest.mark.parametrize("edit", ["drop", "route", "unreachable", "cannot_run"])
+def test_the_bar_needs_all_four(monkeypatch, edit):
     real = se.run
 
     def result(*a, **k):
         r = real(*a, **k)
         if edit == "drop":
             r["files"] = _record_only_emits("filed")
+        elif edit == "route":
+            r["files"] = copy.deepcopy(r["files"])
+            r["files"][ACK_CH]["rows"] = [{**x, "then": "elsewhere"} if x["when"]["outcome"] == "escalated" else x
+                                          for x in r["files"][ACK_CH]["rows"]]
         elif edit == "unreachable":
             r["files"] = {**r["files"], "workflows/orphan.yaml": {"id": "orphan", "steps": []}}
         else:
@@ -2177,3 +2181,691 @@ def test_the_bar_needs_all_three(monkeypatch, edit):
     row = sm.measure("pcn_review", se.OracleExtractor())
     assert row["bar_met"] is False
     assert bool(row["dropped_steps"]) is (edit == "drop") and bool(row["unreachable"]) is (edit == "unreachable")
+    assert bool(row["dropped_routes"]) is (edit == "route")
+
+
+# ── a render step is what someone looks at before an approval (architect, 2026-11-02) ─────────
+
+def test_the_grammar_says_what_someone_looks_at_before_an_approval_is_a_render_step():
+    line = next(x for x in se._GRAMMAR.split("\n- ") if x.startswith("When the user says someone looks at"))
+    for word in ("looks at", "reviews", "sees", "named fields", "before an approval", "render step",
+                 "template", "{trigger.<field>}"):
+        assert word in " ".join(line.split())
+
+
+def test_the_render_form_the_grammar_names_is_the_one_the_fixture_runs():
+    render = next(s for s in _good()[IR]["steps"] if s["kind"] == "render")
+    assert set(render) == {"kind", "id", "template"}
+    assert all(v.startswith("{trigger.") for v in render["template"].values())
+    assert se.runnable(_good()) == []
+
+
+def test_the_loop_inserts_no_render_step_a_draft_without_one_has_dropped_it():
+    f = _good()
+    f[IR]["steps"] = [s for s in f[IR]["steps"] if s["kind"] != "render"]
+    assert se.runnable(f) == [] and not any(g.key.startswith("steps.pcn_impact_review") for g in se.problems(f))
+    out = sm.dropped_steps(f, _good(), {w: w for w in STAGES})
+    assert [x["stage"] for x in out] == ["pcn_impact_review"]
+
+
+# ── a person says no when sending does not settle the stage (architect, 2026-11-02) ───────────
+
+ENDS = "outputs.pcn_record.ends"
+
+
+def _ends_gap(files):
+    d = se.Draft(files=files)
+    d.set_at[(REC, "steps[id=disposition].disposes")] = 0
+    return d, next(g for g in se.confirms(d) if g.key == ENDS)
+
+
+def test_the_scripted_user_rejects_ends_when_the_expected_emit_has_no_disposes():
+    d, g = _ends_gap(_record_only_emits("filed"))
+    u = _pcn_user()
+    entry = u(g, d)
+    assert entry["says"] == f"{NO} {_bank_says('steps.pcn_record')}"
+    assert entry["facts"] == {"unset": [{"file": REC, "path": "steps[id=disposition].disposes"}]}
+    assert entry["corrects"] == ENDS and u.rejected == [ENDS] and u.answered_by_path == []
+
+
+def test_rejecting_ends_is_shown_to_the_model_as_a_correction_and_applies():
+    d, g = _ends_gap(_record_only_emits("filed"))
+    entry = _pcn_user()(g, d)
+    assert "CORRECTION" in se.ModelExtractor("http://model.example", "m")._user_message(entry, d, g)
+    se.apply_patch(d, entry["facts"], 3, answering=g)
+    assert "disposes" not in d.files[REC]["steps"][0] and d.pending == []
+    assert ENDS in _keys(d.files)  # nothing settles the stage now: the loop asks what does
+
+
+def test_control_an_expected_emit_that_disposes_is_never_denied():
+    exp = _expected("pcn_review")
+    exp[REC]["steps"] = [s for s in exp[REC]["steps"] if s["kind"] == "emit"]
+    exp[REC]["steps"][0]["disposes"] = "filed"
+    d, g = _ends_gap(copy.deepcopy(exp))
+    u = sm.AligningUser(_transcript("pcn_review"), exp)
+    assert u._settled_by_sending(g, d.files, ENDS) is None
+    assert u.rejected == []
+
+
+def test_control_an_emit_with_no_expected_emit_to_pair_with_is_not_rejected():
+    d, g = _ends_gap(_record_only_emits("filed"))
+    exp = _expected("pcn_review")
+    emit = next(s for s in exp[REC]["steps"] if s["kind"] == "emit")
+    emit["kind"] = "not_an_emit"
+    u = sm.AligningUser(_transcript("pcn_review"), exp)
+    assert u._settled_by_sending(g, d.files, ENDS) is None and u.rejected == []
+
+
+def test_control_only_a_confirm_of_ends_is_rejected():
+    d, g = _ends_gap(_record_only_emits("filed"))
+    u = _pcn_user()
+    assert u._settled_by_sending(dataclasses.replace(g, kind="missing"), d.files, ENDS) is None
+    assert u._settled_by_sending(g, d.files, "outputs.pcn_record.next") is None
+    assert u.rejected == []
+
+
+def test_a_whole_run_loses_the_guessed_disposes_and_keeps_the_filing_step():
+    t = _transcript("pcn_review")
+    u = sm.AligningUser(t, _expected("pcn_review"))
+    r = se.run(t, _sends_and_guesses, answer=u)
+    assert ENDS in u.rejected and r["files"] == _expected("pcn_review") and r["status"] == "runnable"
+
+
+# ── an unstated empty requires is confirmed once (architect, 2026-11-02) ──────────────────────
+
+REQUIRES = "trigger.requires"
+
+
+def _requires_guessed(value):
+    f = _good()
+    f[TRIG]["requires"] = value
+    d = se.Draft(files=f)
+    d.set_at[(TRIG, "requires")] = 0
+    return d
+
+
+def test_an_unstated_empty_requires_is_confirmed():
+    g = next(x for x in se.confirms(_requires_guessed([])) if x.key == REQUIRES)
+    assert g.kind == "confirm" and g.revises == ((TRIG, "requires"),) and g.rewrites == ((TRIG, "requires"),)
+    assert "never asked" in g.question
+
+
+def test_an_answer_to_the_empty_requires_replaces_it_with_nothing_to_contradict():
+    d = _requires_guessed([])
+    g = next(x for x in se.confirms(d) if x.key == REQUIRES)
+    se.apply_patch(d, {"set": [{"file": TRIG, "path": "requires", "value": ["kind"]}]}, 3, answering=g)
+    assert d.files[TRIG]["requires"] == ["kind"] and d.pending == []
+
+
+def test_the_empty_requires_is_asked_once():
+    d = _requires_guessed([])
+    assert REQUIRES in [g.key for g in se.gaps(d)]
+    d.asked[REQUIRES] += 1
+    assert REQUIRES not in [g.key for g in se.gaps(d)]
+
+
+def test_control_a_requires_with_values_or_one_the_person_answered_is_not_confirmed():
+    assert REQUIRES not in [g.key for g in se.confirms(_requires_guessed(["kind"]))]
+    d = _requires_guessed([])
+    d.answered[REQUIRES] = 1
+    assert REQUIRES not in [g.key for g in se.confirms(d)]
+
+
+def test_an_unanswered_empty_requires_is_left_open_never_deferred():
+    assert se.non_deferrable(_requires_guessed([]), REQUIRES) is not None
+
+
+# ── a deferral whose slot no longer exists is dropped and recorded (architect, 2026-11-02) ────
+
+FILED_DEADLINE = "approvals.pcn_record.file.deadline"
+STALE = "approvals.pcn_impact_review.gone.deadline"
+
+
+def _record_with(step):
+    f = _good()
+    f[REC]["steps"] = [s for s in f[REC]["steps"] if s["kind"] == "emit"] + [step]
+    return f
+
+
+@pytest.mark.parametrize("key,exists", [
+    (DEADLINE_KEY, True),
+    ("approvals.pcn_impact_review.gone.deadline", False),  # the step went
+    ("approvals.gone.engineering_disposition.deadline", False),  # the definition went
+    ("actors.pcn_impact_review.gone.excludes", False),
+    (PLANTED, True),
+    (f"contradiction:{IR}#steps[id=gone].excludes", False),  # the leaf went
+    ("contradiction:workflows/gone.yaml#steps", False),
+    (f"contradiction:{IR}#steps[", True),  # a string nothing parses names nothing
+    ("approvals.pcn_impact_review.next", True),
+    ("approvals.gone.next", False),
+    ("approvals.gone.next.approved", False),
+    ("outputs.gone.ends", False),
+    ("approvals.pcn_acknowledgement.accepts", True),
+    ("approvals.gone.accepts", False),
+    ("outputs.record", True),  # no definition in the key: nothing the draft could have lost
+    (REQUIRES, True),
+    ("timed_out", True),
+])
+def test_a_slot_exists_while_the_draft_holds_what_its_key_names(key, exists):
+    assert se._slot_exists(_good(), key) is exists
+
+
+def test_a_deferred_deadline_on_a_step_now_another_kind_is_dropped_and_recorded():
+    d = se.Draft(files=_record_with({"kind": "signal_await", "id": "file", "signal": "s", "audience": "a"}))
+    d.deferrals[FILED_DEADLINE] = "not agreed"
+    se._drop_stale_deferrals(d, 7)
+    assert d.deferrals == {}
+    assert d.dropped_deferrals == [{"key": FILED_DEADLINE, "reason": "not agreed", "turn": 7}]
+
+
+def test_control_a_deferred_deadline_on_a_step_still_there_stands():
+    d = se.Draft(files=_record_with({"kind": "human_await", "id": "file", "task_kind": "k"}))
+    d.deferrals[FILED_DEADLINE] = "not agreed"
+    se._drop_stale_deferrals(d, 7)
+    assert d.deferrals == {FILED_DEADLINE: "not agreed"} and d.dropped_deferrals == []
+
+
+def _defers_a_slot_of_no_step():
+    """An oracle whose first answer also defers a deadline on a step the draft does not have, as run
+    40's did once its confirm had replaced that step."""
+    state = {"seeded": False}
+
+    def extractor(entry, draft, gap):
+        patch = copy.deepcopy(se.OracleExtractor()(entry, draft, gap) or {})
+        if gap is not None and not state["seeded"]:
+            state["seeded"] = True
+            patch["defer"] = list(patch.get("defer") or []) + [{"gap": STALE, "reason": "later"}]
+        return patch
+    return extractor
+
+
+def test_the_run_drops_a_stale_deferral_and_carries_the_drop():
+    r = se.run(_transcript("pcn_review"), _defers_a_slot_of_no_step())
+    assert [(x["key"], x["reason"]) for x in r["dropped_deferrals"]] == [(STALE, "later")]
+    assert STALE not in r["deferrals"]
+    assert 0 < r["dropped_deferrals"][0]["turn"] < r["turns"]  # at the next turn, not only at the end
+
+
+def test_the_last_turn_can_leave_a_stale_deferral_and_it_is_still_dropped():
+    t = {"opening": {"says": "x", "facts": {"defer": [{"gap": "approvals.gone.x.deadline", "reason": "later"}]}},
+         "answers": {}}
+    r = se.run(t, se.OracleExtractor(), max_turns=0)
+    assert r["deferrals"] == {} and [x["key"] for x in r["dropped_deferrals"]] == ["approvals.gone.x.deadline"]
+
+
+def test_the_measure_records_the_drop():
+    row = sm.measure("pcn_review", _defers_a_slot_of_no_step(), aligned=True)
+    assert [x["key"] for x in row["dropped_deferrals"]] == [STALE]
+
+
+def test_control_the_planted_deferrals_are_not_dropped_on_a_clean_run():
+    for name in NAMES:
+        row = sm.measure(name, se.OracleExtractor(), aligned=True)
+        assert row["dropped_deferrals"] == [] and row["deferrals_recorded"] == row["deferrals_planted"]
+
+
+# ── "can it end?" vouches only for what it asks: the false "earlier you said" of runs 39, 40 ──
+
+STRAY = "contradiction:chaining.pcn_impact_review_chaining.stray"
+
+
+def _guessed_at_the_opening(answer_by_key):
+    """A run replaying runs 39 and 40: the opening drafts the whole bundle, guessing the reasons as
+    [] and a row for an outcome the stage lacks, so nothing has been asked when the contradiction
+    is answered, and the kind's confirm comes next."""
+    files = _expected("pcn_review")
+    files[REASON_KIND]["reason_required"] = []
+    files[CH]["domain"]["outcome"] = list(files[CH]["domain"]["outcome"]) + ["stray"]
+    files[CH]["rows"] = list(files[CH]["rows"]) + [{"when": {"outcome": "stray"}, "then": files[CH]["rows"][0]["then"]}]
+    files[TRIG]["stages"] = list(STAGES)
+    t = {"opening": {"says": "x", "facts": {"set": [{"file": f, "path": "", "value": v} for f, v in files.items()]}},
+         "answers": {}}
+
+    def answer(g, d):
+        return answer_by_key.get(g.key) or {"says": "Yes."}
+    return se.run(t, se.OracleExtractor(), answer=answer)
+
+
+def _no_stray():
+    good = _good()
+    return {"says": "No.", "facts": {"set": [
+        {"file": CH, "path": "domain.outcome", "value": good[CH]["domain"]["outcome"]},
+        {"file": CH, "path": "rows", "value": good[CH]["rows"]}]}}
+
+
+REASONS_NOW = {"says": "They do.", "facts": {"set": [{"file": REASON_KIND, "path": "reason_required",
+                                                      "value": _expected("pcn_review")[REASON_KIND]["reason_required"]}]}}
+
+
+def test_answering_can_it_end_leaves_the_guessed_reasons_a_guess():
+    r = _guessed_at_the_opening({STRAY: _no_stray(), KIND_ENTRY: REASONS_NOW})
+    keys = [q["key"] for q in r["questions"]]
+    assert keys.index(STRAY) < keys.index(KIND_ENTRY)  # the order of runs 39 and 40
+    assert f"contradiction:{REASON_KIND}#reason_required" not in r["contradictions_asked"]
+    assert r["files"][REASON_KIND]["reason_required"] == _expected("pcn_review")[REASON_KIND]["reason_required"]
+
+
+def test_can_it_end_asks_the_row_and_the_answers_and_may_still_revise_the_reasons():
+    g = _gap_of(_with_stray_row("stray"), f"contradiction:chaining.{CHAIN_NAME}.stray")
+    assert set(g.asks) == {(CHAIN, "domain.outcome"), (CHAIN, "rows"), (ACK_KIND, "accepts")}
+    assert {(ACK_KIND, "reason_required"), (CHAIN, "terminals")} <= set(g.revises)
+
+
+def test_control_what_can_it_end_asked_is_vouched():
+    r_keys = []
+
+    def answer(g, d):
+        r_keys.append((g.key, dict(d.vouched)))
+        return {STRAY: _no_stray()}.get(g.key) or {"says": "Yes."}
+    files = _expected("pcn_review")
+    files[CH]["domain"]["outcome"] = list(files[CH]["domain"]["outcome"]) + ["stray"]
+    files[CH]["rows"] = list(files[CH]["rows"]) + [{"when": {"outcome": "stray"}, "then": files[CH]["rows"][0]["then"]}]
+    files[TRIG]["stages"] = list(STAGES)
+    t = {"opening": {"says": "x", "facts": {"set": [{"file": f, "path": "", "value": v} for f, v in files.items()]}},
+         "answers": {}}
+    se.run(t, se.OracleExtractor(), answer=answer)
+    after = next(v for k, v in r_keys[r_keys.index(next(x for x in r_keys if x[0] == STRAY)) + 1:])
+    assert (CH, "rows") in after and (REASON_KIND, "accepts") in after
+    assert (REASON_KIND, "reason_required") not in after
+
+
+def test_can_it_end_after_a_signal_asks_the_signal_s_answers_and_not_its_reasons():
+    files = _expected("pcn_review")
+    table = files[REC_CH]
+    table["domain"]["outcome"] = list(table["domain"]["outcome"]) + ["stray"]
+    table["rows"] = list(table["rows"]) + [{"when": {"outcome": "stray"}, "then": table["rows"][0]["then"]}]
+    g = _gap_of(files, "contradiction:chaining.pcn_record_chaining.stray")
+    assert set(g.asks) == {(REC_CH, "domain.outcome"), (REC_CH, "rows"), (REC, "steps[id=filed].accepts")}
+    assert (REC, "steps[id=filed].reason_required") in g.revises
+
+
+def _vouched_by(g, before, after):
+    d = se.Draft(files=after)
+    se._vouch(d, g, before, 5)
+    return d.vouched
+
+
+def test_a_reason_the_answer_wrote_is_vouched_and_one_it_left_is_not():
+    """The training fixture's answer says "they must say why", and writes the reasons: the person
+    spoke of them. Runs 39 and 40 left them: nobody did."""
+    good = _good()
+    g = se.Gap("k", "approvals", "contradiction", "q", revises=((REASON_KIND, "reason_required"), (CH, "rows")),
+               asks=((CH, "rows"),))
+    left = _vouched_by(g, good, copy.deepcopy(good))
+    assert left == {(CH, "rows"): 5}
+    wrote = copy.deepcopy(good)
+    wrote[REASON_KIND]["reason_required"] = ["something_new"]
+    assert _vouched_by(g, good, wrote) == {(CH, "rows"): 5, (REASON_KIND, "reason_required"): 5}
+
+
+def test_control_a_gap_with_no_asks_vouches_everything_it_revises():
+    g = se.Gap("k", "approvals", "contradiction", "q", revises=((CH, "rows"), (REASON_KIND, "reason_required")))
+    assert set(_vouched_by(g, _good(), _good())) == {(CH, "rows"), (REASON_KIND, "reason_required")}
+
+
+def test_control_a_missing_gap_vouches_nothing():
+    g = se.Gap("k", "approvals", "missing", "q", revises=((CH, "rows"),))
+    assert _vouched_by(g, _good(), _good()) == {}
+
+
+# ── the scripted user says what the draft calls it: run 39's terminals ────────────────────────
+
+def _named_as_the_model_named_them():
+    """Run 39: the stage's rows name its own terminals, and the expected bundle names others."""
+    f = _good()
+    for r in f[PROGRAM_CH]["rows"]:
+        if r["then"] in f[PROGRAM_CH]["terminals"]:
+            r["then"] = "my_" + r["then"]
+    f[PROGRAM_CH]["terminals"] = ["completed"]
+    return f
+
+
+def test_the_scripted_user_answers_terminals_in_the_draft_s_names():
+    f = _named_as_the_model_named_them()
+    key = f"contradiction:{PROGRAM_CH}#terminals"
+    expected = _expected("pcn_review")[PROGRAM_CH]["terminals"]
+    u = _pcn_user()
+    assert u(_raised(key), se.Draft(files=f)) == {"says": "It is " + ", ".join("my_" + x for x in expected) + "."}
+    assert u.answered_contradictions == [key]
+
+
+def test_control_a_terminal_no_row_of_the_draft_reaches_stays_unanswered():
+    f = _named_as_the_model_named_them()
+    terminal = _expected("pcn_review")[PROGRAM_CH]["terminals"][0]
+    f[PROGRAM_CH]["rows"] = [r for r in f[PROGRAM_CH]["rows"] if r["then"] != "my_" + terminal]
+    key = f"contradiction:{PROGRAM_CH}#terminals"
+    u = _pcn_user()
+    assert u(_raised(key), se.Draft(files=f)) is None
+    assert u.answered_contradictions == [] and key in u.unbanked
+
+
+def test_a_stage_or_task_kind_is_said_in_the_draft_s_name_and_a_verb_stays_literal():
+    u = _pcn_user()
+    f = _rename(_good(), {"pcn_acknowledge": "ack"})
+    assert u._in_draft_names(["pcn_acknowledge", "approved"], f, PROGRAM_CH) == ["ack", "approved"]
+    assert u._in_draft_names("pcn_acknowledge", f, PROGRAM_CH) == "ack"
+    assert u._in_draft_names("approved", f, PROGRAM_CH) == "approved"
+
+
+def test_two_terminals_the_draft_names_alike_are_said_once():
+    f = _good()
+    for r in f[PROGRAM_CH]["rows"]:
+        if r["then"] in f[PROGRAM_CH]["terminals"]:
+            r["then"] = "over"
+    u = _pcn_user()
+    assert u._in_draft_names(_expected("pcn_review")[PROGRAM_CH]["terminals"], f, PROGRAM_CH) == ["over"]
+
+
+def test_control_nothing_is_said_of_an_empty_value_but_that_it_is_none():
+    f = _good()
+    f[PROGRAM_CH]["terminals"] = []
+    exp = _expected("pcn_review")
+    exp[PROGRAM_CH]["terminals"] = []
+    key = f"contradiction:{PROGRAM_CH}#terminals"
+    assert sm.AligningUser(_transcript("pcn_review"), exp)(_raised(key), se.Draft(files=f)) == {"says": "It is none."}
+
+
+def test_a_terminal_is_said_as_the_table_asked_about_names_it():
+    f = _named_as_the_model_named_them()
+    terminal = _expected("pcn_review")[PROGRAM_CH]["terminals"][0]
+    u = _pcn_user()
+    assert u._in_draft_names(terminal, f, PROGRAM_CH) == "my_" + terminal
+    assert u._in_draft_names(terminal, f, CH) != "my_" + terminal
+
+
+# ── a value the person rejected is a constraint on the next patch (architect, 2026-11-03) ─────
+
+SENT = _record_only_emits()[REC]["steps"][0]["id"]
+DISPOSES = f"steps[id={SENT}].disposes"
+
+
+def _writes_back(value, then=None):
+    """Says "filed" on the send, unsets it at the confirm, writes ``value`` back at the ``missing``
+    gap on the same key, and answers a refusal with ``then``, or with the same patch again."""
+    def ex(entry, draft, gap):
+        if gap is None:
+            return {"set": [{"file": f, "path": "", "value": v} for f, v in _record_only_emits("filed").items()]}
+        if gap.key != ENDS:
+            return {}
+        if gap.kind == "confirm":
+            return {"unset": [{"file": REC, "path": DISPOSES}]}
+        if entry.get("refused") and then is not None:
+            return then
+        return {"set": [{"file": REC, "path": DISPOSES, "value": value}]}
+    return ex
+
+
+def _run_rejected(ex):
+    return se.run({"opening": {"says": "x"}}, ex, answer=lambda g, d: {"says": NO})
+
+
+@pytest.mark.parametrize("value", ["filed", "something_else"])
+def test_a_rejected_leaf_written_back_is_refused_whatever_its_value(value):
+    # run 43 wrote back the value it was told no about, and run 42 a different one
+    r = _run_rejected(_writes_back(value))
+    assert [m["error"] for m in r["model_errors"]][:1] and "was rejected at turn" in r["model_errors"][0]["error"]
+    assert not any("disposes" in s for s in r["files"][REC]["steps"])
+    assert r["status"] == "cannot_run"
+
+
+def test_the_refusal_names_the_gap_the_turn_and_the_forms_that_fill_it():
+    r = _run_rejected(_writes_back("filed"))
+    said = r["model_errors"][0]["error"]
+    turn = next(q for q, m in enumerate(r["questions"], 1) if m["key"] == ENDS and m["kind"] == "confirm")
+    assert f"disposes was rejected at turn {turn}" in said
+    assert "pcn record still has no step that settles it" in said
+    assert "signal_await or wait" in said
+
+
+def test_the_forms_a_refusal_names_are_forms_that_settle_a_stage():
+    assert set(se._SETTLES_AFTER_A_SEND) <= se._DISPOSING
+    assert "human_await" not in se._SETTLES_AFTER_A_SEND
+
+
+def test_a_patch_that_takes_the_named_form_lands_on_the_restatement():
+    # the list of steps is one leaf: the restatement may rewrite it whole
+    fixed = {"set": [{"file": REC, "path": "steps", "value": _good()[REC]["steps"]}]}
+    r = _run_rejected(_writes_back("filed", then=fixed))
+    assert len(r["model_errors"]) == 1
+    assert r["files"][REC]["steps"] == _good()[REC]["steps"]
+    assert ENDS not in r["gaps_left"]
+
+
+def _after_the_no():
+    draft = se.Draft(files=_record_only_emits())
+    draft.rejected[(REC, DISPOSES)] = 7
+    return draft
+
+
+def _asked(*revises, kind="contradiction", asks=()):
+    return se.Gap(key="k", facet="outputs", kind=kind, question="what now?", revises=tuple(revises), asks=tuple(asks))
+
+
+def _with_disposes(sid=SENT):
+    trial = copy.deepcopy(_after_the_no())
+    trial.files[REC]["steps"][0].update(id=sid, disposes="filed")
+    return trial
+
+
+def test_a_renamed_step_does_not_carry_the_rejected_leaf_past_the_refusal():
+    with pytest.raises(se.StructureError, match="was rejected at turn 7"):
+        se._refuse_rejected(_after_the_no(), _with_disposes("renamed"), _asked())
+
+
+def test_control_a_step_already_there_that_holds_the_same_key_is_not_a_restoration():
+    draft = _after_the_no()
+    draft.files[REC]["steps"].append({"kind": "emit", "id": "other", "disposes": "other"})
+    se._refuse_rejected(draft, copy.deepcopy(draft), _asked())
+
+
+def test_control_a_patch_that_leaves_the_leaf_alone_is_not_refused():
+    draft = _after_the_no()
+    trial = copy.deepcopy(draft)
+    trial.files[REC]["note"] = "kept"
+    se._refuse_rejected(draft, trial, _asked())
+
+
+def test_a_turn_that_asks_the_leaf_may_state_it_again_and_that_ends_the_refusal():
+    draft, trial = _after_the_no(), _with_disposes()
+    g = _asked((REC, DISPOSES))
+    se._refuse_rejected(draft, trial, g)
+    se._note_rejected(trial, g, draft.files, 9)
+    assert trial.rejected == {}
+    se._refuse_rejected(trial, copy.deepcopy(trial), _asked())
+
+
+def test_control_asked_and_left_unset_it_stays_rejected():
+    draft = _after_the_no()
+    se._note_rejected(draft, _asked((REC, DISPOSES)), _record_only_emits("filed"), 9)
+    assert draft.rejected == {(REC, DISPOSES): 9}
+
+
+@pytest.mark.parametrize("g", [
+    _asked((REC, DISPOSES), kind="missing"),  # a `missing` gap on the same key asks how
+    _asked((REC, DISPOSES), (REC, "other"), asks=((REC, "other"),)),  # may revise it, and asks another
+    _asked((REC, "other")),
+    None,
+])
+def test_a_turn_that_does_not_ask_the_leaf_does_not_lift_the_refusal(g):
+    with pytest.raises(se.StructureError):
+        se._refuse_rejected(_after_the_no(), _with_disposes(), g)
+
+
+def test_control_only_what_the_answer_took_out_is_rejected():
+    files = _record_only_emits("filed")
+    draft = se.Draft(files=copy.deepcopy(files))
+    se._note_rejected(draft, _asked((REC, DISPOSES), kind="confirm"), files, 3)
+    assert draft.rejected == {}
+
+
+def test_control_what_a_missing_gap_took_out_is_not_a_rejection():
+    draft = se.Draft(files=_record_only_emits())
+    se._note_rejected(draft, _asked((REC, DISPOSES), kind="missing"), _record_only_emits("filed"), 3)
+    assert draft.rejected == {}
+
+
+def test_a_leaf_that_settles_nothing_is_refused_with_the_question_still_open():
+    draft = se.Draft(files=_good())
+    draft.rejected[(REC, "note")] = 4
+    trial = copy.deepcopy(draft)
+    trial.files[REC]["note"] = "back"
+    with pytest.raises(se.StructureError) as e:
+        se._refuse_rejected(draft, trial, se.Gap(key="k", facet="outputs", kind="missing", question="what now?"))
+    assert "note was rejected at turn 4" in str(e.value) and "still needed: what now?" in str(e.value)
+    assert "signal_await" not in str(e.value)
+
+
+def test_a_refusal_names_the_draft_s_own_stage():
+    draft = se.Draft(files={"workflows/q.yaml": {"id": "some_stage", "steps": []}})
+    draft.rejected[("workflows/q.yaml", "steps[id=a].disposes")] = 2
+    trial = copy.deepcopy(draft)
+    trial.files["workflows/q.yaml"]["steps"] = [{"kind": "emit", "id": "a", "disposes": "x"}]
+    with pytest.raises(se.StructureError, match="some stage still has no step"):
+        se._refuse_rejected(draft, trial, None)
+
+
+# ── a refused path names the forms the loop accepts, and no new form (architect, 2026-11-03) ──
+
+@pytest.mark.parametrize("path", ["steps[0].excludes", "rows[when.outcome=escalated].then"])
+def test_a_refused_path_names_the_forms_and_stays_refused(path):
+    with pytest.raises(se.PatchError) as e:
+        se.parse_path(path)
+    assert "steps[id=a].excludes" in str(e.value) and "set whole" in str(e.value)
+
+
+# ── the walk pairs a table's rows by what they route to (architect, 2026-11-03, instrument v2) ──
+
+def _verbs(files, table, **said):
+    for r in files[table]["rows"]:
+        r["when"]["outcome"] = said.get(r["when"]["outcome"], r["when"]["outcome"])
+    return files
+
+
+def _final(files):
+    files[TRIG].pop("stages", None)  # the served draft has none, so the walk stands alone
+    return files
+
+
+def _pairs(files):
+    return _pcn_user()._pair_definitions(sm._index(files), sm._index(_good()))
+
+
+def _route(files, table, verb, then):
+    t = files[table]
+    next(r for r in t["rows"] if r["when"]["outcome"] == verb)["then"] = then
+    t["terminals"] = sorted({r["then"] for r in t["rows"] if r["then"] not in STAGES})
+    return files
+
+
+def test_control_rows_that_spell_their_outcome_alike_pair_as_they_did():
+    assert _pairs(_final(_good())) == SAME
+
+
+def test_a_person_s_own_verb_does_not_lose_the_stage_behind_it():
+    assert _pairs(_final(_verbs(_good(), PROGRAM_CH, approved="approve", rejected="reject"))) == SAME
+
+
+def test_an_outcome_that_goes_on_never_pairs_with_one_that_ends():
+    f = _final(_verbs(_good(), PROGRAM_CH, approved="approve"))
+    _route(f, PROGRAM_CH, "approve", "somewhere_it_ends")
+    assert "pcn_record" not in _pairs(f).values()
+
+
+def test_two_outcomes_left_on_a_side_pair_nothing():
+    f = _final(_verbs(_good(), CH, rejected="refuse", needs_info="ask"))
+    assert sm._paired_rows(f[CH]["rows"], _good()[CH]["rows"], sm._index(f), sm._index(_good())) == [
+        (f[CH]["rows"][0], _good()[CH]["rows"][0])]
+
+
+def test_two_outcomes_that_go_on_pair_nothing():
+    f = _final(_good())
+    f[PROGRAM_CH]["rows"] = [{"when": {"outcome": "a"}, "then": "pcn_record"},
+                             {"when": {"outcome": "b"}, "then": "pcn_record"}]
+    assert "pcn_record" not in _pairs(f).values()
+
+
+def test_a_selection_s_value_is_not_a_verb_and_stays_literal():
+    f = _final(_good())
+    next(r for r in f[SEL]["rows"] if r["then"] == "pcn_acknowledge")["when"] = {"change_class": "other"}
+    assert "pcn_acknowledge" not in _pairs(f).values()
+
+
+def test_a_terminal_a_person_names_pairs_by_the_row_that_reaches_it_whatever_its_verb():
+    f = _final(_verbs(_good(), PROGRAM_CH, rejected="reject"))
+    _route(f, PROGRAM_CH, "reject", "my_end")
+    assert _pcn_user()._in_draft_names("pcn_rejected", f, PROGRAM_CH) == "my_end"
+
+
+# ── the bar reads routing as well as steps (architect, 2026-11-03) ────────────────────────────
+
+def _drafted(files, pairs=SAME):
+    return sorted((x["table"], x["when"]["outcome"] if "outcome" in x["when"] else str(x["when"]))
+                  for x in sm.dropped_routes(files, _good(), pairs))
+
+
+def test_control_the_expected_bundle_routes_as_expected():
+    assert _drafted(_good()) == []
+
+
+def test_two_ends_of_a_table_on_one_end_of_the_draft_are_dropped_routes():
+    f = _route(_route(_good(), CH, "rejected", "done"), CH, "needs_info", "done")
+    assert _drafted(f) == [(CH[len("decisions/"):-len(".yaml")], "needs_info"),
+                           (CH[len("decisions/"):-len(".yaml")], "rejected")]
+
+
+def test_a_rejected_notice_that_ends_where_a_filed_one_ends_reads_on_both_rows():
+    f = _route(_good(), PROGRAM_CH, "rejected", "pcn_dispositioned")
+    assert _drafted(f) == [("pcn_program_approval_chaining", "rejected"), ("pcn_record_chaining", "filed")]
+
+
+def test_control_an_end_s_name_is_the_model_s_own():
+    f = _route(_route(_good(), CH, "rejected", "refused"), PROGRAM_CH, "rejected", "refused")
+    assert _drafted(f) == []
+
+
+def test_control_one_end_named_twice_loses_nothing_the_person_described():
+    f = _route(_route(_good(), CH, "rejected", "refused_early"), PROGRAM_CH, "rejected", "refused_late")
+    assert _drafted(f) == []
+
+
+def test_an_outcome_that_goes_on_to_the_wrong_stage_is_a_dropped_route():
+    assert _drafted(_route(_good(), ACK_CH, "escalated", "pcn_record")) == [("pcn_acknowledge_chaining", "escalated")]
+
+
+def test_an_outcome_that_goes_on_and_now_ends_is_a_dropped_route():
+    # run 42 lost the escalation this way
+    assert _drafted(_route(_good(), ACK_CH, "escalated", "elsewhere")) == [("pcn_acknowledge_chaining", "escalated")]
+
+
+def test_an_outcome_that_ends_and_now_goes_on_is_a_dropped_route():
+    assert _drafted(_route(_good(), CH, "rejected", "pcn_record")) == [("pcn_impact_review_chaining", "rejected")]
+
+
+def test_a_selection_that_routes_a_value_elsewhere_is_a_dropped_route():
+    f = _good()
+    for r in f[SEL]["rows"]:
+        r["then"] = "pcn_acknowledge" if r["then"] == "pcn_impact_review" else "pcn_impact_review"
+    assert [x[0] for x in _drafted(f)] == ["pcn_received_selection"] * 2
+
+
+def test_a_stage_nothing_pairs_with_has_no_row_to_route_by():
+    out = _drafted(_good(), {w: w for w in STAGES if w != "pcn_acknowledge"})
+    assert out == [("pcn_acknowledge_chaining", "acknowledged"), ("pcn_acknowledge_chaining", "escalated"),
+                   ("pcn_received_selection", str({"change_class": "minor"}))]
+
+
+def test_control_a_row_the_draft_added_is_not_a_dropped_route():
+    f = _good()
+    f[PROGRAM_CH]["rows"].append({"when": {"outcome": "extra"}, "then": "pcn_rejected"})
+    assert _drafted(f) == []
+
+
+def test_every_step_present_and_every_end_on_one_name_is_not_the_workflow():
+    # run 41's shape: the walk reaches each stage, and the bar still reads no for what it reaches
+    f = _final(_verbs(_good(), PROGRAM_CH, approved="approve", rejected="reject"))
+    for table, verb in ((CH, "rejected"), (CH, "needs_info"), (ACK_CH, "acknowledged"),
+                        (PROGRAM_CH, "reject"), (REC_CH, "filed")):
+        _route(f, table, verb, "completed")
+    pairs = _pairs(f)
+    assert pairs == SAME and sm.dropped_steps(f, _good(), pairs) == []
+    assert len(sm.dropped_routes(f, _good(), pairs)) == 5
