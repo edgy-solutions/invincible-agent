@@ -61,6 +61,17 @@ first total and names refused panels; a card the answer declared no longer reads
   `validate_policy` checks the rail when present. A row's `service` must be a seeded `svc:` identity
   and each route a known one. First row: `svc:data-analyst` on `assets.authorize`.
 
+**An authorizer outage (architect ruling, the transport half of 2026-11-02's malformed-answer class)**
+
+- **A Topaz that cannot be reached, or answers a non-2xx, is a 503 at the sites 0.4.76 lists under
+  "A malformed PDP answer"**: 0.4.76 says it is still a deny, and it no longer is. **This changes what
+  callers see during a Topaz blip:** a 503 where it was a 403, and neo4j and weaviate fail the run
+  terminally with a 503 where they gave a partial answer. A deny was terminal too, so terminality does
+  not change. Still a no: a 404 from a directory check, an unset directory URL, an empty identity, and
+  a defect in the asking code. A 404 from a decision (`/api/v2/authz/is`) is a 503. The sandbox's Topaz
+  answers an ungranted or unknown subject 200 `check: false`, read live, so an ordinary "no" does not
+  become a 503. weaviate's retrieval failures stay the tool's own error. No values change.
+
 **Policy changes (a course is reviewed as a document: `review_shape: document`)**
 
 - **The `course` content kind now declares `review_shape: document`** (it declared `course`, a shape

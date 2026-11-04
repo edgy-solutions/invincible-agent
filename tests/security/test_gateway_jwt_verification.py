@@ -148,11 +148,22 @@ def test_algorithm_is_pinned_to_rs256():
     SOURCE because the runtime probe above cannot see a permissive allow-list that simply was
     not exercised.
     """
+    import ast
     import inspect
-    src = inspect.getsource(importlib.import_module("iagent.auth").get_current_user)
-    assert 'algorithms=["RS256"]' in src or "algorithms=['RS256']" in src, (
-        "get_current_user does not pin algorithms to RS256"
-    )
-    assert "verify_signature" not in src or "verify_signature\": False" not in src, (
-        "get_current_user appears to disable signature verification"
-    )
+    auth = importlib.import_module("iagent.auth")
+    decodes = [n for n in ast.walk(ast.parse(inspect.getsource(auth)))
+               if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+               and n.func.attr == "decode" and getattr(n.func.value, "id", None) == "jwt"]
+    assert decodes, "iagent.auth has no jwt.decode to read; the verification moved"
+    for call in decodes:
+        kwargs = {k.arg: k.value for k in call.keywords}
+        assert "algorithms" in kwargs, f"line {call.lineno}: jwt.decode with no allow-list"
+        assert ast.literal_eval(kwargs["algorithms"]) == ["RS256"], f"line {call.lineno}"
+        if "options" in kwargs:
+            assert ast.literal_eval(kwargs["options"]).get("verify_signature", True) is True, (
+                f"line {call.lineno} disables signature verification"
+            )
+    # The door goes through the one that was read.
+    src = inspect.getsource(auth.get_current_user)
+    assert "verified_claims(" in src, "get_current_user does not verify through verified_claims"
+    assert "jwt.decode(" not in src, "get_current_user decodes for itself"
