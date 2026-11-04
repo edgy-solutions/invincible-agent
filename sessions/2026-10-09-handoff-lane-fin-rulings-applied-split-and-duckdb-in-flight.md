@@ -19,6 +19,29 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
+## Update 2026-11-03 (latest): the packet is final, ADR-0052 is draft #245, the live test is #243. Read this first
+
+The relay: "fin: asset-contract packet for Chris's work Dagster assets (URN, columns, period key, cadence, tags) — finalise. ADR-0052 Accepted draft PR with the finance first slice. Variance set (VAC/TCPI) read through the resolver on the EV fixture once Lane 1 rolls — write the test now, skip until the roll."
+
+**Done:**
+- **The packet:** `sessions/2026-11-02-packet-to-chris-the-ev-asset-contract-urn-columns-period-key-cadence-tags.md`, master tree, untracked. One question back: is the work asset `dagster-dlt`?
+- **#243** `fin/variance-set-live-test`, head `49213943`, base master, not a draft. Tests only: `tests/sandbox_e2e/test_variance_set_reads_the_ev_fixture.py`, its yaml, and `tests/finance/test_the_variance_live_test_can_go_red.py`. Off-cluster proof: 41 passed, all 31 mutations killed. It skips today. It goes first because #245 cites its path.
+- **#245** `fin/adr-0052-accepted`, head `afd99e76`, **draft**. Stays one until `enforce` is live. Its body has the before-merge checklist.
+- **Packet to the architect and Lane 1:** `sessions/2026-11-03-packet-to-architect-and-lane-01-from-fin-adr-0052-draft-245-and-the-variance-test-243.md`. The ruling on #245, bob's error in Lane 1's EV spec, and the citation reds on master.
+
+**Moved under me:**
+- **#240 and #213 are merged.** Lane 1 is cutting 0.4.78 as #244. I read its diff: my entry is intact, and it also pins the gateway to `sha-4096a11`, so its values diff has two digest moves, not one. `FIN_DATASET_URN` stays unset.
+- **The roll is gated:** 0.4.78 carries #229, so by the architect's ruling it doesn't roll until cortex's card ships or the Keycloak exchange is configured. Pod acceptance (`sqlalchemy.__version__`, the dialect, a sensor tick) and `ev_fixture` wait for that.
+- **ca shipped `MeshData.resolve`** (`iagent_mesh` `2b699af`). Converging #219's resolver onto it is this lane's follow-up, on no schedule. Not started.
+
+**Nothing has run on a cluster.**
+
+**Next, after the roll:**
+1. Materialize `ev_fixture` by hand and do the pod acceptance.
+2. Chris syncs the two rows: alice's grant, erin in NP-MERIDIAN.
+3. Set the flag and banner, then run #243's test. Its docstring has the three settings. Its skip reason says what's still missing.
+4. Update #245 from what it measured, per its checklist. It leaves draft only on the architect's ruling and `enforce` live.
+
 ## Update 2026-11-03 (late): #219 merged, the digest is #240, 0.4.77 was cut without it. Read this first
 
 The relay: "#219 merges once Lane 1 has read its supervisor commit; #7 is Chris's; the two-pod roll with the new dag-tools digest rides 0.4.77."
