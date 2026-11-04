@@ -3,7 +3,9 @@
 A row is `review_shape` -- "which card renders this". The task's `review_shape` and a content
 kind's `review_shape` are the same word and name a row here (ruled 2026-10-30): one vocabulary,
 one registry. A row is an SDK `iagent_mesh.review_coverage.ReviewShapeRow`:
-`review_shape`, `item_kind`, `rules_version`, `params`, `rules`.
+`review_shape`, `item_kind`, `rules_version`, `params`, `rules`. `item_kind`, `rules_version` and
+`rules` are all or nothing, so a coverage row with no rules yet says `rules: []`; leaving it out makes
+the row invalid.
 
 The file stem equals the row's `review_shape`. `GET /review-shapes` serves every valid row; an
 invalid row is logged and left out, never raised (the `/ingest/export/profiles` contract).
@@ -20,6 +22,7 @@ the seed row.
 `policy/sync/validate_policy.py` refuses a row that does not validate, and refuses a content-kind
 row (seed or overlay) whose `review_shape` names no row in the registry composed for it.
 
-**Card-only rows are not here.** `empty`, `grant_proposal` and `promotion` render a card but have
-no `item_kind` or `rules_version`; they wait for an SDK release that makes those two fields
-optional.
+**Card-only rows are not here yet.** `empty`, `grant_proposal` and `promotion` render a card but have
+no `item_kind`, `rules_version` or `rules`. SDK v0.9.13 and the gate accept such a row, and a review
+coverage body against one is refused, because there is nothing to check it against. Seeding and
+serving them is a separate change.
