@@ -1320,46 +1320,63 @@ utilImages:
 # `uv.lock`, so only the committed `pyproject.toml` ceiling binds the image —
 # and only a digest binds which image runs.
 #
-# DIGEST PROVENANCE, run `36947653296` (push event on dag-tools master,
-# `6609fe67c77a6bf4118a81daadb9fcbf44c4b982`; all three Docker jobs success).
+# DIGEST PROVENANCE, run `41768309688` (push event on dag-tools master,
+# `4096a112eb3fbc91afdf7e0784a12973e72f00e7`; all three Docker jobs success).
 # A green build on a PR proves nothing — that workflow's push step is gated
 # `github.event_name != 'pull_request'`, so PR runs compile both architectures
 # and publish nothing. Two tags were read and they AGREE, which is the binding
 # that matters rather than mere existence:
 #
-#     :sha-6609fe6  -> sha256:be5fec106c938f9f7557e16f9070f1fc80661baea922136d1320bcf132d44b61
+#     :sha-4096a11  -> sha256:44c54e5a193cebcd8d6501df6d7d3bd22c56e1b2722283ca5a0a0e8bb89e9266
 #     :latest       -> the same digest
 #
-# POSITIVE CONTROL: `:master` and `:6609fe6` both answer 404, so a 200 from
+# POSITIVE CONTROL: `:master` and `:4096a11` both answer 404, so a 200 from
 # this instrument discriminates and is not an artifact of the registry
 # accepting any string.
 #
 # Index verified as `application/vnd.oci.image.index.v1+json`, children fetched
 # BY THEIR OWN DIGEST rather than read out of the index:
 #
-#     linux/amd64  sha256:a75f9c551adcadcf1039b678805b4272df00c62dc15c524ed8dc96426424a6d0  200
-#     linux/arm64  sha256:6b79fc60e64313b24244f5121bad634edd7b12a6709c880774678f65c4c32b1c  200
+#     linux/amd64  sha256:a91fcb1550f380696967f97d737bee0991453dc14de3a88cca78dda8f47ad7c3  200
+#     linux/arm64  sha256:bad901982a61ae02c6dd34fd536b35f6ffcb6b39902bfd8f72e2506ae06057fd  200
 #
 # arm64 is the one that matters — the sandbox nodes are arm64. (Two
 # `unknown/unknown` children are buildx provenance/SBOM attestations, also 200.)
 #
-# WHAT THIS PIN DOES NOT PROVE. The digest names bytes; it does not show what
-# those bytes resolved. The resolution was proved separately, by compiling the
-# image's own install line (`.[broker]` plus dagster, dagster-aws,
-# dagster-postgres, acryl-datahub, acryl-datahub-dagster-plugin, pandas, boto3,
-# s3fs) against the capped `pyproject.toml`: `sqlalchemy==2.0.54`,
-# `psycopg2-binary==2.9.13`, and no `psycopg` in the resolution at all — the
-# daemon's working combination. The acceptance test for this roll is still a
-# reading off the POD (`sqlalchemy.__version__` and the dialect the URL
-# selects) plus a sensor tick that does not raise, not this comment.
+# WHAT THIS PIN MOVES. The digest names bytes, and the image re-resolves, so a
+# new digest moves more than dag-tools' own commits. Read from the arm64 layers
+# of this image and of the previous pin: 59 of 156 packages changed, none added
+# or removed. `edgy-dag-tools` 0.8.0 -> 0.10.0. The majors are polars 1.44.2 ->
+# 2.1.0, protobuf 6.33.6 -> 7.36.2, pyarrow 25.0.1 -> 26.0.1 and multidict 6.9.1
+# -> 7.2.1. The cap above holds: `sqlalchemy==2.0.57`, `psycopg2-binary==2.9.13`,
+# no `psycopg`.
 #
-# ROLLBACK: delete the `digest` line. The image reference falls back through
-# `tag: ""` to `latest`, which is where this deployment was before — not to
-# `746e4937`, which no longer has a name pointing at it.
+# MEASURED OFF-CLUSTER, in a venv holding the image's versions: dag-tools' tests
+# gave 817 passed, 50 skipped, 1 failed (the s3fs fault below), 2 errors (`restate`
+# is not in the install line). A bare `postgresql://` URL selects psycopg2. The
+# code location serves, and a dagster 1.12.20 client decodes its listing and its
+# snapshot. `ev_fixture` materializes to local parquet that the finance resolver
+# reads to the seed's figures.
+#
+# NOT MEASURED: a write to the object store on pyarrow 26, and any sensor (that
+# run had no `DATAHUB_SERVER`, so none registered). The acceptance test for this
+# roll is still a reading off the POD (`sqlalchemy.__version__` and the dialect
+# the URL selects) plus a sensor tick that does not raise, not this comment.
+#
+# A FAULT THIS PIN CARRIES AND DID NOT INTRODUCE: `s3fs==0.4.2`, the same in both
+# images. dag-tools' `s3fs>=2023.1.0` floor sits in its `orchestrator` extra, and
+# the install line names bare `s3fs`. `s3fs.S3FileSystem(endpoint_url=...)` raises
+# TypeError at that version. `FsspecS3FSConfig` in the arrow and delta IO managers
+# reaches it. The demo assets use `S3FSConfig`, which goes through `pyarrow.fs`
+# and does not.
+#
+# ROLLBACK: restore `sha256:be5fec106c938f9f7557e16f9070f1fc80661baea922136d1320bcf132d44b61`
+# (`sha-6609fe6`, the previous pin). Do not delete the `digest` line: the image
+# reference falls back through `tag: ""` to `latest`, which floats.
 userDeployments:
   dag-tools:
     image:
-      digest: "sha256:be5fec106c938f9f7557e16f9070f1fc80661baea922136d1320bcf132d44b61"
+      digest: "sha256:44c54e5a193cebcd8d6501df6d7d3bd22c56e1b2722283ca5a0a0e8bb89e9266"
 
 # ==========================================================================
 # NetworkPolicy -- the gate-on roll PROPOSAL. The gate STAYS OFF here
