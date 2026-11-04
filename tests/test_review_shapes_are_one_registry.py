@@ -134,6 +134,50 @@ def test_the_gates_restated_required_fields_are_the_sdk_models():
     assert set(vp.REVIEW_SHAPE_REQUIRED) == required
 
 
+@pytest.mark.parametrize("over, valid", [
+    ({"item_kind": None, "rules_version": None, "rules": None}, True),
+    ({"rules": []}, True),
+    ({"rules": None}, False),
+    ({"item_kind": None}, False),
+    ({"rules_version": None}, False),
+    ({"item_kind": None, "rules_version": None}, False),
+], ids=repr)
+def test_the_gate_and_the_model_agree_on_all_or_nothing(pol, over, valid):
+    """The gate restates the model's rule, so both are asked. A row that loads and fails the gate,
+    or the reverse, would show up only at a deployment's own sync."""
+    from iagent_mesh.review_coverage import ReviewShapeRow
+    nulls = yaml.safe_load(_row("mine", **over))
+    for row in (nulls, {k: v for k, v in nulls.items() if v is not None}):
+        try:
+            ReviewShapeRow.model_validate(row)
+            loads = True
+        except ValueError:
+            loads = False
+        assert loads is valid, row
+        (pol / "review_shapes" / "mine.yaml").write_text(yaml.safe_dump(row), encoding="utf-8")
+        assert (not [e for e in validate(pol, pol) if "mine.yaml" in e]) is valid, row
+
+
+def test_the_gate_still_refuses_a_blank_item_kind(pol):
+    """A set field has to say something: the gate has always refused a blank string."""
+    (pol / "review_shapes" / "mine.yaml").write_text(_row("mine", item_kind="  "), encoding="utf-8")
+    assert any("mine.yaml" in e and "item_kind" in e for e in validate(pol, pol))
+
+
+def test_a_coverage_body_against_a_card_only_row_is_refused_not_a_500():
+    """No card-only row is seeded yet, but an overlay can add one. The two readers a review body
+    reaches must refuse it: the route answers the first with a 422 and the second with a 503, and
+    writes nothing either way."""
+    from iagent_mesh.review_coverage import ReviewShapeRow
+    from src.iagent import review_coverage as rcov
+    card_only = ReviewShapeRow(review_shape="empty")
+    bad = rcov.row_problem({"review_shape": "empty", "item_kind": "part", "rules_version": "v"},
+                           card_only, "empty")
+    assert bad and bad[0] == "item_kind"
+    with pytest.raises(LookupError):
+        rcov.universe_for(card_only.item_kind)
+
+
 def test_validate_names_the_file_of_a_row_that_does_not_validate(pol):
     (pol / "review_shapes" / "bad.yaml").write_text("review_shape: bad\n", encoding="utf-8")
     assert any("bad.yaml" in e for e in validate(pol, pol))

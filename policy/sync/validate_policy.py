@@ -436,14 +436,18 @@ def domain_consumption_required_fields(raw: dict, known_domains: set[str]) -> li
 
 #: A FORK of iagent_mesh ReviewShapeRow's required fields, restated because this gate runs
 #: without the SDK. tests/test_review_shapes_are_one_registry.py holds it equal to the model.
-REVIEW_SHAPE_REQUIRED = ("review_shape", "item_kind", "rules_version")
+REVIEW_SHAPE_REQUIRED = ("review_shape",)
+#: The model's all-or-nothing rule, restated the same way: a coverage row sets all three, a card-only
+#: row none. A `rules: []` is set: the shape exists and no rule is declared for it yet.
+REVIEW_SHAPE_COVERAGE = ("item_kind", "rules_version", "rules")
 
 
 def _read_review_shapes(d: Path) -> tuple[dict[str, Path], list[str]]:
     """{review_shape: file} for every VALID `*.yaml` row in `d`, and the errors for the rest.
     This gate runs where the SDK is not importable, so the row's shape (iagent_mesh
-    ReviewShapeRow: review_shape, item_kind and rules_version strings; params a mapping; rules a
-    list of {id: str, params: mapping}) is checked here, and the file stem must equal the row's
+    ReviewShapeRow: review_shape, and for a coverage row item_kind and rules_version, strings;
+    params a mapping; rules a list of {id: str, params: mapping}; item_kind, rules_version and rules
+    all or nothing) is checked here, and the file stem must equal the row's
     `review_shape` (src/iagent/review_shapes.py applies the same rule)."""
     shapes: dict[str, Path] = {}
     errors: list[str] = []
@@ -459,17 +463,21 @@ def _read_review_shapes(d: Path) -> tuple[dict[str, Path], list[str]]:
             errors.append(f"{f.as_posix()}: a review-shape row is a mapping")
             continue
         problems: list[str] = []
-        bad = [k for k in REVIEW_SHAPE_REQUIRED
-               if not (isinstance(doc.get(k), str) and doc[k].strip())]
+        set_fields = [k for k in REVIEW_SHAPE_COVERAGE if doc.get(k) is not None]
+        strings = (*REVIEW_SHAPE_REQUIRED, *[k for k in set_fields if k != "rules"])
+        bad = [k for k in strings if not (isinstance(doc.get(k), str) and doc[k].strip())]
         if bad:
             problems.append(f"{', '.join(bad)} must be a non-empty string")
         if not isinstance(doc.get("params", {}), dict):
             problems.append("params must be a mapping")
-        rules = doc.get("rules", [])
-        if not isinstance(rules, list) or not all(
+        rules = doc.get("rules")
+        if rules is not None and (not isinstance(rules, list) or not all(
                 isinstance(r, dict) and isinstance(r.get("id"), str)
-                and isinstance(r.get("params", {}), dict) for r in rules):
+                and isinstance(r.get("params", {}), dict) for r in rules)):
             problems.append("rules must be a list of {id: str, params: mapping}")
+        if set_fields and len(set_fields) != len(REVIEW_SHAPE_COVERAGE):
+            problems.append(f"{', '.join(REVIEW_SHAPE_COVERAGE)} are all or nothing: this row sets "
+                            f"{', '.join(set_fields)}")
         if problems:
             errors += [f"{f.as_posix()}: {m}" for m in problems]
             continue
