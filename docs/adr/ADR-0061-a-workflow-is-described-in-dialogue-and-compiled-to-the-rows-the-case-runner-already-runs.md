@@ -11,7 +11,9 @@ required details to a model timeout (§10). Runs 50 to 52 then read the bar for 
 reads `yes` on both bars with the contradiction caught, and runs 51 and 52 read `no` as they should. That is with the
 architect, because v3 doesn't read `approves`, and no run from 41 to 52 drafted it (§10). The architect ruled `approves` and
 `role` into the bar. Instrument v4 reads them as a third bar, and all twelve runs read `no` on it, so run 50 no longer
-meets the bar and the bar is not met (§10). Nothing is flipped.
+meets the bar and the bar is not met (§10). Runs 53 to 55, on the grammar line, draft `approves` for the first time, and
+all three read `no`. Each is `cannot_run` on a question about the impact review's role that the scripted person can't
+answer, though the person said it in the opening (§10). Nothing is flipped.
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2442,6 +2444,59 @@ the group the person named in place of the capacity. So a draft saying `engineer
 Every run reads `no` on approval. Each of its three `human_await` steps has neither `approves` nor `role`. So run 50, which
 read `yes` on v3, reads `no`, and no stored run meets the bar. The bar for Proposed is not met. Runs 53 to 55 are next, on
 the grammar line. Nothing is flipped.
+
+#### 2026-11-04: runs 53 to 55, on the grammar line
+
+Three runs at `48bd0274`. They started once a roll in flight had finished and Dagster listed no active run. The driver had
+refused to start while it did.
+
+| run | status | route bar | slot bar | approval bar | contradiction | `approves` drafted | `role` drafted | what it reads |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 53 | `cannot_run` | no | yes | no | caught | 3 of 3 | 2 of 3 | the impact review's role is missing, and nothing else |
+| 54 | `cannot_run` | no | no | no | caught | 2 of 3 | 1 of 3 | the filing step dropped, the program approval's `excludes` empty, the program approval without `approves`, the impact review's role missing |
+| 55 | `cannot_run` | no | yes | no | caught | 1 of 3 | 0 of 3 | 2 wrong routes, the acknowledgement and program approval without `approves`, the impact review's role missing |
+
+**Bar status: not met.** No run reads `yes` on route, slot and approval. Nothing is flipped.
+
+**The grammar line moved the field.** Six of these nine approval steps have `approves`, against none of the 36 in runs 41 to
+52, and each holds the answers the person called an approval. Three runs aren't enough to say how reliably it lands.
+
+**How the roles land.** The model writes `approves` without `role`, and the executor's validator refuses it: "`approves`
+requires a `role` for the chain entry". The loop puts that to the person as a contradiction on the whole workflow,
+"…does not hold together at steps.1.human_await: … What should it be?". The person answers with what they said of that
+stage. Each of the three roles that landed is on a stage where this was asked and answered: run 53 at turn 6 on the
+program approval and turn 31 on the acknowledgement, and run 54 at turn 30 on the acknowledgement. Each role is in the
+person's words ("component engineer", "program manager"), and v4 reads each as right.
+
+**Why all three are `cannot_run`: the scripted person can't answer that question about the impact review.** It answers a
+whole-workflow contradiction with the bank entry `steps.<stage>`. The impact review has no such entry, because its steps
+are described in the opening: "Any component engineer may take that disposition". The same question on the other three
+stages gets the person's words on all three runs. That is the control, and it was checked with no model time. The loop
+asked twice on each run and then left the gap open with "a runtime refusal may not be deferred; user could not answer".
+No run from 41 to 52 raised a contradiction on a whole workflow, so these are the first runs to reach this path.
+
+So each `cannot_run` is the scripted person staying silent on something they said in their first answer. That is an
+instrument fault, found by the runs. The approval bar would read `no` on each run regardless, since the impact review's
+await has no role.
+
+**Run 53 reads wrong on nothing else.** No step dropped, no wrong route, `excludes` and `requires` right, no rewrite, the
+record ends `filed`, the planted contradiction caught, and the impact review's deadline deferred as planted. Its route bar
+reads `no` only from `cannot_run`. I haven't measured what it would have done had the person answered, and I don't claim
+it.
+
+**Two ways to fix it, for the architect to choose.** I have changed neither.
+
+1. **The loop asks about the field the refusal names.** When a refusal names a field (`` `approves` requires a `role` ``),
+   the loop puts the question on that field (`#steps[id=…].role`) rather than on the whole workflow. A person can say who
+   signs a step, where "what should the impact review be?" is hard to answer. The scripted person would then answer from
+   the expected value, as for any other contradiction on a path. It changes the loop, so it needs new runs. **My
+   recommendation is this one.**
+2. **The scripted person answers from the opening when a stage has no entry of its own.** This changes only the
+   instrument. The risk is that the opening carries the planted contradiction ("including whoever logged the notice"), so
+   replaying it would plant the contradiction again after the person resolved it.
+
+**Also seen.** The rewrite check fired nowhere again. Run 53 had one model error, which I haven't traced. `outputs.record`
+is deferred again on runs 54 and 55, though both drafted a record stage. Run 54's record again stands a render in for the filing step.
 
 ## Consequences
 
