@@ -430,12 +430,12 @@ def _audited(caplog, caller):
             and "route=/internal/human_tasks/register" in r.getMessage()]
 
 
-def test_register_a_user_token_naming_itself_is_admitted(monkeypatch, caplog):
+def test_register_a_user_token_naming_itself_is_admitted(monkeypatch, caplog, register_rail):
     caplog.set_level(logging.INFO, logger=AUDIT)
     served = install_delegates(monkeypatch)
     person, _ = pair_and_outsider(served, RUNNER)
     assert person not in served
-    monkeypatch.delenv("TASK_REGISTER_SERVICES", raising=False)
+    register_rail([])
     r, fx = _drive_register_requested_by(monkeypatch, person, person)
     assert r.status_code < 400 and fx.has(person), (r.status_code, r.text[:200], fx.seen)
     lines = _audited(caplog, person)
@@ -444,12 +444,12 @@ def test_register_a_user_token_naming_itself_is_admitted(monkeypatch, caplog):
     assert line.endswith("outcome=admitted:self"), line
 
 
-def test_register_a_user_token_naming_someone_else_is_refused(monkeypatch, caplog):
+def test_register_a_user_token_naming_someone_else_is_refused(monkeypatch, caplog, register_rail):
     caplog.set_level(logging.INFO, logger=AUDIT)
     served = install_delegates(monkeypatch)
     person, other = pair_and_outsider(served, RUNNER)
     assert person not in served
-    monkeypatch.delenv("TASK_REGISTER_SERVICES", raising=False)
+    register_rail([])
     r, fx = _drive_register_requested_by(monkeypatch, person, other)
     want_status, want_detail = _served_refusal(person, other)
     assert not fx.has(other) and not fx.seen and r.status_code == want_status and         r.json()["detail"]["error"] == want_detail["error"], (r.status_code, r.text[:200], fx.seen)
@@ -459,13 +459,13 @@ def test_register_a_user_token_naming_someone_else_is_refused(monkeypatch, caplo
     assert line.endswith("outcome=refused:" + want_detail["error"]), line
 
 
-def test_register_a_listed_service_may_name_any_person(monkeypatch, caplog):
+def test_register_a_listed_service_may_name_any_person(monkeypatch, caplog, register_rail):
     caplog.set_level(logging.INFO, logger=AUDIT)
     served = install_delegates(monkeypatch)
     person, outsider = pair_and_outsider(served, RUNNER)
     listed = "svc:listed-register-service"
     assert listed not in served and outsider not in served
-    monkeypatch.setenv("TASK_REGISTER_SERVICES", json.dumps([listed]))
+    register_rail([listed])
     r, fx = _drive_register_requested_by(monkeypatch, listed, outsider)
     assert r.status_code < 400 and fx.has(outsider), (r.status_code, r.text[:200], fx.seen)
     lines = _audited(caplog, listed)

@@ -446,9 +446,6 @@ data:
   {{- end }}
   {{- end }}
   DELEGATE_ON_BEHALF_OF: {{ $delegateMap | toJson | quote }}
-  {{- /* The services allowed to register a HumanTask (cortex-bff _task_register_services(),
-  read fresh on every call). Unset renders "[]": no service but a declared delegate may register. */}}
-  TASK_REGISTER_SERVICES: {{ .Values.keycloak.taskRegisterServices | default list | toJson | quote }}
 {{- if .Values.postgresql.enabled }}
 ---
 # InitDB ConfigMap — runs sql/create_bpmn_catalog.sql on first boot

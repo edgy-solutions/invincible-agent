@@ -36,11 +36,12 @@ action-record write retries on a 503.
 `origin_record` definition now sends `case_id`, and `origin/write` requires it. List the in-flight
 `origin_record` cases first, and let them finish or re-run them after the roll.
 
-**`/internal/human_tasks/register` is gated on a service identity.** The caller must be a declared delegate
-or listed in the new `keycloak.taskRegisterServices` (rendered as `TASK_REGISTER_SERVICES`, default
-`svc:review-starter`, `svc:case-runner`); anyone else is 403 `not_a_delegate`, logged on
-`iagent.audit.delegate_named`. The route's `requested_by` field is not bound yet: it passes through as sent,
-and its binding is held for the architect's ruling.
+**`/internal/human_tasks/register` is gated on a service identity.** The caller must be `requested_by`
+itself, a service listed for `human_tasks.register` on a `door: bff` row of `policy/gateway_delegates.yaml`
+(seed rows: `svc:review-starter`, `svc:case-runner`), or a declared delegate naming a principal declared for
+it; anyone else is 403 `not_a_delegate` or `principal_not_declared_for_delegate`, logged on
+`iagent.audit.delegate_named`. A deployment that registers tasks from another service needs a `door: bff` row
+for it before this roll (in its policy repository, or a file mounted at `GATEWAY_DELEGATES_FILE`).
 
 **`cortex-bff` and the code location must roll together.** The route needs the field the new definition sends,
 and the definition sends it to the route.

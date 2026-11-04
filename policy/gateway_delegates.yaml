@@ -7,18 +7,21 @@
 #   * A ROW GRANTS NO READ. The person it names is the one the read is checked against, so a
 #     delegate reaches nothing that person cannot. It is not `asset_grants.yaml`, which refuses a
 #     `svc:` grantee (validate_policy.service_identity_recipients).
-#   * ONE LIST, TWO READERS (architect 11-04). R-089's `DELEGATE_ON_BEHALF_OF` is the BFF's door,
-#     the second internal one. It stays in the chart's values until it reads this file, at a later
-#     cut, where a BFF-only row will carry `door: bff` (lane/01, item 01M6KF81WMJJXVKQAP12M0QTMY). Until then every
-#     row here is the central gateway's.
+#   * ONE LIST, TWO READERS (architect 11-04). The BFF, the second internal door, reads the rows
+#     with `door: bff` (today only for `human_tasks.register`). A row without `door` is the central
+#     gateway's (`door: gateway`). R-089's `DELEGATE_ON_BEHALF_OF` (per-principal) still comes from
+#     the chart's values until lane/01 item 01M6KF81WMJJXVKQAP12M0QTMY.
 #   * A PIPELINE IS NOT A DELEGATE. A run with no person is `pipeline:<name>` and acts as itself.
-#   * NOTHING READS THIS FILE YET. The gateway's `is_delegate` seam answers no until it is wired to
-#     this rail, so these rows are inert. Whoever wires it says here how a change applies.
+#   * THE GATEWAY'S ROWS ARE STILL INERT; THE BFF'S `door: bff` ROWS ARE LIVE. The gateway's
+#     `is_delegate` seam answers no until it is wired to this rail. The BFF reads this file on every
+#     call (env `GATEWAY_DELEGATES_FILE`, default `/app/policy/gateway_delegates.yaml`), so a change
+#     applies with the image that carries it, or at once where a deployment mounts its own file at
+#     that path.
 #
 # Validated by validate_policy.gateway_delegates_errors: `service` is a seeded `svc:` identity in
-# users.yaml, each route is one of GATEWAY_ROUTES, and a row states its grantor, its reason and the
-# seat that ratified it (`ratified_by`: a seat such as `owner`, never a person). Every row carries all
-# three.
+# users.yaml, each route is one of the row's door's routes (GATEWAY_ROUTES, BFF_DELEGATE_ROUTES),
+# and a row states its grantor, its reason and the seat that ratified it (`ratified_by`: a seat such
+# as `owner`, never a person). Every row carries all three.
 #
 # Grantor row: policy/grantors/gateway_delegates.yaml.
 
@@ -30,3 +33,18 @@ gateway_delegates:
     reason: >-
       Engine DA serves every caller over one service token and reads as the acting person. Without
       this row, the gateway's enforce posture refuses every DA read.
+  - service: svc:review-starter
+    door: bff
+    routes: [human_tasks.register]
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      It registers the review HumanTask for the person who asked for the review. Without this row,
+      the BFF refuses that registration.
+  - service: svc:case-runner
+    door: bff
+    routes: [human_tasks.register]
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      The case runner registers a case's HumanTask for the person the case is for.

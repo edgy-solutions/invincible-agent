@@ -82,8 +82,8 @@ def fresh_declarations(monkeypatch):
 
 
 @pytest.fixture
-def route(monkeypatch, fresh_declarations):
-    monkeypatch.setenv("TASK_REGISTER_SERVICES", '["bob"]')
+def route(monkeypatch, fresh_declarations, register_rail):
+    register_rail(["bob"])
     calls = {"resolved": [], "settled": None}
 
     def mark_resolved(tid, **kw):

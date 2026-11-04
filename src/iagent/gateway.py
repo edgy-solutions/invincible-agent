@@ -1481,7 +1481,8 @@ async def register_human_task(
     R-089, ruled 2026-11-04: register is called by a service for a person, so the caller is bound
     to `requested_by` by the same rule as the five case-runner routes, in this order: (1) a caller
     that IS `requested_by` is admitted (a person naming themselves, or a service naming itself);
-    (2) a caller listed in `TASK_REGISTER_SERVICES` may name any person; (3) otherwise
+    (2) a caller listed for `human_tasks.register` on a `door: bff` row of
+    `policy/gateway_delegates.yaml` may name any person; (3) otherwise
     `_admit_on_behalf_of` decides: a declared delegate naming a principal declared for it is
     admitted, anyone else is 403 `not_a_delegate` or `principal_not_declared_for_delegate`.
     `requested_by` is passed through as sent."""
@@ -5719,21 +5720,44 @@ def _delegate_principals() -> dict[str, frozenset[str]]:
         return {}
 
 
+_REGISTER_DELEGATE_ROUTE = "human_tasks.register"
+
+
 def _task_register_services() -> frozenset[str]:
-    """The service identities allowed to register a HumanTask, read fresh from env
-    TASK_REGISTER_SERVICES (a JSON list of strings; deploy configuration, see helm configmap.yaml)
-    ON EVERY CALL. Unset, blank, malformed or the wrong shape is the empty set: FAILS CLOSED, and
-    never raises."""
-    raw = os.environ.get("TASK_REGISTER_SERVICES")
-    if not raw or not raw.strip():
-        return frozenset()
+    """The service identities allowed to name any person on `/internal/human_tasks/register`: the
+    services of the rows with `door: bff` whose routes include `human_tasks.register` in
+    `policy/gateway_delegates.yaml` (architect 11-04). Read ON EVERY CALL from env
+    GATEWAY_DELEGATES_FILE, default `/app/policy/gateway_delegates.yaml`. A row without `door` is
+    the central gateway's and is ignored here, never admitted. A missing file is the empty list
+    (a warning); an unreadable file, a wrong shape, or any malformed row is the empty set and an
+    error: FAILS CLOSED, and never raises."""
+    path = os.environ.get("GATEWAY_DELEGATES_FILE") or "/app/policy/gateway_delegates.yaml"
     try:
-        parsed = json.loads(raw)
-        if not isinstance(parsed, list) or not all(isinstance(e, str) for e in parsed):
-            raise ValueError("TASK_REGISTER_SERVICES is not a list of strings")
-        return frozenset(parsed)
+        import yaml
+        try:
+            with open(path, encoding="utf-8") as fh:
+                parsed = yaml.safe_load(fh)
+        except FileNotFoundError:
+            logger.warning("%s is absent: an absent file is an empty list (no service may register)", path)
+            return frozenset()
+        rows = parsed.get("gateway_delegates") if isinstance(parsed, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("top level is not a mapping with a `gateway_delegates` list")
+        out: set[str] = set()
+        for i, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise ValueError(f"row {i} is not a mapping")
+            if row.get("door") != "bff":
+                continue
+            svc, routes = row.get("service"), row.get("routes")
+            if (not isinstance(svc, str) or not svc.strip() or not isinstance(routes, list)
+                    or not all(isinstance(r, str) for r in routes)):
+                raise ValueError(f"row {i}: `service` is not a non-empty string or `routes` is not a list of strings")
+            if _REGISTER_DELEGATE_ROUTE in routes:
+                out.add(svc)
+        return frozenset(out)
     except Exception as exc:  # noqa: BLE001 -- fail closed
-        logger.error("TASK_REGISTER_SERVICES unreadable, failing closed (no service may register): %s", exc)
+        logger.error("%s unreadable, failing closed (no service may register): %s", path, exc)
         return frozenset()
 
 

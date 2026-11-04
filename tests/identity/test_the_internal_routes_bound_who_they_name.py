@@ -298,7 +298,7 @@ def test_seeded_by_an_undeclared_name_is_422_and_nothing_is_stamped(monkeypatch,
 
 # -- /internal/human_tasks/register: the CALLER gate -------------------------------------------------
 #
-# A person may name only themselves; a service listed in TASK_REGISTER_SERVICES may name anyone.
+# A person may name only themselves; a service on a `door: bff` row for register may name anyone.
 # `requested_by` is bound as ruled 2026-11-04: self, a listed service, or a declared delegate's principal.
 
 import json  # noqa: E402
@@ -307,76 +307,76 @@ from pathlib import Path  # noqa: E402
 import yaml  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parents[2]
-_LISTED = yaml.safe_load((_ROOT / "helm/invincible-agent/values.yaml").read_text(encoding="utf-8")
-                         )["keycloak"]["taskRegisterServices"]
+_RAIL = _ROOT / "policy/gateway_delegates.yaml"
+_LISTED = [r["service"] for r in yaml.safe_load(_RAIL.read_text(encoding="utf-8"))["gateway_delegates"]
+           if r.get("door") == "bff" and "human_tasks.register" in r["routes"]]
 REGISTER = "/internal/human_tasks/register"
 _FULL = {"kind": "k", "task_id": "t-1", "audience": "a", "title": "t", "summary": "s",
          "requested_by": "starter@example.invalid"}
 
 
-def _register(monkeypatch, who, body=None, env=...):
+def _register(monkeypatch, register_rail, who, body=None, env=...):
     """POST the register as `who`; returns (response, the kwargs register_task received or None)."""
     seen = []
     monkeypatch.setattr(ht, "register_task", lambda **kw: (seen.append(kw), {"recipients": []})[1])
     if env is not ...:
-        if env is None:
-            monkeypatch.delenv("TASK_REGISTER_SERVICES", raising=False)
-        else:
-            monkeypatch.setenv("TASK_REGISTER_SERVICES", env)
+        register_rail(env)   # None: no file; a list: its services; a str: the file text verbatim
     _login(who)
     r = _client().post(REGISTER, json=_FULL if body is None else body)
     return r, (seen[0] if seen else None)
 
 
 @pytest.fixture
-def listed(monkeypatch, served):
-    """The chart's listed services in the env the server reads, and one that is NOT a delegate."""
-    monkeypatch.setenv("TASK_REGISTER_SERVICES", json.dumps(_LISTED))
+def listed(monkeypatch, served, register_rail):
+    """The shipped rail's listed services, served from a rail file, and one that is NOT a delegate."""
+    register_rail(_LISTED)
     assert gateway._task_register_services() == frozenset(_LISTED)
     plain = [s for s in _LISTED if s not in served]
     assert plain, "the chart lists no service that is not also a delegate: nothing to seal"
     return plain[0]
 
 
-def test_register_a_person_is_refused_and_nothing_is_registered(monkeypatch, served, listed, caplog):
+def test_register_a_person_is_refused_and_nothing_is_registered(monkeypatch, served, listed, caplog, register_rail):
     caplog.set_level(logging.INFO, logger=AUDIT)
     person, _ = pair_and_outsider(served, RUNNER)
-    r, got = _register(monkeypatch, person)
+    r, got = _register(monkeypatch, register_rail, person)
     assert r.status_code == 403 and r.json()["detail"]["error"] == "not_a_delegate", r.text[:200]
     assert got is None
     assert "refused:not_a_delegate" in _audit(caplog, person)
 
 
-def test_register_a_listed_service_is_admitted_and_requested_by_passes_through(monkeypatch, served, listed):
-    r, got = _register(monkeypatch, listed)
+def test_register_a_listed_service_is_admitted_and_requested_by_passes_through(monkeypatch, served, listed, register_rail):
+    r, got = _register(monkeypatch, register_rail, listed)
     assert r.status_code == 200, r.text[:200]
     assert got["requested_by"] == _FULL["requested_by"]
 
 
-def test_register_a_declared_delegate_needs_no_listing(monkeypatch, served, listed):
+def test_register_a_declared_delegate_needs_no_listing(monkeypatch, served, listed, register_rail):
     principal = sorted(served[RUNNER])[0]      # ruled 2026-11-04: a delegate names a principal declared for it
-    r, got = _register(monkeypatch, RUNNER, {**_FULL, "requested_by": principal}, env=None)
+    r, got = _register(monkeypatch, register_rail, RUNNER, {**_FULL, "requested_by": principal}, env=None)
     assert r.status_code == 200 and got is not None and got["requested_by"] == principal, (
         r.status_code, r.text[:200])
-    r, got = _register(monkeypatch, RUNNER, env=None)         # the starter is not declared for it
+    r, got = _register(monkeypatch, register_rail, RUNNER, env=None)         # the starter is not declared for it
     assert r.status_code == 403 and got is None, (r.status_code, r.text[:200])
 
 
-def test_register_an_unlisted_service_is_refused(monkeypatch, served, listed, caplog):
+def test_register_an_unlisted_service_is_refused(monkeypatch, served, listed, caplog, register_rail):
     caplog.set_level(logging.INFO, logger=AUDIT)
     stranger = _undeclared(served, "svc")
     assert stranger not in _LISTED
-    r, got = _register(monkeypatch, stranger)
+    r, got = _register(monkeypatch, register_rail, stranger)
     assert r.status_code == 403 and r.json()["detail"]["error"] == "not_a_delegate"
     assert got is None
     assert "refused:not_a_delegate" in _audit(caplog, stranger)
 
 
-@pytest.mark.parametrize("env", [None, "", "not json", '{"a": 1}', '[1, 2]', '"svc:x"'],
-                         ids=["unset", "blank", "malformed", "object", "non-strings", "string"])
-def test_register_unset_and_malformed_env_refuse_a_service_that_is_not_a_delegate(
-        monkeypatch, served, listed, env):
-    r, got = _register(monkeypatch, listed, env=env)
+@pytest.mark.parametrize("env", [
+    None, "", "not: [valid", "gateway_delegates: {a: 1}", "- a", "gateway_delegates: [x]",
+    "gateway_delegates:\n  - {service: svc:x, door: bff, routes: human_tasks.register}\n"],
+    ids=["missing", "blank", "malformed", "object", "list-top", "string-row", "routes-string"])
+def test_register_a_missing_or_malformed_rail_refuses_a_service_that_is_not_a_delegate(
+        monkeypatch, served, listed, env, register_rail):
+    r, got = _register(monkeypatch, register_rail, listed, env=env)
     assert r.status_code == 403 and r.json()["detail"]["error"] == "not_a_delegate", (env, r.text[:200])
     assert got is None
 
@@ -384,7 +384,7 @@ def test_register_unset_and_malformed_env_refuse_a_service_that_is_not_a_delegat
 # -- the one door a person's token can reach: promote_answer_artifact's publish_artifact -----------------
 
 def test_the_promote_publish_step_posts_a_body_the_route_refuses_422_before_the_gate(
-        monkeypatch, served, listed):
+        monkeypatch, served, listed, register_rail):
     """`execute_direct_call` posts {task_id, task_type, capability, user_jwt} and the step declares
     no extra_payload; the route needs audience, title, summary and requested_by. So that call is a 422
     before the handler runs, whoever the caller is: the promote step could not succeed before the gate.
@@ -395,15 +395,65 @@ def test_the_promote_publish_step_posts_a_body_the_route_refuses_422_before_the_
     person, _ = pair_and_outsider(served, RUNNER)
     sent = {"task_id": step["id"], "task_type": "direct_call", "capability": step["capability"],
             "user_jwt": "x"}                        # exactly what execute_direct_call builds
-    r, got = _register(monkeypatch, person, sent)
+    r, got = _register(monkeypatch, register_rail, person, sent)
     assert r.status_code == 422, (r.status_code, r.text[:300])
     assert {tuple(e["loc"]) for e in r.json()["detail"]} >= {
         ("body", "audience"), ("body", "title"), ("body", "summary")}
     assert got is None
     complete = {**sent, "audience": "a", "title": "t", "summary": "s", "requested_by": person}
-    r1, got1 = _register(monkeypatch, person, complete)           # a person naming themselves: admitted
+    r1, got1 = _register(monkeypatch, register_rail, person, complete)           # a person naming themselves: admitted
     assert r1.status_code == 200 and got1["requested_by"] == person, (r1.status_code, r1.text[:200])
-    r1, got1 = _register(monkeypatch, person, {**complete, "requested_by": _FULL["requested_by"]})
+    r1, got1 = _register(monkeypatch, register_rail, person, {**complete, "requested_by": _FULL["requested_by"]})
     assert r1.status_code == 403 and got1 is None, (r1.status_code, r1.text[:200])  # naming another: refused
-    r2, got2 = _register(monkeypatch, listed, complete)           # control: a listed service
+    r2, got2 = _register(monkeypatch, register_rail, listed, complete)           # control: a listed service
     assert r2.status_code == 200 and got2["task_id"] == step["id"], (r2.status_code, r2.text[:200])
+
+
+# -- the register list is the rail's `door: bff` rows (architect 11-04) -------------------------------
+
+def _services():
+    return gateway._task_register_services()
+
+
+def test_the_shipped_rail_admits_the_two_register_services_and_not_a_gateway_row(monkeypatch):
+    monkeypatch.setenv("GATEWAY_DELEGATES_FILE", str(_RAIL))
+    assert _services() == frozenset({"svc:review-starter", "svc:case-runner"})
+    assert "svc:data-analyst" in _RAIL.read_text(encoding="utf-8")        # control: it is a row, a gateway one
+    assert "svc:data-analyst" not in _services()
+
+
+def test_a_service_with_only_a_gateway_row_is_not_admitted(register_rail):
+    register_rail("gateway_delegates:\n  - {service: svc:g, routes: [human_tasks.register]}\n"
+                  "  - {service: svc:h, door: gateway, routes: [human_tasks.register]}\n")
+    assert _services() == frozenset()
+
+
+def test_a_bff_row_for_another_route_does_not_admit_for_register(register_rail):
+    register_rail("gateway_delegates:\n  - {service: svc:o, door: bff, routes: [other.route]}\n"
+                  "  - {service: svc:r, door: bff, routes: [other.route, human_tasks.register]}\n")
+    assert _services() == frozenset({"svc:r"})
+
+
+def test_a_missing_file_is_empty_and_a_warning(register_rail, caplog):
+    path = register_rail(None)
+    assert not path.exists()
+    with caplog.at_level(logging.DEBUG, logger=gateway.logger.name):
+        assert _services() == frozenset()
+    levels = [r.levelno for r in caplog.records if str(path) in r.getMessage()]
+    assert levels == [logging.WARNING], levels
+
+
+@pytest.mark.parametrize("text", [
+    "not: [valid",
+    "- svc:a",
+    "gateway_delegates: [just-a-string]",
+    "gateway_delegates:\n  - {service: svc:a, door: bff, routes: human_tasks.register}\n",
+    "gateway_delegates:\n  - {service: svc:ok, door: bff, routes: [human_tasks.register]}\n  - nope\n",
+    "gateway_delegates:\n  - {service: '', door: bff, routes: [human_tasks.register]}\n",
+], ids=["yaml-error", "top-list", "row-string", "routes-string", "one-bad-row-voids-all", "blank-service"])
+def test_a_malformed_rail_fails_closed_with_an_error_and_never_raises(register_rail, caplog, text):
+    path = register_rail(text)
+    with caplog.at_level(logging.DEBUG, logger=gateway.logger.name):
+        assert _services() == frozenset()
+    levels = [r.levelno for r in caplog.records if str(path) in r.getMessage()]
+    assert levels == [logging.ERROR], levels

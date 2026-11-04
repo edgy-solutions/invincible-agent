@@ -307,8 +307,8 @@ def test_control_a_named_requester_passes_the_check(monkeypatch):
 
 
 @pytest.fixture
-def client(monkeypatch):
-    monkeypatch.setenv("TASK_REGISTER_SERVICES", '["svc:case-runner"]')
+def client(monkeypatch, register_rail):
+    register_rail(["svc:case-runner"])
     from fastapi.testclient import TestClient
     monkeypatch.setattr(human_tasks, "_resolve_audience_actors", lambda aud: [])
     user = type("U", (), {"authz_id": "svc:case-runner", "sub": "svc", "email": "",

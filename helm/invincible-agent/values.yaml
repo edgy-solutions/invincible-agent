@@ -1983,12 +1983,6 @@ externalKeycloak:
 
 keycloak:
   enabled: true
-  # The service identities that may register a HumanTask at cortex-bff
-  # (/internal/human_tasks/register). Rendered as TASK_REGISTER_SERVICES beside
-  # DELEGATE_ON_BEHALF_OF. svc:review-starter is the token both Restate runners post the register
-  # with (main.py `_register_human_task`, dispatch_driver `_mint_dispatch_task`);
-  # svc:case-runner is the case runner's delegate identity. A person's token is refused.
-  taskRegisterServices: ["svc:review-starter", "svc:case-runner"]
   image:
     registry: "quay.io"
     repository: "keycloak/keycloak"

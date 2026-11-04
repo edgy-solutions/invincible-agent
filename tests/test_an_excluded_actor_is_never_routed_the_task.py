@@ -94,8 +94,8 @@ def test_AN_EXCLUSION_THAT_EMPTIES_THE_AUDIENCE_IS_REFUSED_BEFORE_ANY_ROW():
 # ── THE ROUTE: the request model must DECLARE the field, or it is silently dropped ──────────
 
 @pytest.fixture
-def route(monkeypatch):
-    monkeypatch.setenv("TASK_REGISTER_SERVICES", '["svc"]')
+def route(monkeypatch, register_rail):
+    register_rail(["svc"])
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from src.iagent import gateway, human_tasks
