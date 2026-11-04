@@ -31,7 +31,7 @@ The relay: "#219 merges once Lane 1 has read its supervisor commit; #7 is Chris'
 **Open, waiting on others:**
 - **#240** `fin/dag-tools-digest`, head `117143fa`: moves the pin to `sha-4096a11` (`sha256:44c54e5a...9266`) and opens `0.4.78 — not yet cut` in the changelog, holding its entry and the resolver's. Lane 1 merges and cuts. Don't roll.
 - **#238** `fin/census-reds`, head `60e6c0de`: the five census reds. Lane 1 merges and decides `c66f04ca`.
-- **Chris:** an `s3fs` floor in dag-tools (below). No PR opened.
+- **`s3fs` floor:** Chris decided: its own small PR in dag-tools, by that repo's agent, not in #240 and not tonight. Packet placed: `2026-11-03-packet-to-dag-tools-owner-from-fin-the-user-deployment-image-needs-an-s3fs-floor.md`. Not fin's to build.
 
 **Measured on the image's versions** (`layers.py` read both images' arm64 layers; the rest in a venv with those versions):
 - 59 of 156 packages changed: polars 1.44 to 2.1, protobuf 6 to 7, pyarrow 25 to 26, multidict 6 to 7, sqlalchemy 2.0.54 to 2.0.57, still psycopg2 and no `psycopg`.
