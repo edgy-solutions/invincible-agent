@@ -2922,7 +2922,8 @@ def _picker_unavailable(exc: HTTPException, owner: str) -> HTTPException:
     `can_export` check) passes through as it was."""
     detail = exc.detail
     if isinstance(detail, dict) and detail.get("reason") == "recipient_readers_unavailable":
-        return HTTPException(status_code=exc.status_code, detail={**detail, "owner": owner})
+        return HTTPException(status_code=exc.status_code,
+                             detail=_detail_with_message(exc.status_code, {**detail, "owner": owner}))
     return exc
 
 
@@ -3622,7 +3623,8 @@ async def _call_engine_cost_answers_export(payload: dict, bearer: str) -> dict:
             detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
         except Exception:
             detail = getattr(rr, "text", "engine refused")
-        raise HTTPException(status_code=rr.status_code, detail=detail)
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, detail))
     return rr.json()
 
 
