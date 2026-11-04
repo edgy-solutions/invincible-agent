@@ -47,7 +47,7 @@ import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, get_args
 
 import yaml
 from pydantic import ValidationError
@@ -418,6 +418,36 @@ def _field_facet(field_name: str, step_kind: Optional[str]) -> str:
     return "steps"
 
 
+_STEP_MODELS = {get_args(c.model_fields["kind"].annotation)[0]: c for c in get_args(get_args(_wd.Step)[0])}
+_PLACEHOLDER = "x"
+
+
+def _field_it_needs(step: Any, msg: str) -> Optional[str]:
+    """The one field ``step`` leaves unset whose setting clears the refusal ``msg``, or None.
+
+    A step-level refusal names no field in its location (ADR-0061 section 10, the architect on runs
+    53 to 55: the loop asked a whole workflow what it should be, and nobody could say). Each
+    field the step's model declares and the step leaves unset is tried with a placeholder string,
+    and it qualifies only if the step then has no error at that field and no longer this refusal.
+    A field of another type fails at itself, so it never qualifies. None when no field or more than
+    one would clear it: that refusal is about the step, so the question stays on the workflow."""
+    model = _STEP_MODELS.get(step.get("kind")) if isinstance(step, dict) else None
+    if model is None:
+        return None
+    found = []
+    for name in model.model_fields:
+        if step.get(name) not in (None, "", [], {}):
+            continue
+        try:
+            model.model_validate({**step, name: _PLACEHOLDER})
+            errors = []
+        except ValidationError as exc:
+            errors = exc.errors()
+        if not any(x["msg"] == msg or (x["loc"] and x["loc"][0] == name) for x in errors):
+            found.append(name)
+    return found[0] if len(found) == 1 else None
+
+
 # ═════════════════════════════════════════════════════════════════════════════════════════════
 # PATCH
 # ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -687,10 +717,20 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
                         out.append(Gap(f"steps.{wid}.{fld}", "steps", "missing",
                                        f"What is the {_words(fld)} of {_words(wid)}?"))
                 else:
-                    out.append(Gap(f"contradiction:workflow.{wid}", "steps", "contradiction",
-                                   f"{_words(wid)} does not hold together at "
-                                   f"{'.'.join(str(x) for x in loc)}: {_first_line(e['msg'])}. "
-                                   "What should it be?"))
+                    st = _steps(raw)
+                    at = loc[1] if loc[:1] == ("steps",) and len(loc) >= 2 and isinstance(loc[1], int) else None
+                    step = st[at] if at is not None and at < len(st) and isinstance(st[at], dict) else None
+                    fld = _field_it_needs(step, e["msg"]) if step is not None and step.get("id") else None
+                    if fld:
+                        path = f"steps[id={step['id']}].{fld}"
+                        out.append(Gap(f"contradiction:{f}#{path}", _field_facet(fld, step.get("kind")), "contradiction",
+                                       f"What is the {_words(fld)} of {_words(step['id'])} in {_words(wid)}? "
+                                       f"Without it: {_first_line(e['msg'].removeprefix('Value error, '))}.", revises=((f, path),)))
+                    else:
+                        out.append(Gap(f"contradiction:workflow.{wid}", "steps", "contradiction",
+                                       f"{_words(wid)} does not hold together at "
+                                       f"{'.'.join(str(x) for x in loc)}: {_first_line(e['msg'])}. "
+                                       "What should it be?"))
 
     for wid, (f, raw) in wfs.items():
         if wid not in reach:

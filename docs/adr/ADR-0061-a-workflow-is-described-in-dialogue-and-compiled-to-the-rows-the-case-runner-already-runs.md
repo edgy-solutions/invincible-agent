@@ -13,7 +13,8 @@ architect, because v3 doesn't read `approves`, and no run from 41 to 52 drafted 
 `role` into the bar. Instrument v4 reads them as a third bar, and all twelve runs read `no` on it, so run 50 no longer
 meets the bar and the bar is not met (§10). Runs 53 to 55, on the grammar line, draft `approves` for the first time, and
 all three read `no`. Each is `cannot_run` on a question about the impact review's role that the scripted person can't
-answer, though the person said it in the opening (§10). Nothing is flipped.
+answer, though the person said it in the opening (§10). The architect chose the first of the two fixes: a refusal that one
+field clears is now asked on that field. Runs 56 to 58 are next (§10). Nothing is flipped.
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2497,6 +2498,37 @@ it.
 
 **Also seen.** The rewrite check fired nowhere again. Run 53 had one model error, which I haven't traced. `outputs.record`
 is deferred again on runs 54 and 55, though both drafted a record stage. Run 54's record again stands a render in for the filing step.
+
+#### 2026-11-04: the ruling on fix 1, and the question on the field
+
+The architect ruled: "build fix 1 (the loop asks for the one field the rejection names, `…#steps[id=…].role`), not fix 2
+(re-plants the contradiction, as you said). Three runs (56–58) after it. Bar not met."
+
+**Built.** When the executor refuses a step and the refusal's location names no field, the loop now looks for the field
+that would clear it. It tries each field the step leaves unset with a placeholder. A field qualifies when the step then
+has no error at that field and no longer this refusal. If exactly one qualifies, the question goes on that field, keyed
+`contradiction:<file>#steps[id=<step>].<field>`, and an answer may write it. On run 53's final draft the person would be
+asked "What is the role of await impact in impact review? Without it: step await_impact: `approves` requires a `role`
+for the chain entry." If no field qualifies, or more than one does, the question stays on the whole workflow as before. A grouped
+await with `approves` is the case that stays: no one field clears that refusal. Like any runtime refusal, the new
+question may not be deferred.
+
+The scripted person answers it from the expected value, as for any other contradiction on a path. So it says "It is
+component_engineer." and does not replay the opening, which carries the planted contradiction. That was the risk in
+fix 2.
+
+Six seals, and nine mutants that each die on one: the question always on the whole workflow, no check that a field
+clears the refusal, a field's own error ignored, the refusal ignored, the first of several fields taken, no `revises`,
+the refusal left out of the question, pydantic's "Value error" prefix kept, and the facet set to steps. No executor
+refusal today is cleared by either of two fields, so that seal reads a stub model. The suite, gov's refusal ratchet
+and the corpus check pass. The census is unchanged at 469 refused, 2003 passed, no crash sites, because the change adds
+a question and not a refusal.
+
+**Runs 53 to 55, re-read with no model time.** On each run's final draft, the loop now asks the field question about
+the impact review's approval step. The scripted person answers "It is component_engineer." on all three. Writing that
+role into a copy of the oracle's draft that lacks it clears the refusal and gives back the oracle's draft. This shows
+the question can now be answered. It doesn't show what a model does with the answer, and only runs 56 to 58 can say
+whether any run reads `yes`.
 
 ## Consequences
 

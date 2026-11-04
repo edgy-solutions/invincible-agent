@@ -3346,3 +3346,74 @@ def test_the_three_bars_read_apart_and_the_bar_needs_all_three(monkeypatch, edit
 def test_the_oracle_meets_the_approval_bar_on_every_fixture(name):
     row = sm.measure(name, se.OracleExtractor(), aligned=True)
     assert row["approval_bar"] is True and row["wrong_approvals"] == [] and row["bar_met"] is True
+
+
+# ── a refusal one field clears is asked on that field (architect, 2026-11-04, on runs 53 to 55) ──
+
+_ROLE = "steps[id=engineering_disposition].role"
+_ROLE_KEY = f"contradiction:{IR}#{_ROLE}"
+
+
+def _roleless():
+    f = _good()
+    del _step(f, IR, "engineering_disposition")["role"]
+    return f
+
+
+def test_a_refusal_one_unset_field_clears_is_asked_on_that_field():
+    gaps = se.problems(_roleless())
+    assert [(g.key, g.kind, g.facet, g.revises) for g in gaps] == [(_ROLE_KEY, "contradiction", "approvals", ((IR, _ROLE),))]
+    said = gaps[0].question
+    assert said.startswith("What is the role of engineering disposition in pcn impact review?")
+    assert "`approves` requires a `role`" in said and "Value error" not in said
+
+
+def test_control_a_refusal_no_single_field_clears_stays_on_the_workflow():
+    f = _good()
+    _step(f, IR, "engineering_disposition")["completion"] = {"mode": "grouped"}
+    gaps = se.problems(f)
+    assert [g.key for g in gaps] == ["contradiction:workflow.pcn_impact_review"]
+    assert "grouped await" in gaps[0].question
+
+
+def test_the_field_question_may_not_be_deferred():
+    assert se.non_deferrable(se.Draft(files=_roleless()), _ROLE_KEY) == "a runtime refusal may not be deferred"
+
+
+def test_the_person_answers_the_field_question_from_what_they_meant_and_not_the_opening():
+    f = _roleless()
+    g = se.problems(f)[0]
+    says = _pcn_user()(g, se.Draft(files=f))["says"]
+    assert says == "It is component_engineer." and "whoever logged" not in says
+
+
+def test_an_answer_to_the_field_question_clears_the_refusal():
+    d = se.Draft(files=_roleless())
+    g = se.problems(d.files)[0]
+    se.apply_patch(d, {"set": [{"file": IR, "path": _ROLE, "value": "component_engineer"}]}, 1, answering=g)
+    assert se.problems(d.files) == [] and d.files == _good()
+
+
+def test_a_refusal_two_fields_would_each_clear_names_neither_and_one_field_names_it(monkeypatch):
+    # No executor refusal today is cleared by either of two fields, so this reads the counting on a stub.
+    from typing import Literal, Optional as Opt
+    from pydantic import BaseModel, model_validator
+
+    class _EitherStep(BaseModel):
+        kind: Literal["either"]
+        id: str
+        a: Opt[str] = None
+        b: Opt[str] = None
+        n: Opt[int] = None
+
+        @model_validator(mode="after")
+        def _one(self):
+            if not (self.a or self.b):
+                raise ValueError("needs a or b")
+            return self
+
+    monkeypatch.setitem(se._STEP_MODELS, "either", _EitherStep)
+    assert se._field_it_needs({"kind": "either", "id": "s"}, "Value error, needs a or b") is None
+    assert se._field_it_needs({"kind": "either", "id": "s", "b": ""}, "Value error, needs a or b") is None
+    monkeypatch.setattr(_EitherStep, "model_fields", {k: v for k, v in _EitherStep.model_fields.items() if k != "b"})
+    assert se._field_it_needs({"kind": "either", "id": "s"}, "Value error, needs a or b") == "a"
