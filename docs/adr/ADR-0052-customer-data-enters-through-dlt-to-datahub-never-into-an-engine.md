@@ -1,9 +1,12 @@
 # ADR-0052 — Customer data enters through `dlt` → DataHub, never into an engine
 
-**Status:** Proposed — decision recorded 2026-09-11, **written before the build**. `dlt` is **not
-currently a dependency of this repo** (verified: no entry in `pyproject.toml`, no import anywhere
-outside vendored trees). This ADR decides the SHAPE a customer-data connector takes so that three
-engines do not each invent one; it does not claim the connector exists.
+**Status:** Accepted (first slice), 2026-11-04, as the architect ruled. Decision recorded
+2026-09-11, written before the build. **Accepted is not conformance:** of §1–§6 the first slice
+meets only §4, and that trivially. §3 is built but not enforced and §5 is met in part. The status
+table in "The finance first slice" below gives each section as met or not met.
+`dlt` is still **not a dependency of this repo**; dag-tools carries it. This ADR decides the SHAPE
+a customer-data connector takes so that three engines do not each invent one; it does not claim a
+customer connector exists.
 **Date:** 2026-09-11
 **Deciders:** Architect (pattern), Platform team
 **Related:**
@@ -45,7 +48,7 @@ derived, a list nobody maintained, a check each consumer wrote for itself.
 | the DataHub wrapper | `agent_fleet/datahub_wrapper/main.py` | owned integration layer (ADR-0022) |
 | catalog seeding | `scripts/seed_datahub_catalog.py` | present |
 | governed read by URN | `CortexDataClient(...).get_dataframe(urn)` | live in engine-fin and data-analyst |
-| the identity discipline | `finance_agent/main.py:995` | JWT + `X-Originator-*`, **no standing credential**, 401 otherwise |
+| the identity discipline | `finance_agent/main.py`, `mesh_ticketed_read` | JWT + `X-Originator-*`, **no standing credential**, 401 otherwise |
 | **`dlt`** | — | **absent. Not a dependency.** |
 
 So the governed half of the path is real and already refuses to read without an initiator. What is
@@ -124,6 +127,35 @@ demonstrate the detection** — and it will pass every seal while proving only t
 
 The diagnostic transfers directly: *does this fixture contain an instance of the failure the
 consumer of it is meant to catch?* If not, a green over it is a claim about the fixture.
+
+## The finance first slice
+
+The status of each section, as of acceptance. A section is met only when the whole of it holds;
+what a partial build reaches is in the row. The slice is engine-fin's declared measures
+reading a synthetic earned-value asset by URN, behind `FIN_DATASET_URN`
+(`agent_fleet/finance_agent/asset_inputs.py`, design in
+[`fin-inputs-resolver`](../plans/fin-inputs-resolver.md)). **Nothing here has run on a cluster.**
+`tests/sandbox_e2e/test_variance_set_reads_the_ev_fixture.py` is that proof, and it skips until the
+roll, naming what it is waiting on.
+
+| § | what it decides | met? | what the slice does |
+|---|---|---|---|
+| 1 | a `dagster-dlt` asset per source | **not met** | `ev_fixture` (dag-tools, `user_deployment/mesh_demo_assets.py`) is a plain `@asset` reading a packaged CSV. dag-tools has a `dlt` factory and component, but they sit in its `orchestrator` extra, which the user-deployment image does not install |
+| 2 | a published schema; drift sealed at the boundary | **not met** | no schema is published or read. The engine checks its own column contract on the frame at read time (`check_schema`): a broken rule is a 502 `asset_contract_violation` naming the rule, never a figure. That is the answer-time error §2's indicator names, failing closed |
+| 3 | the read is by URN, under the initiator | **not met**: built, not enforced | `mesh_ticketed_read` builds the client with the caller's bearer and nothing else. No person means 401, no grant means 403 `access_denied` naming the asset. Sealed against a double. The gateway's `enforce` posture is not live, so a token that fails verification is not yet refused |
+| 4 | `dlt` pulls; a dataset is not state | **met**, trivially | no pull exists. The resolver writes nothing and keeps nothing between requests |
+| 5 | the fixture wears the dataset's interface | **not met**: in part | declared measures read any asset by URN through one route, client and contract. With the flag on, built-in verbs, instance resolution and exports stay on the seed, which is the "engine loads a seed file" §5 warns of |
+| 6 | fixtures carry the errors | **not met** | `ev_fixture` is clean, and its figures equal the seed's by construction. Each of the ten contract rules has a violating frame in `tests/finance/test_fin_inputs_resolver.py`, so the detection is sealed, off-cluster, in the tests and not in the fixture |
+
+**The three items left open at build time:**
+
+1. **Where the assets live:** in neither place this ADR named for the fixture, which is in dag-tools'
+   user deployment. Not ruled as the answer for a customer source.
+2. **Schema-drift disposition:** still open. What runs today is neither option: nothing registers a
+   change, and the reader finds it.
+3. **Whether the fixture's URN is a real registration:** real by intent. The catalog sensor registers
+   it when `DATAHUB_SERVER` is set, and a dag-tools test checks that the broker and the catalog derive
+   the same URN. Not seen live.
 
 ## Consequences
 
