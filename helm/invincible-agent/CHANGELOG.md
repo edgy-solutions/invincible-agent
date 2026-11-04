@@ -1,6 +1,18 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.79 — not yet cut
+## 0.4.80 — not yet cut
+
+(0.4.79 was never cut: the register gate below is a second commit on the same uncut release, and the
+chart-version test wants a bump in every commit that touches chart content, so the pair carries 0.4.80.)
+
+**`/internal/human_tasks/register` is gated on a service identity.** The caller must be a declared delegate
+or listed in the new `keycloak.taskRegisterServices` (rendered as `TASK_REGISTER_SERVICES`, default
+`svc:review-starter`, `svc:case-runner`); anyone else is 403 `not_a_delegate`. `requested_by` now comes from
+the token (the body field is optional); a differing value is admitted only as a principal declared for that
+delegate. The person a task acts for travels as `on_behalf_of`, a recorded label that no reader grants
+authority from, and the inbox now returns it. The two Restate runners send `on_behalf_of` and stop sending
+`requested_by`, so **`cortex-bff` and the code location must roll together**, and a task's card shows the
+service until cortex shows `on_behalf_of`.
 
 **The case-runner routes bound the person they name.** `POST /internal/origin/write`,
 `/internal/cases/{id}/action-record`, `/summary` and `/seeded-by` check the name they are given against what

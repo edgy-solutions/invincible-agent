@@ -205,10 +205,10 @@ def _mint_dispatch_task(task: dict) -> dict:
         "summary": task.get("summary") or "",
         "subject_ref": task.get("subject_ref"),
         "disposition": task.get("disposition"),
-        # cortex-bff register REQUIRES requested_by (422 without it) — the principal who caused the task
-        # (the approver who resolved the grouped review). Found live: the register contract, not
-        # inferable from the driver alone.
-        "requested_by": task.get("requested_by") or "",
+        # The principal who caused the task (the approver who resolved the grouped review). The
+        # gateway takes `requested_by` from the service token, so the person travels as
+        # `on_behalf_of`, a recorded label (ADR-0063).
+        "on_behalf_of": task.get("requested_by") or "",
         "needs_review": task.get("needs_review", False),
         "proposed_by_ruleset": task.get("proposed_by_ruleset"),
         # RE-LINK provenance (rider): unresolved subject -> no graph write, but the task carries enough

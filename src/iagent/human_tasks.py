@@ -676,7 +676,7 @@ def list_tasks_for(caller_id: str, *, status: str = PENDING) -> list[dict[str, A
             cur.execute(
                 """SELECT id, kind, task_id, workflow_id, audience, status, title,
                           summary, requested_by, subject_ref, payload, created_at,
-                          workflow_service, promise_name, case_id
+                          workflow_service, promise_name, case_id, on_behalf_of
                      FROM human_task_projection
                     WHERE """ + inbox_where_params() + """
                     ORDER BY created_at DESC""",

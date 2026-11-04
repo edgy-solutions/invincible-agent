@@ -1724,7 +1724,9 @@ def _register_human_task(workflow_id: str, task: dict, kind: str = "workflow_ack
         "audience": audience,
         "title": task.get("title") or task.get("name") or "Approve step",
         "summary": task.get("summary") or f"Approve workflow step {task_id}",
-        "requested_by": task.get("requested_by", ""),
+        # WHO the task acts for. The gateway takes `requested_by` from the service token (this
+        # runner's identity), so the person travels as `on_behalf_of`, a recorded label (ADR-0063).
+        "on_behalf_of": task.get("requested_by", ""),
         "subject_ref": task.get("subject_ref"),
         # NEW — the owning service and the promise this step awaits, carried so cortex-bff's
         # `/act` can resume the RIGHT workflow by the RIGHT name instead of hardcoding

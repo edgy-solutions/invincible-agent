@@ -294,3 +294,165 @@ def test_seeded_by_an_undeclared_name_is_422_and_nothing_is_stamped(monkeypatch,
     r = _client().post(f"/internal/cases/{CASE}/seeded-by", json={"seeded_by": nobody})
     assert r.status_code == 422 and ran == [], (r.status_code, r.text[:200])
     assert "refused" in _audit(caplog, RUNNER, nobody)
+
+
+# -- /internal/human_tasks/register -----------------------------------------------------------------
+#
+# The caller must be a service identity (a declared delegate, or listed in TASK_REGISTER_SERVICES);
+# `requested_by` comes from the token; `on_behalf_of` is a recorded label.
+
+import json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import yaml  # noqa: E402
+
+_ROOT = Path(__file__).resolve().parents[2]
+_LISTED = yaml.safe_load((_ROOT / "helm/invincible-agent/values.yaml").read_text(encoding="utf-8")
+                         )["keycloak"]["taskRegisterServices"]
+REGISTER = "/internal/human_tasks/register"
+_FULL = {"kind": "k", "task_id": "t-1", "audience": "a", "title": "t", "summary": "s"}
+
+
+def _register(monkeypatch, who, body=None, env=...):
+    """POST the register as `who`; returns (response, the kwargs register_task received or None)."""
+    seen = []
+    monkeypatch.setattr(ht, "register_task", lambda **kw: (seen.append(kw), {"recipients": []})[1])
+    if env is not ...:
+        if env is None:
+            monkeypatch.delenv("TASK_REGISTER_SERVICES", raising=False)
+        else:
+            monkeypatch.setenv("TASK_REGISTER_SERVICES", env)
+    _login(who)
+    r = _client().post(REGISTER, json=_FULL if body is None else body)
+    return r, (seen[0] if seen else None)
+
+
+@pytest.fixture
+def listed(monkeypatch, served):
+    """The chart's listed services in the env the server reads, and one that is NOT a delegate."""
+    monkeypatch.setenv("TASK_REGISTER_SERVICES", json.dumps(_LISTED))
+    assert gateway._task_register_services() == frozenset(_LISTED)
+    plain = [s for s in _LISTED if s not in served]
+    assert plain, "the chart lists no service that is not also a delegate: nothing to seal"
+    return plain[0]
+
+
+def test_register_a_person_is_refused_and_nothing_is_registered(monkeypatch, served, listed, caplog):
+    caplog.set_level(logging.INFO, logger=AUDIT)
+    person, _ = pair_and_outsider(served, RUNNER)
+    r, got = _register(monkeypatch, person)
+    assert r.status_code == 403 and r.json()["detail"]["error"] == "not_a_delegate", r.text[:200]
+    assert got is None
+    assert "refused:not_a_delegate" in _audit(caplog, person)
+
+
+def test_register_a_listed_service_with_no_requested_by_is_recorded_as_itself(
+        monkeypatch, served, listed, caplog):
+    caplog.set_level(logging.INFO, logger=AUDIT)
+    r, got = _register(monkeypatch, listed)
+    assert r.status_code == 200, r.text[:200]
+    assert got["requested_by"] == listed and got["on_behalf_of"] == ""
+    assert [x for x in caplog.records if x.name == AUDIT] == []   # nothing named: nothing to audit
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_register_a_blank_requested_by_is_the_caller(monkeypatch, served, listed, blank):
+    r, got = _register(monkeypatch, listed, {**_FULL, "requested_by": blank})
+    assert r.status_code == 200 and got["requested_by"] == listed, (r.status_code, got)
+
+
+def test_register_a_listed_service_naming_a_person_in_requested_by_is_refused(
+        monkeypatch, served, listed, caplog):
+    caplog.set_level(logging.INFO, logger=AUDIT)
+    person, _ = pair_and_outsider(served, RUNNER)
+    r, got = _register(monkeypatch, listed, {**_FULL, "requested_by": person})
+    assert r.status_code == 403 and r.json()["detail"]["error"] == "not_a_delegate", r.text[:200]
+    assert got is None
+    assert "refused:not_a_delegate" in _audit(caplog, listed, person)
+
+
+def test_register_a_delegate_may_name_a_principal_declared_for_it(monkeypatch, served, listed, caplog):
+    caplog.set_level(logging.INFO, logger=AUDIT)
+    own, _ = pair_and_outsider(served, RUNNER)
+    r, got = _register(monkeypatch, RUNNER, {**_FULL, "requested_by": own})
+    assert r.status_code == 200 and got["requested_by"] == own, (r.status_code, r.text[:200])
+    assert "admitted:declared" in _audit(caplog, RUNNER, own)
+
+
+def test_register_a_delegate_naming_an_undeclared_principal_is_refused(
+        monkeypatch, served, listed, caplog):
+    caplog.set_level(logging.INFO, logger=AUDIT)
+    _own, outsider = pair_and_outsider(served, RUNNER)
+    r, got = _register(monkeypatch, RUNNER, {**_FULL, "requested_by": outsider})
+    assert r.status_code == 403
+    assert r.json()["detail"]["error"] == "principal_not_declared_for_delegate", r.text[:200]
+    assert got is None
+    assert "refused:principal_not_declared_for_delegate" in _audit(caplog, RUNNER, outsider)
+
+
+def test_register_a_listed_services_on_behalf_of_reaches_register_task_and_is_audited(
+        monkeypatch, served, listed, caplog):
+    caplog.set_level(logging.INFO, logger=AUDIT)
+    person = _undeclared(served, "starter")
+    r, got = _register(monkeypatch, listed, {**_FULL, "on_behalf_of": person})
+    assert r.status_code == 200, r.text[:200]
+    assert got["on_behalf_of"] == person and got["requested_by"] == listed
+    assert "admitted:recorded_label" in _audit(caplog, listed, person)
+
+
+@pytest.mark.parametrize("label", ["", "  "])
+def test_register_a_blank_on_behalf_of_is_recorded_as_blank(monkeypatch, served, listed, label):
+    r, got = _register(monkeypatch, listed, {**_FULL, "on_behalf_of": label})
+    assert r.status_code == 200 and got["on_behalf_of"] == "", (r.status_code, got)
+
+
+def test_register_an_on_behalf_of_equal_to_the_caller_is_recorded_as_blank(monkeypatch, served, listed):
+    r, got = _register(monkeypatch, listed, {**_FULL, "on_behalf_of": listed})
+    assert r.status_code == 200 and got["on_behalf_of"] == "", (r.status_code, got)
+
+
+def test_register_an_unlisted_service_is_refused(monkeypatch, served, listed, caplog):
+    caplog.set_level(logging.INFO, logger=AUDIT)
+    stranger = _undeclared(served, "svc")
+    assert stranger not in _LISTED
+    r, got = _register(monkeypatch, stranger)
+    assert r.status_code == 403 and r.json()["detail"]["error"] == "not_a_delegate"
+    assert got is None
+    assert "refused:not_a_delegate" in _audit(caplog, stranger)
+
+
+@pytest.mark.parametrize("env", [None, "", "not json", '{"a": 1}', '[1, 2]', '"svc:x"'],
+                         ids=["unset", "blank", "malformed", "object", "non-strings", "string"])
+def test_register_unset_and_malformed_env_refuse_a_service_that_is_not_a_delegate(
+        monkeypatch, served, listed, env):
+    r, got = _register(monkeypatch, listed, env=env)
+    assert r.status_code == 403 and r.json()["detail"]["error"] == "not_a_delegate", (env, r.text[:200])
+    assert got is None
+
+
+def test_register_a_declared_delegate_needs_no_listing(monkeypatch, served, listed):
+    r, got = _register(monkeypatch, RUNNER, env=None)
+    assert r.status_code == 200 and got["requested_by"] == RUNNER, (r.status_code, r.text[:200])
+
+
+# -- the one door a person's token can reach: promote_answer_artifact's publish_artifact -----------------
+
+def test_the_promote_publish_step_posts_a_body_the_route_refuses_422_before_the_gate(
+        monkeypatch, served, listed):
+    """`execute_direct_call` posts {task_id, task_type, capability, user_jwt} and the step declares
+    no extra_payload; the route needs audience, title and summary. So that call is a 422 before the
+    handler runs, whoever the caller is: the caller gate changes nothing that works today."""
+    wf = yaml.safe_load((_ROOT / "policy/workflows/promote_answer_artifact.yaml").read_text(encoding="utf-8"))
+    [step] = [s for s in wf["steps"] if s["id"] == "publish_artifact"]
+    assert step["kind"] == "direct_call" and "extra_payload" not in step, step
+    person, _ = pair_and_outsider(served, RUNNER)
+    sent = {"task_id": step["id"], "task_type": "direct_call", "capability": step["capability"],
+            "user_jwt": "x"}                        # exactly what execute_direct_call builds
+    r, got = _register(monkeypatch, person, sent)
+    assert r.status_code == 422, (r.status_code, r.text[:300])
+    assert {tuple(e["loc"]) for e in r.json()["detail"]} >= {
+        ("body", "audience"), ("body", "title"), ("body", "summary")}
+    assert got is None
+    # control: the same route, with a COMPLETE body from a listed service, is admitted
+    r2, got2 = _register(monkeypatch, listed, {**sent, "audience": "a", "title": "t", "summary": "s"})
+    assert r2.status_code == 200 and got2["task_id"] == step["id"], (r2.status_code, r2.text[:200])

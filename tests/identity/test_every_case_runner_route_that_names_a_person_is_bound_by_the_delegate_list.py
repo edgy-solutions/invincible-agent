@@ -293,6 +293,8 @@ EXCLUDED = {
     (OW, "evidence"): "free dict passed to origin_writer as evidence; the handler reads no person from it",
     (SM, "transitions"): "free list of hop outcomes; the handler reads `outcome` only",
     (AR, "record"): "the action record; the handler reads provenance.case_id only (a case id, not a person)",
+    (RG, "on_behalf_of"): (
+        "recorded label on a caller-gated route; no reader grants authority from it"),
     (_key("POST", "/internal/identity/redeem"), "claimed_launcher"): (
         "supervisor-only (403 not_the_redeemer for the case runner, checked below); not reachable"),
 }
@@ -391,16 +393,6 @@ def test_a_caller_that_is_not_the_case_runner_is_refused_at_the_gate(monkeypatch
 # -- the exclusions are checked, not asserted -------------------------------------------------------
 
 # -- /internal/human_tasks/register: RULED IN as a separate defect ------------------------------------
-REG_RULING = ("RULED DEFECT (architect via Chris 2026-11-03, a separate defect from the case-runner "
-              "routes): /internal/human_tasks/register needs TWO fixes -- ")
-FIX_A = REG_RULING + ("(a) THE CALLER: gate the route on the delegate list / service identity as its "
-                      "docstring promises, not on get_current_user alone. Turned by fix (a). "
-                      "Lane 1's fix PR removes this marker.")
-FIX_B = REG_RULING + ("(b) THE FIELD: requested_by comes from the token, never the body; a differing body "
-                      "value is refused with the refusal envelope. Turned by fix (b). "
-                      "Lane 1's fix PR removes this marker.")
-
-
 def _served_refusal(caller, on_behalf_of):
     """The refusal the gateway SERVES for this (caller, named) pair, read from the live function."""
     from fastapi import HTTPException
@@ -422,7 +414,6 @@ def test_register_control_a_declared_service_identity_naming_itself_is_admitted(
     assert r.status_code < 400 and fx.has(svc), (svc, r.status_code, r.text[:200], fx.seen)
 
 
-@pytest.mark.xfail(strict=True, reason=FIX_A)
 def test_register_a_plain_user_token_is_refused_at_the_route(monkeypatch):
     """Fix (a). The token is a person (declared, but not a delegate); requested_by is its own, so only
     the CALLER is in question."""
@@ -435,7 +426,6 @@ def test_register_a_plain_user_token_is_refused_at_the_route(monkeypatch):
         want_detail["error"], (r.status_code, r.text[:200], fx.seen)
 
 
-@pytest.mark.xfail(strict=True, reason=FIX_B)
 def test_register_a_body_requested_by_that_differs_from_the_token_is_refused(monkeypatch):
     """Fix (b). The caller IS a declared service identity (passes any gate); the body names someone
     else. register_task must receive the token's identity or nothing."""

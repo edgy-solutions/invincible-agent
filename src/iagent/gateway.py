@@ -1219,7 +1219,14 @@ class HumanTaskRegisterRequest(_BaseModel):
     audience: str
     title: str
     summary: str
-    requested_by: str
+    # Who asked. It comes from the TOKEN: absent, blank or the caller's own id is the caller; a
+    # differing value is admitted only as a principal declared for that delegate
+    # (`_admit_on_behalf_of`). Optional so a service need not send it.
+    requested_by: Optional[str] = None
+    # The person the task acts for (ADR-0063), recorded apart from `requested_by`. A recorded
+    # LABEL: the route does not bind it to the case (the first task on a case names whoever
+    # started the run, and that person holds no task yet) and no reader grants authority from it.
+    on_behalf_of: Optional[str] = None
     workflow_id: Optional[str] = None
     subject_ref: Optional[str] = None
     payload: Optional[dict] = None
@@ -1475,14 +1482,38 @@ async def register_human_task(
     """Register a task and materialize one queue row per Topaz-authorized actor.
     INTERNAL seam — Slice 1b restricts callers to the workflow/service identity;
     at the foundation checkpoint it is exercised directly to prove the identity
-    bridge. Returns the resolved recipient set (the Topaz decision)."""
+    bridge. Returns the resolved recipient set (the Topaz decision).
+
+    The caller must be a SERVICE identity: a declared delegate (`DELEGATE_ON_BEHALF_OF`) or a
+    listed task-register service (`TASK_REGISTER_SERVICES`); anyone else is 403 `not_a_delegate`,
+    the refusal `_admit_on_behalf_of` gives a person naming someone else."""
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
+    route = "/internal/human_tasks/register"
+    caller = current_user.authz_id
+    if caller not in _delegate_principals() and caller not in _task_register_services():
+        _audit_delegate_named(route, caller, req.requested_by, "refused:not_a_delegate")
+        raise HTTPException(status_code=403, detail={"error": "not_a_delegate"})
+    requested_by = caller
+    named = (req.requested_by or "").strip()
+    if named and named != caller:
+        try:
+            requested_by, _via = _admit_on_behalf_of(current_user, named)
+        except HTTPException as exc:
+            _audit_delegate_named(route, caller, named, f"refused:{exc.detail.get('error')}")
+            raise
+        _audit_delegate_named(route, caller, named, "admitted:declared")
+    label = (req.on_behalf_of or "").strip()
+    if label == caller:
+        label = ""
+    if label:
+        _audit_delegate_named(route, caller, label, "admitted:recorded_label")
     try:
         result = await run_in_threadpool(
             lambda: human_tasks.register_task(
                 kind=req.kind, task_id=req.task_id, audience=req.audience,
-                title=req.title, summary=req.summary, requested_by=req.requested_by,
+                title=req.title, summary=req.summary, requested_by=requested_by,
+                on_behalf_of=label,
                 workflow_id=req.workflow_id, subject_ref=req.subject_ref,
                 payload=req.payload, workflow_service=req.workflow_service,
                 promise_name=req.promise_name, excludes=req.excludes,
@@ -5658,6 +5689,24 @@ def _delegate_principals() -> dict[str, frozenset[str]]:
     except Exception as exc:  # noqa: BLE001 — fail closed, never raise out of this helper
         logger.error("DELEGATE_ON_BEHALF_OF unreadable, failing closed (no delegate can act): %s", exc)
         return {}
+
+
+def _task_register_services() -> frozenset[str]:
+    """The service identities allowed to register a HumanTask, read fresh from env
+    TASK_REGISTER_SERVICES (a JSON list of strings; deploy configuration, see helm configmap.yaml)
+    ON EVERY CALL. Unset, blank, malformed or the wrong shape is the empty set: FAILS CLOSED, and
+    never raises."""
+    raw = os.environ.get("TASK_REGISTER_SERVICES")
+    if not raw or not raw.strip():
+        return frozenset()
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, list) or not all(isinstance(e, str) for e in parsed):
+            raise ValueError("TASK_REGISTER_SERVICES is not a list of strings")
+        return frozenset(parsed)
+    except Exception as exc:  # noqa: BLE001 -- fail closed
+        logger.error("TASK_REGISTER_SERVICES unreadable, failing closed (no service may register): %s", exc)
+        return frozenset()
 
 
 def _admit_on_behalf_of(current_user, on_behalf_of: Optional[str]) -> tuple[str, Optional[str]]:

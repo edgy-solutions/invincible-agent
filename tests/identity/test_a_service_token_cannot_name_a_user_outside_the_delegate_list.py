@@ -175,6 +175,16 @@ DRIVERS = {
 }
 
 
+# Decided, NOT driven: a site whose `on_behalf_of` is a recorded LABEL, bound to nothing and read by
+# nothing that grants authority from it (the register gate takes the CALLER from the service list; the
+# label is the person the task acts for, which is whoever started the run). Its legs are in
+# tests/identity/test_the_internal_routes_bound_who_they_name.py, "register".
+RECORDED_LABEL = {
+    ("POST", "/internal/human_tasks/register"):
+        "recorded label on a caller-gated route; no reader grants authority from it",
+}
+
+
 def _sites():
     return sorted({(m, r.path) for r in gateway.app.routes if hasattr(r, "dependant")
                    and gateway._body_names_on_behalf_of(r) for m in r.methods})
@@ -182,8 +192,10 @@ def _sites():
 
 def test_every_site_that_takes_an_on_behalf_of_has_a_driver():
     """CENSUS, derived from the app: a person-asserting site with no driver is red until driven."""
-    assert set(_sites()) == set(DRIVERS), {
-        "undriven": sorted(set(_sites()) - set(DRIVERS)), "stale": sorted(set(DRIVERS) - set(_sites()))}
+    assert set(_sites()) == set(DRIVERS) | set(RECORDED_LABEL), {
+        "undriven": sorted(set(_sites()) - set(DRIVERS) - set(RECORDED_LABEL)),
+        "stale": sorted((set(DRIVERS) | set(RECORDED_LABEL)) - set(_sites()))}
+    assert not set(DRIVERS) & set(RECORDED_LABEL)
 
 
 def _served(monkeypatch):

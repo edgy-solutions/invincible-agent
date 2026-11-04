@@ -2,8 +2,9 @@
 
 What the chart must do (docs/reference/identity-mint-contract.md, "OpenDDIL brokering (sandbox)"):
 
-  (a) the base render is byte-identical to the base sha EXCEPT one explicit line,
-      `USER_ENTITLEMENT_CLAIM: "email"`, in the shared `-config` ConfigMap;
+  (a) the base render is byte-identical to the base sha EXCEPT two explicit lines,
+      `USER_ENTITLEMENT_CLAIM: "email"` and (0.4.80) `TASK_REGISTER_SERVICES`, in the shared
+      `-config` ConfigMap;
   (b) in the sandbox the claim NAME is one string across the BFF env, the service clients'
       authz-id-svc mapper, the cortex-ui attribute mapper and the local users' attribute;
   (c) the realm-reconcile job renders the OpenDDIL IdP, its mappers and the first-login flow;
@@ -228,7 +229,13 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     old_realm = copy.deepcopy(old_realm)
     _cui(old_realm).update(redirectUris=[], webOrigins=[])
     assert {**old_realm, "users": []} == {**new_realm, "users": []}
-    assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == ['+  USER_ENTITLEMENT_CLAIM: "email"']
+    # 0.4.80 adds ONE more explicit line, TASK_REGISTER_SERVICES (the register gate's service list),
+    # read from the values it renders, so the allowance names the key and its value.
+    _regs = yaml.safe_load((_REPO / _CHART / "values.yaml").read_text(encoding="utf-8")
+                           )["keycloak"]["taskRegisterServices"]
+    assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == [
+        '+  USER_ENTITLEMENT_CLAIM: "email"',
+        "+  TASK_REGISTER_SERVICES: " + json.dumps(json.dumps(_regs, separators=(",", ":")))]
     # 0.4.38: the reconcile Job's present-branch for an existing authz-id-svc mapper was rewritten
     # (chart-owned stale mapper migrated, not merely counted). The ONLY lines the base render may
     # lose from the Job are the old create-only check and its comment; nothing else is removed.

@@ -386,6 +386,7 @@ PENDING: dict[str, str] = {
     f"{GW}::_admit_on_behalf_of::not_a_delegate": "config",
     f"{GW}::_admit_on_behalf_of::principal_not_declared_for_delegate": "config",
     f"{GW}::_admit_named_on_case::principal_not_declared_for_delegate": "config",
+    f"{GW}::register_human_task::not_a_delegate": "config",
     f"{GW}::export_package_artifact::caller {{}} is not entitled to the package for {{}}.": "code",
     f"{GW}::_export_package_from_template::not_a_recipient_you_may_export_to": "code",
     f"{GW}::export_package::not_a_recipient_you_may_export_to": "code",
