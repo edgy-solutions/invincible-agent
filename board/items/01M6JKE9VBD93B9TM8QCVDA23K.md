@@ -14,3 +14,5 @@ updated: 2026-11-04
 `policy/workflows/promote_answer_artifact.yaml` step `publish_artifact` is a `direct_call` bound to `/internal/human_tasks/register`. `execute_direct_call` posts `task_id`, `task_type` and `capability`, with no `audience`, `title` or `summary`, which the route requires, so the step is a 422.
 
 It also puts `user_jwt` in the request body when the identity has one. Both predate the identity fix.
+
+Measured for #251: the incomplete body is a 422 with a person's token, so the step could not succeed before that gate either. With a complete body, a person's token now gets 403.
