@@ -1,13 +1,55 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.78 — not yet cut
+## 0.4.78 — 2026-11-04
 
-Entries merged after the 0.4.77 cut (`8fc02746`).
+**0.4.77 stands as cut at `8fc02746` and rolls nowhere. The sandbox goes from 0.4.75 to this chart.** This
+section holds everything merged after that commit. 0.4.77's section is unchanged, and its rows, images and
+notes all reach the sandbox with this chart, as 0.4.76's do.
+
+**⚠ This chart carries the identity vault (#229), and by the architect's ruling of 2026-11-03 it does not
+roll until cortex's paused-run card ships or the Keycloak exchange is configured.** Neither is true at this
+cut. No values file sets `IDENTITY_EXCHANGE_*`, and the card (`docs/specs/run-reauth-card.md` in cortex-ui)
+is not in the cortex pin below. Without one of them, a run whose token nears expiry pauses with nothing to
+show the person, and it holds one of the two run slots until its budget ends.
+
+**So this chart can't meet that ruling as cut, on either branch.** The card takes a later chart: this one pins
+cortex by digest to an image without it, and `paused_call`, `instruction` and `GET /me/paused-runs`, which the
+card reads, aren't in this tree. The exchange needs a Keycloak client with token exchange switched on, and
+`realm-reconcile-job` sets no per-client attributes, so it takes a chart change too unless that client is made
+by hand. Rolling this chart anyway takes a new ruling.
+
+**⚠ Once that is settled, in this order:**
+
+1. **Make the release tree.** `scripts/upgrade-sandbox.sh` now refuses (exit 4) unless HEAD is the tag named
+   by `Chart.yaml` and the tree is clean. The recipe is in `docs/runbooks/rolling-a-service.md`.
+2. **One `topaz_sync`, from this tag's policy.** It is the sync 0.4.77 names: `training-admins`,
+   `alignment-reviewers` and the `safety_finding_review:SUSTAINMENT` audience. `recipient_reader_sync` is not
+   owed. Nothing merged since adds a group; the `task_grants.yaml` changes are `granted_by` only.
+3. **`grant_sync`, only after the catalog holds the `s3` object.** 0.4.77's note applies unchanged: until
+   then it exits 3 and applies nothing, and no hook runs it, so it cannot stop a roll.
+4. **Roll.** `cortex-bff` and the code location move together, which one helm upgrade does.
+
+**The `training-workbench` bucket and its grant are already on the sandbox**, made and applied by hand on
+2026-11-04. The hook finds the bucket there. Nothing is owed for it.
+
+**Images: cortex-ui stays at `26a2049`** (`sha256:3077dfa6…`), as 0.4.77 pinned it.
+
+**Images: the central gateway is pinned to `sha-4096a11`** (`sha256:ac93ba19…`). It ran `latest` with
+`pullPolicy: Always`, so the image it restarted on was whatever that tag named. This delivers dag-tools #6
+(the gateway verifies a token before deciding who a request reads as) and #8 (a service token on the two
+internal doors).
+
+- **Both stay in `observe`, so no call is refused for this.** `GATEWAY_IDENTITY_POSTURE: "observe"` is now
+  set in `values-sandbox.yaml`, because any value the gateway doesn't recognise means `enforce`.
+  `INTERNAL_DOOR_POSTURE` stays unset, which means `observe` on both doors.
+- **`iagent-domain-broker` (`python:3.12-slim`) and `iagent-pub-tools-broker` (`pub-tools:latest`) don't
+  move.** They are not dag-tools images.
+- **To roll back, pin the digest it runs today** (`sha256:eee15c15…`). Deleting the line falls through to
+  `latest`, which is now this image.
 
 **Images: the dag-tools user deployment moves to `sha-4096a11`** (`sha256:44c54e5a…`, from `sha-6609fe6`).
 Its two pods roll with the chart: the code location and the broker. This is what delivers `ev_fixture`,
-dag-tools #6 and #8 (both from their PR bodies default to `observe`) and the commits since the old pin. The
-central gateway has its own image, which this doesn't move.
+dag-tools #6 and #8 (both from their PR bodies default to `observe`) and the commits since the old pin.
 
 - **The image re-resolves, so 59 of its 156 packages changed,** including polars 1.44 -> 2.1 and protobuf
   6 -> 7. `values-sandbox.yaml` has the list and what was measured off-cluster.
@@ -29,6 +71,73 @@ central gateway has its own image, which this doesn't move.
   `denied_assets`, `subject` and `message` when, and only when, the engine says `access_denied`.
 - **`docs/runbooks/adding-an-engine.md` changed, so its row in `setup/ontologies/docs_corpus.ttl` moved
   with it.** The next prime re-reads that one page.
+
+**Policy changes (the grantor a shipped row names)**
+
+- **Every row this rail added says `granted_by: seed`**, as a shipped row must (ruled 2026-10-31).
+  18 rows had reached master naming a person: 12 in `repository_paths.yaml` and 5 in `task_grants.yaml`
+  from #149, and `safety_finding_review:SUSTAINMENT` from #141. 0.4.76 carries them. The field is a
+  record; no answer changes.
+
+**Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
+
+- **New file `policy/configure_subjects.yaml`**, the registry of configure subjects (ruled
+  2026-11-02): `validate_policy` refuses a `can_configure:<S>` key whose S is not in it, so a misspelt
+  key fails the seed before any write. It ships in the cortex-bff image and is not a data file: a
+  deployment's policy repository does not carry it. An overlay's `can_configure:` row names a subject
+  registered here.
+
+**Policy changes (which service may name a person on a central-gateway route)**
+
+- **`policy/gateway_delegates.yaml` and `policy/grantors/gateway_delegates.yaml` are new.** No reader
+  yet: the gateway's `is_delegate` seam still answers no, so this release changes no answer.
+  `validate_policy` checks the rail when present. A row's `service` must be a seeded `svc:` identity
+  and each route a known one. First row: `svc:data-analyst` on `assets.authorize`.
+
+**An authorizer outage (architect ruling, the transport half of 2026-11-02's malformed-answer class)**
+
+- **A Topaz that cannot be reached, or answers a non-2xx, is a 503 at the sites 0.4.76 lists under
+  "A malformed PDP answer"**: 0.4.76 says it is still a deny, and it no longer is. **This changes what
+  callers see during a Topaz blip:** a 503 where it was a 403, and neo4j and weaviate fail the run
+  terminally with a 503 where they gave a partial answer. A deny was terminal too, so terminality does
+  not change. Still a no: a 404 from a directory check, an unset directory URL, an empty identity, and
+  a defect in the asking code. A 404 from a decision (`/api/v2/authz/is`) is a 503. The sandbox's Topaz
+  answers an ungranted or unknown subject 200 `check: false`, read live, so an ordinary "no" does not
+  become a 503. weaviate's retrieval failures stay the tool's own error. No values change.
+
+**The identity vault is one reference per run, redeemed per call (architect ruling 2026-11-03)**
+
+- **Redemption is per call, not per fan-out slot.** The supervisor sends a `call_id` with each
+  outbound call; two calls with two ids both get the person's token, one id twice is a 409 and an
+  ERROR audit line. Every leg that speaks for the person redeems: `/plan`, `/resolve`,
+  `/classify_predicate`, the analyze call, the enumerator, `/fill_slots`, the dispatch, `/support`
+  and `/render_ui`. A vault refusal fails the step and is never absorbed into a fallback answer.
+- **The 600 s bound is gone.** The reference lives as long as the run's budget:
+  `IDENTITY_VAULT_TTL_SECONDS` on `cortex-bff` renders from `dagster.runMonitoring.maxRuntimeSeconds`
+  (one source). Near the token's expiry the gateway asks Keycloak for a fresh token through
+  `identity_exchange`; if that fails the step pauses as `awaiting_reauth`.
+- **New SSE events** `run_awaiting_reauth` and `run_reauth_resumed`, on the run stream; the status
+  union is unchanged, so an older cortex ignores them.
+- **New door** `POST /orchestrate/{run_id}/reauth`: the person presents their own fresh token. An
+  absent run and another person's run answer the same 404.
+- **`cortex-bff` and the code location roll together.** An old supervisor's redeem sends no `call_id`
+  and gets 422.
+- **The Keycloak exchange is unset by default.** `IDENTITY_EXCHANGE_TOKEN_URL`,
+  `IDENTITY_EXCHANGE_CLIENT_ID` and `IDENTITY_EXCHANGE_CLIENT_SECRET` are set by no values file, so
+  near-expiry goes straight to `awaiting_reauth` until a deployment sets them.
+- **A subtask dispatched for a person always carries that person's token, on every verb (#213).** Before,
+  five verbs forwarded it. An engine that checked the service's grants now checks the person's, so **an engine
+  answer can change** for a person who lacks a grant the service holds. Cost and ontology did not answer the
+  packet that asked about this. A run with no person keeps today's service token until the pipeline principal
+  is built.
+
+**The upgrade script rolls from the release tag (architect ruling 2026-11-03).** See step 1 above.
+`--dry-run` still renders from any tree and says when that tree could not roll, so the values diff can be
+taken anywhere. `docs/runbooks/rolling-a-service.md` changed, so its row in
+`setup/ontologies/docs_corpus.ttl` moved with it, and the next prime re-reads that page.
+
+**No deploy effect:** #236, #239 and #241 (seals, with six strict xfails that the identity fix removes), and
+#234 (`board/`).
 
 ## 0.4.77 — 2026-11-04
 
@@ -69,39 +178,6 @@ after the bucket exists. Work needs the same bucket, policy and store value.
 top of `e06e08a`, a payload that claims the document shape and cannot be read says why; k of n holds the
 first total and names refused panels; a card the answer declared no longer reads NOT declared.
 
-**Policy changes (the grantor a shipped row names)**
-
-- **Every row this rail added says `granted_by: seed`**, as a shipped row must (ruled 2026-10-31).
-  18 rows had reached master naming a person: 12 in `repository_paths.yaml` and 5 in `task_grants.yaml`
-  from #149, and `safety_finding_review:SUSTAINMENT` from #141. 0.4.76 carries them. The field is a
-  record; no answer changes.
-
-**Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
-
-- **New file `policy/configure_subjects.yaml`**, the registry of configure subjects (ruled
-  2026-11-02): `validate_policy` refuses a `can_configure:<S>` key whose S is not in it, so a misspelt
-  key fails the seed before any write. It ships in the cortex-bff image and is not a data file: a
-  deployment's policy repository does not carry it. An overlay's `can_configure:` row names a subject
-  registered here.
-
-**Policy changes (which service may name a person on a central-gateway route)**
-
-- **`policy/gateway_delegates.yaml` and `policy/grantors/gateway_delegates.yaml` are new.** No reader
-  yet: the gateway's `is_delegate` seam still answers no, so this release changes no answer.
-  `validate_policy` checks the rail when present. A row's `service` must be a seeded `svc:` identity
-  and each route a known one. First row: `svc:data-analyst` on `assets.authorize`.
-
-**An authorizer outage (architect ruling, the transport half of 2026-11-02's malformed-answer class)**
-
-- **A Topaz that cannot be reached, or answers a non-2xx, is a 503 at the sites 0.4.76 lists under
-  "A malformed PDP answer"**: 0.4.76 says it is still a deny, and it no longer is. **This changes what
-  callers see during a Topaz blip:** a 503 where it was a 403, and neo4j and weaviate fail the run
-  terminally with a 503 where they gave a partial answer. A deny was terminal too, so terminality does
-  not change. Still a no: a 404 from a directory check, an unset directory URL, an empty identity, and
-  a defect in the asking code. A 404 from a decision (`/api/v2/authz/is`) is a 503. The sandbox's Topaz
-  answers an ungranted or unknown subject 200 `check: false`, read live, so an ordinary "no" does not
-  become a 503. weaviate's retrieval failures stay the tool's own error. No values change.
-
 **Policy changes (a course is reviewed as a document: `review_shape: document`)**
 
 - **The `course` content kind now declares `review_shape: document`** (it declared `course`, a shape
@@ -114,27 +190,6 @@ first total and names refused panels; a card the answer declared no longer reads
   is unchanged. The `course` row in `policy/review_shapes/` stays.
 - **Dormant until doc-tools #172 is deployed**: no course extraction carries the outline before it,
   so until then every course task files without `sections`.
-
-**The identity vault is one reference per run, redeemed per call (architect ruling 2026-11-03)**
-
-- **Redemption is per call, not per fan-out slot.** The supervisor sends a `call_id` with each
-  outbound call; two calls with two ids both get the person's token, one id twice is a 409 and an
-  ERROR audit line. Every leg that speaks for the person redeems: `/plan`, `/resolve`,
-  `/classify_predicate`, the analyze call, the enumerator, `/fill_slots`, the dispatch, `/support`
-  and `/render_ui`. A vault refusal fails the step and is never absorbed into a fallback answer.
-- **The 600 s bound is gone.** The reference lives as long as the run's budget:
-  `IDENTITY_VAULT_TTL_SECONDS` on `cortex-bff` renders from `dagster.runMonitoring.maxRuntimeSeconds`
-  (one source). Near the token's expiry the gateway asks Keycloak for a fresh token through
-  `identity_exchange`; if that fails the step pauses as `awaiting_reauth`.
-- **New SSE events** `run_awaiting_reauth` and `run_reauth_resumed`, on the run stream; the status
-  union is unchanged, so an older cortex ignores them.
-- **New door** `POST /orchestrate/{run_id}/reauth`: the person presents their own fresh token. An
-  absent run and another person's run answer the same 404.
-- **`cortex-bff` and the code location roll together.** An old supervisor's redeem sends no `call_id`
-  and gets 422.
-- **The Keycloak exchange is unset by default.** `IDENTITY_EXCHANGE_TOKEN_URL`,
-  `IDENTITY_EXCHANGE_CLIENT_ID` and `IDENTITY_EXCHANGE_CLIENT_SECRET` are set by no values file, so
-  near-expiry goes straight to `awaiting_reauth` until a deployment sets them.
 
 ## 0.4.76 — 2026-11-03
 
