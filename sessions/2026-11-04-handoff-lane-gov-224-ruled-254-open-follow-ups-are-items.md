@@ -20,6 +20,7 @@ This replaces `2026-11-04-handoff-lane-gov-fork-2-is-247-ready-not-merged-v0-9-1
 | PR | what | state at writing |
 | --- | --- | --- |
 | #254 `lane/gov-delegate-rows-ratified` | readings 2 and 3, plus the board: closes `01M6G57K5VSQVAKPZG029AYEQ2` and writes the three follow-up items | open, MERGEABLE, head `bd081765`. The merge is lane/01's. |
+| #256 `lane/gov-granted-by-seed` | the seals import `GRANTED_BY_SEED`; the board moves fork 2 to done and fork 7 to open | open, MERGEABLE, head `181b619a`. Chris's go-ahead was 11-04. The merge is lane/01's. #254 and #256 both re-render `board/BOARD.md`, so the second to land needs a re-render. |
 | #247 | fork 2 and the fleet pin to v0.9.13 | merged `a8152e2b` (Chris: "merges now") |
 | #248 | board moves | merged `b22b9b22` |
 
@@ -27,7 +28,7 @@ This replaces `2026-11-04-handoff-lane-gov-fork-2-is-247-ready-not-merged-v0-9-1
 
 ## Open forks
 
-2. Fork 2's item `01M6A9QDN1M16XMBNHHWVK9EHJ` is still `review` on master, though #247 merged. I didn't move it, because Chris said "Nothing else". Move it to done in the next board commit he approves.
+7. Fork 7's loader half: v0.9.13 ships `compose_export_profiles` (ruled 10-30), so `validate_policy.py`'s copies can go. Nothing blocks it, but it waits on Chris's word. Item `01M6A9QDN199K1WE2H3QN3ZVQ9`.
 12. The relay-form detector for the ratchet (carried over). Item `01M6A9QDN19S78PQVCA67NZ9RC`.
 
 ## Waiting on
@@ -39,7 +40,8 @@ This replaces `2026-11-04-handoff-lane-gov-fork-2-is-247-ready-not-merged-v0-9-1
 | `gateway_routes.json` in a dag-tools release | dag-tools owner, Chris merges (packet placed 11-04) | `01M6KF821P2C3KRQN86FF0N61N` |
 | gov's import of that json | blocked on the row above | `01M6KF8279KZ843KG5MMM0R3YH` |
 | v0.9.14 on the index (closed-network installs) | ca | `01M6JJVP0KKT9HAM99YX2TEDBZ` |
-| Chris's go-ahead to adopt `GRANTED_BY_SEED`, which #247's merge unblocks | Chris | `01M6A9QDN199K1WE2H3QN3ZVQ9` |
+| merge of #256 (the seed half of fork 7, and fork 2 to done) | lane/01 | `01M6A9QDN199K1WE2H3QN3ZVQ9`, `01M6A9QDN1M16XMBNHHWVK9EHJ` |
+| Chris's word on fork 7's loader half | Chris | `01M6A9QDN199K1WE2H3QN3ZVQ9` |
 | the five person-refusal seals, red since #229 | lane/01 | `01M6JJVP4ZEWGEENN2P067EBPX` |
 | one `topaz_sync` at 0.4.76 or later, then the roll | Chris | `01M6FMQYFY8K233JWP2HXN91ED`, `01M6AJR52DDXSJPFKQ12WG08J3` |
 | the gateway's reader for the delegate list | lane/01, architect | `01M6FZQ9TK0F5VQS2E1ERZ927Y` |
@@ -55,14 +57,14 @@ This replaces `2026-11-04-handoff-lane-gov-fork-2-is-247-ready-not-merged-v0-9-1
 1. Read #254 and master, and the inbox in the master tree's `sessions/`.
 2. If master moves before #254 merges, re-read the changelog head. #254's entry sits under `## 0.4.79 — not yet cut`, and a cut entry is never edited. If another board PR lands first, re-render the board.
 3. **When ca tags v0.9.14:** re-pin in one commit (the 17 pyprojects, 17 locks and `values.yaml`, per `docs/runbooks/pinning-the-fleet-sdk.md`), and drop the `index` caveat. Read the published wheel's version before pinning, because v0.9.13 built as 0.9.12.
-4. **On Chris's word only:** adopt `GRANTED_BY_SEED` (`01M6A9QDN199K1WE2H3QN3ZVQ9`), and move fork 2's item to done.
+4. **On Chris's word only:** fork 7's loader half (`01M6A9QDN199K1WE2H3QN3ZVQ9`). `GRANTED_BY_SEED` and fork 2's item are done in #256 (Chris, 11-04: "go").
 5. **When dag-tools ships the json:** start `01M6KF8279KZ843KG5MMM0R3YH`. The json replaces `GATEWAY_ROUTES` and `GATEWAY_ROUTES_READ_AT`, and the read-at seal goes with them.
 6. **Later, as ruled:** the walker `chris@example.com` → `dave`, with lane/01 (`01M6EX5BSQNCWZXBBCFAM8PNCV`).
 
 ## Scratch (session scratchpad, not durable)
 
 - `gs` (own venv, v0.9.13) holds #254.
-- `rp` (own venv) is detached at `6969a16e` and free.
+- `rp` (own venv, v0.9.13) holds #256.
 - `ct` (own venv, v0.9.12) is detached at `8a2717e0`.
 - `bd` (#248, merged) can go.
 
