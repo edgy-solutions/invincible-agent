@@ -13,4 +13,4 @@ updated: 2026-11-04
 
 `policy/configure_subjects.yaml`, first row `deck_template`. `validate_policy` refuses a `can_configure:<S>` key whose S is not in it. No answer changes: `can_configure:` is inert until the workbench asks. Mutants S1-S7 killed. In-process only; CI does not run these seals.
 
-Merged in #223.
+#223 merged at `f31ec4bb`, in 0.4.78.

@@ -17,4 +17,4 @@ Witness: 13 passed at `d8126f4b`, 2 failed at `b4b41ad1` (#149). The rows are co
 
 #221 sets all 17 to the seed, and the sixth row in `task_grants.yaml` (saf's 01M6G4CHTQTR6M6VQ17XCVK3ZG) too, because the param cannot go green without it. Read: each of the 18 is a declared rail row, and none records a decision a person took at a time. The seal's last run predates the two later master merges, which only re-placed the changelog line.
 
-Merged in #221. `test_a_shipped_grantor_is_the_seed.py` is green at master 8a2717e0.
+#221 merged. `tests/security/test_a_shipped_grantor_is_the_seed.py`: 15 passed at 0.4.78 (`8a2717e0`).
