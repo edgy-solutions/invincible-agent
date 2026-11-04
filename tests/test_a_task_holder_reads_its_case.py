@@ -104,6 +104,7 @@ def test_the_queue_read_selects_case_id():
 
 @pytest.fixture
 def route(monkeypatch):
+    monkeypatch.setenv("TASK_REGISTER_SERVICES", '["svc"]')
     from src.iagent import human_tasks
     seen = []
     monkeypatch.setattr(human_tasks, "register_task",

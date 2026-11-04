@@ -1169,7 +1169,8 @@ def test_the_triage_route_answers_503_on_an_outage(client, monkeypatch, body):
 
 
 ORIGIN = {"artifact_id": "a-1", "dropped_by": {"authz_id": "d@x"}, "origin": {"program": "p"},
-          "evidence": {}, "approval_chain": [{"role": "steward", "approver_sub": "s@x"}]}
+          "evidence": {}, "approval_chain": [{"role": "steward", "approver_sub": "s@x"}],
+          "case_id": "C-1"}
 
 
 @pytest.fixture
@@ -1181,6 +1182,8 @@ def origin_world(client, monkeypatch):
         raise RuntimeError("past the membership check")
 
     monkeypatch.setattr(gateway, "_CASE_RUNNER_SERVICE_AUTHZ_ID", "a@x")
+    # the route admits the named steward on the case; the real holder lookup is Postgres
+    monkeypatch.setattr("src.iagent.human_tasks.holds_task_on_case", lambda case_id, who: True)
     monkeypatch.setattr(ng, "Neo4jGraphWriter", _no_store)
     return c, state
 

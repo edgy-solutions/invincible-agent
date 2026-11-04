@@ -121,16 +121,7 @@ def test_leg3_the_answer_is_about_this_dropper_and_this_program(monkeypatch):
     assert asked == [(body["origin"]["program"], body["dropped_by"]["authz_id"])], asked
 
 
-_MISSING_PROGRAM_DEFECT = pytest.mark.xfail(strict=True, reason=(
-    "DEFECT (measured 2026-11-03, owner Lane 1, gateway.py/origin_writer.py): an origin body with NO "
-    "`program` key is not refused -- `origin_writer.write_origin` indexes `o[\"program\"]` and the route "
-    "answers 500 (KeyError). Nothing is written, but a missing program is an unhandled error, not the "
-    "writer's refusal. A null or empty program IS refused (the two other params pass). Lane 1's fix "
-    "PR removes this marker."))
-
-
-@pytest.mark.parametrize("absent", [
-    pytest.param("missing", marks=_MISSING_PROGRAM_DEFECT), "null", "empty"])
+@pytest.mark.parametrize("absent", ["missing", "null", "empty"])
 def test_leg4_a_drop_with_no_program_is_refused_not_written(monkeypatch, absent):
     """`program` falsy sets dropper_is_program_member False WITHOUT asking the PDP. The drop must be
     refused by the writer (200 write_refused), nothing written, the PDP not asked about nothing."""

@@ -411,7 +411,9 @@ async def _accept_through_the_route(g, rec, monkeypatch):
                 "resolved_by": resolved}
 
     monkeypatch.setattr(gateway, "_read_accepted_origin", _read_origin)
-    req = gateway.OriginWriteRequest(**{k: rec[k] for k in (
+    # the route admits the named steward on the case; the real holder lookup is Postgres
+    monkeypatch.setattr("src.iagent.human_tasks.holds_task_on_case", lambda case_id, who: True)
+    req = gateway.OriginWriteRequest(case_id="C-1", **{k: rec[k] for k in (
         "artifact_id", "dropped_by", "origin", "evidence", "approval_chain")})
     return await gateway.write_origin_route(req, current_user=_case_runner())
 

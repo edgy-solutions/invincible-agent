@@ -4154,6 +4154,10 @@
             "title": "Artifact Id",
             "type": "string"
           },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
           "dropped_by": {
             "$ref": "#/components/schemas/_OriginWriteDroppedBy"
           },
@@ -4173,7 +4177,8 @@
           "dropped_by",
           "origin",
           "evidence",
-          "approval_chain"
+          "approval_chain",
+          "case_id"
         ],
         "title": "OriginWriteRequest",
         "type": "object"
@@ -8380,7 +8385,7 @@
     },
     "/internal/human_tasks/register": {
       "post": {
-        "description": "Register a task and materialize one queue row per Topaz-authorized actor.\nINTERNAL seam — Slice 1b restricts callers to the workflow/service identity;\nat the foundation checkpoint it is exercised directly to prove the identity\nbridge. Returns the resolved recipient set (the Topaz decision).",
+        "description": "Register a task and materialize one queue row per Topaz-authorized actor.\nINTERNAL seam — Slice 1b restricts callers to the workflow/service identity;\nat the foundation checkpoint it is exercised directly to prove the identity\nbridge. Returns the resolved recipient set (the Topaz decision).\n\nR-089: the caller must be a SERVICE identity: a declared delegate (`DELEGATE_ON_BEHALF_OF`) or\na listed task-register service (`TASK_REGISTER_SERVICES`); anyone else is 403 `not_a_delegate`,\nthe refusal `_admit_on_behalf_of` gives a person naming someone else. `requested_by` is passed\nthrough as sent (the field's own binding is held for a ruling).",
         "operationId": "register_human_task_internal_human_tasks_register_post",
         "requestBody": {
           "content": {

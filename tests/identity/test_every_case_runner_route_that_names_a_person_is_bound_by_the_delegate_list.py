@@ -232,7 +232,7 @@ def _drive_origin_approver(monkeypatch, who, named):
     monkeypatch.setattr(gateway, "_file_promotion_if_ready", no_filing)
     _login(who)
     r = _client().post("/internal/origin/write", json={
-        "artifact_id": "ing-1", "dropped_by": {"authz_id": PERSON},
+        "case_id": "c-1", "artifact_id": "ing-1", "dropped_by": {"authz_id": PERSON},
         "origin": {"program": "p-1"}, "evidence": {},
         "approval_chain": [{"role": "steward", "approver_sub": named}]})
     return r, fx
@@ -252,7 +252,7 @@ def _drive_origin_dropper(monkeypatch, who, named):
     steward, _ = pair_and_outsider(served, RUNNER)
     _login(who)
     r = _client().post("/internal/origin/write", json={
-        "artifact_id": "ing-1", "dropped_by": {"authz_id": named},
+        "case_id": "c-1", "artifact_id": "ing-1", "dropped_by": {"authz_id": named},
         "origin": {"program": "p-1"}, "evidence": {},
         "approval_chain": [{"role": "steward", "approver_sub": steward}]})
     return r, fx
@@ -276,8 +276,8 @@ DRIVEN = {
     (AR, "on_behalf_of"): None,      # driven in test_a_service_token_cannot_name_a_user_outside_... (xfail there)
     (AR, "seeded_by"): (_drive_action_record_seeded_by, "delegate", REFUSES),
     (SB, "seeded_by"): (_drive_seeded_by_stamp, "delegate", REFUSES),
-    (SM, "seeded_by"): (_drive_summary_seeded_by, "delegate", RED),
-    (OW, "approval_chain"): (_drive_origin_approver, "principal", RED),
+    (SM, "seeded_by"): (_drive_summary_seeded_by, "delegate", REFUSES),
+    (OW, "approval_chain"): (_drive_origin_approver, "principal", REFUSES),
 }
 
 # Decided, NOT driven, each with the reason and the check that backs it.
@@ -393,9 +393,6 @@ def test_a_caller_that_is_not_the_case_runner_is_refused_at_the_gate(monkeypatch
 # -- /internal/human_tasks/register: RULED IN as a separate defect ------------------------------------
 REG_RULING = ("RULED DEFECT (architect via Chris 2026-11-03, a separate defect from the case-runner "
               "routes): /internal/human_tasks/register needs TWO fixes -- ")
-FIX_A = REG_RULING + ("(a) THE CALLER: gate the route on the delegate list / service identity as its "
-                      "docstring promises, not on get_current_user alone. Turned by fix (a). "
-                      "Lane 1's fix PR removes this marker.")
 FIX_B = REG_RULING + ("(b) THE FIELD: requested_by comes from the token, never the body; a differing body "
                       "value is refused with the refusal envelope. Turned by fix (b). "
                       "Lane 1's fix PR removes this marker.")
@@ -422,7 +419,6 @@ def test_register_control_a_declared_service_identity_naming_itself_is_admitted(
     assert r.status_code < 400 and fx.has(svc), (svc, r.status_code, r.text[:200], fx.seen)
 
 
-@pytest.mark.xfail(strict=True, reason=FIX_A)
 def test_register_a_plain_user_token_is_refused_at_the_route(monkeypatch):
     """Fix (a). The token is a person (declared, but not a delegate); requested_by is its own, so only
     the CALLER is in question."""
