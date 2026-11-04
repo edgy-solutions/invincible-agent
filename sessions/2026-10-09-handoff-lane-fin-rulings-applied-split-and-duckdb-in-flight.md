@@ -19,7 +19,20 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **#10** closed, with a comment saying what was read and taken.
 - lane/fin `ad51b5d6` reverts the four stray commits. The tree equals `6aceae41`.
 
-## Update 2026-11-03 (latest): the packet is final, ADR-0052 is draft #245, the live test is #243. Read this first
+## Update 2026-11-04 (latest): the flow-decomposition measure is #255. Read this first
+
+- **The brief** (architect, via Chris): EAC variance as a flow map, with one measure and one render archetype, both declared. fin goes first and proves on the EV fixture in a test overlay. cortex builds against the served table, and not before the finance data path is live on sandbox.
+- **#255** is `fin/variance-decomposition` at `bd720757`, base `master`. It has a second row kind (`inputs.dataset`), the module `measure_modules/variance_decomposition.py`, 65 new tests, and the design in `docs/plans/fin-variance-decomposition.md` (six forks, built to their defaults). It needs Lane 1's read of its one `KNOWN_ARCHETYPES` line. Off-cluster only.
+- **Packet placed** in master `sessions/`: `2026-11-04-packet-to-cortex-architect-and-lane-01-from-fin-the-edge-table-is-255-seven-answers-and-one-fork.md`. It answers cortex's seven questions and asks for one ruling: how a sink is marked. I recommend `render.sink_label`, and nothing for it is built. It supersedes the 11-03 packet, which is marked.
+- **Merged by Lane 1:** #243 at `5e5a9880` and #245 at `2d3f2bd3`. 0.4.78 is live as revision 226.
+- **Next:**
+  - On the sink-marker ruling, a small follow-up on fin's side.
+  - On Lane 1's merge of #255, nothing more.
+  - When `ev_fixture` is materialized, the grant rows are synced and `FIN_DATASET_URN` is set: run #243's live test, then write a live leg for the flow measure.
+  - EAC needs a dataset column. Whether that's Chris's asset or a dag-tools fixture change is the architect's call.
+- **Not mine:** cortex's card, `_PROJECTED_ARCHETYPES` and the other archetype registries, and the `components[*].archetype` question, which goes to Lane 1.
+
+## Update 2026-11-03: the packet is final, ADR-0052 is draft #245, the live test is #243. Read this first
 
 The relay: "fin: asset-contract packet for Chris's work Dagster assets (URN, columns, period key, cadence, tags) — finalise. ADR-0052 Accepted draft PR with the finance first slice. Variance set (VAC/TCPI) read through the resolver on the EV fixture once Lane 1 rolls — write the test now, skip until the roll."
 
