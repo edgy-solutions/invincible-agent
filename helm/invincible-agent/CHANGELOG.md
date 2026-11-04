@@ -39,6 +39,13 @@ after the bucket exists. Work needs the same bucket, policy and store value.
 top of `e06e08a`, a payload that claims the document shape and cannot be read says why; k of n holds the
 first total and names refused panels; a card the answer declared no longer reads NOT declared.
 
+**Policy changes (the grantor a shipped row names)**
+
+- **Every row this rail added says `granted_by: seed`**, as a shipped row must (ruled 2026-10-31).
+  18 rows had reached master naming a person: 12 in `repository_paths.yaml` and 5 in `task_grants.yaml`
+  from #149, and `safety_finding_review:SUSTAINMENT` from #141. 0.4.76 carries them. The field is a
+  record; no answer changes.
+
 **Policy changes (a course is reviewed as a document: `review_shape: document`)**
 
 - **The `course` content kind now declares `review_shape: document`** (it declared `course`, a shape
