@@ -1,5 +1,35 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.78 — not yet cut
+
+Entries merged after the 0.4.77 cut (`8fc02746`).
+
+**Images: the dag-tools user deployment moves to `sha-4096a11`** (`sha256:44c54e5a…`, from `sha-6609fe6`).
+Its two pods roll with the chart: the code location and the broker. This is what delivers `ev_fixture`,
+dag-tools #6 and #8 (both from their PR bodies default to `observe`) and the commits since the old pin. The
+central gateway has its own image, which this doesn't move.
+
+- **The image re-resolves, so 59 of its 156 packages changed,** including polars 1.44 -> 2.1 and protobuf
+  6 -> 7. `values-sandbox.yaml` has the list and what was measured off-cluster.
+- **After the roll, read the pod:** `sqlalchemy.__version__` should be 2.0.57 with the psycopg2 dialect, and a
+  sensor tick shouldn't raise. No sensor has run on these versions, and neither has a write to the object store.
+- **`ev_fixture` is materialized by hand, afterwards.** Nothing reads it until `FIN_DATASET_URN` is set, and
+  that stays unset.
+- **To roll back, restore the old digest.** Deleting the line falls through to `latest`.
+
+**Engine changes (engine-fin can read a declared measure's rows from an asset, off by default)**
+
+- **`FIN_DATASET_URN` unset changes no answer.** There is no read, the client isn't imported, and the
+  envelope is today's. Set, a declared measure computes over rows read as the caller, and a failed
+  read never falls back to the seed. Don't set it yet: `docs/plans/fin-inputs-resolver.md` lists what
+  has to be true first, and nothing here has run on a cluster.
+- **The engine-fin image grows by about 242 MB with the flag on or off** (`polars` and
+  `edgy-dag-tools`, +30 packages). They're imported only when the flag is set.
+- **A chat-dispatched denial now reaches request-access.** `_refusal_from_engine_4xx` carries `status`,
+  `denied_assets`, `subject` and `message` when, and only when, the engine says `access_denied`.
+- **`docs/runbooks/adding-an-engine.md` changed, so its row in `setup/ontologies/docs_corpus.ttl` moved
+  with it.** The next prime re-reads that one page.
+
 ## 0.4.77 — 2026-11-04
 
 Entries merged after the 0.4.76 cut (`ce589473`), up to `ee07dfe8`. **Roll this chart, not 0.4.76.**
@@ -85,18 +115,26 @@ first total and names refused panels; a card the answer declared no longer reads
 - **Dormant until doc-tools #172 is deployed**: no course extraction carries the outline before it,
   so until then every course task files without `sections`.
 
-**Engine changes (engine-fin can read a declared measure's rows from an asset, off by default)**
+**The identity vault is one reference per run, redeemed per call (architect ruling 2026-11-03)**
 
-- **`FIN_DATASET_URN` unset changes no answer.** There is no read, the client isn't imported, and the
-  envelope is today's. Set, a declared measure computes over rows read as the caller, and a failed
-  read never falls back to the seed. Don't set it yet: `docs/plans/fin-inputs-resolver.md` lists what
-  has to be true first, and nothing here has run on a cluster.
-- **The engine-fin image grows by about 242 MB with the flag on or off** (`polars` and
-  `edgy-dag-tools`, +30 packages). They're imported only when the flag is set.
-- **A chat-dispatched denial now reaches request-access.** `_refusal_from_engine_4xx` carries `status`,
-  `denied_assets`, `subject` and `message` when, and only when, the engine says `access_denied`.
-- **`docs/runbooks/adding-an-engine.md` changed, so its row in `setup/ontologies/docs_corpus.ttl` moved
-  with it.** The next prime re-reads that one page.
+- **Redemption is per call, not per fan-out slot.** The supervisor sends a `call_id` with each
+  outbound call; two calls with two ids both get the person's token, one id twice is a 409 and an
+  ERROR audit line. Every leg that speaks for the person redeems: `/plan`, `/resolve`,
+  `/classify_predicate`, the analyze call, the enumerator, `/fill_slots`, the dispatch, `/support`
+  and `/render_ui`. A vault refusal fails the step and is never absorbed into a fallback answer.
+- **The 600 s bound is gone.** The reference lives as long as the run's budget:
+  `IDENTITY_VAULT_TTL_SECONDS` on `cortex-bff` renders from `dagster.runMonitoring.maxRuntimeSeconds`
+  (one source). Near the token's expiry the gateway asks Keycloak for a fresh token through
+  `identity_exchange`; if that fails the step pauses as `awaiting_reauth`.
+- **New SSE events** `run_awaiting_reauth` and `run_reauth_resumed`, on the run stream; the status
+  union is unchanged, so an older cortex ignores them.
+- **New door** `POST /orchestrate/{run_id}/reauth`: the person presents their own fresh token. An
+  absent run and another person's run answer the same 404.
+- **`cortex-bff` and the code location roll together.** An old supervisor's redeem sends no `call_id`
+  and gets 422.
+- **The Keycloak exchange is unset by default.** `IDENTITY_EXCHANGE_TOKEN_URL`,
+  `IDENTITY_EXCHANGE_CLIENT_ID` and `IDENTITY_EXCHANGE_CLIENT_SECRET` are set by no values file, so
+  near-expiry goes straight to `awaiting_reauth` until a deployment sets them.
 
 ## 0.4.76 — 2026-11-03
 

@@ -157,7 +157,10 @@ REQUIRED_IDENTITY: set[str] = {"19 · onto the wire to /enumerate_instances from
 #: default. Sealed by name, because ``getattr(config, "user_email", "")`` is strictly worse than
 #: every hop above: those go red on a rename, this one returns ``""`` and the act proceeds
 #: anonymously. Keyed on (file, function) so a new one is a red that names its site.
-GETATTR_READERS: set[tuple[str, str]] = {(SUPERVISOR, "_redeem_caller_token")}
+GETATTR_READERS: set[tuple[str, str]] = {
+    (SUPERVISOR, "_redeem_caller_token"),
+    (SUPERVISOR, "_run_has_a_person"),
+}
 
 #: Chains that START in the orchestrator: no caller arrives, so no hop above can carry one in, and
 #: the person is NAMED at the site by a sealed source -- (label, file, function, callee, source).
