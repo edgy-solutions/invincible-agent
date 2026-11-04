@@ -4842,8 +4842,15 @@
         "description": "One ``policy/review_shapes/<shape>.yaml`` registry row, as served by ``GET /review-shapes``\n(Lane 1's wire answer, §4) — the registry ``ReviewCoverage.review_shape``/``.item_kind`` are\nvalidated against, server-side. This SDK types the row so a client that reads the served\nregistry has a shape to deserialize into; it does not serve, cache, or validate against the\nregistry itself — same split every registry-adjacent type in this SDK draws between declaring\na shape and arbitrating on it.",
         "properties": {
           "item_kind": {
-            "title": "Item Kind",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Kind"
           },
           "params": {
             "additionalProperties": true,
@@ -4855,21 +4862,33 @@
             "type": "string"
           },
           "rules": {
-            "items": {
-              "$ref": "#/components/schemas/ReviewShapeRule"
-            },
-            "title": "Rules",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ReviewShapeRule"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rules"
           },
           "rules_version": {
-            "title": "Rules Version",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rules Version"
           }
         },
         "required": [
-          "review_shape",
-          "item_kind",
-          "rules_version"
+          "review_shape"
         ],
         "title": "ReviewShapeRow",
         "type": "object"
