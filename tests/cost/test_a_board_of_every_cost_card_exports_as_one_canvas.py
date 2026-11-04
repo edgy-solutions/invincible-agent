@@ -43,6 +43,7 @@ from agent_fleet.cost_agent import canvas as C  # noqa: E402
 from agent_fleet.cost_agent.entities import NotInModel  # noqa: E402
 from agent_fleet.cost_agent.seed import lots_for_recipient  # noqa: E402
 from src.iagent import gateway  # noqa: E402
+from tests.recipient_rail_double import install as install_rail  # noqa: E402
 from tests.cost.test_a_canvas_exports_the_alpha_document import (  # noqa: E402
     ALPHA_CANVAS, FIXTURE,
 )
@@ -119,6 +120,7 @@ def export(monkeypatch):
         "roles": [], "persona": None, "entitled_domains": [], "is_authenticated": True,
     })()
     gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
+    install_rail(monkeypatch)  # alice reads ALPHA on the shipped rail; with no Topaz she reads nothing
     sent: dict = {}
 
     class _Client:

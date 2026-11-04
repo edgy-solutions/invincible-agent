@@ -175,6 +175,19 @@ def _git(*args: str) -> str:
     ).stdout or ""
 
 
+#: Commits whose trailer names no registered pair, each with its reason. Narrower than a row in
+#: `.githooks/lanes`: a row is append-only and would make that id valid for every later commit,
+#: and the ruling is that a worktree path is never a lane id. An entry here excuses ONE sha, and
+#: `test_A_MISNAMED_ENTRY_RETIRES_ITSELF` reds when it no longer excuses anything.
+_MISNAMED: dict[str, str] = {
+    "7b497119": (
+        "Fin's throwaway worktree wrote its own basename as the lane id, with the registry in its"
+        " ancestry, so it could have complied. It is pushed and on master: recorded, not"
+        " rewritten (R-030)."
+    ),
+}
+
+
 def _bound_commits() -> list[tuple[str, str, str]]:
     """(sha, subject, body) for non-merge commits that HAVE THE RULE IN THEIR ANCESTRY.
 
@@ -398,7 +411,7 @@ def test_A_TRAILER_MADE_UNDER_THE_REGISTRY_NAMES_A_REGISTERED_LANE():
     bound.add(reg)
     bad = []
     for sha, subject, body in _bound_commits():
-        if sha not in bound:
+        if sha not in bound or any(sha.startswith(k) for k in _MISNAMED):
             continue
         for lane_id, branch in _TRAILER.findall(body or ""):
             why = _verdict(lane_id, branch, lanes)
@@ -409,6 +422,20 @@ def test_A_TRAILER_MADE_UNDER_THE_REGISTRY_NAMES_A_REGISTERED_LANE():
         "A trailer names a LANE ID from .githooks/lanes, never a worktree path: a throwaway "
         "worktree commits as the lane it works for. `.githooks/pre-push --expected` prints it."
     )
+
+
+def test_A_MISNAMED_ENTRY_RETIRES_ITSELF():
+    """`_MISNAMED`'s own `test_AN_EXEMPTION_RETIRES_ITSELF`: an entry is a hole with a comment on it
+    once its commit is not in the history, or its trailer has come to name a registered pair."""
+    lanes = _registry(_LANES.read_text(encoding="utf-8"))
+    bodies = {sha: body for sha, _sub, body in _bound_commits()}
+    for key in _MISNAMED:
+        body = next((b for sha, b in bodies.items() if sha.startswith(key)), None)
+        assert body is not None, f"{key} is in _MISNAMED but is not a bound commit. Delete the entry."
+        pairs = _TRAILER.findall(body or "")
+        assert pairs and any(_verdict(i, b, lanes) for i, b in pairs), (
+            f"{key} is in _MISNAMED but its trailer now names a registered pair. Delete the entry."
+        )
 
 
 def test_THE_REGISTRY_IS_APPEND_ONLY():

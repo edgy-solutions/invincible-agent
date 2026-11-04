@@ -27,6 +27,7 @@ from agent_fleet.cost_agent import main as cost_main
 from agent_fleet.cost_agent import measures as m
 from agent_fleet.graph_host.graphs import cost_lot_costing_review as review_graph
 from src.iagent import gateway
+from tests.recipient_rail_double import install as install_rail
 from tests.cost.test_the_export_survives_the_image_layout import (  # noqa: F401 (fixture)
     _SHA_POD, _stage_fake_pod_root, real_builder,
 )
@@ -42,12 +43,13 @@ def engine():
 
 
 @pytest.fixture
-def bff():
+def bff(monkeypatch):
     user = type("U", (), {
         "authz_id": "alice@example.com", "id": "sub-alice", "email": "alice@example.com",
         "roles": [], "persona": None, "entitled_domains": [], "is_authenticated": True,
     })()
     gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
+    install_rail(monkeypatch)  # alice reads _SCOPE on the shipped rail; with no Topaz she reads nothing
     with TestClient(gateway.app) as c:
         yield c
     gateway.app.dependency_overrides.clear()

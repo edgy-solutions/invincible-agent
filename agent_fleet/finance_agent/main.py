@@ -604,7 +604,16 @@ async def lifespan(app: FastAPI):
                 mint=_mint,
                 owner_persona=OWNER_PERSONA,
                 cost_class="fast",
-                **_call,
+                name=_call["name"],
+                description=_call["description"],
+                verb=_call["verb"],
+                input_uri=_call["input_uri"],
+                output_uri=_call["output_uri"],
+                verb_synonyms=_call["verb_synonyms"],
+                verb_anti_synonyms=_call["verb_anti_synonyms"],
+                endpoint_url=_call["endpoint_url"],
+                slots=_call["slots"],
+                domains=_call["domains"],
             )
         except Exception as exc:  # pragma: no cover
             # Best-effort, matching the fleet's posture: a failed registration means this
