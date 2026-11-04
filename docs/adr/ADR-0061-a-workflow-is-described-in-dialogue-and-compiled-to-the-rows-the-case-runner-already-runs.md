@@ -3,10 +3,10 @@
 **Status:** Proposed, ruled 2026-11-02: this ADR records the design and its measurements, including
 the gap below. **The bar for "the loop works" is not met.** It is met when a run is runnable with all
 four stages reachable and each stage has the steps the person described (ruled 2026-11-02).
-`runnable` now refuses any definition no table routes to from the trigger. Runs 41 to 43 are all
-runnable with all four stages reachable, and all three have the impact review's `render` step. None meets
-the bar: two lost the record's filing step, and the third has it in a stage the bar's walk can't pair
-(§10).
+`runnable` now refuses any definition no table routes to from the trigger. Runs 44 to 46, on
+instrument v2, whose bar reads routing as well as steps, do not meet it. One can't run, one lost the record's
+filing step, and one has every step and ends two stages the person named separately at one terminal, which
+leaves a question for the architect (§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -257,7 +257,8 @@ does measure:
 
 **Model arm, three runs.** In run 1 the user looked answers up by the exact gap key. In runs 2 and
 3 the user aligned the model's names to the expected ones by structure, never by string similarity:
-- a definition by the selection or chaining row with the same `when` that reaches it;
+- a definition by the selection or chaining row that reaches it, a chaining row by its `when` where
+  both spell it alike and otherwise by what it routes to (instrument v2, §10);
 - a step by its position among steps of the same kind;
 - a task kind by the step that names it.
 
@@ -1884,6 +1885,206 @@ draft that starts from an emit has now lost the step in all four such runs: 38, 
    that it can't parse the segment. Run 42 made the same mistake twice in a row and lost a routing fix to it.
 
 I have built none of these, and ADR-0061's status is unchanged.
+
+#### 2026-11-03: the architect's rulings on runs 41 to 43
+
+1. Yes, refuse the write-back. A later patch that sets a leaf a rejection or correction unset is refused,
+   naming the rejecting turn, until the person states that value again in a turn that asks about it. The
+   refusal carries what the gap still needs and goes through the restate path of the 11-02 structural
+   refusals.
+2. Change the walk to pair by routing, with one guard. A verb's name is the person's vocabulary, and a
+   stage's identity is what it routes to. The new walk is a new instrument version, and runs 41 to 43 are
+   re-read under it together. Run 41 flipping to `yes` counts only if 42 and 43 still read `no`. If all
+   three flip, the walk is too loose and goes back.
+3. Yes, the bar reads routing too. A rejected notice that ends `completed` is a wrong workflow with every
+   step present. The bar reads the existing chain comparison after alignment rather than growing a new one.
+4. Yes, a refused path names the forms it accepts, as part of 1. No new path form.
+
+The bar stays not met. The bar for Proposed is one runnable PCN run reading `yes` under the routing-aware
+bar with the contradiction caught, plus one run that should read `no` and does. If runs 44 to 46 still lose
+the record stage, which has now failed four different ways across runs 19 to 43, the next item is the
+grammar's account of a two-step stage, not another instrument change. The person still can't say "that is
+not a stage"; it hasn't bitten since run 18, so it stays on the open list and out of this build.
+
+#### 2026-11-03: #226 merged, and a correction about its mutants
+
+The order to merge asked for the two mutants that didn't run after the one-line removal. It was the other
+way round: the two replacements ran after it and the other 37 did not. So all 39 ran in a clean worktree
+detached at `82c8fef8`, the merge sha, against `tests/socratic` on the 0.9.12 overlay. All 39 are red, and
+each was restored and checked byte for byte.
+
+The merge did not touch the loop code, so the model runs were not repeated. Between `53f26235` and
+`82c8fef8`, `socratic_elicitation.py`, `socratic_measure.py`, `tests/socratic` and the fixtures have an empty
+diff. The merge changed four other `restate_analyst` files, and the loop imports none of them. #226 landed as
+merge commit `67bd4b7e`, with `82c8fef8` as its second parent, and both are ancestors of `origin/master`.
+
+#### 2026-11-03: instrument v2, built
+
+**The refusal.** The loop now remembers a leaf that a `confirm`, `contradiction` or `null` answer took out,
+and the turn that did it. A patch that sets the leaf again is refused and goes back through the restate. The
+memory clears when a turn that asks about the leaf leaves it held. For a leaf that settles a stage, the refusal
+reads, generated from the draft: "`<stage>` still has no step that settles it; `<leaf>` was rejected at turn N
+and the person has not stated it again; a `signal_await` or `wait` step after the send fills it". For any other
+leaf, it says what was rejected and repeats the gap's question.
+
+**The path forms.** A path the loop can't parse now gets the forms it can in the error. The parser is unchanged.
+
+**The walk.** Within a pair of chaining tables, a row pairs first by a `when` that both sides spell alike. A
+leftover row pairs by where it goes: one row that routes on to a stage with one that routes on, and one row
+that ends with one that ends. A selection's value stays literal, since it is the person's data and not a verb.
+Two rows left on either side pair nothing, so a tie reads `no`. The scripted user aligns through the same
+pairing, so this changes what it answers as well as what the bar reads.
+
+**The bar.** `bar_met` is now runnable, every stage reachable, no dropped step and no wrong route. A wrong route
+is read over the selection and every expected chain table. An expected row that routes on must reach the paired
+stage. An expected row that ends must end, and no end of the draft may take two ends the expected bundle keeps
+apart. `bar_met` does not read `contradictions_detected`, so the Proposed bar's "with the contradiction caught"
+is read beside it, from its own column.
+
+**Checks.** `tests/socratic` 324 passed and the gov ratchet 24 passed, both with `LOCKED_SDK=sdk_0912`, on the
+tree merged with master. The shape census read 469 refused, 2003 passed and 0 crash sites over the three
+fixtures. There are 39 new mutants across all three items, each restored and checked byte for byte. All 39 are
+red on the first pass. They ran on the build before that merge, which changed none of the files they mutate.
+
+#### 2026-11-03: runs 41 to 43 re-read under instrument v2
+
+The stored outputs were re-read and no model ran. The result is the one the order expected: run 41 now passes
+on steps and fails on routing, and 42 and 43 still read `no`. No run reads `yes`, so the guard did not fire.
+
+| run | stored bar | v2 bar | status | unreachable | stages paired | stages that dropped a step | wrong routes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 41 | no | no | runnable | 0 of 4 | 4 of 4 | 0 | 5 |
+| 42 | no | no | runnable | 0 of 4 | 4 of 4 | 1 (record: `emit`, `render`; described `emit`, `signal_await`) | 6 |
+| 43 | no | no | runnable | 0 of 4 | 4 of 4 | 1 (record: `emit`; described `emit`, `signal_await`) | 2 |
+
+The wrong routes, by expected outcome:
+
+| table | outcome | expected | drafted | run |
+| --- | --- | --- | --- | --- |
+| acknowledge | acknowledged | `pcn_acknowledged` | `completed` | 41, 42, 43 |
+| acknowledge | escalated | `pcn_impact_review` | `completed` | 42 |
+| impact review | rejected | `pcn_rejected` | `completed` | 41, 42 |
+| impact review | needs_info | `pcn_awaiting_info` | `completed` | 41, 42 |
+| program approval | rejected | `pcn_rejected` | `completed` | 41, 42 |
+| record | filed | `pcn_dispositioned` | `completed` | 41, 42, 43 |
+
+Run 41 therefore has every step and still isn't the workflow described, because a rejected notice and a filed
+one end in the same place. That is the case ruling 3 names.
+
+#### 2026-11-03: readings in this build, for the architect's review
+
+1. **The bar's routing check is a new read, not the existing comparison.** The ruling says to read the existing
+   chain comparison rather than grow a new one, with each outcome reaching the paired stage or a terminal. That
+   comparison can't do what the same ruling requires. `canonical` collapses every terminal to `END`, so a
+   rejected notice ending `completed` compares equal, and "or to a terminal" read literally would pass it. So
+   `dropped_routes` is a small new read, and the ends the expected bundle keeps apart must stay apart. An end's
+   own name stays the model's.
+2. **The consequence is strict, and you may want to loosen it.** A `yes` needs the five endings kept apart, as
+   the person's words do: rejected, awaiting information, acknowledged, overdue and dispositioned. None of runs
+   41 to 43 did. Run 43's only routing failure is that acknowledged and dispositioned share `completed`. If
+   some endings may share a terminal, this rule is too tight. Loosening it isn't one line, though: dropping the
+   condition also passes a rejected notice ending `completed`, so the instrument would need to be told which
+   endings may merge.
+3. **Any re-set is refused, not only an equal value.** The ruling says "back to the rejected value", but run 42
+   held `recorded`, was told no, and wrote `approved`, so literal equality would have missed one of the two runs
+   it was written for. Run 43 wrote back the same value.
+4. **The refusal outlives its turn.** The first message says "rejected this turn", and the second says "a later
+   patch ... until the person states that value again". Run 42's write-back came two turns after the rejection,
+   so I followed the second.
+5. **`human_await` isn't among the named forms**, though it settles a stage. This follows "a `signal_await` or
+   `wait`": a human approval was one of the record stage's four failures.
+6. **What the walk and the bar still don't read.** A row the draft added isn't read by the routing check. One
+   expected end split over two names in the draft passes. Two differently spelled ending verbs in one table
+   pair nothing and read `no`, even if both are right.
+7. **A known way around the refusal.** Renaming a step in one patch and setting the rejected leaf on the renamed
+   step in a later patch is not caught. A rename and the leaf in the same patch is.
+
+#### 2026-11-03: runs 44 to 46, and the bar is not met
+
+Three complete PCN runs at `94532250`, instrument v2, one at a time, with the same model and harness on the
+0.9.12 overlay. Dagster listed no active run before each one.
+
+| run | questions / bank | runnable errors | unreachable | stages that dropped a step | wrong routes | bar | semantic diffs | open | answered by path | refused patches | confirms | rejected | contradiction | deferral | reasons | contradictions answered | deferrals dropped | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 44 | 26/18 | 0 | 0 of 4 | 1 | 3 | no | 2 | 0 | 6 | 2 | 13 | 0 | 1/1 | 1/1 | held | 1 | 0 | runnable | 721 |
+| 45 | 29/18 | 1 | 0 of 4 | 0 | 1 | no | 4 | 1 | 6 | 3 | 15 | 1 | 1/1 | 1/1 | held | 1 | 0 | cannot_run | 752 |
+| 46 | 27/18 | 0 | 0 of 4 | 0 | 2 | no | 0 | 0 | 5 | 1 | 12 | 1 | 1/1 | 1/1 | held | 2 | 1 | runnable | 682 |
+
+**The bar for Proposed is not met as built: no run reads `yes`.** Runs 44 and 45 read `no` and should, so that
+half is there. Run 46 is the open question, because its `no` rests on one reading of mine (below).
+
+**Run 46 is the closest yet.** It is runnable, every stage is reachable, it dropped no step, and it has no
+semantic diff. The planted contradiction was caught. Its record stage is an `emit` and a `signal_await`, as
+described. It reads `no` on two routes, which are one fault: the person says "the notice is acknowledged and
+that is the end" and "the notice is dispositioned and that is the end", and the model ended both at `completed`.
+Its other three endings are kept apart. The semantic diff is 0 because `canonical` collapses every terminal.
+
+**Run 45 can't run.** The impact review's `needs_info` row names a target that is neither a stage nor a terminal,
+because the table's terminal is `info_needed`. The person said at turn 15 that the notice "waits for information
+and that is the end". The model tried to correct the row twice with `rows[when.outcome=needs_info].then`, and both
+patches were refused because no such form exists. It didn't take up the refusal's advice to set `rows` whole. The
+loop asked for the steps of a stage called `needs_info` at turn 12, before that, and again at turn 28, and the person
+had no answer either time. **So "that is not a stage" has bitten again**, which changes the 11-02 note that it hadn't
+since run 18.
+
+**Run 44 lost the filing step in a way the build doesn't reach.** Its record is an `emit` with `disposes: approved`.
+The model set that at turn 10, in answer to a `missing` gap on `outputs.record.ends`, from "the outcome approved"
+in an answer that goes on "Then the records group files it and says so". The turn check then counts the slot as
+answered, because the question's key is the slot's own (`_attributed`, ruled 10-30). So no confirm on `ends` was
+raised, the scripted user never said no, and nothing was rejected to refuse. I read that cause from the code and
+did not test it alone. Run 45 is the control: it set the value at turn 5 under `steps.record`, and a confirm on `ends`
+was raised at turn 26 and rejected. My 11-02 departure isn't the cause, since it applies only to confirm, contradiction
+and null turns. The rejection rule also reads this turn the opposite way: `_asks` says a `missing` gap "asks how, and
+states nothing".
+
+**Run 44 also lost an answer.** At turn 26 the person said "Once it is filed the notice is dispositioned and that is
+the end". The model's patch was refused on `steps[0].disposes`, its next reply was an empty patch, and the turn closed,
+so that answer changed nothing.
+
+**The refusal did what it was ruled to do, the one time it was reachable.** In run 45 the scripted user rejected
+`disposes` at turn 26. At turn 29 the model wrote it back, as runs 42 and 43 did, and was refused with "record still
+has no step that settles it; disposes was rejected at turn 26 and the person has not stated it again; a signal_await
+or wait step after the send fills it". Its next patch in that turn was an `emit` and a `signal_await`. That is one
+occurrence, not a rate.
+
+**The refused path's forms helped in one turn of three.** The new text came back four times, in one turn of each run.
+In run 46 the next reply wrote the table whole, as the text says. In run 44 the next reply was the empty patch above.
+In run 45 the model sent the same path again, was refused again, and the row stayed wrong, which is why that run can't
+run. Run 44 also sent `rows[when=outcome=timed_out].then` at turn 18, which parses and got the shape refusal instead,
+and its next reply wrote the table whole.
+
+**The record stage:** held in two of three. Run 45 held it through the refusal. Run 46 held it when the model's
+`human_await` was rejected at its `excludes` confirm and the person's words were given again. Run 44 lost it as above.
+
+**One stale deferral.** Run 46 still holds a deferral on `outputs.record` from turn 5, "user could not answer", though
+turns 8 and 20 filled that stage. The stale-deferral drop only looks at whether a slot exists. It compiles to nothing
+and isn't in the bar, but a ratifier would be shown it.
+
+#### 2026-11-03: the question the runs leave, for the architect
+
+**Do two endings the person named separately have to stay separate?** This is reading 2 above, and it now decides
+the bar. The options:
+
+| reading | run 41 | run 43 | run 46 | bar for Proposed |
+| --- | --- | --- | --- | --- |
+| Any end counts ("or to a terminal", literally) | `yes` | `no`, on its step | `yes` | not usable: it passes run 41, which the order expected to fail on routing |
+| Some ends may share a terminal, and a rejection may not share with a success | `no` | `no`, on its step | `yes` | met by 46 with 44 and 45, but the instrument must be told which ends may share, so it is a v3 and 41 to 46 are re-read |
+| Every end the person named stays apart (as built) | `no` | `no` | `no` | not met |
+
+My recommendation is to keep it as built. The person named each ending, and in run 46 a reader can't tell an
+acknowledged minor change from a dispositioned one. Loosening the bar for the one run it blocks is also what the
+guard on the walk was there to prevent. The cost is low, because the fault looks like a naming fault: a grammar line
+saying an ending the person names keeps the person's name, then three more runs. This is your call, and I have not
+changed the instrument or the status.
+
+**For the open list, and not built:**
+1. The record stage was lost in one of three runs. Your next item for that case is the grammar's account of a
+   two-step stage. Run 44 adds a second candidate: a value set at a `missing` gap on its own slot counts as answered,
+   so the person is never asked. Either may be the fix. The turn check is your 10-30 rule, so I'd want your ruling
+   before changing it.
+2. "That is not a stage" has bitten in run 45.
+3. A deferral whose slot was later filled stays in the draft.
+4. A turn can close on an empty patch after a refusal, which loses the person's answer (run 44, turn 26).
 
 ## Consequences
 

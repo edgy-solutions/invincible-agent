@@ -248,14 +248,45 @@ def _narrowed(entry: dict, file: str, path: str) -> dict:
                                         "value": se._get(scratch, file, path)[1]}]}}
 
 
+def _routes_on(then, ix: dict) -> bool:
+    """True iff a row's ``then`` goes on to a stage of ``ix``. Anything else ends the case."""
+    return bool(then) and then not in ix["terminals"]
+
+
+def _paired_rows(drows: list, erows: list, d: dict, e: dict) -> list:
+    """(draft row, expected row) of one pair of tables. A row pairs by its `when` where both spell it
+    alike. An outcome's name is the person's vocabulary and a stage's identity is what it routes to
+    (architect, 2026-11-03): run 41 wrote "approve" for "approved" and lost the stage behind it. So
+    the outcomes left over pair by where they go, one on to a stage with one on to a stage, one
+    ending with one ending. Two left on either side pair nothing, since nothing says which is which.
+    A selection's `when` is an event's value, not a verb, and stays literal."""
+    by_when = {_when_key(r.get("when")): r for r in erows if isinstance(r, dict)}
+    out, left = [], []
+    for r in sorted((r for r in drows if isinstance(r, dict)), key=lambda r: _when_key(r.get("when"))):
+        other = by_when.pop(_when_key(r.get("when")), None)
+        if other is None:
+            left.append(r)
+        else:
+            out.append((r, other))
+
+    def verb(r):
+        when = r.get("when")
+        return isinstance(when, dict) and set(when) == {se._CHAIN_INPUT}
+    for on in (True, False):
+        ds = [r for r in left if verb(r) and _routes_on(r.get("then"), d) is on]
+        es = [r for r in by_when.values() if verb(r) and _routes_on(r.get("then"), e) is on]
+        if len(ds) == len(es) == 1:
+            out.append((ds[0], es[0]))
+    return out
+
+
 class AligningUser:
     """The scripted user for a model run. A person answers a question about "the impact review"
     whatever the model called it; this looks the question up by the EXPECTED bundle's names.
 
     ALIGNMENT IS STRUCTURAL ONLY, never by similarity: the draft and the expected bundle are walked
-    in lock step from their selection tables, pairing rows by their `when` (verbs and input values
-    are literal), so a definition is paired by the path a case reaches it by (the canonical BFS
-    position). Steps pair k-th of a kind with k-th of the same kind; task kinds are the ones aligned
+    in lock step from their selection tables, pairing rows as ``_paired_rows`` does, so a definition
+    is paired by the path a case reaches it by (the canonical BFS position). Steps pair k-th of a kind with k-th of the same kind; task kinds are the ones aligned
     human_await steps name; a chaining table follows its aligned `after`. A name no path reaches is
     NOT aligned -- the question is unanswerable, never answered as some other stage -- unless it is
     a stage the trigger declares, paired by its place in the person's list of stages."""
@@ -303,11 +334,7 @@ class AligningUser:
                       if d["sel"] and e["sel"] else [])
         while queue:
             drows, erows = queue.popleft()
-            by_when = {_when_key(r.get("when")): r for r in erows if isinstance(r, dict)}
-            for r in sorted((r for r in drows if isinstance(r, dict)), key=lambda r: _when_key(r.get("when"))):
-                other = by_when.get(_when_key(r.get("when")))
-                if other is None:
-                    continue
+            for r, other in _paired_rows(drows, erows, d, e):
                 dt, et = r.get("then"), other.get("then")
                 if not dt or not et or dt in d["terminals"] or et in e["terminals"]:
                     continue
@@ -553,12 +580,10 @@ class AligningUser:
         for dt, et in m["tables"].items():
             if se._decisions(self.expected)[et][0] != file:
                 continue
-            by_when = {_when_key(r.get("when")): r.get("then")
-                       for r in e["decisions"][et].get("rows") or [] if isinstance(r, dict)}
-            for r in d["decisions"][dt].get("rows") or []:
-                then = by_when.get(_when_key(r.get("when"))) if isinstance(r, dict) else None
-                if then and r.get("then"):
-                    theirs.setdefault(then, r["then"])
+            for r, other in _paired_rows(d["decisions"][dt].get("rows") or [],
+                                         e["decisions"][et].get("rows") or [], d, e):
+                if other.get("then") and r.get("then"):
+                    theirs.setdefault(other["then"], r["then"])
         held = value if isinstance(value, list) else [value]
         if any(isinstance(v, str) and v in names and v not in theirs for v in held):
             return None
@@ -647,6 +672,40 @@ def dropped_steps(files: dict, expected: dict, pairs: dict) -> list:
     return out
 
 
+def dropped_routes(files: dict, expected: dict, pairs: dict) -> list:
+    """Each expected outcome the draft routes elsewhere (architect, 2026-11-03: a rejected notice
+    that ends ``completed`` is a wrong workflow with every step present). An outcome that goes on to
+    a stage goes on to that stage's pair, and one that ends, ends. Two ends the expected bundle keeps
+    apart must not reach one end of the draft: the person named them apart, and the model's names
+    for them are its own. ``canonical`` cannot read this, since every end is END there. A row the
+    draft added is not read, and ``semantic_diffs`` carries it. A stage nothing pairs with has no
+    row to route by, so each of its outcomes reads here too."""
+    d, e = _index(files), _index(expected)
+    back = {v: k for k, v in pairs.items()}
+    tables = [(e["sel_name"], e["sel"], d["sel"])] + [
+        (name, table, (d["chain"].get(back.get(ew)) or (None, {}))[1])
+        for ew, (name, table) in sorted(e["chain"].items())]
+    read = []
+    for name, etable, dtable in tables:
+        erows = [r for r in etable.get("rows") or [] if isinstance(r, dict)]
+        paired = {id(o): r for r, o in _paired_rows(dtable.get("rows") or [], erows, d, e)}
+        read += [(name, o, paired.get(id(o))) for o in erows]
+    ends: dict = {}
+    for _, o, r in read:
+        if r is not None and r.get("then") and not _routes_on(o.get("then"), e):
+            ends.setdefault(r["then"], set()).add(o.get("then"))
+    out = []
+    for name, o, r in read:
+        then = r.get("then") if r is not None else None
+        if _routes_on(o.get("then"), e):
+            right = pairs.get(then) == o.get("then")
+        else:
+            right = bool(then) and not _routes_on(then, d) and len(ends[then]) == 1
+        if not right:
+            out.append({"table": name, "when": o.get("when"), "expected": o.get("then"), "drafted": then})
+    return out
+
+
 def _as_expected(keys, user: Optional[AligningUser], files: dict) -> set:
     """The recorded ``keys`` in the expected bundle's spelling, aligned against the final ``files``
     as the scripted user aligns a question. A planted key is named in the expected bundle's ids; a
@@ -673,8 +732,8 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         _as_expected(r["deferrals"], user, r["files"])
     ld, sd = leaf_diffs(r["files"], expected), semantic_diffs(r["files"], expected)
     unreachable = sorted(set(se._workflows(r["files"])) - se._reachable(r["files"]))
-    dropped = dropped_steps(r["files"], expected, AligningUser(transcript, expected)._pair_definitions(
-        _index(r["files"]), _index(expected)))
+    pairs = AligningUser(transcript, expected)._pair_definitions(_index(r["files"]), _index(expected))
+    dropped, routes = dropped_steps(r["files"], expected, pairs), dropped_routes(r["files"], expected, pairs)
     return {
         "fixture": name,
         "questions": len(keys), "bank": len(bank),
@@ -692,7 +751,8 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "runnable_errors": {"count": len(r["runnable"]), "first": r["runnable"][:5]},
         "unreachable": unreachable,
         "dropped_steps": dropped,
-        "bar_met": r["status"] == "runnable" and not unreachable and not dropped,
+        "dropped_routes": routes,
+        "bar_met": r["status"] == "runnable" and not unreachable and not dropped and not routes,
         "exact": r["files"] == expected,
         "leaf_diffs": {"count": len(ld), "first": ld[:20]},
         "semantic_diffs": {"count": len(sd), "first": sd[:20]},
@@ -754,7 +814,7 @@ def main() -> int:
               f"{r['deferrals_recorded']}/{r['deferrals_planted']:>3} {len(r['gaps_left']):>4} "
               f"{r['runnable_errors']['count']:>6} {str(r['exact']):>5} {r['leaf_diffs']['count']:>4} "
               f"{r['semantic_diffs']['count']:>4} {r['model_errors']:>7} {len(r['aligned_answers']):>3} {len(r['unaligned']):>4} "
-              f"{len(r['unbanked']):>4} {len(r['answered_by_path']):>4} {len(r['deferred_refusals']):>4} {len(r['dropped_steps']):>4} {str(r['bar_met']):>5} {r['status']:>10} {r['seconds']:>6}")
+              f"{len(r['unbanked']):>4} {len(r['answered_by_path']):>4} {len(r['deferred_refusals']):>4} {len(r['dropped_steps']):>4} {len(r['dropped_routes']):>4} {str(r['bar_met']):>5} {r['status']:>10} {r['seconds']:>6}")
     return 0
 
 
