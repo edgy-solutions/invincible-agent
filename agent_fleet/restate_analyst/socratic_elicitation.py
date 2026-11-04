@@ -1607,6 +1607,11 @@ RULES
 - An emit step that is itself what settles its workflow sets disposes: the outcome it settles with,
   and that workflow's chaining table routes that value. When someone or something confirms it
   afterwards, that is a signal_await and the emit has no disposes. Only an emit step has disposes.
+- Two acts the user describes one after the other are two steps of one stage, in that order, drafted
+  in the same statement; never draft the first act alone. When something is sent and then someone acts
+  on it and says so, that is an emit followed by a signal_await for that audience, not a human_await,
+  since nobody is asked to decide: the emit has no disposes, and the signal_await accepts the user's
+  word for what was done.
 - A step with a deadline_seconds can also end timed_out (the runner's outcome when the deadline
   expires), so its workflow's chaining table routes timed_out as well.
 - A row matches an event field only with one of its listed event values; map the user's words to

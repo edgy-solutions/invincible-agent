@@ -2197,8 +2197,8 @@ diff sees it, and the grammar doesn't mention the form.
 2. **Does run 47's `recorded` count against it?** I'd say not for the bar. It routes correctly, and the fault is a word,
    but the person used that word at every turn from 28 to 32, and the bar is "does the compiled workflow do what the
    person described". If it does count, no run in this batch is `yes`.
-3. **Which comes first?** You ordered the two-step grammar next. I'd do the v3 re-read before it, since it is a small
-   change and the two-step runs would then be read by it. I have started neither.
+3. **What reads the two-step runs?** The two-step grammar is built (below). The v3 re-read has not started. I'd do it
+   before those runs, so that they are read by it.
 
 **For the open list, and not built:**
 1. An answer that names several slots can be written to only the one asked about, and nothing detects it (run 48). A
@@ -2208,7 +2208,26 @@ diff sees it, and the grammar doesn't mention the form.
 3. `requires` can be deferred. It isn't among `required_slots`, so `non_deferrable` lets it through, and I don't know
    whether that was meant.
 4. The record's `approval_chain` is a fixed list, and the grammar doesn't mention `{case.…}`.
-5. The record's outcome word isn't covered by the endings line.
+5. The record's outcome word isn't covered by the endings line. The two-step line below speaks to it for a
+   `signal_await`, and that is not measured.
+
+#### 2026-11-03: where the bar stands, and the two-step grammar
+
+**Bar status: not called met, and with the architect.** As instrument v2 reads it, run 47 is the first half, `yes` with
+the contradiction caught. No run from 47 to 49 is the second half. Runs 44 and 45 read `no` on the same instrument, one
+grammar line earlier. Run 48 should read `no` and reads `yes`. The status above is not flipped and the instrument is
+not changed.
+
+**The two-step grammar is built and not measured.** The grammar already said a step someone confirms afterwards is a
+`signal_await`. First drafts of the record were still one step in five of runs 44 to 49 (all but 46), and the person's
+words there are "Then the records group files it and says so", which never say "confirms". So a new line follows that
+one: "Two acts the user describes one after the other are two steps of one stage, in that order, drafted in the same
+statement; never draft the first act alone. When something is sent and then someone acts on it and says so, that is an
+emit followed by a signal_await for that audience, not a human_await, since nobody is asked to decide: the emit has no
+disposes, and the signal_await accepts the user's word for what was done."
+
+Its seal only shows the text is there. Only model runs can show that the first draft changes, and none has run on this
+line. It does nothing for run 48's lost bar or run 49's timeout. The refusal stays as the backstop.
 
 ## Consequences
 
