@@ -287,25 +287,25 @@ EXCLUDED = {
         "the person who DROPPED the document: a fact attested to the store and VERIFIED against Topaz "
         "program membership (`check_can_view_program`), not a principal the runner acts for; binding it "
         "to the runner's list would refuse every drop by anyone the runner is not declared for. "
-        "ESCALATED to the architect (see test_the_excluded_...)"),
+        "EXCLUSION AGREED by the architect 2026-11-03: a program-membership check, not a delegation; "
+        "the membership check is the seal, no marker here."),
     (OW, "origin"): "free dict; the handler reads origin.program only (a program key, not a person)",
     (OW, "evidence"): "free dict passed to origin_writer as evidence; the handler reads no person from it",
     (SM, "transitions"): "free list of hop outcomes; the handler reads `outcome` only",
     (AR, "record"): "the action record; the handler reads provenance.case_id only (a case id, not a person)",
-    (RG, "requested_by"): (
-        "NOT A CASE-RUNNER ROUTE: the register seam admits any authenticated service caller (no "
-        "case-runner gate; checked below) and `requested_by` is the provenance of the human who asked, "
-        "by design an arbitrary person. ESCALATED to the architect"),
     (_key("POST", "/internal/identity/redeem"), "claimed_launcher"): (
         "supervisor-only (403 not_the_redeemer for the case runner, checked below); not reachable"),
 }
+# Ruled IN as a SEPARATE defect (architect via Chris, 2026-11-03): not a case-runner route, so it has no
+# case-runner driver; its legs are the "register" section further down this module.
+DRIVEN_BELOW = {(RG, "requested_by")}
 # Persona fields name a ROLE (a cell of the entitlement matrix), never a person.
 _ROLE_FIELDS = re.compile(r"persona", re.I)
 
 
 def _decided(route, field):
     leaf = field.split(".")[-1]
-    if (route, field) in DRIVEN or (route, field) in EXCLUDED:
+    if (route, field) in DRIVEN or (route, field) in EXCLUDED or (route, field) in DRIVEN_BELOW:
         return True
     return bool(_ROLE_FIELDS.search(leaf)) or leaf in ("recipient_scope",)
 
@@ -390,13 +390,62 @@ def test_a_caller_that_is_not_the_case_runner_is_refused_at_the_gate(monkeypatch
 
 # -- the exclusions are checked, not asserted -------------------------------------------------------
 
-def test_the_excluded_register_route_is_not_a_case_runner_route(monkeypatch):
-    """Backs the exclusion: it carries no case-runner gate, and a caller that is not the runner is let in."""
-    served = install_delegates(monkeypatch)
+# -- /internal/human_tasks/register: RULED IN as a separate defect ------------------------------------
+REG_RULING = ("RULED DEFECT (architect via Chris 2026-11-03, a separate defect from the case-runner "
+              "routes): /internal/human_tasks/register needs TWO fixes -- ")
+FIX_A = REG_RULING + ("(a) THE CALLER: gate the route on the delegate list / service identity as its "
+                      "docstring promises, not on get_current_user alone. Turned by fix (a). "
+                      "Lane 1's fix PR removes this marker.")
+FIX_B = REG_RULING + ("(b) THE FIELD: requested_by comes from the token, never the body; a differing body "
+                      "value is refused with the refusal envelope. Turned by fix (b). "
+                      "Lane 1's fix PR removes this marker.")
+
+
+def _served_refusal(caller, on_behalf_of):
+    """The refusal the gateway SERVES for this (caller, named) pair, read from the live function."""
+    from fastapi import HTTPException
+    try:
+        gateway._admit_on_behalf_of(types.SimpleNamespace(authz_id=caller), on_behalf_of)
+    except HTTPException as exc:
+        return exc.status_code, exc.detail
+    raise AssertionError("expected the gateway to refuse this pair")
+
+
+def test_the_register_route_is_not_a_case_runner_route():
     assert RG not in case_runner_routes()
-    other = next(d for d in sorted(served) if d != RUNNER)
-    r, fx = _drive_register_requested_by(monkeypatch, other, PERSON)
-    assert r.status_code < 400 and fx.has(PERSON), (r.status_code, r.text[:200])
+
+
+def test_register_control_a_declared_service_identity_naming_itself_is_admitted(monkeypatch):
+    served = install_delegates(monkeypatch)
+    svc = next(d for d in sorted(served) if d != RUNNER)
+    r, fx = _drive_register_requested_by(monkeypatch, svc, svc)
+    assert r.status_code < 400 and fx.has(svc), (svc, r.status_code, r.text[:200], fx.seen)
+
+
+@pytest.mark.xfail(strict=True, reason=FIX_A)
+def test_register_a_plain_user_token_is_refused_at_the_route(monkeypatch):
+    """Fix (a). The token is a person (declared, but not a delegate); requested_by is its own, so only
+    the CALLER is in question."""
+    served = install_delegates(monkeypatch)
+    person, _ = pair_and_outsider(served, RUNNER)
+    assert person not in served
+    r, fx = _drive_register_requested_by(monkeypatch, person, person)
+    want_status, want_detail = _served_refusal(person, "someone-else")
+    assert not fx.has(person) and r.status_code == want_status and r.json()["detail"]["error"] == \
+        want_detail["error"], (r.status_code, r.text[:200], fx.seen)
+
+
+@pytest.mark.xfail(strict=True, reason=FIX_B)
+def test_register_a_body_requested_by_that_differs_from_the_token_is_refused(monkeypatch):
+    """Fix (b). The caller IS a declared service identity (passes any gate); the body names someone
+    else. register_task must receive the token's identity or nothing."""
+    served = install_delegates(monkeypatch)
+    svc = next(d for d in sorted(served) if d != RUNNER)
+    _own, outsider = pair_and_outsider(served, svc)
+    r, fx = _drive_register_requested_by(monkeypatch, svc, outsider)
+    want_status, want_detail = _served_refusal(svc, outsider)
+    assert not fx.has(outsider) and r.status_code == want_status and \
+        r.json()["detail"]["error"] == want_detail["error"], (r.status_code, r.text[:200], fx.seen)
 
 
 def test_the_excluded_redeem_route_is_not_reachable_by_the_case_runner(monkeypatch):
