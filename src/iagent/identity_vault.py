@@ -192,6 +192,10 @@ class _Entry:
     expires_at: float
     state: str = STATE_LIVE
     reason: str = ""
+    # What the person is shown while paused. Human-readable text from the caller of
+    # ``mark_awaiting_reauth``; never a token. Cleared with the pause.
+    paused_call: str = ""
+    instruction: str = ""
 
 
 class IdentityVault:
@@ -295,6 +299,8 @@ class IdentityVault:
                 entry.token = token
                 entry.state = STATE_LIVE
                 entry.reason = ""
+                entry.paused_call = ""
+                entry.instruction = ""
                 ok = True
         if ok:
             logger.info("identity_vault: replaced token run_id=%s subject=%s", run_id, subject)
@@ -303,8 +309,14 @@ class IdentityVault:
                          "subject differs from the one stashed", run_id)
         return ok
 
-    def mark_awaiting_reauth(self, run_id: str, reason: str) -> bool:
-        """The run is paused for the person. ``reason`` is a short code, never a token."""
+    def mark_awaiting_reauth(self, run_id: str, reason: str,
+                             paused_call: str = "", instruction: str = "") -> bool:
+        """The run is paused for the person. ``reason`` is a short code, never a token.
+
+        ``paused_call`` (which call could not proceed) and ``instruction`` (what the person
+        must do) are human-readable text supplied by the caller, shown on the person's
+        sign-in card. Neither may carry a token or a secret. A resume (``replace``) clears them.
+        """
         with self._lock:
             self._evict_locked(self._clock())
             entry = self._entries.get(run_id)
@@ -312,6 +324,8 @@ class IdentityVault:
                 return False
             entry.state = STATE_AWAITING_REAUTH
             entry.reason = str(reason or "")[:120]
+            entry.paused_call = str(paused_call or "")[:200]
+            entry.instruction = str(instruction or "")[:300]
         logger.warning("identity_vault: run_id=%s is awaiting_reauth reason=%s", run_id, reason)
         return True
 
@@ -336,6 +350,30 @@ class IdentityVault:
         with self._lock:
             entry = self._entries.get(run_id)
             return entry.reason if entry else ""
+
+    def pause_record(self, run_id: str) -> Optional[Dict[str, str]]:
+        """The served pause record for one run, or None when it is not paused."""
+        with self._lock:
+            self._evict_locked(self._clock())
+            entry = self._entries.get(run_id)
+            if entry is None or entry.state != STATE_AWAITING_REAUTH:
+                return None
+            return self._record_locked(run_id, entry)
+
+    def paused_runs_of(self, subject: str) -> list:
+        """Pause records for the runs whose stashed subject is ``subject`` (the same
+        comparison ``replace`` makes). In-process memory: a restart empties this."""
+        if not subject:
+            return []
+        with self._lock:
+            self._evict_locked(self._clock())
+            return [self._record_locked(rid, e) for rid, e in self._entries.items()
+                    if e.state == STATE_AWAITING_REAUTH and e.subject == subject]
+
+    @staticmethod
+    def _record_locked(run_id: str, entry: "_Entry") -> Dict[str, str]:
+        return {"run_id": run_id, "paused_call": entry.paused_call,
+                "instruction": entry.instruction, "reason": entry.reason}
 
     def token_for_refresh(self, run_id: str) -> Optional[str]:
         """The held token, for the route's refresh path ONLY: it is the ``subject_token`` of
