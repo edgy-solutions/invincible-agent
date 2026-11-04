@@ -15,6 +15,12 @@ dependencies = [
     "python-dotenv",
     "openpyxl>=3.1.5",
     "python-docx>=1.1.2",
+    # Only when FIN_DATASET_URN is set (docs/plans/fin-inputs-resolver.md): the governed read of one
+    # catalogued asset. dag-tools holds the mesh client (ticket, outcome taxonomy); polars is the
+    # LazyFrame it returns. Both are imported lazily, so the default notional path never loads them.
+    # dag-tools is PINNED TO A TAG for the reason iagent-mesh is.
+    "polars>=1.20",
+    "edgy-dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@v0.10.0",
 ]
 
 # DELIBERATELY THIN, and copied from Engine P's list rather than from a fuller engine's.

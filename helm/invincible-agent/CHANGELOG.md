@@ -52,6 +52,19 @@ first total and names refused panels; a card the answer declared no longer reads
 - **Dormant until doc-tools #172 is deployed**: no course extraction carries the outline before it,
   so until then every course task files without `sections`.
 
+**Engine changes (engine-fin can read a declared measure's rows from an asset, off by default)**
+
+- **`FIN_DATASET_URN` unset changes no answer.** There is no read, the client isn't imported, and the
+  envelope is today's. Set, a declared measure computes over rows read as the caller, and a failed
+  read never falls back to the seed. Don't set it yet: `docs/plans/fin-inputs-resolver.md` lists what
+  has to be true first, and nothing here has run on a cluster.
+- **The engine-fin image grows by about 242 MB with the flag on or off** (`polars` and
+  `edgy-dag-tools`, +30 packages). They're imported only when the flag is set.
+- **A chat-dispatched denial now reaches request-access.** `_refusal_from_engine_4xx` carries `status`,
+  `denied_assets`, `subject` and `message` when, and only when, the engine says `access_denied`.
+- **`docs/runbooks/adding-an-engine.md` changed, so its row in `setup/ontologies/docs_corpus.ttl` moved
+  with it.** The next prime re-reads that one page.
+
 ## 0.4.76 — 2026-11-03
 
 Entries merged after the 0.4.75 cut (`aac9900b`), up to `121272dc`.
