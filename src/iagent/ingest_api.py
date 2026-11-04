@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Union
 
+from iagent_mesh import Refusal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 INGEST_V1_TAG = "ingest-v1"
@@ -366,11 +367,9 @@ class Entitlements(_Strict):
     droppable_kinds: list[str]
 
 
-class RefusalEnvelope(_Strict):
+class RefusalEnvelope(Refusal):
     """`authz.refusal.refusal`'s envelope: what the caller lacks and who can grant it."""
-    policy_id: str
-    missing_binding: str
-    grantable_by: str
+    # The SDK defaults this to empty; this contract has always published it as required.
     candidates: list[str]
 
 

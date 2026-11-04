@@ -47,6 +47,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+from iagent_mesh import Refusal
 
 ROOT = Path(__file__).resolve().parents[2]
 ROOTS = ("src", "agent_fleet")
@@ -258,6 +259,7 @@ ER = "agent_fleet/repository_agent/repo_core.py"
 #: No binding could lift these, so they keep their bodies. Value = why.
 NOT_POLICY: dict[str, str] = {
     "src/iagent/gateway.py::reauth_run::service_token_refused": AUTHN,  # a service token has no person to re-authenticate
+    "src/iagent/gateway.py::my_paused_runs::service_token_refused": AUTHN,  # a service token has no person whose paused runs to list
     "src/iagent/auth.py::get_current_user::Authentication failed: {}": AUTHN,
     "src/iagent/auth.py::get_current_user::Invalid token payload: {}": AUTHN,
     "src/iagent/auth.py::get_current_user::Token has expired": AUTHN,
@@ -549,10 +551,11 @@ def R(monkeypatch):
     mod._GRANTORS_CACHE = None
 
 
-def test_the_fields_are_the_sdk_refusal_envelope(R):
-    """`iagent_mesh.refusal.Refusal` (SDK 0.9.11, 26b1238): this repo pins 0.9.10, so the body is
-    a dict. On the bump, validate it with `Refusal.model_validate` here and delete this restatement."""
-    assert R.FIELDS == ("policy_id", "missing_binding", "grantable_by", "candidates")
+def test_the_body_is_the_sdk_refusal_envelope(R):
+    """Read from the SDK's model, so a field it adds or renames shows up here unrestated."""
+    r = R.refusal("capability_grants:mesh:startReview", "can_invoke(mesh:startReview)")
+    assert tuple(r) == tuple(Refusal.model_fields)
+    assert Refusal.model_validate(r).model_dump(mode="json") == r
 
 
 def test_a_policy_refusal_names_policy_missing_and_the_seeded_grantor(R):
@@ -561,7 +564,7 @@ def test_a_policy_refusal_names_policy_missing_and_the_seeded_grantor(R):
                            missing_binding="can_invoke(mesh:startReview)")
     assert exc.status_code == 403
     r = exc.detail["refusal"]
-    assert tuple(r) == R.FIELDS
+    assert tuple(r) == tuple(Refusal.model_fields)
     assert r["policy_id"] == "capability_grants:mesh:startReview"
     assert r["missing_binding"] == "can_invoke(mesh:startReview)"
     seed = R.grantors()["capability_grants"]

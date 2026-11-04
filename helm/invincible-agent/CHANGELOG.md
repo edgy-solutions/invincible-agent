@@ -2,6 +2,29 @@
 
 ## 0.4.79 — not yet cut
 
+Entries merged after the 0.4.78 cut (`8a2717e0`).
+
+**The fleet moves to iagent-mesh v0.9.13, and the BFF's refusal goes through its `PartialRefusal`
+(architect 10-31, fork 2)**
+
+- **Every engine image re-resolves one package, and the broker takes the new tag.** The lock diff is the
+  SDK's own lines. Don't split the fleet: the pin is one value by construction.
+- **v0.9.13's package calls itself 0.9.12.** A pod reports 0.9.12 from `importlib.metadata`, and that's
+  the tag's defect, not a failed roll. Import `PartialRefusal` in the pod to tell them apart.
+- **Closed network: `meshSdkSource: index` can't serve this pin.** It installs `iagent-mesh==0.9.13`, which
+  isn't on PyPI and can't be built from this tag. The default `url` source isn't affected. A deployment on
+  `index` waits for the SDK's patch release.
+- **A review-shape row that sets `item_kind` and leaves out `rules` is now invalid.** It's logged and left out
+  of `GET /review-shapes`, and `validate_policy` refuses it. Say `rules: []`. Every row in this repo already
+  does; check a deployment's own overlay before the roll.
+- **`docs/api/cortex-bff.openapi.json` moved.** `ReviewShapeRow`'s `item_kind`, `rules_version` and `rules` are
+  now optional and nullable, for card-only rows. No such row is seeded, so what's served
+  doesn't change, but cortex's generated types will when it next moves its producer pin.
+- **A well-formed refusal is unchanged.** What changes is the malformed case. An engine's refusal that can't
+  be completed, or a grantor map that won't load, relays the deny without its `refusal` object and logs an
+  error; it was a 500 or an odd envelope. A blank or non-string candidate at a BFF site is omitted and
+  logged.
+
 **The case-runner routes bound the person they name.** `POST /internal/origin/write`,
 `/internal/cases/{id}/action-record`, `/summary` and `/seeded-by` check the name they are given against what
 can vouch for it: the caller's declared delegate list, the case's seeding delegate, or a person who holds a

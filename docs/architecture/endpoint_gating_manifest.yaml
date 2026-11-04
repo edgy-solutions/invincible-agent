@@ -2229,6 +2229,20 @@ services:
           404 so the route does not confirm that a run exists. A service token is refused with
           403. The token is never echoed in the response or in any log line.
       - method: GET
+        path: /me/paused-runs
+        identity: keycloak-jwt
+        gate: "get_current_user + service identities refused (403) + only runs whose stashed subject is the caller"
+        exposes: ui-state
+        consumers: [cortex-ui sign-in card]
+        class: gated
+        justification: >-
+          Added 2026-11-03 with the pause record. Lists the caller's own runs paused as
+          awaiting_reauth, as run_id, paused_call, instruction and reason: the same record the
+          run_awaiting_reauth event carries, for a page that was not attached when the pause
+          happened. Ownership is the reauth door's comparison; a service token is refused with
+          403; an empty list is a normal 200. No token is held in or returned by the record.
+          The vault is in-process memory, so a restart empties the list.
+      - method: GET
         path: /version
         identity: none
         gate: none

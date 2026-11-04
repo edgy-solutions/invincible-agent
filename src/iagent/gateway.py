@@ -59,6 +59,7 @@ from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, oauth2_scheme, User
 from . import identity_exchange
+from iagent_mesh import Refusal as _Refusal
 from iagent_mesh.review_coverage import ReviewShapeRow
 from iagent_mesh.provenance import EvidenceRef  # the SDK model; the one EvidenceRef (ruling 2026-10-31)
 from pydantic import ValidationError as _PydanticValidationError
@@ -1201,7 +1202,7 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
 # authorized them, so the two cannot diverge. Keyed on authz_id end-to-end (email
 # in sandbox, employee-ID at work-deploy) — display uses .email, authz uses authz_id.
 
-from pydantic import BaseModel as _BaseModel  # noqa: E402
+from pydantic import BaseModel as _BaseModel, ConfigDict as _ConfigDict  # noqa: E402
 from pydantic import BeforeValidator as _BeforeValidator, StrictFloat as _StrictFloat  # noqa: E402
 from pydantic import StrictInt as _StrictInt  # noqa: E402
 from pydantic import StrictBool as _StrictBool, StrictStr as _StrictStr  # noqa: E402
@@ -4859,8 +4860,11 @@ class CanvasSeedAskUnavailable(_BaseModel):
     detail: str = Field(description="The builder's exception class name.")
 
 
-class CanvasSeedRefusal(_BaseModel):
+class CanvasSeedRefusal(_Refusal):
     """`authz.refusal.refusal`'s envelope (ca's `iagent_mesh.refusal.Refusal` field names)."""
+    # This published schema has no `additionalProperties: false`, so it keeps the wider config.
+    model_config = _ConfigDict(extra="ignore", frozen=True)
+
     policy_id: str = Field(description="The policy family that refused, e.g. `groups` or `program_members`.")
     missing_binding: str = Field(description="What the caller lacks, e.g. `can_view_program(program)`.")
     grantable_by: str = Field(description="Who can grant it and how, from policy/grantors/.")
@@ -5380,7 +5384,17 @@ class RedeemIdentityBody(BaseModel):
 _refresh_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 
 
-async def _refresh_the_runs_token(run_id: str) -> None:
+_REAUTH_INSTRUCTION = "Sign in again to continue this run."
+
+
+def _paused_call_text(leg: Optional[str]) -> str:
+    """Readable name of the call that paused, from the supervisor's own leg label (never the
+    opaque call_id)."""
+    leg = (leg or "").strip()[:60]
+    return f"The '{leg}' call made on your behalf" if leg else "A call made on your behalf"
+
+
+async def _refresh_the_runs_token(run_id: str, leg: Optional[str] = None) -> None:
     """Ask Keycloak (through ``identity_exchange``, the separate seam; the vault never
     mints) for a fresh token for the person who holds this run's token. On a token, swap it
     in; on anything else the run is paused as ``awaiting_reauth`` and the card says so."""
@@ -5390,7 +5404,8 @@ async def _refresh_the_runs_token(run_id: str) -> None:
         who = identity_exchange.entitlement_of(fresh) if fresh else None
         if fresh and who and VAULT.replace(run_id, fresh, who):
             return
-    VAULT.mark_awaiting_reauth(run_id, "token_near_expiry_and_not_refreshable")
+    VAULT.mark_awaiting_reauth(run_id, "token_near_expiry_and_not_refreshable",
+                               _paused_call_text(leg), _REAUTH_INSTRUCTION)
 
 
 @app.post("/internal/identity/redeem")
@@ -5448,12 +5463,14 @@ async def redeem_caller_identity(
             result = VAULT.redeem(
                 body.run_id, body.call_id, claimed_launcher=body.claimed_launcher)
             if result.outcome == RedemptionOutcome.NEEDS_REFRESH:
-                await _refresh_the_runs_token(body.run_id)
+                await _refresh_the_runs_token(body.run_id, body.leg)
                 result = VAULT.redeem(
                     body.run_id, body.call_id, claimed_launcher=body.claimed_launcher)
                 if result.outcome == RedemptionOutcome.NEEDS_REFRESH:
                     # A swapped-in token that is itself near expiry is not a token.
-                    VAULT.mark_awaiting_reauth(body.run_id, "refreshed_token_still_near_expiry")
+                    VAULT.mark_awaiting_reauth(
+                        body.run_id, "refreshed_token_still_near_expiry",
+                        _paused_call_text(body.leg), _REAUTH_INSTRUCTION)
                     result = VAULT.redeem(
                         body.run_id, body.call_id, claimed_launcher=body.claimed_launcher)
 
@@ -5538,6 +5555,26 @@ async def reauth_run(
     _vault_audit_log.info(
         "identity_vault: reauth run_id=%s caller=%s outcome=live", run_id, who)
     return {"state": "live"}
+
+
+@app.get("/me/paused-runs")
+async def my_paused_runs(current_user: User = Depends(get_current_user)):
+    """The caller's own runs paused as ``awaiting_reauth``, as ``{"paused": [record, ...]}``
+    with ``record = {run_id, paused_call, instruction, reason}``; the same record the
+    ``run_awaiting_reauth`` event carries. Ownership is the door's: the run's stashed subject
+    must equal the caller. A service token is refused 403, as at the door. Nothing paused is
+    a normal 200 with an empty list.
+
+    The vault is in-process memory in this pod: a cortex-bff restart (or another replica)
+    empties this list. There is no storage behind it, by design.
+    """
+    who = (current_user.authz_id or "").strip()
+    if _is_service_caller(who):
+        _vault_audit_log.error(
+            "identity_vault: REFUSED paused-runs listing — caller %r is a service identity", who)
+        raise HTTPException(status_code=403, detail={"error": "service_token_refused",
+                                                      "authz_id": who})
+    return {"paused": VAULT.paused_runs_of(who)}
 
 
 @app.get("/me/canvases")
@@ -7029,7 +7066,7 @@ def _sse(event: str, data: str) -> str:
 #   chat_message    → agent's text answer (unchanged)
 #   ui_payload /
 #     final_payload → schema-driven semantic payloads (unchanged)
-#   run_awaiting_reauth → {run_id, reason}: the run is PAUSED, not failed, because the
+#   run_awaiting_reauth → {run_id, reason, paused_call, instruction}: the run is PAUSED, not failed, because the
 #                     person's token could not be refreshed; emitted once per pause. The card
 #                     offers a sign-in that POSTs /orchestrate/{run_id}/reauth. A NEW event
 #                     name on purpose, not a pipeline_stage status: cortex's `status` is a
@@ -10081,6 +10118,8 @@ async def _generate_dagster_stream_inner(
                 yield _sse("run_awaiting_reauth", json.dumps({
                     "run_id": run_id,
                     "reason": VAULT.reauth_reason(run_id) or "token_needs_reauth",
+                    **{k: v for k, v in (VAULT.pause_record(run_id) or {}).items()
+                       if k in ("paused_call", "instruction")},
                 }))
         else:
             _ticks += 1
@@ -12854,9 +12893,6 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
 
     return case_projection.project_workflow_case(
         case, definitions, task_rows, output_artifact)
-
-
-from pydantic import ConfigDict as _ConfigDict  # noqa: E402
 
 
 class CaseSignalRequest(_BaseModel):
