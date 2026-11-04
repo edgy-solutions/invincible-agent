@@ -13,6 +13,4 @@ updated: 2026-11-04
 
 Architect 11-04, reading 1: `policy/gateway_delegates.yaml` is the central gateway's list. The BFF's `DELEGATE_ON_BEHALF_OF` (R-089) is the second internal door; it stays in the chart's values today and reads the same file at the next cut, where a BFF-only row carries `door: bff`. Scheduled for lane/01, not a retrofit in #224.
 
-`validate_policy` refuses a `door` key today (`_GD_ROW_FIELDS`), so the same change adds it there.
-
-#251 builds the first half: the `door` key in `validate_policy`, and the BFF reading the `door: bff` rows for `human_tasks.register` (the list #251 added). `DELEGATE_ON_BEHALF_OF` itself still comes from the chart. It names, for each delegate, which people it may act for, and a rail row has no field for that, so moving it is a question for the architect.
+#251 (merged 11-04 as `758811d7`) built the first half: the `door` key in `validate_policy`, and the BFF reading the `door: bff` rows for `human_tasks.register` (the list #251 added). `DELEGATE_ON_BEHALF_OF` itself still comes from the chart. It names, for each delegate, which people it may act for, and a rail row has no field for that, so moving it is a question for the architect.

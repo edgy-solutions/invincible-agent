@@ -3,7 +3,7 @@ title: Where the person goes when requested_by comes from the token
 feature: cross-cutting
 lane: invincible-agent/lane/01
 repo: invincible-agent
-status: review
+status: done
 priority: next
 blocked_on: []
 pr: [invincible-agent#251]
@@ -16,3 +16,5 @@ updated: 2026-11-04
 The options are in `sessions/2026-11-04-packet-to-architect-from-lane-01-requested-by-from-the-token-would-erase-the-person-on-real-registers.md`. One is built and kept on `lane/01-register-field-held` (`ebe71b71`), with no PR and no mutation pass.
 
 Ruled 2026-11-04: not `requested_by` from the token. A user token must equal `requested_by`, and a service token may name it only if the delegate list lists it. Built on #251 at `c9f8d978`. Ruled again 11-04: the list of services that may register for any person is the rows of `policy/gateway_delegates.yaml` with `door: bff`, not chart config; #251 rebuilds on that. `git log master..lane/01-register-field-held` shows nothing that #251 doesn't carry or the ruling didn't supersede, so the branch is to be deleted.
+
+#251 merged 11-04 as `758811d7`. Deleting the held branch waits on Chris.
