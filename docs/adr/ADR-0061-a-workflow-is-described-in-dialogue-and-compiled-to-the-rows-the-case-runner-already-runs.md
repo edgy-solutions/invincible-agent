@@ -14,7 +14,8 @@ architect, because v3 doesn't read `approves`, and no run from 41 to 52 drafted 
 meets the bar and the bar is not met (§10). Runs 53 to 55, on the grammar line, draft `approves` for the first time, and
 all three read `no`. Each is `cannot_run` on a question about the impact review's role that the scripted person can't
 answer, though the person said it in the opening (§10). The architect chose the first of the two fixes: a refusal that one
-field clears is now asked on that field. Runs 56 to 58 are next (§10). Nothing is flipped.
+field clears is now asked on that field. Runs 56 to 58, on it, all read `no`. Run 56 is runnable and reads `yes` on route
+and slot, and misses only the program approval's `approves` and `role`, which nothing asks for (§10). Nothing is flipped.
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2529,6 +2530,50 @@ the impact review's approval step. The scripted person answers "It is component_
 role into a copy of the oracle's draft that lacks it clears the refusal and gives back the oracle's draft. This shows
 the question can now be answered. It doesn't show what a model does with the answer, and only runs 56 to 58 can say
 whether any run reads `yes`.
+
+#### 2026-11-04: runs 56 to 58, on the question on the field
+
+Three runs at `122c5265`, each started once no roll was in flight, Dagster listed no active run and worker6 was Ready.
+
+| run | status | route bar | slot bar | approval bar | contradiction | `approves` drafted | `role` drafted | what it reads |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 56 | runnable | **yes** | **yes** | no | caught | 2 of 3 | 2 of 3 | the program approval without `approves` or `role`, and nothing else |
+| 57 | `cannot_run` | no | yes | no | caught | 2 of 3 | 2 of 3 | the record stage has no steps, its route dropped, the impact review without `approves` or `role` |
+| 58 | `cannot_run` | no | no | no | caught | 1 of 3 | 1 of 3 | the acknowledgement drafted as an emit, the record as two emits, a route dropped, the program approval without `approves` or `role` |
+
+**Bar status: not met.** No run reads `yes` on route, slot and approval. Runs 57 and 58 read `no` and should, since
+each drops something the person described. But there is no first half, so the bar is not met. Nothing is flipped.
+
+**The question on the field works.** It was asked four times: run 56 at turn 18 (impact review) and turn 21
+(acknowledgement), run 57 at turn 20 (acknowledgement), and run 58 at turn 13 (impact review). Each time the scripted
+person answered "It is component_engineer.", and each time the role landed. No run asked the whole workflow what it
+should be. Every role these runs drafted, the instrument reads as right. That includes run 57's "program manager", which
+is in the person's spelling.
+
+**What's left is an approval step drafted without `approves`, and nothing asks for that.** In each run, one stage the
+person called an approval has neither field: the program approval in runs 56 and 58, and the impact review in run 57.
+The executor refuses `approves` without `role`. It doesn't refuse a step with neither, so no refusal is raised and the
+loop never asks. The grammar line is the only thing that asks for the field, and it landed on five of the nine. In run
+56, the person said at turn 3: "Program approval goes to the program manager. They can approve it or reject it". The
+loop asked about that stage four more times, on routing, `excludes`, `reason_required` and the next stage. It never
+asked which answers count as approval.
+
+**One way to close it, for the architect to choose.** I haven't built it. For each `human_await` without `approves`,
+the loop could ask a confirm: "Do any of these answers count as an approval? If so, which, and in what role?" The
+scripted person would answer from the expected value, or with "none" for a step that has no approval. Then the role
+question on the field would follow on its own. It changes the loop, so it needs new runs.
+
+**Run 57's `cannot_run` is the scripted person again.** The model wrote the record workflow with no `steps` key. The
+loop asked `steps.record.steps` at turns 7 and 29, and the person said nothing both times. With no model time, on run
+57's draft, the scripted person answers `steps.record` with the bank's description of the stage. It gives nothing for
+`steps.record.steps`, which is the key `problems()` raises for a workflow missing its `steps` field. No run from 41 to
+58 except 57 raised that key. Run 57 reads `no` on approval regardless, because its impact review has no `approves`.
+Whether to fix this in the key the loop raises or in the scripted person is for the architect.
+
+**Run 58's other faults are on the open list.** At turns 18 and 21, the model wrote a step in the path form
+(`steps[0].kind`, `steps[2].kind`), and the path grammar refused it, as in run 52. `outputs.record.ends` was left open
+as stalled: "asked again and the answer changed nothing". Run 57 had one model error and run 58 had four, which I haven't
+traced. Each run deferred the impact review's deadline, as planted.
 
 ## Consequences
 
