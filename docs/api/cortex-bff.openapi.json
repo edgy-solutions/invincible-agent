@@ -4415,6 +4415,10 @@
       },
       "RedeemIdentityBody": {
         "properties": {
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
           "claimed_launcher": {
             "anyOf": [
               {
@@ -4426,18 +4430,25 @@
             ],
             "title": "Claimed Launcher"
           },
+          "leg": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leg"
+          },
           "run_id": {
             "title": "Run Id",
             "type": "string"
-          },
-          "slot": {
-            "default": 0,
-            "title": "Slot",
-            "type": "integer"
           }
         },
         "required": [
-          "run_id"
+          "run_id",
+          "call_id"
         ],
         "title": "RedeemIdentityBody",
         "type": "object"
@@ -8411,7 +8422,7 @@
     },
     "/internal/identity/redeem": {
       "post": {
-        "description": "Hand the supervisor the caller's own token, once, for one run.\n\nReturns 200 with the token on the single legitimate redemption. Every other outcome is\na refusal with a NAMED cause, because \"it didn't work\" is the answer that cost this\nproject a day of diagnosis more than once.",
+        "description": "Hand the supervisor the caller's own token, for ONE outbound call of one run.\n\nReturns 200 with the token on a legitimate redemption. Every other outcome is a refusal\nwith a NAMED cause, because \"it didn't work\" is the answer that cost this project a day\nof diagnosis more than once.",
         "operationId": "redeem_caller_identity_internal_identity_redeem_post",
         "requestBody": {
           "content": {
@@ -8821,6 +8832,49 @@
         "tags": [
           "mcp"
         ]
+      }
+    },
+    "/orchestrate/{run_id}/reauth": {
+      "post": {
+        "description": "The door that resumes a run paused as ``awaiting_reauth``.\n\nThe person presents their OWN fresh token, verified exactly as ``/orchestrate`` verifies\nit (``get_current_user``), and it replaces the one the run holds. No body. The answer is\nthe state and never the token.\n\nNO EXISTENCE ORACLE: an absent run and a run that is another person's answer with the\nsame 404, because ``VAULT.replace`` refuses on both through one comparison. A service\ntoken is refused 403: a service is never granted a person's identity.",
+        "operationId": "reauth_run_orchestrate__run_id__reauth_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Reauth Run"
       }
     },
     "/plan/baseline/op": {

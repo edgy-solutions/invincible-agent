@@ -65,6 +65,9 @@ def _drive(monkeypatch, post):
         "agent_fleet.utils.service_identity.mint_supervisor_token",
         lambda *a, **k: SERVICE_TOKEN, raising=False,
     )
+    # The run has a person, so the dispatch redeems on every verb (architect, 2026-11-02);
+    # this file is about the engine's refusal, so the redemption is a stub.
+    monkeypatch.setattr(ds, "_redeem_caller_token", lambda *a, **k: "CALLER-TOKEN")
     monkeypatch.setattr(ds, "_classify_route", lambda *a, **k: (
         ds._ROUTING_MATCHED,
         {"verb_iri": "mesh:queryKnowledgeGraph", "endpoint": "http://engine-e/q",

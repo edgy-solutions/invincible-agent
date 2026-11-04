@@ -402,7 +402,7 @@ def test_the_excluded_register_route_is_not_a_case_runner_route(monkeypatch):
 def test_the_excluded_redeem_route_is_not_reachable_by_the_case_runner(monkeypatch):
     install_delegates(monkeypatch)
     _login(RUNNER)
-    r = _client().post("/internal/identity/redeem", json={"run_id": "r", "claimed_launcher": PERSON})
+    r = _client().post("/internal/identity/redeem", json={"run_id": "r", "call_id": "c", "claimed_launcher": PERSON})
     assert r.status_code == 403 and r.json()["detail"]["error"] == "not_the_redeemer", r.text[:200]
 
 
