@@ -259,6 +259,7 @@ ER = "agent_fleet/repository_agent/repo_core.py"
 #: No binding could lift these, so they keep their bodies. Value = why.
 NOT_POLICY: dict[str, str] = {
     "src/iagent/gateway.py::reauth_run::service_token_refused": AUTHN,  # a service token has no person to re-authenticate
+    "src/iagent/gateway.py::my_paused_runs::service_token_refused": AUTHN,  # a service token has no person whose paused runs to list
     "src/iagent/auth.py::get_current_user::Authentication failed: {}": AUTHN,
     "src/iagent/auth.py::get_current_user::Invalid token payload: {}": AUTHN,
     "src/iagent/auth.py::get_current_user::Token has expired": AUTHN,

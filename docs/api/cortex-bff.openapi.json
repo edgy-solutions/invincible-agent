@@ -8700,6 +8700,28 @@
         ]
       }
     },
+    "/me/paused-runs": {
+      "get": {
+        "description": "The caller's own runs paused as ``awaiting_reauth``, as ``{\"paused\": [record, ...]}``\nwith ``record = {run_id, paused_call, instruction, reason}``; the same record the\n``run_awaiting_reauth`` event carries. Ownership is the door's: the run's stashed subject\nmust equal the caller. A service token is refused 403, as at the door. Nothing paused is\na normal 200 with an empty list.\n\nThe vault is in-process memory in this pod: a cortex-bff restart (or another replica)\nempties this list. There is no storage behind it, by design.",
+        "operationId": "my_paused_runs_me_paused_runs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "My Paused Runs"
+      }
+    },
     "/mesh/config": {
       "get": {
         "description": "Proxy the dynamic UI configuration from the Ontology Service.",
