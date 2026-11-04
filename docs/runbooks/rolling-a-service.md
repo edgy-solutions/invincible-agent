@@ -237,6 +237,20 @@ cannot `set -o pipefail`, so the litany itself has no pytest seal — it is exer
 it. `tests/test_helm_timeout_guard_reads_the_resolved_value.py` carries the same limitation and
 records it in the same words.
 
+## Gate: a persona-holder without the asset grant is refused at the asset gate
+
+Run it with the lock held, before release. The denied principal HOLDS the persona cell and lacks only the
+per-asset grant (a principal who cannot hold the persona is refused earlier and proves nothing here). The
+case, principals and asset are in `tests/sandbox_e2e/asset_denial_seal.yaml`; mint one token per subject
+into the scratchpad with `scripts/mint_persona_token.py`, open the BFF port-forward, then:
+
+```bash
+.venv/Scripts/python -X utf8 tests/sandbox_e2e/_seal_asset_read_denied_at_the_gate.py     --allowed-token-file <dir>/token-<allowed>.txt --denied-token-file <dir>/token-<denied>.txt     --gateway-log-cmd "kubectl -n <ns> logs deploy/iagent-cortex-bff --since={since}s"
+```
+
+Exit 0 is sealed; 1 is a breach (a ticket was minted, or rows reached the denied subject); **exit 2 is
+inconclusive and is not a pass**. Port-forwards are the sibling seals'.
+
 ## Take the roll lock first, and release it only when the gates pass
 
 Ruled 2026-10-24 (the architect). One lane rolls the sandbox at a time, and a ConfigMap enforces it,
