@@ -66,6 +66,9 @@ steps:
     # value. A body without a `status` is terminal, never an undecided case.
     outcome_from: status
     extra_payload:
+      # The case the steward's task was filed on: the route decides who may be named as the
+      # steward on it (`holds_task_on_case`), so the body carries it.
+      case_id: "{case.case_id}"
       artifact_id: "{outputs.origin_record.resolution.artifact_id}"
       dropped_by: "{outputs.origin_record.resolution.dropped_by}"
       origin: "{outputs.origin_record.resolution.origin}"

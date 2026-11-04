@@ -203,18 +203,9 @@ def test_control_the_declared_pair_is_admitted_at_the_site(monkeypatch, site):
 
 
 _ACTION_RECORD = ("POST", "/internal/cases/{case_id}/action-record")
-_ACTION_RECORD_DEFECT = pytest.mark.xfail(strict=True, reason=(
-    "RULED DEFECT (architect 2026-11-03: action-record and every case-runner route that takes a person's "
-    "name are bound by the delegate list; the xfails stay strict until Lane 1 builds it): "
-    "POST /internal/cases/{case_id}/action-record admits any caller that is the case-runner identity and "
-    "records `req.on_behalf_of` as produced_for.user_id (the artifact OWNER) without asking "
-    "`_delegate_principals()` whether that principal is declared for the case runner (it only checks "
-    "`seeded_by`; the handler comment calls it 'recorded, not an act', which the ruling overrides). "
-    "Owner: Lane 1 (gateway.py). Lane 1's fix PR removes this marker."))
 
 
-@pytest.mark.parametrize("site", [
-    pytest.param(s, marks=_ACTION_RECORD_DEFECT) if s == _ACTION_RECORD else s for s in sorted(DRIVERS)])
+@pytest.mark.parametrize("site", sorted(DRIVERS))
 def test_a_delegate_cannot_name_a_principal_declared_only_for_another_delegate(monkeypatch, site):
     served = _served(monkeypatch)
     drive, _ = DRIVERS[site]

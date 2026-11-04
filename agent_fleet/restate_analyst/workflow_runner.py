@@ -217,6 +217,11 @@ def _write_action_record(case_id: str, record: dict, seeded_by: Optional[str],
         headers={"Authorization": f"Bearer {token}"},
         timeout=_spo.STEP_HTTP_TIMEOUT,
     )
+    if resp.status_code == 503:
+        # The route could not verify who the case may name (authorization_unavailable) or the
+        # write failed: an outage, not a verdict. Raise plainly so Restate retries; the artifact id
+        # is derived, so the retry writes nothing twice.
+        resp.raise_for_status()
     if not 200 <= resp.status_code < 300:
         raise restate.TerminalError(
             f"writing the action record of case {case_id!r} was refused: HTTP {resp.status_code}",

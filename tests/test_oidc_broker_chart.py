@@ -228,7 +228,8 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     old_realm = copy.deepcopy(old_realm)
     _cui(old_realm).update(redirectUris=[], webOrigins=[])
     assert {**old_realm, "users": []} == {**new_realm, "users": []}
-    assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == ['+  USER_ENTITLEMENT_CLAIM: "email"']
+    assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == [
+        '+  USER_ENTITLEMENT_CLAIM: "email"']
     # 0.4.38: the reconcile Job's present-branch for an existing authz-id-svc mapper was rewritten
     # (chart-owned stale mapper migrated, not merely counted). The ONLY lines the base render may
     # lose from the Job are the old create-only check and its comment; nothing else is removed.

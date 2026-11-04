@@ -495,3 +495,27 @@ def _ingest_v1_200s_conform(request, monkeypatch):
 
     monkeypatch.setattr(tc.TestClient, "request", request_and_check)
     yield
+
+
+@pytest.fixture
+def register_rail(monkeypatch, tmp_path):
+    """Point cortex-bff's register-service reader at a rail file in `tmp_path`
+    (`GATEWAY_DELEGATES_FILE`; the list is the `door: bff` rows of policy/gateway_delegates.yaml).
+    Returns `write(content)`: a list of services writes one `door: bff` row each for
+    `human_tasks.register`; a str is written verbatim (malformed cases); None points the env at a
+    file that does not exist. Call it again to change the file."""
+    path = tmp_path / "gateway_delegates.yaml"
+    monkeypatch.setenv("GATEWAY_DELEGATES_FILE", str(path))
+
+    def write(content=None):
+        path.unlink(missing_ok=True)
+        if isinstance(content, str):
+            path.write_text(content, encoding="utf-8")
+        elif content is not None:
+            rows = "".join(f"  - service: {s}\n    door: bff\n    routes: [human_tasks.register]\n"
+                           for s in content)
+            path.write_text("gateway_delegates:\n" + (rows or "  []\n"), encoding="utf-8")
+        return path
+
+    write([])
+    return write
