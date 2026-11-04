@@ -1,6 +1,76 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.77 — not yet cut
+## 0.4.77 — 2026-11-04
+
+Entries merged after the 0.4.76 cut (`ce589473`), up to `ee07dfe8`. **Roll this chart, not 0.4.76.**
+
+**What was wrong with 0.4.76**
+
+- **Its post-upgrade prime would refuse where `primeSubstrate.enabled` is true, as it is on the sandbox.**
+  #212 edited `docs/runbooks/rolling-a-service.md` and left `setup/ontologies/docs_corpus.ttl` stale, so
+  `upload_doc_pages` raises `REFUSED: docs_corpus.ttl has drifted`. The job has `backoffLimit: 0`, and
+  the later hooks would not be created. Measured with the prime's own predicate against the tag, which
+  named that one page; 0.4.76 was never rolled. #230 regenerated the corpus. The tag stays where it is.
+- **Its note said there was no prime step.** The prime hook runs on every upgrade where it is enabled.
+- **17 shipped rows carry a person as grantor** (`policy/repository_paths.yaml`, `policy/task_grants.yaml`),
+  and this chart still carries them, with saf's one row, until gov's #221 lands. The seal
+  `test_a_shipped_grantor_is_the_seed` is red on both params.
+
+**The sandbox reaches this chart from 0.4.75, so the 0.4.76 section's rows and images come with it.**
+
+**Sync: one `topaz_sync` before the roll**, covering `training-admins`, `alignment-reviewers` and the
+`safety_finding_review:SUSTAINMENT` audience. `recipient_reader_sync` is not owed.
+
+**The `mesh_demo_customers` grant moves to the `s3` form** (Chris, 2026-11-03), the form of the live route
+key. **The `s3` object is not in the sandbox directory**: a lookup answers 404, with `p_cage` as the
+positive control at 200, and the `dagster` object still answers 200. So `grant_sync` run on this file
+would refuse the whole file (exit 3, nothing applied) until the catalog sync has added it. No hook runs
+`grant_sync` on the sandbox, so this cannot stop a roll. Whether the catalog holds the `s3` form is not
+measured: the search answered 401, and no token was fetched to get past it. Until it is applied, alice's
+`dagster`-form relation stays in the directory and the demo read stays as it is.
+
+**A bucket for the training workbench.** `minioBucketInit.buckets` gains `training-workbench`. The grant is
+**not in this chart**: the workbench's MinIO user is hand-provisioned and interim (ADR-0060 pending), so a
+hook could not attach to it on a fresh install. `setup/minio/wb-deck-templates.policy.json` holds the
+policy (read, write and delete on `templates/*`, list on that prefix only), and it is applied by hand
+after the bucket exists. Work needs the same bucket, policy and store value.
+
+**Images.** A chart bump restarts every pod. **cortex-ui** is pinned to `26a2049` (`sha256:3077dfa6…`): on
+top of `e06e08a`, a payload that claims the document shape and cannot be read says why; k of n holds the
+first total and names refused panels; a card the answer declared no longer reads NOT declared.
+
+**Policy changes (the grantor a shipped row names)**
+
+- **Every row this rail added says `granted_by: seed`**, as a shipped row must (ruled 2026-10-31).
+  18 rows had reached master naming a person: 12 in `repository_paths.yaml` and 5 in `task_grants.yaml`
+  from #149, and `safety_finding_review:SUSTAINMENT` from #141. 0.4.76 carries them. The field is a
+  record; no answer changes.
+
+**Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
+
+- **New file `policy/configure_subjects.yaml`**, the registry of configure subjects (ruled
+  2026-11-02): `validate_policy` refuses a `can_configure:<S>` key whose S is not in it, so a misspelt
+  key fails the seed before any write. It ships in the cortex-bff image and is not a data file: a
+  deployment's policy repository does not carry it. An overlay's `can_configure:` row names a subject
+  registered here.
+
+**Policy changes (which service may name a person on a central-gateway route)**
+
+- **`policy/gateway_delegates.yaml` and `policy/grantors/gateway_delegates.yaml` are new.** No reader
+  yet: the gateway's `is_delegate` seam still answers no, so this release changes no answer.
+  `validate_policy` checks the rail when present. A row's `service` must be a seeded `svc:` identity
+  and each route a known one. First row: `svc:data-analyst` on `assets.authorize`.
+
+**An authorizer outage (architect ruling, the transport half of 2026-11-02's malformed-answer class)**
+
+- **A Topaz that cannot be reached, or answers a non-2xx, is a 503 at the sites 0.4.76 lists under
+  "A malformed PDP answer"**: 0.4.76 says it is still a deny, and it no longer is. **This changes what
+  callers see during a Topaz blip:** a 503 where it was a 403, and neo4j and weaviate fail the run
+  terminally with a 503 where they gave a partial answer. A deny was terminal too, so terminality does
+  not change. Still a no: a 404 from a directory check, an unset directory URL, an empty identity, and
+  a defect in the asking code. A 404 from a decision (`/api/v2/authz/is`) is a 503. The sandbox's Topaz
+  answers an ungranted or unknown subject 200 `check: false`, read live, so an ordinary "no" does not
+  become a 503. weaviate's retrieval failures stay the tool's own error. No values change.
 
 **Policy changes (a course is reviewed as a document: `review_shape: document`)**
 
@@ -14,6 +84,19 @@
   is unchanged. The `course` row in `policy/review_shapes/` stays.
 - **Dormant until doc-tools #172 is deployed**: no course extraction carries the outline before it,
   so until then every course task files without `sections`.
+
+**Engine changes (engine-fin can read a declared measure's rows from an asset, off by default)**
+
+- **`FIN_DATASET_URN` unset changes no answer.** There is no read, the client isn't imported, and the
+  envelope is today's. Set, a declared measure computes over rows read as the caller, and a failed
+  read never falls back to the seed. Don't set it yet: `docs/plans/fin-inputs-resolver.md` lists what
+  has to be true first, and nothing here has run on a cluster.
+- **The engine-fin image grows by about 242 MB with the flag on or off** (`polars` and
+  `edgy-dag-tools`, +30 packages). They're imported only when the flag is set.
+- **A chat-dispatched denial now reaches request-access.** `_refusal_from_engine_4xx` carries `status`,
+  `denied_assets`, `subject` and `message` when, and only when, the engine says `access_denied`.
+- **`docs/runbooks/adding-an-engine.md` changed, so its row in `setup/ontologies/docs_corpus.ttl` moved
+  with it.** The next prime re-reads that one page.
 
 ## 0.4.76 — 2026-11-03
 

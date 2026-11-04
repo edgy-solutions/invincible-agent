@@ -1631,7 +1631,7 @@ async def file_triage_task(
     except human_tasks.AuthorizationUnavailable as exc:
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unavailable",
-            "message": "the authorizer's answer could not be read",
+            "message": "the authorizer could not be asked, or its answer could not be read",
         }) from exc
     if not allowed:
         raise HTTPException(status_code=403, detail={
@@ -5778,7 +5778,7 @@ async def act_on_human_task(
     except human_tasks.AuthorizationUnavailable as exc:
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unavailable",
-            "message": "the authorizer's answer could not be read",
+            "message": "the authorizer could not be asked, or its answer could not be read",
         }) from exc
     if not allowed:
         raise HTTPException(status_code=403, detail={"error": "not_authorized_to_act", "audience": audience})

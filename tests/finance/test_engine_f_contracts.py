@@ -618,10 +618,24 @@ def test_the_ticketed_read_refuses_without_a_callers_identity():
     """A read that cannot say who it is for must not be performed: the narrowing that makes
     it safe is keyed on exactly that, and an ambient-identity ticket narrows rows for
     whoever the ENGINE is rather than whoever ASKED."""
-    import inspect
-    src = inspect.getsource(engine.mesh_ticketed_read)
-    assert "x-originator-sub" in src and "x-originator-email" in src
-    assert "401" in src
+    # BEHAVIOUR, not source text: called with no caller in scope, it refuses with a 401 and has
+    # not so much as loaded the mesh client. (The identity matrix, through the route, is in
+    # test_fin_inputs_resolver.py.)
+    from fastapi import HTTPException
+    from agent_fleet.finance_agent import asset_inputs
+
+    def never():
+        raise AssertionError("an unidentified read must not load the client")
+
+    real = asset_inputs._load_client
+    asset_inputs._load_client = never
+    try:
+        with pytest.raises(HTTPException) as ei:
+            engine.mesh_ticketed_read("urn:li:dataset:(x,y,z)")
+    finally:
+        asset_inputs._load_client = real
+    assert ei.value.status_code == 401
+    assert ei.value.detail.startswith("a governed finance read requires the caller's id")
 
 
 # ── THE TWO SEALS FOR THE PRODUCER-STATED VERDICTS (2026-09-02) ────────────────────────

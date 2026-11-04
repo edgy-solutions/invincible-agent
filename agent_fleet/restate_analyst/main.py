@@ -1666,9 +1666,9 @@ def _check_can_act(audience: str, caller_authz_id: str) -> bool:
             return False
     try:
         return check_can_act(audience, caller_authz_id)
-    except httpx.DecodingError as exc:  # a malformed answer: the outage class, never a "no"
+    except httpx.HTTPError as exc:  # unreachable, a non-2xx or a malformed answer: the outage class, never a "no"
         raise restate.TerminalError(
-            "the authorizer's answer could not be read", status_code=503) from exc
+            "the authorizer could not be asked, or its answer could not be read", status_code=503) from exc
 
 
 def _audience_key(promise_name: str) -> str:

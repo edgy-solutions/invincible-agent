@@ -124,8 +124,9 @@ def asker_of(caller: Any) -> str:
 def can_invoke(authz_id: str, capability: str) -> bool:
     """Ask the single decider. Mirrors engine-o's `_can_invoke_capability` exactly.
 
-    Fail-CLOSED on empty identity, empty capability, unset directory URL, or any error. A malformed
-    answer is a 503 (the outage class), not a deny."""
+    Fail-CLOSED on empty identity, empty capability, unset directory URL, a 404, or a defect here. A
+    Topaz that cannot be reached, answers another non-2xx or answers malformed is a 503 (the outage
+    class), not a deny."""
     if not authz_id or not capability or not TOPAZ_DIRECTORY_URL:
         return False
     try:
@@ -140,13 +141,15 @@ def can_invoke(authz_id: str, capability: str) -> bool:
             },
             timeout=5.0,
         )
+        if r.status_code == 404:
+            return False
         r.raise_for_status()
         return check_answer(r)
-    except httpx.DecodingError as e:  # a malformed answer: the outage class, never a "no"
-        logger.warning("engine-docs can_invoke answer malformed capability=%s: %s", capability, e)
+    except httpx.HTTPError as e:  # unreachable, a non-2xx or a malformed answer: the outage class, never a "no"
+        logger.warning("engine-docs can_invoke unavailable capability=%s: %r", capability, e)
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unavailable",
-            "message": "the authorizer's answer could not be read",
+            "message": "the authorizer could not be asked, or its answer could not be read",
         }) from e
     except Exception as e:  # noqa: BLE001 -- fail-closed on any error
         logger.warning("engine-docs can_invoke failed capability=%s caller=%s (fail-closed deny): %s",
