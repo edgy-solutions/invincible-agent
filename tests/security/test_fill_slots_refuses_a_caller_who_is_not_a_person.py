@@ -121,6 +121,7 @@ def _fill(monkeypatch, response):
         return response
 
     monkeypatch.setattr(ds.requests, "post", _post)
+    monkeypatch.setattr(ds, "_redeem_caller_token", lambda *a, **k: "CALLER-TOKEN")
     ctx = _Ctx()
     got = ds._fill_slots_from_query(ctx, query="q", verb_iri="mesh:planFundingGap",
                                     declarations="[]", user_email=PERSON)
