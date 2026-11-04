@@ -1,6 +1,43 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.77 — not yet cut
+## 0.4.77 — 2026-11-04
+
+Entries merged after the 0.4.76 cut (`ce589473`), up to `ee07dfe8`. **Roll this chart, not 0.4.76.**
+
+**What was wrong with 0.4.76**
+
+- **Its post-upgrade prime would refuse where `primeSubstrate.enabled` is true, as it is on the sandbox.**
+  #212 edited `docs/runbooks/rolling-a-service.md` and left `setup/ontologies/docs_corpus.ttl` stale, so
+  `upload_doc_pages` raises `REFUSED: docs_corpus.ttl has drifted`. The job has `backoffLimit: 0`, and
+  the later hooks would not be created. Measured with the prime's own predicate against the tag, which
+  named that one page; 0.4.76 was never rolled. #230 regenerated the corpus. The tag stays where it is.
+- **Its note said there was no prime step.** The prime hook runs on every upgrade where it is enabled.
+- **17 shipped rows carry a person as grantor** (`policy/repository_paths.yaml`, `policy/task_grants.yaml`),
+  and this chart still carries them, with saf's one row, until gov's #221 lands. The seal
+  `test_a_shipped_grantor_is_the_seed` is red on both params.
+
+**The sandbox reaches this chart from 0.4.75, so the 0.4.76 section's rows and images come with it.**
+
+**Sync: one `topaz_sync` before the roll**, covering `training-admins`, `alignment-reviewers` and the
+`safety_finding_review:SUSTAINMENT` audience. `recipient_reader_sync` is not owed.
+
+**The `mesh_demo_customers` grant moves to the `s3` form** (Chris, 2026-11-03), the form of the live route
+key. **The `s3` object is not in the sandbox directory**: a lookup answers 404, with `p_cage` as the
+positive control at 200, and the `dagster` object still answers 200. So `grant_sync` run on this file
+would refuse the whole file (exit 3, nothing applied) until the catalog sync has added it. No hook runs
+`grant_sync` on the sandbox, so this cannot stop a roll. Whether the catalog holds the `s3` form is not
+measured: the search answered 401, and no token was fetched to get past it. Until it is applied, alice's
+`dagster`-form relation stays in the directory and the demo read stays as it is.
+
+**A bucket for the training workbench.** `minioBucketInit.buckets` gains `training-workbench`. The grant is
+**not in this chart**: the workbench's MinIO user is hand-provisioned and interim (ADR-0060 pending), so a
+hook could not attach to it on a fresh install. `setup/minio/wb-deck-templates.policy.json` holds the
+policy (read, write and delete on `templates/*`, list on that prefix only), and it is applied by hand
+after the bucket exists. Work needs the same bucket, policy and store value.
+
+**Images.** A chart bump restarts every pod. **cortex-ui** is pinned to `26a2049` (`sha256:3077dfa6…`): on
+top of `e06e08a`, a payload that claims the document shape and cannot be read says why; k of n holds the
+first total and names refused panels; a card the answer declared no longer reads NOT declared.
 
 **Policy changes (a course is reviewed as a document: `review_shape: document`)**
 
