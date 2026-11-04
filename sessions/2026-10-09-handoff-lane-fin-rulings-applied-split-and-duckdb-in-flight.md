@@ -31,6 +31,12 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
   - When `ev_fixture` is materialized, the grant rows are synced and `FIN_DATASET_URN` is set: run #243's live test, then write a live leg for the flow measure.
   - EAC needs a dataset column. Whether that's Chris's asset or a dag-tools fixture change is the architect's call.
 - **Not mine:** cortex's card, `_PROJECTED_ARCHETYPES` and the other archetype registries, and the `components[*].archetype` question, which goes to Lane 1.
+- **Later 2026-11-04, the sink ruling is applied.**
+  - **The ruling:** edges carry `node_kind: item | other`, and `render` carries `other_label`, served from the module's `OTHER_LABEL`. It's on #255 at `0eb7b534`, with 74 new tests; `tests/finance` gives 736 passed, 14 skipped.
+  - **EAC, as ruled:** dag-tools adds `bac` and `eac` to asset #7, and the row declares value = `eac − bac`.
+  - **Two things the EAC row needs, neither built:** `value: {minus: [a, b]}`, and `inputs.dataset.per_path: once`, because a work-package figure repeated on its 12 period rows would be summed 12 times. Both are with the architect in `2026-11-04-packet-to-architect-cc-dag-tools-cortex-from-fin-sink-marker-applied-eac-needs-per-path-once-and-a-minus.md`.
+  - **dag-tools:** asked to wait for that ruling.
+  - **Next:** on the ruling, build both off-cluster on a test frame carrying `bac`/`eac`.
 
 ## Update 2026-11-03: the packet is final, ADR-0052 is draft #245, the live test is #243. Read this first
 
