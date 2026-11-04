@@ -683,10 +683,28 @@ centralGateway:
   # in its hypercorn invocation). Chart default of 8000 caused
   # readiness/liveness probes to hit a closed port — pod stuck 0/1 Running.
   port: 8090
+  image:
+    # PINNED BY DIGEST (0.4.78), the same dag-tools master as the user deployment below: run
+    # `41768309688`, push on `4096a112eb3fbc91afdf7e0784a12973e72f00e7`. Before this the gateway ran
+    # `latest` with pullPolicy Always, so a restart could change its code with no chart change.
+    #
+    #     :sha-4096a11  -> sha256:ac93ba19f96718cdad6dd40dabd8dc51934db4796ccfd767b5da732b19edf498
+    #     :latest       -> the same digest
+    #
+    # POSITIVE CONTROL: `:sha-4096a12` answers 404. The digest is a multi-arch index; both children
+    # answer 200 (arm64 `72cba2271f82`, amd64 `d4ee5d0687a6`).
+    #
+    # TO ROLL BACK, pin what ran before (`sha256:eee15c15...`). Deleting this line falls through to
+    # `latest`, which is now this image.
+    digest: "sha256:ac93ba19f96718cdad6dd40dabd8dc51934db4796ccfd767b5da732b19edf498"
   env:
     # The gateway's verified identity (dag-tools PR #6). The issuer is what a realm token carries,
     # so it is the public realm URL. JWKS is fetched inside the cluster, like every other realm read.
-    # Inert until an image carrying that PR is deployed; the posture defaults to observe.
+    #
+    # THE POSTURE IS WRITTEN OUT, not left to the default, because the parser reads any value it does
+    # not recognise as enforce. The architect's ruling keeps this roll in observe. The internal doors
+    # (dag-tools PR #8) read their own INTERNAL_DOOR_POSTURE, unset here, which also means observe.
+    GATEWAY_IDENTITY_POSTURE: "observe"
     GATEWAY_JWKS_URL: "http://iagent-keycloak:8080/realms/invincible-agent/protocol/openid-connect/certs"
     GATEWAY_JWT_ISSUER: "https://keycloak.edgy-solutions.com/realms/invincible-agent"
 
