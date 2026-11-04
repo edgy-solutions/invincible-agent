@@ -46,6 +46,14 @@ first total and names refused panels; a card the answer declared no longer reads
   from #149, and `safety_finding_review:SUSTAINMENT` from #141. 0.4.76 carries them. The field is a
   record; no answer changes.
 
+**Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
+
+- **New file `policy/configure_subjects.yaml`**, the registry of configure subjects (ruled
+  2026-11-02): `validate_policy` refuses a `can_configure:<S>` key whose S is not in it, so a misspelt
+  key fails the seed before any write. It ships in the cortex-bff image and is not a data file: a
+  deployment's policy repository does not carry it. An overlay's `can_configure:` row names a subject
+  registered here.
+
 **Policy changes (a course is reviewed as a document: `review_shape: document`)**
 
 - **The `course` content kind now declares `review_shape: document`** (it declared `course`, a shape
