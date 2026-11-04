@@ -5689,10 +5689,9 @@ def _admit_on_behalf_of(current_user, on_behalf_of: Optional[str]) -> tuple[str,
 # One line per admit and per refusal at the case-runner routes that name a person: route, caller,
 # the name, the basis or the refusal. Never a token. Dedicated so it slices out of a log search,
 # and it must ARRIVE: the BFF's root handler sits at WARNING (see identity_vault).
-from iagent.identity_vault import _ensure_the_audit_line_actually_ARRIVES as _arrives  # noqa: E402
 
 _delegate_named_audit_log = logging.getLogger("iagent.audit.delegate_named")
-_arrives(_delegate_named_audit_log)
+_ensure_the_audit_line_actually_ARRIVES(_delegate_named_audit_log)
 
 
 def _audit_delegate_named(route: str, caller: str, named: object, outcome: str) -> None:

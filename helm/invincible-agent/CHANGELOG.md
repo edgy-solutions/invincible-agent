@@ -24,7 +24,7 @@ notes all reach the sandbox with this chart, as 0.4.76's do.
 
 **⚠ This chart carries the identity vault (#229), and by the architect's ruling of 2026-11-03 it does not
 roll until cortex's paused-run card ships or the Keycloak exchange is configured.** Neither is true at this
-cut. No values file sets `IDENTITY_EXCHANGE_*`, and the card (`docs/specs/run-reauth-card.md` in cortex-ui)
+cut. No values file sets `IDENTITY_EXCHANGE_*`, and the card (spec: `run-reauth-card.md` in cortex-ui)
 is not in the cortex pin below. Without one of them, a run whose token nears expiry pauses with nothing to
 show the person, and it holds one of the two run slots until its budget ends.
 
