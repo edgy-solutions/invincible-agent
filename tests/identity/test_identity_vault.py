@@ -5,9 +5,9 @@ names a specific failure, and each gets the test that proves that failure is pre
 A pin without its test is a preference; a pin with one is an invariant.
 
   1. locked to the supervisor's service identity   -> a non-supervisor caller is refused
-  2. single-use, enforced atomically               -> replay is LOUD; concurrent redeem
+  2. single-use PER CALL, enforced atomically      -> replay is LOUD; concurrent redeem
                                                       yields exactly one winner
-  3. TTL bounded to the dispatch window            -> an expired reference is refused
+  3. RULED 2026-11-03: no 600 s bound; lives as long as the run -> a 3000 s-old run redeems
   4. launcher-match refusal                        -> a mismatch refuses AND consumes
   5. memory, not storage                           -> no durable-store import (AST, not
                                                       substring — the module's own prose
@@ -64,127 +64,145 @@ class _FakeClock:
     def advance(self, seconds: float) -> None:
         self.t += seconds
 
-
 # ══════════════════════════════════════════════════════════════════════════════════
 # The happy path — what the whole design exists to deliver
 # ══════════════════════════════════════════════════════════════════════════════════
 
+def _jwt(exp: float, email: str = ALICE) -> str:
+    import base64
+    import json
+
+    def b(o):
+        return base64.urlsafe_b64encode(json.dumps(o).encode()).rstrip(b"=").decode()
+    return f"{b({'alg': 'none'})}.{b({'email': email, 'exp': exp})}.sig"
+
+
 def test_the_reference_redeems_to_the_original_token_unchanged():
-    """THE POINT OF THE WHOLE DESIGN: what comes back is ALICE'S OWN token, byte for byte.
-
-    Not a delegated one, not an exchanged one, not one this process minted. If this ever
-    returns something other than the exact input, the vault has started minting and has
-    become the forgeable-actor shape the plan item prohibits.
-    """
     v = IdentityVault(clock=_FakeClock())
     v.stash("run-1", TOKEN, subject=ALICE)
-
-    r = v.redeem("run-1")
-
-    assert r.ok
-    assert r.token == TOKEN
-    assert r.subject == ALICE
+    r = v.redeem("run-1", "c1")
+    assert r.ok and r.token == TOKEN and r.subject == ALICE
 
 
-# ══════════════════════════════════════════════════════════════════════════════════
-# INVARIANT 2 — single-use, enforced atomically
-# ══════════════════════════════════════════════════════════════════════════════════
-
-def test_a_replay_is_refused_AS_A_REPLAY_and_not_as_a_miss():
-    """Two redemptions of one reference is the tell of a compromised supervisor identity.
-
-    The stronger half of this claim is that a replay must be DISTINGUISHABLE from a late
-    retry. Collapsing ``already_redeemed`` into ``not_found`` would make the single most
-    important signal this endpoint can emit look exactly like the most boring one.
-    """
+def test_a_redemption_does_not_delete_the_entry_so_the_next_call_redeems_again():
     v = IdentityVault(clock=_FakeClock())
     v.stash("run-1", TOKEN, subject=ALICE)
-
-    first = v.redeem("run-1")
-    second = v.redeem("run-1")
-
-    assert first.ok
-    assert second.outcome == RedemptionOutcome.ALREADY_REDEEMED
-    assert second.outcome != RedemptionOutcome.NOT_FOUND, (
-        "a replay that reads as a miss destroys the compromise signal"
-    )
-    assert second.token is None, "a replayed reference must never be re-issued"
+    assert v.redeem("run-1", "plan/1").token == TOKEN
+    assert v.redeem("run-1", "resolve/2").token == TOKEN
+    assert v.redeem("run-1", "dispatch/3").token == TOKEN
 
 
-def test_concurrent_redemption_yields_EXACTLY_ONE_winner():
-    """THE RACE THE PIN NAMES. Read-then-delete satisfies single-use most of the time.
+# ══════════════════════════════════════════════════════════════════════════════════
+# INVARIANT 2 — single-use PER CALL, atomically; the replay is loud and is not a miss
+# ══════════════════════════════════════════════════════════════════════════════════
 
-    'Most of the time' is precisely the plausible version the plan item warns the
-    implementer away from, and it is invisible in a sequential test — which is why this one
-    is threaded. Many threads redeem the same reference simultaneously; exactly one may
-    receive a token and every other must be refused.
-    """
+def test_a_replayed_call_is_refused_AS_A_REPLAY_and_not_as_a_miss(caplog):
     v = IdentityVault(clock=_FakeClock())
-    v.stash("run-hot", TOKEN, subject=ALICE)
+    v.stash("run-1", TOKEN, subject=ALICE)
+    assert v.redeem("run-1", "c1").ok
+    with caplog.at_level(logging.INFO, logger="src.iagent.identity_vault"):
+        again = v.redeem("run-1", "c1")
+        missing = v.redeem("run-never", "c1")
+    assert again.outcome == RedemptionOutcome.ALREADY_REDEEMED
+    assert missing.outcome == RedemptionOutcome.NOT_FOUND
+    assert again.token is None
+    assert any(r.levelno >= logging.ERROR and "REPLAY" in r.getMessage() for r in caplog.records)
 
-    n = 32
-    barrier = threading.Barrier(n)
-    results = []
-    lock = threading.Lock()
 
-    def worker():
-        barrier.wait()  # maximise the overlap; a staggered start would not race at all
-        r = v.redeem("run-hot")
-        with lock:
-            results.append(r)
+def test_a_call_id_is_required():
+    v = IdentityVault(clock=_FakeClock())
+    v.stash("run-1", TOKEN, subject=ALICE)
+    with pytest.raises(ValueError):
+        v.redeem("run-1", "")
+    assert v.redeem("run-1", "c1").ok, "the refused attempt changed nothing"
 
-    threads = [threading.Thread(target=worker) for _ in range(n)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
 
-    winners = [r for r in results if r.ok]
-    assert len(results) == n
-    assert len(winners) == 1, (
-        f"{len(winners)} threads received the credential — redeem-and-delete is not atomic"
-    )
-    assert all(r.token is None for r in results if not r.ok)
+def test_concurrent_redemption_of_ONE_call_id_yields_EXACTLY_ONE_winner():
+    """The race the lock exists for: N threads, one call id, one token handed out."""
+    v = IdentityVault(clock=_FakeClock())
+    v.stash("run-1", TOKEN, subject=ALICE)
+    results, gate = [], threading.Barrier(16)
+
+    def go():
+        gate.wait()
+        results.append(v.redeem("run-1", "same-call").outcome)
+
+    threads = [threading.Thread(target=go) for _ in range(16)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert results.count(RedemptionOutcome.OK) == 1
+    assert results.count(RedemptionOutcome.ALREADY_REDEEMED) == 15
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
-# INVARIANT 3 — TTL bounded to the dispatch window
+# INVARIANT 3, RULED 2026-11-03 — NO 600 s BOUND: the reference lives as long as the run
 # ══════════════════════════════════════════════════════════════════════════════════
 
-def test_a_reference_expires_and_expiry_is_the_safe_default():
-    """An unredeemed reference expiring is the SAFE default; a reference valid for hours is
-    a stored credential with extra steps."""
+def test_the_default_life_is_not_600_seconds(monkeypatch):
+    from src.iagent.identity_vault import vault_ttl_seconds
+    monkeypatch.delenv("IDENTITY_VAULT_TTL_SECONDS", raising=False)
+    assert vault_ttl_seconds() != 600 and vault_ttl_seconds() > 600
+
+
+def test_a_reference_older_than_600s_still_redeems():
     clock = _FakeClock()
-    v = IdentityVault(ttl_seconds=600, clock=clock)
-    v.stash("run-slow", TOKEN, subject=ALICE)
-
-    clock.advance(599)
-    assert v.redeem("run-slow").ok, "inside the window the reference must still work"
-
-    v.stash("run-slower", TOKEN, subject=ALICE)
-    clock.advance(601)
-    late = v.redeem("run-slower")
-
-    assert not late.ok
-    assert late.token is None
-    assert late.outcome in (RedemptionOutcome.EXPIRED, RedemptionOutcome.NOT_FOUND)
+    v = IdentityVault(clock=clock, wall_clock=lambda: 0.0)
+    v.stash("run-1", TOKEN, subject=ALICE)
+    clock.advance(3000)
+    assert v.redeem("run-1", "c1").ok
 
 
-def test_an_expired_reference_leaves_no_credential_behind():
-    """Eviction must actually drop the token, not merely refuse to hand it out. A vault that
-    refuses politely while retaining the credential is still a credential store."""
+def test_the_reference_ends_with_the_run_budget_and_leaves_no_credential():
     clock = _FakeClock()
-    v = IdentityVault(ttl_seconds=60, clock=clock)
-    v.stash("run-x", TOKEN, subject=ALICE)
+    v = IdentityVault(ttl_seconds=3600, clock=clock)
+    v.stash("run-1", TOKEN, subject=ALICE)
+    clock.advance(3601)
+    r = v.redeem("run-1", "c1")
+    assert r.outcome == RedemptionOutcome.NOT_FOUND and r.token is None
+    assert v.stats()[0] == 0, "an expired entry is evicted, not merely refused"
 
-    clock.advance(120)
-    v.redeem("run-x")  # drives eviction
 
-    live, _tombstones = v.stats()
-    assert live == 0
-    assert not any(
-        getattr(e, "token", None) for e in getattr(v, "_entries", {}).values()
-    ), "an expired entry still holds a credential in memory"
+def test_close_ends_the_reference():
+    v = IdentityVault(clock=_FakeClock())
+    v.stash("run-1", TOKEN, subject=ALICE)
+    v.close("run-1")
+    assert v.redeem("run-1", "c1").outcome == RedemptionOutcome.NOT_FOUND
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# Near expiry: the vault never mints. It says what it needs.
+# ══════════════════════════════════════════════════════════════════════════════════
+
+def test_a_token_near_its_exp_is_never_returned_it_needs_a_refresh():
+    v = IdentityVault(clock=_FakeClock(), wall_clock=lambda: 1000.0, refresh_margin_seconds=60)
+    near = _jwt(exp=1030.0)
+    v.stash("run-1", near, subject=ALICE)
+    r = v.redeem("run-1", "c1")
+    assert r.outcome == RedemptionOutcome.NEEDS_REFRESH and r.token is None
+    assert v.token_for_refresh("run-1") == near
+
+
+def test_replace_swaps_the_token_only_for_the_same_subject():
+    v = IdentityVault(clock=_FakeClock(), wall_clock=lambda: 1000.0, refresh_margin_seconds=60)
+    v.stash("run-1", _jwt(exp=1030.0), subject=ALICE)
+    fresh = _jwt(exp=9000.0)
+    assert v.replace("run-1", fresh, "mallory@example.com") is False
+    assert v.redeem("run-1", "c1").outcome == RedemptionOutcome.NEEDS_REFRESH
+    assert v.replace("run-1", fresh, ALICE) is True
+    assert v.redeem("run-1", "c2").token == fresh
+    assert v.replace("run-absent", fresh, ALICE) is False
+
+
+def test_awaiting_reauth_returns_no_token_until_replace_resumes_the_run():
+    v = IdentityVault(clock=_FakeClock(), wall_clock=lambda: 1000.0)
+    v.stash("run-1", TOKEN, subject=ALICE)
+    assert v.mark_awaiting_reauth("run-1", "token_near_expiry_and_not_refreshable")
+    assert v.state("run-1") == "awaiting_reauth"
+    assert v.reauth_reason("run-1")
+    assert v.redeem("run-1", "c1").outcome == RedemptionOutcome.AWAITING_REAUTH
+    assert v.replace("run-1", TOKEN + "2", ALICE)
+    assert v.state("run-1") == "live"
+    assert v.redeem("run-1", "c2").ok
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -192,37 +210,24 @@ def test_an_expired_reference_leaves_no_credential_behind():
 # ══════════════════════════════════════════════════════════════════════════════════
 
 def test_a_launcher_mismatch_refuses():
-    """A reference redeemed for a run alice did not launch is the mismatch that refuses."""
     v = IdentityVault(clock=_FakeClock())
     v.stash("run-1", TOKEN, subject=ALICE)
-
-    r = v.redeem("run-1", claimed_launcher="mallory@example.com")
-
-    assert r.outcome == RedemptionOutcome.LAUNCHER_MISMATCH
-    assert r.token is None
+    r = v.redeem("run-1", "c1", claimed_launcher="mallory@example.com")
+    assert r.outcome == RedemptionOutcome.LAUNCHER_MISMATCH and r.token is None
 
 
-def test_a_mismatch_CONSUMES_the_reference_so_it_cannot_be_retried():
-    """A mismatch is an anomaly, so the reference dies with it.
-
-    Leaving it redeemable would let a caller with the run id retry under different claimed
-    launchers until one matched — turning invariant 4 into an oracle instead of a gate.
-    """
+def test_a_mismatch_CONSUMES_the_whole_reference_so_it_cannot_be_retried():
     v = IdentityVault(clock=_FakeClock())
     v.stash("run-1", TOKEN, subject=ALICE)
-
-    v.redeem("run-1", claimed_launcher="mallory@example.com")
-    retry = v.redeem("run-1", claimed_launcher=ALICE)
-
-    assert not retry.ok, "a mismatched reference must not remain guessable"
-    assert retry.outcome == RedemptionOutcome.ALREADY_REDEEMED
+    v.redeem("run-1", "c1", claimed_launcher="mallory@example.com")
+    again = v.redeem("run-1", "c2", claimed_launcher=ALICE)
+    assert not again.ok and again.outcome == RedemptionOutcome.ALREADY_REDEEMED
 
 
 def test_the_matching_launcher_still_redeems():
-    """The gate must not be a wall: the legitimate cross-check has to pass."""
     v = IdentityVault(clock=_FakeClock())
     v.stash("run-1", TOKEN, subject=ALICE)
-    assert v.redeem("run-1", claimed_launcher=ALICE).ok
+    assert v.redeem("run-1", "c1", claimed_launcher=ALICE).ok
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -304,9 +309,9 @@ def test_every_outcome_writes_an_audit_line(caplog):
 
     with caplog.at_level(logging.INFO, logger="src.iagent.identity_vault"):
         v.stash("run-1", TOKEN, subject=ALICE)
-        v.redeem("run-1")
-        v.redeem("run-1")          # replay
-        v.redeem("run-unknown")    # miss
+        v.redeem("run-1", "c1")
+        v.redeem("run-1", "c1")    # replay
+        v.redeem("run-unknown", "c1")    # miss
 
     text = caplog.text
     assert "run-1" in text
@@ -321,8 +326,8 @@ def test_no_audit_line_contains_the_credential(caplog):
 
     with caplog.at_level(logging.DEBUG, logger="src.iagent.identity_vault"):
         v.stash("run-1", TOKEN, subject=ALICE)
-        v.redeem("run-1")
-        v.redeem("run-1")
+        v.redeem("run-1", "c1")
+        v.redeem("run-1", "c1")
 
     assert TOKEN not in caplog.text
     # Not even a prefix: a truncated JWT still leaks the header and often the payload.
@@ -364,7 +369,7 @@ def test_the_audit_line_survives_a_root_logger_at_WARNING():
 
         v = IdentityVault(clock=_FakeClock())
         v.stash("run-arrives", TOKEN, subject=ALICE)
-        v.redeem("run-arrives")
+        v.redeem("run-arrives", "c1")
         handler.flush()
 
         out = sink.getvalue()
@@ -377,3 +382,33 @@ def test_the_audit_line_survives_a_root_logger_at_WARNING():
         root.handlers = old_handlers
         root.setLevel(old_level)
         vault_logger.setLevel(_logging.INFO)
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# The vault never mints and makes no network call (ruling 2026-11-03)
+# ══════════════════════════════════════════════════════════════════════════════════
+
+_HTTP_CLIENTS = ("httpx", "requests", "aiohttp", "urllib", "urllib3", "http", "socket",
+                 "grpc", "websockets")
+
+
+def test_the_vault_imports_no_http_client_or_socket():
+    source = (_ROOT / "src" / "iagent" / "identity_vault.py").read_text(encoding="utf-8")
+    assert _imports(source, _HTTP_CLIENTS) == [], (
+        "the vault must make no network call: Keycloak is reached from identity_exchange"
+    )
+
+
+def test_the_http_client_guard_is_PROVEN_RED():
+    assert _imports("import httpx\n", _HTTP_CLIENTS) == ["httpx"]
+    assert _imports("from urllib.request import urlopen\n", _HTTP_CLIENTS) == ["urllib"]
+    assert _imports('"""no httpx here"""\nimport time\n', _HTTP_CLIENTS) == []
+
+
+def _imports(source, roots):
+    out = []
+    for node in ast.walk(ast.parse(source)):
+        names = ([a.name for a in node.names] if isinstance(node, ast.Import)
+                 else [node.module or ""] if isinstance(node, ast.ImportFrom) else [])
+        out += [n.split(".")[0] for n in names if n.split(".")[0].lower() in roots]
+    return out

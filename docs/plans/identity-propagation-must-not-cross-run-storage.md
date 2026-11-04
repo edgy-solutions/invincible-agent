@@ -294,6 +294,23 @@ not inferred from the token, not read from the run. Run as written it would have
 and its own stated diagnosis would have been false. The discriminator that exists today is
 the redemption audit line and the parent Dagster run, and those are what the chain asserts.
 
+## 2026-11-03 ruling: one reference per run, redeemed per call, no 600 s bound
+
+**What changed.** The vault holds one reference per run and it is redeemed once per outbound call
+(`call_id`), not once per fan-out slot. The 600 s bound is removed: the reference lives as long as
+the run's budget (`dagster.runMonitoring.maxRuntimeSeconds`, rendered as `IDENTITY_VAULT_TTL_SECONDS`).
+Near the token's expiry the gateway exchanges it at Keycloak (standard RFC 8693, the person's own
+access token as `subject_token`, from a seam separate from the vault); on failure the step pauses as
+`awaiting_reauth`, the stream emits `run_awaiting_reauth`, and `POST /orchestrate/{run_id}/reauth`
+resumes it. Every supervisor leg that speaks for the person redeems.
+
+**What stands.** Memory, not storage: nothing is persisted or serialized. The vault never mints and
+makes no network call. Legacy exchange and impersonation stay ruled out (no `requested_subject`, no
+exchange without a `subject_token`). Only the person's access token goes in. The redeemer is
+`svc:supervisor` alone, the launcher cross-check stays and a mismatch consumes the reference. One
+audit line per redemption, refusals included, and never a token in a log. A `pipeline:<name>`
+principal for runs with no person is not part of this change.
+
 ## Cross-references
 
 * `sdk-discards-caller-identity` — this is its first live casualty and constrains its

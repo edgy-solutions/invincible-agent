@@ -36,6 +36,7 @@ import os
 import re
 import time
 import uuid
+import weakref
 from contextlib import asynccontextmanager
 from datetime import date as _date, datetime, timezone
 from typing import AsyncGenerator, Any, Literal, Optional
@@ -56,7 +57,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_db, init_db
 from .models import BpmnCatalog
-from .auth import get_current_user, User
+from .auth import get_current_user, oauth2_scheme, User
+from . import identity_exchange
 from iagent_mesh.review_coverage import ReviewShapeRow
 from iagent_mesh.provenance import EvidenceRef  # the SDK model; the one EvidenceRef (ruling 2026-10-31)
 from pydantic import ValidationError as _PydanticValidationError
@@ -74,7 +76,6 @@ from .identity_vault import (
     _ensure_the_audit_line_actually_ARRIVES,
     VAULT,
     RedemptionOutcome,
-    vault_slots,
     vault_ttl_seconds,
     logger as _vault_audit_log,   # the ONE logger whose level the vault owns
 )
@@ -2922,7 +2923,8 @@ def _picker_unavailable(exc: HTTPException, owner: str) -> HTTPException:
     `can_export` check) passes through as it was."""
     detail = exc.detail
     if isinstance(detail, dict) and detail.get("reason") == "recipient_readers_unavailable":
-        return HTTPException(status_code=exc.status_code, detail={**detail, "owner": owner})
+        return HTTPException(status_code=exc.status_code,
+                             detail=_detail_with_message(exc.status_code, {**detail, "owner": owner}))
     return exc
 
 
@@ -3622,7 +3624,8 @@ async def _call_engine_cost_answers_export(payload: dict, bearer: str) -> dict:
             detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
         except Exception:
             detail = getattr(rr, "text", "engine refused")
-        raise HTTPException(status_code=rr.status_code, detail=detail)
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, detail))
     return rr.json()
 
 
@@ -5346,15 +5349,38 @@ _VAULT_REDEEMER_AUTHZ_ID = os.getenv("IDENTITY_VAULT_REDEEMER", "svc:supervisor"
 
 class RedeemIdentityBody(BaseModel):
     run_id: str
+    # THE CALL THIS REDEMPTION IS FOR (ruling 2026-11-03). One reference per run, redeemable
+    # per outbound call: the supervisor mints one `call_id` for each call it makes on a
+    # person's behalf, and a `call_id` seen twice is the replay tell. Required, so an older
+    # supervisor that sends none is refused 422 rather than silently redeemed unaccounted:
+    # `cortex-bff` and the code location roll together.
+    call_id: str
     # INVARIANT 4's input: the launcher the redeeming run has recorded in its OWN config.
     # Checked against the subject of the token that was stashed. Optional so an older
     # supervisor image degrades to "no cross-check" rather than to a hard failure — but a
     # supervisor that sends it gets the stronger guarantee.
     claimed_launcher: Optional[str] = None
-    # Which fan-out slot of the run this subtask redeems (its Dagster mapping key,
-    # `task_<n>`). One single-use reference per slot, so two caller-identity subtasks in one
-    # plan do not read as a replay. Bounded to [0, IDENTITY_VAULT_SLOTS) below.
-    slot: int = 0
+    # Which outbound call this is (e.g. `resolve`, `dispatch`), for the audit line only.
+    leg: Optional[str] = None
+
+
+# One lock per run, held only while a refresh is in flight, so two concurrent subtasks that
+# both meet a near-expiry token produce ONE exchange: the second waits, then finds a fresh
+# token. Weak, so a finished run leaves nothing behind.
+_refresh_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
+
+
+async def _refresh_the_runs_token(run_id: str) -> None:
+    """Ask Keycloak (through ``identity_exchange``, the separate seam; the vault never
+    mints) for a fresh token for the person who holds this run's token. On a token, swap it
+    in; on anything else the run is paused as ``awaiting_reauth`` and the card says so."""
+    held = VAULT.token_for_refresh(run_id)
+    if held:
+        fresh = await identity_exchange.exchange(held)
+        who = identity_exchange.entitlement_of(fresh) if fresh else None
+        if fresh and who and VAULT.replace(run_id, fresh, who):
+            return
+    VAULT.mark_awaiting_reauth(run_id, "token_near_expiry_and_not_refreshable")
 
 
 @app.post("/internal/identity/redeem")
@@ -5362,11 +5388,11 @@ async def redeem_caller_identity(
     body: RedeemIdentityBody,
     current_user: User = Depends(get_current_user),
 ):
-    """Hand the supervisor the caller's own token, once, for one run.
+    """Hand the supervisor the caller's own token, for ONE outbound call of one run.
 
-    Returns 200 with the token on the single legitimate redemption. Every other outcome is
-    a refusal with a NAMED cause, because "it didn't work" is the answer that cost this
-    project a day of diagnosis more than once.
+    Returns 200 with the token on a legitimate redemption. Every other outcome is a refusal
+    with a NAMED cause, because "it didn't work" is the answer that cost this project a day
+    of diagnosis more than once.
     """
     caller = (current_user.authz_id or "").strip()
 
@@ -5376,10 +5402,11 @@ async def redeem_caller_identity(
         # worse than the exchange it replaced; a refused redemption is the MOST interesting
         # line this endpoint can write, so it is logged at error.
         _vault_audit_log.error(
-            "identity_vault: REFUSED redemption for run_id=%s — caller %r is not the "
-            "supervisor identity (%r). A second service redeeming a reference is the vault "
-            "leaking sideways.",
-            body.run_id, caller or "<none>", _VAULT_REDEEMER_AUTHZ_ID,
+            "identity_vault: REFUSED redemption for run_id=%s call_id=%s leg=%s — caller %r "
+            "is not the supervisor identity (%r). A second service redeeming a reference is "
+            "the vault leaking sideways.",
+            body.run_id, body.call_id, body.leg or "-", caller or "<none>",
+            _VAULT_REDEEMER_AUTHZ_ID,
         )
         raise HTTPException(
             status_code=403,
@@ -5392,38 +5419,52 @@ async def redeem_caller_identity(
             },
         )
 
-    _slots = vault_slots()
-    if body.slot < 0 or body.slot >= _slots:
+    if not body.call_id.strip():
         _vault_audit_log.error(
-            "identity_vault: REFUSED redemption for run_id=%s slot=%s — outside [0, %s)",
-            body.run_id, body.slot, _slots,
+            "identity_vault: REFUSED redemption for run_id=%s leg=%s — no call_id",
+            body.run_id, body.leg or "-",
         )
         raise HTTPException(
             status_code=422,
-            detail={
-                "error": "slot_out_of_range",
-                "run_id": body.run_id,
-                "message": f"slot must be in [0, {_slots}).",
-            },
+            detail={"error": "call_id_required", "run_id": body.run_id,
+                    "message": "A redemption names the call it is for."},
         )
 
-    # INVARIANTS 2, 3, 4 are all enforced inside this one call, atomically.
-    result = VAULT.redeem(body.run_id, claimed_launcher=body.claimed_launcher, slot=body.slot)
+    # INVARIANTS 2 and 4 are enforced inside this one call, atomically.
+    result = VAULT.redeem(body.run_id, body.call_id, claimed_launcher=body.claimed_launcher)
 
-    # INVARIANT 6 — one line per redemption: run_id, subject, timestamp, outcome. The
+    if result.outcome == RedemptionOutcome.NEEDS_REFRESH:
+        async with _refresh_locks.setdefault(body.run_id, asyncio.Lock()):
+            result = VAULT.redeem(
+                body.run_id, body.call_id, claimed_launcher=body.claimed_launcher)
+            if result.outcome == RedemptionOutcome.NEEDS_REFRESH:
+                await _refresh_the_runs_token(body.run_id)
+                result = VAULT.redeem(
+                    body.run_id, body.call_id, claimed_launcher=body.claimed_launcher)
+                if result.outcome == RedemptionOutcome.NEEDS_REFRESH:
+                    # A swapped-in token that is itself near expiry is not a token.
+                    VAULT.mark_awaiting_reauth(body.run_id, "refreshed_token_still_near_expiry")
+                    result = VAULT.redeem(
+                        body.run_id, body.call_id, claimed_launcher=body.claimed_launcher)
+
+    # INVARIANT 6 — one line per redemption: run_id, call, leg, subject, outcome. The
     # timestamp is the log record's own. The vault's whole legitimacy is that the token's
-    # journey is VISIBLE.
+    # journey is VISIBLE. Never the token.
     _vault_audit_log.info(
-        "identity_vault: redemption run_id=%s slot=%s caller=%s subject=%s outcome=%s",
-        body.run_id, body.slot, caller, result.subject or "-", result.outcome,
+        "identity_vault: redemption run_id=%s call_id=%s leg=%s caller=%s subject=%s outcome=%s",
+        body.run_id, body.call_id, body.leg or "-", caller, result.subject or "-",
+        result.outcome,
     )
 
     if result.ok:
         return {"token": result.token, "subject": result.subject}
 
     # A replay is not a 404. Distinguishing them is the point of the tombstone, and
-    # collapsing them here would throw away the discrimination the vault just made.
-    _status = 409 if result.outcome == RedemptionOutcome.ALREADY_REDEEMED else 404
+    # collapsing them here would throw away the discrimination the vault just made. A run
+    # paused for its person is a 409 too: the state is real, the run is not failed.
+    _status = 409 if result.outcome in (
+        RedemptionOutcome.ALREADY_REDEEMED, RedemptionOutcome.AWAITING_REAUTH,
+    ) else 404
     raise HTTPException(
         status_code=_status,
         detail={
@@ -5431,28 +5472,62 @@ async def redeem_caller_identity(
             "run_id": body.run_id,
             "message": {
                 RedemptionOutcome.ALREADY_REDEEMED: (
-                    "This reference was already redeemed. It is single-use by design; a "
-                    "second redemption is the compromise tell and is never re-issued."
+                    "This call was already redeemed. A call is single-use by design; a "
+                    "second redemption of one call is the compromise tell and is never "
+                    "re-issued."
+                ),
+                RedemptionOutcome.AWAITING_REAUTH: (
+                    "The run is paused, not failed: the person's token needs them to sign "
+                    "in again (POST /orchestrate/{run_id}/reauth). Ask again after they do."
                 ),
                 RedemptionOutcome.LAUNCHER_MISMATCH: (
                     "The run's recorded launcher does not match the stashed token's "
                     "subject. Refused, and the reference has been consumed."
                 ),
-                RedemptionOutcome.EXPIRED: (
-                    "The reference expired. It is bounded to the dispatch window "
-                    f"({vault_ttl_seconds()}s), not to the token's own lifetime."
-                ),
             }.get(
                 result.outcome,
                 "No reference is held for this run. Four causes, in the order worth "
                 "checking: cortex-bff RESTARTED (the vault is in-memory by design, so "
-                "in-flight seeds do not survive one); cortex-bff is running MORE THAN "
+                "in-flight runs do not survive one); cortex-bff is running MORE THAN "
                 "ONE REPLICA, so the stash and this redemption landed on different "
-                "pods; the dispatch window elapsed; or nothing was ever stashed for "
-                "this run.",
+                "pods; the run outlived its budget "
+                f"({vault_ttl_seconds()}s); or nothing was ever stashed for this run.",
             ),
         },
     )
+
+
+@app.post("/orchestrate/{run_id}/reauth")
+async def reauth_run(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    token: str = Depends(oauth2_scheme),
+):
+    """The door that resumes a run paused as ``awaiting_reauth``.
+
+    The person presents their OWN fresh token, verified exactly as ``/orchestrate`` verifies
+    it (``get_current_user``), and it replaces the one the run holds. No body. The answer is
+    the state and never the token.
+
+    NO EXISTENCE ORACLE: an absent run and a run that is another person's answer with the
+    same 404, because ``VAULT.replace`` refuses on both through one comparison. A service
+    token is refused 403: a service is never granted a person's identity.
+    """
+    who = (current_user.authz_id or "").strip()
+    if _is_service_caller(who):
+        _vault_audit_log.error(
+            "identity_vault: REFUSED reauth for run_id=%s — caller %r is a service identity",
+            run_id, who,
+        )
+        raise HTTPException(status_code=403, detail={"error": "service_token_refused",
+                                                      "authz_id": who})
+    if not VAULT.replace(run_id, token, who):
+        _vault_audit_log.warning(
+            "identity_vault: reauth run_id=%s caller=%s outcome=not_found", run_id, who)
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    _vault_audit_log.info(
+        "identity_vault: reauth run_id=%s caller=%s outcome=live", run_id, who)
+    return {"state": "live"}
 
 
 @app.get("/me/canvases")
@@ -6863,6 +6938,13 @@ def _sse(event: str, data: str) -> str:
 #   chat_message    → agent's text answer (unchanged)
 #   ui_payload /
 #     final_payload → schema-driven semantic payloads (unchanged)
+#   run_awaiting_reauth → {run_id, reason}: the run is PAUSED, not failed, because the
+#                     person's token could not be refreshed; emitted once per pause. The card
+#                     offers a sign-in that POSTs /orchestrate/{run_id}/reauth. A NEW event
+#                     name on purpose, not a pipeline_stage status: cortex's `status` is a
+#                     closed union and its switch ignores unknown events, so an old cortex
+#                     stays intact.
+#   run_reauth_resumed  → {run_id}: the person signed in again; once per resume.
 
 
 def _stage(
@@ -9855,15 +9937,15 @@ async def _generate_dagster_stream_inner(
     #
     # STASHED FOR EVERY RUN, not only seeding ones: at launch time nothing knows yet
     # whether this phrase will route to a verb that needs caller identity, and inventing a
-    # guess here would be the optimistic-default shape. The footprint is bounded by TTL
-    # (minutes) and by process lifetime, and it never becomes durable.
+    # guess here would be the optimistic-default shape. The footprint is bounded by the run's budget
+    # (IDENTITY_VAULT_TTL_SECONDS), closed at the run's terminal state, and by process lifetime, and it never becomes durable.
     #
     # A stash failure must NOT kill the run. Every non-seeding phrase is unaffected by it,
     # and a seeding phrase fails LOUDLY at redemption with a named cause — which is the
     # honest place for it to fail, not here where the cause would be guessed at.
     if caller_token:
         try:
-            VAULT.stash(run_id, caller_token, subject=user_email, slots=vault_slots())
+            VAULT.stash(run_id, caller_token, subject=user_email)
         except Exception as _vault_exc:  # noqa: BLE001
             logger.warning(
                 "identity_vault: could not stash the caller reference for run %s (%s: %s). "
@@ -9890,11 +9972,38 @@ async def _generate_dagster_stream_inner(
     # handled by _keepalive_wrap's `: keepalive\n\n` comment lines.
     # The accumulating-rows UI bug is fixed at its source.
 
-    for idx in range(900): # 15 minute max timeout (slow Ollama backends)
+    # THE ONE DEADLINE IN THIS GENERATOR: 900 one-second ticks, the 15 minute ceiling for slow
+    # backends. A run paused for its person (`awaiting_reauth`, ruling 2026-11-03) must not be
+    # ended by it, so a paused tick does not count toward it; the pause is bounded by the
+    # vault entry's own life, after which the state is None and the ticks count again. The
+    # keepalive wrapper is an interval, not a deadline, and `_get_run_status` is a per-call
+    # fetch.
+    _ticks = 0
+    _reauth_paused = False
+    while _ticks < 900:
         await asyncio.sleep(1.0)
 
+        _vstate = VAULT.state(run_id)
+        if _vstate == "awaiting_reauth":
+            if not _reauth_paused:
+                _reauth_paused = True
+                yield _sse("run_awaiting_reauth", json.dumps({
+                    "run_id": run_id,
+                    "reason": VAULT.reauth_reason(run_id) or "token_needs_reauth",
+                }))
+        else:
+            _ticks += 1
+            if _reauth_paused:
+                _reauth_paused = False
+                if _vstate == "live":
+                    yield _sse("run_reauth_resumed", json.dumps({"run_id": run_id}))
+
         status_data = await _get_run_status(run_id)
+        if status_data.get("status") == "CANCELED":
+            VAULT.close(run_id)
+            break
         if status_data.get("status") == "FAILURE":
+            VAULT.close(run_id)
             yield _perror(
                 "Pipeline failed.",
                 kind="retrieving",
@@ -9912,6 +10021,7 @@ async def _generate_dagster_stream_inner(
             break
 
         if status_data.get("status") == "SUCCESS":
+            VAULT.close(run_id)
             is_success = True
             break
             
