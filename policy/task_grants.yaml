@@ -324,7 +324,7 @@ audiences:
   # named for a "steward"; that group is the SAFETY_ENGINEER, SUSTAINMENT cell). No new group,
   # so no new membership to sync; the audience row itself is new, so: merge, topaz_sync, roll.
   safety_finding_review:SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0063 section 2. Who may dispose of an ingested safety finding: the safety engineer
       who knows the fleet, not the authority who accepts residual risk. Confirm, dismiss with a
@@ -554,7 +554,7 @@ audiences:
   # precondition.
 
   repo_review:POLICY:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0062 sections 5 and 7: engine-r's reviewers of the policy rails (policy/, overlays included); ruled 2026-10-28 in section 7 to hold alice and bob. carol added 2026-10-29 by the architect's ruling, so a two-approver policy/ change still has two eligible approvers after the proposer is excluded. Synthetic sandbox names.
     grant_to:
@@ -563,7 +563,7 @@ audiences:
       - carol@example.com
 
   repo_review:ADR:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0062 sections 5 and 7: engine-r's reviewers of docs/adr/ changes. Synthetic sandbox names.
     grant_to:
@@ -571,7 +571,7 @@ audiences:
       - bob@example.com
 
   repo_review:FIXTURES:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0062 sections 5 and 7: engine-r's reviewers of tests/fixtures/ changes. Synthetic sandbox names.
     grant_to:
@@ -579,7 +579,7 @@ audiences:
       - bob@example.com
 
   repo_review:SESSIONS:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0062 sections 5 and 7: engine-r's reviewers of sessions/ packets that have no owning lane. Synthetic sandbox names.
     grant_to:
@@ -587,7 +587,7 @@ audiences:
       - bob@example.com
 
   repo_release:invincible-agent:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       ADR-0062 sections 5 and 7: engine-r's approvers of invincible-agent-* release tags.
       carol added 2026-10-29 by the architect's ruling: a release tag takes two approvers and

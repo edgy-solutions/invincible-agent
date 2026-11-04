@@ -2623,6 +2623,12 @@ def _refusal_from_engine_4xx(context, endpoint, response) -> Optional[Dict[str, 
     for k in ("connector", "fn", "hazard_id", "gap", "ask"):
         if k in detail:
             data[k] = detail[k]
+    # A TYPED DENIAL KEEPS WHAT OPENS THE REQUEST-ACCESS FLOW. `_log_subtask_access_denied_asset`
+    # reads these off this dict; without them the person gets a refusal and no way to ask.
+    if detail.get("status") == "access_denied":
+        for k in ("status", "denied_assets", "subject", "message"):
+            if k in detail:
+                data[k] = detail[k]
     context.log.info(
         "execute_subtask: engine at %s refused with %s %s", endpoint, status, outcome
     )

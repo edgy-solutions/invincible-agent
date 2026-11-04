@@ -181,26 +181,28 @@ def can_invoke_start_review(initiator: str) -> bool:  # pragma: no cover - live 
     capability is "object not found" -> deny.
 
     No-op True when ``ENABLE_DISPOSITION_AUTHZ`` is off (its OWN dark-launch toggle, not the terminal
-    ENABLE_AGENTIC_AUTH flip). Any error / not-found -> deny (a gate must not fail open). A malformed
-    answer is the outage class: a terminal 503, not a deny."""
+    ENABLE_AGENTIC_AUTH flip). A not-found or a defect here -> deny (a gate must not fail open). A
+    Topaz that cannot be reached, answers another non-2xx or answers malformed is the outage class:
+    a terminal 503, not a deny."""
     if not ENABLE_DISPOSITION_AUTHZ:
         return True
     if not initiator:
         return False
     try:
-        import requests
-        resp = requests.post(
+        resp = httpx.post(
             f"{TOPAZ_DIRECTORY_URL}/api/v3/directory/check",
             headers={"Content-Type": "application/json"},
             json={"object_type": "capability", "object_id": MESH_START_REVIEW, "relation": "can_invoke",
                   "subject_type": "user", "subject_id": initiator},
             timeout=5.0,
         )
+        if resp.status_code == 404:
+            return False
         resp.raise_for_status()
-        return check_answer(resp)   # absent/not-found/error -> deny (fail-closed)
-    except httpx.DecodingError as exc:  # the reader's, whichever client asked: never a "no"
+        return check_answer(resp)   # absent -> deny (fail-closed)
+    except httpx.HTTPError as exc:  # unreachable, a non-2xx or a malformed answer: the outage class, never a "no"
         raise restate.TerminalError(
-            "the authorizer's answer could not be read", status_code=503) from exc
+            "the authorizer could not be asked, or its answer could not be read", status_code=503) from exc
     except Exception:  # noqa: BLE001 — fail-closed (deny) on any error, like the ontology gate
         return False
 

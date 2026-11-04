@@ -386,9 +386,9 @@ def _may_act(can_act: Callable[[str, str], bool], audience: str, acted_by: str) 
         return False
     try:
         return can_act(audience, acted_by) is True
-    except AuthorizationUnavailable as exc:  # `check_can_act` raises this only for a malformed answer
+    except AuthorizationUnavailable as exc:  # `check_can_act` raises this only for an outage
         raise PromotionRefused("authorization_unavailable",
-                               "the authorizer's answer could not be read", status=503) from exc
+                               "the authorizer could not be asked, or its answer could not be read", status=503) from exc
     except Exception:  # noqa: BLE001 — fail-closed: an unanswerable check is a no
         return False
 
