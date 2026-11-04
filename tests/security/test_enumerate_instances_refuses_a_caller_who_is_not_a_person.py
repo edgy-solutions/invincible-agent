@@ -139,6 +139,7 @@ def _enumerator(monkeypatch, response):
     from iagent.defs import dynamic_supervisor as ds
     monkeypatch.setattr(ds, "_ENUMERATE_URL", "http://eo/enumerate_instances")
     monkeypatch.setattr(ds.requests, "post", lambda *a, **k: response)
+    monkeypatch.setattr(ds, "_redeem_caller_token", lambda *a, **k: "CALLER-TOKEN")
     return ds, ds._make_enumerator(_Ctx(), user_email=PERSON)
 
 
