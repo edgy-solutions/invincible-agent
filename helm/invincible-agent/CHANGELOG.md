@@ -18,7 +18,7 @@ Entries merged after the 0.4.78 cut (`8a2717e0`).
   of `GET /review-shapes`, and `validate_policy` refuses it. Say `rules: []`. Every row in this repo already
   does; check a deployment's own overlay before the roll.
 - **`docs/api/cortex-bff.openapi.json` moved.** `ReviewShapeRow`'s `item_kind`, `rules_version` and `rules` are
-  now optional and nullable, as the SDK ruled for card-only rows. No such row is seeded, so what's served
+  now optional and nullable, for card-only rows. No such row is seeded, so what's served
   doesn't change, but cortex's generated types will when it next moves its producer pin.
 - **A well-formed refusal is unchanged.** What changes is the malformed case. An engine's refusal that can't
   be completed, or a grantor map that won't load, relays the deny without its `refusal` object and logs an
