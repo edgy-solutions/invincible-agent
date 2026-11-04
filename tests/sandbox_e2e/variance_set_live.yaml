@@ -1,0 +1,24 @@
+# The case `test_variance_set_reads_the_ev_fixture.py` runs. Every principal, asset, program,
+# persona and measure the test names lives HERE and nowhere in its Python (config names the
+# case, ruled 10-30).
+#
+# The two principals hold the same cell and the same program and differ ONLY in the per-asset
+# grant. A principal outside the program is refused 403 `program_not_visible` before any read
+# and proves nothing about the asset gate. The test's preflight reads the rail and names either
+# fact if it has drifted.
+asset: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
+banner_must_say: synthetic
+program_id: NP-MERIDIAN
+overlay_dir: policy/overlays/sample/measure_verbs
+measures: [fin_tcpi, fin_vac_cpi]
+windows:
+  - null
+  - [FY26-02, FY26-03, FY26-05]
+active_persona: PROGRAM_FINANCE_ANALYST
+active_domains: [PROGRAM_FINANCE]
+persona_group: finance-analysts
+allowed_subject: alice@example.com
+allowed_persona: alice
+denied_subject: erin@example.com
+denied_persona: erin
+deployment: iagent-engine-fin
