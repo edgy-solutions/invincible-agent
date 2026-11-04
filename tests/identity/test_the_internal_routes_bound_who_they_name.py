@@ -298,8 +298,8 @@ def test_seeded_by_an_undeclared_name_is_422_and_nothing_is_stamped(monkeypatch,
 
 # -- /internal/human_tasks/register: the CALLER gate -------------------------------------------------
 #
-# The caller must be a service identity (a declared delegate, or listed in TASK_REGISTER_SERVICES).
-# `requested_by` is NOT bound here: it is held for a ruling and passes through as sent.
+# A person may name only themselves; a service listed in TASK_REGISTER_SERVICES may name anyone.
+# `requested_by` is bound as ruled 2026-11-04: self, a listed service, or a declared delegate's principal.
 
 import json  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -354,8 +354,12 @@ def test_register_a_listed_service_is_admitted_and_requested_by_passes_through(m
 
 
 def test_register_a_declared_delegate_needs_no_listing(monkeypatch, served, listed):
-    r, got = _register(monkeypatch, RUNNER, env=None)
-    assert r.status_code == 200 and got is not None, (r.status_code, r.text[:200])
+    principal = sorted(served[RUNNER])[0]      # ruled 2026-11-04: a delegate names a principal declared for it
+    r, got = _register(monkeypatch, RUNNER, {**_FULL, "requested_by": principal}, env=None)
+    assert r.status_code == 200 and got is not None and got["requested_by"] == principal, (
+        r.status_code, r.text[:200])
+    r, got = _register(monkeypatch, RUNNER, env=None)         # the starter is not declared for it
+    assert r.status_code == 403 and got is None, (r.status_code, r.text[:200])
 
 
 def test_register_an_unlisted_service_is_refused(monkeypatch, served, listed, caplog):
@@ -384,7 +388,7 @@ def test_the_promote_publish_step_posts_a_body_the_route_refuses_422_before_the_
     """`execute_direct_call` posts {task_id, task_type, capability, user_jwt} and the step declares
     no extra_payload; the route needs audience, title, summary and requested_by. So that call is a 422
     before the handler runs, whoever the caller is: the promote step could not succeed before the gate.
-    Under the gate a person's token with a COMPLETE body is a 403; a listed service's is a 200."""
+    With a COMPLETE body a person's token naming itself is a 200 and naming another is a 403; a listed service's is a 200."""
     wf = yaml.safe_load((_ROOT / "policy/workflows/promote_answer_artifact.yaml").read_text(encoding="utf-8"))
     [step] = [s for s in wf["steps"] if s["id"] == "publish_artifact"]
     assert step["kind"] == "direct_call" and "extra_payload" not in step, step
@@ -397,7 +401,9 @@ def test_the_promote_publish_step_posts_a_body_the_route_refuses_422_before_the_
         ("body", "audience"), ("body", "title"), ("body", "summary")}
     assert got is None
     complete = {**sent, "audience": "a", "title": "t", "summary": "s", "requested_by": person}
-    r1, got1 = _register(monkeypatch, person, complete)           # a person, complete body: the gate
-    assert r1.status_code == 403 and got1 is None, (r1.status_code, r1.text[:200])
+    r1, got1 = _register(monkeypatch, person, complete)           # a person naming themselves: admitted
+    assert r1.status_code == 200 and got1["requested_by"] == person, (r1.status_code, r1.text[:200])
+    r1, got1 = _register(monkeypatch, person, {**complete, "requested_by": _FULL["requested_by"]})
+    assert r1.status_code == 403 and got1 is None, (r1.status_code, r1.text[:200])  # naming another: refused
     r2, got2 = _register(monkeypatch, listed, complete)           # control: a listed service
     assert r2.status_code == 200 and got2["task_id"] == step["id"], (r2.status_code, r2.text[:200])

@@ -1478,17 +1478,29 @@ async def register_human_task(
     at the foundation checkpoint it is exercised directly to prove the identity
     bridge. Returns the resolved recipient set (the Topaz decision).
 
-    R-089: the caller must be a SERVICE identity: a declared delegate (`DELEGATE_ON_BEHALF_OF`) or
-    a listed task-register service (`TASK_REGISTER_SERVICES`); anyone else is 403 `not_a_delegate`,
-    the refusal `_admit_on_behalf_of` gives a person naming someone else. `requested_by` is passed
-    through as sent (the field's own binding is held for a ruling)."""
+    R-089, ruled 2026-11-04: register is called by a service for a person, so the caller is bound
+    to `requested_by` by the same rule as the five case-runner routes, in this order: (1) a caller
+    that IS `requested_by` is admitted (a person naming themselves, or a service naming itself);
+    (2) a caller listed in `TASK_REGISTER_SERVICES` may name any person; (3) otherwise
+    `_admit_on_behalf_of` decides: a declared delegate naming a principal declared for it is
+    admitted, anyone else is 403 `not_a_delegate` or `principal_not_declared_for_delegate`.
+    `requested_by` is passed through as sent."""
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
     caller = current_user.authz_id
-    if caller not in _delegate_principals() and caller not in _task_register_services():
-        _audit_delegate_named("/internal/human_tasks/register", caller, req.requested_by,
-                              "refused:not_a_delegate")
-        raise HTTPException(status_code=403, detail={"error": "not_a_delegate"})
+    route = "/internal/human_tasks/register"
+    if req.requested_by == caller:
+        _audit_delegate_named(route, caller, req.requested_by, "admitted:self")
+    elif caller in _task_register_services():
+        _audit_delegate_named(route, caller, req.requested_by, "admitted:register_service")
+    else:
+        try:
+            _admit_on_behalf_of(current_user, req.requested_by)
+        except HTTPException as exc:
+            code = exc.detail.get("error") if isinstance(exc.detail, dict) else None
+            _audit_delegate_named(route, caller, req.requested_by, f"refused:{code}")
+            raise
+        _audit_delegate_named(route, caller, req.requested_by, "admitted:delegate")
     try:
         result = await run_in_threadpool(
             lambda: human_tasks.register_task(
