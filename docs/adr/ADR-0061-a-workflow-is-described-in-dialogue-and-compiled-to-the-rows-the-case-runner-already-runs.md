@@ -1,12 +1,12 @@
 # ADR-0061 — A workflow is described in dialogue and compiled to the rows the case runner already runs
 
 **Status:** Proposed, ruled 2026-11-02: this ADR records the design and its measurements, including
-the gap below. **The bar for "the loop works" is not met.** It is met when a run is runnable with all
-four stages reachable and each stage has the steps the person described (ruled 2026-11-02).
-`runnable` now refuses any definition no table routes to from the trigger. Runs 44 to 46, on
-instrument v2, whose bar reads routing as well as steps, do not meet it. One can't run, one lost the record's
-filing step, and one has every step and ends two stages the person named separately at one terminal, which
-leaves a question for the architect (§10).
+the gap below. **The bar for "the loop works" is not called met.** It is met when a run is runnable with
+all four stages reachable and each stage has the steps the person described (ruled 2026-11-02).
+`runnable` now refuses any definition no table routes to from the trigger. Runs 47 to 49, on
+instrument v2, whose bar reads routing as well as steps, all read `yes`, and one of those is false: run 48 lets the
+person who logged a notice sign off its impact review, which the person barred, and the bar doesn't read `excludes`.
+Run 49 lost the required details to a model timeout. Whether the bar is met is the architect's call (§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2011,7 +2011,8 @@ Three complete PCN runs at `94532250`, instrument v2, one at a time, with the sa
 | 46 | 27/18 | 0 | 0 of 4 | 0 | 2 | no | 0 | 0 | 5 | 1 | 12 | 1 | 1/1 | 1/1 | held | 2 | 1 | runnable | 682 |
 
 **The bar for Proposed is not met as built: no run reads `yes`.** Runs 44 and 45 read `no` and should, so that
-half is there. Run 46 is the open question, because its `no` rests on one reading of mine (below).
+half is there. Run 46 is the open question, because its `no` rests on one reading of mine (below). The architect
+ruled that its `no` stands.
 
 **Run 46 is the closest yet.** It is runnable, every stage is reachable, it dropped no step, and it has no
 semantic diff. The planted contradiction was caught. Its record stage is an `emit` and a `signal_await`, as
@@ -2027,15 +2028,13 @@ loop asked for the steps of a stage called `needs_info` at turn 12, before that,
 had no answer either time. **So "that is not a stage" has bitten again**, which changes the 11-02 note that it hadn't
 since run 18.
 
-**Run 44 lost the filing step in a way the build doesn't reach.** Its record is an `emit` with `disposes: approved`.
-The model set that at turn 10, in answer to a `missing` gap on `outputs.record.ends`, from "the outcome approved"
-in an answer that goes on "Then the records group files it and says so". The turn check then counts the slot as
-answered, because the question's key is the slot's own (`_attributed`, ruled 10-30). So no confirm on `ends` was
-raised, the scripted user never said no, and nothing was rejected to refuse. I read that cause from the code and
-did not test it alone. Run 45 is the control: it set the value at turn 5 under `steps.record`, and a confirm on `ends`
-was raised at turn 26 and rejected. My 11-02 departure isn't the cause, since it applies only to confirm, contradiction
-and null turns. The rejection rule also reads this turn the opposite way: `_asks` says a `missing` gap "asks how, and
-states nothing".
+**Run 44 lost the filing step at its first draft of the record.** At turn 4, a `missing` gap on `steps.record`, the
+person said "Then the records group files it and says so", and the model drafted the `emit` alone. Run 45 also
+drafted one step, at turn 5, and run 46 drafted two, at turn 8. At turn 10, a `missing` gap on `outputs.record.ends`,
+the model set `disposes: approved` on that `emit`, so the stage had an end and no gap was left to bring the second
+step back. This paragraph first gave a different cause: that the slot counted as answered, so the person was never
+asked. The architect ruled otherwise: the gap question is the ask, so a value set there was asked, and the next item
+is the two-step grammar, not a confirm there.
 
 **Run 44 also lost an answer.** At turn 26 the person said "Once it is filed the notice is dispositioned and that is
 the end". The model's patch was refused on `steps[0].disposes`, its next reply was an empty patch, and the turn closed,
@@ -2062,6 +2061,8 @@ and isn't in the bar, but a ratifier would be shown it.
 
 #### 2026-11-03: the question the runs leave, for the architect
 
+Ruled 2026-11-03: as built, the third row below. See the rulings after this section.
+
 **Do two endings the person named separately have to stay separate?** This is reading 2 above, and it now decides
 the bar. The options:
 
@@ -2079,12 +2080,135 @@ changed the instrument or the status.
 
 **For the open list, and not built:**
 1. The record stage was lost in one of three runs. Your next item for that case is the grammar's account of a
-   two-step stage. Run 44 adds a second candidate: a value set at a `missing` gap on its own slot counts as answered,
-   so the person is never asked. Either may be the fix. The turn check is your 10-30 rule, so I'd want your ruling
-   before changing it.
+   two-step stage, and you ruled that a confirm at the `missing` gap is not the fix.
 2. "That is not a stage" has bitten in run 45.
 3. A deferral whose slot was later filled stays in the draft.
 4. A turn can close on an empty patch after a refusal, which loses the person's answer (run 44, turn 26).
+
+#### 2026-11-03: the rulings on runs 44 to 46
+
+The architect ruled three things:
+
+1. Endings a person names separately stay separate, as the bar is built. So run 46's `no` stands.
+2. A value set at a `missing` gap on its own slot was asked, because the gap question is the ask. So run 44 lost the
+   filing step for a different reason than the one this section first gave, and the fix is not a confirm there. The
+   paragraph and the open-list item above are corrected.
+3. That ruling is about the turn check only. A `missing` gap doesn't undo a rejection, so `_asks` keeps its behaviour.
+
+The order was a grammar line and three runs, with the grammar's account of a two-step stage after them. `3beeb912`
+adds the line: "An ending the user names keeps the user's word: the terminal is named for it, and two endings they
+name differently are two terminals, never one word of your own such as completed." It also rewords the `_asks`
+docstring. Its seal only shows that the line's text is there. Only the runs can show what it does.
+
+#### 2026-11-03: runs 47 to 49, three `yes` readings and one is false
+
+Three complete PCN runs at `3beeb912`, instrument v2 unchanged, one at a time, with the same model and harness on the
+0.9.12 overlay. Dagster listed no active run before each one.
+
+| run | questions / bank | runnable errors | unreachable | stages that dropped a step | wrong routes | bar as read | semantic diffs | open | answered by path | refused patches | confirms | rejected | contradiction | deferral | reasons | contradictions answered | deferrals dropped | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 47 | 32/18 | 0 | 0 of 4 | 0 | 0 | yes | 2 | 0 | 7 | 2 | 12 | 1 | 1/1 | 1/1 | held | 7 | 0 | runnable | 964 |
+| 48 | 27/18 | 0 | 0 of 4 | 0 | 0 | yes | 3 | 0 | 6 | 2 | 12 | 1 | **0/1** | 1/1 | held | 3 | 0 | runnable | 769 |
+| 49 | 27/18 | 0 | 0 of 4 | 0 | 0 | yes | 3 | 0 | 5 | 2 | 14 | 1 | 1/1 | 1/1 | held | 2 | 0 | runnable | 1030 |
+
+**The instrument reads `yes` on all three, and I am not calling the bar met.** The bar for Proposed is one run `yes`
+with the contradiction caught, and one run that should read `no` and does. Taken by the letter it could be read as
+met: run 47 is `yes` with the contradiction caught, and runs 44 and 45 read `no` on the same instrument, one grammar
+line earlier. But run 48 should read `no` and reads `yes`, so the instrument doesn't yet tell the two apart. Whether
+that decides it is the architect's call. Nothing is flipped and the instrument is not changed.
+
+**Run 48 is a false `yes`.** The person said two things about who may sign off: "Any component engineer may take that
+disposition, including whoever logged the notice", and "The person who logged the notice may never sign off either
+review." That is the planted contradiction. The compiled impact review has `excludes: []`, so the person who logged a
+notice can sign off its impact review. The person ruled that out, and catching it is what the planted contradiction
+is for.
+
+The second sentence came at turn 16, as the answer to a confirm on the program approval. The model wrote `excludes`
+on that one step. In runs 47 and 49 the same sentence, at turns 13 and 14, made the model write both reviews, and the
+conflict with the impact review's earlier `[]` raised the question. In run 48 no second value was written, so there
+was nothing to detect, and the loop doesn't write values itself. The bar doesn't see it because `bar_met` reads step
+kinds and routes, not what a step holds. The semantic diff does see it (`.defs.wf0.steps[1]`), and it isn't in the bar.
+The restate does show the difference, as a word that is missing from one line: the program approval's line carries
+`excludes` and the impact review's doesn't.
+
+**Run 49 lost the required details to a model timeout.** It has no `trigger.requires`, though the person said "Every
+notice has to carry its kind, its notice number, the part number, the change class and who logged it." The run's one
+`ReadTimeout` fell on that turn, turn 1: it is the only reply in the run with no model text, and its patch is the
+exact empty one the extractor returns on a transport failure. So the model never read the answer. The loop then
+deferred the slot as "answer did not settle it", which isn't what happened, and never asked again. `non_deferrable`
+allows it, because a `missing` gap on `requires` isn't in `required_slots`. Runs 47 and 48 set all five fields from
+that same answer. The deferral is at least visible in the restate. I don't read this run as saying anything about the
+model on `requires`, but the bundle it compiled requires no details at all and the bar reads `yes`.
+
+**Run 47 is the only clean reading, with one flaw.** Its contradiction was caught, `excludes` is right on all three
+approvals, `requires` is present, and the record is an `emit` and a `signal_await`. Its flaw is the record's outcome.
+The person said "It is filed" at turns 28 and 30 and "Yes, it can end 'filed'" at turn 31, and the table held `filed`
+after turns 30 and 31. Turn 32 asked what follows `recorded`, because the `signal_await` still accepted that word. The
+model answered by putting `recorded` back in the table, and the run ended there. Routing is right, so the bar passes
+it. The semantic diff reads it as a difference. Five of the run's eight contradiction questions were spent on this
+stage's words.
+
+**Reading content as well would change only these two.** `canonical` already compares `excludes` (as barred or not)
+and `requires`. I read both against the expected bundle for every stored run from 41 to 49, without changing the
+instrument. `excludes` is wrong only in run 48, and `requires` only in run 49. So a bar that also read those two would
+turn 48 and 49 to `no` and move nothing else: 47 stays `yes`, and 41 to 46 already read `no`. That is measured on
+nine stored runs, and the rule would be chosen after seeing them, as v2's was.
+
+| run | bar as read | `excludes` | `requires` | contradiction | bar if it read both | record's outcome word |
+| --- | --- | --- | --- | --- | --- | --- |
+| 47 | yes | right | right | caught | yes | `recorded` |
+| 48 | yes | **impact review bars nobody** | right | **not raised** | no | `dispositioned` |
+| 49 | yes | right | **absent** (timeout) | caught | no | `dispositioned` |
+
+**The grammar line did what it was for, on routes.** Wrong routes went from 3, 1 and 2 in runs 44 to 46 to 0, 0 and 0.
+The only code change between the two batches is that line and a docstring, but three runs each is a count, not a rate.
+The ends are apart in all three. The person's own word is used in one: run 49 has `acknowledged` and `dispositioned`,
+while 47 and 48 have `acknowledge_done` and `record_done`, which the bar allows because an end's own name stays the
+model's. The record's outcome is never the person's `filed` in any of the three, where run 46 had it, and the line
+only speaks of terminals.
+
+**The record stage held in all three, and only by repair.** Each run's first draft of the record was one step, an
+`emit` with `disposes` set (run 47 at turn 4 with `approved`, run 48 at turn 4 and run 49 at turn 8 with `recorded`).
+Each was rejected at its confirm (turns 24, 25 and 25). Each then tried at turn 27 to write `disposes` back, was
+refused, and with that refusal in hand wrote the `signal_await`. Run 44's first draft was also one step, and it didn't
+come back. So the refusal has now fired in four runs of six and repaired the stage each time, and the first draft has
+not improved. That supports the two-step grammar coming next, as ordered.
+
+**The refused path's forms.** The text came back once per run. In runs 47 and 49 the next reply used the named form
+(`steps[id=emit_disposition].template.outcome`, `steps[id=await1].audience`). In run 48 the next reply wrote only the
+table and left that step's write out, which is the write the turn-27 refusal then stopped.
+
+**Not seen in these three.** "That is not a stage" didn't come up: no turn asked for the steps of an ending. No turn
+closed on an empty patch after a refusal. Both stay on the open list, since three runs don't retire them.
+
+**Two more things these runs show.** Run 49 holds the same stale deferral as run 46, on `outputs.record` from turn 5,
+though the stage was filled later. And no stored run from 41 to 49 has the `{case.approval_chain}` the expected bundle
+has. In 47 to 49 the record's `approval_chain` is a fixed list of impact review, acknowledge, program approval, in that
+order, which is not a path any case takes. `canonical` doesn't read templates, so neither the bar nor the semantic
+diff sees it, and the grammar doesn't mention the form.
+
+#### 2026-11-03: the questions runs 47 to 49 leave, for the architect
+
+1. **Is the bar met?** My recommendation is no, not on this instrument. Have the bar read `excludes` and `requires`,
+   as instrument v3, and re-read 41 to 49 together. It needs no model time. If you accept the table above, run 47 is
+   the `yes` with the contradiction caught and run 48 is the run that should read `no` and does, which is both halves.
+   That would not fix run 48: the loop lost a barred approver in one run of the nine, and the instrument would only
+   be reporting it.
+2. **Does run 47's `recorded` count against it?** I'd say not for the bar. It routes correctly, and the fault is a word,
+   but the person used that word at every turn from 28 to 32, and the bar is "does the compiled workflow do what the
+   person described". If it does count, no run in this batch is `yes`.
+3. **Which comes first?** You ordered the two-step grammar next. I'd do the v3 re-read before it, since it is a small
+   change and the two-step runs would then be read by it. I have started neither.
+
+**For the open list, and not built:**
+1. An answer that names several slots can be written to only the one asked about, and nothing detects it (run 48). A
+   grammar line is the obvious first try. It is the model's write, so the loop still doesn't insert.
+2. A transport failure defers the slot with a reason that says the answer was read (run 49). I'd ask again once, and
+   name the failure if it is left.
+3. `requires` can be deferred. It isn't among `required_slots`, so `non_deferrable` lets it through, and I don't know
+   whether that was meant.
+4. The record's `approval_chain` is a fixed list, and the grammar doesn't mention `{case.…}`.
+5. The record's outcome word isn't covered by the endings line.
 
 ## Consequences
 
