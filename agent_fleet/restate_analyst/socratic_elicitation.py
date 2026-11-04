@@ -1163,8 +1163,9 @@ def _vouch(draft: Draft, g: Gap, before: Dict[str, dict], turn: int) -> None:
 
 
 def _asks(g: Optional[Gap], file: str, path: str) -> bool:
-    """True iff ``g`` is a turn that asks the person about this leaf, the standard ``_vouch`` holds a
-    stated value to. A ``missing`` gap on the same key asks how, and states nothing."""
+    """True iff ``g`` is a turn that takes back a ``no`` on this leaf, the standard ``_vouch`` holds a
+    stated value to. A ``missing`` gap on its own slot is an ask (architect, 2026-11-03), but it asks
+    for what fills the gap and doesn't put the rejected value to the person, so it takes nothing back."""
     return (g is not None and g.kind in ("confirm", "contradiction", "null")
             and (file, path) in (g.asks or g.revises))
 
@@ -1592,6 +1593,8 @@ RULES
   terminal listed in `terminals`.
 - A stage is never a terminal: a stage is named by a row's `then` and never listed in `terminals`,
   or a case stops there and never enters it.
+- An ending the user names keeps the user's word: the terminal is named for it, and two endings they
+  name differently are two terminals, never one word of your own such as completed.
 - A selection table has no `after`: `after` belongs to a chaining table and names the workflow it
   follows. The trigger names its selection table in `selection`.
 - REQUIRED: every human_await step sets excludes: the "{trigger.<field>}" of whoever may not
