@@ -54,6 +54,13 @@ first total and names refused panels; a card the answer declared no longer reads
   deployment's policy repository does not carry it. An overlay's `can_configure:` row names a subject
   registered here.
 
+**Policy changes (which service may name a person on a central-gateway route)**
+
+- **`policy/gateway_delegates.yaml` and `policy/grantors/gateway_delegates.yaml` are new.** No reader
+  yet: the gateway's `is_delegate` seam still answers no, so this release changes no answer.
+  `validate_policy` checks the rail when present. A row's `service` must be a seeded `svc:` identity
+  and each route a known one. First row: `svc:data-analyst` on `assets.authorize`.
+
 **Policy changes (a course is reviewed as a document: `review_shape: document`)**
 
 - **The `course` content kind now declares `review_shape: document`** (it declared `course`, a shape

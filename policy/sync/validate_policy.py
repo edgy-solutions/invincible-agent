@@ -34,6 +34,8 @@ definition of "valid", never a parallel re-implementation):
     DATA_FILES -- see the note there)
   - repository_paths.yaml         → repository_paths_errors (WHEN PRESENT; not in
     DATA_FILES -- see the note there)
+  - gateway_delegates.yaml        → gateway_delegates_errors (WHEN PRESENT; not in
+    DATA_FILES -- see the note there)
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
     no sync of its own — can_consume is evaluated in-process)
   - every DATA file must EXIST — explicit-empty (`grants: []`) is a
@@ -106,6 +108,10 @@ DATA_FILES = (
 #
 # repository_paths.yaml (ADR-0062 section 5) is likewise NOT in DATA_FILES: only engine-r reads it,
 # and a deployment's policy repository may not run engine-r. Validated WHEN PRESENT.
+#
+# gateway_delegates.yaml is likewise NOT in DATA_FILES: a deployment with no delegate has nothing to
+# assert, and an absent file means the same as an empty one, no service names a person. Validated
+# WHEN PRESENT.
 
 
 def known_content_kinds() -> tuple[set[str], list[str]]:
@@ -659,6 +665,73 @@ def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> 
     return out
 
 
+#: The central gateway's route ids a delegate row may name. The gateway owns them (dag-tools,
+#: `central_gateway.identity`); that is another repository, so this list is restated and nothing
+#: here can seal the two equal. A misspelt route fails here, not as a delegate who never matches.
+GATEWAY_ROUTES = ("assets.authorize",)
+
+_GD_ROW_FIELDS = ("service", "routes", "granted_by", "reason")
+
+
+def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
+    """Validate policy/gateway_delegates.yaml. PURE.
+
+    `raw` is the parsed file, `users` the users.yaml list. Each error reads
+    `gateway_delegates.yaml: <service>: ...`. A delegate names a person on a route, so a row's
+    `service` must be a seeded service identity (a person holds their own token) and each route a
+    known one (a wildcard is an unknown route). Unknown keys are refused by name, so a typo
+    (`route:`) cannot pass silently."""
+    pre = "gateway_delegates.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"gateway_delegates"}:
+        extra = sorted(map(str, set(raw) - {"gateway_delegates"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `gateway_delegates`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    rows = raw["gateway_delegates"]
+    if not isinstance(rows, list):
+        return [f"{pre}: `gateway_delegates` must be a list of rows (an empty list names no delegate)"]
+
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    seen: set[str] = set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        service = row.get("service")
+        where = f"{pre}: {service if isinstance(service, str) and service.strip() else f'row {i}'}"
+        for k in row:
+            if k not in _GD_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_GD_ROW_FIELDS)})")
+
+        if not isinstance(service, str) or not service.strip():
+            out.append(f"{where}: `service` must be a non-empty string")
+        else:
+            if not service.startswith(SERVICE_SUBJECT_PREFIX):
+                out.append(f"{where}: `service` must be a `{SERVICE_SUBJECT_PREFIX}` identity; "
+                           "a person holds their own token and is no delegate")
+            elif service not in seeded:
+                out.append(f"{where}: `service` is not a seeded identity in users.yaml")
+            if service in seen:
+                out.append(f"{where}: more than one row names this service")
+            seen.add(service)
+
+        routes = row.get("routes")
+        if not isinstance(routes, list) or not routes:
+            out.append(f"{where}: `routes` must be a non-empty list")
+        else:
+            for j, r in enumerate(routes):
+                if r not in GATEWAY_ROUTES:
+                    out.append(f"{where}: unknown route {r!r} (known: {', '.join(GATEWAY_ROUTES)})")
+                elif r in routes[:j]:
+                    out.append(f"{where}: route {r!r} is listed more than once")
+
+        for k in ("granted_by", "reason"):
+            v = row.get(k)
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+    return out
+
+
 def validate(
     policy_dir: Path,
     enums_dir: Path,
@@ -849,6 +922,14 @@ def validate(
         _m = len(_repos)
         print(f"  repository_paths.yaml: {_n_rows} row(s) across {_m} "
               f"{'repository' if _m == 1 else 'repositories'}")
+
+    # gateway_delegates.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note there).
+    _gd_path = policy_dir / "gateway_delegates.yaml"
+    if _gd_path.is_file():
+        gd_raw = _read_yaml(_gd_path, errors)
+        errors.extend(gateway_delegates_errors(gd_raw, users_raw.get("users") or []))
+        _gd_rows = gd_raw.get("gateway_delegates")
+        print(f"  gateway_delegates.yaml: {len(_gd_rows) if isinstance(_gd_rows, list) else 0} row(s)")
 
     # ADMISSION POSTURE (ADR-0034). Validated through the SAME parser the runtime loads with, so
     # there is ONE definition of a well-formed table and this gate cannot drift from the loader.

@@ -1,0 +1,25 @@
+# GATEWAY DELEGATES -- which service may name a person on which central-gateway route.
+#
+#   * THE RULE IS THE GATEWAY'S (dag-tools, `central_gateway.identity`). A user token's subject is
+#     its own claim. A verified service token may name a user only if this file lists that service
+#     for the route, and the audit names both.
+#   * NO ROW, NO DELEGATE. An absent file means the same as an empty list.
+#   * A ROW GRANTS NO READ. The person it names is the one the read is checked against, so a
+#     delegate reaches nothing that person cannot. It is not `asset_grants.yaml`, which refuses a
+#     `svc:` grantee (validate_policy.service_identity_recipients).
+#   * IT IS NOT R-089's `DELEGATE_ON_BEHALF_OF`. That one is the BFF's door, in the chart's values.
+#   * NOTHING READS THIS FILE YET. The gateway's `is_delegate` seam answers no until it is wired to
+#     this rail, so these rows are inert. Whoever wires it says here how a change applies.
+#
+# Validated by validate_policy.gateway_delegates_errors: `service` is a seeded `svc:` identity in
+# users.yaml, each route is one of GATEWAY_ROUTES, and a row's grantor and reason are stated.
+#
+# Grantor row: policy/grantors/gateway_delegates.yaml.
+
+gateway_delegates:
+  - service: svc:data-analyst
+    routes: [assets.authorize]
+    granted_by: seed
+    reason: >-
+      Engine DA serves every caller over one service token and reads as the acting person. Without
+      this row, the gateway's enforce posture refuses every DA read.
