@@ -1,0 +1,31 @@
+# CLASSIFICATION LEVELS -- the registry of ordered levels the `cleared_for:<level>` rail is checked against.
+#
+#   The rail is policy/level_readers.yaml (ADR-0064 item B, Proposed, #266). Item B, verbatim
+#   (architect via Chris, 2026-11-05):
+#
+#     B. Topaz rails (gov): `cleared_for:<level>` as a rail file -- one row per level -> groups,
+#        ratified_by: owner; levels themselves a registry file the rail validates against. No code
+#        reads it until dag-tools step 5 serves a dataset's level.
+#
+#   The standing rule: "levels, sources, access modes and downgrade rules are registry rows; nothing
+#   in dag-tools or iagent names a database, schema, table, column, program or level in code."
+#
+#   * ORDER IS LIST POSITION. The first row is the least restrictive level, the last row the most
+#     restrictive. ADR-0064: an unlabelled source is the most restrictive, so it is the last row.
+#   * A ROW has `id` (the level's name, the `<level>` of `cleared_for:<level>`; no whitespace, no `:`),
+#     `reason`, and `ratified_by` (a seat such as `owner`, never an identity in users.yaml).
+#   * NO LEVEL IS NAMED IN CODE. A deployment adds a level as a row.
+#   * IT SHIPS WITH NO ROWS. No level is ruled yet, and the first row is the owner's to ratify.
+#   * ONE FILE, OWNED BY POLICY. Ruling (a), verbatim (Chris, 2026-11-05): "one levels file, owned by
+#     policy (invincible-agent/policy/classification/levels.yaml); dag-tools never ships its own -- it
+#     reads the deployment's copy (ConfigMap from the chart), so code reads what the server serves."
+#     The chart's ConfigMap that serves this file to dag-tools is not built yet (a separate board item;
+#     it changes the chart).
+#   * A GRANT AT A LEVEL IS A CEILING. Ruling (b), verbatim: "Levels are ordered; a grant at a level is
+#     a ceiling and implies every less restrictive one." A group cleared for a level is cleared for
+#     every earlier row too (see policy/level_readers.yaml).
+#
+# No code reads this file yet (dag-tools step 5). validate_policy.py checks it WHEN PRESENT
+# (classification_levels_errors).
+
+classification_levels: []

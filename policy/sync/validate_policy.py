@@ -36,6 +36,10 @@ definition of "valid", never a parallel re-implementation):
     DATA_FILES -- see the note there)
   - gateway_delegates.yaml        → gateway_delegates_errors (WHEN PRESENT; not in
     DATA_FILES -- see the note there)
+  - classification/levels.yaml    → classification_levels_errors (WHEN PRESENT; not in
+    DATA_FILES -- see the note there): an id is a bare name, unique; a row says why and who ratified
+  - level_readers.yaml            → level_readers_errors (WHEN PRESENT; not in DATA_FILES -- see
+    the note there): a level is registered, one row per level, a group exists and has members
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
     no sync of its own — can_consume is evaluated in-process)
   - every DATA file must EXIST — explicit-empty (`grants: []`) is a
@@ -72,6 +76,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 from pydantic import ValidationError
@@ -112,6 +117,10 @@ DATA_FILES = (
 # gateway_delegates.yaml is likewise NOT in DATA_FILES: a deployment with no delegate has nothing to
 # assert, and an absent file means the same as an empty one, no service names a person. Validated
 # WHEN PRESENT.
+#
+# classification/levels.yaml and level_readers.yaml (ADR-0064 item B, Proposed, #266) are likewise NOT
+# in DATA_FILES: no code reads either yet (dag-tools step 5), an absent registry registers no level
+# and an absent rail grants no level. Validated WHEN PRESENT.
 
 
 def known_content_kinds() -> tuple[set[str], list[str]]:
@@ -795,6 +804,160 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
     return out
 
 
+#: The row fields of policy/classification/levels.yaml and policy/level_readers.yaml (ADR-0064 item B,
+#: Proposed, #266). Neither file is read by code yet; dag-tools step 5 serves a dataset's level.
+_CL_ROW_FIELDS = ("id", "reason", "ratified_by")
+_LR_ROW_FIELDS = ("level", "grant_to_groups", "granted_by", "reason", "ratified_by")
+
+
+def classification_levels_errors(raw: dict, users: list) -> tuple[list[str], list[str] | None]:
+    """Validate policy/classification/levels.yaml. PURE.
+
+    Returns `(errors, levels)`. `levels` is the ORDERED list of valid ids, in file order (list
+    position IS the order: least restrictive first), or None when the file is refused at the top
+    level. Each error reads `classification/levels.yaml: <id or row i>: ...`. An id is the
+    `<level>` of `cleared_for:<level>`, so it has no whitespace and no `:`; it is unique. Every row
+    says why (`reason`) and which seat ratified it (`ratified_by`: a seat, never an identity).
+    Unknown keys are refused by name. A row with a bad id contributes no level."""
+    pre = "classification/levels.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"classification_levels"}:
+        extra = sorted(map(str, set(raw) - {"classification_levels"})) if isinstance(raw, dict) else []
+        return ([f"{pre}: top level must be a mapping with exactly one key, `classification_levels`"
+                 + (f" (unknown key(s): {', '.join(extra)})" if extra else "")], None)
+    rows = raw["classification_levels"]
+    if not isinstance(rows, list):
+        return ([f"{pre}: `classification_levels` must be a list of rows "
+                 "(an empty list registers no level)"], None)
+
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    levels: list[str] = []
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        lid = row.get("id")
+        where = f"{pre}: {lid if isinstance(lid, str) and lid.strip() else f'row {i}'}"
+        for k in row:
+            if k not in _CL_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_CL_ROW_FIELDS)})")
+        if not isinstance(lid, str) or not lid.strip():
+            out.append(f"{where}: `id` must be a non-empty string")
+        elif any(ch.isspace() for ch in lid) or ":" in lid:
+            out.append(f"{where}: `id` must have no whitespace and no `:` (it is the `<level>` "
+                       "of `cleared_for:<level>`)")
+        elif lid in levels:
+            out.append(f"{where}: more than one row has this id")
+        else:
+            levels.append(lid)
+        for k in ("reason", "ratified_by"):
+            v = row.get(k)
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and v.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
+    return out, levels
+
+
+def level_readers_errors(raw: dict, levels: list[str] | None, groups: dict, users: list) -> list[str]:
+    """Validate policy/level_readers.yaml. PURE.
+
+    `levels` is the registry's ordered ids: `[]` when the registry file is absent, None when the
+    registry was refused (then no level-membership or completeness check runs: the registry's own
+    error already stands, and one refused registry must not become one "unknown level" per row).
+    Each error reads `level_readers.yaml: <level or row i>: ...`. One row per registered level;
+    `grant_to_groups` names groups that exist and have members, and may be empty (nobody reads the
+    level). A user is never named: `grant_to:` is an unknown key. Every row says why (`reason`) and
+    which seat ratified it (`ratified_by`: a seat, never an identity).
+
+    A grant is a ceiling (a group named at a level is cleared for every less restrictive one), so a
+    group named at two or more registered levels is refused at each LESS restrictive row: removing it
+    from a lower row would otherwise look like a revocation and change nothing. Order is the
+    registry's, never the rail's row order. Runs only when `levels` is not None."""
+    pre = "level_readers.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"level_readers"}:
+        extra = sorted(map(str, set(raw) - {"level_readers"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `level_readers`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    rows = raw["level_readers"]
+    if not isinstance(rows, list):
+        return [f"{pre}: `level_readers` must be a list of rows (an empty list grants no level)"]
+
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    seen: set[str] = set()
+    named: dict[str, dict[str, list[str]]] = {}
+    dup_levels: set[str] = set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        level = row.get("level")
+        where = f"{pre}: {level if isinstance(level, str) and level.strip() else f'row {i}'}"
+        for k in row:
+            if k not in _LR_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_LR_ROW_FIELDS)})")
+
+        if not isinstance(level, str) or not level.strip():
+            out.append(f"{where}: `level` must be a non-empty string")
+        else:
+            if levels is not None and level not in levels:
+                out.append(f"{where}: {level!r} is not a level in classification/levels.yaml")
+            if level in seen:
+                out.append(f"{where}: more than one row names this level")
+                dup_levels.add(level)
+            seen.add(level)
+
+        gtg = row.get("grant_to_groups")
+        if not isinstance(gtg, list):
+            out.append(f"{where}: `grant_to_groups` must be a list (`[]` says nobody reads the level)")
+        else:
+            names: list[str] = []
+            for g in gtg:
+                if not isinstance(g, str) or not g.strip():
+                    out.append(f"{where}: `grant_to_groups` entries must be non-empty strings")
+                elif g in names:
+                    out.append(f"{where}: group {g!r} is listed more than once")
+                else:
+                    names.append(g)
+            if isinstance(level, str) and level.strip():
+                named.setdefault(level, {}).setdefault("groups", []).extend(names)
+            out.extend(unusable_group_audiences(
+                [SimpleNamespace(key=level if isinstance(level, str) else f"row {i}",
+                                 grant_to_groups=names)],
+                groups, users, file_label=pre, noun="level",
+                nobody="the grant would clear NOBODY"))
+
+        for k in ("granted_by", "reason", "ratified_by"):
+            v = row.get(k)
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and v.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
+
+    if levels is not None:
+        at: dict[str, list[str]] = {}
+        for lv in levels:
+            if lv in dup_levels:
+                continue
+            for g in dict.fromkeys(named.get(lv, {}).get("groups", [])):
+                at.setdefault(g, []).append(lv)
+        for lv in levels:
+            for g in dict.fromkeys(named.get(lv, {}).get("groups", [])) if lv not in dup_levels else ():
+                held = at[g]
+                if len(held) > 1 and lv != held[-1]:
+                    out.append(f"{pre}: {lv}: group {g!r} is also listed at {held[-1]!r}, which already "
+                               f"clears it for {lv!r} (a grant is a ceiling: list a group once, at its "
+                               f"highest level)")
+        for lv in levels:
+            if lv not in seen:
+                out.append(f"{pre}: level {lv!r} has no row (one row per level; "
+                           "`grant_to_groups: []` with a reason says nobody reads it)")
+    return out
+
+
 def validate(
     policy_dir: Path,
     enums_dir: Path,
@@ -887,6 +1050,14 @@ def validate(
     programs, program_errors = load_programs(progs_raw)
     errors.extend(f"program_members.yaml: {e}" for e in program_errors)
     print(f"  program_members.yaml: {len(programs)} program(s)")
+
+    # `cleared_for:<level>` is the level rail's key (ADR-0064 item B), never a capability row; `can_read`
+    # stays what it is, so no `can_read:` key is refused here.
+    for c in caps:
+        if c.key.startswith("cleared_for:"):
+            errors.append(
+                f"capability_grants.yaml: capability {c.key!r}: a level's clearances are rows of "
+                f"policy/level_readers.yaml, not a capability row")
 
     # `can_drop:<K>` (2026-10-28 ruling): the key gates drops of content kind K by the capability
     # OBJECT's existence, so a misspelt kind (`can_drop:pnc`) would gate a kind nobody drops and
@@ -996,6 +1167,29 @@ def validate(
         errors.extend(gateway_delegates_errors(gd_raw, users_raw.get("users") or []))
         _gd_rows = gd_raw.get("gateway_delegates")
         print(f"  gateway_delegates.yaml: {len(_gd_rows) if isinstance(_gd_rows, list) else 0} row(s)")
+
+    # classification/levels.yaml + level_readers.yaml (ADR-0064 item B, Proposed, #266): validated
+    # WHEN PRESENT only (not in DATA_FILES -- see the note there). The rail is checked against the
+    # registry; an absent registry registers no level, and a registered level with the rail absent
+    # reports its missing row.
+    _users_list = users_raw.get("users") or []
+    _groups_map = groups_raw.get("groups") or {}
+    _cl_levels: list[str] | None = []
+    _cl_path = policy_dir / "classification" / "levels.yaml"
+    if _cl_path.is_file():
+        cl_raw = _read_yaml(_cl_path, errors)
+        _cl_errors, _cl_levels = classification_levels_errors(cl_raw, _users_list)
+        errors.extend(_cl_errors)
+        _cl_rows = cl_raw.get("classification_levels")
+        print(f"  classification/levels.yaml: {len(_cl_rows) if isinstance(_cl_rows, list) else 0} level(s)")
+    _lr_path = policy_dir / "level_readers.yaml"
+    if _lr_path.is_file():
+        lr_raw = _read_yaml(_lr_path, errors)
+        errors.extend(level_readers_errors(lr_raw, _cl_levels, _groups_map, _users_list))
+        _lr_rows = lr_raw.get("level_readers")
+        print(f"  level_readers.yaml: {len(_lr_rows) if isinstance(_lr_rows, list) else 0} row(s)")
+    elif _cl_levels:
+        errors.extend(level_readers_errors({"level_readers": []}, _cl_levels, _groups_map, _users_list))
 
     # ADMISSION POSTURE (ADR-0034). Validated through the SAME parser the runtime loads with, so
     # there is ONE definition of a well-formed table and this gate cannot drift from the loader.
