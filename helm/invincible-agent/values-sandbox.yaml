@@ -24,6 +24,10 @@ global:
   # so `kubectl delete pod` picks up the new :latest after CI finishes,
   # instead of caching the broken pre-fix layer.
   imagePullPolicy: Always
+  # The sandbox-only electric mirror (values.yaml pins the upstream electric instead). Rebuilt from
+  # upstream's @core/sync-service@1.0.13 by .github/workflows/mirror-electric.yml; see `electric:`.
+  imageDigests:
+    "ghcr.io/edgy-solutions/mirror/electric": "sha256:70b57efaacb5efeed39283439e050b88c328bae866a4086c6a188d0394a323c3"
 
 # --------------------------------------------------------------------------
 # Disabled engines for Phase 2 (re-enable in Phase 3)
@@ -361,15 +365,7 @@ engineCost:
 # --------------------------------------------------------------------------
 postgresql:
   enabled: true
-  # Inherit imageStyle=bitnami + tag from values.yaml, but override the
-  # repository to bitnamilegacy: sandbox pulls DIRECT from docker.io, where the
-  # pinned 17.5.0-debian-12-r2 tag lives at bitnamilegacy/ (bitnami/postgresql
-  # is :latest-only there post-2025-08 migration). Work keeps values.yaml's
-  # bitnami/ path (resolved against its Artifactory mirror).
-  image:
-    registry: "docker.io"
-    repository: "bitnamilegacy/postgresql"
-    tag: "17.5.0-debian-12-r2"
+  # image: inherited from values.yaml (bitnamilegacy/postgresql since 0.4.80).
   auth:
     postgresPassword: "changeme-postgres-sandbox"  # CHANGE BEFORE DEPLOY
     password: "changeme-iagent-sandbox"            # CHANGE BEFORE DEPLOY
@@ -654,15 +650,7 @@ dagster:
     enabled: true  # loads iagent.definitions
                     # doc-tools is deployed as a SEPARATE Dagster code-location
                     # via the doc-tools chart; both register with this webserver.
-    image:
-      # The chart's default image name `dagster-user-code` is NOT built by
-      # CI (build-containers.yml matrix only builds `dagster-control-plane`).
-      # Both have identical CMD (`dagster api grpc -m iagent.definitions`)
-      # since they're built from the same Dockerfile. Point userCode at the
-      # control-plane image — same code, exists in GHCR with multi-arch
-      # (linux/amd64 + linux/arm64) variants needed for this arm64 k3s.
-      repository: "edgy-solutions/invincible-agent/dagster-control-plane"
-      tag: ""
+    # image: the base default is the control-plane image (the chart's old `dagster-user-code` was never built).
 
   # Doc-tools is deployed standalone via the doc-tools chart but exposes
   # a Dagster gRPC code-location server on port 3030. Wiring it into this
@@ -683,20 +671,7 @@ centralGateway:
   # in its hypercorn invocation). Chart default of 8000 caused
   # readiness/liveness probes to hit a closed port — pod stuck 0/1 Running.
   port: 8090
-  image:
-    # PINNED BY DIGEST (0.4.78), the same dag-tools master as the user deployment below: run
-    # `41768309688`, push on `4096a112eb3fbc91afdf7e0784a12973e72f00e7`. Before this the gateway ran
-    # `latest` with pullPolicy Always, so a restart could change its code with no chart change.
-    #
-    #     :sha-4096a11  -> sha256:ac93ba19f96718cdad6dd40dabd8dc51934db4796ccfd767b5da732b19edf498
-    #     :latest       -> the same digest
-    #
-    # POSITIVE CONTROL: `:sha-4096a12` answers 404. The digest is a multi-arch index; both children
-    # answer 200 (arm64 `72cba2271f82`, amd64 `d4ee5d0687a6`).
-    #
-    # TO ROLL BACK, pin what ran before (`sha256:eee15c15...`). Deleting this line falls through to
-    # `latest`, which is now this image.
-    digest: "sha256:ac93ba19f96718cdad6dd40dabd8dc51934db4796ccfd767b5da732b19edf498"
+  # PINNED BY DIGEST in values.yaml `global.imageDigests` (dag-tools v0.11.0); no image override here.
   env:
     # The gateway's verified identity (dag-tools PR #6). The issuer is what a realm token carries,
     # so it is the public realm URL. JWKS is fetched inside the cluster, like every other realm read.
@@ -716,363 +691,8 @@ cortexUi:
   enabled: true
   image:
     tag: ""
-    # PINNED BY DIGEST FOR THE 2026-09-19 ROLL, and the digest is the pin — not belt-and-braces
-    # over a tag. This image is CROSS-REPO (edgy-solutions/cortex-ui/frontend), so the fleet's
-    # retag-by-digest cannot reach it: scripts/retag_images_by_digest.py derives its population
-    # from THIS repo's build matrix, where cortex-ui appears zero times, and hard-codes the
-    # invincible-agent prefix. So `$ours` is false in the image helper and the tag falls through
-    # to "latest".
-    #
-    # MEASURED 2026-09-19, and the three numbers are the argument:
-    #   running pod   imageID sha256:70a0eead…  (cortex-ui df702ca — serves the safety rows)
-    #   :latest NOW   sha256:81407e58… / f8dc4533…  — ALREADY a different image
-    #   this pin      sha256:c8d6553f…  (cortex-ui 8a13dd6), multi-arch, arm64 present
-    # The running pod is on NEITHER of the other two, and its pullPolicy is Always. So the
-    # frontend currently serving the safety rows is one restart away from becoming whatever
-    # :latest points at, with no chart change and no commit. That is what this line closes.
-    #
-    # ⛔ BUMPED HERE, 2026-09-28, AND *HERE* IS THE FINDING. The frontend bump was ordered
-    # against `values-roll-frontend-digest.yaml`, whose whole purpose is to carry a roll's
-    # cross-repo digests. That file is NOT in `scripts/upgrade-sandbox.sh`'s VALUES array
-    # (29-33: values-sandbox.yaml and values-sandbox.secret.yaml, and nothing else), so the
-    # canonical roll command never reads it. It was written for a hand-run
-    # `helm upgrade --reuse-values -f <overlay>`, which is no longer how rolls fire.
-    #
-    # NOT INFERRED FROM THE SCRIPT — MEASURED ON THE CONSEQUENCE. None of the overlay's four
-    # digests is running: the frontend was on `c8d6553f` (THIS line, not the overlay's
-    # `6e2fc31d`), and central-gateway `4531b7e2` / user-deployment `746e4937` match NEITHER
-    # pin, i.e. they fell through to `:latest` exactly as that file's own header predicts when
-    # no digest reaches the helper. The overlay is inert, and has been for every roll fired
-    # through the script. Its verification is impeccable and its WIRING IS ABSENT — and it
-    # already records an inertness defect one layer down (the helper ignoring `.digest` at
-    # three of four call sites), so fixing that instance read as handling the class.
-    #
-    # The reason the bump lands on this line instead: `c8d6553f` was the RUNNING digest, which
-    # proves values-sandbox.yaml → rendered reference → kubelet is a live path for cortexUi.
-    # The overlay is left alone deliberately: adding it to VALUES would also apply three
-    # cross-repo pins from 2026-09-23 that the running images have since moved PAST, so it
-    # would be a downgrade of two dag-tools workloads nobody re-verified. Filed, not fixed.
-    #
-    # DERIVED, NEVER TYPED — the order carried BOTH the digest and the tag abbreviated
-    # (`sha256:6f277665…`, tag `5b559765`), and this registry's tags are the full 40-char sha.
-    # Resolved 2026-09-28, five readings:
-    #   * cortex-ui `git rev-parse 5b559765` -> 5b559765d1cc539f47beabba1d54257811616ca0
-    #   * that full tag resolves to exactly the digest below — the tag↔digest binding in the
-    #     direction that matters, not merely "the digest exists"
-    #   * the digest is an `application/vnd.oci.image.index.v1+json` with linux/arm64 present
-    #     alongside linux/amd64; the nodes are arm64
-    #   * POSITIVE CONTROL: the ABBREVIATED tag `:5b559765` answers `not found`, so a `found`
-    #     from this instrument discriminates. Without it, the next reading is only an absence.
-    #   * so `60e245a` having no image is a REAL negative, checked at its FULL sha
-    #     (`60e245a136eaac4fe8f609cb98ab6d40ab5b25f7` -> `not found`), not an abbreviation
-    #     artifact. Head has also moved on again, to `46affb59`; neither is this pin.
-    #   * CONTROL: the superseded `6e2fc31d` STILL resolves. Nothing was deleted, it was
-    #     overtaken — an absence assertion would have been wrong here.
-    #
-    # ⚠ `:latest` resolves to THIS SAME DIGEST as of 2026-09-28, which is the inverse of what
-    # the overlay last measured — and it is a fact with a shelf life, not a reassurance. With
-    # `pullPolicy: Always`, latest agreeing today is what makes the digest pin cheap to verify,
-    # never what makes it unnecessary: the pin exists for the day latest moves.
-    # 2026-09-29 roll #7: cortex-ui 0427884 (chart 0.2.1) -> 79bcda2b. Measured before pinning: ghcr
-    # answers 200 with linux/arm64 + linux/amd64; the same digest with its last hex altered answers
-    # 404, and the superseded 6f277665 still answers 200, so the probe discriminates.
-    # 2026-09-30 frontend-only roll: cortex-ui b66ac48 (carries a425186, the docs card and its
-    # capability row) -> 66887e68. CI run 36668932087 green. Measured before pinning: ghcr answers
-    # 200 with linux/arm64 + linux/amd64; last hex altered answers 404; superseded 79bcda2b still
-    # answers 200. cortex-ui changed only src/ + sessions/ since 0427884, so its chart is unchanged.
-    # 2026-09-30 roll #10: cortex-ui 7cf9e9c6 (canvas export + ingest client, both behind
-    # localStorage flags) -> 6fb15fae. Measured before pinning: the tag resolves to this digest
-    # (200, linux/arm64 + linux/amd64); an invented tag answers 404. cortex-ui changed only src/,
-    # sessions/ and its CI producer ref since b66ac48, so its chart is unchanged.
-    # 2026-10-01 roll #11: cortex-ui adf44b5 (the ingest adapter on the deployed wire, plus
-    # everything 497f45a2 carried -- 497f45a2 is superseded and must not be rolled) -> 38dca3a7.
-    # Measured before pinning: the FULL tag resolves to this digest (200, linux/arm64 +
-    # linux/amd64); the abbreviated tag and the full tag with its last hex altered both answer
-    # 404; the superseded 6fb15fae still answers 200.
-    # 2026-10-01 roll #12: cortex-ui b97b9d58 (live ingest wire readable: a duplicate's id is opaque,
-    # timestamps are epoch-ms numbers; export draws its refusal outcome) -> d2e56047. Measured before
-    # pinning: the FULL tag resolves to this digest (200, linux/amd64 + linux/arm64 + 2 attestations);
-    # the abbreviated tag and the full tag with its last hex altered both answer 404; the superseded
-    # 38dca3a7 still answers 200. VITE_FEATURES unchanged.
-    # 2026-10-01 roll #13 (frontend-only): cortex-ui 0489d368 (the task card reads the served
-    # decision menu, so a reason-required kind cannot be accepted without one; an audience whose
-    # kind prefix contradicts the row refuses) -> 613b6c35. Measured before pinning: the FULL tag
-    # resolves to this digest (200); the abbreviated tag and the full tag with its last hex altered
-    # both answer 404; the b97b9d58 control still resolves to d2e56047. VITE_FEATURES unchanged.
-    # 2026-10-01 roll #13, RE-PINNED before it fired: 613b6c35 was never rolled. cortex-ui
-    # 6596999 (adds to 0489d368: the /act refusals are drawn inline, COMPETING_MEASURES moves to
-    # its ADR-0055 package with no visual change, the ingest seal on the rev-164 capture) ->
-    # 87f1f3aa. Measured before pinning: the FULL tag resolves to this digest (200); the
-    # abbreviated tag and the full tag with its last hex altered both answer 404; the 0489d368
-    # control still resolves to 613b6c35. VITE_FEATURES unchanged.
-    # 2026-10-02 roll #16: cortex-ui 21a32d0 (drops the unused node:fs import that broke vite build
-    # for every push after roll #13; carries 65ef90f, the origin drawn after upload, inert until
-    # served) -> f4bac439. Measured before pinning: the FULL tag resolves to this digest; the
-    # abbreviated tag and the full tag with its last hex altered both answer not-found; the
-    # 6596999 control still resolves to 87f1f3aa. linux/amd64 + linux/arm64. VITE_FEATURES unchanged.
-    # 2026-10-04 roll #17: cortex-ui b49db01 (the ingest stage set renames awaiting_disposition to
-    # review, matching the producer since 1c10e28c; 21a32d0 refused every row at review) ->
-    # 49767746. PAIRING: this image refuses awaiting_disposition, so it must not roll with a
-    # producer before 1c10e28c. Measured before pinning: the FULL tag resolves to this digest
-    # (linux/amd64 + linux/arm64); the abbreviated tag and the full tag with its last hex altered
-    # both answer not-found; the 21a32d0 control still resolves to f4bac439. VITE_FEATURES unchanged.
-    # 2026-10-05 roll #18: cortex-ui 3ea967f (the card renders the method block again: formula,
-    # inputs, bound, bound_defaulted, producer_sha; carries d4bb0d2, the rev-171 captures sealed and
-    # the card export retired) -> 8b929940. Supersedes the d4bb0d2 arming (c8a03678), never rolled.
-    # Measured before pinning: the FULL tag resolves to this digest (linux/amd64 + linux/arm64 + 2
-    # attestations); the abbreviated tag and the full tag with its last hex altered both answer
-    # not-found; the b49db01 control still resolves to 49767746. No change under .github or the
-    # Dockerfile since b49db01, so VITE_FEATURES unchanged.
-    # 2026-10-07 roll #21: cortex-ui 8935e6a (event ingests render as cases: case_opened -> GET
-    # /cases/{case_id} -> WORKFLOW_CASE; four commits on dabeeac) -> c054ba50. This supersedes the
-    # dabeeac pin (7cd6fb27, 39381ddb), which was never rolled. Measured before pinning: the FULL
-    # tag resolves to this digest (an OCI index, linux/amd64 + linux/arm64 + 2 attestations); the
-    # abbreviated tag, the full tag with its last hex altered, and this digest with its last hex
-    # altered all answer 404. Since 3ea967f the Dockerfile is unchanged. docker-entrypoint.sh gains
-    # VITE_MOCK_GROUNDING (3d44ee0), sanitised and empty by default, and this chart does not set
-    # it. .github's one change (build.yml PRODUCER_REF -> 3e6d9e9f) selects the parity tests'
-    # checkout and is not a build arg, so VITE_FEATURES is unchanged.
-    # 2026-10-07 roll #21, RE-PINNED before it fired: c054ba50 was never rolled. cortex-ui bd782c5
-    # (adds four commits to 8935e6a: rows read method_label, the SDK parity pin to v0.9.8, the
-    # illustration test settles on the SVG, and a sessions packet) -> 840d5114. Measured before
-    # pinning: the FULL tag resolves to this digest (an OCI index, linux/amd64 + linux/arm64 + 2
-    # attestations); the abbreviated tag and this digest with its last hex altered both answer 404;
-    # the 8935e6a control still resolves to c054ba50. Nothing under the Dockerfile,
-    # docker-entrypoint.sh or .github changed since 8935e6a, so VITE_FEATURES is unchanged.
-    # 2026-10-08, pinned after roll #21 (rev 179): cortex-ui 942259f (adds four commits to bd782c5:
-    # xml as the third ingest file kind with its mirror and door seal, the approval and ingest
-    # status cards labelled for a11y, a CLAUDE.md conventions change, and a sessions packet)
-    # -> 401f76b3. PAIRING: the xml kind needs the producer's 086a9cf0, and the image's parity
-    # seals ran against PRODUCER_REF 5cf7d879. Both are ancestors of the rolled tag b16ae935.
-    # Measured before pinning: the FULL tag resolves to this digest (an OCI index, linux/amd64 +
-    # linux/arm64 + 2 attestations); the abbreviated tag, the full tag with its last hex altered,
-    # and this digest with its last hex altered all answer 404; the bd782c5 control still
-    # resolves to 840d5114. Since bd782c5 the Dockerfile and docker-entrypoint.sh are unchanged,
-    # and .github's one change (build.yml PRODUCER_REF -> 5cf7d879) selects the parity tests'
-    # checkout and is not a build arg, so VITE_FEATURES is unchanged.
-    # 2026-10-08, pinned for roll #23: cortex-ui 3d5a0e1 (master plus the row, cortex's choice (a)):
-    # the DERIVED_BINDINGS row mesh:NoticePartSet -> mesh:InstancesByProperty, paired with this
-    # repo's capabilities.py row and _PROJECTED_ARCHETYPES["INSTANCES_BY_PROPERTY"]; it also
-    # carries c582803 (the notice-parts sources trail), f0da7f9 and f358cc6 (four archetype
-    # packages) and 0e8c998 (a Playwright dry run). -> 83366dd5. Measured before pinning: the
-    # FULL tag resolves to this digest (an OCI index, linux/amd64 + linux/arm64 + 2 attestations);
-    # the abbreviated tag, the full tag with its last hex altered, and this digest with its last
-    # hex altered all answer 404; the 942259f control still resolves to 401f76b3. The image sets
-    # no org.opencontainers.image.revision label, so the sha binding is the tag's, not the
-    # image's. Since 942259f the Dockerfile, docker-entrypoint.sh and .github are unchanged
-    # (PRODUCER_REF still 5cf7d879, an ancestor here), so VITE_FEATURES is unchanged.
-    # 2026-10-10, pinned for rev 183: cortex-ui 9bf8063 (the merge of cortex PR #3, cards read the
-    # `refusal` envelope; pairs with this repo's #13, 5f9203e2) -> 1985ce7f. 9bf8063 also carries
-    # 81dc023 (the stale-tab version.json guard), 8b6a83f (the FRACAS bindings, cortex PR #1) and
-    # 415e5e6 (the P0 ingest fix 182a set by hand). NOT 8b6a83f's own image (c1688a13): 8b6a83f is
-    # an ANCESTOR of 9bf8063, so it lacks the refusal reader and must not roll with #13. Measured
-    # before pinning: the FULL tag resolves to this digest (an OCI index, linux/amd64 +
-    # linux/arm64 + 2 attestations); the abbreviated tag, the full tag with its last hex altered,
-    # and this digest with its last hex altered all answer 404. Since 3d5a0e1 the Dockerfile,
-    # docker-entrypoint.sh and .github are unchanged, so VITE_FEATURES is unchanged.
-    # 2026-10-10, pinned for rev 186b: cortex-ui 865c080 (master; merges cortex #2 8b96ade, #5
-    # 6e64da2 and #6 865c080; NOT #4, which is 187 unless a follow-up pin lands first) ->
-    # 2c45d36a. 9bf8063 is an ANCESTOR of 865c080, so the refusal reader stays. Measured before
-    # pinning: the FULL tag resolves to this digest; the abbreviated tag, the full tag with its
-    # last hex altered, and this digest with its last hex altered all fail to resolve. Since
-    # 9bf8063 the Dockerfile and .github are unchanged; docker-entrypoint.sh gains only
-    # VITE_SEND_FRONTEND_VERSION (env below), so VITE_FEATURES is unchanged. KNOWN AT THIS PIN:
-    # a KNOWLEDGE_DOCUMENT carrying `refusal` draws as the refusal card alone, its prose not shown
-    # -- equally true of 9bf8063 once this repo's 935d7524 sends the field; cortex's fix is a
-    # follow-up pin.
-    # 2026-10-12, pinned for rev 187b: cortex-ui b566192 (master; merges #10 3fa6fcb, the answers
-    # perf merge this pin is conditioned on, plus #4 d528b0b the composer, #7 the refused document
-    # keeps its prose, #8 hazard refusals named, #9 row edits (off) and the narrow Reject, #11
-    # mixed-board export, #12 npm run walk, #13 a refused export shows its reason, #14 stale-tab
-    # re-check) -> 2556cf5b. Rev 187 rolled on 865c080, so the composer goes live HERE, not at
-    # 187. 865c080 and 3fa6fcb are both ancestors of b566192. Measured before pinning: the FULL
-    # tag resolves to this digest (an OCI index, linux/amd64 + linux/arm64 + 2 attestations); the
-    # abbreviated tag and this digest with its last hex altered both answer 404; the 865c080
-    # control still resolves to 2c45d36a. Since 865c080 the Dockerfile is unchanged;
-    # docker-entrypoint.sh gains only VITE_REVIEW_ROW_EDITS (sanitised, empty by default, and not
-    # set by this chart), and .github's one change (build.yml PRODUCER_REF -> 5b2a16a2, an
-    # ancestor of the rolled e977c32b) selects the parity tests' checkout and is not a build arg,
-    # so VITE_FEATURES is unchanged.
-    # 2026-10-12, pinned for rev 187c (architect: frontend-only, ahead of 188): cortex-ui f3617a9
-    # (master; merges #15 the drop box cannot stay grown, #16 rail rows at measured height, #17
-    # walk login cannot mistake Keycloak for the app + WALK_SPKI_PIN, #18 a drop is an ingest
-    # turn on the answers rail, My drops removed) -> facdc367. b566192 and 057938a are both
-    # ancestors of f3617a9. Measured before pinning: the FULL tag resolves to this digest (an OCI
-    # index); the abbreviated tag and this digest with its last hex altered both answer not
-    # found. Since b566192 the Dockerfile, docker-entrypoint.sh, nginx config and .github are
-    # unchanged, so VITE_FEATURES is unchanged. The rail's ingest entry reads
-    # GET /ingest/{id}/status, which the rolled fleet already serves. `npm run walk` needs a
-    # cortex checkout at or after f3617a9 from this pin on.
-    # 2026-10-13, pinned for rev 188: cortex-ui 88a65d4 (master; merges #19 POST /ingest carries
-    # content_kind, #20 the walk classifies only the ask's own artifact and reads version.json
-    # through the pinned browser, #21 row_edits ON by default with the send matching the
-    # producer's models, #22 a failed drop draws its failure and can be retried) -> 7b2b6129.
-    # f3617a9 and 10f64f1 are both ancestors of 88a65d4. Measured before pinning: the FULL tag
-    # resolves to this digest; the abbreviated tag and the full tag with its last hex altered both
-    # answer not found; the f3617a9 control still resolves to facdc367. Since f3617a9 the
-    # Dockerfile and nginx config are unchanged; docker-entrypoint.sh changes one comment line, and
-    # .github only moves PRODUCER_REF to 49aa5e28 (a parity-test checkout, not a build arg), so
-    # VITE_FEATURES is unchanged. VITE_REVIEW_ROW_EDITS now defaults ON in the image and this
-    # chart still does not set it (only the exact string "false" turns it off).
-    # 2026-10-15, pinned for rev 188b: cortex-ui e1b94e2 (master; merges #23 cad greyed "not yet
-    # accepted" and a door 4xx drawn as a refusal, #24 every walk row names its persona, #25 xml
-    # greyed like cad, #26 npm audit 5 high -> 0 via a compression override, dev-only) -> 8d0234ab.
-    # 88a65d4 is an ancestor of e1b94e2. Measured before pinning: the FULL tag resolves to this
-    # digest (an OCI index, amd64 and arm64); the abbreviated tag and this digest with its last hex
-    # altered both answer not found; the 88a65d4 control still resolves to 7b2b6129. Since 88a65d4
-    # the Dockerfile, docker-entrypoint.sh, nginx config and .github are unchanged, so
-    # VITE_FEATURES is unchanged. From this pin the chart SETS VITE_REVIEW_ROW_EDITS (env below).
-    # 2026-10-17, pinned for 193 (architect): cortex-ui 8fe23fc (master; the rail reads
-    # GET /ingest/mine on load, 366a73a a retried drop sits at its latest activity, 4a276e0 the
-    # drop chip names the row's content_kind, 9a84692 export sends the board, #27 the brokered-login
-    # walk check) -> cc2ad9cc. e1b94e2 is an ancestor of 8fe23fc. Measured before pinning: the FULL
-    # tag resolves to this digest (an OCI index); the abbreviated tag and this digest with its last
-    # hex altered both answer 404; the e1b94e2 control still resolves to 8d0234ab. Since e1b94e2 the
-    # Dockerfile, docker-entrypoint.sh, nginx config and .github are unchanged, so VITE_FEATURES is
-    # unchanged. NOT cortex master: 55d2e6a (xml accepted) and 8066347 (/ingest/mine pages past
-    # 50) landed after 8fe23fc and do not roll here.
-    # 2026-10-17, pinned for 194 (architect, "cortex pin 68f56bb (review card)"): cortex-ui 68f56bb
-    # (master; 55d2e6a xml accepted, 8066347 /ingest/mine pages past 50, df7f429 the review card to
-    # the 10-17 standard, f15b88e the pdf.js fix, 68f56bb the outline says cell, table box, or an
-    # inherited date's sentence) -> 5d5b5dbb. 8fe23fc is an ancestor of 68f56bb. Measured before
-    # pinning: the FULL tag resolves to this digest (an OCI index); the abbreviated tag and this
-    # digest with its last hex altered both answer 404; the 8fe23fc control still resolves to
-    # cc2ad9cc. Since 8fe23fc the Dockerfile, docker-entrypoint.sh, nginx config and .github are
-    # unchanged, so VITE_FEATURES is unchanged.
-    # 2026-10-17, pinned for 195 (architect, "cortex 9b23135"): cortex-ui 9b23135 (master; 68f56bb
-    # plus the MODEL_EXPLANATION card, which draws only when VITE_FEATURES lists modelCanvas) ->
-    # 5c411756. 68f56bb is its parent. Measured before pinning: the FULL tag resolves to this
-    # digest (an OCI index); the abbreviated tag and this digest with its last hex altered both
-    # answer 404; the 68f56bb control still resolves to 5d5b5dbb. Since 68f56bb the Dockerfile,
-    # docker-entrypoint.sh, nginx config and .github are unchanged, so VITE_FEATURES is unchanged.
-    # 2026-10-18, pinned for 196 (architect, "196 pins b3bdab7"): cortex-ui b3bdab7 (master; the
-    # /case/{id} and /ask?q= deep links OpenDDIL builds against) -> 94599a96. 9b23135 is an
-    # ancestor. Measured before pinning: the FULL tag resolves to this digest (an OCI index); the
-    # abbreviated tag and this digest with its last hex altered both answer 404; the 9b23135
-    # control still resolves to 5c411756. Since 9b23135 only the BUILD stage moved (node 20 -> 22
-    # in the Dockerfile and both workflows); docker-entrypoint.sh and the nginx config are
-    # unchanged, so VITE_FEATURES is unchanged.
-    # 2026-10-18, re-pinned for 196 (cortex: "name the digest when it is built, and I will pin it
-    # in 196"): cortex-ui 1f5482f (master; Promote held when nothing can be vetted, the four
-    # reject codes, the ?idp=openddil deep-link marker) -> 1f3ae4ed. b3bdab7 is an ancestor.
-    # Measured before pinning: the FULL tag resolves to this digest (an OCI index); the
-    # abbreviated tag and this digest with its last hex altered both answer 404; the b3bdab7
-    # control still resolves to 94599a96. Since b3bdab7 the Dockerfile, docker-entrypoint.sh,
-    # nginx config and .github are unchanged, and the diff reads no new env, so VITE_FEATURES
-    # is unchanged.
-    # 2026-10-19, pinned for 197 (architect P0: "roll 197 with cortex's pin"): cortex-ui 3bd3e80
-    # (master; the pdf.js worker .mjs is served as text/javascript, and the source pane names the
-    # real failure) -> 2b61d76f. 1f5482f is an ancestor. Measured before pinning: the FULL tag
-    # resolves to this digest (an OCI index); the abbreviated tag and this digest with its last
-    # hex altered both answer 404; the 1f5482f control still resolves to 1f3ae4ed. Since 1f5482f
-    # only nginx.conf moved at runtime (an http-level `types { text/javascript mjs; }`); the
-    # Dockerfile, docker-entrypoint.sh and .github are unchanged, and the diff reads no new env,
-    # so VITE_FEATURES is unchanged.
-    # 2026-10-20, pinned for 198 (architect: "Next pin: cortex 3d2f7a3 (refusal reasons in the
-    # toast) in 198"): cortex-ui 3d2f7a3 (a refused grouped /act names the platform's reasons)
-    # -> 7b51701c. 3bd3e80 is an ancestor. Measured before pinning: the FULL tag resolves to this
-    # digest (an OCI index); the abbreviated tag and this digest with its last hex altered both
-    # answer 404. Since 3bd3e80 the Dockerfile, docker-entrypoint.sh, nginx.conf and .github are
-    # unchanged, and the diff reads no new env, so VITE_FEATURES is unchanged.
-    # 2026-10-20, pinned for 199 (cortex: "It replaces 47e96ea as the 199 candidate"): cortex-ui
-    # d44b0cc (header_edits on the title line, the review card's leaf, `unchanged` in the console
-    # line) -> b248af5c. 3d2f7a3 is an ancestor. Measured before pinning: the FULL tag resolves to
-    # this digest (an OCI index); the abbreviated tag and this digest with its last hex altered both
-    # answer 404; the 3d2f7a3 control still resolves to 7b51701c. Since 3d2f7a3 only
-    # .github/workflows/build.yml moved (a test checkout's PRODUCER_REF, not a build arg); the
-    # Dockerfile, docker-entrypoint.sh and nginx.conf are unchanged, and the only env the src diff
-    # reads is the existing VITE_REVIEW_ROW_EDITS, so VITE_FEATURES is unchanged.
-    # 2026-10-20, pinned for 200 (architect: "flip the editor default to OFF ... Pin for 200"):
-    # cortex-ui 7a7666d (the promotion editor gets its own flag, VITE_PROMOTION_ROW_EDITS, OFF in
-    # the image unless exactly "true"; the card reads `mfr_source`) -> f2707184. Measured before
-    # pinning: the FULL tag resolves to this digest; the abbreviated tag and this digest with its
-    # last hex altered both answer 404. Since d44b0cc docker-entrypoint.sh gains only
-    # VITE_PROMOTION_ROW_EDITS (sanitised, empty by default), set below.
-    # 2026-10-21, pinned for 202 (architect: "Pin cortex 8eed1c5 for 202"): cortex-ui 8eed1c5
-    # (reads awaiting_origin and review_rejected instead of freezing at extracting; the leaf chip,
-    # dormant until the status row carries `leaf_source`) -> c58b7dfe. Measured before pinning:
-    # the FULL tag resolves to this digest; the abbreviated tag and the full sha with its last hex
-    # altered both answer 404. 8eed1c5 descends from 7a7666d, and Dockerfile, docker-entrypoint.sh,
-    # nginx.conf and the src's import.meta.env reads are unchanged between them, so no env moves.
-    # 2026-10-21, pinned for 203 (architect, "Leaf, final shape": cortex "takes the names in 203"):
-    # cortex-ui 25f86b8 (reads leaf_source declared/title/corrected on both bodies, corrected_by,
-    # leaf_candidates as [{leaf, score, evidence_ref}]; the review card's kind line is the chip)
-    # -> 8324b585. It must not roll with a 202 BFF: the old names read as unknown there. Measured
-    # before pinning: the FULL tag resolves to this digest; the abbreviated tag and the full sha
-    # with its last hex altered both answer 404. 25f86b8 descends from 8eed1c5, and Dockerfile,
-    # docker-entrypoint.sh, nginx.conf and the src's import.meta.env reads are unchanged.
-    # 2026-10-21, pinned for 204 (architect 10-21, crop coordinates are page fractions): cortex-ui
-    # a3cf4d1 draws the title candidate's crop in page fractions and reads both review-row forms
-    # -> c3a2acdd. Measured before pinning: the FULL tag resolves to this digest; the abbreviated
-    # tag and the full sha with its last hex altered both answer 404. a3cf4d1 descends from
-    # 25f86b8, and Dockerfile, docker-entrypoint.sh, nginx.conf, package files and the src's
-    # import.meta.env reads are unchanged.
-    # 2026-10-22, pinned for 206 (architect 10-22, "Build today": awaiting_kind needs you): cortex-ui
-    # c390a03 (amber rail row, "? · couldn't tell — pick one" with PCN/PDN on the card, the header
-    # needs-you count and the toast; it also carries 9be5963 -- a null or absent bbox reads as "no
-    # box" -- which 205 was meant to bring) -> 2359f48e, an OCI index with amd64 and arm64. Measured
-    # before pinning: the FULL tag resolves to this digest; the abbreviated tag and the full sha
-    # with its last hex altered both answer 404. c390a03 descends from a3cf4d1, and Dockerfile,
-    # docker-entrypoint.sh, nginx.conf, package files, helm/, .github/ and the src's
-    # import.meta.env reads are unchanged.
-    # 2026-10-24, pinned for 207 (architect, overnight 10-24: "merge lane/01-207 + cortex #29"):
-    # cortex-ui e0c3c6d, PR #29 rebase-merged at its head bebbc3cc (kind at drop: a PDF asks
-    # [PCN] [PDN] [Not sure] before Send and sends `leaf`, which 207's door takes) -> c02ee0d2,
-    # an OCI index with amd64 and arm64. It must roll WITH 207's BFF (cortex's packet: a `leaf`
-    # sent to the 206 door is dropped). Measured before pinning: the FULL tag resolves to this
-    # digest; the abbreviated tag and the full sha with its last hex altered both answer 404.
-    # e0c3c6d descends from c390a03, and Dockerfile, docker-entrypoint.sh, nginx.conf, package
-    # files and the src's import.meta.env reads are unchanged; helm/ (chart 0.3.0) and .github/
-    # (retag-image.yml) moved, neither of them a build input.
-    # 2026-10-28, chart 0.4.71 (architect: "cortex pinned at e09e2ac (image 57e40789…)"; P0:
-    # "both clusters get the same image"): cortex-ui e09e2ac re-pins PRODUCER_REF to 4a5ff6b6,
-    # platform #121, the ruled evidence_ref {page, bbox, note?} -> 57e40789, the same digest
-    # values.yaml now carries by default. Measured before pinning: the FULL tag resolves to this
-    # digest, an OCI index with amd64 and arm64; the abbreviated tag and the full sha with its last
-    # hex altered both answer 404. e09e2ac descends from e0c3c6d. Dockerfile, docker-entrypoint.sh,
-    # nginx.conf and helm/ are unchanged, and the src gains no import.meta.env read (one comment
-    # naming it is removed). package.json gains a `gen:api` script, and .github/ moves only the CI
-    # PRODUCER_REF; neither is a build input.
-    # 2026-10-30, chart 0.4.72 (architect: "pin cortex at fe4d787 ... it is the case-panel fix
-    # and the rehearsal lands on that panel"): cortex-ui fe4d787 -> 4d6dd208, the same digest
-    # values.yaml carries by default. It descends from 42c470c (PRODUCER_REF 10ac02fe, platform
-    # #156; the promote act sends review_coverage under promotionRuns) and adds the case panel's
-    # fix in five commits. Measured before pinning: the FULL tag resolves to this digest, an OCI
-    # index with amd64 and arm64; the abbreviated tag and the full sha with its last hex altered
-    # both answer 404. 42c470c..fe4d787 leaves .github/workflows/build.yml, Dockerfile and
-    # package.json unchanged.
-    # RE-PINNED FOR 0.4.74 (architect, 2026-10-31: "cut 0.4.74 (cortex at c27e6d3 or cortex's
-    # item-form merge if it lands)"; cortex-ui #61, the item form, had not landed): cortex-ui
-    # c27e6d3e3ba2f87e72b4b1f61a8fafec7ab09688 -> fa7e51ff. It adds #59 (an export profile's
-    # format is read verbatim) to fe4d787, and still sends review_coverage in the parts form.
-    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
-    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
-    # fe4d787..c27e6d3 leaves .github/workflows/build.yml, Dockerfile and package.json unchanged
-    # and adds no import.meta.env read.
-    # RE-PINNED FOR 0.4.75 (architect, 2026-11-02: "0.4.75 carries ... cortex 8afc0e7"): cortex-ui
-    # 8afc0e7663cdd3dbb2c8edb8792e06192629421a -> 8c60760d. It adds #61 (review_coverage is sent in
-    # the item form) and 6c2f0cc (New Canvas seeds once) to c27e6d3. This BFF still accepts the parts
-    # form, whose deletion waits until this pin has rolled.
-    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
-    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
-    # c27e6d3..8afc0e7 leaves the Dockerfile and package.json unchanged, changes build.yml only at
-    # its PRODUCER_REF contract pin, and adds no import.meta.env read.
-    # RE-PINNED FOR 0.4.76 (Chris, 2026-11-03: "cortex 8afc0e7 or newer"): cortex-ui
-    # e06e08aa3f2b6b0f5fbd679041c532717aeda2f8 -> 2ed53946. It adds #62 (the document review card) to
-    # 8afc0e7, dormant until a kind declares `review_shape: document` and a task serves `sections[]`.
-    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
-    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
-    # 8afc0e7..e06e08a leaves the Dockerfile, package.json and build.yml unchanged, and adds no
-    # import.meta.env read.
-    # RE-PINNED FOR 0.4.77 (Chris, 2026-11-03: "cortex pin 26a2049"): cortex-ui
-    # 26a204990572f7d46cb8ee208abb31c0d7327fe9 -> 3077dfa6. It adds to e06e08a: a payload that claims
-    # the document shape and cannot be read says why; k of n holds the first total and names refused
-    # panels; a card the answer declared no longer reads NOT declared.
-    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
-    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
-    # e06e08a..26a2049 leaves the Dockerfile and package.json unchanged, changes build.yml only at
-    # its PRODUCER_REF contract pin, and adds no import.meta.env read.
-    digest: "sha256:3077dfa6e73a42658116faf27d29aaf4ad8a8b27f9df82bda192c30722e79104"
+    # PINNED BY DIGEST in values.yaml `global.imageDigests` (this file used to repeat the digest;
+    # the pin history is in git and in the comment above that row).
   ingress:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
@@ -1203,7 +823,6 @@ electric:
     registry: "ghcr.io"
     repository: "edgy-solutions/mirror/electric"
     tag: "1.0.13-otp27.3.4.4"
-    digest: "sha256:70b57efaacb5efeed39283439e050b88c328bae866a4086c6a188d0394a323c3"
   # 2026-06-30: direct Electric ingress CLOSED. Per-user isolation
   # interim flows browser → cortex-bff `/electric/shape` proxy → in-
   # cluster Electric service (`http://iagent-electric:3000`). Exposing
@@ -1271,130 +890,12 @@ graphHost:
 engineSafety:
   enabled: true
 
-# --------------------------------------------------------------------------
-# `mc` for the minio-bucket-init hook — built by us, because upstream's is no
-# longer pullable. `minio/mc` answers 401 to an anonymous pull on BOTH quay.io
-# and docker.io (measured 2026-09-30), so the hook at weight -5 blocked every
-# `helm upgrade` until the helm timeout and rolls had to go out `--no-hooks`,
-# which also skips the reregister and ontology-seed hooks.
-#
-# .github/workflows/mirror-util-images.yml builds this from the SAME upstream
-# release tag values.yaml pins. Keep the two tags equal; the workflow's input
-# must be this tag. The repository is outside `global.imagePrefix` on purpose,
-# so the image helper does not float its tag to Chart.Version.
-#
-# SANDBOX ONLY. values.yaml keeps quay.io/minio/mc because it is also what
-# scripts/mirror-to-artifactory.ps1 reads for the work deployment; that
-# deployment has the same unpullable source and needs its own decision.
-#
-# ORDER: dispatch the workflow and see the tag in ghcr BEFORE the first roll
-# that carries this file, or the hook fails on ImagePullBackOff instead.
-# --------------------------------------------------------------------------
-utilImages:
-  mc:
-    registry: "ghcr.io"
-    repository: "edgy-solutions/mirror/mc"
-    tag: "RELEASE.2025-08-13T08-35-41Z"
 
 # --------------------------------------------------------------------------
-# User deployments — dag-tools code location, PINNED BY DIGEST
+# User deployments — no override here. Both images (dag-tools, pub-tools) are cross-repo and
+# are pinned by digest in values.yaml `global.imageDigests`; this file used to carry its own
+# dag-tools digest (4096a11), which was a second place to change and is gone. History is in git.
 # --------------------------------------------------------------------------
-# WHY THIS KEY EXISTS AT ALL: this file had no `userDeployments:` before
-# 2026-10-01. Both user-deployment images are CROSS-REPO, so `$ours` is false
-# in `invincible-agent.image`, `$floor` is `latest`, and the pod has been
-# running whatever the last push to dag-tools master produced. Measured, not
-# assumed: the running pod's imageID was `sha256:746e4937…`, which matches
-# NEITHER digest in `values-roll-frontend-digest.yaml` — it fell through to
-# `:latest`, exactly as that file's header predicts when no digest reaches the
-# helper.
-#
-# ⛔ THE PIN GOES HERE AND NOT IN `values-roll-frontend-digest.yaml`, which is
-# the file whose stated purpose is carrying a roll's cross-repo digests. That
-# file is NOT in `scripts/upgrade-sandbox.sh`'s VALUES array (lines 29-33:
-# values-sandbox.yaml and values-sandbox.secret.yaml, and nothing else), so the
-# canonical roll command never reads it and it is inert. See the long note at
-# `cortexUi.image.tag` above, which records the same finding and the same
-# resolution for the frontend.
-#
-# WHAT THIS PIN IS FOR — the dag-tools code location could not tick a sensor.
-# Every sensor in `iagent-dag-tools` was failing, 224 failures in 30 minutes,
-# with `ModuleNotFoundError: No module named 'psycopg'` out of
-# `dagster_postgres.utils.create_pg_engine`. SQLAlchemy 2.1 changed which DBAPI
-# a bare `postgresql://` URL selects, measured on the two live pods on
-# 2026-10-01:
-#
-#     iagent-dagster-daemon   sqlalchemy 2.0.54  ->  postgresql.psycopg2
-#     iagent-dag-tools        sqlalchemy 2.1.0   ->  postgresql.psycopg
-#
-# `dagster-postgres` declares and ships `psycopg2-binary` and never `psycopg`.
-# The failure lands while the DagsterInstance is being BUILT, before any sensor
-# body runs, so it takes out every sensor in the code location including ones
-# that touch no database — which is why it read as a sensor bug.
-#
-# dag-tools PR #2 (`6609fe6` on master) caps `sqlalchemy>=2.0.0,<2.1` in main
-# `dependencies`. THE CAP IS INERT UNTIL A BUILD CARRIES IT, and inert again
-# unless this cluster pulls that build: the user-deployment Dockerfile installs
-# with `uv pip install --system`, which RE-RESOLVES and does not read
-# `uv.lock`, so only the committed `pyproject.toml` ceiling binds the image —
-# and only a digest binds which image runs.
-#
-# DIGEST PROVENANCE, run `41768309688` (push event on dag-tools master,
-# `4096a112eb3fbc91afdf7e0784a12973e72f00e7`; all three Docker jobs success).
-# A green build on a PR proves nothing — that workflow's push step is gated
-# `github.event_name != 'pull_request'`, so PR runs compile both architectures
-# and publish nothing. Two tags were read and they AGREE, which is the binding
-# that matters rather than mere existence:
-#
-#     :sha-4096a11  -> sha256:44c54e5a193cebcd8d6501df6d7d3bd22c56e1b2722283ca5a0a0e8bb89e9266
-#     :latest       -> the same digest
-#
-# POSITIVE CONTROL: `:master` and `:4096a11` both answer 404, so a 200 from
-# this instrument discriminates and is not an artifact of the registry
-# accepting any string.
-#
-# Index verified as `application/vnd.oci.image.index.v1+json`, children fetched
-# BY THEIR OWN DIGEST rather than read out of the index:
-#
-#     linux/amd64  sha256:a91fcb1550f380696967f97d737bee0991453dc14de3a88cca78dda8f47ad7c3  200
-#     linux/arm64  sha256:bad901982a61ae02c6dd34fd536b35f6ffcb6b39902bfd8f72e2506ae06057fd  200
-#
-# arm64 is the one that matters — the sandbox nodes are arm64. (Two
-# `unknown/unknown` children are buildx provenance/SBOM attestations, also 200.)
-#
-# WHAT THIS PIN MOVES. The digest names bytes, and the image re-resolves, so a
-# new digest moves more than dag-tools' own commits. Read from the arm64 layers
-# of this image and of the previous pin: 59 of 156 packages changed, none added
-# or removed. `edgy-dag-tools` 0.8.0 -> 0.10.0. The majors are polars 1.44.2 ->
-# 2.1.0, protobuf 6.33.6 -> 7.36.2, pyarrow 25.0.1 -> 26.0.1 and multidict 6.9.1
-# -> 7.2.1. The cap above holds: `sqlalchemy==2.0.57`, `psycopg2-binary==2.9.13`,
-# no `psycopg`.
-#
-# MEASURED OFF-CLUSTER, in a venv holding the image's versions: dag-tools' tests
-# gave 817 passed, 50 skipped, 1 failed (the s3fs fault below), 2 errors (`restate`
-# is not in the install line). A bare `postgresql://` URL selects psycopg2. The
-# code location serves, and a dagster 1.12.20 client decodes its listing and its
-# snapshot. `ev_fixture` materializes to local parquet that the finance resolver
-# reads to the seed's figures.
-#
-# NOT MEASURED: a write to the object store on pyarrow 26, and any sensor (that
-# run had no `DATAHUB_SERVER`, so none registered). The acceptance test for this
-# roll is still a reading off the POD (`sqlalchemy.__version__` and the dialect
-# the URL selects) plus a sensor tick that does not raise, not this comment.
-#
-# A FAULT THIS PIN CARRIES AND DID NOT INTRODUCE: `s3fs==0.4.2`, the same in both
-# images. dag-tools' `s3fs>=2023.1.0` floor sits in its `orchestrator` extra, and
-# the install line names bare `s3fs`. `s3fs.S3FileSystem(endpoint_url=...)` raises
-# TypeError at that version. `FsspecS3FSConfig` in the arrow and delta IO managers
-# reaches it. The demo assets use `S3FSConfig`, which goes through `pyarrow.fs`
-# and does not.
-#
-# ROLLBACK: restore `sha256:be5fec106c938f9f7557e16f9070f1fc80661baea922136d1320bcf132d44b61`
-# (`sha-6609fe6`, the previous pin). Do not delete the `digest` line: the image
-# reference falls back through `tag: ""` to `latest`, which floats.
-userDeployments:
-  dag-tools:
-    image:
-      digest: "sha256:44c54e5a193cebcd8d6501df6d7d3bd22c56e1b2722283ca5a0a0e8bb89e9266"
 
 # ==========================================================================
 # NetworkPolicy -- the gate-on roll PROPOSAL. The gate STAYS OFF here

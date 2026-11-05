@@ -42,7 +42,7 @@ SUITE = [
     ("ownership_dataset",
      "Who is the owner of the `customers_gold` dataset in our catalog?"),
     ("ownership_by_user",
-     "List every dataset and dashboard owned by alice@company.com."),
+     "List every dataset and dashboard owned by alice@example.com."),
 
     # ---------------- freshness ----------------
     ("freshness_dataset",

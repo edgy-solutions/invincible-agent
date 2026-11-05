@@ -1,8 +1,92 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.79 — not yet cut
+## 0.4.80 — not yet cut
 
-Entries merged after the 0.4.78 cut (`8a2717e0`).
+Entries merged after the 0.4.79 cut (`758811d7`). Forks 1 and 3 of the delegate ruling (#251), which
+were to land here, move to 0.4.81 (architect 11-05).
+
+**Every image the chart runs is pinned by digest (architect 11-04)**
+
+- **One map holds the digests, and the release carries the file.** `global.imageDigests` is keyed
+  `<registry>/<repository>`; a row renders the image as `<registry>/<repository>@sha256:...`, and a
+  `digest:` at a call site still wins. The prefix test the helper used to run (2026-09-09) is gone: a
+  map lookup pins an image or does not. The release workflow now writes
+  `values-release-<version>.yaml` (ours from `image-digests.json`, third party from the digests
+  `values.yaml` pins, each confirmed in its registry by digest) and attaches it to the chart release.
+  It renders the chart with that file, and again with every optional workload on, and fails the
+  release before publish if any container or initContainer image is not `@sha256:`.
+- **The roll reads that file and resolves nothing.** `scripts/upgrade-sandbox.sh` downloads
+  `values-release-<version>.yaml` from `invincible-agent-<version>`, renders it last, seals the
+  render, and stops on any tag-only image. A release without the file (0.4.79 and earlier) can't be
+  rolled by it. `--set global.imageTag=...` is refused; a roll is of a released version.
+- **Base moves to what sandbox ran.** `postgresql.image` is `bitnamilegacy/postgresql` and
+  `utilImages.mc` is `ghcr.io/edgy-solutions/mirror/mc`, at today's tags; `dagster.userCode` defaults to
+  the control-plane image, because the old default, `dagster-user-code`, has never been built (GHCR
+  answers 403 at every tag) and could never have had a digest. The sandbox rows that became identical to
+  base are deleted.
+- **Sandbox moves two images.** dag-tools goes from `4096a11`'s digests to v0.11.0's (tag `0.11.0` in
+  base), and pub-tools is pinned at `ed93f7b1` (`master` build of 1aa2cbe, reviewed 09-23); sandbox ran
+  `1555b341` ("not reviewed") until now, so the roll moves it back. **What sandbox loses:** `1555b341` is
+  source `e5612fa`, one commit past `1aa2cbe`, and that commit carries two changes: the PUB LOG CP1252
+  byte repair and the V_CHARACTERISTICS overflow fold. Because it is more than the CP1252 fix, the
+  architect ruled on 11-05 to keep `ed93f7b1` and carry both forward on a reviewed build (board
+  01M6P5ZAJ382FBHEQDA23941EA).
+- **`values-roll-frontend-digest.yaml` is retired.** It was the 09-23 order's file: pub-tools `ed93f7b1`
+  reviewed and `1555b341` not, and the four digests it carried. The frontend digest it fed now lives in
+  `global.imageDigests` with its pin history, and the dag-tools and pub-tools pins are above.
+
+**acryl-datahub comes from the lock in the control-plane image (Chris 11-05, board 01M6MZ6HK5PMK9VQ2PM95DC7E2)**
+
+- **The unversioned install after the locked sync is gone** (`.github/docker/Dockerfile.dagster`). The root
+  `pyproject.toml` declares `acryl-datahub>=1.7.0`, so `uv sync --locked` already installs the version
+  `uv.lock` names. The old line re-resolved it from PyPI at build time, and its transitive pins with it.
+- **A seal holds the line:** `tests/test_no_unversioned_install_after_a_locked_sync.py` reads every
+  `.github/docker/Dockerfile*`. Its one remainder is the agent image's `packaging setuptools wheel`, which
+  isn't changed here because that would change every engine image (board 01M6N07ZJJ37W9NQ7KGRE1VRW9).
+
+**The demoSeed's DataHub owners are the canonical users (G3 note, the two alice objects)**
+
+- **`scripts/seed_datahub_catalog.py` names `alice@example.com` and `bob@example.com`,** the
+  `policy/users.yaml` rows. Before this it named `@company.com`, and `datahub_topaz_sync` created a second
+  Topaz user from each owner.
+- **charlie@company.com and dave@company.com are unchanged.** They have no canonical row to move to.
+- **Operator steps, not done by the chart, in this order:**
+  1. Re-run `scripts/seed_datahub_catalog.py` against the cluster's DataHub, or edit the owners there.
+     A roll doesn't do this unless `demoSeed.enabled` is set, and sandbox doesn't set it. Until then,
+     DataHub keeps the `@company.com` owners.
+  2. Run `datahub_topaz_sync`. It moves each owner relation to the `@example.com` user and prunes the
+     old one.
+  3. Delete the Topaz users `alice@company.com` and `bob@company.com` by hand (live write). The sync
+     ensures owner users and never prunes one, so a delete before step 1 is undone by the next sync.
+
+**Every Job and CronJob pod names its component.** The `restate-init` and `db-init` pods now carry
+`app.kubernetes.io/component`, and the NetworkPolicy join seal reads pod-template labels across
+Deployments, StatefulSets, Jobs and CronJobs. This is preconditions 1 and 2 of the NetworkPolicy gate-on
+(board item `01M6MCV3QR2YEBC6WQFAMQ52M1`). No NetworkPolicy is enabled. Both Jobs are hooks, so the changed
+pod template is recreated, not patched.
+
+**`validate_policy` composes export profiles with the SDK (architect 10-30, fork 7)**
+
+- **The composition is `iagent_mesh.compose_export_profiles`,** with one row per kind in the new
+  `policy/export_profile_sources.yaml`. The validator's own copy and its kind-label table are gone. The
+  three engine loaders still read their own constants, so the file restates them, and a seal goes red
+  when a loader renames one. Moving the engines onto the file is 01M6A9QDN1GQ20347W16EM0D3X.
+- **A profile file the old copy skipped is now refused:** an empty or nameless file, two files of one
+  name in one directory, and a tombstone for a name nothing before it ships. Every profile in this
+  repo passes. A refusal stops the seed job before any write, so check a deployment's own
+  export-profile overlays before its next sync.
+- **Refusals name the kinds `review-export`, `answer-export` and `fin-cdrl`** ("fin CDRL" before).
+- **The validator imports the SDK.** The seed job and the documented policy-repo CI form
+  (`policy/README.md`) both run it from the cortex-bff image, which carries it. A CI that runs it
+  from a bare Python with `policy/sync/requirements.txt` fails at the import.
+
+## 0.4.79 — 2026-11-04
+
+Entries merged after the 0.4.78 cut (`8a2717e0`). Released at 21:35Z on 11-04 from `758811d7`, the #251
+merge. Chart.yaml was already at 0.4.79 (`988a0e14`), and the master-push build releases any version that
+isn't published yet. Until 0.4.80's PR this header said "not yet cut", which was wrong from 21:35Z on.
+The release carries `image-digests.json` and the chart, and no `values-release-0.4.79.yaml`: that file
+arrives in 0.4.80, so `scripts/upgrade-sandbox.sh` as of 0.4.80 can't roll 0.4.79. Sandbox never ran it.
 
 **The fleet moves to iagent-mesh v0.9.13, and the BFF's refusal goes through its `PartialRefusal`
 (architect 10-31, fork 2)**
@@ -57,27 +141,6 @@ and the definition sends it to the route.
 - **`GATEWAY_ROUTES` records the dag-tools commit and gateway image it was copied from,** and a seal
   goes red when the chart pins another gateway image without the list being re-read. It stays a
   copy until dag-tools publishes `gateway_routes.json` (01M6KF821P2C3KRQN86FF0N61N).
-
-**Every Job and CronJob pod names its component.** The `restate-init` and `db-init` pods now carry
-`app.kubernetes.io/component`, and the NetworkPolicy join seal reads pod-template labels across
-Deployments, StatefulSets, Jobs and CronJobs. This is preconditions 1 and 2 of the NetworkPolicy gate-on
-(board item `01M6MCV3QR2YEBC6WQFAMQ52M1`). No NetworkPolicy is enabled. Both Jobs are hooks, so the changed
-pod template is recreated, not patched.
-
-**`validate_policy` composes export profiles with the SDK (architect 10-30, fork 7)**
-
-- **The composition is `iagent_mesh.compose_export_profiles`,** with one row per kind in the new
-  `policy/export_profile_sources.yaml`. The validator's own copy and its kind-label table are gone. The
-  three engine loaders still read their own constants, so the file restates them, and a seal goes red
-  when a loader renames one. Moving the engines onto the file is 01M6A9QDN1GQ20347W16EM0D3X.
-- **A profile file the old copy skipped is now refused:** an empty or nameless file, two files of one
-  name in one directory, and a tombstone for a name nothing before it ships. Every profile in this
-  repo passes. A refusal stops the seed job before any write, so check a deployment's own
-  export-profile overlays before its next sync.
-- **Refusals name the kinds `review-export`, `answer-export` and `fin-cdrl`** ("fin CDRL" before).
-- **The validator imports the SDK.** The seed job and the documented policy-repo CI form
-  (`policy/README.md`) both run it from the cortex-bff image, which carries it. A CI that runs it
-  from a bare Python with `policy/sync/requirements.txt` fails at the import.
 
 ## 0.4.78 — 2026-11-04
 

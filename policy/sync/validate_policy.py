@@ -702,13 +702,15 @@ def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> 
 #: as data (`gateway_routes.json`, item 01M6KF821P2C3KRQN86FF0N61N) and this importing it. Until then the list was
 #: read at the commit and image in GATEWAY_ROUTES_READ_AT, and
 #: tests/security/test_gateway_delegates_rail.py goes red when the chart pins another gateway image.
-#: Read at 4096a11: `ROUTE_AUTHORIZE` is the one route the delegate table is keyed on.
-#: `broker.resolve` and `gateway.register` (`internal_door.py`) are doors with their own caller
-#: lists; they never consult this table, so they are not here.
+#: Read at v0.11.0 (4924235), whose `central_gateway/gateway_routes.json` publishes the list: only
+#: `assets.authorize` has `delegate_rows_may_name: true`. `broker.resolve` and `gateway.register`
+#: are internal doors with their own caller lists; they never consult this table, so they are not
+#: here. The same answer was read from the constants at 4096a11. Importing the json needs the
+#: root's dag-tools pin to move to v0.11.0 or later, which is 01M6KF821P2C3KRQN86FF0N61N.
 GATEWAY_ROUTES = ("assets.authorize",)
 GATEWAY_ROUTES_READ_AT = {
-    "dag_tools": "4096a112eb3fbc91afdf7e0784a12973e72f00e7",
-    "central_gateway_digest": "sha256:ac93ba19f96718cdad6dd40dabd8dc51934db4796ccfd767b5da732b19edf498",
+    "dag_tools": "492423577d4e2cb838ba4ed8dd783bbf883ceb60",
+    "central_gateway_digest": "sha256:f71a5b092486354f0d144c467953a6c1c749e1b133c44e133458cf71d6d8cf2c",
 }
 
 #: The BFF's route ids a `door: bff` row may name (architect 11-04). The BFF owns them

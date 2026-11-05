@@ -3,15 +3,15 @@ title: acryl-datahub is pinned by the lock in every image, with no unversioned i
 feature: cross-cutting
 lane: invincible-agent/lane/01
 repo: invincible-agent
-status: open
+status: review
 priority: now
 blocked_on: []
-pr: []
-ruling_ref: Chris 11-05 board item, pin acryl-datahub in the lock, 0.4.79
+pr: [invincible-agent#267]
+ruling_ref: Chris 11-05 board item, pin acryl-datahub in the lock; architect via Chris 11-05: it cuts as 0.4.80
 updated: 2026-11-05
 ---
 
-**0.4.79 content.** The control-plane image installs acryl-datahub outside the lock.
+**0.4.80 content** (0.4.79 was already released, so this cuts as 0.4.80). The control-plane image installs acryl-datahub outside the lock.
 - The install is `.github/docker/Dockerfile.dagster:39`, `uv pip install --python /app/.venv/bin/python acryl-datahub`, with no version.
 - It runs after `uv sync --locked`. Its version is whatever PyPI resolves at build time, so two builds of one sha can differ.
 

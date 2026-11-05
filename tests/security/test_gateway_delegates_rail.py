@@ -233,9 +233,11 @@ def test_a_row_without_ratified_by_is_refused_by_name():
 # ---- the route list is a copy, read at a pinned gateway image ----------------------------------
 
 _VALUES = _REPO / "helm" / "invincible-agent"
-#: The chart's own values files. `values-roll-frontend-digest.yaml` is a per-roll overlay (09-26),
-#: passed only by the roll that wrote it; the chart's pin of record is the sandbox file's.
+#: The chart's own values files. Since 0.4.80 the pin of record is a row of `global.imageDigests`
+#: (keyed `<registry>/<repository>`); a `centralGateway.image.digest` at the call site would win over
+#: it, so it is read too. `values-roll-frontend-digest.yaml` is retired.
 _PIN_FILES = ("values.yaml", "values-sandbox.yaml")
+_GATEWAY_REPO = "dag-tools/central-gateway"
 
 
 def _unread_gateway_pins(paths):
@@ -243,9 +245,11 @@ def _unread_gateway_pins(paths):
     want = vp.GATEWAY_ROUTES_READ_AT["central_gateway_digest"]
     out = {}
     for p in paths:
-        image = ((yaml.safe_load(p.read_text(encoding="utf-8")) or {}).get("centralGateway") or {}).get(
-            "image") or {}
-        pin = image.get("digest") or (f"tag:{image['tag']}" if image.get("tag") else None)
+        doc = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        image = (doc.get("centralGateway") or {}).get("image") or {}
+        rows = ((doc.get("global") or {}).get("imageDigests") or {})
+        mapped = next((d for k, d in rows.items() if k.endswith("/" + _GATEWAY_REPO)), None)
+        pin = image.get("digest") or mapped or (f"tag:{image['tag']}" if image.get("tag") else None)
         if pin and pin != want:
             out[p.name] = pin
     return out
@@ -253,7 +257,7 @@ def _unread_gateway_pins(paths):
 
 def test_the_route_list_was_read_at_the_pinned_gateway_image():
     paths = [_VALUES / f for f in _PIN_FILES]
-    assert any("digest:" in p.read_text(encoding="utf-8") for p in paths)   # control: a pin exists
+    assert any(_GATEWAY_REPO in p.read_text(encoding="utf-8") for p in paths)   # control: a pin exists
     moved = _unread_gateway_pins(paths)
     assert not moved, (
         f"the chart pins a central-gateway image the route list was not read at: {moved}. Read the "
@@ -261,14 +265,15 @@ def test_the_route_list_was_read_at_the_pinned_gateway_image():
         "GATEWAY_ROUTES and GATEWAY_ROUTES_READ_AT in policy/sync/validate_policy.py together.")
 
 
-@pytest.mark.parametrize("image", [
-    {"digest": "sha256:" + "0" * 64},
-    {"tag": "sha-0000000"},
-], ids=["another digest", "a tag"])
-def test_CONTROL_a_moved_pin_is_caught(tmp_path, image):
+@pytest.mark.parametrize("doc, pin", [
+    ({"centralGateway": {"image": {"digest": "sha256:" + "0" * 64}}}, "sha256:" + "0" * 64),
+    ({"centralGateway": {"image": {"tag": "sha-0000000"}}}, "tag:sha-0000000"),
+    ({"global": {"imageDigests": {"ghcr.io/x/" + _GATEWAY_REPO: "sha256:" + "1" * 64}}}, "sha256:" + "1" * 64),
+], ids=["another digest", "a tag", "another map row"])
+def test_CONTROL_a_moved_pin_is_caught(tmp_path, doc, pin):
     p = tmp_path / "values-sandbox.yaml"
-    p.write_text(yaml.safe_dump({"centralGateway": {"image": image}}), encoding="utf-8")
-    assert _unread_gateway_pins([p]) == {"values-sandbox.yaml": image.get("digest") or f"tag:{image['tag']}"}
+    p.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    assert _unread_gateway_pins([p]) == {"values-sandbox.yaml": pin}
 
 
 def test_the_read_at_record_is_a_full_commit_and_digest():
