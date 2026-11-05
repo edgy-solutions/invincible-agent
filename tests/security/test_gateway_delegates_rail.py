@@ -10,8 +10,9 @@ WHAT EACH GROUP DEFENDS
   red arms    one per error class, each differing from the valid baseline in exactly one thing,
               each asserting a FRAGMENT of the message.
 
-  read at    GATEWAY_ROUTES is a copy of dag-tools' route ids, read at one gateway image. The chart
-              pinning another image is red until the list is re-read.
+  from dag-tools  the gateway door's routes are dag-tools' published list (`gateway_routes.json`,
+              `delegate_rows_may_name`), read when the rail is checked: a route the list marks is
+              admitted, and a published route it does not mark is refused.
 
 Nothing reads this rail yet: the gateway's `is_delegate` seam is in dag-tools and answers no until it
 is wired. So nothing here measures a delegate being honoured.
@@ -35,6 +36,7 @@ if str(_SYNC) not in sys.path:
     sys.path.insert(0, str(_SYNC))
 
 import validate_policy as vp  # noqa: E402
+from dag_tools.central_gateway import routes as gateway_routes  # noqa: E402
 
 _POLICY = _REPO / "policy"
 _RAIL = _POLICY / "gateway_delegates.yaml"
@@ -42,7 +44,7 @@ _SEED = yaml.safe_load(_RAIL.read_text(encoding="utf-8"))
 _USERS = yaml.safe_load((_POLICY / "users.yaml").read_text(encoding="utf-8"))["users"]
 
 _B_USERS = [{"id": "svc:a"}, {"id": "svc:b"}, {"id": "alice"}]
-_ROUTE = vp.GATEWAY_ROUTES[0]
+_ROUTE = gateway_routes.delegatable_route_ids()[0]
 
 
 def _row(**over):
@@ -230,56 +232,21 @@ def test_a_row_without_ratified_by_is_refused_by_name():
     _red(_rows(row), "`ratified_by` must be a non-empty string")
 
 
-# ---- the route list is a copy, read at a pinned gateway image ----------------------------------
+# ---- the gateway door's routes are dag-tools' published list (architect 11-04) ---------------------
 
-_VALUES = _REPO / "helm" / "invincible-agent"
-#: The chart's own values files. Since 0.4.80 the pin of record is a row of `global.imageDigests`
-#: (keyed `<registry>/<repository>`); a `centralGateway.image.digest` at the call site would win over
-#: it, so it is read too. `values-roll-frontend-digest.yaml` is retired.
-_PIN_FILES = ("values.yaml", "values-sandbox.yaml")
-_GATEWAY_REPO = "dag-tools/central-gateway"
-
-
-def _unread_gateway_pins(paths):
-    """Each file whose central-gateway image is pinned to anything but the image the list was read at."""
-    want = vp.GATEWAY_ROUTES_READ_AT["central_gateway_digest"]
-    out = {}
-    for p in paths:
-        doc = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        image = (doc.get("centralGateway") or {}).get("image") or {}
-        rows = ((doc.get("global") or {}).get("imageDigests") or {})
-        mapped = next((d for k, d in rows.items() if k.endswith("/" + _GATEWAY_REPO)), None)
-        pin = image.get("digest") or mapped or (f"tag:{image['tag']}" if image.get("tag") else None)
-        if pin and pin != want:
-            out[p.name] = pin
-    return out
+def test_the_gateway_door_follows_the_published_list(monkeypatch):
+    assert _b(_rows(_row())) == []                                          # control: clean as shipped
+    monkeypatch.setattr(gateway_routes, "delegatable_route_ids", lambda: ["route-x"])
+    assert _b(_rows(_row(routes=["route-x"]))) == []
+    errs = _b(_rows(_row()))
+    assert len(errs) == 1 and f"unknown route {_ROUTE!r} for door gateway" in errs[0], errs
 
 
-def test_the_route_list_was_read_at_the_pinned_gateway_image():
-    paths = [_VALUES / f for f in _PIN_FILES]
-    assert any(_GATEWAY_REPO in p.read_text(encoding="utf-8") for p in paths)   # control: a pin exists
-    moved = _unread_gateway_pins(paths)
-    assert not moved, (
-        f"the chart pins a central-gateway image the route list was not read at: {moved}. Read the "
-        "route ids the delegate table is keyed on at that image's dag-tools commit, then update "
-        "GATEWAY_ROUTES and GATEWAY_ROUTES_READ_AT in policy/sync/validate_policy.py together.")
-
-
-@pytest.mark.parametrize("doc, pin", [
-    ({"centralGateway": {"image": {"digest": "sha256:" + "0" * 64}}}, "sha256:" + "0" * 64),
-    ({"centralGateway": {"image": {"tag": "sha-0000000"}}}, "tag:sha-0000000"),
-    ({"global": {"imageDigests": {"ghcr.io/x/" + _GATEWAY_REPO: "sha256:" + "1" * 64}}}, "sha256:" + "1" * 64),
-], ids=["another digest", "a tag", "another map row"])
-def test_CONTROL_a_moved_pin_is_caught(tmp_path, doc, pin):
-    p = tmp_path / "values-sandbox.yaml"
-    p.write_text(yaml.safe_dump(doc), encoding="utf-8")
-    assert _unread_gateway_pins([p]) == {"values-sandbox.yaml": pin}
-
-
-def test_the_read_at_record_is_a_full_commit_and_digest():
-    rec = vp.GATEWAY_ROUTES_READ_AT
-    assert len(rec["dag_tools"]) == 40 and int(rec["dag_tools"], 16) >= 0
-    assert rec["central_gateway_digest"].startswith("sha256:") and len(rec["central_gateway_digest"]) == 71
+def test_a_published_route_not_marked_delegatable_is_refused():
+    internal = [r for r in gateway_routes.route_ids() if r not in gateway_routes.delegatable_route_ids()]
+    assert internal, "control: the published list has a route delegate rows may not name"
+    errs = _b(_rows(_row(routes=[internal[0]])))
+    assert len(errs) == 1 and f"unknown route {internal[0]!r} for door gateway" in errs[0], errs
 
 
 # ---- doors: a row's routes are the routes of ITS door (architect 11-04) ---------------------------

@@ -19,9 +19,10 @@
 #     that path.
 #
 # Validated by validate_policy.gateway_delegates_errors: `service` is a seeded `svc:` identity in
-# users.yaml, each route is one of the row's door's routes (GATEWAY_ROUTES, BFF_DELEGATE_ROUTES),
-# and a row states its grantor, its reason and the seat that ratified it (`ratified_by`: a seat such
-# as `owner`, never a person). Every row carries all three.
+# users.yaml, and each route is one of the row's door's routes. For the gateway, those are the routes
+# dag-tools' `gateway_routes.json` marks `delegate_rows_may_name: true`; for the BFF, they are
+# BFF_DELEGATE_ROUTES. A row states its grantor, its reason and the seat that ratified it
+# (`ratified_by`: a seat such as `owner`, never a person). Every row carries all three.
 #
 # Grantor row: policy/grantors/gateway_delegates.yaml.
 

@@ -48,11 +48,13 @@ dependencies = [
     # rename into a metadata/name mismatch: uv refuses ("Package metadata name `edgy-dag-tools`
     # does not match given name `dag-tools`"), pip tolerates it. A Windows venv installed before
     # the rename kept working, so the break surfaced only on a fresh resolve — the floating-ref
-    # failure mode exactly. Pinned to a TAG; the import name is still `dag_tools` at v0.1.1.
-    # NOTE: agent_fleet/data_analyst pins the pre-rename SHA 61cbfa92 and is the only real
-    # importer. Moving it to v0.1.1 is an upstream UPGRADE, not this rename fix, so it is
-    # deliberately left alone — see the two-dists-one-module hazard if both land in one env.
-    "edgy-dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@v0.1.1",
+    # failure mode exactly. Pinned to one release (never a floating ref); the import name is still
+    # `dag_tools`. 0.11.0 (PyPI, built from 4924235) ships `central_gateway/gateway_routes.json`,
+    # which policy/sync/validate_policy.py reads for the gateway door's delegatable routes
+    # (01M6KF8279KZ843KG5MMM0R3YH).
+    # NOTE: agent_fleet/data_analyst pins the pre-rename SHA 61cbfa92, and agent_fleet/finance_agent
+    # pins v0.10.0, each in its own project. See the two-dists-one-module hazard if both land in one env.
+    "edgy-dag-tools==0.11.0",
     # PROMOTED from the dev group 2026-08-07. The projector and the sandbox domain broker are
     # mesh services that ship in the iagent image and now take the SDK's inbound transport-auth
     # dependency, so `iagent_mesh` must be present at RUNTIME. As a dev-only dependency it
