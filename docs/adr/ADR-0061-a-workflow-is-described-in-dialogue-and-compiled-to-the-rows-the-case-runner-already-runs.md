@@ -20,7 +20,9 @@ ruled two more: an approval step with no `approves` is asked which answers count
 steps is asked as a stage, in the person's words. Both are built. Runs 59 to 61, on them, all read `no`. Runs 59 and 60
 read `yes` on slot and approval for the first time, and both stall on the record stage, where the model's step is refused
 for its path form (§10). The architect then ruled that a positional path's refusal says what to write, and that a stage
-is drafted under a name the person used. Both are built (§10). Nothing is flipped.
+is drafted under a name the person used. Both are built (§10). Runs 62 to 64, on them: run 63 reads `yes` on route, slot
+and approval with the contradiction caught, and run 62 reads `no`, as it should. So the bar for Proposed, in the
+architect's words, is met (§10). Nothing is flipped.
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2738,6 +2740,55 @@ On the name, they are:
 
 The suite, gov's refusal ratchet and the corpus check pass. The census is unchanged at 469 refused, 2003 passed, no crash
 sites. Runs 62 to 64 are next.
+
+#### 2026-11-04: runs 62 to 64, on the path form and the stage's name
+
+Three runs at `d9901b0e`, one at a time. They started once the release read deployed, worker6 read Ready and Dagster
+listed no active run, on two checks in a row.
+
+| run | status | route | slot | approval | contradiction | what it reads |
+| --- | --- | --- | --- | --- | --- | --- |
+| 62 | `cannot_run` | no | yes | yes | caught | the record is a send and a render, with no wait for filing, and ends `recorded`; `outputs.record.ends` stalls |
+| 63 | runnable | **yes** | **yes** | **yes** | caught | nothing in any bar; the one semantic difference is the acknowledgement's answer `escalate` against `escalated` |
+| 64 | runnable | no | no | no | caught | the record is a send alone; the program approval excludes no one; its answers are `approve` and `reject` |
+
+**Bar status: met, in the architect's words:** "one PCN run yes, with the contradiction caught, and one run that should
+read no and does".
+
+- **Run 63 reads `yes` on all three bars, with the planted contradiction caught.** No step or route is dropped, and no
+  approval, `excludes` or `requires` reads wrong. No slot is rewritten, and the planted deadline deferral is recorded. Its one
+  semantic difference reads in no bar. The acknowledgement's answer is `escalate` where the expected bundle has
+  `escalated`, at the same route and in the same `excludes`. The person said "acknowledge it, or escalate it", so the draft
+  is in the person's words. That is the outcome-word item on the open list.
+- **Run 62 reads `no`, and should.** The person described the record as "sends the disposition out … Then the records
+  group files it and says so". The draft has the send, and a render where the wait should be. It ends `recorded`, where the
+  expected bundle ends `filed`.
+
+Nothing is flipped. That is for the architect.
+
+**Run 64 reads `no` too.** Its route and slot readings are right. The record is a send alone. The person said "The person
+who logged the notice may never sign off either review" at turn 15, and the program approval's draft excludes no one. Its
+approval bar reads `no` only on the answer word: the draft says `approve` and `reject`, where the expected bundle says
+`approved` and `rejected`. The person said "They can approve it or reject it". That bar compares the answers by their
+words, so it is the same outcome-word item, and here it decides a bar.
+
+**The path form, in the runs.** Run 63 sent `steps[0].task_kind` at turn 28 and heard "`steps[0]` is
+`steps[id=await_program_approval]`, so write `steps[id=await_program_approval].task_kind`". Its restatement used the id
+form and landed. That is the run's only model error. Run 62 tried, at turn 30, to add the record's wait step as
+`steps[2]`, and heard to set `steps` whole. That was its second try at the turn, after the write-back check refused its
+first, so the restatements were spent and the record stalled. Run 64 sent no positional path.
+
+**The stage's name, in the runs: the check never fired, and these runs show why it cannot catch this form.** In each run,
+the model's opening draft holds the trigger's list of stages in its own names: `acknowledge_change`, `acknowledge`,
+`acknowledge_minor`. The stage confirm at turn 6 puts those names to the person, and the person answers "the impact
+review, the acknowledgement, the program approval and the record". The model then adds the two missing stages and keeps
+its own name for the acknowledgement, in the list and in the workflow alike. The list and the workflows agree, so the
+check finds nothing. It reads the trigger's list as the person's names, and the model writes that list. Nothing read
+wrong on a name in any of the three runs, since no stage question stalled as in run 61. This goes on the open list.
+
+**Also seen.** `outputs.record` is deferred with "user could not answer" on all three runs, asked before the stage was
+described. That is the stale deferral. Run 63 also left the record's filing step without a deadline, with "user could not
+answer". Nobody stated one, so the draft is right to have none.
 
 ## Consequences
 
