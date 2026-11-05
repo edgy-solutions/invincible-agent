@@ -241,10 +241,16 @@ def can_act_or_unavailable(audience: str, caller_id: str) -> bool:
 def check_can_act(audience: str, caller_id: str) -> bool:
     """Application-layer gate: re-check Topaz `can_act` for this caller on this
     audience at resolve time (defense in depth over the replication filter).
-    `caller_id` is the authz_id (Topaz's key). Deny-by-default: any error or empty
-    identity -> False."""
+    `caller_id` is the authz_id (Topaz's key). Deny-by-default: empty identity, a 404 or
+    a defect here -> False. A Topaz that cannot be reached, answers another non-2xx or answers
+    malformed is the outage class and raises `AuthorizationUnavailable`, which the caller answers
+    503 (architect rulings 2026-11-02)."""
     try:
         return can_act_or_unavailable(audience, caller_id)
+    except AuthorizationUnavailable as exc:
+        if not (isinstance(exc.__cause__, httpx.HTTPStatusError) and exc.__cause__.response.status_code == 404):
+            raise
+        return False  # fail-closed: the directory's not-found
     except Exception:
         return False  # fail-closed
 
@@ -288,8 +294,10 @@ def check_can_invoke(capability: str, caller_id: str) -> bool:
     posture as :func:`check_can_act` above — only the namespace differs, because
     INVOKING an effect is not ACTING on a task.
 
-    Deny-by-default: an ungranted capability is "object not found" -> False, and any
-    error -> False. Callers must treat a False as a REFUSAL THEY REPORT LOUDLY, never
+    Deny-by-default: an ungranted capability is False, whichever way Topaz says so (a 404 here, or
+    the 200 `check: false` the sandbox's Topaz was measured answering on 2026-11-02), and a defect here
+    -> False. A Topaz that cannot be reached, answers another non-2xx or answers malformed is the
+    outage class and raises `AuthorizationUnavailable`, which the caller answers 503. Callers must treat a False as a REFUSAL THEY REPORT LOUDLY, never
     as a reason to skip quietly — a gate that silently swallows the thing it was
     guarding is the broken-closed failure, not a safety property.
     """
@@ -305,8 +313,12 @@ def check_can_invoke(capability: str, caller_id: str) -> bool:
     try:
         with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
             r = c.post("/api/v3/directory/check", json=payload)
+            if r.status_code == 404:
+                return False
             r.raise_for_status()
             return check_answer(r)
+    except httpx.HTTPError as exc:  # unreachable, a non-2xx or a malformed answer: the outage class, never a "no"
+        raise AuthorizationUnavailable(type(exc).__name__) from exc
     except Exception:
         return False  # fail-closed
 

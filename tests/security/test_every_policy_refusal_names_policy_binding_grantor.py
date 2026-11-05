@@ -47,6 +47,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+from iagent_mesh import Refusal
 
 ROOT = Path(__file__).resolve().parents[2]
 ROOTS = ("src", "agent_fleet")
@@ -257,6 +258,8 @@ ER = "agent_fleet/repository_agent/repo_core.py"
 
 #: No binding could lift these, so they keep their bodies. Value = why.
 NOT_POLICY: dict[str, str] = {
+    "src/iagent/gateway.py::reauth_run::service_token_refused": AUTHN,  # a service token has no person to re-authenticate
+    "src/iagent/gateway.py::my_paused_runs::service_token_refused": AUTHN,  # a service token has no person whose paused runs to list
     "src/iagent/auth.py::get_current_user::Authentication failed: {}": AUTHN,
     "src/iagent/auth.py::get_current_user::Invalid token payload: {}": AUTHN,
     "src/iagent/auth.py::get_current_user::Token has expired": AUTHN,
@@ -265,6 +268,7 @@ NOT_POLICY: dict[str, str] = {
     f"{GW}::_entitled_artifact_rec::no caller identity on this request": AUTHN,
     f"{GW}::answer_case_signal::no_actor | a case signal needs an authentic": AUTHN,
     f"{FIN}::mesh_ticketed_read::a governed finance read requires the caller's id": AUTHN,
+    f"{FIN}::_refuse_asset_exports::asset_export_unsupported | An export cannot carry figures r": NOT_BUILT,
     "agent_fleet/graph_host/main.py::run_graph::{} runs as the INITIATOR and this request carrie": AUTHN,
     f"{GRW}::submit_decision::submit_decision requires `acted_by` (the caller'": AUTHN,
     f"{RA}::_authorize_resolution::approve requires `acted_by` (the caller's authz_": AUTHN,
@@ -282,7 +286,6 @@ NOT_POLICY: dict[str, str] = {
     f"{GW}::redeem_caller_identity::not_the_redeemer | The identity vault is redeemable": PINNED,
     f"{GW}::ingest_retry_route::retry_is_pin_driven | a retry is driven only by an ext":
         "a retry is driven by an extractor pin change, never by a person",
-    f"{GW}::get_case::delegate_reads_artifacts_only | a delegate reads the artifacts i": SECTION_5_1,
     f"{GW}::get_case_action._not_your_case::not_your_case | a delegate reads the action reco": SECTION_5_1,
     f"{GW}::_ingest_review_access::not_entitled | a service reads only the drops i": SECTION_5_1,
     f"{RA}::_authorize_resolution::caller {{}} is excluded from deciding promise {{}} b": DUTIES,
@@ -384,6 +387,7 @@ PENDING: dict[str, str] = {
     f"{SPO}::verify_spo_step::verb {{}} is NOT eligible for subject {{}} under dom": "groups",
     f"{GW}::_admit_on_behalf_of::not_a_delegate": "config",
     f"{GW}::_admit_on_behalf_of::principal_not_declared_for_delegate": "config",
+    f"{GW}::_admit_named_on_case::principal_not_declared_for_delegate": "config",
     f"{GW}::export_package_artifact::caller {{}} is not entitled to the package for {{}}.": "code",
     f"{GW}::_export_package_from_template::not_a_recipient_you_may_export_to": "code",
     f"{GW}::export_package::not_a_recipient_you_may_export_to": "code",
@@ -546,10 +550,11 @@ def R(monkeypatch):
     mod._GRANTORS_CACHE = None
 
 
-def test_the_fields_are_the_sdk_refusal_envelope(R):
-    """`iagent_mesh.refusal.Refusal` (SDK 0.9.11, 26b1238): this repo pins 0.9.10, so the body is
-    a dict. On the bump, validate it with `Refusal.model_validate` here and delete this restatement."""
-    assert R.FIELDS == ("policy_id", "missing_binding", "grantable_by", "candidates")
+def test_the_body_is_the_sdk_refusal_envelope(R):
+    """Read from the SDK's model, so a field it adds or renames shows up here unrestated."""
+    r = R.refusal("capability_grants:mesh:startReview", "can_invoke(mesh:startReview)")
+    assert tuple(r) == tuple(Refusal.model_fields)
+    assert Refusal.model_validate(r).model_dump(mode="json") == r
 
 
 def test_a_policy_refusal_names_policy_missing_and_the_seeded_grantor(R):
@@ -558,7 +563,7 @@ def test_a_policy_refusal_names_policy_missing_and_the_seeded_grantor(R):
                            missing_binding="can_invoke(mesh:startReview)")
     assert exc.status_code == 403
     r = exc.detail["refusal"]
-    assert tuple(r) == R.FIELDS
+    assert tuple(r) == tuple(Refusal.model_fields)
     assert r["policy_id"] == "capability_grants:mesh:startReview"
     assert r["missing_binding"] == "can_invoke(mesh:startReview)"
     seed = R.grantors()["capability_grants"]
@@ -579,7 +584,7 @@ def test_an_overlay_row_replaces_the_seed_grantor(R, tmp_path, monkeypatch):
 
 def test_an_object_scoped_family_is_named_without_its_key(R):
     scoped = sorted(f for f, g in R.grantors().items() if g.object_scoped)
-    assert scoped == ["asset_grants", "ontology_compartments", "program_members", "recipient_readers"]
+    assert scoped == ["asset_grants", "level_readers", "ontology_compartments", "program_members", "recipient_readers"]
     for fam in scoped:
         assert R.refusal(fam, "member_of(program)")["policy_id"] == fam
         with pytest.raises(ValueError, match="object-scoped"):

@@ -1,8 +1,9 @@
 """The identity vault — a REFERENCE crosses the Dagster boundary, never a CREDENTIAL.
 
 Ruled 2026-08-28 in ``docs/plans/identity-propagation-must-not-cross-run-storage.md``
-(commit 1f4d645). Read that item before changing anything here; this module is the
-implementation of six invariants that were argued for, not preferences.
+(commit 1f4d645); reshaped by the architect's ruling of 2026-11-03 (same document, the
+section of that date). Read that item before changing anything here; this module is the
+implementation of invariants that were argued for, not preferences.
 
 THE PROBLEM IN ONE SENTENCE. The supervisor is not a proxy in alice's request — it is a
 JOB LAUNCHED BY IT, and the only channel across that process boundary is Dagster's run
@@ -16,33 +17,47 @@ in-cluster hop it genuinely has (verified: ``iagent-cortex-bff:8090`` answers 20
 Dagster user-code pod) and receives ALICE'S OWN Ping-rooted token — the same credential the
 browser sends on the button path, not a new one minted on some broker's authority.
 
-    BFF (alice's request)      stash(run_id, alice's token)      [in-process, TTL minutes]
+    BFF (alice's request)      stash(run_id, alice's token)      [in-process, the run's budget]
         -> launchRun(...)      run config carries run_id only
-    supervisor (async, later)  redeem(run_id)                    [live hop]
-        <- alice's token       single-use, atomic, audited
-        -> POST /canvas/seed   Authorization: Bearer <alice>  == the button path
+    supervisor (async, later)  redeem(run_id, call_id)           [live hop, once per outbound call]
+        <- alice's token       atomic, audited, one line per redemption
+        -> any engine call     Authorization: Bearer <alice>     == the button path
 
-WHY THIS AND NOT RFC 8693 DELEGATION: delegation still MINTS A NEW CREDENTIAL and needs a
-realm permission. The vault REDEEMS THE ORIGINAL. Nothing new exists to scope or expire.
+ONE REFERENCE PER RUN, REDEEMED PER CALL (ruling 2026-11-03). Every outbound call the
+supervisor makes on a person's behalf redeems from the run's one reference. What is
+single-use is the CALL, not the reference: a ``call_id`` redeemed twice is the replay tell
+(``ALREADY_REDEEMED``), exactly as a reference redeemed twice was before. The entry stays.
+
+THE REFERENCE LIVES AS LONG AS THE RUN'S BUDGET (``IDENTITY_VAULT_TTL_SECONDS``, default
+3600; the chart renders it from ``dagster.runMonitoring.maxRuntimeSeconds``). The old
+600 s dispatch window is gone, and so is the shrink to the token's own ``exp``. When the
+token nears its ``exp`` the vault does not return it: ``redeem`` answers ``NEEDS_REFRESH``
+and the BFF's route asks Keycloak, through ``identity_exchange`` (a separate module), for a
+fresh one, which ``replace`` swaps in. When that cannot be done the entry is marked
+``awaiting_reauth`` and the person re-authenticates at ``POST /orchestrate/{run_id}/reauth``.
+A run never loses its card to a clock.
+
+WHY THIS AND NOT LEGACY EXCHANGE OR IMPERSONATION. Those are ruled out permanently: a
+request carrying ``requested_subject``, or one with no ``subject_token``, is the refused
+shape. The only exchange this design allows is the standard RFC 8693 one, where the caller
+presents the person's own token as the ``subject_token`` and receives a token for the SAME
+person. That call lives in ``identity_exchange.py``, never here.
 
 THE COST, STATED NOT HIDDEN. The vault has NO ``act`` CLAIM, by construction — it forwards
 alice's own token, so downstream sees ``sub=alice`` and cannot distinguish a phrase-path
-seed from a button click. That is the ONE dimension on which the ruled-out delegation path
-was stronger. It is compensated by the redemption audit line below plus the existence of the
-Dagster run itself, and it OBLIGATES the DecisionArtifact to read the trigger FROM THE RUN
-and never infer it from the JWT subject. Provenance derived from the token alone would
-confidently record a phrase-path seed as a button-path one — a wrong provenance fact written
-confidently, which is the exact failure mode this platform sells against.
+seed from a button click. It is compensated by the redemption audit line below plus the
+existence of the Dagster run itself, and it OBLIGATES the DecisionArtifact to read the
+trigger FROM THE RUN and never infer it from the JWT subject.
 
-SCOPE BOUNDARY. This is for the LAUNCH-TO-DISPATCH hop only. It is not a general token
-store, not a session cache, and NOT the SDK's caller-identity answer —
-``sdk-discards-caller-identity`` keeps its own item and its own fix (injecting
-``CallerIdentity`` into handlers). If someone proposes putting a second KIND of token in
-here, this paragraph is the refusal.
+SCOPE BOUNDARY. This holds the person's ACCESS TOKEN for the life of one run. It is not a
+general token store, not a session cache, and NOT the SDK's caller-identity answer —
+``sdk-discards-caller-identity`` keeps its own item and its own fix. No refresh token and no
+second KIND of token goes in here; if someone proposes one, this paragraph is the refusal.
 
-THE VAULT NEVER MINTS. It stores and returns a token some other authority issued. The moment
-it constructs a token, an actor field, or an identity assertion of its own, it has become the
-forgeable-actor shape the plan item prohibits.
+THE VAULT NEVER MINTS. It makes no network call and constructs no token, actor field or
+identity assertion of its own: it stores and returns a token some other authority issued,
+and ``replace`` swaps in another such token. The moment it constructs one it has become the
+forgeable-actor shape the plan item prohibits. Keycloak is called from a separate seam.
 """
 from __future__ import annotations
 
@@ -91,20 +106,21 @@ __all__ = [
     "RedemptionResult",
     "VAULT",
     "vault_ttl_seconds",
-    "vault_slots",
+    "vault_refresh_margin_seconds",
 ]
 
 
-# INVARIANT 3 — TTL BOUNDED TO THE DISPATCH WINDOW. The reference outlives its run's launch
-# by MINUTES, not by the token's own lifetime. A reference valid for hours is a stored
-# credential with extra steps. The window that matters is launch -> create_task_plan ->
-# execute_subtask's dispatch, observed at well under two minutes; ten is slack, not policy.
-_DEFAULT_TTL_SECONDS = 600
+# THE REFERENCE LIVES AS LONG AS THE RUN'S BUDGET (ruling 2026-11-03). The chart renders
+# IDENTITY_VAULT_TTL_SECONDS from dagster.runMonitoring.maxRuntimeSeconds, the one number that
+# bounds a run; 3600 is only the default for a deployment that does not.
+_DEFAULT_TTL_SECONDS = 3600
 
-# Tombstones outlive the reference on purpose: invariant 2 requires a replay to fail LOUDLY
-# and be IDENTIFIABLE as a replay, which is impossible if a consumed reference decays into
-# the same "unknown" state as a bogus one. Tombstones hold run_id + subject + timestamps and
-# NEVER a credential.
+# The token is not handed out when its own `exp` is this close: a call that starts with a
+# token about to lapse fails mid-flight as a 401 that looks like an entitlement problem.
+_DEFAULT_REFRESH_MARGIN_SECONDS = 60
+
+# A run's call tombstones go with its entry. This is only the life of the "consumed by a
+# launcher mismatch" marker, which has no entry to ride on.
 _DEFAULT_TOMBSTONE_TTL_SECONDS = 3600
 
 
@@ -115,46 +131,25 @@ def vault_ttl_seconds() -> int:
         return _DEFAULT_TTL_SECONDS
 
 
-# ONE REFERENCE PER FAN-OUT SLOT. Every subtask is its own process and the reference is
-# single-use, so a plan with two caller-identity subtasks would read its second redemption as
-# a REPLAY. The BFF stashes `slots` entries (keys `run_id#0 .. run_id#(slots-1)`); each
-# subtask redeems the one named by its Dagster mapping key. See
-# docs/plans/user-token-reaches-specialists.md, Phase 1.
-_DEFAULT_SLOTS = 8
-_MAX_SLOTS = 64
-
-# A slot never outlives its token's own `exp`, less this skew.
-_EXP_SKEW_SECONDS = 30.0
-
-
-def vault_slots() -> int:
-    """IDENTITY_VAULT_SLOTS, default 8, clamped to [1, 64]."""
+def vault_refresh_margin_seconds() -> int:
     try:
-        n = int(os.getenv("IDENTITY_VAULT_SLOTS", "") or _DEFAULT_SLOTS)
+        return max(0, int(os.getenv("IDENTITY_VAULT_REFRESH_MARGIN_SECONDS", "")
+                          or _DEFAULT_REFRESH_MARGIN_SECONDS))
     except ValueError:
-        n = _DEFAULT_SLOTS
-    return max(1, min(_MAX_SLOTS, n))
+        return _DEFAULT_REFRESH_MARGIN_SECONDS
 
 
 def _expiry_of(token: str) -> Optional[float]:
     """The ``exp`` claim of a JWT, read WITHOUT verifying it (mirrors
     ``agent_fleet.utils.service_identity._expiry_of``; mirrored, not imported, because
-    ``src/iagent`` does not depend on ``agent_fleet``). The expiry only bounds how long the
-    vault holds the token; it is never trusted as identity. None if unreadable."""
+    ``src/iagent`` does not depend on ``agent_fleet``). The expiry only decides whether the
+    vault hands the token out; it is never trusted as identity. None if unreadable."""
     try:
         payload = token.split(".")[1]
         exp = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["exp"]
         return float(exp) if isinstance(exp, (int, float)) else None
     except Exception:  # noqa: BLE001 -- an unreadable token simply has no exp bound
         return None
-
-
-def _key(run_id: str, slot: int) -> str:
-    return f"{run_id}#{slot}"
-
-
-def _run_of(key: str) -> str:
-    return key.rsplit("#", 1)[0]
 
 
 class RedemptionOutcome:
@@ -167,10 +162,15 @@ class RedemptionOutcome:
     """
 
     OK = "ok"
-    NOT_FOUND = "not_found"              # never stashed, or already expired out
-    EXPIRED = "expired"                  # stashed, TTL elapsed before redemption
-    ALREADY_REDEEMED = "already_redeemed"  # THE COMPROMISE TELL
+    NOT_FOUND = "not_found"              # never stashed, past its life, or closed
+    ALREADY_REDEEMED = "already_redeemed"  # THE COMPROMISE TELL: one call_id, twice
+    NEEDS_REFRESH = "needs_refresh"      # the token is near its exp; none is returned
+    AWAITING_REAUTH = "awaiting_reauth"  # the run is paused for the person; none is returned
     LAUNCHER_MISMATCH = "launcher_mismatch"
+
+
+STATE_LIVE = "live"
+STATE_AWAITING_REAUTH = "awaiting_reauth"
 
 
 @dataclass(frozen=True)
@@ -190,34 +190,34 @@ class _Entry:
     subject: str
     stashed_at: float
     expires_at: float
-
-
-@dataclass
-class _Tombstone:
-    subject: str
-    redeemed_at: float
-    expires_at: float
+    state: str = STATE_LIVE
+    reason: str = ""
+    # What the person is shown while paused. Human-readable text from the caller of
+    # ``mark_awaiting_reauth``; never a token. Cleared with the pause.
+    paused_call: str = ""
+    instruction: str = ""
 
 
 class IdentityVault:
     """INVARIANT 5 — MEMORY, NOT STORAGE.
 
-    An in-process map, TTL-evicted. **The moment this is Redis or Postgres, a credential is
-    durable again** and the design has quietly reverted to the thing it replaced. There is
-    deliberately no persistence hook, no serialization method, and no backing-store
-    parameter — not as an oversight to be filled in later, but because the absence IS the
-    invariant. ``tests/identity/test_identity_vault.py`` pins it with a source guard.
+    An in-process map keyed on ``run_id``, evicted at the end of the run's life. **The
+    moment this is Redis or Postgres, a credential is durable again** and the design has
+    quietly reverted to the thing it replaced. There is deliberately no persistence hook, no
+    serialization method, and no backing-store parameter — not as an oversight to be filled
+    in later, but because the absence IS the invariant.
+    ``tests/identity/test_identity_vault.py`` pins it with a source guard.
 
-    THE HONEST COST: a BFF restart orphans in-flight seeds. A failed redemption then fails
-    the seed LOUDLY and the user re-asks. Same trade as engine-p's in-memory scenario store,
-    and it earns the same runbook note — *restarting cortex-bff kills in-flight phrase-path
-    seeds; the button path is unaffected.*
+    THE HONEST COST: a BFF restart orphans in-flight runs. A failed redemption then fails
+    the step LOUDLY (``not_found``) and the user re-asks. *Restarting cortex-bff kills
+    in-flight phrase-path runs; the button path is unaffected.*
 
     A NOTE ON WHAT IS STASHED, since the footprint is wider than the feature. The BFF cannot
-    know at launch time whether a given phrase will route to the seed verb, so it stashes for
-    EVERY run it launches on a user's behalf. That is a token in memory for every active run
-    for a few minutes. It is bounded by TTL and by process lifetime, it never becomes durable,
-    and it is stated here rather than discovered later.
+    know at launch time whether a given phrase will need the person's token, so it stashes
+    for EVERY run it launches on a user's behalf: a token in memory for every active run,
+    for at most the run's budget. It is bounded by that life and by process lifetime, it
+    never becomes durable, and it is stated here rather than discovered later. The BFF closes
+    the entry when the run reaches a terminal state.
     """
 
     def __init__(
@@ -225,148 +225,254 @@ class IdentityVault:
         ttl_seconds: Optional[int] = None,
         tombstone_ttl_seconds: int = _DEFAULT_TOMBSTONE_TTL_SECONDS,
         clock=time.monotonic,
+        wall_clock=time.time,
+        refresh_margin_seconds: Optional[int] = None,
     ) -> None:
         self._ttl = ttl_seconds if ttl_seconds is not None else vault_ttl_seconds()
         self._tombstone_ttl = tombstone_ttl_seconds
         self._clock = clock
-        # INVARIANT 2 — the lock is what makes redeem-and-delete ONE operation. A plain
-        # dict read followed by a separate delete is NOT this invariant; it is a race that
-        # satisfies it most of the time, which is the plausible version the plan item warns
-        # the implementer away from. A threading.Lock (not an asyncio one) because FastAPI
-        # runs sync dependencies in a threadpool — the contention is genuinely cross-thread.
+        # `exp` is wall-clock; the vault clock is monotonic and injectable, so the two are
+        # kept apart and each is injectable on its own.
+        self._wall = wall_clock
+        self._margin = (refresh_margin_seconds if refresh_margin_seconds is not None
+                        else vault_refresh_margin_seconds())
+        # INVARIANT 2 — the lock is what makes redeem-and-tombstone ONE operation. A plain
+        # dict read followed by a separate write is NOT this invariant; it is a race that
+        # satisfies it most of the time. A threading.Lock (not an asyncio one) because
+        # FastAPI runs sync dependencies in a threadpool — the contention is cross-thread.
         self._lock = threading.Lock()
         self._entries: Dict[str, _Entry] = {}
-        self._tombstones: Dict[str, _Tombstone] = {}
+        # run_id -> {call_id: redeemed_at}. Holds no credential; dropped with the entry.
+        self._calls: Dict[str, Dict[str, float]] = {}
+        # run_id -> until. A launcher mismatch consumes the whole reference; this is what
+        # makes the retry read as ALREADY_REDEEMED instead of as a miss.
+        self._consumed: Dict[str, float] = {}
 
     # ── writing ────────────────────────────────────────────────────────────────────────
-    def stash(self, run_id: str, token: str, subject: str, slots: int = 1) -> None:
+    def stash(self, run_id: str, token: str, subject: str) -> None:
         """Hold the caller's own token against the run that will need it.
 
         Called by the BFF the instant ``launchRun`` returns a run id — while it still holds
-        alice's request and therefore her token. This is the last moment the two facts
-        (``run_id``, her credential) are in the same place.
+        alice's request and therefore her token. The entry lives for the run's budget and no
+        longer shrinks to the token's ``exp``. A token ALREADY past its ``exp`` makes an
+        ``awaiting_reauth`` entry rather than a silent no-op: the run is paused for the
+        person, not quietly left without an identity.
         """
         if not run_id or not token:
             raise ValueError("identity vault: run_id and token are both required")
-        if slots < 1:
-            raise ValueError("identity vault: slots must be >= 1")
         now = self._clock()
-        life = float(self._ttl)
         exp = _expiry_of(token)
-        if exp is not None:
-            # `exp` is wall-clock; the vault clock is injectable/monotonic, so convert to a
-            # remaining duration. A slot never outlives its token and is never extended.
-            life = min(life, exp - time.time() - _EXP_SKEW_SECONDS)
-            if life <= 0:
-                logger.warning(
-                    "identity_vault: not stashing run_id=%s outcome=token_already_expired", run_id
-                )
-                return
+        expired = exp is not None and exp <= self._wall()
         with self._lock:
             self._evict_locked(now)
-            for k in range(slots):
-                self._entries[_key(run_id, k)] = _Entry(
-                    token=token,
-                    subject=subject,
-                    stashed_at=now,
-                    expires_at=now + life,
-                )
-        # No token, no subject prefix games — the run id and the fact, nothing that could
-        # reconstruct a credential from logs.
-        logger.info("identity_vault: stashed reference run_id=%s ttl=%ss slots=%d",
-                    run_id, self._ttl, slots)
+            self._entries[run_id] = _Entry(
+                token=token,
+                subject=subject,
+                stashed_at=now,
+                expires_at=now + float(self._ttl),
+                state=STATE_AWAITING_REAUTH if expired else STATE_LIVE,
+                reason="token_expired_at_stash" if expired else "",
+            )
+            self._calls.pop(run_id, None)
+            self._consumed.pop(run_id, None)
+        # The run id and the fact, nothing that could reconstruct a credential from logs.
+        if expired:
+            logger.warning(
+                "identity_vault: stashed reference run_id=%s ttl=%ss state=awaiting_reauth "
+                "reason=token_expired_at_stash", run_id, self._ttl)
+        else:
+            logger.info("identity_vault: stashed reference run_id=%s ttl=%ss",
+                        run_id, self._ttl)
 
-    # ── reading, exactly once ──────────────────────────────────────────────────────────
-    def redeem(self, run_id: str, claimed_launcher: Optional[str] = None,
-               slot: int = 0) -> RedemptionResult:
-        """ATOMIC redeem-and-delete. Succeeds at most once per stash, ever.
+    def replace(self, run_id: str, token: str, subject: str) -> bool:
+        """Swap the run's token for another issued by the same authority, for the SAME
+        person. Only if the entry exists and its subject matches; clears ``awaiting_reauth``.
+        Never extends the entry's life — the run's budget is the run's budget."""
+        if not run_id or not token:
+            return False
+        with self._lock:
+            self._evict_locked(self._clock())
+            entry = self._entries.get(run_id)
+            if entry is None or subject != entry.subject:
+                ok = False
+            else:
+                entry.token = token
+                entry.state = STATE_LIVE
+                entry.reason = ""
+                entry.paused_call = ""
+                entry.instruction = ""
+                ok = True
+        if ok:
+            logger.info("identity_vault: replaced token run_id=%s subject=%s", run_id, subject)
+        else:
+            logger.error("identity_vault: REFUSED replace run_id=%s — no such run or the "
+                         "subject differs from the one stashed", run_id)
+        return ok
+
+    def mark_awaiting_reauth(self, run_id: str, reason: str,
+                             paused_call: str = "", instruction: str = "") -> bool:
+        """The run is paused for the person. ``reason`` is a short code, never a token.
+
+        ``paused_call`` (which call could not proceed) and ``instruction`` (what the person
+        must do) are human-readable text supplied by the caller, shown on the person's
+        sign-in card. Neither may carry a token or a secret. A resume (``replace``) clears them.
+        """
+        with self._lock:
+            self._evict_locked(self._clock())
+            entry = self._entries.get(run_id)
+            if entry is None:
+                return False
+            entry.state = STATE_AWAITING_REAUTH
+            entry.reason = str(reason or "")[:120]
+            entry.paused_call = str(paused_call or "")[:200]
+            entry.instruction = str(instruction or "")[:300]
+        logger.warning("identity_vault: run_id=%s is awaiting_reauth reason=%s", run_id, reason)
+        return True
+
+    def close(self, run_id: str) -> None:
+        """Drop the run's entry and its call tombstones (the run reached a terminal state)."""
+        with self._lock:
+            had = self._entries.pop(run_id, None) is not None
+            self._calls.pop(run_id, None)
+            self._consumed.pop(run_id, None)
+        if had:
+            logger.info("identity_vault: closed run_id=%s", run_id)
+
+    # ── reading ────────────────────────────────────────────────────────────────────────
+    def state(self, run_id: str) -> Optional[str]:
+        """``"live"`` | ``"awaiting_reauth"`` | None (no such run)."""
+        with self._lock:
+            self._evict_locked(self._clock())
+            entry = self._entries.get(run_id)
+            return entry.state if entry else None
+
+    def reauth_reason(self, run_id: str) -> str:
+        with self._lock:
+            entry = self._entries.get(run_id)
+            return entry.reason if entry else ""
+
+    def pause_record(self, run_id: str) -> Optional[Dict[str, str]]:
+        """The served pause record for one run, or None when it is not paused."""
+        with self._lock:
+            self._evict_locked(self._clock())
+            entry = self._entries.get(run_id)
+            if entry is None or entry.state != STATE_AWAITING_REAUTH:
+                return None
+            return self._record_locked(run_id, entry)
+
+    def paused_runs_of(self, subject: str) -> list:
+        """Pause records for the runs whose stashed subject is ``subject`` (the same
+        comparison ``replace`` makes). In-process memory: a restart empties this."""
+        if not subject:
+            return []
+        with self._lock:
+            self._evict_locked(self._clock())
+            return [self._record_locked(rid, e) for rid, e in self._entries.items()
+                    if e.state == STATE_AWAITING_REAUTH and e.subject == subject]
+
+    @staticmethod
+    def _record_locked(run_id: str, entry: "_Entry") -> Dict[str, str]:
+        return {"run_id": run_id, "paused_call": entry.paused_call,
+                "instruction": entry.instruction, "reason": entry.reason}
+
+    def token_for_refresh(self, run_id: str) -> Optional[str]:
+        """The held token, for the route's refresh path ONLY: it is the ``subject_token`` of
+        the standard exchange and goes nowhere else."""
+        with self._lock:
+            self._evict_locked(self._clock())
+            entry = self._entries.get(run_id)
+            return entry.token if entry else None
+
+    def redeem(self, run_id: str, call_id: str,
+               claimed_launcher: Optional[str] = None) -> RedemptionResult:
+        """ATOMIC redeem-and-tombstone for ONE outbound call.
+
+        ``call_id`` is single-use: the same one twice is ``ALREADY_REDEEMED``, the replay
+        tell. The entry stays, so the run's next call redeems again. An empty ``call_id``
+        raises before any state changes.
 
         ``claimed_launcher`` is INVARIANT 4: the launcher the redeeming run has recorded in
-        its own config. It must match the subject of the token that was stashed. A reference
-        redeemed for a run alice did not launch is the mismatch that refuses — and it
-        refuses by CONSUMING the reference, because a mismatch is an anomaly and leaving the
-        credential redeemable after one would let an attacker retry until they guessed.
+        its own config. It must match the subject of the token that was stashed. A mismatch
+        refuses by CONSUMING the whole reference, because it is an anomaly and leaving the
+        credential redeemable would let an attacker retry until they guessed.
         """
+        if not call_id:
+            raise ValueError("identity vault: call_id is required to redeem")
         now = self._clock()
-        key = _key(run_id, slot)
         with self._lock:
             self._evict_locked(now)
 
-            entry = self._entries.get(key)
+            entry = self._entries.get(run_id)
             if entry is None:
-                tomb = self._tombstones.get(key)
-                if tomb is not None:
-                    # INVARIANT 2's loud half. Two redemptions of one reference is the tell
-                    # of a compromised supervisor identity. It must never succeed quietly
-                    # twice, and it must never be mistaken for a late retry.
+                if run_id in self._consumed:
                     logger.error(
-                        "identity_vault: REPLAY — run_id=%s was already redeemed %.1fs ago. "
-                        "A second redemption of one reference is the compromise tell; the "
-                        "reference is NOT re-issued.",
-                        run_id, now - tomb.redeemed_at,
-                    )
+                        "identity_vault: REPLAY — run_id=%s was consumed by a refused "
+                        "redemption and is not re-issued.", run_id)
                     return RedemptionResult(RedemptionOutcome.ALREADY_REDEEMED)
                 logger.warning(
-                    "identity_vault: no reference for run_id=%s (never stashed, or the "
-                    "dispatch window elapsed)", run_id,
-                )
+                    "identity_vault: no reference for run_id=%s (never stashed, past its "
+                    "life, or closed)", run_id)
                 return RedemptionResult(RedemptionOutcome.NOT_FOUND)
 
-            # Belt and braces: _evict_locked already dropped anything past its TTL, so this
-            # branch is reachable only if the clock moved between the two reads. Kept
-            # because an expired credential must never be handed out on a timing edge.
-            if now >= entry.expires_at:
-                del self._entries[key]
-                logger.warning("identity_vault: reference for run_id=%s expired", run_id)
-                return RedemptionResult(RedemptionOutcome.EXPIRED)
-
             if claimed_launcher and claimed_launcher != entry.subject:
-                # A mismatch is an anomaly of the RUN, not of one slot: consume every
-                # remaining slot of the run, so the attacker cannot try the next one.
-                for k in [k for k in self._entries if _run_of(k) == run_id]:
-                    del self._entries[k]
-                    self._tombstones[k] = _Tombstone(
-                        subject=entry.subject,
-                        redeemed_at=now,
-                        expires_at=now + self._tombstone_ttl,
-                    )
+                del self._entries[run_id]
+                self._calls.pop(run_id, None)
+                self._consumed[run_id] = now + self._tombstone_ttl
                 logger.error(
                     "identity_vault: LAUNCHER MISMATCH for run_id=%s — the run records a "
                     "different launcher than the token that was stashed. Refusing and "
-                    "consuming the reference.", run_id,
-                )
+                    "consuming the reference.", run_id)
                 return RedemptionResult(RedemptionOutcome.LAUNCHER_MISMATCH)
 
-            # THE ATOMIC STEP: the entry leaves the map in the same critical section that
+            calls = self._calls.setdefault(run_id, {})
+            if call_id in calls:
+                # INVARIANT 2's loud half. One call redeemed twice is the tell of a
+                # compromised supervisor identity. It must never succeed quietly twice, and
+                # it must never be mistaken for a late retry.
+                logger.error(
+                    "identity_vault: REPLAY — run_id=%s call_id=%s was already redeemed "
+                    "%.1fs ago. A second redemption of one call is the compromise tell; "
+                    "it is NOT re-issued.", run_id, call_id, now - calls[call_id])
+                return RedemptionResult(RedemptionOutcome.ALREADY_REDEEMED)
+
+            if entry.state == STATE_AWAITING_REAUTH:
+                logger.warning("identity_vault: run_id=%s call_id=%s is awaiting_reauth; "
+                               "no token returned", run_id, call_id)
+                return RedemptionResult(RedemptionOutcome.AWAITING_REAUTH)
+
+            exp = _expiry_of(entry.token)
+            if exp is not None and exp - self._wall() <= self._margin:
+                logger.info("identity_vault: run_id=%s call_id=%s token is near its exp; "
+                            "needs refresh, no token returned", run_id, call_id)
+                return RedemptionResult(RedemptionOutcome.NEEDS_REFRESH)
+
+            # THE ATOMIC STEP: the call is tombstoned in the same critical section that
             # produced the token. There is no window in which a second caller can observe it.
-            del self._entries[key]
-            self._tombstones[key] = _Tombstone(
-                subject=entry.subject,
-                redeemed_at=now,
-                expires_at=now + self._tombstone_ttl,
-            )
+            calls[call_id] = now
             return RedemptionResult(
                 RedemptionOutcome.OK, token=entry.token, subject=entry.subject
             )
 
     # ── housekeeping ───────────────────────────────────────────────────────────────────
     def _evict_locked(self, now: float) -> None:
-        """TTL eviction. Called under the lock on every operation, which is what keeps the
-        map bounded without a background task — one fewer moving part to fail silently."""
+        """End-of-life eviction. Called under the lock on every operation, which is what
+        keeps the map bounded without a background task — one fewer moving part to fail
+        silently. A run's call tombstones go with its entry."""
         if self._entries:
             for k in [k for k, e in self._entries.items() if now >= e.expires_at]:
                 del self._entries[k]
-                logger.info("identity_vault: reference for run_id=%s evicted unredeemed "
-                            "(the safe default)", _run_of(k))
-        if self._tombstones:
-            for k in [k for k, t in self._tombstones.items() if now >= t.expires_at]:
-                del self._tombstones[k]
+                self._calls.pop(k, None)
+                logger.info("identity_vault: reference for run_id=%s reached the end of its "
+                            "life and was evicted", k)
+        if self._consumed:
+            for k in [k for k, until in self._consumed.items() if now >= until]:
+                del self._consumed[k]
 
     def stats(self) -> Tuple[int, int]:
-        """(live references, tombstones) — for /health. Counts only; never contents."""
+        """(live references, call tombstones) — for /health. Counts only; never contents."""
         with self._lock:
             self._evict_locked(self._clock())
-            return len(self._entries), len(self._tombstones)
+            return len(self._entries), sum(len(c) for c in self._calls.values())
 
 
 # The BFF's single process-wide vault.

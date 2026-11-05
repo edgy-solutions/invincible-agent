@@ -168,6 +168,45 @@ jobs:
             exit "$rc"
           fi
 
+      # EVERY IMAGE BY DIGEST, WRITTEN HERE AND NOWHERE ELSE. The artefact of record for "what does
+      # chart X run" is values-release-<version>.yaml: ours from image-digests.json, third party
+      # from the digests values.yaml pins (each confirmed in its registry by digest; a tag is never
+      # resolved). The seal then renders the chart WITH that file, and once more with every
+      # optional workload on, and fails the release if any container or initContainer image is not
+      # `@sha256:`. The roll (scripts/upgrade-sandbox.sh) downloads this file; it resolves nothing.
+      # Files, not pipes: the step is `bash -e` without pipefail, so a pipe would hand `rc` the
+      # last command's exit and a refusal would read as 0. The renders hold Secrets and stay in
+      # RUNNER_TEMP, never printed.
+      - name: Write the release values (every image by digest) and seal the render
+        run: |
+          version="${{ steps.retag.outputs.version }}"
+          out="values-release-${version}.yaml"
+          python -m pip install --quiet pyyaml
+          rc=0
+          python scripts/write_release_values.py             --manifest image-digests.json             --chart-version "${version}"             --out "${out}" || rc=$?
+          if [ "$rc" != "0" ]; then
+            echo "::error::the release values were not written (exit ${rc}); nothing is published"
+            exit "$rc"
+          fi
+          cat "${out}" >> "$GITHUB_STEP_SUMMARY"
+          for extra in "" scripts/values-every-workload.yaml; do
+            args="-f ${out}"
+            if [ -n "${extra}" ]; then args="${args} -f ${extra}"; fi
+            rc=0
+            helm template invincible-agent helm/invincible-agent ${args} > "${RUNNER_TEMP}/render.yaml" 2> "${RUNNER_TEMP}/render.err" || rc=$?
+            if [ "$rc" != "0" ]; then
+              echo "::error::helm template failed (exit ${rc}) for '${extra:-base}'; $(tail -n 1 "${RUNNER_TEMP}/render.err")"
+              exit "$rc"
+            fi
+            rc=0
+            python scripts/seal_image_digests.py < "${RUNNER_TEMP}/render.yaml" > "${RUNNER_TEMP}/seal.log" 2>&1 || rc=$?
+            cat "${RUNNER_TEMP}/seal.log"
+            if [ "$rc" != "0" ]; then
+              echo "::error::an image in the '${extra:-base}' render is not pinned by digest (exit ${rc}); nothing is published"
+              exit "$rc"
+            fi
+          done
+
       # PUBLISHED ONLY NOW, after every image is tagged and read back. chart-releaser used to run
       # first, which is how a release came to exist over images that did not.
       - name: Run chart-releaser
@@ -187,6 +226,6 @@ jobs:
       - name: Attach the digest manifest to the chart release
         run: |
           gh release upload "invincible-agent-${{ steps.retag.outputs.version }}" \
-            image-digests.json --clobber
+            image-digests.json "values-release-${{ steps.retag.outputs.version }}.yaml" --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

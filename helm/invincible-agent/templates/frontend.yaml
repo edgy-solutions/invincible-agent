@@ -144,6 +144,13 @@ spec:
               value: "http://{{ .Release.Name }}-electric{{ include "invincible-agent.svcDomain" . }}:{{ .Values.electric.port | default 3000 }}"
             {{- end }}
             {{- end }}
+            {{- if .Values.dagster.runMonitoring.maxRuntimeSeconds }}
+            # The identity vault's reference lives as long as the run's budget, from the one
+            # source that bounds a run (docs/plans/identity-propagation-must-not-cross-run-storage.md,
+            # ruling 2026-11-03). Unset, the BFF's own default (3600) applies.
+            - name: IDENTITY_VAULT_TTL_SECONDS
+              value: {{ .Values.dagster.runMonitoring.maxRuntimeSeconds | quote }}
+            {{- end }}
             {{- if .Values.cortexBff.tlsTrust.secretName }}
             # Python's ssl module + the `requests` library both honor
             # these. PyJWKClient (auth.py:42) → urllib → ssl.create_default_context

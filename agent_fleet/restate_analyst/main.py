@@ -1664,7 +1664,11 @@ def _check_can_act(audience: str, caller_authz_id: str) -> bool:
         except ImportError:
             logger.error("can_act decider unimportable — refusing (fail-closed)")
             return False
-    return check_can_act(audience, caller_authz_id)
+    try:
+        return check_can_act(audience, caller_authz_id)
+    except httpx.HTTPError as exc:  # unreachable, a non-2xx or a malformed answer: the outage class, never a "no"
+        raise restate.TerminalError(
+            "the authorizer could not be asked, or its answer could not be read", status_code=503) from exc
 
 
 def _audience_key(promise_name: str) -> str:
@@ -2767,16 +2771,18 @@ async def _run_definition(
             # 1. THE GATE, first and unconditionally — the capability the recorded [403] proved.
             #    Journaled via ctx.run because it is an HTTP decision, and TERMINAL on deny: a
             #    denial is a statement, never weather (fail-and-release, never retry-and-park).
+            #    The translation is INSIDE the action: ctx.run journals a TerminalError as
+            #    terminal and retries any other exception, whatever the code around it catches.
             def _gate(cap=step.capability, who=identity["authz_id"]):
-                if not check_can_invoke(cap, who):
-                    raise StepFailAndRelease(
-                        f"caller {who!r} is not authorized (can_invoke) for capability {cap!r} "
-                        f"— failing and releasing.", status_code=403)
+                try:
+                    if not check_can_invoke(cap, who):
+                        raise StepFailAndRelease(
+                            f"caller {who!r} is not authorized (can_invoke) for capability {cap!r} "
+                            f"— failing and releasing.", status_code=403)
+                except StepFailAndRelease as e:
+                    raise restate.TerminalError(str(e), status_code=e.status_code) from e
                 return {"capability": cap, "caller": who, "granted": True}
-            try:
-                _gate_result = await ctx.run(f"gate_{step.id}", _gate)
-            except StepFailAndRelease as e:
-                raise restate.TerminalError(str(e), status_code=e.status_code)
+            _gate_result = await ctx.run(f"gate_{step.id}", _gate)
 
             # 2. THE DECISION, synthesized. An autonomous run's "decision" is accept-all-with-
             #    exceptions carrying NO exceptions — which is exactly the empty BulkDecision the

@@ -21,15 +21,25 @@ definition of "valid", never a parallel re-implementation):
   - capability_grants.yaml        → also: a `grant_to_groups` group exists and has members, and
     a `can_drop:<K>` key names a KNOWN content kind (see known_content_kinds)
   - capability_grants.yaml        → also: a `can_export:<P>` key names a KNOWN export profile
-    (see known_export_profiles), no profile name is in two kinds, and every known profile --
-    review-export (policy/exports), answer-export (policy/exports/answers) and fin CDRL -- has a
-    `can_export:<P>` row (deny-by-default: no row, nobody exports)
+    (see known_export_profiles), no profile name is in two kinds, and every known profile -- of
+    each kind policy/export_profile_sources.yaml declares -- has a `can_export:<P>` row
+    (deny-by-default: no row, nobody exports)
   - capability_grants.yaml        → also: a `can_call:<T>` key names a tag of the served MCP document
     (see known_call_tags); no row is required per tag (deny-by-default: no row, nobody calls)
   - capability_grants.yaml        → also: a `can_review:<S>` key names a registered review subject
     (see known_review_subjects); no row is required per subject (no row, nobody reviews)
+  - capability_grants.yaml        → also: a `can_configure:<S>` key names a registered configure
+    subject (see known_configure_subjects); no row is required per subject (no row, nobody configures)
   - recipient_readers.yaml        → recipient_reader_sync.load_readers (WHEN PRESENT; not in
     DATA_FILES -- see the note there)
+  - repository_paths.yaml         → repository_paths_errors (WHEN PRESENT; not in
+    DATA_FILES -- see the note there)
+  - gateway_delegates.yaml        → gateway_delegates_errors (WHEN PRESENT; not in
+    DATA_FILES -- see the note there)
+  - classification/levels.yaml    → classification_levels_errors (WHEN PRESENT; not in
+    DATA_FILES -- see the note there): an id is a bare name, unique; a row says why and who ratified
+  - level_readers.yaml            → level_readers_errors (WHEN PRESENT; not in DATA_FILES -- see
+    the note there): a level is registered, one row per level, a group exists and has members
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
     no sync of its own — can_consume is evaluated in-process)
   - every DATA file must EXIST — explicit-empty (`grants: []`) is a
@@ -66,6 +76,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import yaml
 from pydantic import ValidationError
@@ -99,6 +110,17 @@ DATA_FILES = (
 # repository lacks it. It is validated WHEN PRESENT (see validate()). Whether it becomes
 # required -- and so whether an absent file is an error here and FATAL in the sync Job -- is an
 # OPEN question with the architect.
+#
+# repository_paths.yaml (ADR-0062 section 5) is likewise NOT in DATA_FILES: only engine-r reads it,
+# and a deployment's policy repository may not run engine-r. Validated WHEN PRESENT.
+#
+# gateway_delegates.yaml is likewise NOT in DATA_FILES: a deployment with no delegate has nothing to
+# assert, and an absent file means the same as an empty one, no service names a person. Validated
+# WHEN PRESENT.
+#
+# classification/levels.yaml and level_readers.yaml (ADR-0064 item B, Proposed, #266) are likewise NOT
+# in DATA_FILES: no code reads either yet (dag-tools step 5), an absent registry registers no level
+# and an absent rail grants no level. Validated WHEN PRESENT.
 
 
 def known_content_kinds() -> tuple[set[str], list[str]]:
@@ -155,92 +177,115 @@ def known_call_tags() -> tuple[set[str], list[str]]:
     return tags, [f"{f.as_posix()} ({len(tags)} tag(s))"]
 
 
-def known_review_subjects(path: Path | None = None) -> tuple[set[str], list[str]]:
-    """The subjects a `can_review:<S>` capability key may name: the `name` of every row of
-    policy/review_subjects.yaml (the product's registry, read from beside this script and never
-    from a deployment's policy dir), and a note `<path> (<n> subject(s))` or `<path> (absent)`.
-    An absent or unreadable registry is an empty set, which refuses every `can_review:` row."""
-    f = path or Path(__file__).resolve().parents[2] / "policy" / "review_subjects.yaml"
+def _registered_subjects(name: str, path: Path | None) -> tuple[set[str], list[str]]:
+    """The `name` of every row under the key `<stem>` of policy/`<stem>.yaml` (a registry of the
+    product, read from beside this script and never from a deployment's policy dir), and a note
+    `<path> (<n> subject(s))` or `<path> (absent)`. An absent or unreadable registry is an empty
+    set, which refuses every key that must name a subject in it."""
+    f = path or Path(__file__).resolve().parents[2] / "policy" / name
     if not f.is_file():
         return set(), [f"{f.as_posix()} (absent)"]
     try:
         doc = yaml.safe_load(f.read_text(encoding="utf-8"))
     except (OSError, ValueError, yaml.YAMLError):
         return set(), [f"{f.as_posix()} (absent)"]
-    rows = doc.get("review_subjects") if isinstance(doc, dict) else None
+    rows = doc.get(Path(name).stem) if isinstance(doc, dict) else None
     subjects = {r["name"].strip() for r in (rows if isinstance(rows, list) else [])
                 if isinstance(r, dict) and isinstance(r.get("name"), str) and r["name"].strip()}
     return subjects, [f"{f.as_posix()} ({len(subjects)} subject(s))"]
 
 
-#: No grantee is named in code (architect's standing rule, 2026-10-30: a group is configuration).
-#: Each ruled grantee is a ROW in policy/capability_grants.yaml -- the review-export default rows
-#: (alert-processors), the CDRL row (the program-finance persona's group), the plan-answers row
-#: (portfolio-leads) -- and the completeness refusal derives its advice from the rows that already
-#: decide profiles of the same kind.
-_EXPORT_KIND_LABEL = {"review_export": "review-export", "answer_export": "answer-export",
-                      "fin_cdrl": "fin CDRL"}
+def known_review_subjects(path: Path | None = None) -> tuple[set[str], list[str]]:
+    """The subjects a `can_review:<S>` capability key may name: policy/review_subjects.yaml."""
+    return _registered_subjects("review_subjects.yaml", path)
+
+
+def known_configure_subjects(path: Path | None = None) -> tuple[set[str], list[str]]:
+    """The subjects a `can_configure:<S>` capability key may name: policy/configure_subjects.yaml."""
+    return _registered_subjects("configure_subjects.yaml", path)
+
+
+#: Where each export kind's profiles are composed from: one row per kind (architect 2026-10-30, via
+#: Chris: "one function; source rows live in a policy file both the validator and engines share").
+#: No grantee is named in code either (standing rule, 2026-10-30): each ruled grantee is a ROW in
+#: policy/capability_grants.yaml, and the completeness refusal derives its advice from the rows that
+#: already decide profiles of the same kind.
+EXPORT_PROFILE_SOURCES = "export_profile_sources.yaml"
 
 
 def known_export_profiles(
-    sources: list[tuple[Path, str]] | None = None,
+    rows: list | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     """The export profiles a `can_export:<P>` capability key may name: {name: kind}, and notes.
 
-    kind is "review_export" (lane/01's ingest-review profiles, policy/exports), "answer_export"
-    (fin's answer-export profiles, policy/exports/answers -- lane/01's glob is not recursive, so the
-    subdirectory keeps them apart) or "fin_cdrl" (fin's CDRL profiles). `sources` is an ordered
-    [(dir, kind)] for tests; None composes each kind from the directories its own loader reads:
-      - review_export: INGEST_EXPORT_PROFILE_DIR if set, else <root>/policy/exports
-        (src/iagent/export_profiles.py; the variable MOVES the directory, it adds none);
-      - answer_export: the seed (EXPORT_PROFILE_POLICY_DIR if set, else
-        <root>/policy/exports/answers), then each dir in EXPORT_PROFILE_OVERLAY_DIRS
-        (agent_fleet/utils/answer_exports.py);
-      - fin_cdrl: the seed (FIN_EXPORT_PROFILE_POLICY_DIR if set, else
-        <root>/policy/fin_export_profiles), each dir in FIN_EXPORT_PROFILE_OVERLAY_DIRS, then the
-        sandbox's overlay (policy/overlays/sample/fin_export_profiles).
-    Within a kind fin's semantics apply (agent_fleet/finance_agent/export_profiles.py): dirs are
-    applied in order, a later same-`name` row replaces an earlier one, `deleted: true` removes the
-    name. Only `name` and `deleted` are read (this gate runs where the engines are not
-    importable); unparseable files are ignored, as known_content_kinds does. A name present in
-    two kinds' final sets is a COLLISION: a note starting `COLLISION:` which validate() turns into an
-    error. Each source's note reads `<dir> (<n> profile(s))` or `<dir> (absent)`."""
+    Each kind is a row of policy/export_profile_sources.yaml (`rows` stands in for the file, for
+    tests), composed by iagent_mesh.compose_export_profiles: the seed (`seed_env` if set, else
+    `seed_default` under the repository root), then each dir in `overlay_env` (os.pathsep-separated,
+    empty entries dropped, as the engines split it), then the row's `offline_overlays`. A later
+    same-`name` row replaces an earlier one, and `deleted: true` removes the name. The SDK REFUSES
+    what this gate's old copy skipped: an empty or nameless file, two files of one name in one
+    directory, and a tombstone for a name nothing before it ships.
+
+    This gate imports the SDK. Both places it runs carry it: the seed CronJob and a policy repo's
+    CI run it from the cortex-bff image (templates/topaz-seed-cronjob.yaml, policy/README.md),
+    whose `python` is that image's venv (.github/docker/Dockerfile.agent puts /app/.venv/bin first
+    on PATH).
+
+    One note per kind: `<kind>: <dir>, <dir> (absent), ... -> <n> profile(s)`. A note starting
+    `REFUSED:` (a source row, or a profile file the SDK refused) or `COLLISION:` (a name in two
+    kinds' final sets) is turned into an error by validate()."""
+    from iagent_mesh import ExportProfileError, ExportProfileSource, compose_export_profiles
+
     root = Path(__file__).resolve().parents[2]
-    if sources is None:
-        sources = [(Path(os.getenv("INGEST_EXPORT_PROFILE_DIR")
-                         or root / "policy" / "exports"), "review_export")]
-        sources.append((Path(os.getenv("EXPORT_PROFILE_POLICY_DIR")
-                             or root / "policy" / "exports" / "answers"), "answer_export"))
-        raw = (os.getenv("EXPORT_PROFILE_OVERLAY_DIRS") or "").strip()
-        sources += [(Path(p.strip()), "answer_export") for p in raw.split(os.pathsep) if p.strip()]
-        sources.append((Path(os.getenv("FIN_EXPORT_PROFILE_POLICY_DIR")
-                             or root / "policy" / "fin_export_profiles"), "fin_cdrl"))
-        raw = (os.getenv("FIN_EXPORT_PROFILE_OVERLAY_DIRS") or "").strip()
-        sources += [(Path(p.strip()), "fin_cdrl") for p in raw.split(os.pathsep) if p.strip()]
-        sources.append((root / "policy" / "overlays" / "sample" / "fin_export_profiles", "fin_cdrl"))
+    if rows is None:
+        f = root / "policy" / EXPORT_PROFILE_SOURCES
+        try:
+            doc = yaml.safe_load(f.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            return {}, [f"REFUSED: {f.as_posix()} is unreadable ({type(exc).__name__})"]
+        rows = doc.get("sources") if isinstance(doc, dict) else None
+        if not isinstance(rows, list):
+            return {}, [f"REFUSED: {f.as_posix()} has no `sources:` list"]
     by_kind: dict[str, set[str]] = {}
     notes: list[str] = []
-    for d, kind in sources:
-        names = by_kind.setdefault(kind, set())
-        if not d.is_dir():
-            notes.append(f"{d.as_posix()} (absent)")
+    for i, row in enumerate(rows):
+        if not (isinstance(row, dict) and isinstance(row.get("seed_default"), str)):
+            notes.append(f"REFUSED: {EXPORT_PROFILE_SOURCES} row {i} is not a source row: {row!r}")
             continue
-        found = 0
-        for f in sorted(d.glob("*.yaml")):
-            try:
-                doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-            except (OSError, yaml.YAMLError):
-                continue
-            n = doc.get("name") if isinstance(doc, dict) else None
-            if not (isinstance(n, str) and n.strip()):
-                continue
-            n = n.strip()
-            if doc.get("deleted") is True:
-                names.discard(n)
-            else:
-                names.add(n)
-                found += 1
-        notes.append(f"{d.as_posix()} ({found} profile(s))")
+        overlay_env = row.get("overlay_env")
+        try:
+            # The SDK's overlay_env is a str. A kind whose loader reads no overlay variable says
+            # null, and the SDK never reads it here: overlay_dirs is always passed.
+            src = ExportProfileSource.model_validate(
+                {**row, "seed_default": (root / row["seed_default"]).as_posix(),
+                 "overlay_env": overlay_env or ""})
+        except ValidationError as exc:
+            notes.append(f"REFUSED: {EXPORT_PROFILE_SOURCES} row {i}: "
+                         + "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors()))
+            continue
+        if src.kind in by_kind:
+            notes.append(f"REFUSED: {EXPORT_PROFILE_SOURCES} declares kind {src.kind!r} twice")
+            continue
+        dirs: list[str] = []
+        seen: set[Path] = set()
+        listed = [p for p in os.getenv(overlay_env, "").split(os.pathsep) if p] if overlay_env else []
+        for d in listed + [(root / d).as_posix() for d in row.get("offline_overlays") or []]:
+            if Path(d).resolve() not in seen:  # a dir both set and offline is composed once
+                seen.add(Path(d).resolve())
+                dirs.append(d)
+        try:
+            composed = compose_export_profiles(src, overlay_dirs=dirs)
+        # read_rows calls .get on each file's document, so a file that is not a mapping raises
+        # AttributeError, and an unparseable one raises yaml's own error.
+        except (ExportProfileError, yaml.YAMLError, OSError, AttributeError) as exc:
+            by_kind[src.kind] = set()
+            notes.append(f"REFUSED: {src.kind}: {type(exc).__name__}: {exc}")
+            continue
+        by_kind[src.kind] = set(composed)
+        read = [os.getenv(src.seed_env, src.seed_default), *dirs]  # the seed as the SDK reads it
+        notes.append(f"{src.kind}: "
+                     + ", ".join(Path(d).as_posix() + ("" if Path(d).is_dir() else " (absent)") for d in read)
+                     + f" -> {len(composed)} profile(s)")
     profiles: dict[str, str] = {}
     for kind, names in by_kind.items():
         for n in sorted(names):
@@ -413,14 +458,18 @@ def domain_consumption_required_fields(raw: dict, known_domains: set[str]) -> li
 
 #: A FORK of iagent_mesh ReviewShapeRow's required fields, restated because this gate runs
 #: without the SDK. tests/test_review_shapes_are_one_registry.py holds it equal to the model.
-REVIEW_SHAPE_REQUIRED = ("review_shape", "item_kind", "rules_version")
+REVIEW_SHAPE_REQUIRED = ("review_shape",)
+#: The model's all-or-nothing rule, restated the same way: a coverage row sets all three, a card-only
+#: row none. A `rules: []` is set: the shape exists and no rule is declared for it yet.
+REVIEW_SHAPE_COVERAGE = ("item_kind", "rules_version", "rules")
 
 
 def _read_review_shapes(d: Path) -> tuple[dict[str, Path], list[str]]:
     """{review_shape: file} for every VALID `*.yaml` row in `d`, and the errors for the rest.
     This gate runs where the SDK is not importable, so the row's shape (iagent_mesh
-    ReviewShapeRow: review_shape, item_kind and rules_version strings; params a mapping; rules a
-    list of {id: str, params: mapping}) is checked here, and the file stem must equal the row's
+    ReviewShapeRow: review_shape, and for a coverage row item_kind and rules_version, strings;
+    params a mapping; rules a list of {id: str, params: mapping}; item_kind, rules_version and rules
+    all or nothing) is checked here, and the file stem must equal the row's
     `review_shape` (src/iagent/review_shapes.py applies the same rule)."""
     shapes: dict[str, Path] = {}
     errors: list[str] = []
@@ -436,17 +485,21 @@ def _read_review_shapes(d: Path) -> tuple[dict[str, Path], list[str]]:
             errors.append(f"{f.as_posix()}: a review-shape row is a mapping")
             continue
         problems: list[str] = []
-        bad = [k for k in REVIEW_SHAPE_REQUIRED
-               if not (isinstance(doc.get(k), str) and doc[k].strip())]
+        set_fields = [k for k in REVIEW_SHAPE_COVERAGE if doc.get(k) is not None]
+        strings = (*REVIEW_SHAPE_REQUIRED, *[k for k in set_fields if k != "rules"])
+        bad = [k for k in strings if not (isinstance(doc.get(k), str) and doc[k].strip())]
         if bad:
             problems.append(f"{', '.join(bad)} must be a non-empty string")
         if not isinstance(doc.get("params", {}), dict):
             problems.append("params must be a mapping")
-        rules = doc.get("rules", [])
-        if not isinstance(rules, list) or not all(
+        rules = doc.get("rules")
+        if rules is not None and (not isinstance(rules, list) or not all(
                 isinstance(r, dict) and isinstance(r.get("id"), str)
-                and isinstance(r.get("params", {}), dict) for r in rules):
+                and isinstance(r.get("params", {}), dict) for r in rules)):
             problems.append("rules must be a list of {id: str, params: mapping}")
+        if set_fields and len(set_fields) != len(REVIEW_SHAPE_COVERAGE):
+            problems.append(f"{', '.join(REVIEW_SHAPE_COVERAGE)} are all or nothing: this row sets "
+                            f"{', '.join(set_fields)}")
         if problems:
             errors += [f"{f.as_posix()}: {m}" for m in problems]
             continue
@@ -490,6 +543,419 @@ def review_shape_errors(policy_dir: Path, enums_dir: Path) -> tuple[list[str], i
                     f"{f.as_posix()}: review_shape {shape!r} names no row in the review-shape "
                     f"registry (known: {', '.join(sorted(registry)) or 'none'})")
     return errors, total
+
+
+#: Mirrors `agent_fleet.repository_agent.repo_core.GOVERNED_ROOTS` (ADR-0062 section 1). Restated, not
+#: imported: pygit2 is not in every image this gate runs in. tests/security/test_repository_paths_rail.py
+#: asserts the two are equal.
+GOVERNED_ROOTS = ("policy/", "docs/adr/", "tests/fixtures/", "sessions/")
+
+_RP_ROW_FIELDS = ("review", "approvers", "granted_by", "reason", "unowned_review", "unmatched_review")
+
+#: A `review` ending `:<DOMAIN>` is a per-row audience (section 5: `access_grant:<DOMAIN>`, "taken
+#: from each row the diff changes"). engine-r resolves it per changed row; validate_policy checks
+#: every audience it could resolve to, and the `unmatched_review` a row with no such audience falls
+#: back to.
+_RP_DOMAIN = "<DOMAIN>"
+
+
+def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> list[str]:
+    """ADR-0062 section 5: validate policy/repository_paths.yaml. PURE.
+
+    `raw` is the parsed file, `audiences` the records `load_audiences` returned, `groups` the
+    groups.yaml mapping, `users` the users.yaml list. Each error reads
+    `repository_paths.yaml: <repo>: <paths|tags>: <key>: ...`. Unknown keys are refused by name
+    at every level, so a typo (`approver:`) cannot pass silently."""
+    pre = "repository_paths.yaml"
+    out: list[str] = []
+    if not isinstance(raw, dict) or set(raw) != {"repository_paths"}:
+        extra = sorted(map(str, set(raw) - {"repository_paths"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `repository_paths`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    repos = raw["repository_paths"]
+    if not isinstance(repos, dict):
+        return [f"{pre}: `repository_paths` must map repository id -> mapping"]
+
+    by_key = {a.key: a for a in audiences}
+    members: dict[str, set[str]] = {}
+    for u in users or []:
+        if isinstance(u, dict) and u.get("id"):
+            for g in u.get("groups") or []:
+                members.setdefault(g, set()).add(str(u["id"]).strip())
+
+    def distinct_users(a) -> set[str]:
+        s = set(a.grant_to)
+        for g in a.grant_to_groups:
+            s |= members.get(g, set())
+        return s
+
+    def row_errors(where: str, row, *, is_tag: bool, key: str) -> list[str]:
+        e: list[str] = []
+        if not isinstance(row, dict):
+            return [f"{where}: row must be a mapping"]
+        for k in row:
+            if k not in _RP_ROW_FIELDS:
+                e.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_RP_ROW_FIELDS)})")
+        for f in ("granted_by", "reason"):
+            v = row.get(f)
+            if not isinstance(v, str) or not v.strip():
+                e.append(f"{where}: `{f}` is required and must be a non-empty string")
+        ap = row.get("approvers")
+        if "approvers" not in row:
+            e.append(f"{where}: `approvers` is required")
+        elif isinstance(ap, bool) or not isinstance(ap, int) or ap < 1:
+            e.append(f"{where}: `approvers` must be an int >= 1 (got {ap!r})")
+        review = row.get("review")
+        named: list[tuple[str, str]] = []
+        if not isinstance(review, str) or not review.strip():
+            e.append(f"{where}: `review` is required and must be a non-empty string")
+        elif review == "owning_lane":
+            if is_tag or not key.startswith("sessions/"):
+                e.append(f"{where}: `review: owning_lane` is legal only on a `sessions/` path row, "
+                         f"never on a tag or another path")
+            ur = row.get("unowned_review")
+            if not isinstance(ur, str) or not ur.strip():
+                e.append(f"{where}: an `owning_lane` row requires `unowned_review` (an audience key)")
+            elif ur not in by_key:
+                e.append(f"{where}: `unowned_review` {ur!r} is not an audience in task_grants.yaml")
+            else:
+                named.append(("unowned_review", ur))
+        elif review.endswith(":" + _RP_DOMAIN):
+            prefix = review[: -len(_RP_DOMAIN)]
+            matched = sorted(k for k in by_key if k.startswith(prefix))
+            if not matched:
+                e.append(f"{where}: `review` {review!r} resolves to no audience in task_grants.yaml "
+                         f"(none starts {prefix!r})")
+            named.extend(("review", k) for k in matched)
+            mr = row.get("unmatched_review")
+            if not isinstance(mr, str) or not mr.strip():
+                e.append(f"{where}: a `{_RP_DOMAIN}` row requires `unmatched_review` (an audience key) "
+                         f"for a changed row whose domain has no audience")
+            elif mr not in by_key:
+                e.append(f"{where}: `unmatched_review` {mr!r} is not an audience in task_grants.yaml")
+            else:
+                named.append(("unmatched_review", mr))
+            if "unowned_review" in row:
+                e.append(f"{where}: `unowned_review` is allowed only on an `owning_lane` row")
+        else:
+            if review not in by_key:
+                e.append(f"{where}: `review` {review!r} is not an audience in task_grants.yaml")
+            else:
+                named.append(("review", review))
+            if "unowned_review" in row:
+                e.append(f"{where}: `unowned_review` is allowed only on an `owning_lane` row")
+        if "unmatched_review" in row and not (isinstance(review, str)
+                                              and review.endswith(":" + _RP_DOMAIN)):
+            e.append(f"{where}: `unmatched_review` is allowed only on a `{_RP_DOMAIN}` row")
+        if isinstance(ap, int) and not isinstance(ap, bool):
+            for field_, aud in named:
+                n = len(distinct_users(by_key[aud]))
+                if n < ap:
+                    e.append(f"{where}: audience {aud!r} ({field_}) has {n} distinct user(s) but the "
+                             f"row requires {ap} approver(s) -- the row could never be satisfied")
+        return e
+
+    for repo, body in repos.items():
+        rp = f"{pre}: {repo}"
+        if not isinstance(repo, str) or not isinstance(body, dict):
+            out.append(f"{rp}: repository id must be a str mapping to a mapping")
+            continue
+        for k in body:
+            if k not in ("paths", "tags"):
+                out.append(f"{rp}: unknown key {k!r} (a repository carries only `paths` and `tags`)")
+        paths = body.get("paths")
+        if not isinstance(paths, dict):
+            out.append(f"{rp}: `paths` is required and must be a mapping")
+            paths = {}
+        for key, row in paths.items():
+            where = f"{rp}: paths: {key}"
+            if not isinstance(key, str):
+                out.append(f"{where}: path key must be a str")
+                continue
+            if not key.startswith(GOVERNED_ROOTS):
+                out.append(f"{where}: outside the governed roots {GOVERNED_ROOTS} -- the rail cannot "
+                           f"widen check 6")
+            if ".." in key.split("/"):
+                out.append(f"{where}: a `..` segment is not allowed")
+            if key.startswith("/"):
+                out.append(f"{where}: a leading `/` is not allowed")
+            if "*" in key:
+                out.append(f"{where}: `*` is not allowed in a path key (patterns are for tags only)")
+            out.extend(row_errors(where, row, is_tag=False, key=key))
+        tags = body.get("tags", {})
+        if not isinstance(tags, dict):
+            out.append(f"{rp}: `tags` must be a mapping")
+            tags = {}
+        for key, row in tags.items():
+            where = f"{rp}: tags: {key}"
+            if not isinstance(key, str) or not key.strip():
+                out.append(f"{where}: tag pattern must be a non-empty str")
+                continue
+            out.extend(row_errors(where, row, is_tag=True, key=key))
+    return out
+
+
+#: The central gateway's route ids a delegate row may name. The gateway owns them (dag-tools,
+#: `central_gateway.identity`). A misspelt route fails here, not as a delegate who never matches.
+#:
+#: A COPY, AND IT SAYS WHERE FROM (architect 11-04). The ruled form is dag-tools publishing the list
+#: as data (`gateway_routes.json`, item 01M6KF821P2C3KRQN86FF0N61N) and this importing it. Until then the list was
+#: read at the commit and image in GATEWAY_ROUTES_READ_AT, and
+#: tests/security/test_gateway_delegates_rail.py goes red when the chart pins another gateway image.
+#: Read at v0.11.0 (4924235), whose `central_gateway/gateway_routes.json` publishes the list: only
+#: `assets.authorize` has `delegate_rows_may_name: true`. `broker.resolve` and `gateway.register`
+#: are internal doors with their own caller lists; they never consult this table, so they are not
+#: here. The same answer was read from the constants at 4096a11. Importing the json needs the
+#: root's dag-tools pin to move to v0.11.0 or later, which is 01M6KF821P2C3KRQN86FF0N61N.
+GATEWAY_ROUTES = ("assets.authorize",)
+GATEWAY_ROUTES_READ_AT = {
+    "dag_tools": "492423577d4e2cb838ba4ed8dd783bbf883ceb60",
+    "central_gateway_digest": "sha256:f71a5b092486354f0d144c467953a6c1c749e1b133c44e133458cf71d6d8cf2c",
+}
+
+#: The BFF's route ids a `door: bff` row may name (architect 11-04). The BFF owns them
+#: (`src/iagent/gateway.py`); tests/security/test_gateway_delegates_rail.py goes red when
+#: `gateway._REGISTER_DELEGATE_ROUTE` is not in this list.
+BFF_DELEGATE_ROUTES = ("human_tasks.register",)
+#: A row's door is `row.get("door", "gateway")`; each door has its own route list.
+_GD_DOORS = {"gateway": GATEWAY_ROUTES, "bff": BFF_DELEGATE_ROUTES}
+
+_GD_ROW_FIELDS = ("service", "door", "routes", "granted_by", "reason", "ratified_by")
+#: A run with no person behind it (architect 11-04). It acts as itself, so it is never a delegate.
+_PIPELINE_PREFIX = "pipeline:"
+
+
+def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
+    """Validate policy/gateway_delegates.yaml. PURE.
+
+    `raw` is the parsed file, `users` the users.yaml list. Each error reads
+    `gateway_delegates.yaml: <service>: ...`. A delegate names a person on a route, so a row's
+    `service` must be a seeded service identity (a person holds their own token) and each route a
+    known one (a wildcard is an unknown route). Every row says why (`reason`) and which seat
+    ratified it (`ratified_by`, e.g. `owner`: a seat, never an identity). Unknown keys are refused
+    by name, so a typo (`route:`) cannot pass silently.
+
+    A row's `door` is `gateway` (the default) or `bff`; its routes are checked against THAT door's
+    list, and an unknown door is one error with no route errors. A service is unique per
+    `(service, door)`: it may hold one gateway row and one bff row."""
+    pre = "gateway_delegates.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"gateway_delegates"}:
+        extra = sorted(map(str, set(raw) - {"gateway_delegates"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `gateway_delegates`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    rows = raw["gateway_delegates"]
+    if not isinstance(rows, list):
+        return [f"{pre}: `gateway_delegates` must be a list of rows (an empty list names no delegate)"]
+
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        service = row.get("service")
+        where = f"{pre}: {service if isinstance(service, str) and service.strip() else f'row {i}'}"
+        for k in row:
+            if k not in _GD_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_GD_ROW_FIELDS)})")
+
+        door = row.get("door", "gateway")
+        door_key = door if isinstance(door, str) else repr(door)
+        door_known = isinstance(door, str) and door in _GD_DOORS
+        if not door_known:
+            out.append(f"{where}: unknown door {door!r} (known: {', '.join(_GD_DOORS)})")
+
+        if not isinstance(service, str) or not service.strip():
+            out.append(f"{where}: `service` must be a non-empty string")
+        else:
+            if service.startswith(_PIPELINE_PREFIX):
+                out.append(f"{where}: a `{_PIPELINE_PREFIX}<name>` run acts for no person and is "
+                           "never a delegate row")
+            elif not service.startswith(SERVICE_SUBJECT_PREFIX):
+                out.append(f"{where}: `service` must be a `{SERVICE_SUBJECT_PREFIX}` identity; "
+                           "a person holds their own token and is no delegate")
+            elif service not in seeded:
+                out.append(f"{where}: `service` is not a seeded identity in users.yaml")
+            if (service, door_key) in seen:
+                out.append(f"{where}: more than one row names this service on door {door_key}")
+            seen.add((service, door_key))
+
+        routes = row.get("routes")
+        if not isinstance(routes, list) or not routes:
+            out.append(f"{where}: `routes` must be a non-empty list")
+        elif not door_known:
+            pass  # one error for the door, not one per route
+        else:
+            known = _GD_DOORS[door]
+            for j, r in enumerate(routes):
+                if r not in known:
+                    out.append(f"{where}: unknown route {r!r} for door {door} (known: {', '.join(known)})")
+                elif r in routes[:j]:
+                    out.append(f"{where}: route {r!r} is listed more than once")
+
+        for k in ("granted_by", "reason", "ratified_by"):
+            v = row.get(k)
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and v.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
+    return out
+
+
+#: The row fields of policy/classification/levels.yaml and policy/level_readers.yaml (ADR-0064 item B,
+#: Proposed, #266). Neither file is read by code yet; dag-tools step 5 serves a dataset's level.
+_CL_ROW_FIELDS = ("id", "reason", "ratified_by")
+_LR_ROW_FIELDS = ("level", "grant_to_groups", "granted_by", "reason", "ratified_by")
+
+
+def classification_levels_errors(raw: dict, users: list) -> tuple[list[str], list[str] | None]:
+    """Validate policy/classification/levels.yaml. PURE.
+
+    Returns `(errors, levels)`. `levels` is the ORDERED list of valid ids, in file order (list
+    position IS the order: least restrictive first), or None when the file is refused at the top
+    level. Each error reads `classification/levels.yaml: <id or row i>: ...`. An id is the
+    `<level>` of `cleared_for:<level>`, so it has no whitespace and no `:`; it is unique. Every row
+    says why (`reason`) and which seat ratified it (`ratified_by`: a seat, never an identity).
+    Unknown keys are refused by name. A row with a bad id contributes no level."""
+    pre = "classification/levels.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"classification_levels"}:
+        extra = sorted(map(str, set(raw) - {"classification_levels"})) if isinstance(raw, dict) else []
+        return ([f"{pre}: top level must be a mapping with exactly one key, `classification_levels`"
+                 + (f" (unknown key(s): {', '.join(extra)})" if extra else "")], None)
+    rows = raw["classification_levels"]
+    if not isinstance(rows, list):
+        return ([f"{pre}: `classification_levels` must be a list of rows "
+                 "(an empty list registers no level)"], None)
+
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    levels: list[str] = []
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        lid = row.get("id")
+        where = f"{pre}: {lid if isinstance(lid, str) and lid.strip() else f'row {i}'}"
+        for k in row:
+            if k not in _CL_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_CL_ROW_FIELDS)})")
+        if not isinstance(lid, str) or not lid.strip():
+            out.append(f"{where}: `id` must be a non-empty string")
+        elif any(ch.isspace() for ch in lid) or ":" in lid:
+            out.append(f"{where}: `id` must have no whitespace and no `:` (it is the `<level>` "
+                       "of `cleared_for:<level>`)")
+        elif lid in levels:
+            out.append(f"{where}: more than one row has this id")
+        else:
+            levels.append(lid)
+        for k in ("reason", "ratified_by"):
+            v = row.get(k)
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and v.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
+    return out, levels
+
+
+def level_readers_errors(raw: dict, levels: list[str] | None, groups: dict, users: list) -> list[str]:
+    """Validate policy/level_readers.yaml. PURE.
+
+    `levels` is the registry's ordered ids: `[]` when the registry file is absent, None when the
+    registry was refused (then no level-membership or completeness check runs: the registry's own
+    error already stands, and one refused registry must not become one "unknown level" per row).
+    Each error reads `level_readers.yaml: <level or row i>: ...`. One row per registered level;
+    `grant_to_groups` names groups that exist and have members, and may be empty (nobody reads the
+    level). A user is never named: `grant_to:` is an unknown key. Every row says why (`reason`) and
+    which seat ratified it (`ratified_by`: a seat, never an identity).
+
+    A grant is a ceiling (a group named at a level is cleared for every less restrictive one), so a
+    group named at two or more registered levels is refused at each LESS restrictive row: removing it
+    from a lower row would otherwise look like a revocation and change nothing. Order is the
+    registry's, never the rail's row order. Runs only when `levels` is not None."""
+    pre = "level_readers.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"level_readers"}:
+        extra = sorted(map(str, set(raw) - {"level_readers"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `level_readers`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    rows = raw["level_readers"]
+    if not isinstance(rows, list):
+        return [f"{pre}: `level_readers` must be a list of rows (an empty list grants no level)"]
+
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    seen: set[str] = set()
+    named: dict[str, dict[str, list[str]]] = {}
+    dup_levels: set[str] = set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        level = row.get("level")
+        where = f"{pre}: {level if isinstance(level, str) and level.strip() else f'row {i}'}"
+        for k in row:
+            if k not in _LR_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_LR_ROW_FIELDS)})")
+
+        if not isinstance(level, str) or not level.strip():
+            out.append(f"{where}: `level` must be a non-empty string")
+        else:
+            if levels is not None and level not in levels:
+                out.append(f"{where}: {level!r} is not a level in classification/levels.yaml")
+            if level in seen:
+                out.append(f"{where}: more than one row names this level")
+                dup_levels.add(level)
+            seen.add(level)
+
+        gtg = row.get("grant_to_groups")
+        if not isinstance(gtg, list):
+            out.append(f"{where}: `grant_to_groups` must be a list (`[]` says nobody reads the level)")
+        else:
+            names: list[str] = []
+            for g in gtg:
+                if not isinstance(g, str) or not g.strip():
+                    out.append(f"{where}: `grant_to_groups` entries must be non-empty strings")
+                elif g in names:
+                    out.append(f"{where}: group {g!r} is listed more than once")
+                else:
+                    names.append(g)
+            if isinstance(level, str) and level.strip():
+                named.setdefault(level, {}).setdefault("groups", []).extend(names)
+            out.extend(unusable_group_audiences(
+                [SimpleNamespace(key=level if isinstance(level, str) else f"row {i}",
+                                 grant_to_groups=names)],
+                groups, users, file_label=pre, noun="level",
+                nobody="the grant would clear NOBODY"))
+
+        for k in ("granted_by", "reason", "ratified_by"):
+            v = row.get(k)
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and v.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
+
+    if levels is not None:
+        at: dict[str, list[str]] = {}
+        for lv in levels:
+            if lv in dup_levels:
+                continue
+            for g in dict.fromkeys(named.get(lv, {}).get("groups", [])):
+                at.setdefault(g, []).append(lv)
+        for lv in levels:
+            for g in dict.fromkeys(named.get(lv, {}).get("groups", [])) if lv not in dup_levels else ():
+                held = at[g]
+                if len(held) > 1 and lv != held[-1]:
+                    out.append(f"{pre}: {lv}: group {g!r} is also listed at {held[-1]!r}, which already "
+                               f"clears it for {lv!r} (a grant is a ceiling: list a group once, at its "
+                               f"highest level)")
+        for lv in levels:
+            if lv not in seen:
+                out.append(f"{pre}: level {lv!r} has no row (one row per level; "
+                           "`grant_to_groups: []` with a reason says nobody reads it)")
+    return out
 
 
 def validate(
@@ -585,6 +1051,14 @@ def validate(
     errors.extend(f"program_members.yaml: {e}" for e in program_errors)
     print(f"  program_members.yaml: {len(programs)} program(s)")
 
+    # `cleared_for:<level>` is the level rail's key (ADR-0064 item B), never a capability row; `can_read`
+    # stays what it is, so no `can_read:` key is refused here.
+    for c in caps:
+        if c.key.startswith("cleared_for:"):
+            errors.append(
+                f"capability_grants.yaml: capability {c.key!r}: a level's clearances are rows of "
+                f"policy/level_readers.yaml, not a capability row")
+
     # `can_drop:<K>` (2026-10-28 ruling): the key gates drops of content kind K by the capability
     # OBJECT's existence, so a misspelt kind (`can_drop:pnc`) would gate a kind nobody drops and
     # leave `pcn` open, silently. REFUSE it, naming what the known set was composed from.
@@ -607,9 +1081,13 @@ def validate(
     for _n in _pnotes:
         if _n.startswith("COLLISION:"):
             errors.append(f"capability_grants.yaml: export profile {_n}")
-    _pnotes = [n for n in _pnotes if not n.startswith("COLLISION:")]
+        elif _n.startswith("REFUSED:"):
+            errors.append(f"export profiles: {_n}")
+    # A refused kind composed no names, so its rows would all read as misspelt: say the refusal once.
+    _refused = any(n.startswith("REFUSED:") for n in _pnotes)
+    _pnotes = [n for n in _pnotes if not n.startswith(("COLLISION:", "REFUSED:"))]
     _export_keys = {c.key[len("can_export:"):] for c in caps if c.key.startswith("can_export:")}
-    for _p in sorted(_export_keys - set(_profiles)):
+    for _p in sorted(set() if _refused else _export_keys - set(_profiles)):
         errors.append(
             f"capability_grants.yaml: 'can_export:{_p}' names {_p!r}, which is NOT a known export "
             f"profile -- a misspelt key gates nothing and the real profile stays unexportable. "
@@ -622,13 +1100,12 @@ def validate(
             _kind_groups.setdefault(_profiles[_cp], set()).update(c.grant_to_groups)
     for _p, _k in sorted(_profiles.items()):
         if _p not in _export_keys:
-            _l = _EXPORT_KIND_LABEL.get(_k, _k)
             _g = sorted(_kind_groups.get(_k, ()))
             errors.append(
-                f"capability_grants.yaml: {_l} profile {_p!r} has no 'can_export:{_p}' row, so "
+                f"capability_grants.yaml: {_k} profile {_p!r} has no 'can_export:{_p}' row, so "
                 f"NOBODY could export it (deny-by-default). Add one; "
-                + (f"the other {_l} rows grant `grant_to_groups: [{', '.join(_g)}]`" if _g else
-                   f"no other {_l} profile has a row to follow, so the row names its own group "
+                + (f"the other {_k} rows grant `grant_to_groups: [{', '.join(_g)}]`" if _g else
+                   f"no other {_k} profile has a row to follow, so the row names its own group "
                    f"(ask the architect)"))
 
     # `can_call:<T>` (2026-10-30 ruling, deny-by-default): the door asks can_invoke on `can_call:<T>`
@@ -642,16 +1119,20 @@ def validate(
                 f"real tag stays uncallable through a door. Known tags ({len(_ctags)}): "
                 + ", ".join(sorted(_ctags)) + "; composed from " + "; ".join(_cnotes))
 
-    # `can_review:<S>` (2026-11-02 ruling, deny-by-default): the surface asks can_invoke on
-    # `can_review:<S>`; a misspelt key gates nothing. No row is required per subject.
-    _rsubjects, _rnotes = known_review_subjects()
-    for c in caps:
-        if c.key.startswith("can_review:") and c.key[len("can_review:"):] not in _rsubjects:
-            errors.append(
-                f"capability_grants.yaml: {c.key!r} names {c.key[len('can_review:'):]!r}, which is "
-                f"NOT a registered review subject -- a misspelt key gates nothing and the real "
-                f"subject stays reviewable by nobody. Known subjects ({len(_rsubjects)}): "
-                + ", ".join(sorted(_rsubjects)) + "; composed from " + "; ".join(_rnotes))
+    # `can_review:<S>` (2026-11-02 ruling, deny-by-default) and `can_configure:<S>` (ruled the same
+    # way): the surface asks can_invoke on the key; a misspelt key gates nothing. No row is required
+    # per subject.
+    for _prefix, _known, _noun, _able in (
+            ("can_review:", known_review_subjects, "review", "reviewable"),
+            ("can_configure:", known_configure_subjects, "configure", "configurable")):
+        _subjects, _notes = _known()
+        for c in caps:
+            if c.key.startswith(_prefix) and c.key[len(_prefix):] not in _subjects:
+                errors.append(
+                    f"capability_grants.yaml: {c.key!r} names {c.key[len(_prefix):]!r}, which is "
+                    f"NOT a registered {_noun} subject -- a misspelt key gates nothing and the real "
+                    f"subject stays {_able} by nobody. Known subjects ({len(_subjects)}): "
+                    + ", ".join(sorted(_subjects)) + "; composed from " + "; ".join(_notes))
 
     # recipient_readers.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note
     # there; required-or-not is open with the architect). Absent = no reader asserted = every
@@ -663,6 +1144,52 @@ def validate(
         readers, reader_errors = load_readers(readers_raw)
         errors.extend(f"recipient_readers.yaml: {e}" for e in reader_errors)
         print(f"  recipient_readers.yaml: {len(readers)} recipient scope(s)")
+
+    # repository_paths.yaml (ADR-0062 section 5): validated WHEN PRESENT only (not in DATA_FILES --
+    # see the note there). Only engine-r reads it, and a deployment may not run engine-r.
+    _rp_path = policy_dir / "repository_paths.yaml"
+    if _rp_path.is_file():
+        rp_raw = _read_yaml(_rp_path, errors)
+        errors.extend(repository_paths_errors(
+            rp_raw, audiences, groups_raw.get("groups") or {}, users_raw.get("users") or []))
+        _repos = rp_raw.get("repository_paths") or {}
+        _repos = _repos if isinstance(_repos, dict) else {}
+        _n_rows = sum(len(b.get(k) or {}) for b in _repos.values() if isinstance(b, dict)
+                      for k in ("paths", "tags") if isinstance(b.get(k), dict))
+        _m = len(_repos)
+        print(f"  repository_paths.yaml: {_n_rows} row(s) across {_m} "
+              f"{'repository' if _m == 1 else 'repositories'}")
+
+    # gateway_delegates.yaml: validated WHEN PRESENT only (not in DATA_FILES -- see the note there).
+    _gd_path = policy_dir / "gateway_delegates.yaml"
+    if _gd_path.is_file():
+        gd_raw = _read_yaml(_gd_path, errors)
+        errors.extend(gateway_delegates_errors(gd_raw, users_raw.get("users") or []))
+        _gd_rows = gd_raw.get("gateway_delegates")
+        print(f"  gateway_delegates.yaml: {len(_gd_rows) if isinstance(_gd_rows, list) else 0} row(s)")
+
+    # classification/levels.yaml + level_readers.yaml (ADR-0064 item B, Proposed, #266): validated
+    # WHEN PRESENT only (not in DATA_FILES -- see the note there). The rail is checked against the
+    # registry; an absent registry registers no level, and a registered level with the rail absent
+    # reports its missing row.
+    _users_list = users_raw.get("users") or []
+    _groups_map = groups_raw.get("groups") or {}
+    _cl_levels: list[str] | None = []
+    _cl_path = policy_dir / "classification" / "levels.yaml"
+    if _cl_path.is_file():
+        cl_raw = _read_yaml(_cl_path, errors)
+        _cl_errors, _cl_levels = classification_levels_errors(cl_raw, _users_list)
+        errors.extend(_cl_errors)
+        _cl_rows = cl_raw.get("classification_levels")
+        print(f"  classification/levels.yaml: {len(_cl_rows) if isinstance(_cl_rows, list) else 0} level(s)")
+    _lr_path = policy_dir / "level_readers.yaml"
+    if _lr_path.is_file():
+        lr_raw = _read_yaml(_lr_path, errors)
+        errors.extend(level_readers_errors(lr_raw, _cl_levels, _groups_map, _users_list))
+        _lr_rows = lr_raw.get("level_readers")
+        print(f"  level_readers.yaml: {len(_lr_rows) if isinstance(_lr_rows, list) else 0} row(s)")
+    elif _cl_levels:
+        errors.extend(level_readers_errors({"level_readers": []}, _cl_levels, _groups_map, _users_list))
 
     # ADMISSION POSTURE (ADR-0034). Validated through the SAME parser the runtime loads with, so
     # there is ONE definition of a well-formed table and this gate cannot drift from the loader.

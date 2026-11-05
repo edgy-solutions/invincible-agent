@@ -58,6 +58,7 @@ async def orchestrate(
     session_prefix: str = "e2e",
     print_status: bool = True,
     timeout_s: float = 900.0,
+    extra_body: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """POST /orchestrate, stream SSE until done, return collected result.
 
@@ -82,7 +83,7 @@ async def orchestrate(
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
         },
-        json={"message": message, "session_id": session_id},
+        json={"message": message, "session_id": session_id, **(extra_body or {})},
         timeout=httpx.Timeout(timeout_s, connect=10.0),
     ) as resp:
         if resp.status_code != 200:

@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 import yaml
+from iagent_mesh import GRANTED_BY_SEED  # the seed's sentinel is the SDK's, not restated here (architect 10-31)
 
 ROOT = Path(__file__).resolve().parents[2]
-SEED = "seed"
 OWNER = "owner"  # a shipped ratifier is the owner seat, not a person (architect ruling 2026-10-31)
 
 
@@ -62,13 +62,13 @@ def test_every_shipped_grantor_is_the_seed(rail_file):
     found = _grantors(yaml.safe_load(text))
     # Control: the walk reaches every row the text declares (a key line, not a comment).
     assert len(found) == len(re.findall(r"^\s+granted_by:", text, flags=re.M)), rail_file
-    people = [(p, v) for p, v in found if v != SEED]
-    assert not people, f"{rail_file}: a shipped row's grantor is `{SEED}`, never a person: {people}"
+    people = [(p, v) for p, v in found if v != GRANTED_BY_SEED]
+    assert not people, f"{rail_file}: a shipped row's grantor is `{GRANTED_BY_SEED}`, never a person: {people}"
 
 
 def test_the_detector_sees_a_person_at_any_depth():
-    doc = {"a": {"granted_by": SEED, "b": [{"granted_by": "someone"}]}}  # positive control on the detector
-    assert [v for _, v in _grantors(doc) if v != SEED] == ["someone"]
+    doc = {"a": {"granted_by": GRANTED_BY_SEED, "b": [{"granted_by": "someone"}]}}  # positive control on the detector
+    assert [v for _, v in _grantors(doc) if v != GRANTED_BY_SEED] == ["someone"]
 
 
 def test_every_shipped_ratifier_is_the_owner_seat():

@@ -1,0 +1,54 @@
+# Every optional workload that adds a pod, switched on, for the two things that must see ALL of
+# the chart's images: the release-values generator (scripts/write_release_values.py) and the
+# image seal's every-workload arm. Layer it over the chart's own values.yaml (and, in the test,
+# values-sandbox.yaml). It carries only what a flag needs to render; it names no image.
+dagster:
+  docToolsCodeLocation:
+    enabled: true
+engineB:
+  enabled: true
+enginePlanning:
+  enabled: true
+engineFinance:
+  enabled: true
+graphHost:
+  enabled: true
+engineCost:
+  enabled: true
+engineSafety:
+  enabled: true
+userDeployments:
+  dag-tools:
+    grist:
+      enabled: true
+meshRegistrar:
+  enabled: true
+  onBehalfOfUser: platform-registrar
+primeSubstrate:
+  enabled: true
+demoSeed:
+  enabled: true
+ontologySeed:
+  enabled: true
+topazSeed:
+  enabled: true
+  policySource:
+    type: git
+    git:
+      repoUrl: "https://git.example.invalid/policy.git"
+policyOverlay:
+  enabled: true
+  ref: "0123456789abcdef0123456789abcdef01234567"
+taskGrantSync:
+  enabled: true
+topazManifestLoad:
+  enabled: true
+litellm:
+  enabled: true
+networkPolicy:
+  enabled: true
+# The same user values-sandbox.yaml declares, so layering this over it changes nothing there.
+keycloak:
+  nonInteractiveUsers:
+    - username: platform-registrar
+      email: platform-registrar@example.com

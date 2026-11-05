@@ -174,7 +174,12 @@ def _in_scope(rendered: str, templates: set[str]) -> str:
 
 def _norm_old(old: str) -> str:
     ver = re.search(r"^version:\s*(\S+)", (_REPO / _CHART / "Chart.yaml").read_text(encoding="utf-8"), re.M).group(1)
-    return re.sub(r"0.4.35", ver, old)
+    old = re.sub(r"0.4.35", ver, old)
+    # 0.4.80 (every image by digest): the base sha rendered the reconcile Job's curl by tag; this chart
+    # renders the same tag by the digest `global.imageDigests` pins. That is the one image change.
+    import yaml
+    rows = yaml.safe_load((_REPO / _CHART / "values.yaml").read_text(encoding="utf-8"))["global"]["imageDigests"]
+    return re.sub(r"(image: docker\.io/curlimages/curl):8\.11\.0", lambda m: f"{m.group(1)}@{rows['docker.io/curlimages/curl']}", old)
 
 
 def _line_diff(a: str, b: str) -> list[str]:
@@ -228,7 +233,8 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     old_realm = copy.deepcopy(old_realm)
     _cui(old_realm).update(redirectUris=[], webOrigins=[])
     assert {**old_realm, "users": []} == {**new_realm, "users": []}
-    assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == ['+  USER_ENTITLEMENT_CLAIM: "email"']
+    assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == [
+        '+  USER_ENTITLEMENT_CLAIM: "email"']
     # 0.4.38: the reconcile Job's present-branch for an existing authz-id-svc mapper was rewritten
     # (chart-owned stale mapper migrated, not merely counted). The ONLY lines the base render may
     # lose from the Job are the old create-only check and its comment; nothing else is removed.

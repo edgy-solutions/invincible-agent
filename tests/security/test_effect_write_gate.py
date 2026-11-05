@@ -27,9 +27,10 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
 _EO = _REPO / "agent_fleet" / "ontology_service"
-for _p in (str(_EO), str(_REPO)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+# Not _EO: with ontology_service/ on the path `import notice_parts` in main.py resolves flat, and a
+# later file patching agent_fleet.ontology_service.notice_parts reaches a module main.py does not hold.
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 
 # The module is loaded under a UNIQUE name, never the bare ``main``. 155 files in this

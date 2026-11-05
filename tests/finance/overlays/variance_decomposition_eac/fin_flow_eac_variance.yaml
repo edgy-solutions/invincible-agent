@@ -1,0 +1,43 @@
+# TEST overlay -- the EAC variance row, the measure's first user (ruled 2026-11-04): eac - bac, taken
+# once per work package, split down the program's hierarchy (docs/plans/fin-variance-decomposition.md).
+# The test frame adds the two columns with the figures of dag-tools #11. Never loaded from policy/; a
+# deployed row follows the finance data path going live on the sandbox.
+measure_id: fin_flow_eac_variance
+verb: finFlowEacVariance
+name: EAC variance
+description: >-
+  Estimate at completion less budget at completion, split down the program's hierarchy into a
+  flow map, taken once per work package. A test row only.
+synonyms:
+  - eac variance flow
+anti_synonyms:
+  - actual cost flow
+inputs:
+  params: {program_id: {required: true}}
+  dataset:
+    urn: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
+    banner: "SYNTHETIC earned-value fixture, not a real program."
+    levels: [program_id, control_account, work_package]
+    value: {minus: [eac, bac]}
+    per_path: once
+  # At 0.05 no level collapses (4.1 is a lone child below it and keeps its name), so the three
+  # zero-variance work packages and both signs are all drawn.
+  other_threshold: "0.05"
+computation:
+  module: agent_fleet.finance_agent.measure_modules.variance_decomposition
+  function: flow_edges
+  version: "1.3.0"
+  derived_from:
+    authority: Test fixture, no external method
+    clause: A signed sum split down a hierarchy
+    citation: name-only
+    transcription: each edge is the signed sum beneath its child
+render:
+  shape: FLOW_DECOMPOSITION
+  value_label: EAC variance
+  unit: USD
+policy:
+  status: sample
+  cells: [PROGRAM_FINANCE]
+  granted_by: seed
+  reason: a test overlay proving the EAC row on the synthetic EV fixture

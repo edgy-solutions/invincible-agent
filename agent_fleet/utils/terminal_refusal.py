@@ -2,9 +2,10 @@
 
 Architect, 2026-10-27 (ruling 1 on the policy-refusal rule): the refusal rides as JSON in the
 message under a fixed prefix -- `refusal:` followed by the Refusal dict -- and is parsed at the
-BFF. The SDK grows a typed `Refusal.to_terminal()` / `from_terminal()` pair in v0.9.12; until it
-tags, this module is the engines' half and `src/iagent/authz/refusal.py` (`TERMINAL_PREFIX`,
-`from_terminal`) is the BFF's. They are two copies because an engine image carries no `src/`;
+BFF. The SDK's `Refusal.to_terminal()` / `from_terminal()` pair needs a `grantable_by` an engine
+cannot know, and its `PartialRefusal` has no terminal form, so this module is the engines' half and
+`src/iagent/authz/refusal.py` (`TERMINAL_PREFIX`, `from_terminal`) is the BFF's. They are two copies
+because an engine image carries no `src/`;
 `tests/security/test_a_relayed_refusal_parses_the_same_on_both_sides.py` holds the two to the
 same dict on every message, so neither side hand-rolls a variant.
 

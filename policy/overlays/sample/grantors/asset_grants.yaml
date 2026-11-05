@@ -4,9 +4,10 @@
 # deployment-neutral.
 #
 # Architect, 2026-10-27 (ruling 5 on the policy-refusal rule): "the sandbox overlay names the
-# sandbox's actual approver (alice)". alice is that approver for THIS family: she is the only
-# grantee of the `access_grant:DATA_ENGINEERING` audience (policy/task_grants.yaml), and
-# approving that task writes the asset_grants.yaml reader row with granted_by = the approver,
+# sandbox's actual approver (alice)". alice is that approver for THIS family. She was the only
+# grantee of the `access_grant:DATA_ENGINEERING` audience (policy/task_grants.yaml) until bob
+# joined it on 2026-10-29 (architect's ruling, for ADR-0062 section 5's two-approver
+# asset_grants row). Approving that task writes the asset_grants.yaml reader row with granted_by = the approver,
 # then runs grant_sync (src/iagent/human_tasks.py `write_grant_and_sync`). No other domain has
 # an access_grant audience, so `how` names the git path for those.
 #
@@ -16,9 +17,9 @@
 family: asset_grants
 rail_file: policy/asset_grants.yaml
 object_scoped: true
-who: alice@example.com (DATA_STEWARD, DATA_ENGINEERING), this sandbox's approver of per-asset read access
+who: alice@example.com (DATA_STEWARD, DATA_ENGINEERING) or bob@example.com, this sandbox's approvers of per-asset read access
 how: >-
-  request access in the app (POST /access_requests); for a DATA_ENGINEERING asset alice approves
-  the access_grant:DATA_ENGINEERING task, which writes the reader row (granted_by alice) and runs
+  request access in the app (POST /access_requests); for a DATA_ENGINEERING asset alice or bob approves
+  the access_grant:DATA_ENGINEERING task, which writes the reader row (granted_by the approver) and runs
   grant_sync. An asset in another domain has no approver task: a reviewed change adding a grant
   row to policy/asset_grants.yaml, applied by topaz_sync

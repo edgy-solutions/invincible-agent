@@ -113,6 +113,10 @@ def _login(authz_id):
 def api(monkeypatch):
     store = _Store()
     monkeypatch.setattr(gateway, "neo4j_driver", store)
+    # The route now admits the named person on the case; the real lookup is Postgres, so the
+    # holder check is a double that says the named person holds a task on the case.
+    from src.iagent import human_tasks
+    monkeypatch.setattr(human_tasks, "holds_task_on_case", lambda case_id, who: True)
     _login(RUNNER)
     yield TestClient(gateway.app), store
     gateway.app.dependency_overrides.clear()

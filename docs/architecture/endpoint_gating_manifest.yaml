@@ -2206,12 +2206,42 @@ services:
           (RS256 pinned, JWKS-verified, all failure paths 401), and the handler then
           requires the caller's authz_id to equal `VAULT_REDEEMER_AUTHZ_ID` — an unset
           variable denies, so a missing config fails CLOSED rather than opening the vault.
-          Beyond identity, the vault enforces single-use, run-binding and expiry atomically,
-          and every outcome INCLUDING refusals is audited: an unlogged dispensing surface
-          cannot be reasoned about after the fact.
+          Beyond identity, the vault enforces single-use PER CALL (one reference per run,
+          redeemed once per outbound call under a call_id; ruling 2026-11-03), run-binding and
+          the run's own life atomically, and every outcome INCLUDING refusals is audited: an
+          unlogged dispensing surface cannot be reasoned about after the fact. A token near
+          its expiry is never dispensed: the answer is awaiting_reauth.
           Not `internal` despite the path: the prefix is a naming convention, not a network
           boundary, and classifying on the URL would record a gate the routing layer does
           not provide.
+      - method: POST
+        path: /orchestrate/{run_id}/reauth
+        identity: keycloak-jwt
+        gate: "get_current_user + service identities refused (403) + the token's person must be the run's stashed subject (404 otherwise, identical for an absent run)"
+        exposes: caller-credential
+        consumers: [cortex-ui re-authentication prompt]
+        class: gated
+        justification: >-
+          Added 2026-11-03 with the run-bound identity vault. A run whose token could not be
+          refreshed pauses as awaiting_reauth; the person presents a fresh access token here
+          and the run resumes. The vault replaces the held token only when the new one is for
+          the SAME person, and the wrong person and an absent run answer with one identical
+          404 so the route does not confirm that a run exists. A service token is refused with
+          403. The token is never echoed in the response or in any log line.
+      - method: GET
+        path: /me/paused-runs
+        identity: keycloak-jwt
+        gate: "get_current_user + service identities refused (403) + only runs whose stashed subject is the caller"
+        exposes: ui-state
+        consumers: [cortex-ui sign-in card]
+        class: gated
+        justification: >-
+          Added 2026-11-03 with the pause record. Lists the caller's own runs paused as
+          awaiting_reauth, as run_id, paused_call, instruction and reason: the same record the
+          run_awaiting_reauth event carries, for a page that was not attached when the pause
+          happened. Ownership is the reauth door's comparison; a service token is refused with
+          403; an empty list is a normal 200. No token is held in or returned by the record.
+          The vault is in-process memory, so a restart empties the list.
       - method: GET
         path: /version
         identity: none

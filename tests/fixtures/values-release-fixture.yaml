@@ -1,0 +1,24 @@
+# FAKE digests for the image-seal tests: sha256 of the service name, so well-formed and
+# deterministic, and pinning nothing real. One row per service in the build matrix
+# (tests/test_every_image_is_pinned_by_digest.py checks the rows against services_from_matrix()).
+global:
+  imageDigests:
+    "ghcr.io/edgy-solutions/invincible-agent/dagster-control-plane": "sha256:add61835cdb8b5047bf35f48ed257703ea47e514055d6a287c955473dfa919bb"
+    "ghcr.io/edgy-solutions/invincible-agent/dagster-server": "sha256:6b71d9af2b618f2c0906c4a517a78d5f4cbad93bd049a1ae28fcd4368e85008b"
+    "ghcr.io/edgy-solutions/invincible-agent/ontology-service": "sha256:5d00d3dd531195a803fcc96ae2db69617f5106fa65cbc02182a37d05e69334ea"
+    "ghcr.io/edgy-solutions/invincible-agent/mesh-registrar": "sha256:a3db06d0abce7793975fb997776d793eda07c9348413c1f5d545682189c0265e"
+    "ghcr.io/edgy-solutions/invincible-agent/restate-analyst": "sha256:f17e9bcef9932424807bfa538b291ee5817c49a051156362a023a4ada27dc03b"
+    "ghcr.io/edgy-solutions/invincible-agent/langgraph-support": "sha256:df6af37a7055d38c6e7cd43be2500836a0078e6cbeadbe87a3230d8e7fc7be83"
+    "ghcr.io/edgy-solutions/invincible-agent/swarms-scraper": "sha256:8877d6a34697295d73e3660cf9cc3ff4f97d0ef24c2c7a97283b68ff946d13c1"
+    "ghcr.io/edgy-solutions/invincible-agent/datahub-wrapper": "sha256:27a26711c3ce127eadc2d4cbc15af1102b040d32d36a23c856efa99515907f18"
+    "ghcr.io/edgy-solutions/invincible-agent/neo4j-expert": "sha256:ef645cc7e9a16ab87518f4363d99a5db0c82b46e152f455cc509c9428a43af22"
+    "ghcr.io/edgy-solutions/invincible-agent/presentation-agent": "sha256:a1fb4d92f66b5cc366b890fc69426aa85f0360bbad992af15bf960f1f904c520"
+    "ghcr.io/edgy-solutions/invincible-agent/weaviate-expert": "sha256:76b89a0e91094b441d2b6e01d7b7ac1d64908525bf98322a1e3e477744f60434"
+    "ghcr.io/edgy-solutions/invincible-agent/data-analyst": "sha256:a55a59486ad1ca238a1e028b91b13241c7dc665b945a07964af9f58199868596"
+    "ghcr.io/edgy-solutions/invincible-agent/planning-agent": "sha256:4a2904188f855e8e4e2e477bd9b5fc4c88c1d1ecff72a8f59be6831dc9fa2528"
+    "ghcr.io/edgy-solutions/invincible-agent/finance-agent": "sha256:7aa42ccd4561c6bef1acfd2c3146f3338aff33e79e2206aacdeccc8435ed816a"
+    "ghcr.io/edgy-solutions/invincible-agent/cost-agent": "sha256:44be6ffddb3291d64aad4ecd28919404f4a9cd88d7145dccf7dcab9cfe36da27"
+    "ghcr.io/edgy-solutions/invincible-agent/safety-agent": "sha256:f0512d3f003986ee79b0e3dc2e8780741811e38c7146afd1d5b49e533ee18aae"
+    "ghcr.io/edgy-solutions/invincible-agent/docs-agent": "sha256:211994bc786721024ad82a9c5d9d267d1139bdbf580cb47a05eddc77059a56c4"
+    "ghcr.io/edgy-solutions/invincible-agent/graph-host": "sha256:874a17bbd4c2f74cff5e666eeaa188911d6c50d008ab0888a86142793270d206"
+    "ghcr.io/edgy-solutions/invincible-agent/cortex-bff": "sha256:0dfbc1770bba9a84302ee08e7ec56c3bd9a84297d47b717cee9eb4128b9a397f"

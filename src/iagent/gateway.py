@@ -36,6 +36,7 @@ import os
 import re
 import time
 import uuid
+import weakref
 from contextlib import asynccontextmanager
 from datetime import date as _date, datetime, timezone
 from typing import AsyncGenerator, Any, Literal, Optional
@@ -56,7 +57,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_db, init_db
 from .models import BpmnCatalog
-from .auth import get_current_user, User
+from .auth import get_current_user, oauth2_scheme, User
+from . import identity_exchange
+from iagent_mesh import Refusal as _Refusal
 from iagent_mesh.review_coverage import ReviewShapeRow
 from iagent_mesh.provenance import EvidenceRef  # the SDK model; the one EvidenceRef (ruling 2026-10-31)
 from pydantic import ValidationError as _PydanticValidationError
@@ -74,7 +77,6 @@ from .identity_vault import (
     _ensure_the_audit_line_actually_ARRIVES,
     VAULT,
     RedemptionOutcome,
-    vault_slots,
     vault_ttl_seconds,
     logger as _vault_audit_log,   # the ONE logger whose level the vault owns
 )
@@ -1200,7 +1202,7 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
 # authorized them, so the two cannot diverge. Keyed on authz_id end-to-end (email
 # in sandbox, employee-ID at work-deploy) — display uses .email, authz uses authz_id.
 
-from pydantic import BaseModel as _BaseModel  # noqa: E402
+from pydantic import BaseModel as _BaseModel, ConfigDict as _ConfigDict  # noqa: E402
 from pydantic import BeforeValidator as _BeforeValidator, StrictFloat as _StrictFloat  # noqa: E402
 from pydantic import StrictInt as _StrictInt  # noqa: E402
 from pydantic import StrictBool as _StrictBool, StrictStr as _StrictStr  # noqa: E402
@@ -1474,9 +1476,32 @@ async def register_human_task(
     """Register a task and materialize one queue row per Topaz-authorized actor.
     INTERNAL seam — Slice 1b restricts callers to the workflow/service identity;
     at the foundation checkpoint it is exercised directly to prove the identity
-    bridge. Returns the resolved recipient set (the Topaz decision)."""
+    bridge. Returns the resolved recipient set (the Topaz decision).
+
+    R-089, ruled 2026-11-04: register is called by a service for a person, so the caller is bound
+    to `requested_by` by the same rule as the five case-runner routes, in this order: (1) a caller
+    that IS `requested_by` is admitted (a person naming themselves, or a service naming itself);
+    (2) a caller listed for `human_tasks.register` on a `door: bff` row of
+    `policy/gateway_delegates.yaml` may name any person; (3) otherwise
+    `_admit_on_behalf_of` decides: a declared delegate naming a principal declared for it is
+    admitted, anyone else is 403 `not_a_delegate` or `principal_not_declared_for_delegate`.
+    `requested_by` is passed through as sent."""
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
+    caller = current_user.authz_id
+    route = "/internal/human_tasks/register"
+    if req.requested_by == caller:
+        _audit_delegate_named(route, caller, req.requested_by, "admitted:self")
+    elif caller in _task_register_services():
+        _audit_delegate_named(route, caller, req.requested_by, "admitted:register_service")
+    else:
+        try:
+            _admit_on_behalf_of(current_user, req.requested_by)
+        except HTTPException as exc:
+            code = exc.detail.get("error") if isinstance(exc.detail, dict) else None
+            _audit_delegate_named(route, caller, req.requested_by, f"refused:{code}")
+            raise
+        _audit_delegate_named(route, caller, req.requested_by, "admitted:delegate")
     try:
         result = await run_in_threadpool(
             lambda: human_tasks.register_task(
@@ -1624,9 +1649,15 @@ async def file_triage_task(
     """
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
-    allowed = await run_in_threadpool(
-        lambda: human_tasks.check_can_invoke(_MESH_FILE_TRIAGE, current_user.authz_id)
-    )
+    try:
+        allowed = await run_in_threadpool(
+            lambda: human_tasks.check_can_invoke(_MESH_FILE_TRIAGE, current_user.authz_id)
+        )
+    except human_tasks.AuthorizationUnavailable as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the authorizer could not be asked, or its answer could not be read",
+        }) from exc
     if not allowed:
         raise HTTPException(status_code=403, detail={
             "error": "not_entitled_to_file_triage",
@@ -2916,7 +2947,8 @@ def _picker_unavailable(exc: HTTPException, owner: str) -> HTTPException:
     `can_export` check) passes through as it was."""
     detail = exc.detail
     if isinstance(detail, dict) and detail.get("reason") == "recipient_readers_unavailable":
-        return HTTPException(status_code=exc.status_code, detail={**detail, "owner": owner})
+        return HTTPException(status_code=exc.status_code,
+                             detail=_detail_with_message(exc.status_code, {**detail, "owner": owner}))
     return exc
 
 
@@ -3616,7 +3648,8 @@ async def _call_engine_cost_answers_export(payload: dict, bearer: str) -> dict:
             detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
         except Exception:
             detail = getattr(rr, "text", "engine refused")
-        raise HTTPException(status_code=rr.status_code, detail=detail)
+        raise HTTPException(status_code=rr.status_code,
+                            detail=_detail_with_message(rr.status_code, detail))
     return rr.json()
 
 
@@ -4840,8 +4873,11 @@ class CanvasSeedAskUnavailable(_BaseModel):
     detail: str = Field(description="The builder's exception class name.")
 
 
-class CanvasSeedRefusal(_BaseModel):
+class CanvasSeedRefusal(_Refusal):
     """`authz.refusal.refusal`'s envelope (ca's `iagent_mesh.refusal.Refusal` field names)."""
+    # This published schema has no `additionalProperties: false`, so it keeps the wider config.
+    model_config = _ConfigDict(extra="ignore", frozen=True)
+
     policy_id: str = Field(description="The policy family that refused, e.g. `groups` or `program_members`.")
     missing_binding: str = Field(description="What the caller lacks, e.g. `can_view_program(program)`.")
     grantable_by: str = Field(description="Who can grant it and how, from policy/grantors/.")
@@ -5340,15 +5376,49 @@ _VAULT_REDEEMER_AUTHZ_ID = os.getenv("IDENTITY_VAULT_REDEEMER", "svc:supervisor"
 
 class RedeemIdentityBody(BaseModel):
     run_id: str
+    # THE CALL THIS REDEMPTION IS FOR (ruling 2026-11-03). One reference per run, redeemable
+    # per outbound call: the supervisor mints one `call_id` for each call it makes on a
+    # person's behalf, and a `call_id` seen twice is the replay tell. Required, so an older
+    # supervisor that sends none is refused 422 rather than silently redeemed unaccounted:
+    # `cortex-bff` and the code location roll together.
+    call_id: str
     # INVARIANT 4's input: the launcher the redeeming run has recorded in its OWN config.
     # Checked against the subject of the token that was stashed. Optional so an older
     # supervisor image degrades to "no cross-check" rather than to a hard failure — but a
     # supervisor that sends it gets the stronger guarantee.
     claimed_launcher: Optional[str] = None
-    # Which fan-out slot of the run this subtask redeems (its Dagster mapping key,
-    # `task_<n>`). One single-use reference per slot, so two caller-identity subtasks in one
-    # plan do not read as a replay. Bounded to [0, IDENTITY_VAULT_SLOTS) below.
-    slot: int = 0
+    # Which outbound call this is (e.g. `resolve`, `dispatch`), for the audit line only.
+    leg: Optional[str] = None
+
+
+# One lock per run, held only while a refresh is in flight, so two concurrent subtasks that
+# both meet a near-expiry token produce ONE exchange: the second waits, then finds a fresh
+# token. Weak, so a finished run leaves nothing behind.
+_refresh_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
+
+
+_REAUTH_INSTRUCTION = "Sign in again to continue this run."
+
+
+def _paused_call_text(leg: Optional[str]) -> str:
+    """Readable name of the call that paused, from the supervisor's own leg label (never the
+    opaque call_id)."""
+    leg = (leg or "").strip()[:60]
+    return f"The '{leg}' call made on your behalf" if leg else "A call made on your behalf"
+
+
+async def _refresh_the_runs_token(run_id: str, leg: Optional[str] = None) -> None:
+    """Ask Keycloak (through ``identity_exchange``, the separate seam; the vault never
+    mints) for a fresh token for the person who holds this run's token. On a token, swap it
+    in; on anything else the run is paused as ``awaiting_reauth`` and the card says so."""
+    held = VAULT.token_for_refresh(run_id)
+    if held:
+        fresh = await identity_exchange.exchange(held)
+        who = identity_exchange.entitlement_of(fresh) if fresh else None
+        if fresh and who and VAULT.replace(run_id, fresh, who):
+            return
+    VAULT.mark_awaiting_reauth(run_id, "token_near_expiry_and_not_refreshable",
+                               _paused_call_text(leg), _REAUTH_INSTRUCTION)
 
 
 @app.post("/internal/identity/redeem")
@@ -5356,11 +5426,11 @@ async def redeem_caller_identity(
     body: RedeemIdentityBody,
     current_user: User = Depends(get_current_user),
 ):
-    """Hand the supervisor the caller's own token, once, for one run.
+    """Hand the supervisor the caller's own token, for ONE outbound call of one run.
 
-    Returns 200 with the token on the single legitimate redemption. Every other outcome is
-    a refusal with a NAMED cause, because "it didn't work" is the answer that cost this
-    project a day of diagnosis more than once.
+    Returns 200 with the token on a legitimate redemption. Every other outcome is a refusal
+    with a NAMED cause, because "it didn't work" is the answer that cost this project a day
+    of diagnosis more than once.
     """
     caller = (current_user.authz_id or "").strip()
 
@@ -5370,10 +5440,11 @@ async def redeem_caller_identity(
         # worse than the exchange it replaced; a refused redemption is the MOST interesting
         # line this endpoint can write, so it is logged at error.
         _vault_audit_log.error(
-            "identity_vault: REFUSED redemption for run_id=%s — caller %r is not the "
-            "supervisor identity (%r). A second service redeeming a reference is the vault "
-            "leaking sideways.",
-            body.run_id, caller or "<none>", _VAULT_REDEEMER_AUTHZ_ID,
+            "identity_vault: REFUSED redemption for run_id=%s call_id=%s leg=%s — caller %r "
+            "is not the supervisor identity (%r). A second service redeeming a reference is "
+            "the vault leaking sideways.",
+            body.run_id, body.call_id, body.leg or "-", caller or "<none>",
+            _VAULT_REDEEMER_AUTHZ_ID,
         )
         raise HTTPException(
             status_code=403,
@@ -5386,38 +5457,54 @@ async def redeem_caller_identity(
             },
         )
 
-    _slots = vault_slots()
-    if body.slot < 0 or body.slot >= _slots:
+    if not body.call_id.strip():
         _vault_audit_log.error(
-            "identity_vault: REFUSED redemption for run_id=%s slot=%s — outside [0, %s)",
-            body.run_id, body.slot, _slots,
+            "identity_vault: REFUSED redemption for run_id=%s leg=%s — no call_id",
+            body.run_id, body.leg or "-",
         )
         raise HTTPException(
             status_code=422,
-            detail={
-                "error": "slot_out_of_range",
-                "run_id": body.run_id,
-                "message": f"slot must be in [0, {_slots}).",
-            },
+            detail={"error": "call_id_required", "run_id": body.run_id,
+                    "message": "A redemption names the call it is for."},
         )
 
-    # INVARIANTS 2, 3, 4 are all enforced inside this one call, atomically.
-    result = VAULT.redeem(body.run_id, claimed_launcher=body.claimed_launcher, slot=body.slot)
+    # INVARIANTS 2 and 4 are enforced inside this one call, atomically.
+    result = VAULT.redeem(body.run_id, body.call_id, claimed_launcher=body.claimed_launcher)
 
-    # INVARIANT 6 — one line per redemption: run_id, subject, timestamp, outcome. The
+    if result.outcome == RedemptionOutcome.NEEDS_REFRESH:
+        async with _refresh_locks.setdefault(body.run_id, asyncio.Lock()):
+            result = VAULT.redeem(
+                body.run_id, body.call_id, claimed_launcher=body.claimed_launcher)
+            if result.outcome == RedemptionOutcome.NEEDS_REFRESH:
+                await _refresh_the_runs_token(body.run_id, body.leg)
+                result = VAULT.redeem(
+                    body.run_id, body.call_id, claimed_launcher=body.claimed_launcher)
+                if result.outcome == RedemptionOutcome.NEEDS_REFRESH:
+                    # A swapped-in token that is itself near expiry is not a token.
+                    VAULT.mark_awaiting_reauth(
+                        body.run_id, "refreshed_token_still_near_expiry",
+                        _paused_call_text(body.leg), _REAUTH_INSTRUCTION)
+                    result = VAULT.redeem(
+                        body.run_id, body.call_id, claimed_launcher=body.claimed_launcher)
+
+    # INVARIANT 6 — one line per redemption: run_id, call, leg, subject, outcome. The
     # timestamp is the log record's own. The vault's whole legitimacy is that the token's
-    # journey is VISIBLE.
+    # journey is VISIBLE. Never the token.
     _vault_audit_log.info(
-        "identity_vault: redemption run_id=%s slot=%s caller=%s subject=%s outcome=%s",
-        body.run_id, body.slot, caller, result.subject or "-", result.outcome,
+        "identity_vault: redemption run_id=%s call_id=%s leg=%s caller=%s subject=%s outcome=%s",
+        body.run_id, body.call_id, body.leg or "-", caller, result.subject or "-",
+        result.outcome,
     )
 
     if result.ok:
         return {"token": result.token, "subject": result.subject}
 
     # A replay is not a 404. Distinguishing them is the point of the tombstone, and
-    # collapsing them here would throw away the discrimination the vault just made.
-    _status = 409 if result.outcome == RedemptionOutcome.ALREADY_REDEEMED else 404
+    # collapsing them here would throw away the discrimination the vault just made. A run
+    # paused for its person is a 409 too: the state is real, the run is not failed.
+    _status = 409 if result.outcome in (
+        RedemptionOutcome.ALREADY_REDEEMED, RedemptionOutcome.AWAITING_REAUTH,
+    ) else 404
     raise HTTPException(
         status_code=_status,
         detail={
@@ -5425,28 +5512,82 @@ async def redeem_caller_identity(
             "run_id": body.run_id,
             "message": {
                 RedemptionOutcome.ALREADY_REDEEMED: (
-                    "This reference was already redeemed. It is single-use by design; a "
-                    "second redemption is the compromise tell and is never re-issued."
+                    "This call was already redeemed. A call is single-use by design; a "
+                    "second redemption of one call is the compromise tell and is never "
+                    "re-issued."
+                ),
+                RedemptionOutcome.AWAITING_REAUTH: (
+                    "The run is paused, not failed: the person's token needs them to sign "
+                    "in again (POST /orchestrate/{run_id}/reauth). Ask again after they do."
                 ),
                 RedemptionOutcome.LAUNCHER_MISMATCH: (
                     "The run's recorded launcher does not match the stashed token's "
                     "subject. Refused, and the reference has been consumed."
                 ),
-                RedemptionOutcome.EXPIRED: (
-                    "The reference expired. It is bounded to the dispatch window "
-                    f"({vault_ttl_seconds()}s), not to the token's own lifetime."
-                ),
             }.get(
                 result.outcome,
                 "No reference is held for this run. Four causes, in the order worth "
                 "checking: cortex-bff RESTARTED (the vault is in-memory by design, so "
-                "in-flight seeds do not survive one); cortex-bff is running MORE THAN "
+                "in-flight runs do not survive one); cortex-bff is running MORE THAN "
                 "ONE REPLICA, so the stash and this redemption landed on different "
-                "pods; the dispatch window elapsed; or nothing was ever stashed for "
-                "this run.",
+                "pods; the run outlived its budget "
+                f"({vault_ttl_seconds()}s); or nothing was ever stashed for this run.",
             ),
         },
     )
+
+
+@app.post("/orchestrate/{run_id}/reauth")
+async def reauth_run(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    token: str = Depends(oauth2_scheme),
+):
+    """The door that resumes a run paused as ``awaiting_reauth``.
+
+    The person presents their OWN fresh token, verified exactly as ``/orchestrate`` verifies
+    it (``get_current_user``), and it replaces the one the run holds. No body. The answer is
+    the state and never the token.
+
+    NO EXISTENCE ORACLE: an absent run and a run that is another person's answer with the
+    same 404, because ``VAULT.replace`` refuses on both through one comparison. A service
+    token is refused 403: a service is never granted a person's identity.
+    """
+    who = (current_user.authz_id or "").strip()
+    if _is_service_caller(who):
+        _vault_audit_log.error(
+            "identity_vault: REFUSED reauth for run_id=%s — caller %r is a service identity",
+            run_id, who,
+        )
+        raise HTTPException(status_code=403, detail={"error": "service_token_refused",
+                                                      "authz_id": who})
+    if not VAULT.replace(run_id, token, who):
+        _vault_audit_log.warning(
+            "identity_vault: reauth run_id=%s caller=%s outcome=not_found", run_id, who)
+        raise HTTPException(status_code=404, detail={"error": "not_found"})
+    _vault_audit_log.info(
+        "identity_vault: reauth run_id=%s caller=%s outcome=live", run_id, who)
+    return {"state": "live"}
+
+
+@app.get("/me/paused-runs")
+async def my_paused_runs(current_user: User = Depends(get_current_user)):
+    """The caller's own runs paused as ``awaiting_reauth``, as ``{"paused": [record, ...]}``
+    with ``record = {run_id, paused_call, instruction, reason}``; the same record the
+    ``run_awaiting_reauth`` event carries. Ownership is the door's: the run's stashed subject
+    must equal the caller. A service token is refused 403, as at the door. Nothing paused is
+    a normal 200 with an empty list.
+
+    The vault is in-process memory in this pod: a cortex-bff restart (or another replica)
+    empties this list. There is no storage behind it, by design.
+    """
+    who = (current_user.authz_id or "").strip()
+    if _is_service_caller(who):
+        _vault_audit_log.error(
+            "identity_vault: REFUSED paused-runs listing — caller %r is a service identity", who)
+        raise HTTPException(status_code=403, detail={"error": "service_token_refused",
+                                                      "authz_id": who})
+    return {"paused": VAULT.paused_runs_of(who)}
 
 
 @app.get("/me/canvases")
@@ -5579,6 +5720,47 @@ def _delegate_principals() -> dict[str, frozenset[str]]:
         return {}
 
 
+_REGISTER_DELEGATE_ROUTE = "human_tasks.register"
+
+
+def _task_register_services() -> frozenset[str]:
+    """The service identities allowed to name any person on `/internal/human_tasks/register`: the
+    services of the rows with `door: bff` whose routes include `human_tasks.register` in
+    `policy/gateway_delegates.yaml` (architect 11-04). Read ON EVERY CALL from env
+    GATEWAY_DELEGATES_FILE, default `/app/policy/gateway_delegates.yaml`. A row without `door` is
+    the central gateway's and is ignored here, never admitted. A missing file is the empty list
+    (a warning); an unreadable file, a wrong shape, or any malformed row is the empty set and an
+    error: FAILS CLOSED, and never raises."""
+    path = os.environ.get("GATEWAY_DELEGATES_FILE") or "/app/policy/gateway_delegates.yaml"
+    try:
+        import yaml
+        try:
+            with open(path, encoding="utf-8") as fh:
+                parsed = yaml.safe_load(fh)
+        except FileNotFoundError:
+            logger.warning("%s is absent: an absent file is an empty list (no service may register)", path)
+            return frozenset()
+        rows = parsed.get("gateway_delegates") if isinstance(parsed, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("top level is not a mapping with a `gateway_delegates` list")
+        out: set[str] = set()
+        for i, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise ValueError(f"row {i} is not a mapping")
+            if row.get("door") != "bff":
+                continue
+            svc, routes = row.get("service"), row.get("routes")
+            if (not isinstance(svc, str) or not svc.strip() or not isinstance(routes, list)
+                    or not all(isinstance(r, str) for r in routes)):
+                raise ValueError(f"row {i}: `service` is not a non-empty string or `routes` is not a list of strings")
+            if _REGISTER_DELEGATE_ROUTE in routes:
+                out.add(svc)
+        return frozenset(out)
+    except Exception as exc:  # noqa: BLE001 -- fail closed
+        logger.error("%s unreadable, failing closed (no service may register): %s", path, exc)
+        return frozenset()
+
+
 def _admit_on_behalf_of(current_user, on_behalf_of: Optional[str]) -> tuple[str, Optional[str]]:
     """R-089: admit (or refuse) an `on_behalf_of` that names someone other than the caller.
     Returns `(actor, via)`. `actor` is who the authorization questions and the record are
@@ -5603,6 +5785,69 @@ def _admit_on_behalf_of(current_user, on_behalf_of: Optional[str]) -> tuple[str,
             "on_behalf_of": on_behalf_of,
         })
     return on_behalf_of, caller
+
+
+# One line per admit and per refusal at the case-runner routes that name a person: route, caller,
+# the name, the basis or the refusal. Never a token. Dedicated so it slices out of a log search,
+# and it must ARRIVE: the BFF's root handler sits at WARNING (see identity_vault).
+
+_delegate_named_audit_log = logging.getLogger("iagent.audit.delegate_named")
+_ensure_the_audit_line_actually_ARRIVES(_delegate_named_audit_log)
+
+
+def _audit_delegate_named(route: str, caller: str, named: object, outcome: str) -> None:
+    """The audit line naming BOTH identities: the service that called and the person it named."""
+    _delegate_named_audit_log.info(
+        "delegate_named route=%s caller=%s named=%s outcome=%s", route, caller, named, outcome)
+
+
+async def _admit_named_on_case(caller: str, case_id: str, named: Optional[str],
+                               seeded_by: Optional[str], *, route: str = "") -> str:
+    """R-089: admit (or refuse) a person a case-runner route NAMES. Returns the basis, or raises.
+
+    A plain check against `_delegate_principals()[caller]` would refuse every real call: the
+    runner's own list is only the platform registrar, and the people it names on a case are the
+    case's. So the name is checked against what can actually vouch for it:
+
+    * `declared`          -- on the caller's own delegate list;
+    * `seeding_delegate`  -- the case's `seeded_by`, itself a declared delegate;
+    * `task_holder`       -- holds a task on THIS case (`human_tasks.holds_task_on_case`).
+
+    A holder lookup that cannot run is 503 `authorization_unavailable`, never "not a holder".
+    Blank or whitespace `named` is never admitted. Every outcome leaves one audit line."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    name = (named or "").strip() if isinstance(named, str) else ""
+    if name:
+        delegates = _delegate_principals()
+        basis = None
+        if name in delegates.get(caller, ()):
+            basis = "declared"
+        elif seeded_by is not None and name == seeded_by and seeded_by in delegates:
+            basis = "seeding_delegate"
+        else:
+            try:
+                held = await run_in_threadpool(human_tasks.holds_task_on_case, case_id, name)
+            except Exception as exc:  # noqa: BLE001 -- unknown is not "not a holder"
+                logger.warning("holder lookup failed on case %s: %s", case_id, exc)
+                _audit_delegate_named(route, caller, named, "refused:authorization_unavailable")
+                raise HTTPException(status_code=503, detail={
+                    "error": "authorization_unavailable",
+                    "message": "could not verify who this case may name",
+                }) from exc
+            if held:
+                basis = "task_holder"
+        if basis is not None:
+            _audit_delegate_named(route, caller, named, f"admitted:{basis}")
+            return basis
+    _audit_delegate_named(route, caller, named, "refused:principal_not_declared_for_delegate")
+    raise HTTPException(status_code=403, detail={
+        "error": "principal_not_declared_for_delegate",
+        "delegate": caller,
+        "on_behalf_of": named,
+    })
 
 
 def _promotion_stores(acted_by: str):
@@ -5767,7 +6012,13 @@ async def act_on_human_task(
     audience = match["audience"]
     # can_act is asked about the ACTOR (the principal for a delegated act; R-089) — NEVER about
     # the delegate. A delegate speaks only as far as the principal it names is itself entitled.
-    allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, actor))
+    try:
+        allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, actor))
+    except human_tasks.AuthorizationUnavailable as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the authorizer could not be asked, or its answer could not be read",
+        }) from exc
     if not allowed:
         raise HTTPException(status_code=403, detail={"error": "not_authorized_to_act", "audience": audience})
 
@@ -6069,8 +6320,11 @@ async def act_on_human_task(
                     # kind declares no shape is parts.
                     _kind = _declared_row.item_kind if _declared_row else cov.get("item_kind", "part")
                     _read = _rcov.universe_for(_kind)
-                    _universe = await run_in_threadpool(lambda: _read(
-                        lambda: _review_parts_for_payload(_cov_subject)))
+                    # A section universe is the task's own stored list; a part's is the extraction's.
+                    _raw = ((lambda: (match.get("payload") or {}).get("sections"))
+                            if _kind in _rcov.PAYLOAD_SERVED
+                            else (lambda: _review_parts_for_payload(_cov_subject)))
+                    _universe = await run_in_threadpool(lambda: _read(_raw))
                     _bad = _rcov.problem(cov, _universe, _rows.get(cov.get("review_shape")),
                                          arrived_new=_arrived_new, declared_shape=_declared)
             except HTTPException as exc:
@@ -6848,6 +7102,13 @@ def _sse(event: str, data: str) -> str:
 #   chat_message    → agent's text answer (unchanged)
 #   ui_payload /
 #     final_payload → schema-driven semantic payloads (unchanged)
+#   run_awaiting_reauth → {run_id, reason, paused_call, instruction}: the run is PAUSED, not failed, because the
+#                     person's token could not be refreshed; emitted once per pause. The card
+#                     offers a sign-in that POSTs /orchestrate/{run_id}/reauth. A NEW event
+#                     name on purpose, not a pipeline_stage status: cortex's `status` is a
+#                     closed union and its switch ignores unknown events, so an old cortex
+#                     stays intact.
+#   run_reauth_resumed  → {run_id}: the person signed in again; once per resume.
 
 
 def _stage(
@@ -9840,15 +10101,15 @@ async def _generate_dagster_stream_inner(
     #
     # STASHED FOR EVERY RUN, not only seeding ones: at launch time nothing knows yet
     # whether this phrase will route to a verb that needs caller identity, and inventing a
-    # guess here would be the optimistic-default shape. The footprint is bounded by TTL
-    # (minutes) and by process lifetime, and it never becomes durable.
+    # guess here would be the optimistic-default shape. The footprint is bounded by the run's budget
+    # (IDENTITY_VAULT_TTL_SECONDS), closed at the run's terminal state, and by process lifetime, and it never becomes durable.
     #
     # A stash failure must NOT kill the run. Every non-seeding phrase is unaffected by it,
     # and a seeding phrase fails LOUDLY at redemption with a named cause — which is the
     # honest place for it to fail, not here where the cause would be guessed at.
     if caller_token:
         try:
-            VAULT.stash(run_id, caller_token, subject=user_email, slots=vault_slots())
+            VAULT.stash(run_id, caller_token, subject=user_email)
         except Exception as _vault_exc:  # noqa: BLE001
             logger.warning(
                 "identity_vault: could not stash the caller reference for run %s (%s: %s). "
@@ -9875,11 +10136,40 @@ async def _generate_dagster_stream_inner(
     # handled by _keepalive_wrap's `: keepalive\n\n` comment lines.
     # The accumulating-rows UI bug is fixed at its source.
 
-    for idx in range(900): # 15 minute max timeout (slow Ollama backends)
+    # THE ONE DEADLINE IN THIS GENERATOR: 900 one-second ticks, the 15 minute ceiling for slow
+    # backends. A run paused for its person (`awaiting_reauth`, ruling 2026-11-03) must not be
+    # ended by it, so a paused tick does not count toward it; the pause is bounded by the
+    # vault entry's own life, after which the state is None and the ticks count again. The
+    # keepalive wrapper is an interval, not a deadline, and `_get_run_status` is a per-call
+    # fetch.
+    _ticks = 0
+    _reauth_paused = False
+    while _ticks < 900:
         await asyncio.sleep(1.0)
 
+        _vstate = VAULT.state(run_id)
+        if _vstate == "awaiting_reauth":
+            if not _reauth_paused:
+                _reauth_paused = True
+                yield _sse("run_awaiting_reauth", json.dumps({
+                    "run_id": run_id,
+                    "reason": VAULT.reauth_reason(run_id) or "token_needs_reauth",
+                    **{k: v for k, v in (VAULT.pause_record(run_id) or {}).items()
+                       if k in ("paused_call", "instruction")},
+                }))
+        else:
+            _ticks += 1
+            if _reauth_paused:
+                _reauth_paused = False
+                if _vstate == "live":
+                    yield _sse("run_reauth_resumed", json.dumps({"run_id": run_id}))
+
         status_data = await _get_run_status(run_id)
+        if status_data.get("status") == "CANCELED":
+            VAULT.close(run_id)
+            break
         if status_data.get("status") == "FAILURE":
+            VAULT.close(run_id)
             yield _perror(
                 "Pipeline failed.",
                 kind="retrieving",
@@ -9897,6 +10187,7 @@ async def _generate_dagster_stream_inner(
             break
 
         if status_data.get("status") == "SUCCESS":
+            VAULT.close(run_id)
             is_success = True
             break
             
@@ -12601,22 +12892,17 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
     The pure projection and the entitlement gate live in `case_projection`; this route only
     fetches runner/DB state and calls them.
 
-    A DELEGATE IS NOT A SUBMITTER (ruled 2026-10-16): any caller acting under a delegate client
+    A DELEGATE IS NOT A SUBMITTER (ruled 2026-10-16): a caller acting under a delegate client
     (a key of `_delegate_principals()`, e.g. svc:openddil) reads the artifacts it seeded
-    (GET /artifacts/{id}), never the whole case. Refused 403 BEFORE the fetch, so the answer is
-    identical whether or not the case exists (no existence oracle). R-089: the delegate map
-    is asserted by configuration this pass.
+    (GET /artifacts/{id}), never the whole case. The MCP door (`_mcp_door()`, on this route's
+    decorator) enforces the ruling: every service caller is refused 403 `service_token_refused`
+    BEFORE the fetch, and a GET has no body `on_behalf_of`, so the door's delegate exemption
+    cannot apply. The answer is the door's, identical whether or not the case exists (no
+    existence oracle). R-089: the delegate map is asserted by configuration this pass.
     """
     from starlette.concurrency import run_in_threadpool
 
     from . import case_projection, human_tasks
-
-    # R-089: the delegate map is asserted by configuration this pass, not verified.
-    if current_user.authz_id in _delegate_principals():
-        raise HTTPException(status_code=403, detail={
-            "error": "delegate_reads_artifacts_only",
-            "message": "a delegate reads the artifacts it seeded (GET /artifacts/{id}), "
-                       "never the whole case"})
 
     case, definitions = await _load_viewable_case(case_id, current_user)
 
@@ -12643,9 +12929,6 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
 
     return case_projection.project_workflow_case(
         case, definitions, task_rows, output_artifact)
-
-
-from pydantic import ConfigDict as _ConfigDict  # noqa: E402
 
 
 class CaseSignalRequest(_BaseModel):
@@ -14531,11 +14814,12 @@ def _read_extraction_manifest(key: str) -> dict:
 _PART_FIELD_RE = re.compile(r"^parts\[(\d+)\]\.(.+)$")
 
 
-def _review_json_key(manifest: dict, extraction_ref: str) -> Optional[str]:
-    """The key of the review.json doc-tools wrote beside the manifest's `text_location` (same
-    directory), or None when `text_location` is an s3:// URL for another bucket. `text_location`
-    is a bare key or an `s3://<bucket>/<key>` URL; blank falls back to the directory of the
-    manifest itself (`extraction_ref`), which is the same generated/<base>/<version>/ directory."""
+def _beside_manifest_key(manifest: dict, extraction_ref: str, name: str) -> Optional[str]:
+    """The key of `name` (review.json, extraction.json) doc-tools wrote beside the manifest's
+    `text_location` (same directory), or None when `text_location` is an s3:// URL for another
+    bucket. `text_location` is a bare key or an `s3://<bucket>/<key>` URL; blank falls back to the
+    directory of the manifest itself (`extraction_ref`), which is the same
+    generated/<base>/<version>/ directory."""
     import posixpath
     from urllib.parse import urlparse
 
@@ -14547,13 +14831,33 @@ def _review_json_key(manifest: dict, extraction_ref: str) -> Optional[str]:
         key = u.path.lstrip("/")
     else:
         key = loc or str(extraction_ref or "").strip()
-    return posixpath.dirname(key) + "/review.json"
+    return posixpath.dirname(key) + "/" + name
+
+
+def _review_json_key(manifest: dict, extraction_ref: str) -> Optional[str]:
+    """The key of the review.json beside the manifest's `text_location`; see `_beside_manifest_key`."""
+    return _beside_manifest_key(manifest, extraction_ref, "review.json")
+
+
+def _extraction_json_key(manifest: dict, extraction_ref: str) -> Optional[str]:
+    """The key of the extraction.json beside the manifest's `text_location` (doc-tools writes it
+    for every kind); bound exactly as `_review_json_key` is."""
+    return _beside_manifest_key(manifest, extraction_ref, "extraction.json")
 
 
 def _read_review_json(key: str) -> dict:
     """Read review.json at `key` (sync; threadpool). Same mapping as `_read_extraction_manifest`
     but its own error names: 422 `extraction_rows_absent` (store said NoSuchKey), 503
     `artifact_store_unreachable`, 422 `extraction_unreadable` (not a JSON object)."""
+    return _read_beside_json(key, "review.json")
+
+
+def _read_extraction_json(key: str) -> dict:
+    """Read extraction.json at `key`; the errors are `_read_review_json`'s."""
+    return _read_beside_json(key, "extraction.json")
+
+
+def _read_beside_json(key: str, name: str) -> dict:
     import json as _j
 
     try:
@@ -14566,7 +14870,7 @@ def _read_review_json(key: str) -> dict:
         if code in ("NoSuchKey", "404") or "NoSuchKey" in str(exc):
             raise HTTPException(status_code=422, detail={
                 "error": "extraction_rows_absent",
-                "message": "the store answered that this extraction has no review.json"})
+                "message": f"the store answered that this extraction has no {name}"})
         raise HTTPException(status_code=503, detail={
             "error": "artifact_store_unreachable",
             "message": f"the artifact store did not answer: {type(exc).__name__}"})
@@ -14576,7 +14880,7 @@ def _read_review_json(key: str) -> dict:
         doc = None
     if not isinstance(doc, dict):
         raise HTTPException(status_code=422, detail={
-            "error": "extraction_unreadable", "message": "review.json is not a JSON object"})
+            "error": "extraction_unreadable", "message": f"{name} is not a JSON object"})
     return doc
 
 
@@ -14791,6 +15095,34 @@ async def _soft_review_summary(manifest: dict, extraction_ref: str, prefix: str)
     return _review_notice_summary(review)
 
 
+async def _soft_document_sections(manifest: dict, extraction_ref: str, prefix: str,
+                                  ingest_id: str) -> Optional[list]:
+    """The served section list of a document, from the extraction.json beside the manifest, or
+    None (with one WARNING naming the ingest id and why) when it is absent, unbound, unreadable or
+    has no valid outline. NEVER a refusal: the task must still file. Read from the store and not
+    the graph: the graph is replaced on re-ingest, and a coverage verifies against what was shown."""
+    from starlette.concurrency import run_in_threadpool
+
+    def none(why: str):
+        logger.warning("document %s: no sections served (%s)", ingest_id, why)
+        return None
+
+    key = _extraction_json_key(manifest, extraction_ref)
+    if not key or not key.startswith(prefix):
+        return none("extraction.json is not under the document's directory")
+    try:
+        doc = await run_in_threadpool(lambda: _read_extraction_json(key))
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        return none(f"extraction.json unreadable: {detail.get('error') or exc.status_code}")
+    except Exception as exc:  # noqa: BLE001
+        return none(f"extraction.json unreadable: {type(exc).__name__}")
+    sections = _rcov.sections_from_extraction(doc, ingest_id)
+    if sections is None:
+        return none("extraction.json carries no single valid outline")
+    return sections
+
+
 def _promotion_task_id(ingest_id: str, generation: int) -> str:
     """The `document_promotion` task id for a document at a promotion GENERATION (spec 204): the
     legacy `document_promotion:<id>` at generation 0, `document_promotion:<id>:g<n>` after. A leaf
@@ -14858,7 +15190,7 @@ async def _file_or_find_document_promotion_task(
     """
     from starlette.concurrency import run_in_threadpool
 
-    from . import content_kinds, human_tasks, promotion
+    from . import content_kinds, human_tasks, promotion, review_shapes
 
     domain = str(domain or "").strip() or None
     if domain is None:
@@ -14943,6 +15275,17 @@ async def _file_or_find_document_promotion_task(
         "notice_date": summ["notice_date"] if summ else None,
         "part_count": summ["part_count"] if summ else None,
         "attempt": attempt}
+    # A kind whose shape row's item_kind is served from the payload (`section`) carries the card's
+    # shape and the section universe it will be verified against. Any other kind's payload is
+    # untouched. Keyed on the shape row's item_kind, never on a kind's name.
+    _kreg = content_kinds.by_kind(row.get("content_kind"))
+    _shape = getattr(_kreg, "review_shape", None) if _kreg is not None else None
+    _shape_row = review_shapes.valid_review_shapes().get(_shape) if _shape else None
+    if _shape_row is not None and _shape_row.item_kind in _rcov.PAYLOAD_SERVED:
+        payload["review_shape"] = _shape
+        _sections = await _soft_document_sections(manifest, ref, prefix, ingest_id)
+        if _sections is not None:
+            payload["sections"] = _sections
     notice_id_ = str(payload.get("notice_id") or "").strip()
     ck_ = str(payload.get("content_kind") or "").strip()
     kind_label = ck_.upper() if ck_.lower() in ("pcn", "pdn") else (ck_ or "Document")
@@ -16095,6 +16438,8 @@ class OriginWriteRequest(_BaseModel):
     origin: dict
     evidence: dict
     approval_chain: list[dict]
+    # The case the steward's task was filed on: who may be named as the steward is decided on it.
+    case_id: str
 
 
 @app.post("/internal/origin/write")
@@ -16146,12 +16491,25 @@ async def write_origin_route(
                        "-- refusing to write under nobody's provenance.",
         })
     on_behalf_of = steward_entries[-1]["approver_sub"]
+    # The steward is a person this service NAMES, so the name must be one the case can vouch for
+    # (a declared principal, or one who holds a task on this very case). `dropped_by.authz_id` is
+    # NOT checked here: it is verified against program membership below, not acted for (see
+    # tests/identity/test_origin_write_refuses_a_dropper_who_is_not_a_program_member.py ::
+    # test_the_excluded_dropper_is_verified_against_membership_not_acted_for).
+    await _admit_named_on_case(caller, req.case_id, on_behalf_of, None,
+                               route="/internal/origin/write")
 
     dropped_by_authz_id = req.dropped_by.authz_id
     program = req.origin.get("program")
-    dropper_is_program_member = (
-        human_tasks.check_can_view_program(program, dropped_by_authz_id) if program else False
-    )
+    try:
+        dropper_is_program_member = (
+            human_tasks.check_can_view_program(program, dropped_by_authz_id) if program else False
+        )
+    except httpx.HTTPError as exc:  # Topaz down, or its answer malformed: not "not a member"
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "could not verify program membership",
+        }) from exc
 
     try:
         from agent_fleet.utils.mesh_writers.neo4j_graph import Neo4jGraphWriter  # noqa: PLC0415
@@ -16297,7 +16655,11 @@ async def stamp_seeded_by_route(
             "message": "POST /internal/cases/{case_id}/seeded-by is callable only by the case "
                        "runner's own service identity.",
         })
-    if req.seeded_by not in _delegate_principals():
+    declared = req.seeded_by in _delegate_principals()
+    _audit_delegate_named("/internal/cases/{case_id}/seeded-by", caller, req.seeded_by,
+                          "admitted:declared_delegate" if declared
+                          else "refused:seeded_by_not_a_declared_delegate")
+    if not declared:
         raise HTTPException(status_code=422, detail={"error": "seeded_by_not_a_declared_delegate"})
 
     def _stamp() -> int:
@@ -16368,6 +16730,16 @@ async def write_case_summary_route(
         })
     if not req.state.strip():
         raise HTTPException(status_code=422, detail={"error": "state_is_blank"})
+    # The seeding delegate is a person-shaped name this route stores: it must be a declared
+    # delegate, as at the seeded-by stamp. None is a case with no seeding delegate.
+    if req.seeded_by is not None:
+        # R-089: a name is checked against the delegate declarations, never taken as sent.
+        declared = req.seeded_by in _delegate_principals()
+        _audit_delegate_named("/internal/cases/{case_id}/summary", caller, req.seeded_by,
+                              "admitted:declared_delegate" if declared
+                              else "refused:seeded_by_not_a_declared_delegate")
+        if not declared:
+            raise HTTPException(status_code=422, detail={"error": "seeded_by_not_a_declared_delegate"})
 
     def _write() -> list:
         released = _case_released(req.transitions)
@@ -16431,10 +16803,13 @@ async def write_action_record_route(
     if not (req.on_behalf_of or "").strip():
         raise HTTPException(status_code=422, detail={"error": "on_behalf_of_required"})
     # R-089: `seeded_by` must be a DECLARED delegate (the configured map, asserted not verified
-    # this pass), as at the seeded-by stamp; `on_behalf_of` is the case's principal as the runner
-    # read it from the case, RECORDED as the owner, not an act this route authorises.
+    # this pass), as at the seeded-by stamp.
     if req.seeded_by is not None and req.seeded_by not in _delegate_principals():
         raise HTTPException(status_code=422, detail={"error": "seeded_by_not_a_declared_delegate"})
+    # `on_behalf_of` becomes the OWNER the read gate admits, so it is a name this route acts on:
+    # the seeding delegate, a declared principal, or someone who holds a task on this case.
+    await _admit_named_on_case(caller, case_id, req.on_behalf_of, req.seeded_by,
+                               route="/internal/cases/{case_id}/action-record")
     provenance = req.record.get("provenance")
     if not isinstance(provenance, dict) or provenance.get("case_id") != case_id:
         raise HTTPException(status_code=422, detail={"error": "case_id_mismatch"})

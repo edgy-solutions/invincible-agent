@@ -65,6 +65,9 @@ def _drive(monkeypatch, post):
         "agent_fleet.utils.service_identity.mint_supervisor_token",
         lambda *a, **k: SERVICE_TOKEN, raising=False,
     )
+    # The run has a person, so the dispatch redeems on every verb (architect, 2026-11-02);
+    # this file is about the engine's refusal, so the redemption is a stub.
+    monkeypatch.setattr(ds, "_redeem_caller_token", lambda *a, **k: "CALLER-TOKEN")
     monkeypatch.setattr(ds, "_classify_route", lambda *a, **k: (
         ds._ROUTING_MATCHED,
         {"verb_iri": "mesh:queryKnowledgeGraph", "endpoint": "http://engine-e/q",
@@ -143,3 +146,18 @@ def test_a_grantor_map_that_will_not_load_still_relays_the_refusal(monkeypatch):
     assert er["refused"] is True
     assert er["refusal"] == {"policy_id": FAMILY, "missing_binding": "x"}
     assert er.get("status") != "engine_unreachable"
+
+
+def test_only_a_typed_denial_carries_its_status_past_the_relay(monkeypatch):
+    """`status` is what opens the request-access flow, so another engine's word must not travel."""
+    body = _refusal_body()
+    body["detail"].update(status="blocked", denied_assets=["urn:x"], subject="alice@example.com")
+    er = _drive(monkeypatch, _returning(_response(403, body)))["expert_response"]
+    assert er["refused"] is True
+    assert not {"status", "denied_assets", "subject", "message"} & er.keys()
+
+    body["detail"]["status"] = "access_denied"
+    er = _drive(monkeypatch, _returning(_response(403, body)))["expert_response"]
+    assert er["refused"] is True
+    assert (er["status"], er["denied_assets"], er["subject"], er["message"]) == (
+        "access_denied", ["urn:x"], "alice@example.com", "m")

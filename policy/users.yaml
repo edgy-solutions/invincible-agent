@@ -62,6 +62,8 @@ users:
       - maint-tier-ack-edge-01   # 2026-10-11 ruling: actor-only (no cell); see groups.yaml. No step waits on a tier ack since 2026-10-28; kept by ruling
       - maint-tier-ack-edge-02   # 2026-10-27: the edge-02 mirror, actor-only (no cell)
       - alert-processors         # FIXTURE grant, 2026-10-28: alice is the sandbox alert processor (PCN/PDN drops); not a claim about who drops notices in production.
+      - alignment-reviewers      # FIXTURE grant, 2026-11-02 ruling: sandbox alignment reviewer (can_review:alignment); not a claim about who reviews in production.
+      - training-admins          # FIXTURE grant, 2026-11-02 ruling: sandbox deck template admin (can_configure:deck_template); not a claim about who configures it in production
       - mcp-callers              # FIXTURE grant, 2026-10-31: sandbox MCP caller; not a claim about who calls the MCP surface in production.
       - finance-analysts    # FIXTURE grant, 2026-08-31: alice is the
                             # Engine F demo actor, so the persona/domain picker offers
@@ -132,7 +134,6 @@ users:
       # 2026-10-14 ruling: document_promotion:MANUFACTURING. Actor-only (no cell).
       - manufacturing-stewards
       - mcp-callers              # FIXTURE grant, 2026-10-31: sandbox MCP caller; not a claim about who calls the MCP surface in production.
-      - alignment-reviewers      # FIXTURE grant, 2026-10-31: sandbox alignment reviewer (can_review:alignment); not a claim about who reviews in production.
     default:
       persona: DATA_STEWARD
       domains: [AVIATION]
@@ -274,8 +275,9 @@ users:
   # SERVICE is calling, not WHOSE data may be read. DA serves every caller, so a read grant
   # on svc:data-analyst would entitle EVERY caller to whatever it can reach — the confused
   # deputy the per-caller conjunction exists to prevent. The acting human currently rides
-  # separately (X-Originator-Email; the can_read gate is keyed on that), and formalising
-  # that delegation is an open design decision, not something to settle with a grant here.
+  # separately (X-Originator-Email; the can_read gate is keyed on that). Naming that human on a
+  # central-gateway route is policy/gateway_delegates.yaml's, which grants no read; never settle
+  # it with a grant here.
   # Replaces the hand-created sandbox client `engine-da-svc`, whose token carried no claim
   # mapper at all — its authz_id fell back to the opaque Keycloak `sub` UUID, which is
   # precisely the not-human-reviewable key this file exists to refuse.

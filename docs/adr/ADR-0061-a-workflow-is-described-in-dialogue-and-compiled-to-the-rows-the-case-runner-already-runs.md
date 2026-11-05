@@ -1,8 +1,30 @@
 # ADR-0061 — A workflow is described in dialogue and compiled to the rows the case runner already runs
 
-**Status:** Proposed, ruled 2026-11-02: this ADR records the design and its measurements, including
-the gap below. **The bar for "the loop works" is not met.** It is met when `runnable` refuses any
-definition no table routes to from the trigger, and a run is runnable with all four stages reachable.
+**Status:** Proposed. **The bar for "the loop works" is met on run 63 (ruled 2026-11-05, §10).** This ADR records the
+design and its measurements, including the gap below and the open list. The bar is a run that is runnable with all four
+stages reachable, each stage holding the steps the person described (ruled 2026-11-02), and the draft holding what the
+person stated (ruled 2026-11-03).
+`runnable` now refuses any definition no table routes to from the trigger. Instrument v3 reads routes and slots as two
+bars. Runs 47 to 49 all read `yes` on routes and `no` on slots: run 47 put back an outcome the person had corrected,
+run 48 lets the person who logged a notice sign off its impact review, which the person barred, and run 49 lost the
+required details to a model timeout (§10). Runs 50 to 52 then read the bar for Proposed as met on instrument v3: run 50
+reads `yes` on both bars with the contradiction caught, and runs 51 and 52 read `no` as they should. That is with the
+architect, because v3 doesn't read `approves`, and no run from 41 to 52 drafted it (§10). The architect ruled `approves` and
+`role` into the bar. Instrument v4 reads them as a third bar, and all twelve runs read `no` on it, so run 50 no longer
+meets the bar and the bar is not met (§10). Runs 53 to 55, on the grammar line, draft `approves` for the first time, and
+all three read `no`. Each is `cannot_run` on a question about the impact review's role that the scripted person can't
+answer, though the person said it in the opening (§10). The architect chose the first of the two fixes: a refusal that one
+field clears is now asked on that field. Runs 56 to 58, on it, all read `no`. Run 56 is runnable and reads `yes` on route
+and slot, and misses only the program approval's `approves` and `role`, which nothing asks for (§10). The architect then
+ruled two more: an approval step with no `approves` is asked which answers count and in what role, and a stage with no
+steps is asked as a stage, in the person's words. Both are built. Runs 59 to 61, on them, all read `no`. Runs 59 and 60
+read `yes` on slot and approval for the first time, and both stall on the record stage, where the model's step is refused
+for its path form (§10). The architect then ruled that a positional path's refusal says what to write, and that a stage
+is drafted under a name the person used. Both are built (§10). Runs 62 to 64, on them: run 63 reads `yes` on route, slot
+and approval with the contradiction caught, and run 62 reads `no`, as it should. The architect ruled the bar met on run 63
+and the ADR Proposed (2026-11-05). That reading is instrument v4's. The same ruling makes an outcome word that differs
+from the person's own word a slot fault. Run 63 has one: the person said "If it is escalated", and the draft kept
+`escalate`. So the check, once built, reads run 63 `no` on slot. It is next, and no run comes before it (§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -253,7 +275,8 @@ does measure:
 
 **Model arm, three runs.** In run 1 the user looked answers up by the exact gap key. In runs 2 and
 3 the user aligned the model's names to the expected ones by structure, never by string similarity:
-- a definition by the selection or chaining row with the same `when` that reaches it;
+- a definition by the selection or chaining row that reaches it, a chaining row by its `when` where
+  both spell it alike and otherwise by what it routes to (instrument v2, §10);
 - a step by its position among steps of the same kind;
 - a task kind by the step that names it.
 
@@ -1395,6 +1418,1400 @@ derivation, not on an assertion.
 
 Both interpretations stand: a null for who is barred reads as absent, and a stated "no limit" null is
 asked. Three runs follow (2), (3) and (4).
+
+#### 2026-11-02: rulings 2, 3 and 4, built
+
+**Ruling 2, the refusal.** `runnable` reports `definition <id>: no table routes to it from the
+trigger` for each definition the walk from the trigger does not reach. Read against the stored
+drafts: run 32 now refuses two definitions and run 33 one, so both are `cannot_run`, as ruled. Run 31
+was already `cannot_run` on its open slots, and all its definitions are reached.
+
+The walk had to change first. `_reachable` held one list of terminals across all tables, while
+`runnable` reads a row's `then` against its own table's terminals. A value that was a terminal in
+one table therefore stopped a row in another, and the walk could refuse a bundle the runner runs. It
+now reads each table's own terminals.
+
+**A question ruling 2 did not name: my call, for review.** A refusal the person never hears can't be
+answered, and §9 says a refusal is never deferred: the loop keeps asking, or stops with "cannot run,
+missing X". So `required_slots` also asks `steps.<id>.routed`: "no stage leads to X, so a case can
+never reach it. Which stage's ending leads to it, and on which outcome?" It is asked only when no
+other required slot is open, because a table still being drafted is asked for by name first, and it
+may not be deferred. The answer may rewrite a table's rows, its terminals and its input's domain. The
+model writes the row; the loop inserts nothing. The ruling did not ask for this. Without it, a run
+that reaches the refusal can only end `cannot_run`.
+
+There is one limit. The person can't yet answer "that is not a stage": a definition the model invented
+stays open, and the run stays `cannot_run`. That is the honest result, and the runs below may show it.
+
+**Ruling 3, the reasons.** Each approval step now has the required slot
+`approvals.<definition>.<step>.reason_required`, built as `excludes` is. A null reads as absent. A
+value nobody stated is confirmed once, and the answer may replace it, so a stated reason is no longer
+charged as an overwrite of a `[]` nobody asked for; that charge is what lost the reasons in runs 31
+to 33. The per-kind question and the per-kind null are gone. The grammar now says `reason_required`
+is required, and that `[]` means no answer needs one.
+
+The cost is in the fixtures. Each person's reasons used to arrive inside a stage answer, which is not
+attributed to the step, so each is now confirmed:
+
+| fixture | questions before | questions now | new entries in the person's words |
+| --- | --- | --- | --- |
+| `pcn_review` | 15 | 18 | 3 |
+| `maint_case_release` | 12 | 14 | 2 |
+| `training_course_approval` | 16 | 18 | 2 |
+
+The training content review adds no question: its reasons are answered in its own contradiction.
+
+**Ruling 4, `disposes`.** The grammar says an emit step that is itself what settles its workflow sets
+`disposes`, that its chaining table routes that value, that a later confirmation is a `signal_await`,
+and that only an emit step has `disposes`. A definition that only sends is asked "does sending X
+settle it, and with what outcome, or does someone confirm it afterwards?". A definition with no emit
+keeps "who or what confirms it?". A `disposes` nobody stated is confirmed under
+`outputs.<id>.ends`, and one on any other kind of step is refused by `runnable` and never confirmed.
+
+**The instrument.** The scripted user answers the three new slot forms from the expected bundle:
+reasons from the kind the step names, a routed question from the first table with a row into that
+stage, and an ending from that stage's last disposing step. It also rejects a reason confirm on a step
+the process does not have. The measure row gains `unreachable`.
+
+**Seals and mutants.** `tests/socratic` has 171 passing at `LOCKED_SDK=sdk_0912`, and the gov ratchet
+24. All 19 mutants of the new behaviour went red. Three survived the first pass:
+
+- Removing the reason line from the grammar survived, and now has a seal.
+- Confirming a `disposes` on any kind of step survived, and now has a seal.
+- Removing `_slot_target` from the scripted user's rejection survived because it decided nothing.
+  The target always comes from the expected bundle, so the check always holds. That call is removed,
+  and its mutant is replaced by one on the reason form of a step slot.
+
+One red is a `KeyError`, not an assertion: treating a null as held, where the test indexes the slot
+that should be open. The slot's absence is the failure the test exists to catch.
+
+#### 2026-11-02: run 34 crashed, and a value of the wrong shape is now refused
+
+The first run after rulings 2, 3 and 4 did not finish. The model wrote a row's `when` as a string, and
+`decide` raised `AttributeError` from inside `problems`, `required_slots` and `runnable`. No output was
+written, so what else run 34 held is lost, and it counts as none of the three runs. Rulings 2 to 4 did
+not introduce this. `_apply_or_charge` already promised that a run never crashes on model output, and
+the promise covered only a `PatchError`.
+
+**The census.** One row is a sample, so I put eight wrong-typed values at every node of the PCN bundle
+and called each reader: 3264 calls, 20 distinct crash sites, across the tables, the kinds, the steps and
+the trigger.
+
+**The refusal.** This defends the class rather than the 20 sites. A patch is already tried on a copy, so
+`_refuse_unreadable` reads that copy with `_all_gaps` and `runnable`. If either raises anything, the
+patch is refused and the model restates it with the refusal in hand, under the existing restate limit.
+This goes beyond the rulings' words: it is my call, for review. `decision_table.py`, the production
+evaluator, is deliberately unchanged, so a broken row reaching it directly still raises.
+
+The instrument needed its own guards. Values the loop tolerates still reach the measure, so
+`semantic_diffs` records a draft with no canonical form as a difference, and `_steps_of` reads a `steps`
+that isn't a list as empty. The first pass of the census found 7 such sites in the instrument.
+
+| fixture | wrong-typed values refused | passed the refusal | crash sites in later readers |
+| --- | --- | --- | --- |
+| `pcn_review` | 135 | 681 | 0 |
+| `maint_case_release`, `training_course_approval` | 334 | 1322 | 0 |
+
+The later readers are `finalize`, `semantic_diffs`, the reachability walk and the scripted user on each
+open gap. This census covers one wrong value at one node of a complete bundle. It does not cover a
+wrong value in a partial draft, or two at once. A reader the refusal does not call, reached only from a
+partial draft, could still raise.
+
+**The cost.** `runnable` now runs on every patch, so `tests/socratic` takes about 40 to 47 seconds, up
+from about 9.5. In a model run this is small beside the model's own time. I have not measured it there.
+
+**Seals and mutants.** `tests/socratic` has 189 passing at `LOCKED_SDK=sdk_0912`, and the gov ratchet
+24. All six mutants of the refusal and the guards went red: not reading the draft at all, catching only
+`AttributeError`, not calling `_all_gaps`, not calling `runnable`, and removing each instrument guard.
+Removing `runnable` from the refusal is held by one seal only.
+
+**A correction to the runs through 33.** They ran under `-I`, which ignores `PYTHONPATH`, so they
+imported the venv's `iagent_mesh` 0.9.5 and not the 0.9.12 overlay. The loop imports only `task_kinds`
+from the SDK, and that file is byte-identical in the two versions, so their results stand. The runs below
+use the 0.9.12 overlay.
+
+#### 2026-11-02: runs 35 to 37, and the bar is not met
+
+Three complete PCN runs at `6122cf6f`, one at a time, with the same model and harness, on the 0.9.12
+overlay. Run 34 is not one of them: it crashed, as the section above says.
+
+| run | questions / bank | runnable errors | unreachable | semantic diffs | open | answered by path | model errors | confirms | rejected | contradiction | deferral | reasons | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 35 | 27/18 | 0 | 0 of 4 | 3 | 1 | 4 | 0 | 12 | 1 | 1/1 | 1/1 | held | cannot_run | 569 |
+| 36 | 26/18 | 2 | 2 of 4 | 6 | 3 | 8 | 0 | 11 | 1 | 1/1 | 1/1 | lost on one kind | cannot_run | 645 |
+| 37 | 30/18 | 1 | 0 of 4 | 3 | 0 | 6 | 0 | 11 | 0 | 1/1 | 1/1 | held | cannot_run | 563 |
+
+**The bar is not met: no run is runnable.** Two of the three have all four stages reachable. Runs 31
+to 33 had the planted contradiction in two of three and lost the reasons in all three. These three
+report it every time and hold the reasons in two.
+
+**Why each stopped:**
+
+- **Runs 35 and 36: the loop charged the model's correct answer as a contradiction.** The opening
+  guessed the acknowledgement as an emit that settles itself. The loop then asked, correctly, "the
+  draft says sending it settles the stage, but you were never asked. Is that right?" The person said a
+  component engineer answers it. The model rewrote the stage as a `human_await` with both outcomes,
+  which is what the fixture expects. The loop charged that as "Earlier you said {emit}; now
+  {human_await}. Which holds?". The person never said emit, and the question before it had just said
+  so. The scripted user could not answer, the contradiction was deferred, and the guess stayed. This
+  is the mechanism that lost the reasons in runs 31 to 33, at a wider site: ruling 3 cured it for
+  `reason_required` alone. Its last effect is the open slot: the confirm on the guessed table is one
+  the scripted user cannot answer, and it may not be deferred.
+- **Run 36 also: the refusal is true and the model could not act on it.** The model listed
+  `program_approval` as a terminal of the table whose row routes to it, so a case stops there and the
+  stage and the one after it are unreachable. The routed question says "no stage leads to program
+  approval", which names no cause. The model rewrote the same table with the same terminal, and the
+  slot stalled.
+- **Run 37: an error no question reaches.** The selection table carries `after` naming the trigger,
+  and `runnable` refuses it. The grammar says what `after` means on a chaining table and is silent on
+  a selection. No slot asks about it, so with nothing open the run ended `cannot_run`. Nothing is wrong
+  with that ending, but one line of the draft decided it, and neither the person nor the model was told.
+
+**Run 37 shows the bar is not the workflow either.** With `after` removed from the stored draft,
+`runnable` reports nothing and all four stages are reachable, so it would clear the bar as worded. Its
+record stage is still wrong: the person says the disposition is sent and then filed, and the draft has
+one emit that settles itself as `recorded`, with no step that waits for the filing. Asked whether sending
+settles it, the person said "then the records group files it and says so", and the model changed only the
+emit's template. I have not examined the other semantic differences in these runs.
+
+**Most contradictions the loop asks are not contradictions.** The planted one was reported in every
+run. Besides it, the scripted user could not answer 7, 4 and 8 contradictions, all raised by the loop,
+and each became a deferral. Run 37 opens with three of the form "you said what happens when review ends
+'approved', but review's answers are empty. Can it end 'approved'?", asked before the task kind exists.
+A person could answer these, and the scripted user answers only what its transcript holds, so these
+figures understate what a person would get done. They also mean a person would be asked a false "earlier
+you said" several times per run.
+
+**What did not show up.** The shape refusal never fired in these three: no refused patches and no model
+errors. It is held by its seals and the census, not by a live run. Run time is within the 562 to 705
+seconds of runs 31 to 33, so the per-patch read adds nothing visible beside the model's own time.
+
+**Asked of the architect.** Each is a change beyond the rulings, so none is built. I recommend yes to all
+three:
+
+1. A value nobody stated, corrected in the answer to its own confirm, is not a contradiction: the answer
+   may replace what was guessed, including the step and its table. A contradiction needs something the
+   person said. This also removes the false "earlier you said" and the empty-answers form.
+2. A structural error the person can't answer goes back to the model as a refused patch, naming the
+   cause: a terminal that is also a stage, or an `after` on a selection. The grammar gains both lines.
+3. The scripted user answers a contradiction the loop raised, from the expected bundle, as it already
+   rejects a routing row for an outcome a stage lacks. This follows (1) and does not replace it: on its
+   own it would raise the score and leave the person being told what they never said.
+
+The fourth is a question, not a recommendation: should the bar also ask that a run's stages have the steps
+the person described? As worded, run 37 clears it with one line changed.
+
+#### 2026-11-02: the architect's rulings on runs 35 to 37
+
+1. Yes: a value nobody stated, corrected at its own confirm, is a correction, not a contradiction. The
+   answer replaces the guess and its table.
+2. Yes: a structural error the person can't answer goes back to the model as a refused patch naming the
+   cause. Both cases go into the grammar.
+3. Yes, after (1).
+4. Yes: the bar requires each stage to have the steps the person described. A runnable spec that drops a
+   step is not the workflow.
+
+The refusal of a value of the wrong shape, which I had marked as my call, is accepted. So is the suite's
+time of about 45 seconds.
+
+#### 2026-11-02: the four rulings, built
+
+**Ruling 1, the correction.** A confirm now carries what was built on the guess, and its answer may
+replace those values without pending a contradiction. For a step's slot that is the answers and reasons
+of the task kind the step names, and the routing table after its definition. Each is listed with the
+slots that would have asked it. If one of those slots was answered, the person stated the value, and a
+different answer still pends as a contradiction. "Stated" is the turn check this ADR already uses for
+confirms. So a value that arrived inside a stage answer, or in the opening, counts as unstated unless a
+question covered it. That reading is mine, for review: it is the existing standard, not a new one.
+
+A workflow's `steps` is one list and so one leaf. A patch that rewrites the whole list lands only if every
+other step comes through unchanged and in order, so correcting a guessed step cannot change one the
+person described.
+
+The empty-answers form is gone: a kind with no answers yet raises no "can it end" contradiction, and
+`contradiction:task_kind` still asks for the answers. **What remains:** the ruling covers a confirm, so a
+false "earlier you said" outside one still happens. Runs 35 and 37 raised `#accepts` after
+`steps.<id>.routed`, run 35 raised `chaining.<t>.needs_info` with non-empty answers, and run 37 raised
+`steps[id=ack].excludes`. Ruling 3 answers these; it does not stop them being asked.
+
+**Ruling 2, the refusal.** A patch that lists a stage in a table's `terminals`, or puts `after` on the
+table the trigger names in `selection`, is refused with the cause named, and the model restates it. The
+grammar has both lines. "A stage" is a definition or a name in the trigger's `stages`, so a terminal is
+refused even before that stage's definition is drafted. Two things beyond the ruling's words, for review:
+
+- Only an error the patch introduces is refused. An error the draft already held does not block every
+  later patch.
+- The restatement may rewrite the leaf the refusal named, even one the person stated, because the error
+  may come from a later patch: a new stage that an old terminal already names. Without this the restated
+  patch would pend the terminal, keep the error and be refused again.
+
+**Ruling 3, the scripted user.** It now answers a contradiction the loop raised, from the expected bundle,
+and each is recorded in the row's `answered_contradictions`. Its answers are words only, with no facts
+shown to the model, so the model is measured on the words as it is for any other answer. That is my
+reading of "as it already rejects a routing row", which does carry facts; tell me if you meant the same
+here. A single value is said as "It is a, b." or "It is none." A value with a structure, such as steps or
+rows, is said in the person's own words from the entry that asks for it. An outcome the expected table
+routes gets "Yes, it can end x. It can end: a, b." The trigger's form, a selection table's rows and a
+value the bundle does not hold stay unanswered, and count as they did. A planted contradiction is banked
+and never reaches this code, so detection is unchanged.
+
+**Ruling 4, the bar.** The row gains `dropped_steps` and `bar_met`. An expected stage has dropped a step
+if its step kinds are not an in-order subsequence of the paired draft stage's. Steps compare by kind, so
+a step of the right kind with the wrong content is not counted, and `semantic_diffs` carries it. An added
+step is not a dropped one. The pairing walk stops at a terminal, so a stage it can't pair counts as having
+dropped all its steps, and such a stage is usually counted as unreachable too. The two columns can
+therefore overlap on one stage.
+
+**Checks.** `tests/socratic` 234 passed and the gov ratchet 24 passed, both with
+`LOCKED_SDK=sdk_0912`, so the ratchet counts no new refusal site. The shape
+census is unchanged, with the new reader included: 469 refused, 2003 passed, 0 crash sites over the three
+fixtures. All 33 mutants are red on a named test, each restored and checked byte for byte. One was
+first written so that the file failed to import, which is not a kill; rewritten, it went red on the test it
+was written for.
+
+#### 2026-11-02: runs 38 to 40, and the bar is not met
+
+Three complete PCN runs at `5f7628d6`, one at a time, with the same model and harness, on the 0.9.12
+overlay.
+
+| run | questions / bank | runnable errors | unreachable | stages that dropped a step | bar | semantic diffs | open | answered by path | refused patches | confirms | rejected | contradiction | deferral | reasons | contradictions answered | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 38 | 27/18 | 0 | 0 of 4 | 2 | no | 3 | 0 | 8 | 1 | 11 | 0 | 1/1 | 1/1 | held | 1 | runnable | 669 |
+| 39 | 29/18 | 0 | 0 of 4 | 2 | no | 4 | 0 | 5 | 2 | 12 | 0 | 1/1 | 1/1 | held | 6 | runnable | 677 |
+| 40 | 27/18 | 0 | 0 of 4 | 1 | no | 3 | 0 | 5 | 0 | 12 | 1 | 1/1 | 1/1 | held | 3 | runnable | 603 |
+
+**The bar is not met: every run is runnable with all four stages reachable, and none has every step
+the person described.** These are the first runnable runs since `runnable` began to refuse a stage
+nothing reaches. Runs 35 to 37 were all `cannot_run`.
+
+**What is missing:**
+
+- **The impact review's `render` step, in all three runs.** The person says an engineer "looks at the
+  part, the maker and the change class and gives a disposition". Each run wrote one `human_await`. The
+  grammar names `render` in a list of step kinds and says nothing about when one applies, and no gap
+  or refusal asks for it, so nothing in the loop can catch this.
+- **The record's `signal_await`, in runs 38 and 39.** The person says "Then the records group files it
+  and says so". Both runs wrote an emit with `disposes`, which the grammar says not to do when someone
+  confirms afterwards. The loop then asked, correctly, whether sending settles the stage. The scripted
+  user repeated the stage's description instead of saying no, because its confirm rejection covers
+  only a step's slots and this key is `outputs.record.ends`. The model answered with an empty patch in
+  run 38 and changed only the template in run 39, and the confirm closed.
+- **Run 40 kept that step, and shows ruling 1 working.** Its first draft made filing a `human_await`.
+  The confirm rejection at `actors.record.file.excludes` replaced it with the `signal_await` and raised
+  no contradiction.
+
+**What the rulings changed:**
+
+- **Ruling 1.** Questions saying "Earlier you said" went from 7, 5 and 5 to 3, 6 and 3, each count
+  including the planted contradiction. Most of those left are outside a confirm, as the section above
+  said they would be: run 39's six include three on a chaining table the model rewrote while answering
+  another stage. Two are not, and they are a defect, below.
+- **Ruling 2.** The structural refusal did not fire in any run: all three refused patches are the
+  `steps[0]` path form. Neither error from runs 36 and 37 came back. Three runs can't separate the
+  grammar lines from chance.
+- **Ruling 3.** Ten contradictions were answered and one row was denied, and no run ended with one
+  open. The trigger's form in run 38 stayed unanswered, as designed, and each planted contradiction
+  was answered from the bank.
+- **Ruling 4.** The bar now reads `no` on specs that `runnable` accepts, which is what it was ruled to
+  do.
+
+**Two defects in my build.** Neither changes whether the bar is met. I have not fixed either, so the code
+stays what these runs measured.
+
+**The first breaks ruling 1 at a confirm.** Runs 39 and 40 asked "Earlier you said nobody (empty); now
+rejected, needs_info" about the impact review's reasons, straight after that kind's confirm. Nobody said
+that: the opening guessed `[]`. A "can it end" contradiction lists the kind's `accepts` and
+`reason_required` as what it revises, and answering a contradiction marks those leaves as stated, so the
+later confirm treats the guess as something the person said. Run 38 answered the same contradiction after
+the confirm and did not ask. I read this from the code and the order of the turns in all three runs; I did
+not replay it. Ruling 3 exposed it, since that contradiction used to go unanswered. The fix is to mark only
+what the question asked about. It costs one question in each of those two runs, and the reasons still held
+because ruling 3 answered it.
+
+**The second is in the scripted user.** The scripted answer to run 39's `terminals` contradiction said
+"It is pcn_rejected, pcn_program_overdue": the expected bundle's names, not the draft's. The model wrote
+them, the rows still named `rejected` and `program_overdue`, and the loop asked what those two were.
+Neither question could be answered. So run 39's 29 questions include 2 my instrument caused, and its
+contradiction count includes that answer. The model restored its own names, so the final table is not
+affected. The answer should use the draft's names, or stay unanswered when it has none to use.
+
+**Also seen, none of it counted by the bar:**
+
+- Run 39's opening wrote `requires: []`. The slot is asked only when the key is absent, so the empty
+  list was never asked or confirmed. It is that run's fourth semantic diff.
+- Run 40 wrote the acknowledgement's and the program approval's `audience` without the `:SUSTAINMENT`
+  qualifier the expected bundle holds, which accounts for two of its semantic diffs.
+- Run 40 also wrote a `completion` block nobody stated on its `human_await` steps. Removing it from the
+  stored files leaves the semantic diffs unchanged, so the comparison does not read it.
+- Run 40's deferrals still hold `approvals.record.file.deadline`, a slot of the `human_await` that the
+  `signal_await` replaced.
+- Run 40 has one answer that did not settle its question. The row counts it and does not name it.
+
+**Questions for the architect:**
+
+1. Does "looks at the part, the maker and the change class" describe a `render` step? The fixture says
+   yes, and so the bar does. If so, I recommend a grammar line: what someone looks at before they answer
+   is a `render` step holding those fields. The model would be measured on that line alone, because the
+   loop inserts nothing. If not, the fixture is wrong, and changing it is your call, since it would
+   lower what the bar requires.
+2. Should the scripted user reject `outputs.<stage>.ends` when the expected emit holds no `disposes`, as
+   it rejects a step's slot now? I recommend yes: a person asked whether sending settles the stage, when
+   someone files afterwards, says no. It would answer with the same words and facts as that rejection,
+   so it would measure the same thing.
+3. Should an unstated `requires: []` be confirmed once, as an unstated `excludes` is? I recommend yes. An
+   empty list reads as "nothing is required", and nobody said that.
+4. Should a deferral be dropped when its slot no longer exists? I recommend yes, so that a ratifier isn't
+   shown a slot the spec doesn't have.
+
+I will fix the two defects with whatever you rule, seal both, and measure them in the same three runs.
+They need no ruling unless you want the scripted `terminals` form left unanswered.
+
+#### 2026-11-02: the architect's rulings on runs 38 to 40
+
+1. Yes: "looks at the part, the maker and the change class" is a render step, because a human reads
+   declared fields before deciding. It goes in the grammar: a render applies when the person says someone
+   looks at, reviews or sees named fields before an approval.
+2. Yes: the scripted user rejects `ends` when the expected emit has no `disposes`.
+3. Yes: an unstated `requires: []` is confirmed once.
+4. Yes: a deferral whose slot no longer exists is dropped, and the drop is recorded in the run.
+
+The two defects are to be fixed with these and sealed, then three runs. The five things I marked as going
+beyond the words of the earlier rulings are all accepted: "stated" uses the existing turn check; only an
+error the patch introduces is refused; the restatement may rewrite the leaf a refusal named; the scripted
+answers to contradictions are words only; and dropped steps compare by kind and in order.
+
+#### 2026-11-02: the rulings and the two defects, built
+
+Built at `53f26235`.
+
+**Ruling 1.** The grammar has the line, and nothing else changed. The loop does not ask for a render or
+insert one, so the model is measured on that line alone.
+
+**Ruling 2.** The scripted user answers the confirm at `outputs.<stage>.ends` with "No, that is not right."
+and the stage's words, and unsets that step's `disposes`, when the expected emit has none. It does this
+only at a confirm. It does not do this at a `missing` gap on the same key, which matters below.
+
+**Ruling 3.** `requires == []` is confirmed once, under the key `trigger.requires`.
+
+**Ruling 4.** The loop drops a deferral when its slot no longer exists, and records it in
+`dropped_deferrals` with its reason and turn. A key the loop can't parse counts as existing, so it stays.
+
+**The false "earlier you said".** A "can it end" contradiction now records what it asks about: the routing
+table's domain and rows, and the answers. Answering it marks those leaves as stated, and no longer the
+kind's reasons.
+
+**A departure from what I proposed.** I proposed marking only what the question asked. That was too narrow:
+the training fixture's answer says "they must say why" and writes the reasons, so the person did state them.
+A leaf the answer changed now counts as stated too. A guess the answer left alone does not.
+
+**The bundle's names.** The scripted answer to a contradiction now uses the draft's names, pairing them only
+within the table it was asked about, because other tables share terminals. A value with no counterpart stays
+unanswered. An empty value is said as "It is none."
+
+**Checks.** `tests/socratic` 284 passed and the gov ratchet 24 passed, both with `LOCKED_SDK=sdk_0912`. The
+shape census read 469 refused, 2003 passed and 0 crash sites over the three fixtures. There are 39 new
+mutants, each restored and checked byte for byte. The first pass had one survivor, which showed that a
+`kind != "emit"` check could never fire, since steps pair only within a kind. I removed the check and
+replaced that mutant with two that went red. The other 37 ran before that one-line removal and were not
+rerun. Of the earlier 33, 32 are red; the other no longer matches the line it mutated, so it was skipped,
+and `names-none-unsaid` covers that behaviour.
+
+#### 2026-11-02: runs 41 to 43, and the bar is not met
+
+Three complete PCN runs at `53f26235`, one at a time, with the same model and harness, on the 0.9.12
+overlay.
+
+| run | questions / bank | runnable errors | unreachable | stages that dropped a step | bar | semantic diffs | open | answered by path | refused patches | confirms | rejected | contradiction | deferral | reasons | contradictions answered | deferrals dropped | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 41 | 25/18 | 0 | 0 of 4 | 1 | no | 4 | 0 | 5 | 1 | 11 | 1 | 1/1 | 1/1 | held | 2 | 1 | runnable | 652 |
+| 42 | 34/18 | 0 | 0 of 4 | 1 | no | 4 | 0 | 9 | 2 | 14 | 1 | 1/1 | 1/1 | held | 5 | 0 | runnable | 875 |
+| 43 | 25/18 | 0 | 0 of 4 | 1 | no | 2 | 0 | 6 | 0 | 14 | 1 | 1/1 | 1/1 | held | 1 | 0 | runnable | 665 |
+
+**The bar is not met: all three read `no`.** Every run is runnable with all four stages reachable, and every
+run now has the impact review's `render` step. The one stage counted in each is the record, and the three
+cases differ:
+
+- **Runs 42 and 43 really lost the filing step.** The person says "Then the records group files it and says
+  so". Run 42's record is an emit and a render, and run 43's is an emit alone. Neither has a `signal_await`.
+- **Run 41 reads `no`, and it has every step.** Its record is an emit and a `signal_await`, and every other
+  stage has its steps too. It reads `no` because of the bar's pairing. The person says of the program approval
+  "They can approve it or reject it", and the model wrote `approve` and `reject` where the expected table has
+  `approved` and `rejected`. The walk pairs stages through a row's outcome, so it stops there, and a stage it
+  can't pair counts as having dropped all its steps. With `record` paired by hand, `dropped_steps` is empty,
+  and by the bar's definition the run would read `yes`. I have not changed the walk, because that would move
+  a reading towards met on a run already taken. It is question 2.
+
+**Why ruling 2 did not hold.** It fired in runs 42 and 43, and the model obeyed it: at the confirm it unset
+`disposes` (run 42 turn 29, run 43 turn 23). It added no `signal_await`. With nothing settling the stage, the
+`missing` gap on the same key asked again two turns later. The scripted user answered by path with the stage's
+words, not a no, and the model wrote `disposes` back (`approved`, `disposition_sent`). That confirm had already
+been asked, so it did not ask again, and the stage closed with what the person had just rejected.
+
+The filing step survived only by another route. Runs 40 and 41 are the two that kept it, and each first wrote
+filing as a `human_await`, which the rejection at that step's `excludes` replaced with the `signal_await`. A
+draft that starts from an emit has now lost the step in all four such runs: 38, 39, 42 and 43.
+
+**What the rulings changed:**
+
+- **Ruling 1 worked.** All three runs wrote the `render`, with the part number, manufacturer and change class
+  from `{trigger.*}`. It was 0 of 3 in runs 38 to 40. Three runs is few, but the grammar line is the only
+  thing that changed there.
+- **Ruling 2** fired in both runs it could, and did not hold, as above.
+- **Ruling 3** fired once, in run 43 at turn 8, and the final `requires` is correct. Runs 41 and 42 left the
+  key out of the opening, so it was asked as missing. All three end with the expected five fields.
+- **Ruling 4** fired once, in run 41 at turn 17: `approvals.record.record.deadline`, whose step the
+  `signal_await` replaced. It was dropped with its reason, and only the impact review's deferral remains. Runs
+  42 and 43 had nothing to drop.
+
+**The two defects:**
+
+- **The false "earlier you said" did not come back.** No run raised a contradiction on the reasons. "Earlier
+  you said" appears 2, 4 and 1 times, each count including the planted contradiction. All are about `excludes`,
+  and in each the person did say it, at that leaf's confirm. Run 42's last two repeat because the model wrote
+  `excludes: []` while answering an unrelated confirm at turn 25.
+- **The bundle's names did not fire live.** No `terminals` contradiction arose, so these runs say nothing about
+  that fix. No bundle name appears in any contradiction answer. It is covered by its tests, and replaying run
+  39's final files gives "It is rejected, program_overdue".
+
+**Also seen, none of it counted by the bar:**
+
+- **Runs 41 and 42 send a rejection to `completed`.** The person says "the notice is rejected and that is the
+  end". A rejected notice and a filed one end the same way. Run 43 keeps `rejected`.
+- **Run 42 lost the escalation.** Its `escalated` routes to `completed`, not back to the impact review. The
+  model tried to fix that at the routing confirm on turn 24, and both patches were refused, because they used
+  `rows[when.outcome=escalated]`, a path form the loop can't parse. Run 42 also has one denied row.
+- **Run 42 added steps:** a `render` on the record and an `emit` on the impact review. An added step is not a
+  dropped one.
+- **Run 41's one refusal** is the `steps[0]` path form again.
+
+**Questions for the architect:**
+
+1. Should the loop refuse a patch that writes back a value the person just rejected? I recommend yes: a refused
+   patch that names the cause, like the structural refusals. The person said no and the model wrote it back, so
+   this detects and inserts nothing. If the model can't restate the patch, the gap stays open, and the run reads
+   that way. The other option is for the scripted user to say no at the `missing` gap as well. That changes only
+   the instrument, and the model could still write the value back a third time.
+2. How should a stage be read when the walk can't pair it because the verbs differ? Today it counts as having
+   dropped everything, so run 41 reads `no` with every step present. If you want that changed, I recommend
+   pairing a table's rows by which ones route on to another stage, not by the verb. It changes how the bar reads,
+   so it's your call, and I have not built it. Runs 42 and 43 read `no` either way.
+3. Should the bar read routing as well as steps? A run whose steps are all present can still end a rejected
+   notice as `completed`, or lose the escalation, as runs 41 and 42 do. The ruling covers steps only, so I have
+   not counted these. If run 41's reading changes under question 2, this decides whether it is the workflow the
+   person described.
+4. Should a refused path name the forms the loop accepts? I recommend yes, and no new form. The refusal says only
+   that it can't parse the segment. Run 42 made the same mistake twice in a row and lost a routing fix to it.
+
+I have built none of these, and ADR-0061's status is unchanged.
+
+#### 2026-11-03: the architect's rulings on runs 41 to 43
+
+1. Yes, refuse the write-back. A later patch that sets a leaf a rejection or correction unset is refused,
+   naming the rejecting turn, until the person states that value again in a turn that asks about it. The
+   refusal carries what the gap still needs and goes through the restate path of the 11-02 structural
+   refusals.
+2. Change the walk to pair by routing, with one guard. A verb's name is the person's vocabulary, and a
+   stage's identity is what it routes to. The new walk is a new instrument version, and runs 41 to 43 are
+   re-read under it together. Run 41 flipping to `yes` counts only if 42 and 43 still read `no`. If all
+   three flip, the walk is too loose and goes back.
+3. Yes, the bar reads routing too. A rejected notice that ends `completed` is a wrong workflow with every
+   step present. The bar reads the existing chain comparison after alignment rather than growing a new one.
+4. Yes, a refused path names the forms it accepts, as part of 1. No new path form.
+
+The bar stays not met. The bar for Proposed is one runnable PCN run reading `yes` under the routing-aware
+bar with the contradiction caught, plus one run that should read `no` and does. If runs 44 to 46 still lose
+the record stage, which has now failed four different ways across runs 19 to 43, the next item is the
+grammar's account of a two-step stage, not another instrument change. The person still can't say "that is
+not a stage"; it hasn't bitten since run 18, so it stays on the open list and out of this build.
+
+#### 2026-11-03: #226 merged, and a correction about its mutants
+
+The order to merge asked for the two mutants that didn't run after the one-line removal. It was the other
+way round: the two replacements ran after it and the other 37 did not. So all 39 ran in a clean worktree
+detached at `82c8fef8`, the merge sha, against `tests/socratic` on the 0.9.12 overlay. All 39 are red, and
+each was restored and checked byte for byte.
+
+The merge did not touch the loop code, so the model runs were not repeated. Between `53f26235` and
+`82c8fef8`, `socratic_elicitation.py`, `socratic_measure.py`, `tests/socratic` and the fixtures have an empty
+diff. The merge changed four other `restate_analyst` files, and the loop imports none of them. #226 landed as
+merge commit `67bd4b7e`, with `82c8fef8` as its second parent, and both are ancestors of `origin/master`.
+
+#### 2026-11-03: instrument v2, built
+
+**The refusal.** The loop now remembers a leaf that a `confirm`, `contradiction` or `null` answer took out,
+and the turn that did it. A patch that sets the leaf again is refused and goes back through the restate. The
+memory clears when a turn that asks about the leaf leaves it held. For a leaf that settles a stage, the refusal
+reads, generated from the draft: "`<stage>` still has no step that settles it; `<leaf>` was rejected at turn N
+and the person has not stated it again; a `signal_await` or `wait` step after the send fills it". For any other
+leaf, it says what was rejected and repeats the gap's question.
+
+**The path forms.** A path the loop can't parse now gets the forms it can in the error. The parser is unchanged.
+
+**The walk.** Within a pair of chaining tables, a row pairs first by a `when` that both sides spell alike. A
+leftover row pairs by where it goes: one row that routes on to a stage with one that routes on, and one row
+that ends with one that ends. A selection's value stays literal, since it is the person's data and not a verb.
+Two rows left on either side pair nothing, so a tie reads `no`. The scripted user aligns through the same
+pairing, so this changes what it answers as well as what the bar reads.
+
+**The bar.** `bar_met` is now runnable, every stage reachable, no dropped step and no wrong route. A wrong route
+is read over the selection and every expected chain table. An expected row that routes on must reach the paired
+stage. An expected row that ends must end, and no end of the draft may take two ends the expected bundle keeps
+apart. `bar_met` does not read `contradictions_detected`, so the Proposed bar's "with the contradiction caught"
+is read beside it, from its own column.
+
+**Checks.** `tests/socratic` 324 passed and the gov ratchet 24 passed, both with `LOCKED_SDK=sdk_0912`, on the
+tree merged with master. The shape census read 469 refused, 2003 passed and 0 crash sites over the three
+fixtures. There are 39 new mutants across all three items, each restored and checked byte for byte. All 39 are
+red on the first pass. They ran on the build before that merge, which changed none of the files they mutate.
+
+#### 2026-11-03: runs 41 to 43 re-read under instrument v2
+
+The stored outputs were re-read and no model ran. The result is the one the order expected: run 41 now passes
+on steps and fails on routing, and 42 and 43 still read `no`. No run reads `yes`, so the guard did not fire.
+
+| run | stored bar | v2 bar | status | unreachable | stages paired | stages that dropped a step | wrong routes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 41 | no | no | runnable | 0 of 4 | 4 of 4 | 0 | 5 |
+| 42 | no | no | runnable | 0 of 4 | 4 of 4 | 1 (record: `emit`, `render`; described `emit`, `signal_await`) | 6 |
+| 43 | no | no | runnable | 0 of 4 | 4 of 4 | 1 (record: `emit`; described `emit`, `signal_await`) | 2 |
+
+The wrong routes, by expected outcome:
+
+| table | outcome | expected | drafted | run |
+| --- | --- | --- | --- | --- |
+| acknowledge | acknowledged | `pcn_acknowledged` | `completed` | 41, 42, 43 |
+| acknowledge | escalated | `pcn_impact_review` | `completed` | 42 |
+| impact review | rejected | `pcn_rejected` | `completed` | 41, 42 |
+| impact review | needs_info | `pcn_awaiting_info` | `completed` | 41, 42 |
+| program approval | rejected | `pcn_rejected` | `completed` | 41, 42 |
+| record | filed | `pcn_dispositioned` | `completed` | 41, 42, 43 |
+
+Run 41 therefore has every step and still isn't the workflow described, because a rejected notice and a filed
+one end in the same place. That is the case ruling 3 names.
+
+#### 2026-11-03: readings in this build, for the architect's review
+
+1. **The bar's routing check is a new read, not the existing comparison.** The ruling says to read the existing
+   chain comparison rather than grow a new one, with each outcome reaching the paired stage or a terminal. That
+   comparison can't do what the same ruling requires. `canonical` collapses every terminal to `END`, so a
+   rejected notice ending `completed` compares equal, and "or to a terminal" read literally would pass it. So
+   `dropped_routes` is a small new read, and the ends the expected bundle keeps apart must stay apart. An end's
+   own name stays the model's.
+2. **The consequence is strict, and you may want to loosen it.** A `yes` needs the five endings kept apart, as
+   the person's words do: rejected, awaiting information, acknowledged, overdue and dispositioned. None of runs
+   41 to 43 did. Run 43's only routing failure is that acknowledged and dispositioned share `completed`. If
+   some endings may share a terminal, this rule is too tight. Loosening it isn't one line, though: dropping the
+   condition also passes a rejected notice ending `completed`, so the instrument would need to be told which
+   endings may merge.
+3. **Any re-set is refused, not only an equal value.** The ruling says "back to the rejected value", but run 42
+   held `recorded`, was told no, and wrote `approved`, so literal equality would have missed one of the two runs
+   it was written for. Run 43 wrote back the same value.
+4. **The refusal outlives its turn.** The first message says "rejected this turn", and the second says "a later
+   patch ... until the person states that value again". Run 42's write-back came two turns after the rejection,
+   so I followed the second.
+5. **`human_await` isn't among the named forms**, though it settles a stage. This follows "a `signal_await` or
+   `wait`": a human approval was one of the record stage's four failures.
+6. **What the walk and the bar still don't read.** A row the draft added isn't read by the routing check. One
+   expected end split over two names in the draft passes. Two differently spelled ending verbs in one table
+   pair nothing and read `no`, even if both are right.
+7. **A known way around the refusal.** Renaming a step in one patch and setting the rejected leaf on the renamed
+   step in a later patch is not caught. A rename and the leaf in the same patch is.
+
+#### 2026-11-03: runs 44 to 46, and the bar is not met
+
+Three complete PCN runs at `94532250`, instrument v2, one at a time, with the same model and harness on the
+0.9.12 overlay. Dagster listed no active run before each one.
+
+| run | questions / bank | runnable errors | unreachable | stages that dropped a step | wrong routes | bar | semantic diffs | open | answered by path | refused patches | confirms | rejected | contradiction | deferral | reasons | contradictions answered | deferrals dropped | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 44 | 26/18 | 0 | 0 of 4 | 1 | 3 | no | 2 | 0 | 6 | 2 | 13 | 0 | 1/1 | 1/1 | held | 1 | 0 | runnable | 721 |
+| 45 | 29/18 | 1 | 0 of 4 | 0 | 1 | no | 4 | 1 | 6 | 3 | 15 | 1 | 1/1 | 1/1 | held | 1 | 0 | cannot_run | 752 |
+| 46 | 27/18 | 0 | 0 of 4 | 0 | 2 | no | 0 | 0 | 5 | 1 | 12 | 1 | 1/1 | 1/1 | held | 2 | 1 | runnable | 682 |
+
+**The bar for Proposed is not met as built: no run reads `yes`.** Runs 44 and 45 read `no` and should, so that
+half is there. Run 46 is the open question, because its `no` rests on one reading of mine (below). The architect
+ruled that its `no` stands.
+
+**Run 46 is the closest yet.** It is runnable, every stage is reachable, it dropped no step, and it has no
+semantic diff. The planted contradiction was caught. Its record stage is an `emit` and a `signal_await`, as
+described. It reads `no` on two routes, which are one fault: the person says "the notice is acknowledged and
+that is the end" and "the notice is dispositioned and that is the end", and the model ended both at `completed`.
+Its other three endings are kept apart. The semantic diff is 0 because `canonical` collapses every terminal.
+
+**Run 45 can't run.** The impact review's `needs_info` row names a target that is neither a stage nor a terminal,
+because the table's terminal is `info_needed`. The person said at turn 15 that the notice "waits for information
+and that is the end". The model tried to correct the row twice with `rows[when.outcome=needs_info].then`, and both
+patches were refused because no such form exists. It didn't take up the refusal's advice to set `rows` whole. The
+loop asked for the steps of a stage called `needs_info` at turn 12, before that, and again at turn 28, and the person
+had no answer either time. **So "that is not a stage" has bitten again**, which changes the 11-02 note that it hadn't
+since run 18.
+
+**Run 44 lost the filing step at its first draft of the record.** At turn 4, a `missing` gap on `steps.record`, the
+person said "Then the records group files it and says so", and the model drafted the `emit` alone. Run 45 also
+drafted one step, at turn 5, and run 46 drafted two, at turn 8. At turn 10, a `missing` gap on `outputs.record.ends`,
+the model set `disposes: approved` on that `emit`, so the stage had an end and no gap was left to bring the second
+step back. This paragraph first gave a different cause: that the slot counted as answered, so the person was never
+asked. The architect ruled otherwise: the gap question is the ask, so a value set there was asked, and the next item
+is the two-step grammar, not a confirm there.
+
+**Run 44 also lost an answer.** At turn 26 the person said "Once it is filed the notice is dispositioned and that is
+the end". The model's patch was refused on `steps[0].disposes`, its next reply was an empty patch, and the turn closed,
+so that answer changed nothing.
+
+**The refusal did what it was ruled to do, the one time it was reachable.** In run 45 the scripted user rejected
+`disposes` at turn 26. At turn 29 the model wrote it back, as runs 42 and 43 did, and was refused with "record still
+has no step that settles it; disposes was rejected at turn 26 and the person has not stated it again; a signal_await
+or wait step after the send fills it". Its next patch in that turn was an `emit` and a `signal_await`. That is one
+occurrence, not a rate.
+
+**The refused path's forms helped in one turn of three.** The new text came back four times, in one turn of each run.
+In run 46 the next reply wrote the table whole, as the text says. In run 44 the next reply was the empty patch above.
+In run 45 the model sent the same path again, was refused again, and the row stayed wrong, which is why that run can't
+run. Run 44 also sent `rows[when=outcome=timed_out].then` at turn 18, which parses and got the shape refusal instead,
+and its next reply wrote the table whole.
+
+**The record stage:** held in two of three. Run 45 held it through the refusal. Run 46 held it when the model's
+`human_await` was rejected at its `excludes` confirm and the person's words were given again. Run 44 lost it as above.
+
+**One stale deferral.** Run 46 still holds a deferral on `outputs.record` from turn 5, "user could not answer", though
+turns 8 and 20 filled that stage. The stale-deferral drop only looks at whether a slot exists. It compiles to nothing
+and isn't in the bar, but a ratifier would be shown it.
+
+#### 2026-11-03: the question the runs leave, for the architect
+
+Ruled 2026-11-03: as built, the third row below. See the rulings after this section.
+
+**Do two endings the person named separately have to stay separate?** This is reading 2 above, and it now decides
+the bar. The options:
+
+| reading | run 41 | run 43 | run 46 | bar for Proposed |
+| --- | --- | --- | --- | --- |
+| Any end counts ("or to a terminal", literally) | `yes` | `no`, on its step | `yes` | not usable: it passes run 41, which the order expected to fail on routing |
+| Some ends may share a terminal, and a rejection may not share with a success | `no` | `no`, on its step | `yes` | met by 46 with 44 and 45, but the instrument must be told which ends may share, so it is a v3 and 41 to 46 are re-read |
+| Every end the person named stays apart (as built) | `no` | `no` | `no` | not met |
+
+My recommendation is to keep it as built. The person named each ending, and in run 46 a reader can't tell an
+acknowledged minor change from a dispositioned one. Loosening the bar for the one run it blocks is also what the
+guard on the walk was there to prevent. The cost is low, because the fault looks like a naming fault: a grammar line
+saying an ending the person names keeps the person's name, then three more runs. This is your call, and I have not
+changed the instrument or the status.
+
+**For the open list, and not built:**
+1. The record stage was lost in one of three runs. Your next item for that case is the grammar's account of a
+   two-step stage, and you ruled that a confirm at the `missing` gap is not the fix.
+2. "That is not a stage" has bitten in run 45.
+3. A deferral whose slot was later filled stays in the draft.
+4. A turn can close on an empty patch after a refusal, which loses the person's answer (run 44, turn 26).
+
+#### 2026-11-03: the rulings on runs 44 to 46
+
+The architect ruled three things:
+
+1. Endings a person names separately stay separate, as the bar is built. So run 46's `no` stands.
+2. A value set at a `missing` gap on its own slot was asked, because the gap question is the ask. So run 44 lost the
+   filing step for a different reason than the one this section first gave, and the fix is not a confirm there. The
+   paragraph and the open-list item above are corrected.
+3. That ruling is about the turn check only. A `missing` gap doesn't undo a rejection, so `_asks` keeps its behaviour.
+
+The order was a grammar line and three runs, with the grammar's account of a two-step stage after them. `3beeb912`
+adds the line: "An ending the user names keeps the user's word: the terminal is named for it, and two endings they
+name differently are two terminals, never one word of your own such as completed." It also rewords the `_asks`
+docstring. Its seal only shows that the line's text is there. Only the runs can show what it does.
+
+#### 2026-11-03: runs 47 to 49, three `yes` readings and one is false
+
+Three complete PCN runs at `3beeb912`, instrument v2 unchanged, one at a time, with the same model and harness on the
+0.9.12 overlay. Dagster listed no active run before each one.
+
+| run | questions / bank | runnable errors | unreachable | stages that dropped a step | wrong routes | bar as read | semantic diffs | open | answered by path | refused patches | confirms | rejected | contradiction | deferral | reasons | contradictions answered | deferrals dropped | status | seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 47 | 32/18 | 0 | 0 of 4 | 0 | 0 | yes | 2 | 0 | 7 | 2 | 12 | 1 | 1/1 | 1/1 | held | 7 | 0 | runnable | 964 |
+| 48 | 27/18 | 0 | 0 of 4 | 0 | 0 | yes | 3 | 0 | 6 | 2 | 12 | 1 | **0/1** | 1/1 | held | 3 | 0 | runnable | 769 |
+| 49 | 27/18 | 0 | 0 of 4 | 0 | 0 | yes | 3 | 0 | 5 | 2 | 14 | 1 | 1/1 | 1/1 | held | 2 | 0 | runnable | 1030 |
+
+**The instrument reads `yes` on all three, and I am not calling the bar met.** The bar for Proposed is one run `yes`
+with the contradiction caught, and one run that should read `no` and does. Taken by the letter it could be read as
+met: run 47 is `yes` with the contradiction caught, and runs 44 and 45 read `no` on the same instrument, one grammar
+line earlier. But run 48 should read `no` and reads `yes`, so the instrument doesn't yet tell the two apart. Whether
+that decides it is the architect's call. Nothing is flipped and the instrument is not changed.
+
+**Run 48 is a false `yes`.** The person said two things about who may sign off: "Any component engineer may take that
+disposition, including whoever logged the notice", and "The person who logged the notice may never sign off either
+review." That is the planted contradiction. The compiled impact review has `excludes: []`, so the person who logged a
+notice can sign off its impact review. The person ruled that out, and catching it is what the planted contradiction
+is for.
+
+The second sentence came at turn 16, as the answer to a confirm on the program approval. The model wrote `excludes`
+on that one step. In runs 47 and 49 the same sentence, at turns 13 and 14, made the model write both reviews, and the
+conflict with the impact review's earlier `[]` raised the question. In run 48 no second value was written, so there
+was nothing to detect, and the loop doesn't write values itself. The bar doesn't see it because `bar_met` reads step
+kinds and routes, not what a step holds. The semantic diff does see it (`.defs.wf0.steps[1]`), and it isn't in the bar.
+The restate does show the difference, as a word that is missing from one line: the program approval's line carries
+`excludes` and the impact review's doesn't.
+
+**Run 49 lost the required details to a model timeout.** It has no `trigger.requires`, though the person said "Every
+notice has to carry its kind, its notice number, the part number, the change class and who logged it." The run's one
+`ReadTimeout` fell on that turn, turn 1: it is the only reply in the run with no model text, and its patch is the
+exact empty one the extractor returns on a transport failure. So the model never read the answer. The loop then
+deferred the slot as "answer did not settle it", which isn't what happened, and never asked again. `non_deferrable`
+allows it, because a `missing` gap on `requires` isn't in `required_slots`. Runs 47 and 48 set all five fields from
+that same answer. The deferral is at least visible in the restate. I don't read this run as saying anything about the
+model on `requires`, but the bundle it compiled requires no details at all and the bar reads `yes`.
+
+**Run 47 is the only clean reading, with one flaw.** Its contradiction was caught, `excludes` is right on all three
+approvals, `requires` is present, and the record is an `emit` and a `signal_await`. Its flaw is the record's outcome.
+The person said "It is filed" at turns 28 and 30 and "Yes, it can end 'filed'" at turn 31, and the table held `filed`
+after turns 30 and 31. Turn 32 asked what follows `recorded`, because the `signal_await` still accepted that word. The
+model answered by putting `recorded` back in the table, and the run ended there. Routing is right, so the bar passes
+it. The semantic diff reads it as a difference. Five of the run's eight contradiction questions were spent on this
+stage's words.
+
+**Reading content as well would change only these two.** `canonical` already compares `excludes` (as barred or not)
+and `requires`. I read both against the expected bundle for every stored run from 41 to 49, without changing the
+instrument. `excludes` is wrong only in run 48, and `requires` only in run 49. So a bar that also read those two would
+turn 48 and 49 to `no` and move nothing else: 47 stays `yes`, and 41 to 46 already read `no`. That is measured on
+nine stored runs, and the rule would be chosen after seeing them, as v2's was.
+
+| run | bar as read | `excludes` | `requires` | contradiction | bar if it read both | record's outcome word |
+| --- | --- | --- | --- | --- | --- | --- |
+| 47 | yes | right | right | caught | yes | `recorded` |
+| 48 | yes | **impact review bars nobody** | right | **not raised** | no | `dispositioned` |
+| 49 | yes | right | **absent** (timeout) | caught | no | `dispositioned` |
+
+Superseded by the ruling below: run 47 reads `no` on slots, so no run of these reads `yes` on both.
+
+**The grammar line did what it was for, on routes.** Wrong routes went from 3, 1 and 2 in runs 44 to 46 to 0, 0 and 0.
+The only code change between the two batches is that line and a docstring, but three runs each is a count, not a rate.
+The ends are apart in all three. The person's own word is used in one: run 49 has `acknowledged` and `dispositioned`,
+while 47 and 48 have `acknowledge_done` and `record_done`, which the bar allows because an end's own name stays the
+model's. The record's outcome is never the person's `filed` in any of the three, where run 46 had it, and the line
+only speaks of terminals.
+
+**The record stage held in all three, and only by repair.** Each run's first draft of the record was one step, an
+`emit` with `disposes` set (run 47 at turn 4 with `approved`, run 48 at turn 4 and run 49 at turn 8 with `recorded`).
+Each was rejected at its confirm (turns 24, 25 and 25). Each then tried at turn 27 to write `disposes` back, was
+refused, and with that refusal in hand wrote the `signal_await`. Run 44's first draft was also one step, and it didn't
+come back. So the refusal has now fired in four runs of six and repaired the stage each time, and the first draft has
+not improved. That supports the two-step grammar coming next, as ordered.
+
+**The refused path's forms.** The text came back once per run. In runs 47 and 49 the next reply used the named form
+(`steps[id=emit_disposition].template.outcome`, `steps[id=await1].audience`). In run 48 the next reply wrote only the
+table and left that step's write out, which is the write the turn-27 refusal then stopped.
+
+**Not seen in these three.** "That is not a stage" didn't come up: no turn asked for the steps of an ending. No turn
+closed on an empty patch after a refusal. Both stay on the open list, since three runs don't retire them.
+
+**Two more things these runs show.** Run 49 holds the same stale deferral as run 46, on `outputs.record` from turn 5,
+though the stage was filled later. And no stored run from 41 to 49 has the `{case.approval_chain}` the expected bundle
+has. In 47 to 49 the record's `approval_chain` is a fixed list of impact review, acknowledge, program approval, in that
+order, which is not a path any case takes. `canonical` doesn't read templates, so neither the bar nor the semantic
+diff sees it, and the grammar doesn't mention the form.
+
+#### 2026-11-03: the questions runs 47 to 49 leave, for the architect
+
+All three are ruled below. Question 2's recommendation was overruled: run 47's `recorded` counts, as a slot fault.
+
+1. **Is the bar met?** My recommendation is no, not on this instrument. Have the bar read `excludes` and `requires`,
+   as instrument v3, and re-read 41 to 49 together. It needs no model time. If you accept the table above, run 47 is
+   the `yes` with the contradiction caught and run 48 is the run that should read `no` and does, which is both halves.
+   That would not fix run 48: the loop lost a barred approver in one run of the nine, and the instrument would only
+   be reporting it.
+2. **Does run 47's `recorded` count against it?** I'd say not for the bar. It routes correctly, and the fault is a word,
+   but the person used that word at every turn from 28 to 32, and the bar is "does the compiled workflow do what the
+   person described". If it does count, no run in this batch is `yes`.
+3. **What reads the two-step runs?** The two-step grammar is built (below). The v3 re-read has not started. I'd do it
+   before those runs, so that they are read by it.
+
+**For the open list, and not built:**
+1. An answer that names several slots can be written to only the one asked about, and nothing detects it (run 48). A
+   grammar line is the obvious first try. It is the model's write, so the loop still doesn't insert.
+2. A transport failure defers the slot with a reason that says the answer was read (run 49). I'd ask again once, and
+   name the failure if it is left.
+3. `requires` can be deferred. It isn't among `required_slots`, so `non_deferrable` lets it through, and I don't know
+   whether that was meant.
+4. The record's `approval_chain` is a fixed list, and the grammar doesn't mention `{case.…}`.
+5. The record's outcome word isn't covered by the endings line. The two-step line below speaks to it for a
+   `signal_await`, and that is not measured. Where the model puts back a word the person corrected, it is now ruled a
+   slot fault and refused (below).
+
+#### 2026-11-03: where the bar stands, and the two-step grammar
+
+**Bar status when this was written: not called met, and with the architect. The ruling below says not met.** As
+instrument v2 reads it, run 47 is the first half, `yes` with
+the contradiction caught. No run from 47 to 49 is the second half. Runs 44 and 45 read `no` on the same instrument, one
+grammar line earlier. Run 48 should read `no` and reads `yes`. The status above is not flipped and the instrument is
+not changed.
+
+**The two-step grammar is built and not measured.** The grammar already said a step someone confirms afterwards is a
+`signal_await`. First drafts of the record were still one step in five of runs 44 to 49 (all but 46), and the person's
+words there are "Then the records group files it and says so", which never say "confirms". So a new line follows that
+one: "Two acts the user describes one after the other are two steps of one stage, in that order, drafted in the same
+statement; never draft the first act alone. When something is sent and then someone acts on it and says so, that is an
+emit followed by a signal_await for that audience, not a human_await, since nobody is asked to decide: the emit has no
+disposes, and the signal_await accepts the user's word for what was done."
+
+Its seal only shows the text is there. Only model runs can show that the first draft changes, and none has run on this
+line. It does nothing for run 48's lost bar or run 49's timeout. The refusal stays as the backstop.
+
+#### 2026-11-03: the rulings on runs 47 to 49
+
+1. **Instrument v3 reads `excludes` and `requires` alongside step kinds and routes.** "A bar that can't see the
+   self-signoff exclusion was reading `yes` on a workflow the person ruled out — that is the finding of this batch."
+2. **Run 47's `recorded` counts, as a slot fault and not a route fault.** "The outcome name is a slot the person set and
+   the model reverted it. The confirm/turn check exists for exactly this; it didn't fire." So run 47 reads `yes` on
+   routes and `no` on the confirm. "Bar not met this batch; no run is clean." The table records the route bar and the
+   slot bar apart.
+3. **v3 first, then the two-step runs.** Added to the confirm check: "a slot the person has stated is not rewritten by
+   the model without a confirm turn; a rewrite is a fault, not a deferral."
+
+#### 2026-11-03: instrument v3 and the rewrite check, built
+
+**The bar is now two bars, and `yes` needs both.** The route bar is what v2's bar was: runnable, every stage reachable,
+no stage that dropped a step, no wrong route. The slot bar reads three things:
+
+- `wrong_excludes`: a step whose bar on who may answer isn't the expected one. It compares the values, where `canonical`
+  keeps only whether there is a bar, so a bar on the wrong field reads too. Steps pair by kind and in order, as
+  `dropped_steps` pairs them.
+- `wrong_requires`: the trigger's required details, in any order, with an absent list read as empty.
+- `rewritten_slots`: a value the person stated that the model took out on a turn that didn't put it to them, replayed
+  from the stored turns.
+
+**Runs 41 to 49 re-read, with no model time.**
+
+| run | route bar | slot bar | bar | what the route bar reads | what the slot bar reads |
+| --- | --- | --- | --- | --- | --- |
+| 41 | no | yes | no | 5 wrong routes | |
+| 42 | no | yes | no | 1 dropped step, 6 wrong routes | |
+| 43 | no | yes | no | 1 dropped step, 2 wrong routes | |
+| 44 | no | yes | no | 1 dropped step, 3 wrong routes | |
+| 45 | no | yes | no | `cannot_run`, 1 wrong route | |
+| 46 | no | yes | no | 2 wrong routes | |
+| 47 | **yes** | **no** | no | | `filed` taken out of the record's outcomes and rows at turn 32 |
+| 48 | **yes** | **no** | no | | the impact review's `excludes` is `[]`, expected the person who logged the notice |
+| 49 | **yes** | **no** | no | | `trigger.requires` absent |
+
+The route bar equals the stored `bar_met` on all nine, which is the control that v2's reading survived the split. Runs
+48 and 49 flip as ruled, and run 47 reads `no` as ruled in item 2. Nothing else moved: 41 to 46 have nothing on the slot
+bar and already read `no` on routes.
+
+**Where that leaves the bar for Proposed: not met on these nine runs.** It needs one run `yes` with the contradiction
+caught, and one that should read `no` and does. Runs 48 and 49 are now the second half. No run of these is the first.
+Nothing is flipped. Runs 50 to 52 are below.
+
+**Why the check didn't fire on run 47.** Turn 32 was a `missing` gap, asking what follows `recorded`, because the
+`signal_await` still accepted that word. That gap's `revises` names the table's `domain.outcome` and `rows`, so the write
+didn't pend. `_refuse_rejected` didn't apply either, because it stops a value the person took out from coming back, and
+this took out a value the person had put in. Nothing read that direction.
+
+**The check.** `Draft.stated` holds, per leaf, the values the person stated and the turn. A patch that takes one out is
+refused unless the turn puts that leaf to the person, meaning a confirm, contradiction or null whose `revises` or
+`rewrites` names it, or a structural fix a refusal asked for. The refusal is charged to the turn in `model_errors` with
+`fault: rewrite`, and it says what the turn may still change, because otherwise the model has nowhere to go but the same
+value. The patch gets the one restatement every refused patch gets. If that is refused too, the gap goes to `open`, so
+the run is `cannot_run`, and `leave` isn't called, so it is never a deferral. An open key can be asked once more, and an
+answer that settles it then closes it.
+
+**The stored replies put back through the loop, with no model.** This shows where the check fires on real patches. Each
+stored reply went through `run` with the check on:
+
+| run | turns stored / replayed | rewrite faults | status stored → replayed |
+| --- | --- | --- | --- |
+| 41 | 25 / 25 | 0 | runnable → runnable |
+| 42 | 34 / 31 | 0 | runnable → `cannot_run` |
+| 43 | 25 / 25 | 0 | runnable → `cannot_run` |
+| 44 | 26 / 26 | 0 | runnable → runnable |
+| 45 | 29 / 29 | 0 | `cannot_run` → `cannot_run` |
+| 46 | 27 / 27 | 0 | runnable → runnable |
+| 47 | 32 / 34 | **2, both at turn 32** | runnable → `cannot_run` |
+| 48 | 27 / 27 | 0 | runnable → runnable |
+| 49 | 27 / 27 | 0 | runnable → runnable |
+
+At turn 32 of run 47 the outcome stays `filed`, and the model would read: "the possible outcomes of record chaining: the
+person stated ["filed"] at turn 30 and this turn does not put it to them, so it stays; this turn may change the possible
+answers for await record in record, which answers need a reason for await record in record; still needed: When record
+ends 'recorded', what happens next?" The two faults are one patch tried twice, since a replay has no second reply to
+give. Its two extra turns are `contradiction:chaining.record_chaining.filed` and `outputs.record.next.recorded` asked
+again, and nothing is stored to answer them, so its `cannot_run` is what a replay can show, not what a live run would do.
+Runs 42 and 43 change status because of the write-back refusal, `bc357427`, not because of this check. That refusal came
+after they ran. Each wrote `disposes` back on its second `ends` turn after the person rejected it (run 42's turn 31, run
+43's turn 25), that patch is now refused, and the gap stays open. A replay can't say whether a model given the rewrite
+text takes the way out. Only runs 50 to 52 can.
+
+**The replay found a defect the seals had passed.** My first version compared a whole `domain` dict as one value. It
+refused run 45's turn 18, which only grew the outcome list, because a confirm had put `domain` to the person at turn 16.
+That was a false fault on a correct turn. The check now reads a dict one leaf at a time, and it drops a stated value once
+a turn that put it to the person has changed it. Both have seals, and run 45 now replays clean.
+
+#### 2026-11-03: readings in the rewrite check, for the architect's review
+
+1. **"Stated" is what the turn check already means by it.** It is what the answer on a confirm, contradiction or null
+   turn wrote, one value at a time within a list. A confirm or overwrite contradiction also states what it asked about
+   and left standing. A contradiction over one chaining value states only what its answer changed: run 42 answered "can
+   it end this way" with the opening's guessed rows still in place, and the turns that then routed them were right.
+2. **A value set at a `missing` gap isn't stated, for this check.** The ruling that the
+   gap's question is the ask was about the turn check. Read here as well, it would add ten readings on the stored runs,
+   across 42, 44, 45, 46, 47, 48 and 49. Eight of them are `routed` gaps, where a stage no table reached gets routed and
+   the table an earlier `missing` turn drafted has to change, so the check would refuse the turn that makes a stage
+   reachable. Run 47's turn 32 reads under both. If you want the wider reading, it is one condition in `_note_stated`
+   and in `rewritten_slots`, and it needs that exemption ruled.
+3. **Adding to a leaf isn't a rewrite.** Only a value taken out is. So a person's `excludes: []` states nothing, and a bar
+   the model adds to it later isn't refused here. `wrong_excludes` would read it if it landed.
+4. **A rewrite that was refused and repaired doesn't fail the slot bar.** The check fired and the slot is intact. It shows
+   in `rewrites_refused`. Only one that landed fails.
+5. **The instrument reads less than the loop holds.** A stored turn doesn't record what its question asked, so
+   `rewritten_slots` reads only what an answer wrote. The loop also holds a value confirmed and left unchanged. Its seal
+   is `test_what_an_answer_wrote_at_a_confirm_is_stated_and_a_leaf_it_left_alone_is_not`.
+
+**What v3 still doesn't read.** The slot bar reads a reverted word, not a wrong one. Runs 48 and 49 end with the record's
+outcome `dispositioned`, where the expected bundle has `filed`. Both wrote it at turn 26, the confirm answered "Once it is
+filed the notice is dispositioned and that is the end", so nothing was reverted and neither reading is about it. Only
+runs 41 and 46 end on `filed`. The semantic diff sees the difference, and the bar doesn't. The fixed `approval_chain`
+isn't read either. Runs 48 and 49 read `no` for other reasons, so neither of these moved a reading in this batch. It could
+in the next one.
+
+#### 2026-11-04: runs 50 to 52, and the bar as v3 reads it
+
+Three runs at `d2b88afb`, on the two-step line and the rewrite check together, so a change between these and run 49 can't
+be split between the two.
+
+| run | status | route bar | slot bar | bar | contradiction | record, first draft | record, final | what it reads |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 50 | runnable | **yes** | **yes** | **yes** | caught | emit, `human_await` | emit, `signal_await`, ends `filed` | |
+| 51 | runnable | no | yes | no | caught | emit | emit with `disposes`, ends `approved` | the filing step dropped |
+| 52 | `cannot_run` | no | yes | no | caught | emit, render | emit, render, ends `approved` | the filing step dropped, 2 wrong routes, `outputs.record.ends` open |
+
+**Bar status: as instrument v3 reads it, the bar for Proposed is met, and that reading is with the architect.** Run 50 is
+the first half: `yes` on both bars with the contradiction caught. Runs 51 and 52 are the second half: the person described
+a filing step, the draft doesn't have it, and both read `no`. The bar asks for one run and this is one in three, so it says
+the loop can do this, not that it does so reliably. Nothing is flipped.
+
+**Run 50 read against the bundle by hand, because runs 47 and 48 read `yes` falsely.** These match, apart from names: the
+selection, every route and terminal, each stage's step kinds, every audience, `accepts`, `reason_required`, the three
+deadlines (seven days, none, deferred as planted), every `excludes`, the trigger's `requires`, `key` and `episode`, and the
+record's `signal` and outcome. The caught contradiction is the planted one, at turn 16 on the impact review's `excludes`,
+answered "The submitter is barred from both reviews." That answer also wrote the bar onto the acknowledgement, and the loop
+asked about that at turn 17 ("It is none"), so the slip didn't land.
+
+**What run 50 doesn't do, and no instrument reads:**
+
+1. **`approves` and `role` are absent from all three of its `human_await` steps, and from every step in all twelve runs 41
+   to 52.** The person says "Only an approval counts as an approval." The executor appends an approval-chain entry only
+   when the step has `approves` (`main.py`, `if step.approves:`), so run 50 would never record who approved. No gap asks
+   for the field, though the model is shown it in the schema, and `canonical` doesn't keep it. This has the same form as
+   the finding that made v3: a bar that can't see something the person said. Reading it would turn all twelve to `no` on
+   slots, and no run would be the first half. **My recommendation is to rule it into the bar before calling the bar met.**
+   It needs a gap or a grammar line as well as the instrument, so it would mean new model runs. I have changed nothing.
+   `subject_ref` and `title` are absent too, and I haven't read what that does when the case runs.
+2. **The record's message carries the words `approval_chain`, not the chain.** The template is `approval_chain:
+   approval_chain`, where the bundle has `{case.approval_chain}`. This is on the open list: the grammar has no `{case.…}`.
+3. **`outputs.record` stays deferred with the reason "user could not answer", though the stage is filled.** It was asked at
+   turn 5, before the stage had steps. This is the stale deferral on the open list, and run 52 has it too.
+
+**The two-step line, measured.** First drafts of the record had two steps in two of these three, against one of runs 44 to
+49. Neither was the shape the line asks for, an emit then a `signal_await`. Run 50's `human_await` became a `signal_await`
+only at turn 18, when the person answered a confirm on its `excludes` with "No, that is not right". Run 52's second step
+is a render standing in for the filing. So the line may have moved the count of steps, and not the kind. Three runs can't
+say more than that.
+
+**The rewrite check did not fire.** `rewrites_refused` and `rewritten_slots` are empty on all three, and none of the
+refusals is that check's. So it charged no false fault here, and whether a model handed that refusal takes the way out is
+still not measured.
+
+**Run 51 never got a rejection.** `outputs.record.ends` was a `missing` gap at turn 11, so the person's answer was the step
+description again, and the model wrote `disposes: approved` on the emit. The rejection the scripted user gives is on the
+`confirm` form, as in run 50's turn 26 and run 52's turn 24.
+
+**Run 52 lost a correct move to the path form.** After the person rejected `disposes` at turn 24, the model wrote it back at
+turn 26 and the write-back refusal told it a `signal_await` after the send would fill it. Its next reply wrote one, at
+`steps[1]`. The path grammar refused that form and it was the last try, so the gap stayed open and the run is `cannot_run`.
+That reading is right, since nothing landed. It goes on the open list.
+
+#### 2026-11-04: the ruling on approves and role, and instrument v4
+
+The architect ruled: "`approves`/`role` ruled in — instrument v4 reads them; add the grammar line ("an approval step names
+who approves and in what role"); three runs, go. Bar not met until a run reads yes on route, slot and approval."
+
+**Built.** `wrong_approvals` in `scripts/socratic_measure.py` lists each described `human_await` whose draft doesn't
+carry the same `approves` and `role`. The awaits pair in order, and only with awaits, so a render before one doesn't shift
+the pairing. A described await the draft lacks reads, and so does an `approves` on a step whose answers the person didn't
+call an approval. The approval bar is that list being empty. `bar_met` now needs the route bar, the slot bar and the
+approval bar. The grammar gained a line: an approval step names who approves and in what role. When the user says which
+answers count as approval, that `human_await` lists them in `approves`, and its `role` is the approver's capacity in the
+user's words. A step none of whose answers the user calls an approval has no `approves`. The scripted person in
+`pcn_review` says all of it: "Only an approval counts as an approval", "Acknowledging counts as an approval", "Any
+component engineer", "Program approval goes to the program manager".
+
+Ten seals, and ten mutants that each die on one: `approves` ignored, `role` ignored, the role read verbatim, the role read
+with case folded but not separators, an unpaired step passing, only described approvals read, awaits paired with any step
+kind, the approval bar always true, `bar_met` without it, and the grammar line taken out. The suite, gov's refusal
+ratchet and the corpus check pass. The census is unchanged at 469 refused, 2003 passed, no crash sites.
+
+**A reading for the architect's review: the role compares by its words, not its spelling.** "Program Manager",
+`program-manager` and `program_manager` read the same. Anything else is a different role. That includes a synonym, or
+the group the person named in place of the capacity. So a draft saying `engineer` for "any component engineer" reads
+`no`. If the architect wants a role read against the grants rather than the words, that is another instrument.
+
+**Runs 41 to 52, re-read under v4 with no model time.** Route and slot equal v3's on all twelve, checked by assertion.
+Every run reads `no` on approval. Each of its three `human_await` steps has neither `approves` nor `role`. So run 50, which
+read `yes` on v3, reads `no`, and no stored run meets the bar. The bar for Proposed is not met. Runs 53 to 55 are next, on
+the grammar line. Nothing is flipped.
+
+#### 2026-11-04: runs 53 to 55, on the grammar line
+
+Three runs at `48bd0274`. They started once a roll in flight had finished and Dagster listed no active run. The driver had
+refused to start while it did.
+
+| run | status | route bar | slot bar | approval bar | contradiction | `approves` drafted | `role` drafted | what it reads |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 53 | `cannot_run` | no | yes | no | caught | 3 of 3 | 2 of 3 | the impact review's role is missing, and nothing else |
+| 54 | `cannot_run` | no | no | no | caught | 2 of 3 | 1 of 3 | the filing step dropped, the program approval's `excludes` empty, the program approval without `approves`, the impact review's role missing |
+| 55 | `cannot_run` | no | yes | no | caught | 1 of 3 | 0 of 3 | 2 wrong routes, the acknowledgement and program approval without `approves`, the impact review's role missing |
+
+**Bar status: not met.** No run reads `yes` on route, slot and approval. Nothing is flipped.
+
+**The grammar line moved the field.** Six of these nine approval steps have `approves`, against none of the 36 in runs 41 to
+52, and each holds the answers the person called an approval. Three runs aren't enough to say how reliably it lands.
+
+**How the roles land.** The model writes `approves` without `role`, and the executor's validator refuses it: "`approves`
+requires a `role` for the chain entry". The loop puts that to the person as a contradiction on the whole workflow,
+"…does not hold together at steps.1.human_await: … What should it be?". The person answers with what they said of that
+stage. Each of the three roles that landed is on a stage where this was asked and answered: run 53 at turn 6 on the
+program approval and turn 31 on the acknowledgement, and run 54 at turn 30 on the acknowledgement. Each role is in the
+person's words ("component engineer", "program manager"), and v4 reads each as right.
+
+**Why all three are `cannot_run`: the scripted person can't answer that question about the impact review.** It answers a
+whole-workflow contradiction with the bank entry `steps.<stage>`. The impact review has no such entry, because its steps
+are described in the opening: "Any component engineer may take that disposition". The same question on the other three
+stages gets the person's words on all three runs. That is the control, and it was checked with no model time. The loop
+asked twice on each run and then left the gap open with "a runtime refusal may not be deferred; user could not answer".
+No run from 41 to 52 raised a contradiction on a whole workflow, so these are the first runs to reach this path.
+
+So each `cannot_run` is the scripted person staying silent on something they said in their first answer. That is an
+instrument fault, found by the runs. The approval bar would read `no` on each run regardless, since the impact review's
+await has no role.
+
+**Run 53 reads wrong on nothing else.** No step dropped, no wrong route, `excludes` and `requires` right, no rewrite, the
+record ends `filed`, the planted contradiction caught, and the impact review's deadline deferred as planted. Its route bar
+reads `no` only from `cannot_run`. I haven't measured what it would have done had the person answered, and I don't claim
+it.
+
+**Two ways to fix it, for the architect to choose.** I have changed neither.
+
+1. **The loop asks about the field the refusal names.** When a refusal names a field (`` `approves` requires a `role` ``),
+   the loop puts the question on that field (`#steps[id=…].role`) rather than on the whole workflow. A person can say who
+   signs a step, where "what should the impact review be?" is hard to answer. The scripted person would then answer from
+   the expected value, as for any other contradiction on a path. It changes the loop, so it needs new runs. **My
+   recommendation is this one.**
+2. **The scripted person answers from the opening when a stage has no entry of its own.** This changes only the
+   instrument. The risk is that the opening carries the planted contradiction ("including whoever logged the notice"), so
+   replaying it would plant the contradiction again after the person resolved it.
+
+**Also seen.** The rewrite check fired nowhere again. Run 53 had one model error, which I haven't traced. `outputs.record`
+is deferred again on runs 54 and 55, though both drafted a record stage. Run 54's record again stands a render in for the filing step.
+
+#### 2026-11-04: the ruling on fix 1, and the question on the field
+
+The architect ruled: "build fix 1 (the loop asks for the one field the rejection names, `…#steps[id=…].role`), not fix 2
+(re-plants the contradiction, as you said). Three runs (56–58) after it. Bar not met."
+
+**Built.** When the executor refuses a step and the refusal's location names no field, the loop now looks for the field
+that would clear it. It tries each field the step leaves unset with a placeholder. A field qualifies when the step then
+has no error at that field and no longer this refusal. If exactly one qualifies, the question goes on that field, keyed
+`contradiction:<file>#steps[id=<step>].<field>`, and an answer may write it. On run 53's final draft the person would be
+asked "What is the role of await impact in impact review? Without it: step await_impact: `approves` requires a `role`
+for the chain entry." If no field qualifies, or more than one does, the question stays on the whole workflow as before. A grouped
+await with `approves` is the case that stays: no one field clears that refusal. Like any runtime refusal, the new
+question may not be deferred.
+
+The scripted person answers it from the expected value, as for any other contradiction on a path. So it says "It is
+component_engineer." and does not replay the opening, which carries the planted contradiction. That was the risk in
+fix 2.
+
+Six seals, and nine mutants that each die on one: the question always on the whole workflow, no check that a field
+clears the refusal, a field's own error ignored, the refusal ignored, the first of several fields taken, no `revises`,
+the refusal left out of the question, pydantic's "Value error" prefix kept, and the facet set to steps. No executor
+refusal today is cleared by either of two fields, so that seal reads a stub model. The suite, gov's refusal ratchet
+and the corpus check pass. The census is unchanged at 469 refused, 2003 passed, no crash sites, because the change adds
+a question and not a refusal.
+
+**Runs 53 to 55, re-read with no model time.** On each run's final draft, the loop now asks the field question about
+the impact review's approval step. The scripted person answers "It is component_engineer." on all three. Writing that
+role into a copy of the oracle's draft that lacks it clears the refusal and gives back the oracle's draft. This shows
+the question can now be answered. It doesn't show what a model does with the answer, and only runs 56 to 58 can say
+whether any run reads `yes`.
+
+#### 2026-11-04: runs 56 to 58, on the question on the field
+
+Three runs at `122c5265`, each started once no roll was in flight, Dagster listed no active run and worker6 was Ready.
+
+| run | status | route bar | slot bar | approval bar | contradiction | `approves` drafted | `role` drafted | what it reads |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 56 | runnable | **yes** | **yes** | no | caught | 2 of 3 | 2 of 3 | the program approval without `approves` or `role`, and nothing else |
+| 57 | `cannot_run` | no | yes | no | caught | 2 of 3 | 2 of 3 | the record stage has no steps, its route dropped, the impact review without `approves` or `role` |
+| 58 | `cannot_run` | no | no | no | caught | 1 of 3 | 1 of 3 | the acknowledgement drafted as an emit, the record as two emits, a route dropped, the program approval without `approves` or `role` |
+
+**Bar status: not met.** No run reads `yes` on route, slot and approval. Runs 57 and 58 read `no` and should, since
+each drops something the person described. But there is no first half, so the bar is not met. Nothing is flipped.
+
+**The question on the field works.** It was asked four times: run 56 at turn 18 (impact review) and turn 21
+(acknowledgement), run 57 at turn 20 (acknowledgement), and run 58 at turn 13 (impact review). Each time the scripted
+person answered "It is component_engineer.", and each time the role landed. No run asked the whole workflow what it
+should be. Every role these runs drafted, the instrument reads as right. That includes run 57's "program manager", which
+is in the person's spelling.
+
+**What's left is an approval step drafted without `approves`, and nothing asks for that.** In each run, one stage the
+person called an approval has neither field: the program approval in runs 56 and 58, and the impact review in run 57.
+The executor refuses `approves` without `role`. It doesn't refuse a step with neither, so no refusal is raised and the
+loop never asks. The grammar line is the only thing that asks for the field, and it landed on five of the nine. In run
+56, the person said at turn 3: "Program approval goes to the program manager. They can approve it or reject it". The
+loop asked about that stage four more times, on routing, `excludes`, `reason_required` and the next stage. It never
+asked which answers count as approval.
+
+**One way to close it, for the architect to choose.** I haven't built it. For each `human_await` without `approves`,
+the loop could ask a confirm: "Do any of these answers count as an approval? If so, which, and in what role?" The
+scripted person would answer from the expected value, or with "none" for a step that has no approval. Then the role
+question on the field would follow on its own. It changes the loop, so it needs new runs.
+
+**Run 57's `cannot_run` is the scripted person again.** The model wrote the record workflow with no `steps` key. The
+loop asked `steps.record.steps` at turns 7 and 29, and the person said nothing both times. With no model time, on run
+57's draft, the scripted person answers `steps.record` with the bank's description of the stage. It gives nothing for
+`steps.record.steps`, which is the key `problems()` raises for a workflow missing its `steps` field. No run from 41 to
+58 except 57 raised that key. Run 57 reads `no` on approval regardless, because its impact review has no `approves`.
+Whether to fix this in the key the loop raises or in the scripted person is for the architect.
+
+**Run 58's other faults are on the open list.** At turns 18 and 21, the model wrote a step in the path form
+(`steps[0].kind`, `steps[2].kind`), and the path grammar refused it, as in run 52. `outputs.record.ends` was left open
+as stalled: "asked again and the answer changed nothing". Run 57 had one model error and run 58 had four, which I haven't
+traced. Each run deferred the impact review's deadline, as planted.
+
+#### 2026-11-04: the two rulings after runs 56 to 58, and the five model errors
+
+The architect ruled: "decision 1 — yes, build the confirm question on an approval step with no `approves` ("which answers
+count as an approval, and in what role"). Decision 2 — fix the loop, not the scripted person: the loop asks about a stage
+in the person's words ("what are the steps of the record stage"), keyed internally; a real person never answers a path
+either. Three runs (59–61) after both. Trace the five model errors before the runs, one line each."
+
+**The five model errors, traced.** These are the ones runs 57 and 58 left untraced. Each is a patch the loop refused, at
+the turn it was sent.
+
+1. Run 57, turn 14, on the confirm about the impact review's `task_kind`: the path
+   `rows[ when.outcome=more_information_needed ].when.outcome` is refused. A list of rows is set whole, and an element is
+   picked only by a key it holds directly.
+2. Run 58, turn 18, on the confirm about where the acknowledgement ends: an unset of `steps[0].disposes` in the
+   acknowledgement is refused, because an unset may remove only what the confirm names.
+3. Run 58, turn 18, in the same reply: the path `steps[0].kind` is refused, because a step is picked by its `id`, not its
+   position.
+4. Run 58, turn 21, on the confirm about the record's next stage: writing `disposes` back is refused, because the person
+   rejected it at turn 19. The refusal says a `signal_await` or wait step after the send fills it.
+5. Run 58, turn 21, in the same reply: the path `steps[2].kind` is refused, as in error 3.
+
+Run 53's one model error, left untraced in its section, is the same form: at turn 31, on the whole-workflow question about
+the acknowledgement, `steps[0].approves` is refused. So three of these six are the positional `steps[N]` form, which is
+on the open list with run 52's. Errors 2 and 4 are the loop's own checks refusing what the question didn't allow. Error
+1 is a selector on a nested key, and no other run has written one.
+
+**Built: an approval step with no `approves` is asked.** `unapproved_awaits` lists each `human_await` that a case can
+reach, has an `id`, and has no `approves`. Each gets one `confirm` on the approvals facet: "At program approval in pcn
+program approval, which answers count as an approval, and in what role does whoever answers sign? Its answers are
+approved, rejected. If none does, say so." The answers are the `accepts` of the step's task kind, when it has one. The
+question revises both `approves` and `role`, so an answer that names both clears it at once. A confirm is asked once, so
+a person who says none counts isn't asked again. A step with `approves` and no `role` isn't asked here: the executor
+refuses that, and the question on the field asks for the role. The scripted person answers from the expected step:
+"Only approved counts as an approval, and the role is program_manager.", or "None of them counts as an approval." for a
+step with no `approves`. It gives no answer for an expected step that has `approves` and no `role`.
+
+**Built: a stage with no steps is asked as a stage.** A workflow with no `steps`, or an empty list, was asked under
+`steps.<stage>.steps`, a key the scripted person has no entry for (run 57). It is now asked under `steps.<stage>`, the key
+a stage is asked by: "What are the steps of the pcn record stage: who acts, what they decide, and how it ends?" Another
+missing field of a workflow keeps its own key. The scripted person is unchanged. It answers `steps.<stage>` from what the
+person said of the stage, as for any stage.
+
+**Checked with no model time, on the stored drafts.** On runs 56 to 58, the new confirm is raised on exactly the stage
+each run drafted without `approves`, and the scripted person answers it with that stage's verbs and role. On run 57's
+draft, the record's missing steps are asked under `steps.record`, and the person answers with their description of the
+stage. On all three fixtures' expected bundles, neither question is raised.
+
+Twelve seals, and eleven mutants that each die on them: the stage branch taken out, the key put back to
+`steps.<stage>.steps`, the confirm not wired into the gaps, the `approves` check removed, the reach check removed, the
+kind `missing` for `confirm`, `revises` without `role`, the answers left out of the question, the scripted person not
+answering it, its "none" answer wrong, and a role-less expected step answered. The suite, gov's refusal ratchet and the
+corpus check pass. The census is unchanged at 469 refused, 2003 passed, no crash sites.
+
+#### 2026-11-04: runs 59 to 61, on the two rulings
+
+Three runs at `d4676bcd`, one at a time, each after Dagster listed no active run.
+
+| run | status | route bar | slot bar | approval bar | contradiction | the new confirm | what it reads |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 59 | `cannot_run` | no | **yes** | **yes** | caught | not raised: every approval step drafted with both fields | the record is an emit and a render, and `outputs.record.ends` stalls |
+| 60 | `cannot_run` | no | **yes** | **yes** | caught | asked on all three approval steps, and all three landed | the record is an emit alone, and `outputs.record.ends` stalls |
+| 61 | `cannot_run` | no | no | no | caught | asked once, on the acknowledgement, and it landed | the impact review routes `approved` away, so the program approval and record are unreachable, and a stage named `acknowledgement` is never answered |
+
+**Bar status: not met.** No run reads `yes` on route, slot and approval. All three read `no` and should: each lacks a
+step the person described. There is still no first half. Nothing is flipped.
+
+**The confirm on `approves` works.** Run 60 drafted all three approval steps without `approves`. The loop asked about
+each at turns 24 to 26, the person answered with the verbs and role, and v4 reads all three right. Run 59 needed no
+question, because the grammar line landed on all three. Run 61 asked about the one step it could reach. Its program
+approval is unreachable, so it isn't asked, as built, and it reads wrong. Runs 59 and 60 are the first runs to read `yes`
+on approval.
+
+**The question on a stage with no steps wasn't raised.** No run drafted a workflow without steps. Each stage question in
+these runs is the older one, for a stage the trigger lists and no workflow holds. So these runs don't measure decision
+2. Its only evidence is still the seals and run 57's stored draft.
+
+**Why runs 59 and 60 are `cannot_run`: the record stage, and the path form again.** The person described the record as
+a send and then a wait for filing. Run 59 drafted an emit and a render, and run 60 drafted an emit alone. In both, the
+confirm on where the record ends was rejected at turn 27 ("No, that is not right"). The model then tried to add the step
+by position, and the path grammar refused it. Run 59 sent `steps[0].disposes` at turn 29. Run 60 sent `steps[0].disposes`
+at turn 28 and `steps[1].kind` at turn 29. Each was refused alongside the write-back check. The gap then stalled: "asked
+again and the answer changed nothing". Nothing else reads wrong in either run. Every route lands, `excludes` and
+`requires` are right, every role and `approves` is right, and the impact review's deadline is deferred as planted. I
+haven't measured what either run would have read had that step landed, and I don't claim it.
+
+**Run 61 drifts in its names.** The trigger listed a stage `acknowledgement`, and the workflow for it was drafted as
+`minor_acknowledge`. The loop asked twice about `acknowledgement`, at turns 3 and 27, and the scripted person had no
+answer either time, because no drafted stage of that name pairs with one the person described. The gap stayed open as a
+required slot. Separately, the impact review's routing table sends `approved` to a terminal named `approved`, not to the
+program approval, so the program approval and record are unreachable. That alone reads `no` on route.
+
+**Eleven model errors, by form.**
+
+- Five are the positional `steps[N]` path. Run 59 sent it at turns 20 and 29, run 60 at turns 28 and 29, and run 61 at
+  turn 18.
+- Three are the write-back check refusing `disposes` on the record after the person rejected it: run 59 at turn 29, and
+  run 60 at turns 28 and 29.
+- Two pick a row by a nested key, `rows[when.outcome=…]`: run 59 at turn 28 and run 61 at turn 18.
+- One is in run 59 at turn 28: "'matches' holds a list, not a mapping".
+
+Across runs 41 to 61, the positional path form is the commonest refusal: 16 of the 37, in 12 of the 21 runs. In runs 59
+and 60 it is on the only stage that reads wrong.
+
+**One way to close it, for the architect to choose.** I haven't built it. The path refusal could say what to write. For an
+index the list holds, it would name the id form, for example "`steps[1]` is `steps[id=send_disposition]`". For a new step,
+it would say to set `steps` whole. Today it says only that a list element is picked by a key it holds directly. That
+changes only the refusal text, so it needs new runs. Accepting `steps[N]` outright is the other way, and it widens the
+path grammar, so I don't recommend it.
+
+**Also seen.** `outputs.record` is deferred again with "user could not answer" on runs 59 and 60, since it was asked at
+turn 5, before the stage was described. That is the stale deferral on the open list. Run 60 also recorded a deferral on the
+acknowledgement's escalated route, "User did not specify where the escalated outcome should route", though its table
+routes `escalated` to the impact review, as the person described. That deferral is stale in the same way.
+
+#### 2026-11-04: the ruling on the path form and on a stage's name
+
+The architect ruled: "yes — the refusal names the id form for an existing step and says to set `steps` whole for a new
+one. Name drift: fix in the loop — the confirm lists the stage names the person used, and a drafted stage not in that list
+is refused with the list. Three runs (62–64)."
+
+**The path form.** A positional segment such as `steps[1]` is read against the file it names before it is refused. Where
+the list holds that element and the element has an `id`, the refusal names the id form and the whole path to write:
+"`steps[1]` is `steps[id=engineering_disposition]`, so write `steps[id=engineering_disposition].role`". Where the list
+doesn't hold it, or the stage has no steps yet, the refusal says to set the list whole, as it stands, with the new element
+in its place. A list whose elements hold no `id`, such as a table's rows, keeps the grammar's own refusal, which already
+says such a list is set whole. An unset is read the same way, before its scope, so a positional unset hears the id form
+rather than a scope refusal. The grammar is unchanged: `steps[N]` is still refused, and only the refusal text is new.
+
+**A stage's name.** Where the trigger lists the stages the person named, a patch that drafts a workflow under another
+name is refused, and the refusal lists the names: "… drafts a stage named minor_acknowledge, and the stages the person named
+are …: draft it under one of those names". The refusal goes back to the model as a structural error and points at the
+workflow's file, never at the list of names. So the model may rename the stage, and the list stays as the person confirmed
+it. A misnamed stage already in the draft doesn't block an unrelated patch, as with any structural error. With no stages
+listed, no name is refused. The stage confirm already lists the trigger's names, in the person's words, and a seal now
+holds it to each one.
+
+**Checks.** Fifteen seals, and fourteen mutants that each die on one. On the path form, the mutants are:
+
+- the position never read;
+- the id form never given;
+- the rest of the path dropped from what to write;
+- the unset not read before its scope;
+- the set path read without its file;
+- an id selector before the position ignored;
+- an absent list falling back to the grammar;
+- every list told to be set whole.
+
+On the name, they are:
+
+- the check off;
+- every name refused;
+- the refusal pointing at the list of names;
+- the list left out of the refusal;
+- an empty list refusing every name;
+- the confirm listing the workflows in place of the person's names.
+
+The suite, gov's refusal ratchet and the corpus check pass. The census is unchanged at 469 refused, 2003 passed, no crash
+sites. Runs 62 to 64 are next.
+
+#### 2026-11-04: runs 62 to 64, on the path form and the stage's name
+
+Three runs at `d9901b0e`, one at a time. They started once the release read deployed, worker6 read Ready and Dagster
+listed no active run, on two checks in a row.
+
+| run | status | route | slot | approval | contradiction | what it reads |
+| --- | --- | --- | --- | --- | --- | --- |
+| 62 | `cannot_run` | no | yes | yes | caught | the record is a send and a render, with no wait for filing, and ends `recorded`; `outputs.record.ends` stalls |
+| 63 | runnable | **yes** | **yes** | **yes** | caught | nothing in any bar; the one semantic difference is the acknowledgement's answer `escalate` against `escalated` |
+| 64 | runnable | no | no | no | caught | the record is a send alone; the program approval excludes no one; its answers are `approve` and `reject` |
+
+**Bar status: met, in the architect's words:** "one PCN run yes, with the contradiction caught, and one run that should
+read no and does".
+
+- **Run 63 reads `yes` on all three bars, with the planted contradiction caught.** No step or route is dropped, and no
+  approval, `excludes` or `requires` reads wrong. No slot is rewritten, and the planted deadline deferral is recorded. Its one
+  semantic difference reads in no bar. The acknowledgement's answer is `escalate` where the expected bundle has
+  `escalated`, at the same route and in the same `excludes`. The person said "They can acknowledge it, or escalate it" at
+  turn 24, and "If it is escalated it goes back to the impact review" at turn 26, when asked where an escalation leads.
+  So the draft has the person's word for the act, where the bundle has their word for the outcome. That is the
+  outcome-word item on the open list. (Corrected 2026-11-05: this said the draft was in the person's words, and it
+  omitted turn 26.)
+- **Run 62 reads `no`, and should.** The person described the record as "sends the disposition out … Then the records
+  group files it and says so". The draft has the send, and a render where the wait should be. It ends `recorded`, where the
+  expected bundle ends `filed`.
+
+Nothing is flipped. That is for the architect.
+
+**Run 64 reads `no` too.** Its route and slot readings are right. The record is a send alone. The person said "The person
+who logged the notice may never sign off either review" at turn 15, and the program approval's draft excludes no one. Its
+approval bar reads `no` only on the answer word: the draft says `approve` and `reject`, where the expected bundle says
+`approved` and `rejected`. The person said "They can approve it or reject it", then at turn 30 "When program approval is
+approved … If it is rejected", and at turn 31 "Only approved counts as an approval". That bar compares the answers by
+their words, so it is the same outcome-word item, and here it decides a bar.
+
+**The path form, in the runs.** Run 63 sent `steps[0].task_kind` at turn 28 and heard "`steps[0]` is
+`steps[id=await_program_approval]`, so write `steps[id=await_program_approval].task_kind`". Its restatement used the id
+form and landed. That is the run's only model error. Run 62 tried, at turn 30, to add the record's wait step as
+`steps[2]`, and heard to set `steps` whole. That was its second try at the turn, after the write-back check refused its
+first, so the restatements were spent and the record stalled. Run 64 sent no positional path.
+
+**The stage's name, in the runs: the check never fired, and these runs show why it cannot catch this form.** In each run,
+the model's opening draft holds the trigger's list of stages in its own names: `acknowledge_change`, `acknowledge`,
+`acknowledge_minor`. The stage confirm at turn 6 puts those names to the person, and the person answers "the impact
+review, the acknowledgement, the program approval and the record". The model then adds the two missing stages and keeps
+its own name for the acknowledgement, in the list and in the workflow alike. The list and the workflows agree, so the
+check finds nothing. It reads the trigger's list as the person's names, and the model writes that list. Nothing read
+wrong on a name in any of the three runs, since no stage question stalled as in run 61. This goes on the open list.
+
+**Also seen.** `outputs.record` is deferred with "user could not answer" on all three runs, asked before the stage was
+described. That is the stale deferral. Run 63 also left the record's filing step without a deadline, with "user could not
+answer". Nobody stated one, so the draft is right to have none.
+
+#### 2026-11-05: the ruling: Proposed, on run 63
+
+The architect ruled: "bar met on run 63 — flip ADR-0061 to Proposed … with §10 as the evidence". The status above now says
+so. The evidence is the table in the section before this one. Run 63 is runnable, reads `yes` on route, slot and approval
+under instrument v4, and catches the planted contradiction. Run 62 reads `no`, as it should.
+
+The limit ruled on 2026-11-02 stands: the person can't yet say "that is not a stage". The open list stands, in the
+architect's order. Outcome words come first: the slot check compares an answer word with the person's own words, and
+`escalate` against `escalated` is a slot fault, not noise. The grammar line on answer words is next. No run comes before
+both are built.
+
+**Run 63 and that check.** Run 63's one semantic difference from the expected bundle is the acknowledgement's answer.
+The draft says `escalate`. The person said "They can acknowledge it, or escalate it" at turn 24, and at turn 26 "If it is
+escalated it goes back to the impact review". The expected bundle says `escalated`. The ruling calls that a slot fault,
+so the check, once built, reads run 63 `no` on slot. The flip rests on v4's reading, as ruled. Runs 62 to 64 are re-read
+under the new check with no model time, and that reading is reported when it is built.
 
 ## Consequences
 

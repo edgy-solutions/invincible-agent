@@ -20,15 +20,67 @@
 # the new ones, so a value removed from a file survives in the release — which is precisely how
 # a stale declaration outlives the commit that deleted it. Every render is computed from the
 # files as they are now.
+#
+# NOTE ON THE TREE. An upgrade runs from a worktree checked out at the release tag, never from
+# master's working tree (scripts/require-release-tree.sh refuses anything else, exit 4). Master
+# moves under a shared tree, and a chart rendered from it is no release anyone cut. A --dry-run
+# renders from any tree and says when that tree could not roll.
 set -euo pipefail
 
 RELEASE="${RELEASE:-iagent}"
 NAMESPACE="${NAMESPACE:-sandbox}"
 CHART="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/helm/invincible-agent"
 
+# ── A ROLL IS OF A RELEASED VERSION, AND ITS DIGESTS COME FROM THAT RELEASE ──────────────────
+#
+# Ruled 2026-11-04 (the architect): digests are generated at PUBLISH time only. The chart release
+# workflow writes values-release-<version>.yaml -- every image's digest, ours from the build and
+# third-party read from the registry -- and attaches it to the chart release as the artifact of
+# record. This script downloads that file for the version it rolls and renders with it LAST. It
+# never resolves a tag at roll time: a roll that resolved its own digests would be a second,
+# unreviewed answer to a question the release already answered.
+#
+# `global.imageTag` IS REFUSED, replacing the old check that it "resolves to a commit". That check
+# existed because a typed sha could be almost right; the remedy now is that there is nothing to
+# type. A pinned digest beats any tag, so a tag passed here either does nothing (the image has a
+# digest) or names an image no seal would accept. A roll is of a released version.
+_prev=""
+for _arg in "$@"; do
+  case "${_arg}" in
+    global.imageTag=*|--set=*global.imageTag=*|--set-string=*global.imageTag=*) _refuse_tag=1 ;;
+    *) case "${_prev}" in --set|--set-string) case "${_arg}" in *global.imageTag=*) _refuse_tag=1 ;; esac ;; esac ;;
+  esac
+  _prev="${_arg}"
+done
+if [ -n "${_refuse_tag:-}" ]; then
+  echo "REFUSING: global.imageTag is not a roll argument." >&2
+  echo "  A roll is of a RELEASED chart version; its images are pinned by digest in the release's" >&2
+  echo "  values-release-<version>.yaml, which this script downloads and renders last." >&2
+  echo "  To roll other bytes, cut a release." >&2
+  exit 2
+fi
+
+_version="$(awk '/^version:/ { gsub(/["'"'"']/, "", $2); print $2; exit }' "${CHART}/Chart.yaml")"
+if [ -z "${_version}" ]; then
+  echo "ERROR: no chart version in ${CHART}/Chart.yaml" >&2
+  exit 1
+fi
+# A fresh directory of its own, never inside the repo: the release file is an artifact of a
+# release, not a tracked file, and the helm render below (which holds Secrets) is written here too.
+_work="$(mktemp -d)"
+_release_values="${_work}/values-release-${_version}.yaml"
+if ! gh release download "invincible-agent-${_version}" --pattern "values-release-${_version}.yaml" --dir "${_work}" >/dev/null 2>&1    || [ ! -s "${_release_values}" ]; then
+  # A HARD STOP, like a missing values file: rendering without it would pin nothing.
+  echo "ERROR: required release artifact missing: values-release-${_version}.yaml" >&2
+  echo "       It is attached to the GitHub release invincible-agent-${_version} by the release" >&2
+  echo "       workflow. No release, or a release cut before 0.4.80, cannot be rolled by this script." >&2
+  exit 1
+fi
+
 VALUES=(
   "${CHART}/values-sandbox.yaml"
   "${CHART}/values-sandbox.secret.yaml"   # untracked: real credentials, incl. the keycloak admin password
+  "${_release_values}"                    # LAST: the release's digests, fetched above, win over every file before
 )
 
 ARGS=()
@@ -141,37 +193,41 @@ _on_kill() {
   exit 143
 }
 trap _on_kill TERM INT
-# ── THE TAG MUST RESOLVE, AND THIS REFUSES RATHER THAN WARNS ────────────────────────────────
+# ── THE RENDER IS SEALED: EVERY IMAGE BY DIGEST ──────────────────────────────────────────────
 #
-# TWICE IN ONE DAY, BY THE AUTHOR OF THE RULE THAT FORBIDS IT. A sha was TYPED instead of
-# derived -- `cd924dbb61fb...` for `cd924dbcb1a1...` -- and both times the first seven characters
-# were real, which is exactly why it read as correct. First time it wedged the release at
-# pending-upgrade; second time 18 pods went ImagePullBackOff.
-#
-# "A sha is derived, never typed" is a good rule and it did not survive contact with its author's
-# hands. A discipline that fails twice is not the remedy; this is. The script resolves the tag
-# itself and refuses anything git cannot name -- so the habit has nowhere to land.
-#
-# REFUSES, DOES NOT WARN: this script's own killed-client trap already records that a warning in
-# a long log stops nobody, including the person who wrote it.
-_tag=""
+# Render with exactly the values files this roll will use, and refuse if any image is left on a
+# tag. The render contains Secrets: it is written only into the temp dir, fed to the seal (which
+# prints image strings and nothing else), and deleted before anything else can fail. It also
+# runs under --dry-run, so a dry run says what a roll would refuse.
+_tmpl_args=()
 _prev=""
 for _arg in "$@"; do
-  case "${_arg}" in
-    global.imageTag=*) _tag="${_arg#global.imageTag=}" ;;
-    *) [ "${_prev}" = "--set" ] && case "${_arg}" in global.imageTag=*) _tag="${_arg#global.imageTag=}" ;; esac ;;
+  case "${_prev}" in
+    --set|--set-string|--set-file|-f|--values) _tmpl_args+=( "${_prev}" "${_arg}" ) ;;
+    *) case "${_arg}" in --set=*|--set-string=*|--set-file=*|--values=*) _tmpl_args+=( "${_arg}" ) ;; esac ;;
   esac
   _prev="${_arg}"
 done
-if [ -n "${_tag}" ]; then
-  if ! git -C "$(dirname "${CHART}")/.." cat-file -e "${_tag}^{commit}" 2>/dev/null; then
-    echo "REFUSING: global.imageTag='${_tag}' does not resolve to a commit in this repository." >&2
-    echo "  A sha that is ALMOST right is the dangerous case -- the first characters match, the" >&2
-    echo "  tag reads as correct, and the failure arrives as ImagePullBackOff on every service." >&2
-    echo "  Derive it:  --set global.imageTag=\$(git rev-parse origin/master)" >&2
-    echo "  If you mean a tag that is not a commit: ALLOW_UNRESOLVABLE_IMAGE_TAG=1 ..." >&2
-    [ "${ALLOW_UNRESOLVABLE_IMAGE_TAG:-}" = "1" ] || exit 2
-  fi
+if [ -n "${PYTHON:-}" ]; then _py=( "${PYTHON}" ); else _py=( uv run python ); fi
+_render="${_work}/render.yaml"
+_rc=0
+helm template "${RELEASE}" "${CHART}" -n "${NAMESPACE}" "${ARGS[@]}" ${_tmpl_args[@]+"${_tmpl_args[@]}"} > "${_render}" 2>"${_work}/render.err" || _rc=$?
+if [ "${_rc}" != "0" ]; then
+  # helm's own error text can quote a value; show its last line only.
+  rm -f "${_render}"
+  echo "ERROR: helm template failed (exit ${_rc}) rendering the roll's values:" >&2
+  tail -n 1 "${_work}/render.err" >&2
+  rm -f "${_work}/render.err"
+  exit 1
+fi
+rm -f "${_work}/render.err"
+_rc=0
+"${_py[@]}" "$(dirname "${BASH_SOURCE[0]}")/seal_image_digests.py" < "${_render}" || _rc=$?
+rm -f "${_render}"
+if [ "${_rc}" != "0" ]; then
+  echo "REFUSING: the render carries images that are not pinned by digest (seal exit ${_rc})." >&2
+  echo "  values-release-${_version}.yaml should name every one. Re-cut or repair the release." >&2
+  exit 2
 fi
 
 # ── THE ROLL LOCK, LAST, SO NOTHING ABOVE CAN REFUSE AFTER IT IS TAKEN ─────────────────
@@ -185,9 +241,15 @@ fi
 _dry=""
 for _arg in "$@"; do case "${_arg}" in --dry-run|--dry-run=*) _dry=1 ;; esac; done
 _lock="$(dirname "${BASH_SOURCE[0]}")/roll-lock.sh"
+# THE TREE IS THE RELEASE, ruled 2026-11-03: a roll runs from a worktree at the release tag, never
+# from a working tree. `CHART` above is this file's own tree, so where the script is run from is what
+# gets rendered. A dry run rolls nothing and may render anything; it still says what it rendered.
+_tree="$(dirname "${BASH_SOURCE[0]}")/require-release-tree.sh"
 if [ -n "${_dry}" ]; then
+  bash "${_tree}" "${CHART}" || echo "(dry run: rendering this tree anyway, and it could not roll)" >&2
   bash "${_lock}" show || true
 else
+  bash "${_tree}" "${CHART}" || exit 4
   bash "${_lock}" acquire --minutes "${_mins:-90}" || exit 3
 fi
 

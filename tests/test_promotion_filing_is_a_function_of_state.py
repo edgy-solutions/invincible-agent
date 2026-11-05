@@ -120,6 +120,7 @@ _BODY = {
     "evidence": {"source": "contract", "citation": "CDRL A001"},
     "approval_chain": [{"step": 1, "role": "steward", "approver_sub": "steward@x",
                         "decision": "approved"}],
+    "case_id": "C-1",
 }
 
 
@@ -133,6 +134,8 @@ def _accept(world, *, store_owner=None, body=None):
         return {"status": "written", "reason": None}
 
     mp = pytest.MonkeyPatch()
+    # the route admits the named steward on the case; the real lookup is Postgres
+    mp.setattr("src.iagent.human_tasks.holds_task_on_case", lambda case_id, who: True)
     mp.setattr(origin_writer, "write_origin", _fake)
     mp.setattr("agent_fleet.utils.mesh_writers.neo4j_graph.Neo4jGraphWriter",
                lambda **kw: object())
