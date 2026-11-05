@@ -34,9 +34,19 @@ from: invincible-agent/lane/fin, the session of 2026-10-08/09
 - **Later 2026-11-04, the sink ruling is applied.**
   - **The ruling:** edges carry `node_kind: item | other`, and `render` carries `other_label`, served from the module's `OTHER_LABEL`. It's on #255 at `0eb7b534`, with 74 new tests; `tests/finance` gives 736 passed, 14 skipped.
   - **EAC, as ruled:** dag-tools adds `bac` and `eac` to asset #7, and the row declares value = `eac − bac`.
-  - **Two things the EAC row needs, neither built:** `value: {minus: [a, b]}`, and `inputs.dataset.per_path: once`, because a work-package figure repeated on its 12 period rows would be summed 12 times. Both are with the architect in `2026-11-04-packet-to-architect-cc-dag-tools-cortex-from-fin-sink-marker-applied-eac-needs-per-path-once-and-a-minus.md`.
-  - **dag-tools:** asked to wait for that ruling.
-  - **Next:** on the ruling, build both off-cluster on a test frame carrying `bac`/`eac`.
+  - **Two things the EAC row needs:** `value: {minus: [a, b]}`, and `inputs.dataset.per_path: once`, because a work-package figure repeated on its 6 period rows would be summed 6 times. (The fixture has six periods; `FISCAL_PERIODS` has twelve.) Both were put to the architect in `2026-11-04-packet-to-architect-cc-dag-tools-cortex-from-fin-sink-marker-applied-eac-needs-per-path-once-and-a-minus.md`.
+- **Latest 2026-11-04: both rulings are built on #255 at `4326c318`** (MERGEABLE, base `master`).
+  - **Ruled and built:**
+    - `sign` is the words `positive`/`negative`/`zero`.
+    - Zero edges are emitted with their subtree; a zero is outside the collapse.
+    - `value: {minus: [a, b]}`.
+    - `per_path: sum|once`; under `once`, a varying amount is a 502 with rule `varies_within_path`.
+    - The module is 1.2.0.
+  - **The EAC row is the first user:** the test overlay `tests/finance/overlays/variance_decomposition_eac/`, at threshold 0.05, over dag-tools #11's figures (merged as `5905fee`; three work packages at zero). `tests/finance` gives 760 passed, 14 skipped.
+  - **The contract cortex reads** is the plan doc section "The served table".
+  - **Packet placed:** `2026-11-04-packet-to-cortex-dag-tools-architect-lane-01-from-fin-255-serves-the-ruled-table-sign-words-zero-edges-eac-row-built.md`. It amends the two earlier 11-04 packets.
+  - **Open:** cortex's packet relays a ruling item that fin never received: a **root edge** (`source: null`, `target: [root]`, level 0, carrying the total). It isn't built, and Chris has been asked to confirm it. If confirmed, it's a small change in the module, `dataset_verdict` and the plan doc.
+  - **Next:** after Lane 1 merges #255 and `ev_fixture` is re-materialized from a location carrying #11 (the deployed parquet predates the columns; 0.11.0 doesn't carry them), deploy the EAC row and write its live leg alongside #243's.
 
 ## Update 2026-11-03: the packet is final, ADR-0052 is draft #245, the live test is #243. Read this first
 
