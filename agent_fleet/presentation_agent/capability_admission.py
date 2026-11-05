@@ -104,6 +104,9 @@ KNOWN_ARCHETYPES = frozenset({
     # frontend advertises it — not after. Four live-view archetypes were refused on their
     # first registration for exactly this.
     "MULTI_SERIES",
+    # The finance flow-map measure's shape (docs/plans/fin-variance-decomposition.md). Admitted
+    # HERE FIRST, before cortex renders it, for the same ordering reason as MULTI_SERIES above.
+    "FLOW_DECOMPOSITION",
     # THE FIRST ARCHETYPE THAT IS ACTED ON RATHER THAN DRAWN, 2026-08-26. "make me a portfolio
     # canvas" answers with slot-ordered artifact ids and `canvasSeedFromArtifact` arranges them;
     # no component renders it. Added HERE FIRST, before the binding exists -- the ontology class

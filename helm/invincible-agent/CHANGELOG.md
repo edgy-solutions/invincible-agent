@@ -64,6 +64,21 @@ Deployments, StatefulSets, Jobs and CronJobs. This is preconditions 1 and 2 of t
 (board item `01M6MCV3QR2YEBC6WQFAMQ52M1`). No NetworkPolicy is enabled. Both Jobs are hooks, so the changed
 pod template is recreated, not patched.
 
+**`validate_policy` composes export profiles with the SDK (architect 10-30, fork 7)**
+
+- **The composition is `iagent_mesh.compose_export_profiles`,** with one row per kind in the new
+  `policy/export_profile_sources.yaml`. The validator's own copy and its kind-label table are gone. The
+  three engine loaders still read their own constants, so the file restates them, and a seal goes red
+  when a loader renames one. Moving the engines onto the file is 01M6A9QDN1GQ20347W16EM0D3X.
+- **A profile file the old copy skipped is now refused:** an empty or nameless file, two files of one
+  name in one directory, and a tombstone for a name nothing before it ships. Every profile in this
+  repo passes. A refusal stops the seed job before any write, so check a deployment's own
+  export-profile overlays before its next sync.
+- **Refusals name the kinds `review-export`, `answer-export` and `fin-cdrl`** ("fin CDRL" before).
+- **The validator imports the SDK.** The seed job and the documented policy-repo CI form
+  (`policy/README.md`) both run it from the cortex-bff image, which carries it. A CI that runs it
+  from a bare Python with `policy/sync/requirements.txt` fails at the import.
+
 ## 0.4.78 — 2026-11-04
 
 **0.4.77 stands as cut at `8fc02746` and rolls nowhere. The sandbox goes from 0.4.75 to this chart.** This

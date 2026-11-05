@@ -41,11 +41,14 @@ programs:
       - alice@example.com
   NP-MERIDIAN:
     granted_by: seed
+    ratified_by: owner
     reason: >-
       Sandbox fixture: engine-fin's seeded synthetic program (agent_fleet/finance_agent/seed.py
       PROGRAM_ID). engine-fin lists and resolves only the programs the caller can_view_program
       (lane/fin, 2026-10-27), so without this entry the finance canvas's "which program?" menu is
-      empty for everyone. alice is the finance-analysts fixture member. Not a claim about any
-      real program's membership.
+      empty for everyone. alice is the finance-analysts fixture member. erin holds the measure's
+      cell and no asset grant, so erin is the asset gate's refusal control (#243). Not a claim
+      about any real program's membership.
     grant_to:
       - alice@example.com
+      - erin@example.com

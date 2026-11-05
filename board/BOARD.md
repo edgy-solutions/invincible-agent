@@ -364,9 +364,9 @@ Where it is: 4 blocked · 6 review · 1 claimed · 26 open · 26 done; next: Rul
 - [A run that resumes after its client left writes no answer](items/01M6JKE63GTR4DHYZ8DP1NYVZM.md) — invincible-agent/lane/01 · next · updated 2026-11-04
 - [The planning projector omits subject_concept when null](items/01M6JKE7C6EA4T7W4W79VZH993.md) — invincible-agent/lane/01 · next · updated 2026-11-04
 - [promote_answer_artifact's publish step posts a body register can't take, with a token in it](items/01M6JKE9VBD93B9TM8QCVDA23K.md) — invincible-agent/lane/01 · next · updated 2026-11-04
-- [The BFF's DELEGATE_ON_BEHALF_OF reads policy/gateway_delegates.yaml (one list, two readers)](items/01M6KF81WMJJXVKQAP12M0QTMY.md) — invincible-agent/lane/01 · next · updated 2026-11-04
+- [The BFF reads gateway_delegates.yaml from the merged policy view, and a row's for replaces DELEGATE_ON_BEHALF_OF](items/01M6KF81WMJJXVKQAP12M0QTMY.md) — invincible-agent/lane/01 · next · updated 2026-11-04
 - [dag-tools publishes the central gateway's route ids as data (gateway_routes.json)](items/01M6KF821P2C3KRQN86FF0N61N.md) — unclaimed · next · updated 2026-11-04
-- [NetworkPolicy gate-on, sandbox fully enabled by 12-01](items/01M6MCV3QR2YEBC6WQFAMQ52M1.md) — invincible-agent/lane/01 · next · updated 2026-11-04
+- [NetworkPolicy gate-on, sandbox fully enabled by 12-01](items/01M6MCV3QR2YEBC6WQFAMQ52M1.md) — invincible-agent/lane/01 · next · PR invincible-agent#260 · updated 2026-11-04
 - [Relay-form detector for the refusal ratchet (fork 12)](items/01M6A9QDN19S78PQVCA67NZ9RC.md) — invincible-agent/lane/gov · later · updated 2026-10-31 ⚑ stale: updated 2026-10-31
 - [Critical-delete a4: seed safety_critical, then gate, then delete the lists](items/01M6A9QDN1B9G28188EMXFPHK9.md) — invincible-agent/lane/saf · later · updated 2026-10-26 ⚑ stale: updated 2026-10-26
 - [Gateway route for the Engine S is_safety_critical check (ADR-0060)](items/01M6A9QDN1P8WX74K5QF71838K.md) — invincible-agent/lane/01 · later · updated 2026-10-31 ⚑ stale: updated 2026-10-31

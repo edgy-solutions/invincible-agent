@@ -77,3 +77,12 @@ grants:
       reproduced. Folded so the new document prune scope does not revoke it
       silently. No DocumentChunk carries this doc_id (measured 2026-10-08), so
       it is retained, not exercised.
+  - subject: alice@example.com
+    asset: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: alice reads the synthetic earned-value fixture (dag-tools #7) to
+      exercise the governed read of a declared finance measure (#243). Fixture grant, not a
+      claim about any real program's data. erin holds the program and the cell but not this
+      row, and is the refusal control. Remove when the live leg no longer needs it.

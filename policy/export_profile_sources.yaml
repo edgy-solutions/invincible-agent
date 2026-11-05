@@ -1,0 +1,37 @@
+# Where each export kind's profiles are composed from: one row per kind (architect 2026-10-30, via
+# Chris: "one function; source rows live in a policy file both the validator and engines share").
+# The function is iagent_mesh.compose_export_profiles (SDK v0.9.13); each row is its
+# ExportProfileSource {kind, seed_env, seed_default, overlay_env}. A new export kind is a row here.
+#
+#   kind           the kind's name, as validate_policy's refusals print it. A profile name is in one
+#                  kind only: every kind shares the one `can_export:<P>` namespace.
+#   seed_env       the variable that MOVES the seed directory.
+#   seed_default   the seed directory when seed_env is unset, relative to the repository root (/app
+#                  in an image).
+#   overlay_env    the variable listing overlay directories, os.pathsep-separated, applied in order
+#                  after the seed. null when the kind's loader reads no overlay variable.
+#   offline_overlays
+#                  overlay directories the chart's own values set on the engine (values-sandbox.yaml),
+#                  relative to the repository root. Only validate_policy reads this field: it runs
+#                  where the engine's environment is not, and composes these after overlay_env's.
+#
+# validate_policy reads this file (policy/sync/validate_policy.py, known_export_profiles). The three
+# engine loaders still read their own constants (src/iagent/export_profiles.py,
+# agent_fleet/utils/answer_exports.py, agent_fleet/finance_agent/export_profiles.py); their move to
+# this file and the SDK is board item 01M6A9QDN1GQ20347W16EM0D3X. Until then this file restates
+# their constants, and tests/security/test_can_export_capability_rail.py's join arms go red when the
+# two disagree on a name.
+sources:
+  - kind: review-export
+    seed_env: INGEST_EXPORT_PROFILE_DIR
+    seed_default: policy/exports
+    overlay_env: null
+  - kind: answer-export
+    seed_env: EXPORT_PROFILE_POLICY_DIR
+    seed_default: policy/exports/answers
+    overlay_env: EXPORT_PROFILE_OVERLAY_DIRS
+  - kind: fin-cdrl
+    seed_env: FIN_EXPORT_PROFILE_POLICY_DIR
+    seed_default: policy/fin_export_profiles
+    overlay_env: FIN_EXPORT_PROFILE_OVERLAY_DIRS
+    offline_overlays: [policy/overlays/sample/fin_export_profiles]

@@ -27,10 +27,11 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib
 import json
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 import re
 from datetime import date, datetime, timezone
 from typing import Any, Optional
@@ -933,6 +934,8 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
                 "fin_performance_indices", [s for s in slots_for("fin_performance_indices")
                                             if s["name"] in missing]),
         })
+    if row.kind == measure_verbs.KIND_DATASET:
+        return _dataset_envelope(row, params)
     urn = asset_inputs.dataset_urn()
     try:
         # THE ONE SELECTION OF THE STATE. Unset, the seed (byte-identical to before the flag
@@ -970,9 +973,18 @@ def _asset_state(urn: str, params: dict[str, Any]) -> Any:
         raise NotInModel(f"unknown program {program_id!r}")
     window = params.get("window")
     periods = periods_in(window) if window is not None else None  # an unknown period: no read
-    try:
+    with _asset_read_errors(urn):
         df = asset_inputs.read_rows(mesh_ticketed_read, urn, program_id, periods)
         return asset_inputs.state_from_rows(df, program_id)
+
+
+@contextmanager
+def _asset_read_errors(urn: str):
+    """The outcomes of a governed read, each as its own typed status; none degrades to the seed.
+    Shared by the state kind (`_asset_state`) and the dataset kind (`_dataset_envelope`), so the
+    two cannot drift. `NotInModel` is left to the caller's 422."""
+    try:
+        yield
     except asset_inputs.AssetDenied as exc:
         raise HTTPException(
             status_code=403,
@@ -1004,14 +1016,55 @@ def _asset_state(urn: str, params: dict[str, Any]) -> Any:
         }) from exc
 
 
+def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
+    """The envelope of a DATASET-kind measure: a governed read of the ROW'S URN as the caller
+    (never `FIN_DATASET_URN`, never the seed), the module run once, and the edge table as `rows`.
+    Same keys as `_declared_envelope` minus `series`/`reference`, which a flow has no use for."""
+    urn, program_id = row.dataset_urn, params["program_id"]
+    try:
+        with _asset_read_errors(urn):
+            paths = asset_inputs.read_dataset_rows(
+                mesh_ticketed_read, urn, row.levels, row.value_columns, row.value_op,
+                row.per_path, program_id)
+            try:
+                rows = measure_verbs.run_dataset(paths, row, program_id=program_id)
+            except ValueError as exc:
+                # A module refuses rows it cannot draw (a level value that is the sink's own
+                # label). Its message can name row values, so only the type is logged.
+                log.warning("dataset measure %s refused the rows: %s", row.measure_id,
+                            type(exc).__name__)
+                raise asset_inputs.ContractViolation(
+                    "refused_by_module", "the measure's module refused the asset's rows") from None
+    except NotInModel as exc:
+        raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
+    fn = row.measure_id
+    envelope = {
+        "measure": fn,
+        "output_uri": measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
+        "artifact_id": _artifact_id(fn, params, rows),
+        "value_label": row.render.get("value_label", row.name),
+        "render": {**copy.deepcopy(row.render),
+                   "other_label": importlib.import_module(row.resolved_module).OTHER_LABEL},
+        "data_provenance": asset_inputs.dataset_provenance(row.banner, urn),
+        "data_source": {"kind": "asset", "urn": urn},
+        "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
+                   "module_sha256": row.module_sha256},
+        **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows)) is not None else {}),
+        "rows": rows,
+    }
+    return envelope
+
+
 def _refuse_asset_exports(fns: list[str]) -> None:
     """409 when the flag is set and an export names a declared measure, BEFORE anything is
     measured: `state_sha256` cannot describe a package whose figures come from two sources, and
     whether a recipient without the asset grant may read an export of it is an open ruling. A
     built-in-only export is unaffected."""
     urn = asset_inputs.dataset_urn()
-    named = sorted({fn for fn in fns if fn in DECLARED})
-    if urn is not None and named:
+    # A dataset-kind measure always reads a governed asset (its row's URN), flag or no flag.
+    named = sorted({fn for fn in fns if fn in DECLARED
+                    and (urn is not None or DECLARED[fn].kind == measure_verbs.KIND_DATASET)})
+    if named:
         raise HTTPException(status_code=409, detail={
             "error": "asset_export_unsupported",
             "measures": named,
@@ -1973,7 +2026,8 @@ def mesh_ticketed_read(urn: str):
     The caller is the SDK's, from the request's bearer (never the body: a `svc:` principal
     naming a user is refused, as a service holds no grant to lend). The client is built with
     the bearer and that caller and NOTHING else: no client id, no secret, so there is no rung to
-    fall to but a refusal. Called only from `_asset_state`, only when `FIN_DATASET_URN` is set.
+    fall to but a refusal. Called from `_asset_state` (only when `FIN_DATASET_URN` is set) and from
+    `_dataset_envelope` (always: a dataset-kind row names its own asset).
     """
     caller = _current_caller()
     bearer = asset_inputs.current_bearer()
