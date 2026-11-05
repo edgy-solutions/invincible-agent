@@ -38,6 +38,99 @@ global:
   # different clock from the chart's contents — the images are built from the commit the CHART
   # was released at.
   defaultImageTag: ""
+  # -- Every image this repo does NOT build, pinned by digest. Keyed by the full reference
+  # WITHOUT its tag (`<registry>/<repository>`); `invincible-agent.image` renders the digest in
+  # place of any tag. The images this repo DOES build are not here: the release workflow writes
+  # them, with a re-check of these rows, into `values-release-<version>.yaml` and attaches it to
+  # the chart release. A roll renders with that file. `scripts/seal_image_digests.py` fails any
+  # rendered image that still carries only a tag. The map is keyed by repository, so a component
+  # `image.tag` override on a row below is ignored; change the row instead.
+  imageDigests:
+    # 0.11.0 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:f71a5b092486354f0d144c467953a6c1c749e1b133c44e133458cf71d6d8cf2c"
+    # 0.11.0 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:ebc44a04433678e5f366cbbb94c9c130e9d0df28338414db012e7d00e535250f"
+    # reviewed 09-23 (`master` build of 1aa2cbe) (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "ghcr.io/edgy-solutions/pub-tools": "sha256:ed93f7b14b6a3d4a094c098d0fb6233deb077b1271440fb851e8952d717bc9bc"
+    # The cortex frontend. Pin history (each digest was read at the full tag, an OCI index with
+    # linux/arm64) follows; the row is the digest the last entry names.
+    # PINNED HERE FROM 0.4.71 (architect, 2026-10-28: "cut release 0.4.71 ... with cortex pinned
+    # at e09e2ac (image 57e40789…), so work installs it by version"). Until 0.4.70 this was
+    # empty on purpose, so that the default file would not pin a digest only one environment had
+    # pulled. The ruling replaces that: the release names the frontend it was proved with, and
+    # an environment that installs by version gets those bytes. Measured before pinning:
+    # cortex-ui e09e2acce926966ba32055698628142e2934a98c, the full tag, resolves to this digest,
+    # an OCI index with linux/amd64 and linux/arm64. The abbreviated tag and the full sha with
+    # its last hex altered both answer 404. An environment's own values file still overrides
+    # this pin by setting this row.
+    # RE-PINNED FOR 0.4.72 (architect, 2026-10-30: "pin cortex at fe4d787 ... it is the
+    # case-panel fix and the rehearsal lands on that panel"): cortex-ui
+    # fe4d7879ac4c86a83bbc958565be11688bffd0cf -> 4d6dd208. It carries 42c470c's review_coverage
+    # send (under promotionRuns only) and the case panel's fix (the panel subscribes to the
+    # loaded kind menu; options read the pending task's own when the case omits them). Measured
+    # before pinning, the same three ways as above: the full tag resolves to this digest, an OCI
+    # index with linux/amd64 and linux/arm64; the abbreviated tag and the full sha with its last
+    # hex altered both answer 404. fe4d787 descends from 42c470c, which descends from e09e2ac.
+    # RE-PINNED FOR 0.4.74 (architect, 2026-10-31: "cut 0.4.74 (cortex at c27e6d3 or cortex's
+    # item-form merge if it lands)"; cortex-ui #61, the item form, had not landed): cortex-ui
+    # c27e6d3e3ba2f87e72b4b1f61a8fafec7ab09688 -> fa7e51ff. It adds #59 (an export profile's
+    # format is read verbatim) to fe4d787, and still sends review_coverage in the parts form.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # fe4d787..c27e6d3 leaves .github/workflows/build.yml, Dockerfile and package.json unchanged
+    # and adds no import.meta.env read.
+    # RE-PINNED FOR 0.4.75 (architect, 2026-11-02: "0.4.75 carries ... cortex 8afc0e7"): cortex-ui
+    # 8afc0e7663cdd3dbb2c8edb8792e06192629421a -> 8c60760d. It adds #61 (review_coverage is sent in
+    # the item form) and 6c2f0cc (New Canvas seeds once) to c27e6d3. This BFF still accepts the parts
+    # form, whose deletion waits until this pin has rolled.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # c27e6d3..8afc0e7 leaves the Dockerfile and package.json unchanged, changes build.yml only at
+    # its PRODUCER_REF contract pin, and adds no import.meta.env read.
+    # RE-PINNED FOR 0.4.76 (Chris, 2026-11-03: "cortex 8afc0e7 or newer"): cortex-ui
+    # e06e08aa3f2b6b0f5fbd679041c532717aeda2f8 -> 2ed53946. It adds #62 (the document review card) to
+    # 8afc0e7, dormant until a kind declares `review_shape: document` and a task serves `sections[]`.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # 8afc0e7..e06e08a leaves the Dockerfile, package.json and build.yml unchanged, and adds no
+    # import.meta.env read.
+    # RE-PINNED FOR 0.4.77 (Chris, 2026-11-03: "cortex pin 26a2049"): cortex-ui
+    # 26a204990572f7d46cb8ee208abb31c0d7327fe9 -> 3077dfa6. It adds to e06e08a: a payload that claims
+    # the document shape and cannot be read says why; k of n holds the first total and names refused
+    # panels; a card the answer declared no longer reads NOT declared.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
+    # e06e08a..26a2049 leaves the Dockerfile and package.json unchanged, changes build.yml only at
+    # its PRODUCER_REF contract pin, and adds no import.meta.env read.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:3077dfa6e73a42658116faf27d29aaf4ad8a8b27f9df82bda192c30722e79104"
+    # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
+    # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "docker.io/bitnamilegacy/postgresql": "sha256:6c08e21c71520516d50efbe2a6bca509b4d133c2971f1ef79c91433f3717fd14"
+    # 8.11.0 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "docker.io/curlimages/curl": "sha256:83a505ba2ba62f208ed6e410c268b7b9aa48f0f7b403c8108b9773b44199dbba"
+    # 1.0.13 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "docker.io/electricsql/electric": "sha256:4e69c4a6ec3e976efbdd8b7e6de427e771aeacdbc0c8c7ca22eb0ca6ab1611ff"
+    # 5.26.0 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "docker.io/library/neo4j": "sha256:5a015e53de1895e7eee1574ae0325cf8c4b89587222778108c594bdd45a474b5"
+    # 15-alpine (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "docker.io/library/postgres": "sha256:54e0dd8e8cddcdbb9156c2486eed5a43eccb7214d7c6828097d41ce049fb3984"
+    # 3.12-slim (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "docker.io/library/python": "sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30"
+    # 1.6.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "docker.io/restatedev/restate": "sha256:78858ccbfe3385805ddcf81dc48ae1bea12f63daf0c207da81468ef49a7b10f6"
+    # 5.5.0 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "docker.io/secoresearch/fuseki": "sha256:6a3f2bd8332cc1fd9f452bd30b903b9bcf6918ad40c1ef95e59ed76798e16379"
+    # 1.27.0 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "docker.io/semitechnologies/weaviate": "sha256:53fa576934f8e2c9130dc3a61a0f9b7d9330fe0ff456ccb37db05d03b700abc9"
+    # 0.33.13 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "ghcr.io/aserto-dev/topaz": "sha256:0bf70f9a00ceb793f011b12215a7f2c3e3abee4670d0fa00a673a686dbda63be"
+    # v1.89.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "ghcr.io/berriai/litellm": "sha256:713e2a036aecc8f2cb24cdf0bdeffd893b4f37190d4b21eb9e26ac648939c67a"
+    # RELEASE.2025-08-13T08-35-41Z (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "ghcr.io/edgy-solutions/mirror/mc": "sha256:ee1e889d7bda12996f0ec8b2bf49bb25361c374cb2b2611ad31737d93200be68"
+    # 26.6.4 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
+    "quay.io/keycloak/keycloak": "sha256:0aae0de7fca85525f727d3354df17896092de8bb26ae4c12d89c77e5df8cbce4"
   imagePullPolicy: IfNotPresent
   # -- Suffix for internal K8s service resolution (e.g., .default.svc.cluster.local)
   clusterDomain: ""
@@ -149,13 +242,12 @@ postgresql:
     # sandbox 2026-07-13). NOTE the source path: after Bitnami's 2025-08 Docker
     # Hub migration the pinned `-r2` tag exists on docker.io ONLY at
     # `bitnamilegacy/postgresql` (bitnami/postgresql there is `:latest`-only).
-    # Work pulls from Artifactory where the mirror seeds it under `bitnami/`
-    # (see scripts/mirror-to-artifactory.ps1). A docker.io-direct deploy
-    # (e.g. sandbox) must override repository -> `bitnamilegacy/postgresql`
-    # (see values-sandbox.yaml). For the official image instead:
+    # Since 0.4.79 this is the default for every deployment (it was `bitnami/postgresql` here
+    # and `bitnamilegacy/` in values-sandbox.yaml); a deployment that mirrors the image under
+    # another path overrides repository AND the `global.imageDigests` row. For the official image instead:
     # imageStyle: postgres, repository: library/postgres, tag: "17".
     registry: "docker.io"
-    repository: "bitnami/postgresql"
+    repository: "bitnamilegacy/postgresql"
     tag: "17.5.0-debian-12-r2"
   auth:
     postgresPassword: "changeme-postgres"
@@ -287,7 +379,13 @@ dagster:
     enabled: true
     replicas: 1
     image:
-      tag: ""  # defaults to .Chart.AppVersion
+      # The control-plane image: `dagster api grpc -m iagent.definitions` is its CMD, and it is the one
+      # image the build matrix produces that holds this code. This used to default to
+      # `<imagePrefix>/dagster-user-code`, which no workflow has ever built, so a bare-defaults render
+      # named an image that does not exist (values-sandbox.yaml overrode it to this). Pinned by digest
+      # like every other image of ours; the seal fails any that is not.
+      repository: "edgy-solutions/invincible-agent/dagster-control-plane"
+      tag: ""
     port: 4000
     # SIZED FROM THE LOAD, NOT BY DOUBLING. `DefaultRunLauncher` starts runs INSIDE this pod
     # (instance config: templates/dagster-instance.yaml; runs that outlive
@@ -812,7 +910,7 @@ centralGateway:
   replicas: 1
   image:
     repository: "edgy-solutions/dag-tools/central-gateway"
-    tag: ""
+    tag: "0.11.0"
   port: 8000
   resources:
     requests:
@@ -1064,7 +1162,7 @@ userDeployments:
     image:
       registry: "ghcr.io"
       repository: "edgy-solutions/dag-tools/user-deployment"
-      tag: ""
+      tag: "0.11.0"
     imagePullPolicy: Always
     dagsterModule: "dag_tools.user_deployment.definitions"
     codeLocation:
@@ -1623,56 +1721,8 @@ cortexUi:
   image:
     repository: edgy-solutions/cortex-ui/frontend
     tag: ""
-    # DIGEST WINS OVER TAG when set; the rationale is `invincible-agent.image` in _helpers.tpl.
-    # PINNED HERE FROM 0.4.71 (architect, 2026-10-28: "cut release 0.4.71 ... with cortex pinned
-    # at e09e2ac (image 57e40789…), so work installs it by version"). Until 0.4.70 this was
-    # empty on purpose, so that the default file would not pin a digest only one environment had
-    # pulled. The ruling replaces that: the release names the frontend it was proved with, and
-    # an environment that installs by version gets those bytes. Measured before pinning:
-    # cortex-ui e09e2acce926966ba32055698628142e2934a98c, the full tag, resolves to this digest,
-    # an OCI index with linux/amd64 and linux/arm64. The abbreviated tag and the full sha with
-    # its last hex altered both answer 404. An environment's own values file still overrides
-    # this pin (values-sandbox.yaml carries the same digest).
-    # RE-PINNED FOR 0.4.72 (architect, 2026-10-30: "pin cortex at fe4d787 ... it is the
-    # case-panel fix and the rehearsal lands on that panel"): cortex-ui
-    # fe4d7879ac4c86a83bbc958565be11688bffd0cf -> 4d6dd208. It carries 42c470c's review_coverage
-    # send (under promotionRuns only) and the case panel's fix (the panel subscribes to the
-    # loaded kind menu; options read the pending task's own when the case omits them). Measured
-    # before pinning, the same three ways as above: the full tag resolves to this digest, an OCI
-    # index with linux/amd64 and linux/arm64; the abbreviated tag and the full sha with its last
-    # hex altered both answer 404. fe4d787 descends from 42c470c, which descends from e09e2ac.
-    # RE-PINNED FOR 0.4.74 (architect, 2026-10-31: "cut 0.4.74 (cortex at c27e6d3 or cortex's
-    # item-form merge if it lands)"; cortex-ui #61, the item form, had not landed): cortex-ui
-    # c27e6d3e3ba2f87e72b4b1f61a8fafec7ab09688 -> fa7e51ff. It adds #59 (an export profile's
-    # format is read verbatim) to fe4d787, and still sends review_coverage in the parts form.
-    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
-    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
-    # fe4d787..c27e6d3 leaves .github/workflows/build.yml, Dockerfile and package.json unchanged
-    # and adds no import.meta.env read.
-    # RE-PINNED FOR 0.4.75 (architect, 2026-11-02: "0.4.75 carries ... cortex 8afc0e7"): cortex-ui
-    # 8afc0e7663cdd3dbb2c8edb8792e06192629421a -> 8c60760d. It adds #61 (review_coverage is sent in
-    # the item form) and 6c2f0cc (New Canvas seeds once) to c27e6d3. This BFF still accepts the parts
-    # form, whose deletion waits until this pin has rolled.
-    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
-    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
-    # c27e6d3..8afc0e7 leaves the Dockerfile and package.json unchanged, changes build.yml only at
-    # its PRODUCER_REF contract pin, and adds no import.meta.env read.
-    # RE-PINNED FOR 0.4.76 (Chris, 2026-11-03: "cortex 8afc0e7 or newer"): cortex-ui
-    # e06e08aa3f2b6b0f5fbd679041c532717aeda2f8 -> 2ed53946. It adds #62 (the document review card) to
-    # 8afc0e7, dormant until a kind declares `review_shape: document` and a task serves `sections[]`.
-    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
-    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
-    # 8afc0e7..e06e08a leaves the Dockerfile, package.json and build.yml unchanged, and adds no
-    # import.meta.env read.
-    # RE-PINNED FOR 0.4.77 (Chris, 2026-11-03: "cortex pin 26a2049"): cortex-ui
-    # 26a204990572f7d46cb8ee208abb31c0d7327fe9 -> 3077dfa6. It adds to e06e08a: a payload that claims
-    # the document shape and cannot be read says why; k of n holds the first total and names refused
-    # panels; a card the answer declared no longer reads NOT declared.
-    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
-    # arm64; the abbreviated tag and the full sha with its last hex altered both answer 404.
-    # e06e08a..26a2049 leaves the Dockerfile and package.json unchanged, changes build.yml only at
-    # its PRODUCER_REF contract pin, and adds no import.meta.env read.
-    digest: "sha256:3077dfa6e73a42658116faf27d29aaf4ad8a8b27f9df82bda192c30722e79104"
+    # PINNED BY DIGEST in `global.imageDigests` (top of this file), keyed by this repository;
+    # the pin history that used to sit here moved with the digest.
   port: 8080
   resources:
     requests:
@@ -2725,8 +2775,8 @@ utilImages:
   # buckets declared in `minioBucketInit.buckets`. Version-aligned with the
   # mirrored minio server (see scripts/mirror-to-artifactory.ps1).
   mc:
-    registry: "quay.io"
-    repository: "minio/mc"
+    registry: "ghcr.io"
+    repository: "edgy-solutions/mirror/mc"
     tag: "RELEASE.2025-08-13T08-35-41Z"
 
 # ==========================================================================

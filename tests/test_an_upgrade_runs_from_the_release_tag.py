@@ -10,6 +10,8 @@ and it still prints what the tree is.
 from __future__ import annotations
 
 import os
+import re
+import sys
 import shutil
 import subprocess
 from pathlib import Path
@@ -56,6 +58,7 @@ def tree(tmp_path: Path) -> Path:
     (root / ".gitignore").write_text("*.secret.yaml\n", encoding="utf-8", newline="\n")
     shutil.copy(GUARD, scripts / GUARD.name)
     shutil.copy(UPGRADE, scripts / UPGRADE.name)
+    shutil.copy(UPGRADE.with_name("seal_image_digests.py"), scripts / "seal_image_digests.py")
     (scripts / "roll-lock.sh").write_text(
         '#!/usr/bin/env bash\necho "lock $*" >> "$CALLS"\n', encoding="utf-8", newline="\n"
     )
@@ -73,17 +76,42 @@ def _guard(root: Path) -> subprocess.CompletedProcess:
     )
 
 
-def _upgrade(root: Path, tmp_path: Path, *args: str) -> tuple[subprocess.CompletedProcess, list[str]]:
+def _upgrade(root: Path, tmp_path: Path, *args: str, env_extra: dict | None = None) -> tuple[subprocess.CompletedProcess, list[str]]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    (bin_dir / "helm").write_text('#!/usr/bin/env bash\necho "helm $*" >> "$CALLS"\n', encoding="utf-8", newline="\n")
+    # `helm template` is the seal's render (not a roll step): it prints one pod that is pinned by
+    # digest, and is logged to a file of its own so the roll's calls stay the thing asserted on.
+    (bin_dir / "helm").write_text(
+        '#!/usr/bin/env bash\n'
+        'if [ "$1" = "template" ]; then echo "helm $*" >> "$CALLS.template"; cat "$STUB_RENDER"; exit 0; fi\n'
+        'echo "helm $*" >> "$CALLS"\n',
+        encoding="utf-8", newline="\n",
+    )
+    # The release artifact the roll downloads (ruled 2026-11-04): the stub writes it where --dir says.
+    (bin_dir / "gh").write_text(
+        '#!/usr/bin/env bash\n'
+        'echo "gh $*" >> "$CALLS.gh"\n'
+        '[ -n "$STUB_NO_ARTIFACT" ] && exit 1\n'
+        'while [ $# -gt 0 ]; do case "$1" in --dir) d="$2"; shift;; --pattern) f="$2"; shift;; esac; shift; done\n'
+        'echo "global: {imageDigests: {}}" > "$d/$f"\n',
+        encoding="utf-8", newline="\n",
+    )
+    render = tmp_path / "render.yaml"
+    render.write_text(
+        "kind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n"
+        f"        - image: example.invalid/x@sha256:{'a' * 64}\n",
+        encoding="utf-8", newline="\n",
+    )
     calls = tmp_path / "calls.log"
     env = {
         **os.environ,
         "STUB_DIR": bin_dir.as_posix(),
         "CALLS": calls.as_posix(),
+        "STUB_RENDER": render.as_posix(),
+        "PYTHON": sys.executable,
         # Whatever else goes wrong below, a real helm finds no cluster to act on.
         "KUBECONFIG": (tmp_path / "no-such-kubeconfig").as_posix(),
+        **(env_extra or {}),
     }
     for inherited in ("HELM_TIMEOUT", "HELM_KUBECONTEXT"):
         env.pop(inherited, None)
@@ -177,3 +205,33 @@ def test_a_dry_run_from_a_working_tree_renders_and_says_what_the_tree_is(tree: P
     assert any(c.startswith("helm ") and "--dry-run" in c for c in calls)
     assert not any(c.startswith("lock acquire") for c in calls)
     assert "REFUSING" in done.stderr
+
+
+def test_a_roll_downloads_the_release_artifact_and_renders_with_it_last(tree: Path, tmp_path: Path):
+    done, calls = _upgrade(tree, tmp_path)
+    assert done.returncode == 0, done.stderr
+    gh = (tmp_path / "calls.log.gh").read_text(encoding="utf-8")
+    assert f"release download invincible-agent-{VERSION}" in gh and f"values-release-{VERSION}.yaml" in gh
+    helm_upgrade = next(c for c in calls if c.startswith("helm "))
+    files = re.findall(r"(?:-f|--values) (\S+)", helm_upgrade)
+    assert files and files[-1].endswith(f"values-release-{VERSION}.yaml"), files
+    assert (tmp_path / "calls.log.template").exists(), "the seal render did not run"
+
+
+def test_a_missing_release_artifact_is_a_hard_stop_that_names_the_version(tree: Path, tmp_path: Path):
+    done, calls = _upgrade(tree, tmp_path, env_extra={"STUB_NO_ARTIFACT": "1"})
+    assert done.returncode == 1
+    assert f"values-release-{VERSION}.yaml" in done.stderr
+    assert calls == []
+
+
+@pytest.mark.parametrize("args", [
+    ["--set", "global.imageTag=abc1234"],
+    ["--set=global.imageTag=abc1234"],
+    ["--set-string", "global.imageTag=abc1234"],
+])
+def test_global_image_tag_is_not_a_roll_argument(tree: Path, tmp_path: Path, args: list[str]):
+    done, calls = _upgrade(tree, tmp_path, *args)
+    assert done.returncode == 2, done.stderr
+    assert "global.imageTag" in done.stderr
+    assert calls == []

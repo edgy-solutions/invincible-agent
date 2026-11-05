@@ -28,15 +28,11 @@ if [ -f "uv.lock" ]; then uv sync --locked --no-install-project --no-dev --compi
 COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
 if [ -f "uv.lock" ]; then uv sync --locked --no-dev --no-install-project --compile-bytecode; else uv pip install --system -e .; fi
-# Bake acryl-datahub into the venv — CONTROL-PLANE IMAGE ONLY — so the
-# gated demoSeed catalog seed (scripts/seed_datahub_catalog.py) can run.
-# The cluster has no PyPI egress, so it can't be pip-installed at Job
-# runtime; and adding it to the root deps would bloat cortex-bff /
-# dagster / projector with acryl's ~150MB (the mesh-registrar pyproject
-# already flags that cost). Installed here into /app/.venv, which the
-# seed's `python` uses. CI has PyPI at build time; runtime doesn't need it.
-RUN --mount=type=cache,target=/root/.cache/uv \
-uv pip install --python /app/.venv/bin/python acryl-datahub
+# acryl-datahub (the demoSeed catalog seed, scripts/seed_datahub_catalog.py) comes from
+# the locked sync above: the root pyproject declares it, so uv.lock names its version.
+# No install after the sync — an unversioned one resolved whatever PyPI served at build
+# time, and took its transitive pins off the lock with it.
+# tests/test_no_unversioned_install_after_a_locked_sync.py holds that line.
 
 # STAGE 2: SECURE RUNNER
 FROM python:3.12-slim-bookworm

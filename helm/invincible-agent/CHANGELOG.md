@@ -58,6 +58,54 @@ and the definition sends it to the route.
   goes red when the chart pins another gateway image without the list being re-read. It stays a
   copy until dag-tools publishes `gateway_routes.json` (01M6KF821P2C3KRQN86FF0N61N).
 
+**Every image the chart runs is pinned by digest (architect 11-04)**
+
+- **One map holds the digests, and the release carries the file.** `global.imageDigests` is keyed
+  `<registry>/<repository>`; a row renders the image as `<registry>/<repository>@sha256:...`, and a
+  `digest:` at a call site still wins. The prefix test the helper used to run (2026-09-09) is gone: a
+  map lookup pins an image or does not. The release workflow now writes
+  `values-release-<version>.yaml` (ours from `image-digests.json`, third party from the digests
+  `values.yaml` pins, each confirmed in its registry by digest) and attaches it to the chart release.
+  It renders the chart with that file, and again with every optional workload on, and fails the
+  release before publish if any container or initContainer image is not `@sha256:`.
+- **The roll reads that file and resolves nothing.** `scripts/upgrade-sandbox.sh` downloads
+  `values-release-<version>.yaml` from `invincible-agent-<version>`, renders it last, seals the
+  render, and stops on any tag-only image. A release without the file (0.4.78 and earlier) can't be
+  rolled by it. `--set global.imageTag=...` is refused; a roll is of a released version.
+- **Base moves to what sandbox ran.** `postgresql.image` is `bitnamilegacy/postgresql` and
+  `utilImages.mc` is `ghcr.io/edgy-solutions/mirror/mc`, at today's tags; `dagster.userCode` defaults to
+  the control-plane image, because the old default, `dagster-user-code`, has never been built (GHCR
+  answers 403 at every tag) and could never have had a digest. The sandbox rows that became identical to
+  base are deleted.
+- **Sandbox moves two images.** dag-tools goes from `4096a11`'s digests to v0.11.0's (tag `0.11.0` in
+  base), and pub-tools is pinned at `ed93f7b1` (`master` build of 1aa2cbe, reviewed 09-23); sandbox ran
+  `1555b341` ("not reviewed") until now, so the roll moves it back. **What sandbox loses:** `1555b341`'s
+  PUB LOG CP1252 / V_CHARACTERISTICS staging fix. That isn't nothing, so per G2 the roll waits on a
+  ruling.
+- **`values-roll-frontend-digest.yaml` is retired.** It was the 09-23 order's file: pub-tools `ed93f7b1`
+  reviewed and `1555b341` not, and the four digests it carried. The frontend digest it fed now lives in
+  `global.imageDigests` with its pin history, and the dag-tools and pub-tools pins are above.
+
+**acryl-datahub comes from the lock in the control-plane image (Chris 11-05, board 01M6MZ6HK5PMK9VQ2PM95DC7E2)**
+
+- **The unversioned install after the locked sync is gone** (`.github/docker/Dockerfile.dagster`). The root
+  `pyproject.toml` declares `acryl-datahub>=1.7.0`, so `uv sync --locked` already installs the version
+  `uv.lock` names. The old line re-resolved it from PyPI at build time, and its transitive pins with it.
+- **A seal holds the line:** `tests/test_no_unversioned_install_after_a_locked_sync.py` reads every
+  `.github/docker/Dockerfile*`. Its one remainder is the agent image's `packaging setuptools wheel`, which
+  isn't changed here because that would change every engine image (board 01M6N07ZJJ37W9NQ7KGRE1VRW9).
+
+**The demoSeed's DataHub owners are the canonical users (G3 note, the two alice objects)**
+
+- **`scripts/seed_datahub_catalog.py` names `alice@example.com` and `bob@example.com`,** the
+  `policy/users.yaml` rows. Before this it named `@company.com`, and `datahub_topaz_sync` created a second
+  Topaz user from each owner.
+- **charlie@company.com and dave@company.com are unchanged.** They have no canonical row to move to.
+- **Operator steps, not done by the chart:**
+  - DataHub ownership that is already seeded keeps the old owners until the seed re-runs or is edited.
+  - The Topaz user `alice@company.com` and its owner relations are removed by hand, in the same
+    `datahub_topaz_sync` (Chris, live write).
+
 ## 0.4.78 — 2026-11-04
 
 **0.4.77 stands as cut at `8fc02746` and rolls nowhere. The sandbox goes from 0.4.75 to this chart.** This
