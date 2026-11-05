@@ -1,9 +1,9 @@
 # ADR-0061 — A workflow is described in dialogue and compiled to the rows the case runner already runs
 
-**Status:** Proposed, ruled 2026-11-02: this ADR records the design and its measurements, including
-the gap below. **The bar for "the loop works" is not met: no run from 47 to 49 is clean (ruled 2026-11-03).**
-It is met when a run is runnable with all four stages reachable, each stage has the steps the person described
-(ruled 2026-11-02), and the draft holds what the person stated (ruled 2026-11-03).
+**Status:** Proposed. **The bar for "the loop works" is met on run 63 (ruled 2026-11-05, §10).** This ADR records the
+design and its measurements, including the gap below and the open list. The bar is a run that is runnable with all four
+stages reachable, each stage holding the steps the person described (ruled 2026-11-02), and the draft holding what the
+person stated (ruled 2026-11-03).
 `runnable` now refuses any definition no table routes to from the trigger. Instrument v3 reads routes and slots as two
 bars. Runs 47 to 49 all read `yes` on routes and `no` on slots: run 47 put back an outcome the person had corrected,
 run 48 lets the person who logged a notice sign off its impact review, which the person barred, and run 49 lost the
@@ -21,8 +21,9 @@ steps is asked as a stage, in the person's words. Both are built. Runs 59 to 61,
 read `yes` on slot and approval for the first time, and both stall on the record stage, where the model's step is refused
 for its path form (§10). The architect then ruled that a positional path's refusal says what to write, and that a stage
 is drafted under a name the person used. Both are built (§10). Runs 62 to 64, on them: run 63 reads `yes` on route, slot
-and approval with the contradiction caught, and run 62 reads `no`, as it should. So the bar for Proposed, in the
-architect's words, is met (§10). Nothing is flipped.
+and approval with the contradiction caught, and run 62 reads `no`, as it should. The architect ruled the bar met on run 63
+and the ADR Proposed (2026-11-05). That reading is instrument v4's. The same ruling puts outcome words in the slot check,
+read against the person's own words. That check is next, and no run comes before it (§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2789,6 +2790,22 @@ wrong on a name in any of the three runs, since no stage question stalled as in 
 **Also seen.** `outputs.record` is deferred with "user could not answer" on all three runs, asked before the stage was
 described. That is the stale deferral. Run 63 also left the record's filing step without a deadline, with "user could not
 answer". Nobody stated one, so the draft is right to have none.
+
+#### 2026-11-05: the ruling: Proposed, on run 63
+
+The architect ruled: "bar met on run 63 — flip ADR-0061 to Proposed … with §10 as the evidence". The status above now says
+so. The evidence is the table in the section before this one. Run 63 is runnable, reads `yes` on route, slot and approval
+under instrument v4, and catches the planted contradiction. Run 62 reads `no`, as it should.
+
+The limit ruled on 2026-11-02 stands: the person can't yet say "that is not a stage". The open list stands, in the
+architect's order. Outcome words come first: the slot check compares an answer word with the person's own words, and
+`escalate` against `escalated` is a slot fault, not noise. The grammar line on answer words is next. No run comes before
+both are built.
+
+**Run 63 and that check.** Run 63's one semantic difference from the expected bundle is the acknowledgement's answer. The
+draft says `escalate`, the person said "acknowledge it, or escalate it", and the expected bundle says `escalated`. So the
+draft holds the person's word, and the bundle holds a word the person never said. The flip rests on v4's reading, as
+ruled. Runs 62 to 64 are re-read under the new check with no model time, and that reading is reported when it is built.
 
 ## Consequences
 
