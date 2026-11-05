@@ -17,7 +17,9 @@ answer, though the person said it in the opening (§10). The architect chose the
 field clears is now asked on that field. Runs 56 to 58, on it, all read `no`. Run 56 is runnable and reads `yes` on route
 and slot, and misses only the program approval's `approves` and `role`, which nothing asks for (§10). The architect then
 ruled two more: an approval step with no `approves` is asked which answers count and in what role, and a stage with no
-steps is asked as a stage, in the person's words. Both are built, and runs 59 to 61 are next (§10). Nothing is flipped.
+steps is asked as a stage, in the person's words. Both are built. Runs 59 to 61, on them, all read `no`. Runs 59 and 60
+read `yes` on slot and approval for the first time, and both stall on the record stage, where the model's step is refused
+for its path form (§10). Nothing is flipped.
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2629,6 +2631,67 @@ Twelve seals, and eleven mutants that each die on them: the stage branch taken o
 kind `missing` for `confirm`, `revises` without `role`, the answers left out of the question, the scripted person not
 answering it, its "none" answer wrong, and a role-less expected step answered. The suite, gov's refusal ratchet and the
 corpus check pass. The census is unchanged at 469 refused, 2003 passed, no crash sites.
+
+#### 2026-11-04: runs 59 to 61, on the two rulings
+
+Three runs at `d4676bcd`, one at a time, each after Dagster listed no active run.
+
+| run | status | route bar | slot bar | approval bar | contradiction | the new confirm | what it reads |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 59 | `cannot_run` | no | **yes** | **yes** | caught | not raised: every approval step drafted with both fields | the record is an emit and a render, and `outputs.record.ends` stalls |
+| 60 | `cannot_run` | no | **yes** | **yes** | caught | asked on all three approval steps, and all three landed | the record is an emit alone, and `outputs.record.ends` stalls |
+| 61 | `cannot_run` | no | no | no | caught | asked once, on the acknowledgement, and it landed | the impact review routes `approved` away, so the program approval and record are unreachable, and a stage named `acknowledgement` is never answered |
+
+**Bar status: not met.** No run reads `yes` on route, slot and approval. All three read `no` and should: each lacks a
+step the person described. There is still no first half. Nothing is flipped.
+
+**The confirm on `approves` works.** Run 60 drafted all three approval steps without `approves`. The loop asked about
+each at turns 24 to 26, the person answered with the verbs and role, and v4 reads all three right. Run 59 needed no
+question, because the grammar line landed on all three. Run 61 asked about the one step it could reach. Its program
+approval is unreachable, so it isn't asked, as built, and it reads wrong. Runs 59 and 60 are the first runs to read `yes`
+on approval.
+
+**The question on a stage with no steps wasn't raised.** No run drafted a workflow without steps. Each stage question in
+these runs is the older one, for a stage the trigger lists and no workflow holds. So these runs don't measure decision
+2. Its only evidence is still the seals and run 57's stored draft.
+
+**Why runs 59 and 60 are `cannot_run`: the record stage, and the path form again.** The person described the record as
+a send and then a wait for filing. Run 59 drafted an emit and a render, and run 60 drafted an emit alone. In both, the
+confirm on where the record ends was rejected at turn 27 ("No, that is not right"). The model then tried to add the step
+by position, and the path grammar refused it. Run 59 sent `steps[0].disposes` at turn 29. Run 60 sent `steps[0].disposes`
+at turn 28 and `steps[1].kind` at turn 29. Each was refused alongside the write-back check. The gap then stalled: "asked
+again and the answer changed nothing". Nothing else reads wrong in either run. Every route lands, `excludes` and
+`requires` are right, every role and `approves` is right, and the impact review's deadline is deferred as planted. I
+haven't measured what either run would have read had that step landed, and I don't claim it.
+
+**Run 61 drifts in its names.** The trigger listed a stage `acknowledgement`, and the workflow for it was drafted as
+`minor_acknowledge`. The loop asked twice about `acknowledgement`, at turns 3 and 27, and the scripted person had no
+answer either time, because no drafted stage of that name pairs with one the person described. The gap stayed open as a
+required slot. Separately, the impact review's routing table sends `approved` to a terminal named `approved`, not to the
+program approval, so the program approval and record are unreachable. That alone reads `no` on route.
+
+**Eleven model errors, by form.**
+
+- Five are the positional `steps[N]` path. Run 59 sent it at turns 20 and 29, run 60 at turns 28 and 29, and run 61 at
+  turn 18.
+- Three are the write-back check refusing `disposes` on the record after the person rejected it: run 59 at turn 29, and
+  run 60 at turns 28 and 29.
+- Two pick a row by a nested key, `rows[when.outcome=…]`: run 59 at turn 28 and run 61 at turn 18.
+- One is in run 59 at turn 28: "'matches' holds a list, not a mapping".
+
+Across runs 41 to 61, the positional path form is the commonest refusal: 16 of the 37, in 12 of the 21 runs. In runs 59
+and 60 it is on the only stage that reads wrong.
+
+**One way to close it, for the architect to choose.** I haven't built it. The path refusal could say what to write. For an
+index the list holds, it would name the id form, for example "`steps[1]` is `steps[id=send_disposition]`". For a new step,
+it would say to set `steps` whole. Today it says only that a list element is picked by a key it holds directly. That
+changes only the refusal text, so it needs new runs. Accepting `steps[N]` outright is the other way, and it widens the
+path grammar, so I don't recommend it.
+
+**Also seen.** `outputs.record` is deferred again with "user could not answer" on runs 59 and 60, since it was asked at
+turn 5, before the stage was described. That is the stale deferral on the open list. Run 60 also recorded a deferral on the
+acknowledgement's escalated route, "User did not specify where the escalated outcome should route", though its table
+routes `escalated` to the impact review, as the person described. That deferral is stale in the same way.
 
 ## Consequences
 
