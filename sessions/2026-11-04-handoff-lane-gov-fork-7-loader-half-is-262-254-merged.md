@@ -61,3 +61,5 @@ This replaces `2026-11-04-handoff-lane-gov-224-ruled-254-open-follow-ups-are-ite
 
 - **A dropped premise has siblings.** The validator's "the SDK isn't importable here" comment justified three forks; the ruling retired one. Grep the premise, not the fork, and file the siblings as an item rather than widening the PR.
 - **A global substitution misses the unquoted form.** The edit script's quoted-kind replace skipped the COLLISION message, where kind names appear bare. Grep every FORM of a renamed string before trusting a rename.
+- **A message file can predate the command meant to write it.** `495fc4ef` (this handoff) carries a 10-31 subject: `ho_msg.txt` already existed in the scratchpad, and the `printf` that would have overwritten it sat after a guard that exited. Write the message with a fresh name, and `head -1` it before `git commit -F`.
+- **ia-gov's own tree has no `.githooks/lanes` and an old hook.** `--expected` prints nothing here, so derive the trailer from master's registry row (`ia-gov  lane/gov lane/gov-*`).
