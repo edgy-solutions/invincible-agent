@@ -781,6 +781,61 @@ def wrong_approvals(files: dict, expected: dict, pairs: dict) -> list:
     return out
 
 
+def wrong_outcomes(files: dict, expected: dict, pairs: dict) -> list:
+    """Each described answer word the draft holds in another form (architect, 2026-11-05: the slot
+    check compares the person's own words, and ``escalate`` against ``escalated`` is a slot fault,
+    not noise). The person's words are the expected bundle's, read wherever an answer is held: a
+    human_await's task kind (``accepts``, ``reason_required``), a signal_await's ``accepts``, and
+    the outcomes the stage's chaining table routes. The words read in any order and exactly as
+    spelled. ``dropped_routes`` pairs a row whose outcome is spelled otherwise by where it goes, so
+    a route can read right while its word reads here, and rows pair here as they pair there. Steps
+    pair k-th of a kind with k-th of the same kind. A stage, step, table or row with no counterpart
+    is not read here (run 58 lacked the escalated row, which dropped_routes reads): ``dropped_steps`` and
+    ``dropped_routes`` read it, so one fault doesn't read in two bars. No bundle holds an emit's
+    ``disposes``, and an emit that settles a stage the person had someone confirm is a dropped
+    step, so ``disposes`` is not read either."""
+    d, e = _index(files), _index(expected)
+    back = {v: k for k, v in pairs.items()}
+
+    def held(ix, step):
+        if step.get("kind") == "human_await":
+            k = ix["kinds"].get(str(step.get("task_kind")))
+            k = k if isinstance(k, dict) else {}
+            return {"accepts": _names(k.get("accepts")), "reason_required": _names(k.get("reason_required"))}
+        return {"accepts": _names(step.get("accepts"))}
+
+    def verb(r):
+        return isinstance(r.get("when"), dict) and set(r["when"]) == {se._CHAIN_INPUT}
+
+    out = []
+    for ew, wf in sorted(e["wfs"].items()):
+        dw = back.get(ew)
+        if dw not in d["wfs"]:
+            continue
+        drafted = _steps_of(d["wfs"][dw])
+        for kind in ("human_await", "signal_await"):
+            rest = iter([s for s in drafted if s.get("kind") == kind])
+            for step in _steps_of(wf):
+                if step.get("kind") != kind:
+                    continue
+                other = next(rest, None)
+                if other is None:
+                    break
+                want, have = held(e, step), held(d, other)
+                if have != want:
+                    out.append({"stage": ew, "step": step.get("id"), "expected": want, "drafted": have})
+        if ew in e["chain"]:
+            erows = [r for r in e["chain"][ew][1].get("rows") or [] if isinstance(r, dict)]
+            drows = (d["chain"].get(dw) or (None, {}))[1].get("rows") or []
+            both = [(r, o) for r, o in _paired_rows(drows, erows, d, e)
+                    if verb(r) and verb(o)]
+            want = sorted(str(o["when"][se._CHAIN_INPUT]) for _, o in both)
+            have = sorted(str(r["when"][se._CHAIN_INPUT]) for r, _ in both)
+            if have != want:
+                out.append({"stage": ew, "step": None, "expected": {"routes": want}, "drafted": {"routes": have}})
+    return out
+
+
 def _role(value) -> Optional[str]:
     return re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_") or None if value else None
 
@@ -868,8 +923,9 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
     barred, required = wrong_excludes(r["files"], expected, pairs), wrong_requires(r["files"], expected)
     rewritten = rewritten_slots(r["messages"])
     approvals = wrong_approvals(r["files"], expected, pairs)
+    outcomes = wrong_outcomes(r["files"], expected, pairs)
     route_bar = r["status"] == "runnable" and not unreachable and not dropped and not routes
-    slot_bar = not barred and not required and not rewritten
+    slot_bar = not barred and not required and not rewritten and not outcomes
     approval_bar = not approvals
     return {
         "fixture": name,
@@ -894,6 +950,7 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "rewritten_slots": rewritten,
         "rewrites_refused": [m for m in r["model_errors"] if m.get("fault") == "rewrite"],
         "wrong_approvals": approvals,
+        "wrong_outcomes": outcomes,
         "route_bar": route_bar,
         "slot_bar": slot_bar,
         "approval_bar": approval_bar,

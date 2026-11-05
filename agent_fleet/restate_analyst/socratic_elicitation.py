@@ -1793,6 +1793,11 @@ RULES
   approval, that human_await lists those answers in approves, and its role is the approver's capacity
   in the user's words, the one they give whoever answers. A human_await none of whose answers the
   user calls an approval has no approves.
+- An answer word is the user's word for the outcome once it has happened, the one they use for
+  what follows it ("if it is approved", "only approved counts"), not the verb for the act
+  ("approve it"). Write that same word wherever the answer is held: the task kind's accepts and
+  reason_required, approves, a signal_await's accepts, and the chaining table's when. timed_out is
+  the runner's word, not the user's.
 - A step with a deadline_seconds can also end timed_out (the runner's outcome when the deadline
   expires), so its workflow's chaining table routes timed_out as well.
 - A row matches an event field only with one of its listed event values; map the user's words to

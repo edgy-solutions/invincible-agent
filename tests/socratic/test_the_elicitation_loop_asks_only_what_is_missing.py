@@ -3320,7 +3320,7 @@ def test_an_approval_step_the_draft_lacks_reads_and_a_render_before_it_does_not_
 
 @pytest.mark.parametrize("edit,route,slot,approval", [
     ("none", True, True, True), ("approves", True, True, False), ("role", True, True, False),
-    ("excludes", True, False, True), ("drop", False, True, True)])
+    ("excludes", True, False, True), ("drop", False, True, True), ("outcome", True, False, True)])
 def test_the_three_bars_read_apart_and_the_bar_needs_all_three(monkeypatch, edit, route, slot, approval):
     real = se.run
 
@@ -3335,6 +3335,8 @@ def test_the_three_bars_read_apart_and_the_bar_needs_all_three(monkeypatch, edit
             _step(r["files"], IR, "engineering_disposition")["excludes"] = []
         elif edit == "drop":
             r["files"] = {**r["files"], **_record_only_emits("filed")}
+        elif edit == "outcome":
+            _ack_says(r["files"], "escalate")
         return r
     monkeypatch.setattr(sm.se, "run", result)
     row = sm.measure("pcn_review", se.OracleExtractor(), aligned=True)
@@ -3681,3 +3683,179 @@ def test_the_stage_confirm_lists_each_name_the_person_used():
     slot = next(s for s in se._value_slots(f) if s[0] == f"trigger.{se._STAGES}")
     for name in NAMED:
         assert se._words(name) in slot[3]
+
+
+# ── an answer word is read in the person's own words (architect, 2026-11-05) ──────────────────
+
+def _ack_says(f, word):
+    """The acknowledgement's escalation spelled ``word`` wherever an answer is held, as run 63 drafted it."""
+    k = f[ACK_KIND]
+    k["accepts"] = [word if a == "escalated" else a for a in k["accepts"]]
+    k["reason_required"] = [word if a == "escalated" else a for a in k["reason_required"]]
+    for r in f[ACK_CH]["rows"]:
+        if r["when"].get("outcome") == "escalated":
+            r["when"]["outcome"] = word
+    return f
+
+
+def test_an_answer_word_in_another_form_reads_where_it_is_held():
+    out = sm.wrong_outcomes(_ack_says(_good(), "escalate"), _good(), SAME)
+    assert [(x["stage"], x["step"]) for x in out] == [("pcn_acknowledge", "acknowledge"), ("pcn_acknowledge", None)]
+    assert out[0]["drafted"] == {"accepts": ["acknowledged", "escalate"], "reason_required": ["escalate"]}
+    assert out[1]["drafted"] == {"routes": ["acknowledged", "escalate"]}
+
+
+def test_the_route_reads_right_while_its_word_reads_wrong():
+    f = _ack_says(_good(), "escalate")
+    assert sm.dropped_routes(f, _good(), SAME) == [] and sm.wrong_approvals(f, _good(), SAME) == []
+    assert sm.wrong_outcomes(f, _good(), SAME) != []
+
+
+def _only_accepts(f):
+    f[ACK_KIND]["accepts"] = ["acknowledged", "escalate"]
+
+
+def _only_reason(f):
+    f[ACK_KIND]["reason_required"] = ["escalate"]
+
+
+def _only_route(f):
+    next(r for r in f[ACK_CH]["rows"] if r["when"]["outcome"] == "escalated")["when"]["outcome"] = "escalate"
+
+
+def _only_signal(f):
+    _step(f, REC, "filed")["accepts"] = ["file"]
+
+
+@pytest.mark.parametrize("edit,stage,step,field", [
+    (_only_accepts, "pcn_acknowledge", "acknowledge", "accepts"),
+    (_only_reason, "pcn_acknowledge", "acknowledge", "reason_required"),
+    (_only_route, "pcn_acknowledge", None, "routes"),
+    (_only_signal, "pcn_record", "filed", "accepts")])
+def test_each_place_an_answer_is_held_reads_on_its_own(edit, stage, step, field):
+    f = _good()
+    edit(f)
+    out = sm.wrong_outcomes(f, _good(), SAME)
+    assert [(x["stage"], x["step"]) for x in out] == [(stage, step)]
+    assert [k for k in out[0]["expected"] if out[0]["expected"][k] != out[0]["drafted"][k]] == [field]
+
+
+def test_control_the_same_words_in_another_order_read_the_same():
+    f = _good()
+    f[ACK_KIND]["accepts"] = list(reversed(f[ACK_KIND]["accepts"]))
+    f[ACK_CH]["rows"] = list(reversed(f[ACK_CH]["rows"]))
+    assert sm.wrong_outcomes(f, _good(), SAME) == []
+
+
+def test_a_stage_nothing_pairs_with_is_the_route_bars_and_not_read_here():
+    pairs = {w: w for w in STAGES if w != "pcn_acknowledge"}
+    f = _ack_says(_good(), "escalate")
+    assert sm.wrong_outcomes(f, _good(), pairs) == []
+    assert [x["stage"] for x in sm.dropped_steps(f, _good(), pairs)] == ["pcn_acknowledge"]
+
+
+def test_an_answer_step_the_draft_lacks_is_the_route_bars_and_not_read_here():
+    f = _record_only_emits("filed")
+    assert sm.wrong_outcomes(f, _good(), SAME) == []
+    assert [x["stage"] for x in sm.dropped_steps(f, _good(), SAME)] == ["pcn_record"]
+
+
+def test_a_table_the_draft_lacks_is_the_route_bars_and_not_read_here():
+    f = _good()
+    del f[ACK_CH]
+    assert sm.wrong_outcomes(f, _good(), SAME) == []
+    assert sm.dropped_routes(f, _good(), SAME) != []
+
+
+def test_a_row_the_draft_lacks_is_the_route_bars_and_not_read_here():
+    """Run 58: the acknowledgement's table held no escalated row at all. That is a dropped route,
+    not a word in another form."""
+    f = _good()
+    f[ACK_CH]["rows"] = [r for r in f[ACK_CH]["rows"] if r["when"].get("outcome") != "escalated"]
+    assert sm.wrong_outcomes(f, _good(), SAME) == []
+    assert [x["when"] for x in sm.dropped_routes(f, _good(), SAME)] == [{"outcome": "escalated"}]
+
+
+def test_another_kind_before_an_answer_step_does_not_shift_the_pairing():
+    f = _good()
+    f[REC]["steps"].insert(0, {"kind": "render", "id": "look", "template": {}})
+    _step(f, REC, "filed")["accepts"] = ["file"]
+    assert [(x["stage"], x["step"]) for x in sm.wrong_outcomes(f, _good(), SAME)] == [("pcn_record", "filed")]
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_every_answer_word_a_bundle_holds_is_one_its_person_says(name):
+    """The instrument reads the expected bundle as the person's words. That is a claim about each
+    fixture, so it is read here: every word held where an answer is held is one the transcript's
+    person says, except timed_out, which the grammar names the runner's outcome."""
+    d = FIXTURES / name
+    said = " ".join(_says(yaml.safe_load((d / "transcript.yaml").read_text(encoding="utf-8"))))
+    words = set()
+    for x in sm.wrong_outcomes(_wordless(_expected(name)), _expected(name), _identity(name)):
+        for v in x["expected"].values():
+            words |= set(v)
+    assert words and "timed_out (the runner's outcome" in se._GRAMMAR
+    unsaid = {w for w in words if not re.search(r"\b(%s|%s)\b" % (re.escape(w), re.escape(w.replace("_", " "))), said)}
+    assert unsaid <= {"timed_out"}
+
+
+def _wordless(files):
+    """The bundle with every answer word replaced, so the check lists each place one is held."""
+    f = copy.deepcopy(files)
+    for name, d in f.items():
+        if name.startswith("task_kinds/"):
+            d["accepts"], d["reason_required"] = ["-"], ["-"]
+        elif name.startswith("workflows/"):
+            for st in d.get("steps") or []:
+                if st.get("kind") == "signal_await":
+                    st["accepts"] = ["-"]
+        elif name.startswith("decisions/") and d.get("after"):
+            for r in d.get("rows") or []:
+                if set(r.get("when") or {}) == {se._CHAIN_INPUT}:
+                    r["when"] = {se._CHAIN_INPUT: "-"}
+    return f
+
+
+def _identity(name):
+    return {w: w for w in sm._index(_expected(name))["wfs"]}
+
+
+def _says(x):
+    if isinstance(x, dict):
+        for k, v in x.items():
+            if k == "says" and isinstance(v, str):
+                yield v
+            else:
+                yield from _says(v)
+    elif isinstance(x, list):
+        for v in x:
+            yield from _says(v)
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_the_oracle_holds_every_answer_word_as_the_person_says_it(name):
+    row = sm.measure(name, se.OracleExtractor(), aligned=True)
+    assert row["wrong_outcomes"] == [] and row["slot_bar"] is True and row["bar_met"] is True
+
+
+# ── the grammar line on answer words (architect, 2026-11-05) ─────────────────────────────────
+
+def test_the_grammar_says_an_answer_word_is_the_users_word_for_the_outcome():
+    line = next((x for x in se._GRAMMAR.split("\n- ") if x.startswith("An answer word is")), None)
+    assert line is not None
+    said = " ".join(line.split())
+    for word in ("the user's word for the outcome once it has happened", "not the verb for the act",
+                 "Write that same word wherever the answer is held", "accepts and reason_required", "approves",
+                 "a signal_await's accepts", "the chaining table's when", "timed_out is the runner's word"):
+        assert word in said
+
+
+def test_the_grammar_names_every_place_the_instrument_reads_an_answer_word():
+    """The line and the instrument must agree on where an answer is held: a place the check reads
+    that the line doesn't name would hold the model to a rule it was never given."""
+    said = " ".join(next(x for x in se._GRAMMAR.split("\n- ") if x.startswith("An answer word is")).split())
+    held = set()
+    for x in sm.wrong_outcomes(_wordless(_good()), _good(), SAME):
+        held |= set(x["expected"])
+    assert held == {"accepts", "reason_required", "routes"}
+    assert "accepts" in said and "reason_required" in said and "chaining table's when" in said
