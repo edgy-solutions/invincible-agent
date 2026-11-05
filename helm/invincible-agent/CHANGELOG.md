@@ -58,6 +58,12 @@ and the definition sends it to the route.
   goes red when the chart pins another gateway image without the list being re-read. It stays a
   copy until dag-tools publishes `gateway_routes.json` (01M6KF821P2C3KRQN86FF0N61N).
 
+**Every Job and CronJob pod names its component.** The `restate-init` and `db-init` pods now carry
+`app.kubernetes.io/component`, and the NetworkPolicy join seal reads pod-template labels across
+Deployments, StatefulSets, Jobs and CronJobs. This is preconditions 1 and 2 of the NetworkPolicy gate-on
+(board item `01M6MCV3QR2YEBC6WQFAMQ52M1`). No NetworkPolicy is enabled. Both Jobs are hooks, so the changed
+pod template is recreated, not patched.
+
 **`validate_policy` composes export profiles with the SDK (architect 10-30, fork 7)**
 
 - **The composition is `iagent_mesh.compose_export_profiles`,** with one row per kind in the new

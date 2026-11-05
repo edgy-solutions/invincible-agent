@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from iagent_mesh import GRANTED_BY_SEED
 
 ROOT = Path(__file__).resolve().parents[2]
 _SYNC = ROOT / "policy" / "sync"
@@ -188,7 +189,7 @@ def test_the_repo_pins_exactly_two_can_drop_rows_pcn_and_pdn_group_only():
     for k, v in drops.items():
         assert v["grant_to_groups"] == [GROUP], k
         assert "grant_to" not in v, k
-        assert v["granted_by"] == "seed", k
+        assert v["granted_by"] == GRANTED_BY_SEED, k
 
 
 def test_alert_processors_grants_no_cell_and_alice_is_a_member():

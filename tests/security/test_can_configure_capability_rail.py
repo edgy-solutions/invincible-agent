@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from iagent_mesh import GRANTED_BY_SEED
 
 ROOT = Path(__file__).resolve().parents[2]
 for _p in (ROOT, ROOT / "policy" / "sync"):
@@ -83,7 +84,7 @@ def _defects(rows: dict, cells: dict, members: dict[str, set[str]]) -> list[str]
 
 def test_a_the_ruled_row_is_a_seed_row_granting_the_ruled_group():
     row = _rows()[FIRST_RULED]
-    assert row["granted_by"] == "seed"
+    assert row["granted_by"] == GRANTED_BY_SEED
     assert row["grant_to_groups"] == [RULED_GROUP]
     assert not row.get("grant_to")
     assert (row.get("reason") or "").strip()
