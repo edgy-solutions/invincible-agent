@@ -8,10 +8,10 @@ priority: next
 blocked_on: []
 pr: [invincible-agent#251]
 ruling_ref: architect 11-03 overnight; register ruled in as its own defect, saf's packet
-updated: 2026-11-04
+updated: 2026-11-05
 ---
 
-Chart 0.4.79, not cut, for after 0.4.78. Doubles only, nothing live.
+Shipped in chart 0.4.79 (released 11-04 21:35Z from `758811d7`), not rolled. Doubles only, nothing live.
 
 A case in flight at the roll is refused: `origin_record` now sends `case_id` and the route requires it. `cortex-bff` and the code location roll together.
 
