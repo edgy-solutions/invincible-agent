@@ -93,7 +93,8 @@
 .PARAMETER Release
   Mirror one chart release's images BY DIGEST instead of by tag, e.g.
   -Release 0.4.80. The artifact of record is that release's
-  values-release-<version>.yaml (downloaded with 'gh release download'
+  values-release-<version>.yaml (downloaded from the GitHub release over HTTPS,
+  no login needed,
   unless -ReleaseValues names a local copy). For every image in it:
     - the source is <repository>@<release digest>, never a tag, so a
       newer :latest build cannot slip in;
@@ -489,12 +490,17 @@ if ($Release) {
     if (-not $ReleaseValues) {
         $relDir = Join-Path ([IO.Path]::GetTempPath()) "ia-release-$Release"
         New-Item -ItemType Directory -Force $relDir | Out-Null
-        & gh release download "invincible-agent-$Release" --repo edgy-solutions/invincible-agent --pattern "values-release-$Release.yaml" --dir $relDir --clobber
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "ERROR: could not download values-release-$Release.yaml (gh auth login? does release invincible-agent-$Release exist?)" -ForegroundColor Red
+        $ReleaseValues = Join-Path $relDir "values-release-$Release.yaml"
+        $relUrl = "https://github.com/edgy-solutions/invincible-agent/releases/download/invincible-agent-$Release/values-release-$Release.yaml"
+        # Windows PowerShell 5.1 may not offer TLS 1.2 by default; GitHub requires it.
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        try {
+            Invoke-WebRequest -Uri $relUrl -OutFile $ReleaseValues -UseBasicParsing
+        } catch {
+            Write-Host "ERROR: could not download $relUrl ($($_.Exception.Message))." -ForegroundColor Red
+            Write-Host "Does release invincible-agent-$Release exist? Or download the file another way and pass -ReleaseValues." -ForegroundColor Yellow
             exit 1
         }
-        $ReleaseValues = Join-Path $relDir "values-release-$Release.yaml"
     }
     $relText = Get-Content -Raw -Encoding UTF8 $ReleaseValues
     if ($relText -notmatch "Chart version $([regex]::Escape($Release)),") {
