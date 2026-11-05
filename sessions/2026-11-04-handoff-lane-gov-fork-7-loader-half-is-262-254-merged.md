@@ -5,9 +5,11 @@ from: invincible-agent/lane/gov, 2026-11-04
 
 This replaces `2026-11-04-handoff-lane-gov-224-ruled-254-open-follow-ups-are-items.md`. Fork 12 and the lessons in older handoffs still stand.
 
-## The ruling since (via Chris, verbatim)
+## The rulings since (via Chris, verbatim)
 
 > gov: go on the rest of fork 7 — compose_export_profiles from the SDK, delete the copies in validate_policy.py. #254, #256 merge in Lane 1's next train; the second re-renders BOARD.md.
+
+> gov: #262 stands; don't rewrite the pushed commit — the follow-up note is enough. The two other validate_policy.py spots are a board item, yours, after #262 merges.
 
 ## State
 
@@ -22,7 +24,7 @@ This replaces `2026-11-04-handoff-lane-gov-224-ruled-254-open-follow-ups-are-ite
 ## Open forks
 
 12. The relay-form detector for the ratchet (carried over). Item `01M6A9QDN19S78PQVCA67NZ9RC`.
-13. (Candidate, not yet an item.) `validate_policy.py`'s other "no SDK here" forks, content kinds (~line 124) and review shapes (~line 437), rest on the premise #262 drops. Write an item when fork 7 goes to done; don't change them in #262.
+13. (Ruled 11-04: gov's board item, written after #262 merges.) `validate_policy.py`'s other "no SDK here" forks, content kinds (~line 124) and review shapes (~line 437), rest on the premise #262 drops. Write the item in the same board commit that moves fork 7, once #262 is on master.
 
 ## Waiting on
 
