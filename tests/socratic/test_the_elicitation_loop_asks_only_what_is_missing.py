@@ -3417,3 +3417,114 @@ def test_a_refusal_two_fields_would_each_clear_names_neither_and_one_field_names
     assert se._field_it_needs({"kind": "either", "id": "s", "b": ""}, "Value error, needs a or b") is None
     monkeypatch.setattr(_EitherStep, "model_fields", {k: v for k, v in _EitherStep.model_fields.items() if k != "b"})
     assert se._field_it_needs({"kind": "either", "id": "s"}, "Value error, needs a or b") == "a"
+
+
+# ── an approval step with no approves is asked which answers count (architect, 2026-11-04) ───
+
+PA = "workflows/pcn_program_approval.yaml"
+_PA_KEY = "approvals.pcn_program_approval.program_approval.approves"
+
+
+def _unapproved():
+    f = _good()
+    st = _await(f, PROGRAM)
+    del st["approves"], st["role"]
+    return f
+
+
+def test_an_approval_step_with_no_approves_is_asked_which_answers_count_and_in_what_role():
+    gaps = se.unapproved_awaits(_unapproved())
+    assert [(g.key, g.kind, g.facet, g.revises) for g in gaps] == [(_PA_KEY, "confirm", "approvals", (
+        (PA, "steps[id=program_approval].approves"), (PA, "steps[id=program_approval].role")))]
+    said = gaps[0].question
+    for word in ("which answers count as an approval", "in what role", "Its answers are approved, rejected.",
+                 "If none does, say so."):
+        assert word in said
+
+
+def test_control_an_approval_step_with_approves_is_not_asked_and_one_without_role_is_left_to_the_refusal():
+    assert se.unapproved_awaits(_good()) == []
+    f = _good()
+    del _await(f, PROGRAM)["role"]
+    assert se.unapproved_awaits(f) == []
+    assert [g.key for g in se.problems(f)] == [f"contradiction:{PA}#steps[id=program_approval].role"]
+
+
+def test_an_approval_step_no_case_can_reach_is_not_asked():
+    f = _unapproved()
+    orphan = copy.deepcopy(f[PA])
+    orphan["id"] = "unreached_approval"
+    f["workflows/unreached_approval.yaml"] = orphan
+    assert [g.key for g in se.unapproved_awaits(f)] == [_PA_KEY]
+
+
+def test_the_ask_is_in_the_gaps_and_asked_once():
+    d = se.Draft(files=_unapproved())
+    assert _PA_KEY in [g.key for g in se.gaps(d)]
+    d.asked[_PA_KEY] += 1
+    assert _PA_KEY not in [g.key for g in se.gaps(d)]
+
+
+def test_the_person_says_which_answers_count_and_the_role_from_what_they_meant():
+    f = _unapproved()
+    g = se.unapproved_awaits(f)[0]
+    u = _pcn_user()
+    assert u(g, se.Draft(files=f)) == {"says": "Only approved counts as an approval, and the role is program_manager."}
+    assert u.answered_approvals == [_PA_KEY]
+
+
+def test_the_person_says_none_counts_where_they_described_no_approval():
+    e = _expected("pcn_review")
+    st = _await(e, PROGRAM)
+    del st["approves"], st["role"]
+    u = sm.AligningUser(_transcript("pcn_review"), e)
+    f = _unapproved()
+    assert u(se.unapproved_awaits(f)[0], se.Draft(files=f)) == {"says": "None of them counts as an approval."}
+
+
+def test_the_person_gives_no_approval_answer_where_they_named_the_answers_and_no_role():
+    e = _expected("pcn_review")
+    del _await(e, PROGRAM)["role"]
+    u = sm.AligningUser(_transcript("pcn_review"), e)
+    f = _unapproved()
+    reply = u(se.unapproved_awaits(f)[0], se.Draft(files=f))
+    assert u.answered_approvals == [] and "as an approval" not in str(reply)
+
+
+def test_an_answer_to_the_ask_writes_both_fields_and_clears_it():
+    d = se.Draft(files=_unapproved())
+    g = se.unapproved_awaits(d.files)[0]
+    se.apply_patch(d, {"set": [{"file": PA, "path": "steps[id=program_approval].approves", "value": ["approved"]},
+                               {"file": PA, "path": "steps[id=program_approval].role", "value": "program_manager"}]},
+                   1, answering=g)
+    assert se.unapproved_awaits(d.files) == [] and se.problems(d.files) == [] and d.files == _good()
+
+
+# ── a stage with no steps is asked as a stage, never as a path (architect, 2026-11-04) ───────
+
+REC = "workflows/pcn_record.yaml"
+
+
+@pytest.mark.parametrize("how", ["absent", "empty"])
+def test_a_stage_with_no_steps_is_asked_in_the_persons_words_under_the_stage_key(how):
+    f = _good()
+    if how == "absent":
+        del f[REC]["steps"]
+    else:
+        f[REC]["steps"] = []
+    assert [(g.key, g.kind, g.question) for g in se.problems(f)] == [(
+        "steps.pcn_record", "missing",
+        "What are the steps of the pcn record stage: who acts, what they decide, and how it ends?")]
+
+
+def test_the_person_answers_a_stage_with_no_steps_from_what_they_said_of_the_stage():
+    f = _good()
+    del f[REC]["steps"]
+    g = se.problems(f)[0]
+    assert _pcn_user()(g, se.Draft(files=f)) == _transcript("pcn_review")["answers"]["steps.pcn_record"]
+
+
+def test_control_another_missing_field_of_a_stage_keeps_its_own_key():
+    f = _good()
+    del f[REC]["name"]
+    assert [g.key for g in se.problems(f)] == ["steps.pcn_record.name"]

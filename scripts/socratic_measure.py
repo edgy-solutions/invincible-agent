@@ -182,6 +182,7 @@ _REASON_SLOT = re.compile(r"^approvals\.([^.]+)\.([^.]+)\.reason_required$")
 _ROUTED_SLOT = re.compile(r"^steps\.([^.]+)\.routed$")
 _ENDS_SLOT = re.compile(r"^outputs\.([^.]+)\.ends$")
 _CHAIN_ROW = re.compile(r"^contradiction:chaining\.([^.]+)\.(.+)$")
+_APPROVES_SLOT = re.compile(r"^approvals\.([^.]+)\.([^.]+)\.approves$")
 
 
 def _chain_target(key: str, expected: dict) -> Optional[Tuple[str, str]]:
@@ -301,6 +302,7 @@ class AligningUser:
         self.rejected: list = []
         self.denied_rows: list = []
         self.answered_contradictions: list = []
+        self.answered_approvals: list = []
         self.opening = transcript.get("opening")
         # the person's own list of stages, from the entry that declares it: `finalize` drops the
         # list from the served trigger, so the expected bundle does not carry it
@@ -590,6 +592,26 @@ class AligningUser:
         said = [theirs.get(v, v) if isinstance(v, str) and v in names else v for v in held]
         return list(dict.fromkeys(said)) if isinstance(value, list) else said[0]
 
+    def _approval(self, gap, t: Optional[str]) -> Optional[dict]:
+        """A person asked which answers at an approval step count as an approval, and in what role,
+        answers from the expected bundle in words, as for a contradiction on a path. The stage's own
+        entry may be the opening, and replaying that would plant its contradiction again. No facts."""
+        m = _APPROVES_SLOT.match(t or "")
+        wf = se._workflows(self.expected).get(m.group(1)) if m else None
+        step = next((s for s in _steps_of(wf[1]) if str(s.get("id")) == m.group(2)), None) if wf else None
+        if step is None:
+            return None
+        verbs = [str(v) for v in step.get("approves") or []]
+        if verbs and step.get("role"):
+            says = (f"Only {' and '.join(verbs)} {'counts' if len(verbs) == 1 else 'count'} as an approval, "
+                    f"and the role is {step['role']}.")
+        elif verbs:
+            return None
+        else:
+            says = "None of them counts as an approval."
+        self.answered_approvals.append(gap.key)
+        return {"says": says}
+
     def _contradiction(self, gap, draft_files: dict, t: Optional[str]) -> Optional[dict]:
         """A person who knows their process answers a contradiction the loop raised, from the
         expected bundle (architect 2026-11-02), in words. No facts: the model is measured on the
@@ -635,6 +657,9 @@ class AligningUser:
         settled = self._settled_by_sending(gap, draft.files, t)
         if settled is not None:
             return settled
+        approval = self._approval(gap, t)
+        if approval is not None:
+            return approval
         entry = self.bank.get(t)
         if entry is None:
             tgt = _fact_target(t) or _chain_target(t, self.expected) or _slot_target(t, self.expected)
@@ -882,6 +907,7 @@ def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) 
         "rejected": list(user.rejected) if user else [],
         "denied_rows": list(user.denied_rows) if user else [],
         "answered_contradictions": list(user.answered_contradictions) if user else [],
+        "answered_approvals": list(user.answered_approvals) if user else [],
         "unbanked": list(user.unbanked) if user else sorted(k for k in keys if k not in set(bank)),
         "deferred_refusals": [k for k in r["deferred_refusals"] if k in r["deferrals"]],
         "model_errors": errors_of(extractor) + len(r["model_errors"]),

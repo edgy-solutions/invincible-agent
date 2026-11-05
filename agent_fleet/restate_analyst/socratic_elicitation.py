@@ -712,6 +712,12 @@ def problems(files: Dict[str, dict]) -> List[Gap]:
                         else:
                             q = f"What is the {_words(fld)} of {_words(sid)} in {_words(wid)}?"
                         out.append(Gap(f"steps.{wid}.{sid}.{fld}", facet, "missing", q))
+                    elif loc == ("steps",):
+                        # a stage, in the person's words, under the key a stage is asked by: nobody
+                        # answers a path (architect, 2026-11-04, on run 57's `steps.<stage>.steps`)
+                        out.append(Gap(f"steps.{wid}", "steps", "missing",
+                                       f"What are the steps of the {_words(wid)} stage: who acts, what "
+                                       "they decide, and how it ends?"))
                     else:
                         fld = ".".join(str(x) for x in loc)
                         out.append(Gap(f"steps.{wid}.{fld}", "steps", "missing",
@@ -1126,6 +1132,31 @@ def confirms(draft: Draft) -> List[Gap]:
     return out
 
 
+def unapproved_awaits(files: Dict[str, dict]) -> List[Gap]:
+    """Each ``human_await`` a case can reach that has no ``approves``, asked once which of its
+    answers count as an approval and in what role (architect, 2026-11-04, on runs 56 to 58). The
+    executor refuses ``approves`` without ``role`` but not a step with neither, so nothing else
+    asks: in each of those runs one stage the person called an approval was drafted with neither
+    field. An answer that names some writes both, and one that names none leaves the step as it is."""
+    out: List[Gap] = []
+    reach, kinds = _reachable(files), _kinds(files)
+    for wid, (f, raw) in _workflows(files).items():
+        if wid not in reach:
+            continue
+        for st in _steps(raw):
+            sid = st.get("id")
+            if st.get("kind") != "human_await" or not sid or st.get("approves"):
+                continue
+            named = _kinds_for(str(st.get("task_kind") or ""), kinds)
+            accepts = [str(a) for a in (kinds[named[0]][1].get("accepts") or [])] if named else []
+            said = f" Its answers are {', '.join(accepts)}." if accepts else ""
+            out.append(Gap(f"approvals.{wid}.{sid}.approves", "approvals", "confirm",
+                           f"At {_words(sid)} in {_words(wid)}, which answers count as an approval, and in "
+                           f"what role does whoever answers sign?{said} If none does, say so.",
+                           revises=((f, f"steps[id={sid}].approves"), (f, f"steps[id={sid}].role"))))
+    return out
+
+
 def _null_slots(files: Dict[str, dict]) -> List[Tuple[str, str, str, str, Optional[str]]]:
     """Each value ``_completeness`` asks for while absent that the draft holds as null, under the
     key it asks, as (key, facet, file, leaf, the definition it binds to if any)."""
@@ -1405,7 +1436,7 @@ def _all_gaps(draft: Draft) -> List[Gap]:
     """``gaps`` before the asked-twice cut. A confirm ranks after every missing item; an open key
     ranks after every other gap."""
     rest = (required_slots(draft.files) + problems(draft.files) + _completeness(draft.files)
-            + null_values(draft) + confirms(draft))
+            + null_values(draft) + confirms(draft) + unapproved_awaits(draft.files))
     seen: set = set()
     pend, contra, missing, confirm = [], [], [], []
     for g in list(draft.pending) + rest:

@@ -15,7 +15,9 @@ meets the bar and the bar is not met (§10). Runs 53 to 55, on the grammar line,
 all three read `no`. Each is `cannot_run` on a question about the impact review's role that the scripted person can't
 answer, though the person said it in the opening (§10). The architect chose the first of the two fixes: a refusal that one
 field clears is now asked on that field. Runs 56 to 58, on it, all read `no`. Run 56 is runnable and reads `yes` on route
-and slot, and misses only the program approval's `approves` and `role`, which nothing asks for (§10). Nothing is flipped.
+and slot, and misses only the program approval's `approves` and `role`, which nothing asks for (§10). The architect then
+ruled two more: an approval step with no `approves` is asked which answers count and in what role, and a stage with no
+steps is asked as a stage, in the person's words. Both are built, and runs 59 to 61 are next (§10). Nothing is flipped.
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2574,6 +2576,59 @@ Whether to fix this in the key the loop raises or in the scripted person is for 
 (`steps[0].kind`, `steps[2].kind`), and the path grammar refused it, as in run 52. `outputs.record.ends` was left open
 as stalled: "asked again and the answer changed nothing". Run 57 had one model error and run 58 had four, which I haven't
 traced. Each run deferred the impact review's deadline, as planted.
+
+#### 2026-11-04: the two rulings after runs 56 to 58, and the five model errors
+
+The architect ruled: "decision 1 — yes, build the confirm question on an approval step with no `approves` ("which answers
+count as an approval, and in what role"). Decision 2 — fix the loop, not the scripted person: the loop asks about a stage
+in the person's words ("what are the steps of the record stage"), keyed internally; a real person never answers a path
+either. Three runs (59–61) after both. Trace the five model errors before the runs, one line each."
+
+**The five model errors, traced.** These are the ones runs 57 and 58 left untraced. Each is a patch the loop refused, at
+the turn it was sent.
+
+1. Run 57, turn 14, on the confirm about the impact review's `task_kind`: the path
+   `rows[ when.outcome=more_information_needed ].when.outcome` is refused. A list of rows is set whole, and an element is
+   picked only by a key it holds directly.
+2. Run 58, turn 18, on the confirm about where the acknowledgement ends: an unset of `steps[0].disposes` in the
+   acknowledgement is refused, because an unset may remove only what the confirm names.
+3. Run 58, turn 18, in the same reply: the path `steps[0].kind` is refused, because a step is picked by its `id`, not its
+   position.
+4. Run 58, turn 21, on the confirm about the record's next stage: writing `disposes` back is refused, because the person
+   rejected it at turn 19. The refusal says a `signal_await` or wait step after the send fills it.
+5. Run 58, turn 21, in the same reply: the path `steps[2].kind` is refused, as in error 3.
+
+Run 53's one model error, left untraced in its section, is the same form: at turn 31, on the whole-workflow question about
+the acknowledgement, `steps[0].approves` is refused. So three of these six are the positional `steps[N]` form, which is
+on the open list with run 52's. Errors 2 and 4 are the loop's own checks refusing what the question didn't allow. Error
+1 is a selector on a nested key, and no other run has written one.
+
+**Built: an approval step with no `approves` is asked.** `unapproved_awaits` lists each `human_await` that a case can
+reach, has an `id`, and has no `approves`. Each gets one `confirm` on the approvals facet: "At program approval in pcn
+program approval, which answers count as an approval, and in what role does whoever answers sign? Its answers are
+approved, rejected. If none does, say so." The answers are the `accepts` of the step's task kind, when it has one. The
+question revises both `approves` and `role`, so an answer that names both clears it at once. A confirm is asked once, so
+a person who says none counts isn't asked again. A step with `approves` and no `role` isn't asked here: the executor
+refuses that, and the question on the field asks for the role. The scripted person answers from the expected step:
+"Only approved counts as an approval, and the role is program_manager.", or "None of them counts as an approval." for a
+step with no `approves`. It gives no answer for an expected step that has `approves` and no `role`.
+
+**Built: a stage with no steps is asked as a stage.** A workflow with no `steps`, or an empty list, was asked under
+`steps.<stage>.steps`, a key the scripted person has no entry for (run 57). It is now asked under `steps.<stage>`, the key
+a stage is asked by: "What are the steps of the pcn record stage: who acts, what they decide, and how it ends?" Another
+missing field of a workflow keeps its own key. The scripted person is unchanged. It answers `steps.<stage>` from what the
+person said of the stage, as for any stage.
+
+**Checked with no model time, on the stored drafts.** On runs 56 to 58, the new confirm is raised on exactly the stage
+each run drafted without `approves`, and the scripted person answers it with that stage's verbs and role. On run 57's
+draft, the record's missing steps are asked under `steps.record`, and the person answers with their description of the
+stage. On all three fixtures' expected bundles, neither question is raised.
+
+Twelve seals, and eleven mutants that each die on them: the stage branch taken out, the key put back to
+`steps.<stage>.steps`, the confirm not wired into the gaps, the `approves` check removed, the reach check removed, the
+kind `missing` for `confirm`, `revises` without `role`, the answers left out of the question, the scripted person not
+answering it, its "none" answer wrong, and a role-less expected step answered. The suite, gov's refusal ratchet and the
+corpus check pass. The census is unchanged at 469 refused, 2003 passed, no crash sites.
 
 ## Consequences
 
