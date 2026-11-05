@@ -64,37 +64,29 @@ Optional override knobs (purely additive; existing callers unaffected):
   "repository" — repository path; concatenated with the registry above.
 */}}
 {{/*
-TAG PRECEDENCE: a component's own `tag`, then `global.imageTag`, then `global.defaultImageTag`.
+TAG PRECEDENCE: a component's own `tag`, then `global.imageTag`, then `global.defaultImageTag`,
+then `Chart.Version`. A tag is only the fallback: an image renders BY DIGEST whenever one is known,
+and `scripts/seal_image_digests.py` fails any rendered image that is left on a tag.
 
-`global.imageTag` is the commit-pin knob, and ONE knob for the whole fleet on purpose: pinning
-services individually is how a cluster ends up running four commits at once with nothing to
-read it off. CI publishes every image under `:<git-sha>` beside `:latest`, so
-`--set global.imageTag=<sha>` needs no new build.
+DIGEST RESOLUTION: the call site's own `digest` wins; otherwise the helper reads
+`global.imageDigests[<registry>/<repository>]`, keyed by the full reference WITHOUT its tag. That
+map is the whole pin: base `values.yaml` holds every image this repo does not build, and the
+release workflow writes `values-release-<version>.yaml` carrying every image it does (from the
+build) and re-confirms the rest (read from the registry), attaching it to the chart release as the
+artifact of record. A roll renders with that file and never resolves a tag.
 
-IT APPLIES ONLY TO IMAGES THIS REPO BUILDS, and the scoping is the whole point.
-MEASURED 2026-09-09: the pin was global over every image the chart renders, so a commit sha
-reached `cortex-ui/frontend`, `dag-tools/central-gateway`, `dag-tools/user-deployment` and
-`pub-tools` — repositories that have never built it. Four deployments into ImagePullBackOff on
-a live cluster, from a knob whose name says "image tag" and whose reach was every image.
-A COMMIT SHA ONLY MEANS SOMETHING INSIDE THE REPOSITORY THAT MINTED IT. So an image is eligible
-only when its repository sits under `global.imagePrefix`; anything with its own `repository`
-elsewhere falls through to its own tag or the floor, exactly as before.
+WHY THE TAG CHAIN NO LONGER NEEDS SCOPING. MEASURED 2026-09-09: a commit-sha pin was global over
+every image the chart renders, so a sha reached `cortex-ui/frontend`, `dag-tools/central-gateway`,
+`dag-tools/user-deployment` and `pub-tools` — repositories that have never built it — and four
+deployments went into ImagePullBackOff on a live cluster; changing the floor from `latest` to
+`Chart.Version` then broke the same four through the fallback. The fix was to scope the pin and the
+floor to repositories under `global.imagePrefix`. The protection is now the digest map plus the
+seal: a cross-repo image is named by a digest that repository really holds, and a render that
+still carries a tag for ANY image fails the seal, wherever the repository sits. Nothing here tests
+a prefix.
 
-THE FLOOR IS ALSO SCOPED, AND IT WAS NOT, WHICH COST THE SAME FOUR DEPLOYMENTS TWICE.
-For images this repo builds the floor is `Chart.Version`, which the release guarantees exists by
-retagging every image of the build matrix to it BY DIGEST. For anything else the floor stays
-`latest`.
-
-`Chart.AppVersion` was the original floor and asks for `:2026.07.02`, which has never existed;
-every values file papered over that with an explicit `tag: "latest"`, which is also what made
-the pin unreachable, since a component tag beats a global one.
-
-THE SCOPING NOTE ABOVE WAS WRITTEN FOR THE PIN AND READ AS IF IT COVERED THE CHAIN. It did not.
-The pin was made `$ours`-only on 2026-09-09; the floor was left global, so changing the floor
-from `latest` to `Chart.Version` sent `cortex-ui/frontend`, `dag-tools/central-gateway`,
-`dag-tools/user-deployment` and `pub-tools` straight back to a tag they have never published —
-the identical break, the identical four repositories, reached through the fallback instead of
-the override. A guard on one term of an expression is not a guard on the expression.
+THE MAP IS KEYED BY REPOSITORY, NOT BY TAG. A component tag override on an image the map holds
+therefore renders the mapped digest and the tag is ignored; change the row to move the image.
 
 EVERY LINE INSIDE THE DEFINE IS DASH-TRIMMED. It renders inline as `image: {{ include ... }}`,
 so a single untrimmed newline produces `could not find expected ':'` in a file that has nothing
@@ -102,33 +94,11 @@ wrong with it. Comments belong out here, not in there.
 */}}
 {{- define "invincible-agent.image" -}}
 {{- $repo := .repository | default (printf "%s/%s" .root.Values.global.imagePrefix .name) -}}
-{{- $ours := hasPrefix (printf "%s/" .root.Values.global.imagePrefix) $repo -}}
-{{/* THE FLOOR IS SCOPED THE SAME WAY THE PIN IS, and for the same reason. `Chart.Version` is a
-     real tag ONLY for images this repo builds, because only those are retagged to it by the
-     release. A cross-repo image falling through to it asks for a tag that repository has never
-     published — which is the 2026-09-09 ImagePullBackOff again, in the same four repositories,
-     through the other end of this chain. */}}
-{{- $floor := ternary .root.Chart.Version "latest" $ours -}}
-{{- $tag := .tag | default (ternary .root.Values.global.imageTag "" $ours) | default .root.Values.global.defaultImageTag | default $floor -}}
+{{- $tag := .tag | default .root.Values.global.imageTag | default .root.Values.global.defaultImageTag | default .root.Chart.Version -}}
 {{- $registry := .registry | default .root.Values.global.imageRegistry -}}
-{{/* DIGEST WINS OVER TAG, AND IT IS THE ONLY WAY TO PIN A CROSS-REPO IMAGE.
-     Added 2026-09-19. Before this, the chart could not express a digest at all — every path
-     ended in `repo:tag`, so a digest could only have been passed as a tag and would have
-     rendered `repo:@sha256:…`, which is not a reference.
-
-     WHY IT MATTERS HERE RATHER THAN EVERYWHERE: for an image this repo builds, the release
-     retags it to `Chart.Version` BY DIGEST, so the tag already names bytes. A CROSS-REPO image
-     is retagged by nobody — `$ours` is false, `$floor` is `latest`, and `latest` is a label
-     that moves on every push to that repository's default branch. The frontend is the live
-     case: the pod runs `:latest` with `pullPolicy: Always`, so the image it serves changes
-     under it at the next restart with no chart change and no commit anywhere in this repo.
-
-     A digest is a statement about bytes; a tag is a statement about a name. Where nothing
-     retags for us, only the first one is a pin. Scoped deliberately: set `digest` on the one
-     image that needs it, not globally — a fleet-wide digest map would have to be regenerated
-     on every build and would rot into the `latest` problem wearing a longer string. */}}
-{{- if .digest -}}
-{{ $registry }}/{{ $repo }}@{{ .digest }}
+{{- $digest := .digest | default (get (.root.Values.global.imageDigests | default dict) (printf "%s/%s" $registry $repo)) -}}
+{{- if $digest -}}
+{{ $registry }}/{{ $repo }}@{{ $digest }}
 {{- else -}}
 {{ $registry }}/{{ $repo }}:{{ $tag }}
 {{- end -}}
