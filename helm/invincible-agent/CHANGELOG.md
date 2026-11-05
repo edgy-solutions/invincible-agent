@@ -79,19 +79,6 @@ pod template is recreated, not patched.
   (`policy/README.md`) both run it from the cortex-bff image, which carries it. A CI that runs it
   from a bare Python with `policy/sync/requirements.txt` fails at the import.
 
-**The `can_read:<level>` rail and the levels registry (ADR-0064 item B), validator only**
-
-- **Three new files ship empty, and nothing reads them:** `policy/classification_levels.yaml` (the
-  ordered registry of levels; list position is the order), `policy/level_readers.yaml` (one row per
-  level naming the groups that may read it) and the grantor row `policy/grantors/level_readers.yaml`.
-  No level is ruled yet. dag-tools step 5 is the first reader. ADR-0064 is Proposed (#266).
-- **`validate_policy` checks both files when present:** an id is a bare name (no whitespace, no `:`) and
-  unique; every row says why and which seat ratified it; the rail's levels are registered, each
-  registered level has exactly one row, and each group exists and has members. `grant_to_groups: []`
-  with a reason says nobody reads the level.
-- **A `can_read:<level>` row in `capability_grants.yaml` is refused,** so a level's readers have one home.
-- **No answer changes in this release.**
-
 ## 0.4.78 — 2026-11-04
 
 **0.4.77 stands as cut at `8fc02746` and rolls nowhere. The sandbox goes from 0.4.75 to this chart.** This
