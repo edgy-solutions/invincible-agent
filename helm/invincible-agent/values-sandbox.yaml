@@ -365,7 +365,7 @@ engineCost:
 # --------------------------------------------------------------------------
 postgresql:
   enabled: true
-  # image: inherited from values.yaml (bitnamilegacy/postgresql since 0.4.79).
+  # image: inherited from values.yaml (bitnamilegacy/postgresql since 0.4.80).
   auth:
     postgresPassword: "changeme-postgres-sandbox"  # CHANGE BEFORE DEPLOY
     password: "changeme-iagent-sandbox"            # CHANGE BEFORE DEPLOY

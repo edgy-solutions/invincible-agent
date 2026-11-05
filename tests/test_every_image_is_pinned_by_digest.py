@@ -1,4 +1,4 @@
-"""EVERY IMAGE THE CHART RUNS IS PINNED BY DIGEST (ruled 2026-11-04, 0.4.79).
+"""EVERY IMAGE THE CHART RUNS IS PINNED BY DIGEST (ruled 2026-11-04, 0.4.80).
 
 The rule: no container or initContainer of a rendered workload names an image by tag alone.
 Ours are pinned by the digests `scripts/retag_images_by_digest.py` records; third party by the

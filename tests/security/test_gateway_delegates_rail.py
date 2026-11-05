@@ -233,7 +233,7 @@ def test_a_row_without_ratified_by_is_refused_by_name():
 # ---- the route list is a copy, read at a pinned gateway image ----------------------------------
 
 _VALUES = _REPO / "helm" / "invincible-agent"
-#: The chart's own values files. Since 0.4.79 the pin of record is a row of `global.imageDigests`
+#: The chart's own values files. Since 0.4.80 the pin of record is a row of `global.imageDigests`
 #: (keyed `<registry>/<repository>`); a `centralGateway.image.digest` at the call site would win over
 #: it, so it is read too. `values-roll-frontend-digest.yaml` is retired.
 _PIN_FILES = ("values.yaml", "values-sandbox.yaml")

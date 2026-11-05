@@ -50,6 +50,8 @@ global:
     "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:f71a5b092486354f0d144c467953a6c1c749e1b133c44e133458cf71d6d8cf2c"
     # 0.11.0 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:ebc44a04433678e5f366cbbb94c9c130e9d0df28338414db012e7d00e535250f"
+    # Kept over 1555b341 (source e5612fa: the CP1252 repair AND the V_CHARACTERISTICS fold, not reviewed),
+    # architect 11-05; board 01M6P5ZAJ382FBHEQDA23941EA carries both forward on a reviewed build.
     # reviewed 09-23 (`master` build of 1aa2cbe) (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "ghcr.io/edgy-solutions/pub-tools": "sha256:ed93f7b14b6a3d4a094c098d0fb6233deb077b1271440fb851e8952d717bc9bc"
     # The cortex frontend. Pin history (each digest was read at the full tag, an OCI index with
@@ -242,7 +244,7 @@ postgresql:
     # sandbox 2026-07-13). NOTE the source path: after Bitnami's 2025-08 Docker
     # Hub migration the pinned `-r2` tag exists on docker.io ONLY at
     # `bitnamilegacy/postgresql` (bitnami/postgresql there is `:latest`-only).
-    # Since 0.4.79 this is the default for every deployment (it was `bitnami/postgresql` here
+    # Since 0.4.80 this is the default for every deployment (it was `bitnami/postgresql` here
     # and `bitnamilegacy/` in values-sandbox.yaml); a deployment that mirrors the image under
     # another path overrides repository AND the `global.imageDigests` row. For the official image instead:
     # imageStyle: postgres, repository: library/postgres, tag: "17".

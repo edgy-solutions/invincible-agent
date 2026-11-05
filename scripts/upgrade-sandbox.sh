@@ -73,7 +73,7 @@ if ! gh release download "invincible-agent-${_version}" --pattern "values-releas
   # A HARD STOP, like a missing values file: rendering without it would pin nothing.
   echo "ERROR: required release artifact missing: values-release-${_version}.yaml" >&2
   echo "       It is attached to the GitHub release invincible-agent-${_version} by the release" >&2
-  echo "       workflow. No release, or a release cut before 0.4.79, cannot be rolled by this script." >&2
+  echo "       workflow. No release, or a release cut before 0.4.80, cannot be rolled by this script." >&2
   exit 1
 fi
 

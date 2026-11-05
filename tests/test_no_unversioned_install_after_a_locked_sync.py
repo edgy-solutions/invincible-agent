@@ -1,4 +1,4 @@
-"""NO UNVERSIONED INSTALL AFTER A LOCKED SYNC (board 01M6MZ6HK5PMK9VQ2PM95DC7E2, 0.4.79).
+"""NO UNVERSIONED INSTALL AFTER A LOCKED SYNC (board 01M6MZ6HK5PMK9VQ2PM95DC7E2, 0.4.80).
 
 `uv sync --locked` makes the image's packages the ones `uv.lock` names. A `pip install <name>`
 after it, with no version, resolves whatever the index serves at build time, so two builds of

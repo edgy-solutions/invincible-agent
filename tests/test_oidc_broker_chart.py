@@ -175,7 +175,7 @@ def _in_scope(rendered: str, templates: set[str]) -> str:
 def _norm_old(old: str) -> str:
     ver = re.search(r"^version:\s*(\S+)", (_REPO / _CHART / "Chart.yaml").read_text(encoding="utf-8"), re.M).group(1)
     old = re.sub(r"0.4.35", ver, old)
-    # 0.4.79 (every image by digest): the base sha rendered the reconcile Job's curl by tag; this chart
+    # 0.4.80 (every image by digest): the base sha rendered the reconcile Job's curl by tag; this chart
     # renders the same tag by the digest `global.imageDigests` pins. That is the one image change.
     import yaml
     rows = yaml.safe_load((_REPO / _CHART / "values.yaml").read_text(encoding="utf-8"))["global"]["imageDigests"]
