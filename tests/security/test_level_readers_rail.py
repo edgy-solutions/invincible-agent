@@ -1,5 +1,5 @@
-"""The `can_read:<level>` rail (`policy/level_readers.yaml`) and the levels registry
-(`policy/classification_levels.yaml`) -- ADR-0064 item B (Proposed, #266). Validator only.
+"""The `cleared_for:<level>` rail (`policy/level_readers.yaml`) and the levels registry
+(`policy/classification/levels.yaml`) -- ADR-0064 item B (Proposed, #266). Validator only.
 
 WHAT EACH GROUP DEFENDS
   seed        the shipped registry and rail parse clean, and the validate_policy CLI is green and
@@ -36,7 +36,7 @@ if str(_SYNC) not in sys.path:
 import validate_policy as vp  # noqa: E402
 
 _POLICY = _REPO / "policy"
-_REGISTRY = yaml.safe_load((_POLICY / "classification_levels.yaml").read_text(encoding="utf-8"))
+_REGISTRY = yaml.safe_load((_POLICY / "classification" / "levels.yaml").read_text(encoding="utf-8"))
 _RAIL = yaml.safe_load((_POLICY / "level_readers.yaml").read_text(encoding="utf-8"))
 _USERS = yaml.safe_load((_POLICY / "users.yaml").read_text(encoding="utf-8"))["users"]
 _GROUPS = yaml.safe_load((_POLICY / "groups.yaml").read_text(encoding="utf-8"))["groups"]
@@ -95,7 +95,7 @@ _AB = _reg(_lvl("level-a"), _lvl("level-b"))
 def test_a_two_level_registry_and_two_rows_are_clean():
     errs, levels = _cl(_AB)
     assert errs == [] and levels == ["level-a", "level-b"]
-    assert _lre(_rail(_lr("level-a"), _lr("level-b")), levels) == []
+    assert _lre(_rail(_lr("level-a"), _lr("level-b", grant_to_groups=["team-b"])), levels) == []
 
 
 def test_levels_come_back_in_file_order():
@@ -115,12 +115,12 @@ def test_the_validate_policy_cli_is_green_and_prints_both_lines():
     r = subprocess.run([sys.executable, str(_SYNC / "validate_policy.py")],
                        capture_output=True, text=True, cwd=_REPO)
     assert r.returncode == 0, (r.stdout + r.stderr)[-2000:]
-    assert f"classification_levels.yaml: {len(_REGISTRY['classification_levels'])} level(s)" in r.stdout
+    assert f"classification/levels.yaml: {len(_REGISTRY['classification_levels'])} level(s)" in r.stdout
     assert f"level_readers.yaml: {len(_RAIL['level_readers'])} row(s)" in r.stdout
 
 
 def test_neither_file_is_in_data_files():
-    assert "classification_levels.yaml" not in vp.DATA_FILES
+    assert "classification/levels.yaml" not in vp.DATA_FILES
     assert "level_readers.yaml" not in vp.DATA_FILES
 
 
@@ -149,7 +149,7 @@ def test_a_malformed_registry_is_one_error_and_no_levels(raw, fragment):
 def test_a_bad_registry_row_is_refused(row, fragment):
     errs, levels = _cl(_reg(row))
     assert any(fragment in e for e in errs), errs
-    assert all(e.startswith("classification_levels.yaml: ") for e in errs), errs
+    assert all(e.startswith("classification/levels.yaml: ") for e in errs), errs
 
 
 def test_a_duplicate_id_is_an_error_and_is_not_added_twice():
@@ -171,7 +171,7 @@ def test_a_malformed_rail_is_one_error(raw, fragment):
 
 
 @pytest.mark.parametrize("rows,fragment", [
-    ([_lr("level-z")], "'level-z' is not a level in classification_levels.yaml"),
+    ([_lr("level-z")], "'level-z' is not a level in classification/levels.yaml"),
     ([_lr(), _lr()], "more than one row names this level"),
     ([_drop(_lr(), "grant_to_groups")], "`grant_to_groups` must be a list"),
     ([_lr(grant_to_groups="team-a")], "`grant_to_groups` must be a list"),
@@ -222,7 +222,7 @@ def _errs(pol, *files):
     return [e for e in vp.validate(pol, pol) if e.startswith(files)]
 
 
-_FILES = ("classification_levels.yaml", "level_readers.yaml")
+_FILES = ("classification/levels.yaml", "level_readers.yaml")
 
 
 def test_validate_is_clean_as_copied(tmp_path):
@@ -233,17 +233,17 @@ def test_validate_is_clean_as_copied(tmp_path):
 def test_validate_carries_an_error_from_each_file(tmp_path):
     pol = _policy_copy(tmp_path)
     grp = _real_group()
-    _put(pol, "classification_levels.yaml", _reg(_lvl("level-a"), _lvl("level:b")))
+    _put(pol, "classification/levels.yaml", _reg(_lvl("level-a"), _lvl("level:b")))
     _put(pol, "level_readers.yaml", _rail(_lr("level-a", grant_to_groups=[grp], colour="red")))
     errs = _errs(pol, *_FILES)
-    assert any(e.startswith("classification_levels.yaml") and "no whitespace" in e for e in errs), errs
+    assert any(e.startswith("classification/levels.yaml") and "no whitespace" in e for e in errs), errs
     assert any(e.startswith("level_readers.yaml") and "unknown key 'colour'" in e for e in errs), errs
 
 
 def test_validate_passes_the_real_groups_and_users_to_the_rail(tmp_path):
     pol = _policy_copy(tmp_path)
     grp = _real_group()
-    _put(pol, "classification_levels.yaml", _reg(_lvl("level-a")))
+    _put(pol, "classification/levels.yaml", _reg(_lvl("level-a")))
     _put(pol, "level_readers.yaml", _rail(_lr("level-a", grant_to_groups=[grp])))
     assert _errs(pol, *_FILES) == []                       # the control: a real group is clean
     _put(pol, "level_readers.yaml", _rail(_lr("level-a", grant_to_groups=["no-such-group"])))
@@ -252,7 +252,7 @@ def test_validate_passes_the_real_groups_and_users_to_the_rail(tmp_path):
 
 def test_validate_with_a_broken_registry_reports_it_and_no_unknown_level(tmp_path):
     pol = _policy_copy(tmp_path)
-    _put(pol, "classification_levels.yaml", {"classification_levels": "nope"})
+    _put(pol, "classification/levels.yaml", {"classification_levels": "nope"})
     _put(pol, "level_readers.yaml", _rail(_lr("level-x", grant_to_groups=[_real_group()])))
     errs = _errs(pol, *_FILES)
     assert any("must be a list of rows" in e for e in errs), errs
@@ -268,15 +268,15 @@ def test_both_files_absent_is_clean(tmp_path):
 
 def test_an_absent_registry_with_a_rail_row_is_an_unknown_level(tmp_path):
     pol = _policy_copy(tmp_path)
-    (pol / "classification_levels.yaml").unlink()
+    (pol / "classification" / "levels.yaml").unlink()
     _put(pol, "level_readers.yaml", _rail(_lr("level-a", grant_to_groups=[_real_group()])))
     errs = _errs(pol, *_FILES)
-    assert any("'level-a' is not a level in classification_levels.yaml" in e for e in errs), errs
+    assert any("'level-a' is not a level in classification/levels.yaml" in e for e in errs), errs
 
 
 def test_a_registered_level_with_an_absent_rail_reports_its_missing_row(tmp_path):
     pol = _policy_copy(tmp_path)
-    _put(pol, "classification_levels.yaml", _reg(_lvl("level-a")))
+    _put(pol, "classification/levels.yaml", _reg(_lvl("level-a")))
     (pol / "level_readers.yaml").unlink()
     errs = _errs(pol, *_FILES)
     assert len(errs) == 1 and "level 'level-a' has no row" in errs[0], errs
@@ -284,18 +284,80 @@ def test_a_registered_level_with_an_absent_rail_reports_its_missing_row(tmp_path
 
 # ---- one home ----------------------------------------------------------------------------------
 
-def test_a_can_read_capability_row_is_refused(tmp_path):
+def test_a_cleared_for_capability_row_is_refused(tmp_path):
     pol = _policy_copy(tmp_path)
     caps = yaml.safe_load((pol / "capability_grants.yaml").read_text(encoding="utf-8"))
     first = next(iter(caps["capabilities"].values()))
-    base = [e for e in vp.validate(pol, pol) if "can_read:" in e]
+    base = [e for e in vp.validate(pol, pol) if "cleared_for:" in e]
     assert base == []                                      # the control
+    caps = copy.deepcopy(caps)
+    caps["capabilities"]["cleared_for:level-a"] = copy.deepcopy(first)
+    _put(pol, "capability_grants.yaml", caps)
+    errs = [e for e in vp.validate(pol, pol) if "cleared_for:level-a" in e]
+    assert any("a level's clearances are rows of policy/level_readers.yaml, not a capability row" in e
+               for e in errs), errs
+
+
+def test_a_can_read_capability_key_is_not_refused_by_this_rail(tmp_path):
+    pol = _policy_copy(tmp_path)
+    caps = yaml.safe_load((pol / "capability_grants.yaml").read_text(encoding="utf-8"))
+    first = next(iter(caps["capabilities"].values()))
     caps = copy.deepcopy(caps)
     caps["capabilities"]["can_read:level-a"] = copy.deepcopy(first)
     _put(pol, "capability_grants.yaml", caps)
-    errs = [e for e in vp.validate(pol, pol) if "can_read:level-a" in e]
-    assert any("a level's readers are rows of policy/level_readers.yaml, not a capability row" in e
-               for e in errs), errs
+    errs = [e for e in vp.validate(pol, pol) if "level_readers.yaml" in e]
+    assert errs == [], errs
+
+
+# ---- a grant is a ceiling ----------------------------------------------------------------------
+
+_ABC = ["level-a", "level-b", "level-c"]
+
+
+def _redundant(rows):
+    return [e for e in _lre(_rail(*rows), _ABC) if "a grant is a ceiling" in e]
+
+
+def _full(**by_level):
+    return [_lr(lv, grant_to_groups=by_level.get(lv.replace("-", "_"), [])) for lv in _ABC]
+
+
+def test_a_group_at_two_levels_is_one_redundancy_error_at_the_lower_row():
+    errs = _redundant(_full(level_a=["team-a"], level_c=["team-a"]))
+    assert len(errs) == 1 and errs[0].startswith("level_readers.yaml: level-a:"), errs
+    assert "'level-c'" in errs[0]
+
+
+def test_the_redundancy_follows_registry_order_not_row_order():
+    rows = list(reversed(_full(level_a=["team-a"], level_c=["team-a"])))
+    errs = _redundant(rows)
+    assert len(errs) == 1 and errs[0].startswith("level_readers.yaml: level-a:"), errs
+    assert "'level-c'" in errs[0]
+
+
+def test_a_group_at_all_three_levels_is_two_errors_each_naming_the_highest():
+    errs = _redundant(_full(level_a=["team-a"], level_b=["team-a"], level_c=["team-a"]))
+    assert len(errs) == 2, errs
+    assert errs[0].startswith("level_readers.yaml: level-a:")
+    assert errs[1].startswith("level_readers.yaml: level-b:")
+    assert all("'level-c'" in e for e in errs)
+
+
+def test_two_different_groups_at_two_levels_are_clean():
+    assert _redundant(_full(level_a=["team-a"], level_c=["team-b"])) == []
+
+
+def test_without_a_registry_there_is_no_redundancy_error():
+    rows = _full(level_a=["team-a"], level_c=["team-a"])
+    errs = [e for e in _lre(_rail(*rows), None) if "a grant is a ceiling" in e]
+    assert errs == []
+
+
+def test_a_duplicated_level_row_is_skipped_by_the_ceiling_check():
+    rows = _full(level_a=["team-a"]) + [_lr("level-c", grant_to_groups=["team-a"])]
+    errs = _lre(_rail(*rows), _ABC)
+    assert any("level-c: more than one row names this level" in e for e in errs), errs
+    assert [e for e in errs if "a grant is a ceiling" in e] == [], errs
 
 
 @pytest.mark.parametrize("bad", ["", "level:a", "level a"])

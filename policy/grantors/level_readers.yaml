@@ -7,5 +7,5 @@ rail_file: policy/level_readers.yaml
 object_scoped: true
 who: the approvers of policy/level_readers.yaml in this deployment's policy repository
 how: >-
-  a reviewed change adding the group to the level's row (granted_by, reason, ratified_by); no reader applies it
-  until ADR-0064's step 5
+  a reviewed change naming the group in the row of the highest level it may read (granted_by, reason,
+  ratified_by); no reader applies it until ADR-0064's step 5
