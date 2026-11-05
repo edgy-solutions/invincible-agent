@@ -13,6 +13,8 @@ single population both templates render from; THIS file asserts the join on the 
   4  reality         every `store` and every caller names a component the chart renders and (so)
                      selects a pod; an engine that is disabled in sandbox is refused.
   5  gate off        the sandbox values render zero NetworkPolicies without the flag.
+  6  job pods        every Job and CronJob pod names its component (pod template, not the object).
+  7  job components  a hook Job's component is one the chart renders, so arm 4 accepts it.
 
 (The exact-equality per-store arm lives in test_networkpolicy_admits_the_allowlist_by_component.py.)
 
@@ -49,6 +51,25 @@ def _render(*extra: str) -> list[dict]:
 @pytest.fixture(scope="module")
 def docs() -> list[dict]:
     return _render("--set", "networkPolicy.enabled=true")
+
+
+_WORKLOAD_KINDS = ("Deployment", "StatefulSet", "Job", "CronJob")
+
+
+def _pod_labels(d: dict) -> dict:
+    """The labels of the POD a workload makes -- what a podSelector selects, never the object's own."""
+    spec = d.get("spec") or {}
+    if d.get("kind") == "CronJob":
+        spec = (spec.get("jobTemplate") or {}).get("spec") or {}
+    elif d.get("kind") not in ("Deployment", "StatefulSet", "Job"):
+        return {}
+    return ((spec.get("template") or {}).get("metadata") or {}).get("labels") or {}
+
+
+def _rendered_components(docs) -> set[str]:
+    return {
+        _pod_labels(d).get(_COMP) for d in docs if d.get("kind") in _WORKLOAD_KINDS
+    } - {None}
 
 
 def _policies(docs, kind_key):
@@ -167,10 +188,7 @@ def test_EVERY_ENTRY_HAS_VIA_AND_AN_UNEXPIRED_EXPIRES():
 # 4. every name is a component the chart renders
 # ---------------------------------------------------------------------------------------------
 def test_EVERY_STORE_AND_CALLER_NAMES_A_COMPONENT_THE_CHART_RENDERS():
-    rendered = {
-        (d["metadata"].get("labels") or {}).get(_COMP)
-        for d in _render() if d.get("kind") in ("Deployment", "StatefulSet")
-    } - {None}
+    rendered = _rendered_components(_render())
     assert rendered, "the render found no workloads"
     bad = []
     for caller, e in _entries():
@@ -192,3 +210,29 @@ def test_THE_GATE_OFF_RENDERS_ZERO_NETWORKPOLICIES_WITH_THE_SANDBOX_VALUES():
     assert not cfg.get("enabled"), "values-sandbox.yaml turns the gate on; this roll is the proposal"
     assert cfg.get("directCallers"), "the population is empty: this arm would be vacuous"
     assert [d for d in _render() if d.get("kind") == "NetworkPolicy"] == []
+
+
+# ---------------------------------------------------------------------------------------------
+# 6. every Job and CronJob pod names its component
+# ---------------------------------------------------------------------------------------------
+# A NetworkPolicy podSelector selects PODS. A hook Job whose pod carries no component label can be
+# admitted by no entry, and `prime-substrate` failing fails the release.
+def test_EVERY_JOB_AND_CRONJOB_POD_NAMES_ITS_COMPONENT():
+    docs = _render("--set", "demoSeed.enabled=true", "--set", "topazSeed.enabled=true")
+    jobs = [d for d in docs if d.get("kind") in ("Job", "CronJob")]
+    names = [d["metadata"]["name"] for d in jobs]
+    assert any(d["kind"] == "Job" for d in jobs), "population has no Job"
+    assert any(d["kind"] == "CronJob" for d in jobs), "population has no CronJob"
+    for suffix in ("-restate-init", "-db-init", "-prime-substrate", "-realm-reconcile"):
+        assert any(n.endswith(suffix) for n in names), f"population lacks a job named ...{suffix}: {sorted(names)}"
+    offenders = sorted(d["metadata"]["name"] for d in jobs if not _pod_labels(d).get(_COMP))
+    assert not offenders, f"Job/CronJob pod templates with no {_COMP}: {offenders}"
+
+
+# ---------------------------------------------------------------------------------------------
+# 7. a hook Job's component is a component the chart renders
+# ---------------------------------------------------------------------------------------------
+def test_A_JOB_COMPONENT_IS_A_COMPONENT_THE_CHART_RENDERS():
+    rendered = _rendered_components(_render())
+    missing = {"prime-substrate", "restate-init"} - rendered
+    assert not missing, f"Job components not rendered: {sorted(missing)}"
