@@ -4,16 +4,16 @@ feature: cross-cutting
 lane: invincible-agent/lane/01
 repo: invincible-agent
 status: open
-priority: now
+priority: next
 blocked_on: []
 pr: []
-ruling_ref: architect 11-04 on #224's three readings; architect via Chris 11-04 on #251's forks 1 and 3
+ruling_ref: architect 11-04 on #224's three readings; architect via Chris 11-04 on #251's forks 1 and 3; Chris 11-04: lands in 0.4.80
 updated: 2026-11-04
 ---
 
 **A regression is open until this lands.** Since #251 (`758811d7`), the BFF reads `gateway_delegates.yaml` only from its own image (`/app/policy/`). The chart mounts no deployment policy on the BFF. Before #251, a deployment added a register service in a values overlay (`keycloak.taskRegisterServices`). Now it needs an image, which fails the 10-30 rule's third test.
 
-Fix it at the next cut. If a work install falls in 0.4.79's window, 0.4.79 doesn't ship without this.
+It lands in 0.4.80 (Chris 11-04: no work install in 0.4.79, so 0.4.79 ships without it).
 
 One PR carries both halves.
 
