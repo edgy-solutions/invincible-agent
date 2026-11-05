@@ -3528,3 +3528,156 @@ def test_control_another_missing_field_of_a_stage_keeps_its_own_key():
     f = _good()
     del f[REC]["name"]
     assert [g.key for g in se.problems(f)] == ["steps.pcn_record.name"]
+
+
+# ── a positional path is refused with what to write (architect, 2026-11-04, on runs 59 and 60) ─
+
+def _refusal(files, patch):
+    with pytest.raises(se.PatchError) as e:
+        se.apply_patch(se.Draft(files=copy.deepcopy(files)), patch, 1)
+    return str(e.value)
+
+
+def test_a_position_the_list_holds_is_refused_naming_its_id_form_and_the_path_to_write():
+    said = _refusal(_good(), {"set": [{"file": IR, "path": "steps[1].role", "value": "x"}]})
+    assert "steps[1] is steps[id=engineering_disposition]" in said
+    assert "so write steps[id=engineering_disposition].role" in said
+    assert "set steps whole" not in said
+
+
+def test_a_position_past_the_end_is_refused_saying_to_set_the_list_whole():
+    said = _refusal(_good(), {"set": [{"file": ACK, "path": "steps[1].kind", "value": "human_await"}]})
+    assert "steps holds no element 1" in said and "set steps whole" in said and "[id=" not in said.split(":", 1)[1].split("as in")[0]
+
+
+def test_a_position_in_a_stage_with_no_steps_yet_is_refused_saying_to_set_the_list_whole():
+    said = _refusal(_good(), {"set": [{"file": "workflows/new_stage.yaml", "path": "steps[0].kind", "value": "emit"}]})
+    assert "steps holds no element 0" in said and "set steps whole" in said
+
+
+def test_an_unset_by_position_is_refused_with_the_id_form_before_its_scope_is_read():
+    said = _refusal(_good(), {"unset": [{"file": IR, "path": "steps[0].excludes"}]})
+    assert "steps[0] is steps[id=impact]" in said and "so write steps[id=impact].excludes" in said
+
+
+def test_a_position_under_an_id_selector_reads_the_list_it_names():
+    f = _good()
+    _step(f, IR, "engineering_disposition")["branches"] = [{"id": "b1"}, {"id": "b2"}]
+    said = _refusal(f, {"set": [{"file": IR, "path": "steps[id=engineering_disposition].branches[1].x", "value": 1}]})
+    assert "so write steps[id=engineering_disposition].branches[id=b2].x" in said
+
+
+def test_control_a_position_in_a_list_whose_elements_hold_no_id_keeps_the_grammar():
+    said = _refusal(_good(), {"set": [{"file": CH, "path": "rows[0].then", "value": "x"}]})
+    assert se._PATH_FORMS in said and "not its position" not in said
+
+
+def _roleless():
+    f = _good()
+    del _step(f, IR, "engineering_disposition")["role"]
+    return f
+
+
+def test_control_a_path_by_id_lands():
+    d = se.Draft(files=_roleless())
+    se.apply_patch(d, {"set": [{"file": IR, "path": "steps[id=engineering_disposition].role", "value": "x"}]}, 1)
+    assert _step(d.files, IR, "engineering_disposition")["role"] == "x"
+
+
+def test_the_restatement_of_a_positional_path_hears_the_id_form():
+    d = se.Draft(files=_roleless())
+    asked = []
+
+    def model(entry, *_):
+        asked.append(entry)
+        path = "steps[id=engineering_disposition].role" if entry.get("refused") else "steps[1].role"
+        return {"set": [{"file": IR, "path": path, "value": "component engineer"}]}
+    charged = []
+    se._apply_or_charge(d, model, {"says": "x"}, None, 1, charged)
+    assert "steps[1] is steps[id=engineering_disposition]" in asked[1]["refused"] and len(charged) == 1
+    assert _step(d.files, IR, "engineering_disposition")["role"] == "component engineer"
+
+
+# ── a stage is drafted under a name the person used (architect, 2026-11-04, on run 61) ──────
+
+NAMED = ["pcn_impact_review", "acknowledgement", "pcn_program_approval", "pcn_record"]
+
+
+def _named(files, stages=NAMED):
+    files = copy.deepcopy(files)
+    files[TRIG]["stages"] = list(stages)
+    return files
+
+
+def _with_ack_as(files, wid):
+    files = copy.deepcopy(files)
+    doc = files.pop(ACK)
+    files[f"workflows/{wid}.yaml"] = {**doc, "id": wid}
+    return files
+
+
+def _drafting_ack_as(wid, stages=NAMED):
+    f = _named(_good(), stages)
+    doc = f.pop(ACK)
+    return se.Draft(files=f), {"set": [{"file": f"workflows/{wid}.yaml", "path": "", "value": {**doc, "id": wid}}]}
+
+
+def test_a_stage_drafted_under_a_name_the_person_did_not_use_is_refused_with_their_names():
+    draft, patch = _drafting_ack_as("minor_acknowledge")
+    before = copy.deepcopy(draft.files)
+    charged = []
+    se._apply_or_charge(draft, lambda *_: patch, {"says": "x"}, None, 1, charged)
+    assert draft.files == before and charged
+    said = charged[0]["error"]
+    assert "drafts a stage named minor_acknowledge" in said
+    assert "the stages the person named are " + ", ".join(NAMED) in said
+
+
+def test_control_the_same_stage_under_a_name_the_person_used_lands():
+    draft, patch = _drafting_ack_as("acknowledgement")
+    charged = []
+    se._apply_or_charge(draft, lambda *_: patch, {"says": "x"}, None, 1, charged)
+    assert charged == [] and "workflows/acknowledgement.yaml" in draft.files
+
+
+def test_control_with_no_stages_named_no_name_is_refused():
+    draft, patch = _drafting_ack_as("minor_acknowledge", stages=[])
+    charged = []
+    se._apply_or_charge(draft, lambda *_: patch, {"says": "x"}, None, 1, charged)
+    assert charged == []
+    assert not any("drafts a stage named" in c for c in se._structure_errors(_good()))
+
+
+def test_the_names_refusal_points_at_the_stage_file_and_never_at_the_names():
+    errors = se._structure_errors(_named(_with_ack_as(_good(), "minor_acknowledge")))
+    leaves = [lv for c, lv in errors.items() if "drafts a stage named minor_acknowledge" in c]
+    assert leaves == [(("workflows/minor_acknowledge.yaml", ""),)]
+
+
+def test_a_misnamed_stage_already_in_the_draft_does_not_block_an_unrelated_patch():
+    d = se.Draft(files=_named(_with_ack_as(_roleless(), "minor_acknowledge")))
+    charged = []
+    patch = {"set": [{"file": IR, "path": "steps[id=engineering_disposition].role", "value": "x"}]}
+    se._apply_or_charge(d, lambda *_: patch, {"says": "x"}, None, 1, charged)
+    assert charged == [] and _step(d.files, IR, "engineering_disposition")["role"] == "x"
+
+
+def test_the_restatement_of_a_misnamed_stage_under_the_persons_name_lands():
+    draft, wrong = _drafting_ack_as("minor_acknowledge")
+    _, right = _drafting_ack_as("acknowledgement")
+    asked = []
+
+    def model(entry, *_):
+        asked.append(entry)
+        return right if entry.get("refused") else wrong
+    charged = []
+    se._apply_or_charge(draft, model, {"says": "x"}, None, 1, charged)
+    assert "the stages the person named are" in asked[1]["refused"] and len(charged) == 1
+    assert "workflows/acknowledgement.yaml" in draft.files and "workflows/minor_acknowledge.yaml" not in draft.files
+
+
+def test_the_stage_confirm_lists_each_name_the_person_used():
+    f = _named(_good())
+    slot = next(s for s in se._value_slots(f) if s[0] == f"trigger.{se._STAGES}")
+    for name in NAMED:
+        assert se._words(name) in slot[3]

@@ -157,10 +157,37 @@ _SEG = re.compile(r"^([A-Za-z0-9_\-]+)(?:\[([A-Za-z0-9_\-]+)=([^\]]*)\])?$")
 
 _PATH_FORMS = ("a path is dotted keys, and a list element is picked by a key it holds directly, as in "
                "steps[id=a].excludes; a list whose elements hold no such key, like rows, is set whole")
+_AT = re.compile(r"^([A-Za-z0-9_\-]+)\[(\d+)\]$")
 
 
-def parse_path(path: str) -> List[Tuple[str, Optional[Tuple[str, str]]]]:
-    """``"steps[id=a].excludes"`` -> ``[("steps", ("id", "a")), ("excludes", None)]``."""
+def _by_position(root: dict, before, parts: List[str], k: int) -> Optional[str]:
+    """What to write for the positional segment ``parts[k]``, read against ``root``, or None when its
+    list holds elements with no id (architect, 2026-11-04: across runs 41 to 61 the positional form is
+    the commonest refusal, and in runs 59 and 60 it blocked the one stage that read wrong). An element
+    the list holds is named by its id form, and one it doesn't hold is added by setting the list whole."""
+    m = _AT.match(parts[k])
+    if m is None:
+        return None
+    name, i = m.group(1), int(m.group(2))
+    try:
+        loc = _locate(root, list(before) + [(name, None)], create=False)
+    except PatchError:
+        loc = None
+    lst = loc[0].get(loc[1]) if loc is not None else None
+    whole = ".".join(parts[:k] + [name])
+    if isinstance(lst, list) and i < len(lst) and isinstance(lst[i], dict) and lst[i].get("id") not in (None, ""):
+        at = f"{name}[id={lst[i]['id']}]"
+        return (f"a list element is picked by its id, not its position: {parts[k]} is {at}, so write "
+                f"{'.'.join(parts[:k] + [at] + parts[k + 1:])}")
+    if lst is None or (isinstance(lst, list) and all(isinstance(e, dict) and e.get("id") not in (None, "") for e in lst)):
+        return (f"{whole} holds no element {i}, and a list element is picked by its id, not its position: "
+                f"to add one, set {whole} whole, the list as it stands with the new element in its place")
+    return None
+
+
+def parse_path(path: str, root: Optional[dict] = None) -> List[Tuple[str, Optional[Tuple[str, str]]]]:
+    """``"steps[id=a].excludes"`` -> ``[("steps", ("id", "a")), ("excludes", None)]``. Given the file's
+    ``root``, a positional segment is refused with what to write in its place."""
     if path == "":
         return []
     parts: List[str] = []
@@ -177,10 +204,11 @@ def parse_path(path: str) -> List[Tuple[str, Optional[Tuple[str, str]]]]:
             buf += ch
     parts.append(buf)
     out = []
-    for p in parts:
+    for k, p in enumerate(parts):
         m = _SEG.match(p)
         if not m:
-            raise PatchError(f"cannot parse path segment {p!r} in {path!r}: {_PATH_FORMS}")
+            said = _by_position(root, out, parts, k) if root is not None else None
+            raise PatchError(f"cannot parse path segment {p!r} in {path!r}: {said or _PATH_FORMS}")
         out.append((m.group(1), (m.group(2), m.group(3)) if m.group(2) else None))
     return out
 
@@ -477,6 +505,8 @@ def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] =
         file, path = str(entry["file"]), str(entry["path"])
         if _is_rendering(file, path):
             continue
+        if path:
+            parse_path(path, draft.files.get(file) or {})
         if not _in_scope(scope, file, path, unset=True):
             raise PatchError(f"an unset may only remove what the confirm being answered names; "
                              f"{path or 'the whole file'} of {file} is not")
@@ -492,7 +522,7 @@ def apply_patch(draft: Draft, patch: dict, turn: int, answering: Optional[Gap] =
         for leaf_path, leaf_value in leaves:
             if leaf_path == "":
                 raise PatchError(f"cannot set the root of {file} to a non-mapping")
-            container, key = _locate(root, parse_path(leaf_path), create=True)  # type: ignore[misc]
+            container, key = _locate(root, parse_path(leaf_path, root), create=True)  # type: ignore[misc]
             if key in container:
                 old = container[key]
                 if old == leaf_value:
@@ -1912,6 +1942,16 @@ def _structure_errors(files: Dict[str, dict]) -> Dict[str, Tuple[Tuple[str, str]
                 out[f"`terminals` of {tf} lists {x}, which is also a stage, so a case stops there and "
                     "never enters it: a stage is named only by a row's `then`, so set `terminals` "
                     "without it"] = ((tf, "terminals"),)
+    # a stage is drafted under a name the person used (architect, 2026-11-04, on run 61, whose
+    # trigger listed one name and whose workflow was drafted under another the person never said)
+    for _, t in triggers:
+        named = [str(x) for x in t.get(_STAGES) or []] if isinstance(t.get(_STAGES), list) else []
+        if not named:
+            continue
+        for wid, (wf, _) in _workflows(files).items():
+            if wid not in named:
+                out[f"{wf} drafts a stage named {wid}, and the stages the person named are "
+                    f"{', '.join(named)}: draft it under one of those names"] = ((wf, ""),)
     return out
 
 

@@ -19,7 +19,8 @@ and slot, and misses only the program approval's `approves` and `role`, which no
 ruled two more: an approval step with no `approves` is asked which answers count and in what role, and a stage with no
 steps is asked as a stage, in the person's words. Both are built. Runs 59 to 61, on them, all read `no`. Runs 59 and 60
 read `yes` on slot and approval for the first time, and both stall on the record stage, where the model's step is refused
-for its path form (§10). Nothing is flipped.
+for its path form (§10). The architect then ruled that a positional path's refusal says what to write, and that a stage
+is drafted under a name the person used. Both are built (§10). Nothing is flipped.
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2692,6 +2693,51 @@ path grammar, so I don't recommend it.
 turn 5, before the stage was described. That is the stale deferral on the open list. Run 60 also recorded a deferral on the
 acknowledgement's escalated route, "User did not specify where the escalated outcome should route", though its table
 routes `escalated` to the impact review, as the person described. That deferral is stale in the same way.
+
+#### 2026-11-04: the ruling on the path form and on a stage's name
+
+The architect ruled: "yes — the refusal names the id form for an existing step and says to set `steps` whole for a new
+one. Name drift: fix in the loop — the confirm lists the stage names the person used, and a drafted stage not in that list
+is refused with the list. Three runs (62–64)."
+
+**The path form.** A positional segment such as `steps[1]` is read against the file it names before it is refused. Where
+the list holds that element and the element has an `id`, the refusal names the id form and the whole path to write:
+"`steps[1]` is `steps[id=engineering_disposition]`, so write `steps[id=engineering_disposition].role`". Where the list
+doesn't hold it, or the stage has no steps yet, the refusal says to set the list whole, as it stands, with the new element
+in its place. A list whose elements hold no `id`, such as a table's rows, keeps the grammar's own refusal, which already
+says such a list is set whole. An unset is read the same way, before its scope, so a positional unset hears the id form
+rather than a scope refusal. The grammar is unchanged: `steps[N]` is still refused, and only the refusal text is new.
+
+**A stage's name.** Where the trigger lists the stages the person named, a patch that drafts a workflow under another
+name is refused, and the refusal lists the names: "… drafts a stage named minor_acknowledge, and the stages the person named
+are …: draft it under one of those names". The refusal goes back to the model as a structural error and points at the
+workflow's file, never at the list of names. So the model may rename the stage, and the list stays as the person confirmed
+it. A misnamed stage already in the draft doesn't block an unrelated patch, as with any structural error. With no stages
+listed, no name is refused. The stage confirm already lists the trigger's names, in the person's words, and a seal now
+holds it to each one.
+
+**Checks.** Fifteen seals, and fourteen mutants that each die on one. On the path form, the mutants are:
+
+- the position never read;
+- the id form never given;
+- the rest of the path dropped from what to write;
+- the unset not read before its scope;
+- the set path read without its file;
+- an id selector before the position ignored;
+- an absent list falling back to the grammar;
+- every list told to be set whole.
+
+On the name, they are:
+
+- the check off;
+- every name refused;
+- the refusal pointing at the list of names;
+- the list left out of the refusal;
+- an empty list refusing every name;
+- the confirm listing the workflows in place of the person's names.
+
+The suite, gov's refusal ratchet and the corpus check pass. The census is unchanged at 469 refused, 2003 passed, no crash
+sites. Runs 62 to 64 are next.
 
 ## Consequences
 
