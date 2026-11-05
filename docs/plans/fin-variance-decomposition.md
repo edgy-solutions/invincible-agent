@@ -66,6 +66,10 @@ render:
 - There's one edge per (parent, child): `source` and `target` are the two paths, `value` is the
   absolute value of the child's signed sum, `sign` is `positive`, `negative` or `zero`, `level` is
   the child's depth (1 for the root's children), and `node_kind` is `other` for a sink and `item` for anything else.
+- **The root has its own edge** (ruled 2026-11-04). One more edge carries the total: `source` null,
+  `target` `[root]`, `level` 0, `node_kind` `item`, and the root's absolute net with its sign. So
+  every node, the root included, has exactly one incoming edge. A read with no rows has no edges at
+  all, never a root at zero, because an empty read is already refused before the module runs.
 - **The sink is marked, never matched by label** (ruled 2026-11-04). A consumer finds it by
   `node_kind`. The engine serves `render.other_label` for display, taken from the module's
   `OTHER_LABEL`, which is also the sink path's last element. A row doesn't declare it.
@@ -91,18 +95,20 @@ from the row, plus `render.other_label`. Each edge:
 
 | field | what it is |
 | --- | --- |
-| `source`, `target` | paths: lists of strings, root first. The display label is the last element |
+| `source`, `target` | paths: lists of strings, root first. The display label is the last element. `source` is null on the root edge, and only there |
 | `value` | non-negative: the absolute net, a cent-quantized float, with `value_exact` (the exact Decimal string) beside it |
 | `sign` | `positive`, `negative` or `zero`: the sign of the target's net |
-| `level` | the target's depth, `len(target) - 1`; 1 for the root's children |
+| `level` | the target's depth, `len(target) - 1`; 0 for the root edge, 1 for the root's children |
 | `node_kind` | `other` for a sink, `item` for everything else |
 
 1. **Level is data.** Each edge carries `level`, and a node's depth is also `len(path) - 1`. A sink
    is terminal at its own depth, and no edge spans levels.
 2. **The sink is marked by `node_kind == "other"`, never by its label.** Show `render.other_label`.
    No real node shares the sink's path: that is a 502 with rule `refused_by_module`.
-3. **Sign is on the edge, and it's the target's.** The table is a tree, so every non-root node has
-   exactly one incoming edge and its sign is that edge's sign. The root's net is only in `verdict`.
+3. **Sign is on the edge, and it's the target's.** The table is a tree, so every node has exactly
+   one incoming edge and its sign is that edge's sign. The root's comes from the root edge
+   (`source: null`, `level: 0`), which carries the total, so the net is data, not only `verdict`
+   prose. It sorts first.
 4. **`value` is non-negative, with `sign` beside it.** A zero edge arrives with `value` 0 and
    `sign: zero`. The renderer draws no band for it and lists the zeros on the parent's hover, e.g.
    "n items at zero".
@@ -110,7 +116,7 @@ from the row, plus `render.other_label`. Each edge:
    included, sum to the node's own value, which is on its incoming edge. A mismatch is a defect in
    transit. A row missing from the asset isn't visible, because the table is the sum of the rows read.
 6. **It's a tree.** One sink per parent, and paths make every node unique, so a node has one parent
-   and its subtree is well-defined.
+   (the root's is null) and its subtree is well-defined.
 7. **Units and label are per table, in `render`:** `value_label` and the optional `unit`. No scale
    is applied; the figures are full units.
 
@@ -127,6 +133,7 @@ from the row, plus `render.other_label`. Each edge:
 | 7 | how the sink is marked | **ruled 2026-11-04:** `node_kind: item \| other` on each edge, and `render.other_label` for display | a label match, which cortex refused |
 | 8 | a zero | **ruled 2026-11-04:** `sign: zero`, the edge emitted with its subtree, no band drawn | no edge, and the subtree dropped |
 | 9 | a path figure carried on each row | **ruled 2026-11-04:** `per_path: once`, a 502 if it varies | per-row increments, or a separate snapshot asset |
+| 10 | where the root's total lives | **ruled 2026-11-04:** one root edge, `source` null, `target` `[root]`, `level` 0 | only in `verdict` |
 
 ## Not met by this change
 

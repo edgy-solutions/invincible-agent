@@ -10,10 +10,13 @@ NODES ARE PATHS. A node is `[root]`, then `[root, v1]`, then `[root, v1, v2]` an
 nodes that share a name under different parents stay two nodes. The signed value of a node is the
 exact sum of the amounts beneath it.
 
-EDGES. One per (parent, child): `{source, target, value, sign, level, node_kind}`. `source` and `target` are
-the two paths (lists of strings), `value` is the ABSOLUTE signed sum of the child (Decimal), `sign`
-is `"positive"`, `"negative"` or `"zero"` (the sign of the child's signed net), `level` is the
-child's depth (1 for the root's children), and `node_kind` is `"other"` for the sink edge the collapse emits and `"item"` for every other edge. The sink is marked by
+EDGES. One per (parent, child): `{source, target, value, sign, level, node_kind}`. `source` and
+`target` are the two paths (lists of strings), `value` is the ABSOLUTE signed sum of the child
+(Decimal), `sign` is `"positive"`, `"negative"` or `"zero"` (the sign of the child's signed net),
+`level` is the child's depth (1 for the root's children), and `node_kind` is `"other"` for the sink
+edge the collapse emits and `"item"` for every other edge. One more edge carries the root: `source`
+None, `target` `[root]`, `level` 0, and the root's net (ruled 2026-11-04), so the total is data and
+every node, the root included, has exactly one incoming edge. The sink is marked by
 `node_kind`, never recognised by its label; its path element is `OTHER_LABEL`, which is for display.
 A child whose signed sum is exactly zero IS emitted (`value` 0, `sign` "zero", `node_kind`
 "item") and its subtree is walked as usual, because its own children can be nonzero and offset; a
@@ -43,7 +46,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Sequence
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 OTHER_LABEL = "All other"
 
 
@@ -66,13 +69,17 @@ def flow_edges(
 
     edges: list[dict[str, Any]] = []
 
-    def emit(source: tuple[str, ...], target: tuple[str, ...], net: Decimal, node_kind: str) -> None:
+    def emit(source: tuple[str, ...] | None, target: tuple[str, ...], net: Decimal,
+             node_kind: str) -> None:
         edges.append({
-            "source": list(source), "target": list(target), "value": abs(net),
+            "source": None if source is None else list(source), "target": list(target),
+            "value": abs(net),
             "sign": "positive" if net > 0 else "negative" if net < 0 else "zero",
             "level": len(target) - 1, "node_kind": node_kind,
         })
 
+    if (root,) in children:
+        emit(None, (root,), sum(children[(root,)].values(), Decimal(0)), "item")
     stack: list[tuple[str, ...]] = [(root,)]
     while stack:
         parent = stack.pop()
@@ -95,5 +102,5 @@ def flow_edges(
             sink_net = sum((live[c] for c in below), Decimal(0))
             emit(parent, parent + (OTHER_LABEL,), sink_net, "other")
 
-    edges.sort(key=lambda e: (e["level"], e["source"], -e["value"], e["target"]))
+    edges.sort(key=lambda e: (e["level"], e["source"] or [], -e["value"], e["target"]))
     return edges

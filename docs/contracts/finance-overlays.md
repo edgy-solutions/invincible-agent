@@ -97,6 +97,9 @@ differences under `inputs` and `render`:
   reconciles: the signed children, sinks included, sum to the parent. A renderer draws no band for
   a zero edge. Zero children are outside the collapse (not in the share total, never "below", not
   counted toward "two or more"); a sink whose members net to zero is emitted with `sign` `"zero"`.
+- One edge carries the root: `source` null, `target` `[root]`, `level` 0, `node_kind` `"item"`, and
+  the root's absolute net with its `sign`. It is the only edge with a null `source`, and it sorts
+  first. A read with no rows has no edges, never a root at zero.
 - Each edge carries `node_kind`, `item` or `other` (the "All other" sink the collapse makes).
   `render.other_label` is served by the engine from the module's `OTHER_LABEL`; a row does not
   declare it (a row that does is refused at load). A consumer marks the sink by `node_kind`, never

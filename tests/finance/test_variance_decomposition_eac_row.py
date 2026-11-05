@@ -108,13 +108,14 @@ def expected_edges(times=1, threshold=THRESHOLD):
         return out, kept
 
     level1, kept = split([PROGRAM], ca_net)
-    edges = [([PROGRAM], t, v, kind) for t, v, kind in level1]
+    edges = [(None, [PROGRAM], sum(ca_net.values(), Decimal(0)), "item")]   # the root edge
+    edges += [([PROGRAM], t, v, kind) for t, v, kind in level1]
     for ca in kept:
         level2, _ = split([PROGRAM, ca], {w: wp_net[w] for w, v in PLAN.items() if v[0] == ca})
         edges += [([PROGRAM, ca], t, v, kind) for t, v, kind in level2]
     table = [(s, t, abs(v), "positive" if v > 0 else "negative" if v < 0 else "zero", len(t) - 1, kind)
              for s, t, v, kind in edges]
-    return sorted(table, key=lambda e: (e[4], e[0], -e[2], e[1]))
+    return sorted(table, key=lambda e: (e[4], e[0] or [], -e[2], e[1]))
 
 
 def served(rows):
@@ -127,8 +128,8 @@ def test_the_edges_equal_eac_less_bac_taken_once_per_work_package(post, flow_row
     status, env = post()
     assert status == 200, env
     assert served(env["rows"]) == expected_edges()
-    assert len(env["rows"]) == 5 + 9 and not [e for e in env["rows"] if e["node_kind"] == "other"]
-    assert env["method"]["version"] == "1.2.0" and env["render"]["value_label"] == "EAC variance"
+    assert len(env["rows"]) == 1 + 5 + 9 and not [e for e in env["rows"] if e["node_kind"] == "other"]
+    assert env["method"]["version"] == "1.3.0" and env["render"]["value_label"] == "EAC variance"
 
 
 def test_at_0_15_four_accounts_fold_into_one_sink_and_one_zero_is_drawn(post, flow_rows, monkeypatch):
@@ -149,13 +150,15 @@ def test_the_zero_edges_are_present_and_each_level_reconciles(post):
     assert zeros == {(PROGRAM, "1.1", "WP-1101"), (PROGRAM, "2.1", "WP-2102"), (PROGRAM, "3.1", "WP-3102")}
     assert all(Decimal(e["value_exact"]) == 0 for e in rows if e["sign"] == "zero")
     value_of = {tuple(e["target"]): SIGN[e["sign"]] * Decimal(e["value_exact"]) for e in rows}
-    value_of[(PROGRAM,)] = sum((Decimal(eac - bac) for _c, bac, eac in PLAN.values()), Decimal(0))
-    for node in {tuple(e["source"]) for e in rows}:
-        kids = sum((SIGN[e["sign"]] * Decimal(e["value_exact"]) for e in rows if tuple(e["source"]) == node),
+    assert value_of[(PROGRAM,)] == sum((Decimal(eac - bac) for _c, bac, eac in PLAN.values()), Decimal(0))
+    (root,) = [e for e in rows if e["source"] is None]
+    assert (root["target"], root["level"], root["sign"], root["value_exact"]) == ([PROGRAM], 0, "positive", "1065000.00")
+    for node in {tuple(e["source"]) for e in rows if e["source"] is not None}:
+        kids = sum((SIGN[e["sign"]] * Decimal(e["value_exact"]) for e in rows if e["source"] == list(node)),
                    Decimal(0))
         assert kids == value_of[node], node
     assert "3 edge(s) at zero" in env["verdict"] and "net 1065000.00" in env["verdict"]
-    assert "0 'All other' sink(s)" in env["verdict"]
+    assert "0 'All other' sink(s)" in env["verdict"] and "across 14 edges over 2 levels" in env["verdict"]
 
 
 def test_over_and_under_work_packages_carry_all_three_signs(post):

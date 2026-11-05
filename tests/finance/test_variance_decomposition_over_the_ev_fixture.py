@@ -117,14 +117,15 @@ def expected_edges(frame, threshold=THRESHOLD):
 
     cas = {r[0]: Decimal(str(r[1])) for r in f.group_by("control_account").agg(pl.col("acwp").sum()).iter_rows()}
     level1, kept = split([PROGRAM], cas)
-    edges = [([PROGRAM], t, v) for t, v in level1]
+    edges = [(None, [PROGRAM], sum(cas.values(), Decimal(0)))]          # the root edge
+    edges += [([PROGRAM], t, v) for t, v in level1]
     for ca in kept:
         wps = {r[0]: Decimal(str(r[1])) for r in f.filter(pl.col("control_account") == ca)
                .group_by("work_package").agg(pl.col("acwp").sum()).iter_rows()}
         level2, _ = split([PROGRAM, ca], wps)
         edges += [([PROGRAM, ca], t, v) for t, v in level2]
     table = [(s, t, abs(v), "positive" if v > 0 else "negative" if v < 0 else "zero", len(t) - 1) for s, t, v in edges]
-    return sorted(table, key=lambda e: (e[4], e[0], -e[2], e[1]))
+    return sorted(table, key=lambda e: (e[4], e[0] or [], -e[2], e[1]))
 
 
 def served(rows):
@@ -136,9 +137,10 @@ SIGN = {"positive": 1, "negative": -1, "zero": 0}
 
 def conserved(rows, root_value):
     value_of = {tuple(e["target"]): SIGN[e["sign"]] * Decimal(e["value_exact"]) for e in rows}
-    value_of[(PROGRAM,)] = root_value
-    for node in {tuple(e["source"]) for e in rows}:
-        kids = sum((SIGN[e["sign"]] * Decimal(e["value_exact"]) for e in rows if tuple(e["source"]) == node), Decimal(0))
+    assert value_of[(PROGRAM,)] == root_value                       # the root edge carries the total
+    for node in {tuple(e["source"]) for e in rows if e["source"] is not None}:
+        kids = sum((SIGN[e["sign"]] * Decimal(e["value_exact"]) for e in rows if e["source"] == list(node)),
+                   Decimal(0))
         assert kids == value_of[node], node
 
 
@@ -168,7 +170,7 @@ def test_the_envelope_names_the_shape_the_source_and_the_method(post, gate, flow
     assert env["data_provenance"].startswith("SYNTHETIC") and ROW_URN in env["data_provenance"]
     assert env["measure"] == FN and env["output_uri"].endswith("DeclaredMeasureSeries")
     assert env["artifact_id"].startswith(f"fin:{FN}:")
-    assert env["method"]["version"] == "1.2.0" and env["method"]["module_sha256"] == flow_rows[FN].module_sha256
+    assert env["method"]["version"] == "1.3.0" and env["method"]["module_sha256"] == flow_rows[FN].module_sha256
     assert env["verdict"] and "net" in env["verdict"] and "All other" in env["verdict"]
     assert "series" not in env and "reference" not in env
     assert all(isinstance(e["value"], float) and e["value_exact"] for e in env["rows"])

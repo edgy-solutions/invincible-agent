@@ -35,13 +35,14 @@ def signed(edges):
 
 def assert_conserved(edges, paths):
     """At EVERY node that has edges out of it, its signed children (sink included) sum to its
-    signed value, where a node's value is read from the edge INTO it (the root's from the input)."""
+    signed value, where a node's value is read from the edge INTO it: the root's too, from the root
+    edge, which must carry the input's total."""
     value_of = signed(edges)
-    value_of[(ROOT,)] = sum((a for _p, a in paths), D(0))
-    sources = {tuple(e["source"]) for e in edges}
+    assert value_of[(ROOT,)] == sum((a for _p, a in paths), D(0))
+    sources = {tuple(e["source"]) for e in edges if e["source"] is not None}
     assert (ROOT,) in sources
     for node in sources:
-        kids = sum((SIGN[e["sign"]] * e["value"] for e in edges if tuple(e["source"]) == node), D(0))
+        kids = sum((SIGN[e["sign"]] * e["value"] for e in edges if tuple(e["source"] or ()) == node), D(0))
         assert kids == value_of[node], node
 
 
@@ -49,7 +50,7 @@ def test_conservation_holds_at_every_node_with_negative_flows():
     edges = edges_of()
     assert any(e["sign"] == "negative" for e in edges) and any(e["sign"] == "positive" for e in edges)
     assert_conserved(edges, PATHS)
-    assert len({tuple(e["source"]) for e in edges}) > 4   # several internal nodes, not just the root
+    assert len({tuple(e["source"] or ()) for e in edges}) > 4   # several internal nodes, not just the root
 
 
 @pytest.mark.parametrize("threshold", ["0", "0.05", "0.5", "0.99"])
@@ -117,13 +118,14 @@ def test_conservation_holds_at_every_node_including_the_zero_ones():
     edges = edges_of()
     zero_nodes = {tuple(e["target"]) for e in edges if e["sign"] == "zero"}
     assert zero_nodes
-    assert zero_nodes <= {tuple(e["source"]) for e in edges}   # a zero node here has children to reconcile
+    assert zero_nodes <= {tuple(e["source"] or ()) for e in edges}   # a zero node here has children to reconcile
     assert_conserved(edges, PATHS)
 
 
 def test_a_parent_whose_children_sum_to_nothing_in_absolute_value_collapses_nothing():
     edges = edges_of([(("A", "a"), D("0")), (("A", "b"), D("0"))])
-    assert [(e["target"][-1], e["sign"]) for e in edges] == [("A", "zero"), ("a", "zero"), ("b", "zero")]
+    assert [(e["target"][-1], e["sign"]) for e in edges] == [
+        (ROOT, "zero"), ("A", "zero"), ("a", "zero"), ("b", "zero")]
 
 
 def test_nodes_are_paths_so_one_name_under_two_parents_stays_two_nodes():
@@ -136,8 +138,11 @@ def test_nodes_are_paths_so_one_name_under_two_parents_stays_two_nodes():
 def test_edges_carry_exactly_source_target_value_sign_level_node_kind():
     for e in edges_of():
         assert set(e) == {"source", "target", "value", "sign", "level", "node_kind"}
-        assert isinstance(e["source"], list) and isinstance(e["target"], list)
-        assert e["target"][:-1] == e["source"] and e["level"] == len(e["target"]) - 1
+        assert isinstance(e["target"], list) and e["level"] == len(e["target"]) - 1
+        if e["source"] is None:                       # the root edge
+            assert e["target"] == [ROOT]
+            continue
+        assert isinstance(e["source"], list) and e["target"][:-1] == e["source"]
         assert e["value"] >= 0 and e["sign"] in ("positive", "negative", "zero")
 
 
@@ -160,17 +165,38 @@ def test_the_order_is_deterministic_whatever_the_input_order():
     assert keys == sorted(keys)
 
 
+@pytest.mark.parametrize("paths, value, sign", [
+    (PATHS, None, None),
+    ([(("A",), D("-30")), (("B",), D("10"))], D("20"), "negative"),
+    ([(("A",), D("5")), (("B",), D("-5"))], D("0"), "zero"),
+])
+def test_the_root_has_one_edge_from_null_carrying_the_net_total(paths, value, sign):
+    edges = edges_of(paths)
+    roots = [e for e in edges if e["source"] is None]
+    assert len(roots) == 1 and edges[0] is roots[0]                # one, and first in the order
+    total = sum((a for _p, a in paths), D(0))
+    assert (roots[0]["target"], roots[0]["level"], roots[0]["node_kind"]) == ([ROOT], 0, "item")
+    assert roots[0]["value"] == abs(total) and SIGN[roots[0]["sign"]] * roots[0]["value"] == total
+    if value is not None:
+        assert (roots[0]["value"], roots[0]["sign"]) == (value, sign)
+    assert [e for e in edges if e["target"] == [ROOT]] == roots   # no other edge reaches the root
+
+
+def test_no_paths_is_no_edges_not_a_root_at_zero():
+    assert edges_of([]) == []
+
+
 def test_amounts_are_exact_decimals_with_no_float_in_the_way():
     tenths = [(("A", "a"), D("0.1")), (("A", "a"), D("0.2")), (("A", "b"), D("0.1")), (("A", "b"), D("0.2"))]
     edges = edges_of(tenths, threshold="0")
-    assert [e["value"] for e in edges] == [D("0.6"), D("0.3"), D("0.3")]   # A, then a and b
+    assert [e["value"] for e in edges] == [D("0.6"), D("0.6"), D("0.3"), D("0.3")]   # root, A, a, b
     assert all(isinstance(e["value"], Decimal) for e in edges)
 
 
 def test_the_module_is_versioned_and_names_no_case():
     import inspect
     src = inspect.getsource(vd)
-    assert vd.VERSION == "1.2.0"
+    assert vd.VERSION == "1.3.0"
     import re
     for word in ("EAC", "WBS", "control account", "work package", "program", "cost"):
         assert not re.search(rf"b{word}", src, re.I), word

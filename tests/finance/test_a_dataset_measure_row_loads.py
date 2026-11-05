@@ -114,7 +114,7 @@ def test_each_invalid_field_is_refused_naming_the_file(case, tmp_path):
 def test_a_function_with_other_keywords_is_refused(tmp_path):
     """The signature must be exactly keyword-only root, paths, other_threshold."""
     mod = tmp_path / "wrong_flow_mod.py"
-    mod.write_text('VERSION = "1.2.0"\nOTHER_LABEL = "x"\n\ndef flow_edges(*, root, paths):\n    return []\n',
+    mod.write_text('VERSION = "1.3.0"\nOTHER_LABEL = "x"\n\ndef flow_edges(*, root, paths):\n    return []\n',
                    encoding="utf-8")
     sys.path.insert(0, str(tmp_path))
     try:
@@ -169,7 +169,7 @@ def test_a_row_declaring_other_label_is_refused(tmp_path):
     ids=["absent", "empty", "not-a-str", "none"])
 def test_a_module_without_a_usable_other_label_is_refused(body, tmp_path):
     mod = tmp_path / "no_label_flow_mod.py"
-    mod.write_text('VERSION = "1.2.0"\n' + body + "\ndef flow_edges(*, root, paths, other_threshold):\n"
+    mod.write_text('VERSION = "1.3.0"\n' + body + "\ndef flow_edges(*, root, paths, other_threshold):\n"
                    "    return []\n", encoding="utf-8")
     sys.path.insert(0, str(tmp_path))
     try:

@@ -554,16 +554,19 @@ def run_dataset(paths, row: MeasureVerbRow, *, program_id: str) -> list[dict[str
 
 
 def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]]) -> Optional[str]:
-    """A MECHANICAL restatement of the edge table: the root's net signed value, how many edges,
-    over how many levels, and how many sinks the collapse made. It states where the figure stands,
-    never whether that is acceptable. ABSENT (None) when there are no edges."""
+    """A MECHANICAL restatement of the edge table: the root's net signed value (read off the root
+    edge), how many edges below the root, over how many levels, and how many sinks the collapse
+    made. It states where the figure stands, never whether that is acceptable. ABSENT (None) when
+    there are no edges."""
     if not rows:
         return None
     sign = {"positive": 1, "negative": -1, "zero": 0}
-    net = sum((Decimal(e["value_exact"]) * sign[e["sign"]] for e in rows if e["level"] == 1), Decimal(0))
-    zeros = sum(1 for e in rows if e["sign"] == "zero")
-    sinks = sum(1 for e in rows if e.get("node_kind") == "other")
+    (root,) = [e for e in rows if e["source"] is None]
+    net = Decimal(root["value_exact"]) * sign[root["sign"]]
+    below = [e for e in rows if e["source"] is not None]
+    zeros = sum(1 for e in below if e["sign"] == "zero")
+    sinks = sum(1 for e in below if e.get("node_kind") == "other")
     label = row.render.get("value_label", row.name)
-    return (f"{label}: net {net:.2f} across {len(rows)} edges over {len(row.levels) - 1} levels, "
+    return (f"{label}: net {net:.2f} across {len(below)} edges over {len(row.levels) - 1} levels, "
             f"{sinks} 'All other' sink(s) from the collapse, "
             f"{zeros} edge(s) at zero")
