@@ -1,0 +1,13 @@
+# LEVEL READERS -- the `can_read:<level>` rail of ADR-0064 item B (Proposed, #266).
+#
+#   * ONE ROW PER LEVEL of policy/classification_levels.yaml, naming the groups that may read it.
+#     Every registered level needs exactly one row.
+#   * A ROW has `level`, `grant_to_groups` (groups in groups.yaml with at least one member; no user
+#     is ever named here, membership lives in users.yaml), `granted_by` (`seed` for a shipped row),
+#     `reason`, and `ratified_by` (`owner`: a seat, never an identity).
+#   * DENY BY DEFAULT. An explicit `grant_to_groups: []` with a reason says nobody reads the level.
+#
+# No reader applies this file until dag-tools step 5 serves a dataset's level. validate_policy.py
+# checks it WHEN PRESENT (level_readers_errors).
+
+level_readers: []

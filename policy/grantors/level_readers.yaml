@@ -1,0 +1,11 @@
+# SEED -- deployment-neutral. A deployment names its own approvers in an overlay row
+# (GRANTOR_OVERLAY_DIRS), which replaces this row whole (ADR-0036).
+# object_scoped: a refusal here concerns a column the reader may not see, and such a column is absent
+# from the ticket, so naming its level would disclose it.
+family: level_readers
+rail_file: policy/level_readers.yaml
+object_scoped: true
+who: the approvers of policy/level_readers.yaml in this deployment's policy repository
+how: >-
+  a reviewed change adding the group to the level's row (granted_by, reason, ratified_by); no reader applies it
+  until ADR-0064's step 5

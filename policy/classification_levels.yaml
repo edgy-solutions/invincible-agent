@@ -1,0 +1,25 @@
+# CLASSIFICATION LEVELS -- the registry of ordered levels the `can_read:<level>` rail is checked against.
+#
+#   The rail is policy/level_readers.yaml (ADR-0064 item B, Proposed, #266). Item B, verbatim
+#   (architect via Chris, 2026-11-05):
+#
+#     B. Topaz rails (gov): `can_read:<level>` as a rail file -- one row per level -> groups,
+#        ratified_by: owner; levels themselves a registry file the rail validates against. No code
+#        reads it until dag-tools step 5 serves a dataset's level.
+#
+#   The standing rule: "levels, sources, access modes and downgrade rules are registry rows; nothing
+#   in dag-tools or iagent names a database, schema, table, column, program or level in code."
+#
+#   * ORDER IS LIST POSITION. The first row is the least restrictive level, the last row the most
+#     restrictive. ADR-0064: an unlabelled source is the most restrictive, so it is the last row.
+#   * A ROW has `id` (the level's name, the `<level>` of `can_read:<level>`; no whitespace, no `:`),
+#     `reason`, and `ratified_by` (a seat such as `owner`, never an identity in users.yaml).
+#   * NO LEVEL IS NAMED IN CODE. A deployment adds a level as a row.
+#   * IT SHIPS WITH NO ROWS. No level is ruled yet, and the first row is the owner's to ratify.
+#   * dag-tools step 3 also names a `classification/levels.yaml`. Whether one file serves both repos
+#     is OPEN with the architect.
+#
+# No code reads this file yet (dag-tools step 5). validate_policy.py checks it WHEN PRESENT
+# (classification_levels_errors).
+
+classification_levels: []
