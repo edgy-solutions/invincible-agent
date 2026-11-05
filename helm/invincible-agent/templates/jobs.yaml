@@ -4,6 +4,7 @@ metadata:
   name: {{ .Release.Name }}-restate-init
   labels:
     {{- include "invincible-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: restate-init
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "5"
@@ -12,6 +13,8 @@ spec:
   template:
     metadata:
       name: {{ .Release.Name }}-restate-init
+      labels:
+        {{- include "invincible-agent.selectorLabels" (dict "component" "restate-init" "root" .) | nindent 8 }}
     spec:
       restartPolicy: OnFailure
       {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
@@ -121,6 +124,7 @@ metadata:
   name: {{ .Release.Name }}-db-init
   labels:
     {{- include "invincible-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-init
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "1"
@@ -129,6 +133,8 @@ spec:
   template:
     metadata:
       name: {{ .Release.Name }}-db-init
+      labels:
+        {{- include "invincible-agent.selectorLabels" (dict "component" "db-init" "root" .) | nindent 8 }}
     spec:
       restartPolicy: OnFailure
       {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
