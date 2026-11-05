@@ -25,6 +25,54 @@ Entries merged after the 0.4.78 cut (`8a2717e0`).
   error; it was a 500 or an odd envelope. A blank or non-string candidate at a BFF site is omitted and
   logged.
 
+**The case-runner routes bound the person they name.** `POST /internal/origin/write`,
+`/internal/cases/{id}/action-record`, `/summary` and `/seeded-by` check the name they are given against what
+can vouch for it: the caller's declared delegate list, the case's seeding delegate, or a person who holds a
+task on that case. Each admit and refusal logs one line on `iagent.audit.delegate_named`. A missing `program`
+(and `owner_domain`, `obtained_via`) on an origin body is now a `write_refused`, not a 500. The runner's
+action-record write retries on a 503.
+
+**⚠ A case in flight at the roll has no `case_id` on its `written` step and will be refused** (422): the
+`origin_record` definition now sends `case_id`, and `origin/write` requires it. List the in-flight
+`origin_record` cases first, and let them finish or re-run them after the roll.
+
+**`/internal/human_tasks/register` is gated on a service identity.** The caller must be `requested_by`
+itself, a service listed for `human_tasks.register` on a `door: bff` row of `policy/gateway_delegates.yaml`
+(seed rows: `svc:review-starter`, `svc:case-runner`), or a declared delegate naming a principal declared for
+it; anyone else is 403 `not_a_delegate` or `principal_not_declared_for_delegate`, logged on
+`iagent.audit.delegate_named`. A deployment that registers tasks from another service needs a `door: bff` row
+for it before this roll (in its policy repository, or a file mounted at `GATEWAY_DELEGATES_FILE`).
+
+**`cortex-bff` and the code location must roll together.** The route needs the field the new definition sends,
+and the definition sends it to the route.
+
+**A gateway delegate row says who ratified it (architect 11-04, on #224)**
+
+- **Every row in `policy/gateway_delegates.yaml` carries `reason` and `ratified_by`,** and
+  `ratified_by` names a seat such as `owner`, never a person. `validate_policy` refuses a row
+  without either. Nothing reads the file yet, so no answer changes; a deployment's own overlay
+  rows need the field before their next sync.
+- **A `pipeline:<name>` service gets its own refusal:** a run with no person acts as itself and is
+  never a delegate row.
+- **`GATEWAY_ROUTES` records the dag-tools commit and gateway image it was copied from,** and a seal
+  goes red when the chart pins another gateway image without the list being re-read. It stays a
+  copy until dag-tools publishes `gateway_routes.json` (01M6KF821P2C3KRQN86FF0N61N).
+
+**`validate_policy` composes export profiles with the SDK (architect 10-30, fork 7)**
+
+- **The composition is `iagent_mesh.compose_export_profiles`,** with one row per kind in the new
+  `policy/export_profile_sources.yaml`. The validator's own copy and its kind-label table are gone. The
+  three engine loaders still read their own constants, so the file restates them, and a seal goes red
+  when a loader renames one. Moving the engines onto the file is 01M6A9QDN1GQ20347W16EM0D3X.
+- **A profile file the old copy skipped is now refused:** an empty or nameless file, two files of one
+  name in one directory, and a tombstone for a name nothing before it ships. Every profile in this
+  repo passes. A refusal stops the seed job before any write, so check a deployment's own
+  export-profile overlays before its next sync.
+- **Refusals name the kinds `review-export`, `answer-export` and `fin-cdrl`** ("fin CDRL" before).
+- **The validator imports the SDK.** The seed job and the documented policy-repo CI form
+  (`policy/README.md`) both run it from the cortex-bff image, which carries it. A CI that runs it
+  from a bare Python with `policy/sync/requirements.txt` fails at the import.
+
 ## 0.4.78 — 2026-11-04
 
 **0.4.77 stands as cut at `8fc02746` and rolls nowhere. The sandbox goes from 0.4.75 to this chart.** This
@@ -33,7 +81,7 @@ notes all reach the sandbox with this chart, as 0.4.76's do.
 
 **⚠ This chart carries the identity vault (#229), and by the architect's ruling of 2026-11-03 it does not
 roll until cortex's paused-run card ships or the Keycloak exchange is configured.** Neither is true at this
-cut. No values file sets `IDENTITY_EXCHANGE_*`, and the card (`docs/specs/run-reauth-card.md` in cortex-ui)
+cut. No values file sets `IDENTITY_EXCHANGE_*`, and the card (spec: `run-reauth-card.md` in cortex-ui)
 is not in the cortex pin below. Without one of them, a run whose token nears expiry pauses with nothing to
 show the person, and it holds one of the two run slots until its budget ends.
 

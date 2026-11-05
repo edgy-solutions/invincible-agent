@@ -10,6 +10,9 @@ WHAT EACH GROUP DEFENDS
   red arms    one per error class, each differing from the valid baseline in exactly one thing,
               each asserting a FRAGMENT of the message.
 
+  read at    GATEWAY_ROUTES is a copy of dag-tools' route ids, read at one gateway image. The chart
+              pinning another image is red until the list is re-read.
+
 Nothing reads this rail yet: the gateway's `is_delegate` seam is in dag-tools and answers no until it
 is wired. So nothing here measures a delegate being honoured.
 
@@ -43,7 +46,8 @@ _ROUTE = vp.GATEWAY_ROUTES[0]
 
 
 def _row(**over):
-    row = {"service": "svc:a", "routes": [_ROUTE], "granted_by": "seed", "reason": "because"}
+    row = {"service": "svc:a", "routes": [_ROUTE], "granted_by": "seed", "reason": "because",
+           "ratified_by": "owner"}
     row.update(over)
     return row
 
@@ -82,6 +86,12 @@ def test_the_validate_policy_cli_is_green_and_prints_the_rail():
                        capture_output=True, text=True, cwd=_REPO)
     assert r.returncode == 0, (r.stdout + r.stderr)[-2000:]
     assert f"gateway_delegates.yaml: {len(_SEED['gateway_delegates'])} row(s)" in r.stdout
+
+
+def test_every_seed_row_says_why_and_who_ratified_it():
+    """Architect 11-04: every row carries both. The validator enforces it; this names the ruling."""
+    for row in _SEED["gateway_delegates"]:
+        assert row.get("reason", "").strip() and row.get("ratified_by", "").strip(), row
 
 
 def test_every_seed_service_is_a_seeded_service_identity():
@@ -182,6 +192,12 @@ def test_a_malformed_file_is_refused(raw, fragment):
     ({"granted_by": " "}, "`granted_by` must be a non-empty string"),
     ({"reason": None}, "`reason` must be a non-empty string"),
     ({"reason": ""}, "`reason` must be a non-empty string"),
+    ({"ratified_by": None}, "`ratified_by` must be a non-empty string"),
+    ({"ratified_by": "  "}, "`ratified_by` must be a non-empty string"),
+    ({"ratified_by": 3}, "`ratified_by` must be a non-empty string"),
+    ({"ratified_by": "alice"}, "names a seat"),
+    ({"ratified_by": "svc:b"}, "names a seat"),
+    ({"service": "pipeline:nightly"}, "never a delegate row"),
 ])
 def test_a_bad_row_is_refused(over, fragment):
     _red(_rows(_row(**over)), fragment)
@@ -200,3 +216,106 @@ def test_a_person_is_refused_even_when_seeded():
 def test_an_unhashable_route_is_refused_not_a_crash():
     _red(_rows(_row(routes=[["nested"]])), "unknown route")
     _red(_rows(_row(routes=[["nested"], ["nested"]])), "unknown route")
+
+
+def test_a_pipeline_gets_its_own_refusal_and_only_that():
+    """`pipeline:` also fails the `svc:` prefix; the reader should see why, once, not two reasons."""
+    errs = _b(_rows(_row(service="pipeline:nightly")))
+    assert len(errs) == 1 and "never a delegate row" in errs[0], errs
+
+
+def test_a_row_without_ratified_by_is_refused_by_name():
+    row = _row()
+    del row["ratified_by"]
+    _red(_rows(row), "`ratified_by` must be a non-empty string")
+
+
+# ---- the route list is a copy, read at a pinned gateway image ----------------------------------
+
+_VALUES = _REPO / "helm" / "invincible-agent"
+#: The chart's own values files. `values-roll-frontend-digest.yaml` is a per-roll overlay (09-26),
+#: passed only by the roll that wrote it; the chart's pin of record is the sandbox file's.
+_PIN_FILES = ("values.yaml", "values-sandbox.yaml")
+
+
+def _unread_gateway_pins(paths):
+    """Each file whose central-gateway image is pinned to anything but the image the list was read at."""
+    want = vp.GATEWAY_ROUTES_READ_AT["central_gateway_digest"]
+    out = {}
+    for p in paths:
+        image = ((yaml.safe_load(p.read_text(encoding="utf-8")) or {}).get("centralGateway") or {}).get(
+            "image") or {}
+        pin = image.get("digest") or (f"tag:{image['tag']}" if image.get("tag") else None)
+        if pin and pin != want:
+            out[p.name] = pin
+    return out
+
+
+def test_the_route_list_was_read_at_the_pinned_gateway_image():
+    paths = [_VALUES / f for f in _PIN_FILES]
+    assert any("digest:" in p.read_text(encoding="utf-8") for p in paths)   # control: a pin exists
+    moved = _unread_gateway_pins(paths)
+    assert not moved, (
+        f"the chart pins a central-gateway image the route list was not read at: {moved}. Read the "
+        "route ids the delegate table is keyed on at that image's dag-tools commit, then update "
+        "GATEWAY_ROUTES and GATEWAY_ROUTES_READ_AT in policy/sync/validate_policy.py together.")
+
+
+@pytest.mark.parametrize("image", [
+    {"digest": "sha256:" + "0" * 64},
+    {"tag": "sha-0000000"},
+], ids=["another digest", "a tag"])
+def test_CONTROL_a_moved_pin_is_caught(tmp_path, image):
+    p = tmp_path / "values-sandbox.yaml"
+    p.write_text(yaml.safe_dump({"centralGateway": {"image": image}}), encoding="utf-8")
+    assert _unread_gateway_pins([p]) == {"values-sandbox.yaml": image.get("digest") or f"tag:{image['tag']}"}
+
+
+def test_the_read_at_record_is_a_full_commit_and_digest():
+    rec = vp.GATEWAY_ROUTES_READ_AT
+    assert len(rec["dag_tools"]) == 40 and int(rec["dag_tools"], 16) >= 0
+    assert rec["central_gateway_digest"].startswith("sha256:") and len(rec["central_gateway_digest"]) == 71
+
+
+# ---- doors: a row's routes are the routes of ITS door (architect 11-04) ---------------------------
+
+_BFF_ROUTE = vp.BFF_DELEGATE_ROUTES[0]
+
+
+def test_a_bff_row_for_a_bff_route_is_clean():
+    assert _b(_rows(_row(door="bff", routes=[_BFF_ROUTE]))) == []
+
+
+def test_a_bff_row_for_a_gateway_route_is_refused_naming_the_door():
+    _red(_rows(_row(door="bff", routes=[_ROUTE])), "unknown route 'assets.authorize' for door bff")
+
+
+def test_a_gateway_row_for_a_bff_route_is_refused_naming_the_door():
+    _red(_rows(_row(routes=[_BFF_ROUTE])), "unknown route 'human_tasks.register' for door gateway")
+
+
+@pytest.mark.parametrize("door", ["side", "", None, ["bff"]], ids=["unknown", "blank", "none", "list"])
+def test_an_unknown_door_is_one_error_and_no_route_error(door):
+    errs = _b(_rows(_row(door=door, routes=[_ROUTE, "no.such.route"])))
+    assert len(errs) == 1 and "unknown door" in errs[0] and "gateway, bff" in errs[0], errs
+
+
+def test_the_same_service_twice_on_one_door_is_refused():
+    _red(_rows(_row(door="bff", routes=[_BFF_ROUTE]), _row(door="bff", routes=[_BFF_ROUTE])),
+         "more than one row names this service on door bff")
+
+
+def test_the_same_service_once_per_door_is_clean():
+    assert _b(_rows(_row(), _row(door="bff", routes=[_BFF_ROUTE]))) == []
+
+
+def test_the_shipped_rail_has_bff_rows_and_still_validates_clean():
+    bff = [r["service"] for r in _SEED["gateway_delegates"] if r.get("door") == "bff"]
+    assert {"svc:review-starter", "svc:case-runner"} <= set(bff)       # control: the rows are read
+    assert vp.gateway_delegates_errors(_SEED, _USERS) == []
+
+
+def test_SEAL_the_bff_register_route_is_one_the_validator_admits_on_door_bff():
+    pytest.importorskip("fastapi")
+    from src.iagent import gateway
+    assert gateway._REGISTER_DELEGATE_ROUTE in vp.BFF_DELEGATE_ROUTES

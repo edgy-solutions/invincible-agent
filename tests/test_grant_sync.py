@@ -282,4 +282,4 @@ def test_the_shipped_yaml_loads_clean_with_three_document_grants():
     assert errors == []
     assert sorted(g.asset for g in grants if g.kind == "document") == [
         "TM-1H-130H-2-12-01", "mil#wpn-howtouse", "mil#wpn-m0004-1-1680-TNG"]
-    assert sum(g.kind == "dataset" for g in grants) == 3
+    assert sum(g.kind == "dataset" for g in grants) == 4

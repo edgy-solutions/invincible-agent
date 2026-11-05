@@ -21,9 +21,9 @@ definition of "valid", never a parallel re-implementation):
   - capability_grants.yaml        → also: a `grant_to_groups` group exists and has members, and
     a `can_drop:<K>` key names a KNOWN content kind (see known_content_kinds)
   - capability_grants.yaml        → also: a `can_export:<P>` key names a KNOWN export profile
-    (see known_export_profiles), no profile name is in two kinds, and every known profile --
-    review-export (policy/exports), answer-export (policy/exports/answers) and fin CDRL -- has a
-    `can_export:<P>` row (deny-by-default: no row, nobody exports)
+    (see known_export_profiles), no profile name is in two kinds, and every known profile -- of
+    each kind policy/export_profile_sources.yaml declares -- has a `can_export:<P>` row
+    (deny-by-default: no row, nobody exports)
   - capability_grants.yaml        → also: a `can_call:<T>` key names a tag of the served MCP document
     (see known_call_tags); no row is required per tag (deny-by-default: no row, nobody calls)
   - capability_grants.yaml        → also: a `can_review:<S>` key names a registered review subject
@@ -196,74 +196,87 @@ def known_configure_subjects(path: Path | None = None) -> tuple[set[str], list[s
     return _registered_subjects("configure_subjects.yaml", path)
 
 
-#: No grantee is named in code (architect's standing rule, 2026-10-30: a group is configuration).
-#: Each ruled grantee is a ROW in policy/capability_grants.yaml -- the review-export default rows
-#: (alert-processors), the CDRL row (the program-finance persona's group), the plan-answers row
-#: (portfolio-leads) -- and the completeness refusal derives its advice from the rows that already
-#: decide profiles of the same kind.
-_EXPORT_KIND_LABEL = {"review_export": "review-export", "answer_export": "answer-export",
-                      "fin_cdrl": "fin CDRL"}
+#: Where each export kind's profiles are composed from: one row per kind (architect 2026-10-30, via
+#: Chris: "one function; source rows live in a policy file both the validator and engines share").
+#: No grantee is named in code either (standing rule, 2026-10-30): each ruled grantee is a ROW in
+#: policy/capability_grants.yaml, and the completeness refusal derives its advice from the rows that
+#: already decide profiles of the same kind.
+EXPORT_PROFILE_SOURCES = "export_profile_sources.yaml"
 
 
 def known_export_profiles(
-    sources: list[tuple[Path, str]] | None = None,
+    rows: list | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     """The export profiles a `can_export:<P>` capability key may name: {name: kind}, and notes.
 
-    kind is "review_export" (lane/01's ingest-review profiles, policy/exports), "answer_export"
-    (fin's answer-export profiles, policy/exports/answers -- lane/01's glob is not recursive, so the
-    subdirectory keeps them apart) or "fin_cdrl" (fin's CDRL profiles). `sources` is an ordered
-    [(dir, kind)] for tests; None composes each kind from the directories its own loader reads:
-      - review_export: INGEST_EXPORT_PROFILE_DIR if set, else <root>/policy/exports
-        (src/iagent/export_profiles.py; the variable MOVES the directory, it adds none);
-      - answer_export: the seed (EXPORT_PROFILE_POLICY_DIR if set, else
-        <root>/policy/exports/answers), then each dir in EXPORT_PROFILE_OVERLAY_DIRS
-        (agent_fleet/utils/answer_exports.py);
-      - fin_cdrl: the seed (FIN_EXPORT_PROFILE_POLICY_DIR if set, else
-        <root>/policy/fin_export_profiles), each dir in FIN_EXPORT_PROFILE_OVERLAY_DIRS, then the
-        sandbox's overlay (policy/overlays/sample/fin_export_profiles).
-    Within a kind fin's semantics apply (agent_fleet/finance_agent/export_profiles.py): dirs are
-    applied in order, a later same-`name` row replaces an earlier one, `deleted: true` removes the
-    name. Only `name` and `deleted` are read (this gate runs where the engines are not
-    importable); unparseable files are ignored, as known_content_kinds does. A name present in
-    two kinds' final sets is a COLLISION: a note starting `COLLISION:` which validate() turns into an
-    error. Each source's note reads `<dir> (<n> profile(s))` or `<dir> (absent)`."""
+    Each kind is a row of policy/export_profile_sources.yaml (`rows` stands in for the file, for
+    tests), composed by iagent_mesh.compose_export_profiles: the seed (`seed_env` if set, else
+    `seed_default` under the repository root), then each dir in `overlay_env` (os.pathsep-separated,
+    empty entries dropped, as the engines split it), then the row's `offline_overlays`. A later
+    same-`name` row replaces an earlier one, and `deleted: true` removes the name. The SDK REFUSES
+    what this gate's old copy skipped: an empty or nameless file, two files of one name in one
+    directory, and a tombstone for a name nothing before it ships.
+
+    This gate imports the SDK. Both places it runs carry it: the seed CronJob and a policy repo's
+    CI run it from the cortex-bff image (templates/topaz-seed-cronjob.yaml, policy/README.md),
+    whose `python` is that image's venv (.github/docker/Dockerfile.agent puts /app/.venv/bin first
+    on PATH).
+
+    One note per kind: `<kind>: <dir>, <dir> (absent), ... -> <n> profile(s)`. A note starting
+    `REFUSED:` (a source row, or a profile file the SDK refused) or `COLLISION:` (a name in two
+    kinds' final sets) is turned into an error by validate()."""
+    from iagent_mesh import ExportProfileError, ExportProfileSource, compose_export_profiles
+
     root = Path(__file__).resolve().parents[2]
-    if sources is None:
-        sources = [(Path(os.getenv("INGEST_EXPORT_PROFILE_DIR")
-                         or root / "policy" / "exports"), "review_export")]
-        sources.append((Path(os.getenv("EXPORT_PROFILE_POLICY_DIR")
-                             or root / "policy" / "exports" / "answers"), "answer_export"))
-        raw = (os.getenv("EXPORT_PROFILE_OVERLAY_DIRS") or "").strip()
-        sources += [(Path(p.strip()), "answer_export") for p in raw.split(os.pathsep) if p.strip()]
-        sources.append((Path(os.getenv("FIN_EXPORT_PROFILE_POLICY_DIR")
-                             or root / "policy" / "fin_export_profiles"), "fin_cdrl"))
-        raw = (os.getenv("FIN_EXPORT_PROFILE_OVERLAY_DIRS") or "").strip()
-        sources += [(Path(p.strip()), "fin_cdrl") for p in raw.split(os.pathsep) if p.strip()]
-        sources.append((root / "policy" / "overlays" / "sample" / "fin_export_profiles", "fin_cdrl"))
+    if rows is None:
+        f = root / "policy" / EXPORT_PROFILE_SOURCES
+        try:
+            doc = yaml.safe_load(f.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            return {}, [f"REFUSED: {f.as_posix()} is unreadable ({type(exc).__name__})"]
+        rows = doc.get("sources") if isinstance(doc, dict) else None
+        if not isinstance(rows, list):
+            return {}, [f"REFUSED: {f.as_posix()} has no `sources:` list"]
     by_kind: dict[str, set[str]] = {}
     notes: list[str] = []
-    for d, kind in sources:
-        names = by_kind.setdefault(kind, set())
-        if not d.is_dir():
-            notes.append(f"{d.as_posix()} (absent)")
+    for i, row in enumerate(rows):
+        if not (isinstance(row, dict) and isinstance(row.get("seed_default"), str)):
+            notes.append(f"REFUSED: {EXPORT_PROFILE_SOURCES} row {i} is not a source row: {row!r}")
             continue
-        found = 0
-        for f in sorted(d.glob("*.yaml")):
-            try:
-                doc = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-            except (OSError, yaml.YAMLError):
-                continue
-            n = doc.get("name") if isinstance(doc, dict) else None
-            if not (isinstance(n, str) and n.strip()):
-                continue
-            n = n.strip()
-            if doc.get("deleted") is True:
-                names.discard(n)
-            else:
-                names.add(n)
-                found += 1
-        notes.append(f"{d.as_posix()} ({found} profile(s))")
+        overlay_env = row.get("overlay_env")
+        try:
+            # The SDK's overlay_env is a str. A kind whose loader reads no overlay variable says
+            # null, and the SDK never reads it here: overlay_dirs is always passed.
+            src = ExportProfileSource.model_validate(
+                {**row, "seed_default": (root / row["seed_default"]).as_posix(),
+                 "overlay_env": overlay_env or ""})
+        except ValidationError as exc:
+            notes.append(f"REFUSED: {EXPORT_PROFILE_SOURCES} row {i}: "
+                         + "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors()))
+            continue
+        if src.kind in by_kind:
+            notes.append(f"REFUSED: {EXPORT_PROFILE_SOURCES} declares kind {src.kind!r} twice")
+            continue
+        dirs: list[str] = []
+        seen: set[Path] = set()
+        listed = [p for p in os.getenv(overlay_env, "").split(os.pathsep) if p] if overlay_env else []
+        for d in listed + [(root / d).as_posix() for d in row.get("offline_overlays") or []]:
+            if Path(d).resolve() not in seen:  # a dir both set and offline is composed once
+                seen.add(Path(d).resolve())
+                dirs.append(d)
+        try:
+            composed = compose_export_profiles(src, overlay_dirs=dirs)
+        # read_rows calls .get on each file's document, so a file that is not a mapping raises
+        # AttributeError, and an unparseable one raises yaml's own error.
+        except (ExportProfileError, yaml.YAMLError, OSError, AttributeError) as exc:
+            by_kind[src.kind] = set()
+            notes.append(f"REFUSED: {src.kind}: {type(exc).__name__}: {exc}")
+            continue
+        by_kind[src.kind] = set(composed)
+        read = [os.getenv(src.seed_env, src.seed_default), *dirs]  # the seed as the SDK reads it
+        notes.append(f"{src.kind}: "
+                     + ", ".join(Path(d).as_posix() + ("" if Path(d).is_dir() else " (absent)") for d in read)
+                     + f" -> {len(composed)} profile(s)")
     profiles: dict[str, str] = {}
     for kind, names in by_kind.items():
         for n in sorted(names):
@@ -674,11 +687,31 @@ def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> 
 
 
 #: The central gateway's route ids a delegate row may name. The gateway owns them (dag-tools,
-#: `central_gateway.identity`); that is another repository, so this list is restated and nothing
-#: here can seal the two equal. A misspelt route fails here, not as a delegate who never matches.
+#: `central_gateway.identity`). A misspelt route fails here, not as a delegate who never matches.
+#:
+#: A COPY, AND IT SAYS WHERE FROM (architect 11-04). The ruled form is dag-tools publishing the list
+#: as data (`gateway_routes.json`, item 01M6KF821P2C3KRQN86FF0N61N) and this importing it. Until then the list was
+#: read at the commit and image in GATEWAY_ROUTES_READ_AT, and
+#: tests/security/test_gateway_delegates_rail.py goes red when the chart pins another gateway image.
+#: Read at 4096a11: `ROUTE_AUTHORIZE` is the one route the delegate table is keyed on.
+#: `broker.resolve` and `gateway.register` (`internal_door.py`) are doors with their own caller
+#: lists; they never consult this table, so they are not here.
 GATEWAY_ROUTES = ("assets.authorize",)
+GATEWAY_ROUTES_READ_AT = {
+    "dag_tools": "4096a112eb3fbc91afdf7e0784a12973e72f00e7",
+    "central_gateway_digest": "sha256:ac93ba19f96718cdad6dd40dabd8dc51934db4796ccfd767b5da732b19edf498",
+}
 
-_GD_ROW_FIELDS = ("service", "routes", "granted_by", "reason")
+#: The BFF's route ids a `door: bff` row may name (architect 11-04). The BFF owns them
+#: (`src/iagent/gateway.py`); tests/security/test_gateway_delegates_rail.py goes red when
+#: `gateway._REGISTER_DELEGATE_ROUTE` is not in this list.
+BFF_DELEGATE_ROUTES = ("human_tasks.register",)
+#: A row's door is `row.get("door", "gateway")`; each door has its own route list.
+_GD_DOORS = {"gateway": GATEWAY_ROUTES, "bff": BFF_DELEGATE_ROUTES}
+
+_GD_ROW_FIELDS = ("service", "door", "routes", "granted_by", "reason", "ratified_by")
+#: A run with no person behind it (architect 11-04). It acts as itself, so it is never a delegate.
+_PIPELINE_PREFIX = "pipeline:"
 
 
 def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
@@ -687,8 +720,13 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
     `raw` is the parsed file, `users` the users.yaml list. Each error reads
     `gateway_delegates.yaml: <service>: ...`. A delegate names a person on a route, so a row's
     `service` must be a seeded service identity (a person holds their own token) and each route a
-    known one (a wildcard is an unknown route). Unknown keys are refused by name, so a typo
-    (`route:`) cannot pass silently."""
+    known one (a wildcard is an unknown route). Every row says why (`reason`) and which seat
+    ratified it (`ratified_by`, e.g. `owner`: a seat, never an identity). Unknown keys are refused
+    by name, so a typo (`route:`) cannot pass silently.
+
+    A row's `door` is `gateway` (the default) or `bff`; its routes are checked against THAT door's
+    list, and an unknown door is one error with no route errors. A service is unique per
+    `(service, door)`: it may hold one gateway row and one bff row."""
     pre = "gateway_delegates.yaml"
     if not isinstance(raw, dict) or set(raw) != {"gateway_delegates"}:
         extra = sorted(map(str, set(raw) - {"gateway_delegates"})) if isinstance(raw, dict) else []
@@ -700,7 +738,7 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
 
     seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
     out: list[str] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for i, row in enumerate(rows):
         if not isinstance(row, dict):
             out.append(f"{pre}: row {i}: must be a mapping")
@@ -711,32 +749,47 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
             if k not in _GD_ROW_FIELDS:
                 out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_GD_ROW_FIELDS)})")
 
+        door = row.get("door", "gateway")
+        door_key = door if isinstance(door, str) else repr(door)
+        door_known = isinstance(door, str) and door in _GD_DOORS
+        if not door_known:
+            out.append(f"{where}: unknown door {door!r} (known: {', '.join(_GD_DOORS)})")
+
         if not isinstance(service, str) or not service.strip():
             out.append(f"{where}: `service` must be a non-empty string")
         else:
-            if not service.startswith(SERVICE_SUBJECT_PREFIX):
+            if service.startswith(_PIPELINE_PREFIX):
+                out.append(f"{where}: a `{_PIPELINE_PREFIX}<name>` run acts for no person and is "
+                           "never a delegate row")
+            elif not service.startswith(SERVICE_SUBJECT_PREFIX):
                 out.append(f"{where}: `service` must be a `{SERVICE_SUBJECT_PREFIX}` identity; "
                            "a person holds their own token and is no delegate")
             elif service not in seeded:
                 out.append(f"{where}: `service` is not a seeded identity in users.yaml")
-            if service in seen:
-                out.append(f"{where}: more than one row names this service")
-            seen.add(service)
+            if (service, door_key) in seen:
+                out.append(f"{where}: more than one row names this service on door {door_key}")
+            seen.add((service, door_key))
 
         routes = row.get("routes")
         if not isinstance(routes, list) or not routes:
             out.append(f"{where}: `routes` must be a non-empty list")
+        elif not door_known:
+            pass  # one error for the door, not one per route
         else:
+            known = _GD_DOORS[door]
             for j, r in enumerate(routes):
-                if r not in GATEWAY_ROUTES:
-                    out.append(f"{where}: unknown route {r!r} (known: {', '.join(GATEWAY_ROUTES)})")
+                if r not in known:
+                    out.append(f"{where}: unknown route {r!r} for door {door} (known: {', '.join(known)})")
                 elif r in routes[:j]:
                     out.append(f"{where}: route {r!r} is listed more than once")
 
-        for k in ("granted_by", "reason"):
+        for k in ("granted_by", "reason", "ratified_by"):
             v = row.get(k)
             if not isinstance(v, str) or not v.strip():
                 out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and v.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
     return out
 
 
@@ -855,9 +908,13 @@ def validate(
     for _n in _pnotes:
         if _n.startswith("COLLISION:"):
             errors.append(f"capability_grants.yaml: export profile {_n}")
-    _pnotes = [n for n in _pnotes if not n.startswith("COLLISION:")]
+        elif _n.startswith("REFUSED:"):
+            errors.append(f"export profiles: {_n}")
+    # A refused kind composed no names, so its rows would all read as misspelt: say the refusal once.
+    _refused = any(n.startswith("REFUSED:") for n in _pnotes)
+    _pnotes = [n for n in _pnotes if not n.startswith(("COLLISION:", "REFUSED:"))]
     _export_keys = {c.key[len("can_export:"):] for c in caps if c.key.startswith("can_export:")}
-    for _p in sorted(_export_keys - set(_profiles)):
+    for _p in sorted(set() if _refused else _export_keys - set(_profiles)):
         errors.append(
             f"capability_grants.yaml: 'can_export:{_p}' names {_p!r}, which is NOT a known export "
             f"profile -- a misspelt key gates nothing and the real profile stays unexportable. "
@@ -870,13 +927,12 @@ def validate(
             _kind_groups.setdefault(_profiles[_cp], set()).update(c.grant_to_groups)
     for _p, _k in sorted(_profiles.items()):
         if _p not in _export_keys:
-            _l = _EXPORT_KIND_LABEL.get(_k, _k)
             _g = sorted(_kind_groups.get(_k, ()))
             errors.append(
-                f"capability_grants.yaml: {_l} profile {_p!r} has no 'can_export:{_p}' row, so "
+                f"capability_grants.yaml: {_k} profile {_p!r} has no 'can_export:{_p}' row, so "
                 f"NOBODY could export it (deny-by-default). Add one; "
-                + (f"the other {_l} rows grant `grant_to_groups: [{', '.join(_g)}]`" if _g else
-                   f"no other {_l} profile has a row to follow, so the row names its own group "
+                + (f"the other {_k} rows grant `grant_to_groups: [{', '.join(_g)}]`" if _g else
+                   f"no other {_k} profile has a row to follow, so the row names its own group "
                    f"(ask the architect)"))
 
     # `can_call:<T>` (2026-10-30 ruling, deny-by-default): the door asks can_invoke on `can_call:<T>`

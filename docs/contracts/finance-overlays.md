@@ -69,6 +69,44 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 | `render` | How the result is drawn: the shape, the one series (and its unit), the value label, and a target line. |
 | `policy` | Who may see it, who approved it, and why. |
 
+**A second kind of row: a dataset row.** A row whose `inputs` holds `dataset` instead of `state` is
+a flow decomposition: it reads named columns of one asset and answers once, with an edge table.
+Design: `docs/plans/fin-variance-decomposition.md`. It uses the same top-level keys, with these
+differences under `inputs` and `render`:
+
+- `inputs.params` is `program_id` only (`window` is refused: this kind has no period axis).
+- `inputs.dataset` holds `urn` (a `urn:li:dataset:...` URN, read as the caller; `FIN_DATASET_URN` is
+  not consulted), `banner` (required, shown beside every answer), `levels` (at least two distinct
+  column names, root first; the root column is selected by `program_id`), `value` and optionally
+  `per_path`. `value` is a numeric column that is not one of the levels, or exactly
+  `{minus: [a, b]}`: two distinct numeric columns, neither a level, whose difference `a - b` is the
+  row's amount (computed per row in exact Decimal). `per_path` is `sum` (the default: every row of
+  the asset adds) or `once` (rows are grouped by the full level tuple, the amount is taken once per
+  group, and a group whose rows disagree is a 502 `asset_contract_violation` with rule
+  `varies_within_path`, naming the column(s) and never a value). Anything else is refused at load.
+  The row cap counts rows read, before any reduction.
+- `inputs.other_threshold` is a Decimal string, 0 up to but not including 1: the share below which
+  two or more siblings collapse into an "All other" sink. `0` collapses nothing.
+- `inputs.state` is refused, and the module's function takes exactly the keyword-only `root`,
+  `paths` and `other_threshold`.
+- `render.shape` is `FLOW_DECOMPOSITION` (a state row is `MULTI_SERIES`, and a mismatch is refused
+  either way); `render.series` is not required.
+- Each edge carries `sign`, one of `"positive"`, `"negative"` or `"zero"` (the sign of the child's
+  signed net), and `value`, its absolute value. A child that nets to exactly zero IS emitted
+  (`value` 0, `sign` `"zero"`, `node_kind` `"item"`) and its subtree is walked, so every level
+  reconciles: the signed children, sinks included, sum to the parent. A renderer draws no band for
+  a zero edge. Zero children are outside the collapse (not in the share total, never "below", not
+  counted toward "two or more"); a sink whose members net to zero is emitted with `sign` `"zero"`.
+- One edge carries the root: `source` null, `target` `[root]`, `level` 0, `node_kind` `"item"`, and
+  the root's absolute net with its `sign`. It is the only edge with a null `source`, and it sorts
+  first. A read with no rows has no edges, never a root at zero.
+- Each edge carries `node_kind`, `item` or `other` (the "All other" sink the collapse makes).
+  `render.other_label` is served by the engine from the module's `OTHER_LABEL`; a row does not
+  declare it (a row that does is refused at load). A consumer marks the sink by `node_kind`, never
+  by matching the label.
+- A level value named "All other" under a parent that gets a sink is a 502 `asset_contract_violation`
+  with rule `refused_by_module`; the message names no row value.
+
 The worked example, copied from the sample file. TCPI (to-complete performance index) is the
 efficiency the remaining work must achieve to finish on budget.
 
@@ -528,7 +566,8 @@ of the `urn:li:dataset:` form, or the mesh client cannot be imported.
 
 Answers carry `data_source: {kind: "asset", urn}` and the banner in place of the notional text.
 Package and CDRL exports naming a declared measure return 409 `asset_export_unsupported` while the
-URN is set; built-in measures still export.
+URN is set; built-in measures still export. A dataset-kind measure (section 2) always reads its own
+asset, so an export naming one is refused the same way whether or not the URN is set.
 
 ## 6. Not covered yet
 
