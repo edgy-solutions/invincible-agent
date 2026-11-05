@@ -12,18 +12,22 @@ exact sum of the amounts beneath it.
 
 EDGES. One per (parent, child): `{source, target, value, sign, level, node_kind}`. `source` and `target` are
 the two paths (lists of strings), `value` is the ABSOLUTE signed sum of the child (Decimal), `sign`
-is 1 or -1, `level` is the child's depth (1 for the root's children), and `node_kind` is `"other"`
-for the sink edge the collapse emits and `"item"` for every other edge. The sink is marked by
+is `"positive"`, `"negative"` or `"zero"` (the sign of the child's signed net), `level` is the
+child's depth (1 for the root's children), and `node_kind` is `"other"` for the sink edge the collapse emits and `"item"` for every other edge. The sink is marked by
 `node_kind`, never recognised by its label; its path element is `OTHER_LABEL`, which is for display.
-A child whose signed sum is exactly zero carries no flow and gets no edge.
+A child whose signed sum is exactly zero IS emitted (`value` 0, `sign` "zero", `node_kind`
+"item") and its subtree is walked as usual, because its own children can be nonzero and offset; a
+renderer draws no band for it. That keeps every level reconcilable.
 
 CONSERVATION is the invariant: at every node, the signed children (the sink included) sum to the
-node's signed value.
+node's signed value (a zero edge adds nothing, and is still there to be read).
 
 THE COLLAPSE. A child's share is its absolute value over the sum of its siblings' absolute values
-(a parent whose children sum to zero in absolute value collapses nothing). When TWO OR MORE
-siblings fall below `other_threshold`, they are replaced by one `[..parent, OTHER_LABEL]` child
-carrying their signed sum, and that child is terminal. A lone sibling below the threshold keeps its
+(a parent whose children sum to zero in absolute value collapses nothing). Zero-net siblings are
+outside the collapse: they are not in that total, never fall below, and do not count toward the
+two. When TWO OR MORE siblings fall below `other_threshold`, they are replaced by one
+`[..parent, OTHER_LABEL]` child carrying their signed sum (emitted even when that sum is exactly
+zero, with sign "zero"), and that child is terminal. A lone sibling below the threshold keeps its
 name, because a sink of one only renames it. A threshold of 0 collapses nothing. A real child that
 is itself named `OTHER_LABEL`, under a parent that also gets a sink, is refused: the two nodes
 would share a path.
@@ -39,7 +43,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Sequence
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 OTHER_LABEL = "All other"
 
 
@@ -65,7 +69,8 @@ def flow_edges(
     def emit(source: tuple[str, ...], target: tuple[str, ...], net: Decimal, node_kind: str) -> None:
         edges.append({
             "source": list(source), "target": list(target), "value": abs(net),
-            "sign": 1 if net > 0 else -1, "level": len(target) - 1, "node_kind": node_kind,
+            "sign": "positive" if net > 0 else "negative" if net < 0 else "zero",
+            "level": len(target) - 1, "node_kind": node_kind,
         })
 
     stack: list[tuple[str, ...]] = [(root,)]
@@ -81,15 +86,14 @@ def flow_edges(
             raise SinkLabelClash(
                 f"a child of {list(parent)} is named {OTHER_LABEL!r}, which is the label of the "
                 f"sink that collapses its siblings; the two would share a path")
-        for child, net in live.items():
+        for child, net in sums.items():
             if child in below:
                 continue
             emit(parent, child, net, "item")
             stack.append(child)
         if below:
             sink_net = sum((live[c] for c in below), Decimal(0))
-            if sink_net != 0:
-                emit(parent, parent + (OTHER_LABEL,), sink_net, "other")
+            emit(parent, parent + (OTHER_LABEL,), sink_net, "other")
 
     edges.sort(key=lambda e: (e["level"], e["source"], -e["value"], e["target"]))
     return edges

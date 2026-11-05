@@ -107,14 +107,12 @@ def expected_edges(frame, threshold=THRESHOLD):
         small = [k for k, v in kids.items() if v != 0 and abs(v) / total < threshold]
         out, kept = [], []
         for k, v in kids.items():
-            if v == 0 or (len(small) > 1 and k in small):
+            if len(small) > 1 and k in small:
                 continue
             out.append((parent + [k], v))
             kept.append(k)
         if len(small) > 1:
-            net = sum((kids[k] for k in small), Decimal(0))
-            if net != 0:
-                out.append((parent + ["All other"], net))
+            out.append((parent + ["All other"], sum((kids[k] for k in small), Decimal(0))))
         return out, kept
 
     cas = {r[0]: Decimal(str(r[1])) for r in f.group_by("control_account").agg(pl.col("acwp").sum()).iter_rows()}
@@ -125,7 +123,7 @@ def expected_edges(frame, threshold=THRESHOLD):
                .group_by("work_package").agg(pl.col("acwp").sum()).iter_rows()}
         level2, _ = split([PROGRAM, ca], wps)
         edges += [([PROGRAM, ca], t, v) for t, v in level2]
-    table = [(s, t, abs(v), 1 if v > 0 else -1, len(t) - 1) for s, t, v in edges]
+    table = [(s, t, abs(v), "positive" if v > 0 else "negative" if v < 0 else "zero", len(t) - 1) for s, t, v in edges]
     return sorted(table, key=lambda e: (e[4], e[0], -e[2], e[1]))
 
 
@@ -133,11 +131,14 @@ def served(rows):
     return [(e["source"], e["target"], Decimal(e["value_exact"]), e["sign"], e["level"]) for e in rows]
 
 
+SIGN = {"positive": 1, "negative": -1, "zero": 0}
+
+
 def conserved(rows, root_value):
-    value_of = {tuple(e["target"]): e["sign"] * Decimal(e["value_exact"]) for e in rows}
+    value_of = {tuple(e["target"]): SIGN[e["sign"]] * Decimal(e["value_exact"]) for e in rows}
     value_of[(PROGRAM,)] = root_value
     for node in {tuple(e["source"]) for e in rows}:
-        kids = sum((e["sign"] * Decimal(e["value_exact"]) for e in rows if tuple(e["source"]) == node), Decimal(0))
+        kids = sum((SIGN[e["sign"]] * Decimal(e["value_exact"]) for e in rows if tuple(e["source"]) == node), Decimal(0))
         assert kids == value_of[node], node
 
 
@@ -167,7 +168,7 @@ def test_the_envelope_names_the_shape_the_source_and_the_method(post, gate, flow
     assert env["data_provenance"].startswith("SYNTHETIC") and ROW_URN in env["data_provenance"]
     assert env["measure"] == FN and env["output_uri"].endswith("DeclaredMeasureSeries")
     assert env["artifact_id"].startswith(f"fin:{FN}:")
-    assert env["method"]["version"] == "1.1.0" and env["method"]["module_sha256"] == flow_rows[FN].module_sha256
+    assert env["method"]["version"] == "1.2.0" and env["method"]["module_sha256"] == flow_rows[FN].module_sha256
     assert env["verdict"] and "net" in env["verdict"] and "All other" in env["verdict"]
     assert "series" not in env and "reference" not in env
     assert all(isinstance(e["value"], float) and e["value_exact"] for e in env["rows"])

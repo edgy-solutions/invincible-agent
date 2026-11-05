@@ -77,14 +77,26 @@ differences under `inputs` and `render`:
 - `inputs.params` is `program_id` only (`window` is refused: this kind has no period axis).
 - `inputs.dataset` holds `urn` (a `urn:li:dataset:...` URN, read as the caller; `FIN_DATASET_URN` is
   not consulted), `banner` (required, shown beside every answer), `levels` (at least two distinct
-  column names, root first; the root column is selected by `program_id`) and `value` (a numeric
-  column that is not one of the levels).
+  column names, root first; the root column is selected by `program_id`), `value` and optionally
+  `per_path`. `value` is a numeric column that is not one of the levels, or exactly
+  `{minus: [a, b]}`: two distinct numeric columns, neither a level, whose difference `a - b` is the
+  row's amount (computed per row in exact Decimal). `per_path` is `sum` (the default: every row of
+  the asset adds) or `once` (rows are grouped by the full level tuple, the amount is taken once per
+  group, and a group whose rows disagree is a 502 `asset_contract_violation` with rule
+  `varies_within_path`, naming the column(s) and never a value). Anything else is refused at load.
+  The row cap counts rows read, before any reduction.
 - `inputs.other_threshold` is a Decimal string, 0 up to but not including 1: the share below which
   two or more siblings collapse into an "All other" sink. `0` collapses nothing.
 - `inputs.state` is refused, and the module's function takes exactly the keyword-only `root`,
   `paths` and `other_threshold`.
 - `render.shape` is `FLOW_DECOMPOSITION` (a state row is `MULTI_SERIES`, and a mismatch is refused
   either way); `render.series` is not required.
+- Each edge carries `sign`, one of `"positive"`, `"negative"` or `"zero"` (the sign of the child's
+  signed net), and `value`, its absolute value. A child that nets to exactly zero IS emitted
+  (`value` 0, `sign` `"zero"`, `node_kind` `"item"`) and its subtree is walked, so every level
+  reconciles: the signed children, sinks included, sum to the parent. A renderer draws no band for
+  a zero edge. Zero children are outside the collapse (not in the share total, never "below", not
+  counted toward "two or more"); a sink whose members net to zero is emitted with `sign` `"zero"`.
 - Each edge carries `node_kind`, `item` or `other` (the "All other" sink the collapse makes).
   `render.other_label` is served by the engine from the module's `OTHER_LABEL`; a row does not
   declare it (a row that does is refused at load). A consumer marks the sink by `node_kind`, never

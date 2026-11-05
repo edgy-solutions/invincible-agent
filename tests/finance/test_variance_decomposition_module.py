@@ -14,6 +14,7 @@ from agent_fleet.finance_agent.measure_modules import variance_decomposition as 
 
 D = Decimal
 ROOT = "R"
+SIGN = {"positive": 1, "negative": -1, "zero": 0}
 # A: shares of |139| are .72 .216 .036 .029; B: 50 and 1 (and a b2 that nets to zero); C: one child.
 PATHS = [
     (("A", "a1", "x"), D("60")), (("A", "a1", "y"), D("40")), (("A", "a2", "p"), D("-30")),
@@ -29,7 +30,7 @@ def edges_of(paths=PATHS, threshold="0.05"):
 
 
 def signed(edges):
-    return {tuple(e["target"]): e["sign"] * e["value"] for e in edges}
+    return {tuple(e["target"]): SIGN[e["sign"]] * e["value"] for e in edges}
 
 
 def assert_conserved(edges, paths):
@@ -40,13 +41,13 @@ def assert_conserved(edges, paths):
     sources = {tuple(e["source"]) for e in edges}
     assert (ROOT,) in sources
     for node in sources:
-        kids = sum((e["sign"] * e["value"] for e in edges if tuple(e["source"]) == node), D(0))
+        kids = sum((SIGN[e["sign"]] * e["value"] for e in edges if tuple(e["source"]) == node), D(0))
         assert kids == value_of[node], node
 
 
 def test_conservation_holds_at_every_node_with_negative_flows():
     edges = edges_of()
-    assert any(e["sign"] == -1 for e in edges) and any(e["sign"] == 1 for e in edges)
+    assert any(e["sign"] == "negative" for e in edges) and any(e["sign"] == "positive" for e in edges)
     assert_conserved(edges, PATHS)
     assert len({tuple(e["source"]) for e in edges}) > 4   # several internal nodes, not just the root
 
@@ -61,14 +62,14 @@ def test_two_siblings_below_the_threshold_collapse_into_one_terminal_sink():
     under_a = [e for e in edges if e["source"] == [ROOT, "A"]]
     assert [e["target"][-1] for e in under_a] == ["a1", "a2", vd.OTHER_LABEL]
     sink = under_a[-1]
-    assert (sink["value"], sink["sign"], sink["level"]) == (D("1"), 1, 2)   # +5 and -4, signed
+    assert (sink["value"], sink["sign"], sink["level"]) == (D("1"), "positive", 2)   # +5 and -4, signed
     assert not [e for e in edges if e["source"] == [ROOT, "A", vd.OTHER_LABEL]]  # terminal
     assert not [e for e in edges if e["target"][:3] in ([ROOT, "A", "a3"], [ROOT, "A", "a4"])]
 
 
 def test_a_lone_child_below_the_threshold_keeps_its_name():
     under_b = [e["target"][-1] for e in edges_of() if e["source"] == [ROOT, "B"]]
-    assert under_b == ["b1", "b3"]           # b3 is 1/51 of B: below 0.05, but alone
+    assert under_b == ["b1", "b3", "b2"]     # b3 is 1/51 of B: below 0.05, but alone (b2 is zero: outside)
     assert vd.OTHER_LABEL not in under_b
 
 
@@ -78,13 +79,51 @@ def test_a_zero_threshold_collapses_nothing():
     assert {"a3", "a4"} <= {e["target"][-1] for e in edges}
 
 
-def test_a_zero_net_child_gets_no_edge_and_its_subtree_goes_with_it():
-    targets = {tuple(e["target"]) for e in edges_of()}
-    assert (ROOT, "B", "b2") not in targets and (ROOT, "B", "b2", "p") not in targets
+def test_a_zero_net_child_is_emitted_at_zero_and_its_offsetting_children_hang_below_it():
+    by_target = {tuple(e["target"]): e for e in edges_of()}
+    b2 = by_target[(ROOT, "B", "b2")]
+    assert (b2["value"], b2["sign"], b2["node_kind"], b2["level"]) == (D("0"), "zero", "item", 2)
+    assert (by_target[(ROOT, "B", "b2", "p")]["sign"], by_target[(ROOT, "B", "b2", "p")]["value"]) == ("positive", D("7"))
+    assert (by_target[(ROOT, "B", "b2", "q")]["sign"], by_target[(ROOT, "B", "b2", "q")]["value"]) == ("negative", D("7"))
+
+
+def test_sign_is_one_of_three_words_and_zero_only_where_the_value_is_zero():
+    edges = edges_of()
+    assert {e["sign"] for e in edges} == {"positive", "negative", "zero"}
+    assert all((e["sign"] == "zero") == (e["value"] == 0) for e in edges)
+
+
+def test_zero_children_are_never_collapsed_and_do_not_make_up_the_two_below_count():
+    # Under P: 100, 1 (below 0.05 of 101, alone), and two zeros. The zeros are not "below", so the
+    # lone small child is still alone and keeps its name, and no sink is made.
+    paths = [(("P", "big"), D("100")), (("P", "small"), D("1")),
+             (("P", "z1"), D("0")), (("P", "z2"), D("0"))]
+    edges = edges_of(paths)
+    assert [e["target"][-1] for e in edges if e["source"] == [ROOT, "P"]] == ["big", "small", "z1", "z2"]
+    assert not [e for e in edges if e["node_kind"] == "other"]
+    # and the zeros stay out of the share total: small is 1/101, not 1/(101 + 2 x anything)
+    assert_conserved(edges, paths)
+
+
+def test_a_sink_whose_siblings_net_to_zero_is_emitted_with_sign_zero():
+    paths = [(("P", "big"), D("100")), (("P", "s1"), D("2")), (("P", "s2"), D("-2"))]
+    edges = edges_of(paths, threshold="0.05")
+    (sink,) = [e for e in edges if e["node_kind"] == "other"]
+    assert (sink["value"], sink["sign"], sink["source"]) == (D("0"), "zero", [ROOT, "P"])
+    assert_conserved(edges, paths)
+
+
+def test_conservation_holds_at_every_node_including_the_zero_ones():
+    edges = edges_of()
+    zero_nodes = {tuple(e["target"]) for e in edges if e["sign"] == "zero"}
+    assert zero_nodes
+    assert zero_nodes <= {tuple(e["source"]) for e in edges}   # a zero node here has children to reconcile
+    assert_conserved(edges, PATHS)
 
 
 def test_a_parent_whose_children_sum_to_nothing_in_absolute_value_collapses_nothing():
-    assert edges_of([(("A", "a"), D("0")), (("A", "b"), D("0"))]) == []
+    edges = edges_of([(("A", "a"), D("0")), (("A", "b"), D("0"))])
+    assert [(e["target"][-1], e["sign"]) for e in edges] == [("A", "zero"), ("a", "zero"), ("b", "zero")]
 
 
 def test_nodes_are_paths_so_one_name_under_two_parents_stays_two_nodes():
@@ -99,7 +138,7 @@ def test_edges_carry_exactly_source_target_value_sign_level_node_kind():
         assert set(e) == {"source", "target", "value", "sign", "level", "node_kind"}
         assert isinstance(e["source"], list) and isinstance(e["target"], list)
         assert e["target"][:-1] == e["source"] and e["level"] == len(e["target"]) - 1
-        assert e["value"] > 0 and e["sign"] in (1, -1)
+        assert e["value"] >= 0 and e["sign"] in ("positive", "negative", "zero")
 
 
 def test_a_real_child_named_like_the_sink_is_refused_when_the_parent_also_gets_a_sink():
@@ -131,7 +170,7 @@ def test_amounts_are_exact_decimals_with_no_float_in_the_way():
 def test_the_module_is_versioned_and_names_no_case():
     import inspect
     src = inspect.getsource(vd)
-    assert vd.VERSION == "1.1.0"
+    assert vd.VERSION == "1.2.0"
     import re
     for word in ("EAC", "WBS", "control account", "work package", "program", "cost"):
         assert not re.search(rf"b{word}", src, re.I), word

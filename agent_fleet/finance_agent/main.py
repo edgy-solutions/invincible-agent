@@ -1023,10 +1023,11 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
     urn, program_id = row.dataset_urn, params["program_id"]
     try:
         with _asset_read_errors(urn):
-            df = asset_inputs.read_dataset_rows(
-                mesh_ticketed_read, urn, row.levels, row.value_column, program_id)
+            paths = asset_inputs.read_dataset_rows(
+                mesh_ticketed_read, urn, row.levels, row.value_columns, row.value_op,
+                row.per_path, program_id)
             try:
-                rows = measure_verbs.run_dataset(df, row, program_id=program_id)
+                rows = measure_verbs.run_dataset(paths, row, program_id=program_id)
             except ValueError as exc:
                 # A module refuses rows it cannot draw (a level value that is the sink's own
                 # label). Its message can name row values, so only the type is logged.

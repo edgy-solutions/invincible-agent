@@ -165,7 +165,9 @@ class MeasureVerbRow:
     dataset_urn: str = ""
     banner: str = ""
     levels: tuple[str, ...] = ()
-    value_column: str = ""
+    value_columns: tuple[str, ...] = ()   # one column, or the two of a `minus`
+    value_op: str = "column"              # "column" (the one column) or "minus" (first less second)
+    per_path: str = "sum"                 # "sum" (rows add) or "once" (a path's amount counted once)
     other_threshold: Optional[Decimal] = None
 
     @property
@@ -222,9 +224,9 @@ def _check_dataset(inputs: dict) -> dict:
     ds = inputs["dataset"]
     if not isinstance(ds, dict):
         raise ValueError("inputs.dataset must be a mapping")
-    unknown = sorted(set(ds) - {"urn", "banner", "levels", "value"})
+    unknown = sorted(set(ds) - {"urn", "banner", "levels", "value", "per_path"})
     if unknown:
-        raise ValueError(f"inputs.dataset carries {unknown}; it holds urn, banner, levels and value only")
+        raise ValueError(f"inputs.dataset carries {unknown}; it holds urn, banner, levels, value and per_path only")
     urn = ds.get("urn")
     if not isinstance(urn, str) or not urn.startswith(_URN_PREFIX) or len(urn) == len(_URN_PREFIX):
         raise ValueError(f"inputs.dataset.urn must be a '{_URN_PREFIX}...' URN")
@@ -238,10 +240,25 @@ def _check_dataset(inputs: dict) -> dict:
             or len(set(levels)) != len(levels)):
         raise ValueError("inputs.dataset.levels must be a list of at least two distinct, non-empty column names")
     value = ds.get("value")
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("inputs.dataset.value must be a column name")
-    if value in levels:
-        raise ValueError(f"inputs.dataset.value {value!r} is also one of the levels")
+    if isinstance(value, str) and value.strip():
+        op, columns = "column", (value,)
+    elif isinstance(value, dict):
+        pair = value.get("minus")
+        if (set(value) != {"minus"} or not isinstance(pair, list) or len(pair) != 2
+                or not all(isinstance(c, str) and c.strip() for c in pair) or pair[0] == pair[1]):
+            raise ValueError(
+                "inputs.dataset.value must be a column name or exactly {minus: [a, b]} "
+                "with two distinct column names")
+        op, columns = "minus", tuple(pair)
+    else:
+        raise ValueError(
+            "inputs.dataset.value must be a column name or exactly {minus: [a, b]}")
+    for c in columns:
+        if c in levels:
+            raise ValueError(f"inputs.dataset.value column {c!r} is also one of the levels")
+    per_path = ds.get("per_path", "sum")
+    if per_path not in ("sum", "once"):
+        raise ValueError("inputs.dataset.per_path must be 'sum' or 'once'")
     raw_t = inputs.get("other_threshold")
     if raw_t is None:
         raise ValueError("missing required key 'inputs.other_threshold'")
@@ -252,8 +269,8 @@ def _check_dataset(inputs: dict) -> dict:
     except ArithmeticError:  # InvalidOperation is one
         raise ValueError(
             f"inputs.other_threshold {raw_t!r} must be a Decimal string with 0 <= t < 1") from None
-    return {"urn": urn, "banner": banner.strip(), "levels": tuple(levels), "value": value,
-            "other_threshold": threshold}
+    return {"urn": urn, "banner": banner.strip(), "levels": tuple(levels), "value_columns": columns,
+            "value_op": op, "per_path": per_path, "other_threshold": threshold}
 
 
 def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureVerbRow:
@@ -424,7 +441,8 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         status=pol["status"], cells=cells, granted_by=str(pol["granted_by"]),
         reason=str(pol["reason"]), module_sha256=hashlib.sha256(data).hexdigest(),
         kind=kind, dataset_urn=dataset.get("urn", ""), banner=dataset.get("banner", ""),
-        levels=dataset.get("levels", ()), value_column=dataset.get("value", ""),
+        levels=dataset.get("levels", ()), value_columns=dataset.get("value_columns", ()),
+        value_op=dataset.get("value_op", "column"), per_path=dataset.get("per_path", "sum"),
         other_threshold=dataset.get("other_threshold"),
     )
 
@@ -523,18 +541,15 @@ def declared_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]]) -> Optiona
 
 # ── THE DATASET KIND ─────────────────────────────────────────────────────────────────────────
 
-def run_dataset(df, row: MeasureVerbRow, *, program_id: str) -> list[dict[str, Any]]:
-    """The edge table of one program's rows. Pure over `df`; no I/O.
+def run_dataset(paths, row: MeasureVerbRow, *, program_id: str) -> list[dict[str, Any]]:
+    """The edge table of one program's rows. Pure over `paths`; no I/O.
 
-    `df` holds the row's columns only (the reader's select) and the program's rows only: its
-    `levels[0]` column is the root, so every path below it starts at `levels[1]`. Amounts are read
-    as `Decimal(str(x))`, which is exact for an integer or a decimal and the shortest repr for a
-    float, as the state kind reads `program.bac`. The module is called once; each edge's `value` is
-    emitted as `_emit_money` emits money (a cent-quantized float beside `value_exact`).
+    `paths` is what `asset_inputs.read_dataset_rows` returns: a list of `(level values below the
+    root, Decimal amount)`, the amount already computed from the row's value spec and reduced per
+    its `per_path`. The module is called once; each edge's `value` is emitted as `_emit_money`
+    emits money (a cent-quantized float beside `value_exact`).
     """
-    paths = [(tuple(str(v) for v in r[:-1]), Decimal(str(r[-1])))
-             for r in df.select([*row.levels[1:], row.value_column]).iter_rows()]
-    edges = row.resolve()(root=program_id, paths=paths, other_threshold=row.other_threshold)
+    edges = row.resolve()(root=program_id, paths=list(paths), other_threshold=row.other_threshold)
     return _measures._emit_money(edges, money_fields=("value",))
 
 
@@ -544,8 +559,11 @@ def dataset_verdict(row: MeasureVerbRow, rows: list[dict[str, Any]]) -> Optional
     never whether that is acceptable. ABSENT (None) when there are no edges."""
     if not rows:
         return None
-    net = sum((Decimal(e["value_exact"]) * e["sign"] for e in rows if e["level"] == 1), Decimal(0))
+    sign = {"positive": 1, "negative": -1, "zero": 0}
+    net = sum((Decimal(e["value_exact"]) * sign[e["sign"]] for e in rows if e["level"] == 1), Decimal(0))
+    zeros = sum(1 for e in rows if e["sign"] == "zero")
     sinks = sum(1 for e in rows if e.get("node_kind") == "other")
     label = row.render.get("value_label", row.name)
     return (f"{label}: net {net:.2f} across {len(rows)} edges over {len(row.levels) - 1} levels, "
-            f"{sinks} 'All other' sink(s) from the collapse")
+            f"{sinks} 'All other' sink(s) from the collapse, "
+            f"{zeros} edge(s) at zero")

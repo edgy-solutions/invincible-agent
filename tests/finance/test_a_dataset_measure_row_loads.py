@@ -56,7 +56,8 @@ def test_a_valid_dataset_row_loads_with_its_fields(tmp_path):
     assert row.kind == "dataset" and row.archetype == "FLOW_DECOMPOSITION"
     assert row.dataset_urn.startswith("urn:li:dataset:") and row.banner.startswith("SYNTHETIC")
     assert row.levels == ("program_id", "control_account", "work_package")
-    assert row.value_column == "acwp" and row.other_threshold == Decimal("0.15")
+    assert row.value_columns == ("acwp",) and row.value_op == "column" and row.per_path == "sum"
+    assert row.other_threshold == Decimal("0.15")
     assert row.params == ("program_id",) and row.state == {} and row.series == ()
     assert row.render["shape"] == "FLOW_DECOMPOSITION" and row.resolve().__name__ == "flow_edges"
 
@@ -78,6 +79,16 @@ REFUSED = {
     "levels_empty_name": (set_("inputs.dataset.levels", ["program_id", ""]), "levels"),
     "value_is_a_level": (set_("inputs.dataset.value", "work_package"), "levels"),
     "value_not_a_string": (set_("inputs.dataset.value", 3), "value"),
+    "minus_one_column": (set_("inputs.dataset.value", {"minus": ["eac"]}), "minus"),
+    "minus_three_columns": (set_("inputs.dataset.value", {"minus": ["eac", "bac", "acwp"]}), "minus"),
+    "minus_duplicate": (set_("inputs.dataset.value", {"minus": ["eac", "eac"]}), "minus"),
+    "minus_a_level": (set_("inputs.dataset.value", {"minus": ["eac", "work_package"]}), "levels"),
+    "minus_an_extra_key": (set_("inputs.dataset.value", {"minus": ["eac", "bac"], "plus": ["x"]}), "minus"),
+    "minus_not_a_list": (set_("inputs.dataset.value", {"minus": "eac"}), "minus"),
+    "minus_non_string_column": (set_("inputs.dataset.value", {"minus": ["eac", 3]}), "minus"),
+    "value_other_mapping": (set_("inputs.dataset.value", {"plus": ["eac", "bac"]}), "minus"),
+    "per_path_unknown": (set_("inputs.dataset.per_path", "mean"), "per_path"),
+    "per_path_not_a_string": (set_("inputs.dataset.per_path", True), "per_path"),
     "threshold_missing": (set_("inputs.other_threshold", DELETE), "other_threshold"),
     "threshold_not_a_string": (set_("inputs.other_threshold", 0.05), "other_threshold"),
     "threshold_not_a_number": (set_("inputs.other_threshold", "five percent"), "other_threshold"),
@@ -103,7 +114,7 @@ def test_each_invalid_field_is_refused_naming_the_file(case, tmp_path):
 def test_a_function_with_other_keywords_is_refused(tmp_path):
     """The signature must be exactly keyword-only root, paths, other_threshold."""
     mod = tmp_path / "wrong_flow_mod.py"
-    mod.write_text('VERSION = "1.1.0"\nOTHER_LABEL = "x"\n\ndef flow_edges(*, root, paths):\n    return []\n',
+    mod.write_text('VERSION = "1.2.0"\nOTHER_LABEL = "x"\n\ndef flow_edges(*, root, paths):\n    return []\n',
                    encoding="utf-8")
     sys.path.insert(0, str(tmp_path))
     try:
@@ -158,7 +169,7 @@ def test_a_row_declaring_other_label_is_refused(tmp_path):
     ids=["absent", "empty", "not-a-str", "none"])
 def test_a_module_without_a_usable_other_label_is_refused(body, tmp_path):
     mod = tmp_path / "no_label_flow_mod.py"
-    mod.write_text('VERSION = "1.1.0"\n' + body + "\ndef flow_edges(*, root, paths, other_threshold):\n"
+    mod.write_text('VERSION = "1.2.0"\n' + body + "\ndef flow_edges(*, root, paths, other_threshold):\n"
                    "    return []\n", encoding="utf-8")
     sys.path.insert(0, str(tmp_path))
     try:
@@ -168,3 +179,11 @@ def test_a_module_without_a_usable_other_label_is_refused(body, tmp_path):
     finally:
         sys.path.remove(str(tmp_path))
         sys.modules.pop("no_label_flow_mod", None)
+
+
+def test_a_minus_value_and_a_per_path_of_once_or_sum_are_accepted(tmp_path):
+    (row,) = load(mutated(set_("inputs.dataset.value", {"minus": ["eac", "bac"]})), tmp_path)
+    assert row.value_columns == ("eac", "bac") and row.value_op == "minus" and row.per_path == "sum"
+    for word in ("once", "sum"):
+        (row,) = load(mutated(set_("inputs.dataset.per_path", word)), tmp_path)
+        assert row.per_path == word and row.value_op == "column"

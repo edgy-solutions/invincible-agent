@@ -23,6 +23,7 @@ import logging
 import os
 import time
 from contextvars import ContextVar
+from decimal import Decimal
 from typing import Any, Callable, Optional
 
 from fastapi import HTTPException, Request
@@ -295,17 +296,24 @@ def read_rows(read: Callable[[str], Any], urn: str, program_id: str,
     return df
 
 
-def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, ...], value: str,
-                      program_id: str) -> Any:
+def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, ...],
+                      value_columns: tuple[str, ...], value_op: str, per_path: str,
+                      program_id: str) -> list[tuple[tuple[str, ...], Any]]:
     """`read_rows` for a dataset-kind row: the rows of ONE program of the ROW'S columns.
 
-    The contract is the row's own columns, not the fixed finance ones. All of `levels` and `value`
-    must be present and `value` numeric (checked on the schema, before a row is collected); the
-    level columns are read as strings, and the filter keeps the rows whose `levels[0]` is
-    `program_id`. Only those columns are selected, and the row cap is applied before collect. Every
-    outcome maps as `read_rows` maps it. An empty frame raises `NotInModel`, as `state_from_rows`
+    The contract is the row's own columns, not the fixed finance ones. All of `levels` and
+    `value_columns` must be present and every value column numeric (checked on the schema, before a
+    row is collected); the level columns are read as strings, and the filter keeps the rows whose
+    `levels[0]` is `program_id`. Only those columns are selected, and the row cap is applied before
+    collect, so it counts rows read, before any reduction. Every outcome maps as `read_rows` maps it. An empty frame raises `NotInModel`, as `state_from_rows`
     does for a program the asset does not hold. Nulls and non-finite values are checked on the
-    collected frame; a message names the rule and the column, never a row's value."""
+    collected frame; a message names the rule and the column, never a row's value.
+
+    RETURNS the `(path below the root, Decimal amount)` list `run_dataset` takes. A row's amount is
+    `Decimal(str(x))`, or for `value_op == "minus"` `Decimal(str(a)) - Decimal(str(b))`. Under
+    `per_path == "once"` the rows are grouped by the full level tuple, every row of a group must
+    carry the same amount (else `varies_within_path`, naming the column(s), never a value), and the
+    amount is taken once per group; under `"sum"` every row stays."""
     import polars as pl
 
     t0 = time.perf_counter()
@@ -321,16 +329,17 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
     except Exception as exc:
         log.warning("asset scan failed: %s", type(exc).__name__)
         raise AssetUnavailable("the asset could not be scanned") from None
-    missing = [c for c in (*levels, value) if c not in schema]
+    missing = [c for c in (*levels, *value_columns) if c not in schema]
     if missing:
         raise ContractViolation("missing_column", "missing column(s): " + ", ".join(missing))
-    if not schema[value].is_numeric():
-        raise ContractViolation("wrong_type", f"column(s) of the wrong type: {value}")
+    bad = [c for c in value_columns if not schema[c].is_numeric()]
+    if bad:
+        raise ContractViolation("wrong_type", "column(s) of the wrong type: " + ", ".join(bad))
     cap = max_rows()
     as_text = [pl.col(c).cast(pl.String) for c in levels]
     q = lf.filter(pl.col(levels[0]).cast(pl.String) == program_id)
     try:
-        df = q.select([*as_text, pl.col(value)]).head(cap + 1).collect()
+        df = q.select([*as_text, *(pl.col(c) for c in value_columns)]).head(cap + 1).collect()
     except Exception as exc:
         log.warning("asset scan failed: %s", type(exc).__name__)
         raise AssetUnavailable("the asset could not be scanned") from None
@@ -339,14 +348,30 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
              round((t1 - t0) * 1000), round((t2 - t1) * 1000), df.height, df.estimated_size(), urn)
     if df.height > cap:
         raise AssetTooLarge(cap)
-    for c in (*levels, value):
+    for c in (*levels, *value_columns):
         if df[c].null_count():
             raise ContractViolation("null_value", f"null value(s) in column {c}")
-    if df[value].dtype.is_float() and not df[value].is_finite().all():
-        raise ContractViolation("non_finite", f"non-finite number(s) in column {value}")
+    for c in value_columns:
+        if df[c].dtype.is_float() and not df[c].is_finite().all():
+            raise ContractViolation("non_finite", f"non-finite number(s) in column {c}")
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r}")
-    return df
+    n = len(levels) - 1
+    paths: list[tuple[tuple[str, ...], Any]] = []
+    for r in df.select([*levels[1:], *value_columns]).iter_rows():
+        amount = Decimal(str(r[n]))
+        if value_op == "minus":
+            amount -= Decimal(str(r[n + 1]))
+        paths.append((tuple(str(v) for v in r[:n]), amount))
+    if per_path == "once":
+        seen: dict[tuple[str, ...], Any] = {}
+        for path, amount in paths:
+            if seen.setdefault(path, amount) != amount:
+                raise ContractViolation(
+                    "varies_within_path",
+                    ", ".join(value_columns) + " vary within one terminal path")
+        paths = list(seen.items())
+    return paths
 
 
 def _raise_for_read_failure(exc: Exception) -> None:
