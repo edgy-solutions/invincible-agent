@@ -3346,3 +3346,338 @@ def test_the_three_bars_read_apart_and_the_bar_needs_all_three(monkeypatch, edit
 def test_the_oracle_meets_the_approval_bar_on_every_fixture(name):
     row = sm.measure(name, se.OracleExtractor(), aligned=True)
     assert row["approval_bar"] is True and row["wrong_approvals"] == [] and row["bar_met"] is True
+
+
+# ── a refusal one field clears is asked on that field (architect, 2026-11-04, on runs 53 to 55) ──
+
+_ROLE = "steps[id=engineering_disposition].role"
+_ROLE_KEY = f"contradiction:{IR}#{_ROLE}"
+
+
+def _roleless():
+    f = _good()
+    del _step(f, IR, "engineering_disposition")["role"]
+    return f
+
+
+def test_a_refusal_one_unset_field_clears_is_asked_on_that_field():
+    gaps = se.problems(_roleless())
+    assert [(g.key, g.kind, g.facet, g.revises) for g in gaps] == [(_ROLE_KEY, "contradiction", "approvals", ((IR, _ROLE),))]
+    said = gaps[0].question
+    assert said.startswith("What is the role of engineering disposition in pcn impact review?")
+    assert "`approves` requires a `role`" in said and "Value error" not in said
+
+
+def test_control_a_refusal_no_single_field_clears_stays_on_the_workflow():
+    f = _good()
+    _step(f, IR, "engineering_disposition")["completion"] = {"mode": "grouped"}
+    gaps = se.problems(f)
+    assert [g.key for g in gaps] == ["contradiction:workflow.pcn_impact_review"]
+    assert "grouped await" in gaps[0].question
+
+
+def test_the_field_question_may_not_be_deferred():
+    assert se.non_deferrable(se.Draft(files=_roleless()), _ROLE_KEY) == "a runtime refusal may not be deferred"
+
+
+def test_the_person_answers_the_field_question_from_what_they_meant_and_not_the_opening():
+    f = _roleless()
+    g = se.problems(f)[0]
+    says = _pcn_user()(g, se.Draft(files=f))["says"]
+    assert says == "It is component_engineer." and "whoever logged" not in says
+
+
+def test_an_answer_to_the_field_question_clears_the_refusal():
+    d = se.Draft(files=_roleless())
+    g = se.problems(d.files)[0]
+    se.apply_patch(d, {"set": [{"file": IR, "path": _ROLE, "value": "component_engineer"}]}, 1, answering=g)
+    assert se.problems(d.files) == [] and d.files == _good()
+
+
+def test_a_refusal_two_fields_would_each_clear_names_neither_and_one_field_names_it(monkeypatch):
+    # No executor refusal today is cleared by either of two fields, so this reads the counting on a stub.
+    from typing import Literal, Optional as Opt
+    from pydantic import BaseModel, model_validator
+
+    class _EitherStep(BaseModel):
+        kind: Literal["either"]
+        id: str
+        a: Opt[str] = None
+        b: Opt[str] = None
+        n: Opt[int] = None
+
+        @model_validator(mode="after")
+        def _one(self):
+            if not (self.a or self.b):
+                raise ValueError("needs a or b")
+            return self
+
+    monkeypatch.setitem(se._STEP_MODELS, "either", _EitherStep)
+    assert se._field_it_needs({"kind": "either", "id": "s"}, "Value error, needs a or b") is None
+    assert se._field_it_needs({"kind": "either", "id": "s", "b": ""}, "Value error, needs a or b") is None
+    monkeypatch.setattr(_EitherStep, "model_fields", {k: v for k, v in _EitherStep.model_fields.items() if k != "b"})
+    assert se._field_it_needs({"kind": "either", "id": "s"}, "Value error, needs a or b") == "a"
+
+
+# ── an approval step with no approves is asked which answers count (architect, 2026-11-04) ───
+
+PA = "workflows/pcn_program_approval.yaml"
+_PA_KEY = "approvals.pcn_program_approval.program_approval.approves"
+
+
+def _unapproved():
+    f = _good()
+    st = _await(f, PROGRAM)
+    del st["approves"], st["role"]
+    return f
+
+
+def test_an_approval_step_with_no_approves_is_asked_which_answers_count_and_in_what_role():
+    gaps = se.unapproved_awaits(_unapproved())
+    assert [(g.key, g.kind, g.facet, g.revises) for g in gaps] == [(_PA_KEY, "confirm", "approvals", (
+        (PA, "steps[id=program_approval].approves"), (PA, "steps[id=program_approval].role")))]
+    said = gaps[0].question
+    for word in ("which answers count as an approval", "in what role", "Its answers are approved, rejected.",
+                 "If none does, say so."):
+        assert word in said
+
+
+def test_control_an_approval_step_with_approves_is_not_asked_and_one_without_role_is_left_to_the_refusal():
+    assert se.unapproved_awaits(_good()) == []
+    f = _good()
+    del _await(f, PROGRAM)["role"]
+    assert se.unapproved_awaits(f) == []
+    assert [g.key for g in se.problems(f)] == [f"contradiction:{PA}#steps[id=program_approval].role"]
+
+
+def test_an_approval_step_no_case_can_reach_is_not_asked():
+    f = _unapproved()
+    orphan = copy.deepcopy(f[PA])
+    orphan["id"] = "unreached_approval"
+    f["workflows/unreached_approval.yaml"] = orphan
+    assert [g.key for g in se.unapproved_awaits(f)] == [_PA_KEY]
+
+
+def test_the_ask_is_in_the_gaps_and_asked_once():
+    d = se.Draft(files=_unapproved())
+    assert _PA_KEY in [g.key for g in se.gaps(d)]
+    d.asked[_PA_KEY] += 1
+    assert _PA_KEY not in [g.key for g in se.gaps(d)]
+
+
+def test_the_person_says_which_answers_count_and_the_role_from_what_they_meant():
+    f = _unapproved()
+    g = se.unapproved_awaits(f)[0]
+    u = _pcn_user()
+    assert u(g, se.Draft(files=f)) == {"says": "Only approved counts as an approval, and the role is program_manager."}
+    assert u.answered_approvals == [_PA_KEY]
+
+
+def test_the_person_says_none_counts_where_they_described_no_approval():
+    e = _expected("pcn_review")
+    st = _await(e, PROGRAM)
+    del st["approves"], st["role"]
+    u = sm.AligningUser(_transcript("pcn_review"), e)
+    f = _unapproved()
+    assert u(se.unapproved_awaits(f)[0], se.Draft(files=f)) == {"says": "None of them counts as an approval."}
+
+
+def test_the_person_gives_no_approval_answer_where_they_named_the_answers_and_no_role():
+    e = _expected("pcn_review")
+    del _await(e, PROGRAM)["role"]
+    u = sm.AligningUser(_transcript("pcn_review"), e)
+    f = _unapproved()
+    reply = u(se.unapproved_awaits(f)[0], se.Draft(files=f))
+    assert u.answered_approvals == [] and "as an approval" not in str(reply)
+
+
+def test_an_answer_to_the_ask_writes_both_fields_and_clears_it():
+    d = se.Draft(files=_unapproved())
+    g = se.unapproved_awaits(d.files)[0]
+    se.apply_patch(d, {"set": [{"file": PA, "path": "steps[id=program_approval].approves", "value": ["approved"]},
+                               {"file": PA, "path": "steps[id=program_approval].role", "value": "program_manager"}]},
+                   1, answering=g)
+    assert se.unapproved_awaits(d.files) == [] and se.problems(d.files) == [] and d.files == _good()
+
+
+# ── a stage with no steps is asked as a stage, never as a path (architect, 2026-11-04) ───────
+
+REC = "workflows/pcn_record.yaml"
+
+
+@pytest.mark.parametrize("how", ["absent", "empty"])
+def test_a_stage_with_no_steps_is_asked_in_the_persons_words_under_the_stage_key(how):
+    f = _good()
+    if how == "absent":
+        del f[REC]["steps"]
+    else:
+        f[REC]["steps"] = []
+    assert [(g.key, g.kind, g.question) for g in se.problems(f)] == [(
+        "steps.pcn_record", "missing",
+        "What are the steps of the pcn record stage: who acts, what they decide, and how it ends?")]
+
+
+def test_the_person_answers_a_stage_with_no_steps_from_what_they_said_of_the_stage():
+    f = _good()
+    del f[REC]["steps"]
+    g = se.problems(f)[0]
+    assert _pcn_user()(g, se.Draft(files=f)) == _transcript("pcn_review")["answers"]["steps.pcn_record"]
+
+
+def test_control_another_missing_field_of_a_stage_keeps_its_own_key():
+    f = _good()
+    del f[REC]["name"]
+    assert [g.key for g in se.problems(f)] == ["steps.pcn_record.name"]
+
+
+# ── a positional path is refused with what to write (architect, 2026-11-04, on runs 59 and 60) ─
+
+def _refusal(files, patch):
+    with pytest.raises(se.PatchError) as e:
+        se.apply_patch(se.Draft(files=copy.deepcopy(files)), patch, 1)
+    return str(e.value)
+
+
+def test_a_position_the_list_holds_is_refused_naming_its_id_form_and_the_path_to_write():
+    said = _refusal(_good(), {"set": [{"file": IR, "path": "steps[1].role", "value": "x"}]})
+    assert "steps[1] is steps[id=engineering_disposition]" in said
+    assert "so write steps[id=engineering_disposition].role" in said
+    assert "set steps whole" not in said
+
+
+def test_a_position_past_the_end_is_refused_saying_to_set_the_list_whole():
+    said = _refusal(_good(), {"set": [{"file": ACK, "path": "steps[1].kind", "value": "human_await"}]})
+    assert "steps holds no element 1" in said and "set steps whole" in said and "[id=" not in said.split(":", 1)[1].split("as in")[0]
+
+
+def test_a_position_in_a_stage_with_no_steps_yet_is_refused_saying_to_set_the_list_whole():
+    said = _refusal(_good(), {"set": [{"file": "workflows/new_stage.yaml", "path": "steps[0].kind", "value": "emit"}]})
+    assert "steps holds no element 0" in said and "set steps whole" in said
+
+
+def test_an_unset_by_position_is_refused_with_the_id_form_before_its_scope_is_read():
+    said = _refusal(_good(), {"unset": [{"file": IR, "path": "steps[0].excludes"}]})
+    assert "steps[0] is steps[id=impact]" in said and "so write steps[id=impact].excludes" in said
+
+
+def test_a_position_under_an_id_selector_reads_the_list_it_names():
+    f = _good()
+    _step(f, IR, "engineering_disposition")["branches"] = [{"id": "b1"}, {"id": "b2"}]
+    said = _refusal(f, {"set": [{"file": IR, "path": "steps[id=engineering_disposition].branches[1].x", "value": 1}]})
+    assert "so write steps[id=engineering_disposition].branches[id=b2].x" in said
+
+
+def test_control_a_position_in_a_list_whose_elements_hold_no_id_keeps_the_grammar():
+    said = _refusal(_good(), {"set": [{"file": CH, "path": "rows[0].then", "value": "x"}]})
+    assert se._PATH_FORMS in said and "not its position" not in said
+
+
+def _roleless():
+    f = _good()
+    del _step(f, IR, "engineering_disposition")["role"]
+    return f
+
+
+def test_control_a_path_by_id_lands():
+    d = se.Draft(files=_roleless())
+    se.apply_patch(d, {"set": [{"file": IR, "path": "steps[id=engineering_disposition].role", "value": "x"}]}, 1)
+    assert _step(d.files, IR, "engineering_disposition")["role"] == "x"
+
+
+def test_the_restatement_of_a_positional_path_hears_the_id_form():
+    d = se.Draft(files=_roleless())
+    asked = []
+
+    def model(entry, *_):
+        asked.append(entry)
+        path = "steps[id=engineering_disposition].role" if entry.get("refused") else "steps[1].role"
+        return {"set": [{"file": IR, "path": path, "value": "component engineer"}]}
+    charged = []
+    se._apply_or_charge(d, model, {"says": "x"}, None, 1, charged)
+    assert "steps[1] is steps[id=engineering_disposition]" in asked[1]["refused"] and len(charged) == 1
+    assert _step(d.files, IR, "engineering_disposition")["role"] == "component engineer"
+
+
+# ── a stage is drafted under a name the person used (architect, 2026-11-04, on run 61) ──────
+
+NAMED = ["pcn_impact_review", "acknowledgement", "pcn_program_approval", "pcn_record"]
+
+
+def _named(files, stages=NAMED):
+    files = copy.deepcopy(files)
+    files[TRIG]["stages"] = list(stages)
+    return files
+
+
+def _with_ack_as(files, wid):
+    files = copy.deepcopy(files)
+    doc = files.pop(ACK)
+    files[f"workflows/{wid}.yaml"] = {**doc, "id": wid}
+    return files
+
+
+def _drafting_ack_as(wid, stages=NAMED):
+    f = _named(_good(), stages)
+    doc = f.pop(ACK)
+    return se.Draft(files=f), {"set": [{"file": f"workflows/{wid}.yaml", "path": "", "value": {**doc, "id": wid}}]}
+
+
+def test_a_stage_drafted_under_a_name_the_person_did_not_use_is_refused_with_their_names():
+    draft, patch = _drafting_ack_as("minor_acknowledge")
+    before = copy.deepcopy(draft.files)
+    charged = []
+    se._apply_or_charge(draft, lambda *_: patch, {"says": "x"}, None, 1, charged)
+    assert draft.files == before and charged
+    said = charged[0]["error"]
+    assert "drafts a stage named minor_acknowledge" in said
+    assert "the stages the person named are " + ", ".join(NAMED) in said
+
+
+def test_control_the_same_stage_under_a_name_the_person_used_lands():
+    draft, patch = _drafting_ack_as("acknowledgement")
+    charged = []
+    se._apply_or_charge(draft, lambda *_: patch, {"says": "x"}, None, 1, charged)
+    assert charged == [] and "workflows/acknowledgement.yaml" in draft.files
+
+
+def test_control_with_no_stages_named_no_name_is_refused():
+    draft, patch = _drafting_ack_as("minor_acknowledge", stages=[])
+    charged = []
+    se._apply_or_charge(draft, lambda *_: patch, {"says": "x"}, None, 1, charged)
+    assert charged == []
+    assert not any("drafts a stage named" in c for c in se._structure_errors(_good()))
+
+
+def test_the_names_refusal_points_at_the_stage_file_and_never_at_the_names():
+    errors = se._structure_errors(_named(_with_ack_as(_good(), "minor_acknowledge")))
+    leaves = [lv for c, lv in errors.items() if "drafts a stage named minor_acknowledge" in c]
+    assert leaves == [(("workflows/minor_acknowledge.yaml", ""),)]
+
+
+def test_a_misnamed_stage_already_in_the_draft_does_not_block_an_unrelated_patch():
+    d = se.Draft(files=_named(_with_ack_as(_roleless(), "minor_acknowledge")))
+    charged = []
+    patch = {"set": [{"file": IR, "path": "steps[id=engineering_disposition].role", "value": "x"}]}
+    se._apply_or_charge(d, lambda *_: patch, {"says": "x"}, None, 1, charged)
+    assert charged == [] and _step(d.files, IR, "engineering_disposition")["role"] == "x"
+
+
+def test_the_restatement_of_a_misnamed_stage_under_the_persons_name_lands():
+    draft, wrong = _drafting_ack_as("minor_acknowledge")
+    _, right = _drafting_ack_as("acknowledgement")
+    asked = []
+
+    def model(entry, *_):
+        asked.append(entry)
+        return right if entry.get("refused") else wrong
+    charged = []
+    se._apply_or_charge(draft, model, {"says": "x"}, None, 1, charged)
+    assert "the stages the person named are" in asked[1]["refused"] and len(charged) == 1
+    assert "workflows/acknowledgement.yaml" in draft.files and "workflows/minor_acknowledge.yaml" not in draft.files
+
+
+def test_the_stage_confirm_lists_each_name_the_person_used():
+    f = _named(_good())
+    slot = next(s for s in se._value_slots(f) if s[0] == f"trigger.{se._STAGES}")
+    for name in NAMED:
+        assert se._words(name) in slot[3]
