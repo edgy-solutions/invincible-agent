@@ -123,7 +123,8 @@ decisions.
 - `dagtools audit reads` — step 1's command; its output is a file, and test fixtures are synthetic.
 - `classification/levels.yaml` — ordered levels (step 3).
 - `classification/sources.yaml` — dataset, column, level, owner, origin of the label (`board` or
-  `catalog_tag`) (step 3).
+  `catalog_tag`) (step 3). Read this through the addendum at the end: these rows are instances of
+  the source component, not a second file.
 - `warehouse_source` — the generic asset kind of step 4a. Its `access` field is `brokered` or
   `passthrough`.
 - `TableColumnLineage` metadata — required on Python assets that read a labelled source (step 4b).
@@ -228,3 +229,35 @@ Order: 1 → 2 this week (they produce the scope numbers for the
 board); 3 → 4 → 5 after the ADR is Proposed. Own worktree; the
 qual session is separate. Chris merges; versions ride 0.12.0+.
 ```
+
+
+### Addendum: the two dag-tools answers, accepted 2026-11-05
+
+Both were questions the dag-tools lane was asked to settle before step 4 began. Both were measured
+rather than argued, and both are held by named regression tests in dag-tools; this section records
+what was accepted, not where it is enforced.
+
+**The component's YAML is the registry row, and there is no second sources file.** Step 3's
+`classification/sources.yaml` collapses into instances of step 4a's `warehouse_source`: one
+instance's `attributes:` block *is* a row — the catalog's dataset URN, the column labels, the
+declared access mode, and any downgrade declaration. dag-tools ships the kind, the deployment's YAML
+carries the rows, and a row arrives and leaves as data, which is the standing rule restated rather
+than relaxed. A parallel file would have been a second place for the same fact to be wrong in. The
+ordered levels stay a file of their own, because an ordered vocabulary is not an instance of
+anything, and because "anything unlisted is the most restrictive" needs one ordering to be most
+restrictive against.
+
+**The compat floor holds, and the one thing that would move it is scheduling in YAML.** The Dagster
+the deployment runs was measured against step 1's shipped component rather than assumed about: the
+component loads there, materialises there, and reports numbers identical to current. What that
+version refuses is an unknown *top-level* key in a component file, and the refusal fails the whole
+code-location load rather than just the unrecognised block — so staying inside `type:` and
+`attributes:`, with every attribute a plain scalar or mapping the component validates itself instead
+of handing to the resolver, is not a style preference but the condition of being deployable at all.
+Steps 3 to 5 stay inside that envelope, and the floor does not move for them. The known exception is
+an automation condition expressed in YAML: that is exactly the block the floor rejects, already
+measured on another component. If step 4 wants a schedule, the schedule comes from Python.
+
+Step 1 is built and merged (dag-tools `#17`), which is what let both answers be measurements rather
+than positions. Its report — the reads no asset explains — is also the number step 2 exists to drive
+to zero.
