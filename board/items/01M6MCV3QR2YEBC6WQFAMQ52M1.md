@@ -6,7 +6,7 @@ repo: invincible-agent
 status: open
 priority: next
 blocked_on: []
-pr: []
+pr: [invincible-agent#260]
 ruling_ref: architect via Chris 11-04: NetworkPolicy gate-on scheduled; target sandbox fully enabled by 12-01; labels and the seal as one PR tonight
 updated: 2026-11-04
 ---
