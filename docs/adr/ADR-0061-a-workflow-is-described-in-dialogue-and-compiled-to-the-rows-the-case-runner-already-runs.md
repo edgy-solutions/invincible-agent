@@ -22,8 +22,9 @@ read `yes` on slot and approval for the first time, and both stall on the record
 for its path form (§10). The architect then ruled that a positional path's refusal says what to write, and that a stage
 is drafted under a name the person used. Both are built (§10). Runs 62 to 64, on them: run 63 reads `yes` on route, slot
 and approval with the contradiction caught, and run 62 reads `no`, as it should. The architect ruled the bar met on run 63
-and the ADR Proposed (2026-11-05). That reading is instrument v4's. The same ruling puts outcome words in the slot check,
-read against the person's own words. That check is next, and no run comes before it (§10).
+and the ADR Proposed (2026-11-05). That reading is instrument v4's. The same ruling makes an outcome word that differs
+from the person's own word a slot fault. Run 63 has one: the person said "If it is escalated", and the draft kept
+`escalate`. So the check, once built, reads run 63 `no` on slot. It is next, and no run comes before it (§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2759,8 +2760,11 @@ read no and does".
 - **Run 63 reads `yes` on all three bars, with the planted contradiction caught.** No step or route is dropped, and no
   approval, `excludes` or `requires` reads wrong. No slot is rewritten, and the planted deadline deferral is recorded. Its one
   semantic difference reads in no bar. The acknowledgement's answer is `escalate` where the expected bundle has
-  `escalated`, at the same route and in the same `excludes`. The person said "acknowledge it, or escalate it", so the draft
-  is in the person's words. That is the outcome-word item on the open list.
+  `escalated`, at the same route and in the same `excludes`. The person said "They can acknowledge it, or escalate it" at
+  turn 24, and "If it is escalated it goes back to the impact review" at turn 26, when asked where an escalation leads.
+  So the draft has the person's word for the act, where the bundle has their word for the outcome. That is the
+  outcome-word item on the open list. (Corrected 2026-11-05: this said the draft was in the person's words, and it
+  omitted turn 26.)
 - **Run 62 reads `no`, and should.** The person described the record as "sends the disposition out … Then the records
   group files it and says so". The draft has the send, and a render where the wait should be. It ends `recorded`, where the
   expected bundle ends `filed`.
@@ -2770,8 +2774,9 @@ Nothing is flipped. That is for the architect.
 **Run 64 reads `no` too.** Its route and slot readings are right. The record is a send alone. The person said "The person
 who logged the notice may never sign off either review" at turn 15, and the program approval's draft excludes no one. Its
 approval bar reads `no` only on the answer word: the draft says `approve` and `reject`, where the expected bundle says
-`approved` and `rejected`. The person said "They can approve it or reject it". That bar compares the answers by their
-words, so it is the same outcome-word item, and here it decides a bar.
+`approved` and `rejected`. The person said "They can approve it or reject it", then at turn 30 "When program approval is
+approved … If it is rejected", and at turn 31 "Only approved counts as an approval". That bar compares the answers by
+their words, so it is the same outcome-word item, and here it decides a bar.
 
 **The path form, in the runs.** Run 63 sent `steps[0].task_kind` at turn 28 and heard "`steps[0]` is
 `steps[id=await_program_approval]`, so write `steps[id=await_program_approval].task_kind`". Its restatement used the id
@@ -2802,10 +2807,11 @@ architect's order. Outcome words come first: the slot check compares an answer w
 `escalate` against `escalated` is a slot fault, not noise. The grammar line on answer words is next. No run comes before
 both are built.
 
-**Run 63 and that check.** Run 63's one semantic difference from the expected bundle is the acknowledgement's answer. The
-draft says `escalate`, the person said "acknowledge it, or escalate it", and the expected bundle says `escalated`. So the
-draft holds the person's word, and the bundle holds a word the person never said. The flip rests on v4's reading, as
-ruled. Runs 62 to 64 are re-read under the new check with no model time, and that reading is reported when it is built.
+**Run 63 and that check.** Run 63's one semantic difference from the expected bundle is the acknowledgement's answer.
+The draft says `escalate`. The person said "They can acknowledge it, or escalate it" at turn 24, and at turn 26 "If it is
+escalated it goes back to the impact review". The expected bundle says `escalated`. The ruling calls that a slot fault,
+so the check, once built, reads run 63 `no` on slot. The flip rests on v4's reading, as ruled. Runs 62 to 64 are re-read
+under the new check with no model time, and that reading is reported when it is built.
 
 ## Consequences
 
