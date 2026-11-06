@@ -3,10 +3,10 @@ title: Classification dimensions (levels.yaml -> dimensions.yaml) and the holds:
 feature: cross-cutting
 lane: invincible-agent/lane/gov
 repo: invincible-agent
-status: claimed
+status: review
 priority: next
 blocked_on: []
-pr: []
+pr: [invincible-agent#282]
 ruling_ref: Chris 11-06 (levels.yaml -> dimensions.yaml; cleared_for stays for the hierarchical dimension; holds rail for set dimensions)
 updated: 2026-11-06
 ---
