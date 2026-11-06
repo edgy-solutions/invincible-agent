@@ -5,5 +5,6 @@ rail_file: policy/option_deciders.yaml
 object_scoped: false
 who: the approvers of policy/option_deciders.yaml in this deployment's policy repository
 how: >-
-  a reviewed change naming the group in the option's row (granted_by, reason, ratified_by); no reader
-  applies it until the obsolescence_resolution workflow row lands (ADR-0065)
+  a reviewed change naming the group in the row of the workflow and option it may choose (granted_by,
+  reason, ratified_by); no reader applies it until a workflow definition's decide step carries its
+  options (ADR-0065)

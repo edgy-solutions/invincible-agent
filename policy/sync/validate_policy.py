@@ -41,7 +41,7 @@ definition of "valid", never a parallel re-implementation):
   - level_readers.yaml            → level_readers_errors (WHEN PRESENT; not in DATA_FILES -- see
     the note there): a level is registered, one row per level, a group exists and has members
   - option_deciders.yaml          → option_deciders_errors (WHEN PRESENT; not in DATA_FILES -- see
-    the note there): an option has one row, a group exists and has members
+    the note there): a workflow and option have one row, a group exists and has members
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
     no sync of its own — can_consume is evaluated in-process)
   - every DATA file must EXIST — explicit-empty (`grants: []`) is a
@@ -124,9 +124,9 @@ DATA_FILES = (
 # in DATA_FILES: no code reads either yet (dag-tools step 5), an absent registry registers no level
 # and an absent rail grants no level. Validated WHEN PRESENT.
 #
-# option_deciders.yaml (the `can_decide:<option>` rail, ADR-0065 (provisional, not yet written)) is
-# likewise NOT in DATA_FILES: no code reads it yet (Lane 1's obsolescence_resolution workflow row), and
-# an absent rail grants no option. Validated WHEN PRESENT.
+# option_deciders.yaml (the `can_decide:<workflow_id>.<option>` rail, ADR-0065 (provisional, not yet
+# written)) is likewise NOT in DATA_FILES: no code reads it yet (a workflow definition's decide step will
+# carry the options, ADR-0065 ruling 3), and an absent rail grants no option. Validated WHEN PRESENT.
 
 
 def known_content_kinds() -> tuple[set[str], list[str]]:
@@ -958,20 +958,23 @@ def level_readers_errors(raw: dict, levels: list[str] | None, groups: dict, user
                            "`grant_to_groups: []` with a reason says nobody reads it)")
     return out
 
-#: The row fields of policy/option_deciders.yaml (ADR-0065 (provisional, not yet written)). Nothing
-#: reads the file yet; Lane 1's obsolescence_resolution workflow row will carry the options.
-_OD_ROW_FIELDS = ("option", "grant_to_groups", "granted_by", "reason", "ratified_by")
+#: The row fields of policy/option_deciders.yaml (ADR-0065 (provisional, not yet written)). One row per
+#: workflow and option, keyed `<workflow_id>.<option>`. Nothing reads the file yet; the options will come
+#: from the workflow definition's decide step (ruling 3).
+_OD_ROW_FIELDS = ("workflow", "option", "grant_to_groups", "granted_by", "reason", "ratified_by")
 
 
 def option_deciders_errors(raw: dict, groups: dict, users: list) -> list[str]:
     """Validate policy/option_deciders.yaml. PURE.
 
-    Each error reads `option_deciders.yaml: <option or row i>: ...`. An option is the `<option>` of
-    `can_decide:<option>`, so it has no whitespace and no `:`; it has one row. `grant_to_groups` names
-    groups that exist and have members, and may be empty (nobody decides the option). A user is never
+    Each error reads `option_deciders.yaml: <workflow>.<option> (or row i): ...`. A row is keyed
+    `<workflow_id>.<option>`, the two parts of `can_decide:<workflow_id>.<option>`: each has no whitespace,
+    no `:` and no `.`, so the key splits one way; a key has one row. `grant_to_groups` names
+    groups that exist and have members, and may be empty (nobody chooses the option). A user is never
     named: `grant_to:` is an unknown key. Every row says why (`reason`) and which seat ratified it
-    (`ratified_by`: a seat, never an identity). Option membership and one-row-per-registered-option are
-    checked once a workflow row carries the options (ADR-0065)."""
+    (`ratified_by`: a seat, never an identity). Option membership (each `<option>` is one of its workflow's
+    decide-step options) and one row per offered option are checked once a workflow definition carries
+    the options (ADR-0065, ruling 3)."""
     pre = "option_deciders.yaml"
     if not isinstance(raw, dict) or set(raw) != {"option_deciders"}:
         extra = sorted(map(str, set(raw) - {"option_deciders"})) if isinstance(raw, dict) else []
@@ -988,25 +991,32 @@ def option_deciders_errors(raw: dict, groups: dict, users: list) -> list[str]:
         if not isinstance(row, dict):
             out.append(f"{pre}: row {i}: must be a mapping")
             continue
+        workflow = row.get("workflow")
         option = row.get("option")
-        where = f"{pre}: {option if isinstance(option, str) and option.strip() else f'row {i}'}"
+        parts = all(isinstance(v, str) and v.strip() for v in (workflow, option))
+        key = f"{workflow}.{option}" if parts else f"row {i}"
+        where = f"{pre}: {key}"
         for k in row:
             if k not in _OD_ROW_FIELDS:
                 out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_OD_ROW_FIELDS)})")
 
-        if not isinstance(option, str) or not option.strip():
-            out.append(f"{where}: `option` must be a non-empty string")
-        elif any(ch.isspace() for ch in option) or ":" in option:
-            out.append(f"{where}: `option` must have no whitespace and no `:` (it is the `<option>` "
-                       "of `can_decide:<option>`)")
-        else:
-            if option in seen:
-                out.append(f"{where}: more than one row names this option")
-            seen.add(option)
+        part_ok = True
+        for field, v in (("workflow", workflow), ("option", option)):
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{field}` must be a non-empty string")
+                part_ok = False
+            elif any(ch.isspace() for ch in v) or ":" in v or "." in v:
+                out.append(f"{where}: `{field}` must have no whitespace, no `:` and no `.` (it is a part "
+                           "of `<workflow_id>.<option>` in `can_decide:<workflow_id>.<option>`)")
+                part_ok = False
+        if part_ok:
+            if key in seen:
+                out.append(f"{where}: more than one row names this workflow and option")
+            seen.add(key)
 
         gtg = row.get("grant_to_groups")
         if not isinstance(gtg, list):
-            out.append(f"{where}: `grant_to_groups` must be a list (`[]` says nobody may decide the option)")
+            out.append(f"{where}: `grant_to_groups` must be a list (`[]` says nobody may choose the option)")
         else:
             names: list[str] = []
             for g in gtg:
@@ -1017,10 +1027,9 @@ def option_deciders_errors(raw: dict, groups: dict, users: list) -> list[str]:
                 else:
                     names.append(g)
             out.extend(unusable_group_audiences(
-                [SimpleNamespace(key=option if isinstance(option, str) else f"row {i}",
-                                 grant_to_groups=names)],
+                [SimpleNamespace(key=key, grant_to_groups=names)],
                 groups, users, file_label=pre, noun="option",
-                nobody="the grant would let NOBODY decide"))
+                nobody="the grant would let NOBODY choose"))
 
         for k in ("granted_by", "reason", "ratified_by"):
             v = row.get(k)
@@ -1133,7 +1142,8 @@ def validate(
                 f"capability_grants.yaml: capability {c.key!r}: a level's clearances are rows of "
                 f"policy/level_readers.yaml, not a capability row")
 
-    # `can_decide:<option>` is the option rail's key (ADR-0065, provisional), never a capability row.
+    # `can_decide:<workflow_id>.<option>` is the option rail's key (ADR-0065, provisional), never a
+    # capability row.
     for c in caps:
         if c.key.startswith("can_decide:"):
             errors.append(
@@ -1271,7 +1281,7 @@ def validate(
         print(f"  level_readers.yaml: {len(_lr_rows) if isinstance(_lr_rows, list) else 0} row(s)")
     elif _cl_levels:
         errors.extend(level_readers_errors({"level_readers": []}, _cl_levels, _groups_map, _users_list))
-    # option_deciders.yaml (ADR-0065, provisional): WHEN PRESENT only; options come from a workflow row.
+    # option_deciders.yaml (ADR-0065, provisional): WHEN PRESENT only; no code reads workflow definitions yet.
     _od_path = policy_dir / "option_deciders.yaml"
     if _od_path.is_file():
         od_raw = _read_yaml(_od_path, errors)

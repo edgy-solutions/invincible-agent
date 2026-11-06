@@ -1,5 +1,5 @@
-# OPTION DECIDERS -- the `can_decide:<option>` rail for obsolescence resolution, ADR-0065 (provisional,
-# not yet written).
+# OPTION DECIDERS -- the `can_decide:<workflow_id>.<option>` rail for obsolescence resolution, ADR-0065
+# (provisional, not yet written).
 #
 #   * SOURCE TEXT, verbatim (architect via Chris, 2026-11-06): "Rails for obsolescence_resolution: roles
 #     (who may approve LTB / redesign) as groups + capability rows; `can_decide:
@@ -9,17 +9,32 @@
 #   * STANDING RULE, verbatim: "kinds, workflows, options, levels, ontology slices, mappings and
 #     contracts are rows/files a deployment supplies; dag-tools and iagent ship the types and the
 #     validators, never a customer's shape."
-#   * ONE ROW PER OPTION, naming the groups whose members may decide that option. A role is a group:
-#     "who may approve" an option is the groups in its row (groups in groups.yaml with at least one
-#     member; no user is ever named here, membership lives in users.yaml).
-#   * A ROW has `option` (the `<option>` of `can_decide:<option>`; no whitespace, no `:`),
-#     `grant_to_groups`, `granted_by` (`seed` for a shipped row), `reason`, and `ratified_by` (`owner`:
-#     a seat, never an identity).
-#   * DENY BY DEFAULT. An explicit `grant_to_groups: []` with a reason says nobody may decide the option.
-#   * NO OPTION IS NAMED IN CODE OR IN THIS SEED. A deployment adds its options as rows.
+#   * RULING 1, verbatim (architect via Chris): "Two different acts, two rails: option_deciders.yaml says
+#     who may choose an option at a decide step; task_grants' approver audience says who may approve. A
+#     workflow row references both by name; neither derives from the other."
+#   * ONE ROW PER WORKFLOW AND OPTION, naming the groups whose members may CHOOSE that option at the
+#     workflow's decide step. They are groups in groups.yaml with at least one member, and no user is ever
+#     named here (membership lives in users.yaml).
+#   * Who may APPROVE is a different act on a different rail: the approver `audience` in task_grants.yaml.
+#   * A workflow row references both rails by name. Neither is derived from the other, and this validator
+#     does not read either from the other.
+#   * RULING 2, verbatim: "Key per workflow now, not later: `<workflow_id>.<option>`. A generic option
+#     (archive) gets one row per workflow that offers it. Nothing reads the file yet, so there is no cost."
+#   * A ROW has `workflow` (a workflow definition's `id`) and `option`, the two parts of
+#     `can_decide:<workflow_id>.<option>` (each: no whitespace, no `:`, no `.`), `grant_to_groups`,
+#     `granted_by` (`seed` for a shipped row), `reason`, and `ratified_by` (`owner`: a seat, never an
+#     identity).
+#   * DENY BY DEFAULT. An explicit `grant_to_groups: []` with a reason says nobody may choose that option in
+#     that workflow.
+#   * NO OPTION AND NO WORKFLOW IS NAMED IN CODE OR IN THIS SEED. A deployment adds its rows.
 #   * A `can_decide:` capability row in capability_grants.yaml is refused: this file is the one home.
+#   * RULING 3, verbatim: "Options live on the decide step of the workflow definition
+#     (`steps[id=...].options`, the SDK's WorkflowDefinition). The three hard-coded option lists retire when
+#     the runner reads the step -- item for 74, after the Socratic bar work."
+#   * MEASURED: the pinned SDK's steps (v0.9.13; the sibling repo's v0.9.15) have no `options` field yet;
+#     a `human_await` step has `chooses_from`, a context path the runner resolves at registration.
 #
-# No reader applies this file until Lane 1's obsolescence_resolution workflow row lands.
-# validate_policy.py checks it WHEN PRESENT (option_deciders_errors).
+# No reader applies this file, and its options are not checked for membership, until a workflow
+# definition's decide step carries them. validate_policy.py checks it WHEN PRESENT (option_deciders_errors).
 
 option_deciders: []

@@ -1,4 +1,4 @@
-"""The `can_decide:<option>` rail (`policy/option_deciders.yaml`) -- ADR-0065 (provisional, not yet
+"""The `can_decide:<workflow_id>.<option>` rail (`policy/option_deciders.yaml`) -- ADR-0065 (provisional, not yet
 written). Validator only.
 
 WHAT EACH GROUP DEFENDS
@@ -10,9 +10,9 @@ WHAT EACH GROUP DEFENDS
   one home    a `can_decide:<x>` row in capability_grants.yaml is refused, naming this rail's file, and
               that refusal is distinct from the `cleared_for:` one.
 
-Nothing reads the file yet (Lane 1's obsolescence_resolution workflow row will carry the options), so
-option membership and one-row-per-registered-option are not checked. The fixture options are neutral
-names, never a real option.
+Nothing reads the file yet (a workflow definition's decide step will carry the options, ruling 3), so
+option membership and one-row-per-offered-option are not checked. The fixture workflows and options are
+neutral ids, never a real one.
 
 Run:  uv run pytest tests/security/test_option_deciders_rail.py -q
 """
@@ -49,8 +49,8 @@ def _real_group() -> str:
     return sorted(g for g in _GROUPS if g in held)[0]
 
 
-def _od(option="option-a", **over):
-    row = {"option": option, "grant_to_groups": ["team-a"], "granted_by": "seed",
+def _od(workflow="wf_a", option="opt_x", **over):
+    row = {"workflow": workflow, "option": option, "grant_to_groups": ["team-a"], "granted_by": "seed",
            "reason": "because", "ratified_by": "owner"}
     row.update(over)
     return row
@@ -74,7 +74,28 @@ def _drop(row, key):
 # ---- the positive control and the seed ---------------------------------------------------------
 
 def test_a_two_row_rail_is_clean():
-    assert _ode(_rail(_od("option-a"), _od("option-b", grant_to_groups=["team-b"]))) == []
+    assert _ode(_rail(_od("wf_a", "opt_x"), _od("wf_a", "opt_y", grant_to_groups=["team-b"]))) == []
+
+
+def test_the_same_option_under_two_workflows_is_clean():
+    """Ruling 2's generic option: one row per workflow that offers it."""
+    assert _ode(_rail(_od("wf_a", "opt_x"), _od("wf_b", "opt_x"))) == []
+
+
+def test_the_same_workflow_and_option_twice_is_exactly_one_error():
+    errs = _ode(_rail(_od(), _od()))
+    assert len(errs) == 1 and "more than one row names this workflow and option" in errs[0], errs
+
+
+def test_an_invalid_key_is_not_also_reported_as_a_duplicate():
+    """A row whose workflow or option is invalid has its own error; it is skipped for the duplicate check."""
+    errs = _ode(_rail(_od("wf.a"), _od("wf.a")))
+    assert len(errs) == 2 and not any("more than one row" in e for e in errs), errs
+
+
+def test_the_error_prefix_is_the_key():
+    errs = _ode(_rail(_od(grant_to_groups="team-a")))
+    assert errs and all(e.startswith("option_deciders.yaml: wf_a.opt_x:") for e in errs), errs
 
 
 def test_an_empty_grant_to_groups_with_a_reason_is_valid():
@@ -111,10 +132,14 @@ def test_a_malformed_rail_is_one_error(raw, fragment):
 
 
 @pytest.mark.parametrize("rows,fragment", [
+    ([_drop(_od(), "workflow")], "`workflow` must be a non-empty string"),
     ([_drop(_od(), "option")], "`option` must be a non-empty string"),
-    ([_od("option:a")], "no whitespace and no `:`"),
-    ([_od("option a")], "no whitespace and no `:`"),
-    ([_od(), _od()], "more than one row names this option"),
+    ([_od("wf.a")], "`workflow` must have no whitespace, no `:` and no `.`"),
+    ([_od("wf:a")], "`workflow` must have no whitespace, no `:` and no `.`"),
+    ([_od("wf a")], "`workflow` must have no whitespace, no `:` and no `.`"),
+    ([_od(option="opt.x")], "`option` must have no whitespace, no `:` and no `.`"),
+    ([_od(option="opt:x")], "`option` must have no whitespace, no `:` and no `.`"),
+    ([_od(option="opt x")], "`option` must have no whitespace, no `:` and no `.`"),
     ([_drop(_od(), "grant_to_groups")], "`grant_to_groups` must be a list"),
     ([_od(grant_to_groups="team-a")], "`grant_to_groups` must be a list"),
     ([_od(grant_to_groups=["team-a", "team-a"])], "group 'team-a' is listed more than once"),
@@ -164,16 +189,16 @@ def test_the_rail_absent_is_clean(tmp_path):
 
 def test_validate_carries_a_rail_error(tmp_path):
     pol = _policy_copy(tmp_path)
-    _put(pol, "option_deciders.yaml", _rail(_od("option-a", grant_to_groups=[_real_group()], colour="red")))
+    _put(pol, "option_deciders.yaml", _rail(_od("wf_a", "opt_x", grant_to_groups=[_real_group()], colour="red")))
     errs = _errs(pol, *_FILES)
     assert any("unknown key 'colour'" in e for e in errs), errs
 
 
 def test_validate_passes_the_real_groups_and_users_to_the_rail(tmp_path):
     pol = _policy_copy(tmp_path)
-    _put(pol, "option_deciders.yaml", _rail(_od("option-a", grant_to_groups=[_real_group()])))
+    _put(pol, "option_deciders.yaml", _rail(_od("wf_a", "opt_x", grant_to_groups=[_real_group()])))
     assert _errs(pol, *_FILES) == []                       # the control: a real group is clean
-    _put(pol, "option_deciders.yaml", _rail(_od("option-a", grant_to_groups=["no-such-group"])))
+    _put(pol, "option_deciders.yaml", _rail(_od("wf_a", "opt_x", grant_to_groups=["no-such-group"])))
     assert any("NOT a group in groups.yaml" in e for e in _errs(pol, *_FILES))
 
 
@@ -191,7 +216,7 @@ def _caps_with(pol, key):
 def test_a_can_decide_capability_row_is_refused(tmp_path):
     pol = _policy_copy(tmp_path)
     assert [e for e in vp.validate(pol, pol) if "can_decide:" in e] == []   # the control
-    errs = _caps_with(pol, "can_decide:option-a")
+    errs = _caps_with(pol, "can_decide:wf_a.opt_x")
     assert any("an option's deciders are rows of policy/option_deciders.yaml, not a capability row" in e
                for e in errs), errs
 
@@ -199,7 +224,7 @@ def test_a_can_decide_capability_row_is_refused(tmp_path):
 def test_a_cleared_for_refusal_and_a_can_decide_refusal_are_distinct(tmp_path):
     pol = _policy_copy(tmp_path)
     cleared = _caps_with(pol, "cleared_for:level-a")
-    decide = _caps_with(pol, "can_decide:option-a")
+    decide = _caps_with(pol, "can_decide:wf_a.opt_x")
     assert any("policy/level_readers.yaml" in e for e in cleared), cleared
     assert not any("option_deciders.yaml" in e for e in cleared), cleared
     assert any("policy/option_deciders.yaml" in e for e in decide), decide

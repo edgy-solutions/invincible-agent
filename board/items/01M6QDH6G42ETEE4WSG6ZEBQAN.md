@@ -1,5 +1,5 @@
 ---
-title: Contract files carry a classification level validated against policy/classification/levels.yaml (ADR-0066 provisional)
+title: Contract files carry level per column and max_level per dataset, validated against policy/classification/levels.yaml (ADR-0066 provisional)
 feature: cross-cutting
 lane: invincible-agent/lane/gov
 repo: invincible-agent
@@ -7,12 +7,14 @@ status: open
 priority: later
 blocked_on: []
 pr: []
-ruling_ref: architect via Chris 11-06 (contracts as data; contract files get a `classification` field validated against levels.yaml)
+ruling_ref: architect via Chris 11-06 (contracts as data), and #276 fork 4 (`level:` per column, `max_level` on the dataset)
 updated: 2026-11-06
 ---
 
-The brief asks that contract files carry a `classification` field that `validate_policy` checks against `policy/classification/levels.yaml`. The check is the same one #268's rail makes.
+The ruling on fork 4, verbatim: "Contracts use `level:` (per column, plus `max_level` on the dataset), the levels.yaml vocabulary; `classification` stays the compartment word on workflow rows."
 
-Not started, because there is nothing to put the field on. No contract file exists as data on master (`db0d547e`), and ADR-0066, which defines one, is not written. Gov builds the check when the contract file format lands.
+So a contract file names a `level:` on each column and a `max_level` on the dataset. `validate_policy` checks both against `policy/classification/levels.yaml`, the same check #268's rail makes. Since levels are ordered, it will presumably also refuse a column whose level is more restrictive than the dataset's `max_level`. That check is gov's reading and should be confirmed when the work starts.
 
-Raised with the architect (fork 4 of the 11-06 packet): on a workflow row, `classification:` already means a compartment, not a level. All eight `policy/workflows/*.yaml` rows set it to `null` (`WorkflowDefinition.classification`). If a contract file and a workflow row ever share a key space, the field may need another name.
+Not started, because there is nothing to put the fields on. No contract file exists as data on master (`9bb11c97`), and ADR-0066, which would define one, is not written. Gov builds the check when the contract file format lands.
+
+On workflow rows, `classification:` keeps its meaning: a compartment. All `policy/workflows/*.yaml` rows set it to `null` (`WorkflowDefinition.classification`).
