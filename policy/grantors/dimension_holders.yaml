@@ -1,0 +1,11 @@
+# SEED -- deployment-neutral. A deployment names its own approvers in an overlay row
+# (GRANTOR_OVERLAY_DIRS), which replaces this row whole (ADR-0036).
+# object_scoped: a refusal here concerns a column the reader may not see, and such a column is absent
+# from the ticket, so naming its dimension value would disclose it.
+family: dimension_holders
+rail_file: policy/dimension_holders.yaml
+object_scoped: true
+who: the approvers of policy/dimension_holders.yaml in this deployment's policy repository
+how: >-
+  a reviewed change naming the group in the row of the dimension value it may hold (granted_by,
+  reason, ratified_by); no reader applies it until ADR-0064's step 5
