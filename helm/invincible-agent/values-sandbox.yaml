@@ -354,6 +354,15 @@ engineFinance:
   enabled: true
   image:
     tag: ""
+  # DECLARED MEASURES READ THE EV FIXTURE, as the caller (ADR-0052 §3, §5). Ruled permanent for
+  # 0.4.81 (architect, 2026-11-05), after the live leg on 0.4.80 passed with the flag set by hand.
+  # The URN and banner are contracts/ev_fixture.yaml's, and a test holds them equal to it.
+  # Set, a declared measure (fin_tcpi, fin_vac_cpi) needs a per-asset grant: a caller without one
+  # gets 403 `access_denied`, never the seed. An export naming one gets 409 `asset_export_unsupported`,
+  # which includes both sample CDRL A001 profiles. Built-in verbs still answer from the seed.
+  env:
+    FIN_DATASET_URN: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
+    FIN_DATASET_BANNER: "SYNTHETIC earned-value fixture, not a real program."
 
 engineCost:
   enabled: true
