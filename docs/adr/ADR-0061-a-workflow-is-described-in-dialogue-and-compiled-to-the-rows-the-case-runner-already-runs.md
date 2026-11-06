@@ -24,7 +24,8 @@ is drafted under a name the person used. Both are built (§10). Runs 62 to 64, o
 and approval with the contradiction caught, and run 62 reads `no`, as it should. The architect ruled the bar met on run 63
 and the ADR Proposed (2026-11-05). That reading is instrument v4's. The same ruling makes an outcome word that differs
 from the person's own word a slot fault. Run 63 has one: the person said "If it is escalated", and the draft kept
-`escalate`. So the check, once built, reads run 63 `no` on slot. It is next, and no run comes before it (§10).
+`escalate`. The check is built (instrument v5) and reads run 63 `no` on slot, so under v5 no stored run meets the
+bar. The grammar line on answer words is in, and no run has used it (§10).
 Runs 32 and 33 met the 10-30 gate in its words with stages unreachable (§10). Under that refusal they
 are `cannot_run`. A prototype of the elicitation loop and three synthetic fixtures are built and
 measured (§8). No route, no verb, no canvas.
@@ -2812,6 +2813,81 @@ The draft says `escalate`. The person said "They can acknowledge it, or escalate
 escalated it goes back to the impact review". The expected bundle says `escalated`. The ruling calls that a slot fault,
 so the check, once built, reads run 63 `no` on slot. The flip rests on v4's reading, as ruled. Runs 62 to 64 are re-read
 under the new check with no model time, and that reading is reported when it is built.
+
+#### 2026-11-05: instrument v5: an answer word is read in the person's own words
+
+The ruling made an outcome word in another form a slot fault, and instrument v5 reads it (`wrong_outcomes` in the
+measure script, in the slot bar). An answer is held in four places: a human_await's task kind (`accepts` and
+`reason_required`), a signal_await's `accepts`, and the outcome a chaining row routes on. Each is read against the
+expected bundle exactly as spelled, in any order. `approves` was already the approval bar's. The check takes the expected
+bundle as the person's words. That is a claim about each fixture, so the suite reads it: every answer word an expected
+bundle holds is one its person says, except `timed_out`, which the grammar names the runner's outcome.
+
+One fault reads in one bar. Rows pair as `dropped_routes` pairs them, by their word where both spell it alike and
+otherwise by where they go. A stage, step, table or row with no counterpart is the route bar's and is not read here. The
+first build read run 58's missing `escalated` row twice, as a dropped route and as a word, and v5 reads it once. No
+bundle holds an emit's `disposes`, so it is not read. The check has 14 mutants and the grammar line below has 5, all
+killed. One mutant (a missing table read as present) was equivalent once rows paired, so the guard it mutated was removed
+and the mutant now plants a row.
+
+The grammar line on answer words is in, beside the approval line:
+
+> An answer word is the user's word for the outcome once it has happened, the one they use for what follows it ("if it
+> is approved", "only approved counts"), not the verb for the act ("approve it"). Write that same word wherever the
+> answer is held: the task kind's accepts and reason_required, approves, a signal_await's accepts, and the chaining
+> table's when. timed_out is the runner's word, not the user's.
+
+No run has used it. No run comes before a ruling.
+
+**The stored runs under v5**, re-read with no model time. Route, the v4 slot reading and approval are derived again and
+asserted equal to what each run stored, so only the new check moves.
+
+| run | status | route | slot (v4) | answer words in another form | slot (v5) | approval | bar (v4) | bar (v5) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 41 | runnable | no | yes | 2 | no | no | no | no |
+| 42 | runnable | no | yes | 1 | no | no | no | no |
+| 43 | runnable | no | yes | 1 | no | no | no | no |
+| 44 | runnable | no | yes | 1 | no | no | no | no |
+| 45 | cannot_run | no | yes | 4 | no | no | no | no |
+| 46 | runnable | no | yes | 0 | yes | no | no | no |
+| 47 | runnable | yes | no | 2 | no | no | no | no |
+| 48 | runnable | yes | no | 2 | no | no | no | no |
+| 49 | runnable | yes | no | 2 | no | no | no | no |
+| 50 | runnable | yes | yes | 0 | yes | no | no | no |
+| 51 | runnable | no | yes | 1 | no | no | no | no |
+| 52 | cannot_run | no | yes | 1 | no | no | no | no |
+| 53 | cannot_run | no | yes | 0 | yes | no | no | no |
+| 54 | cannot_run | no | no | 1 | no | no | no | no |
+| 55 | cannot_run | no | yes | 0 | yes | no | no | no |
+| 56 | runnable | yes | yes | 0 | yes | no | no | no |
+| 57 | cannot_run | no | yes | 0 | yes | no | no | no |
+| 58 | cannot_run | no | no | 1 | no | no | no | no |
+| 59 | cannot_run | no | yes | 1 | no | yes | no | no |
+| 60 | cannot_run | no | yes | 1 | no | yes | no | no |
+| 61 | cannot_run | no | no | 1 | no | no | no | no |
+| 62 | cannot_run | no | yes | 1 | no | yes | no | no |
+| 63 | runnable | yes | yes | 2 | no | yes | yes | no |
+| 64 | runnable | no | no | 5 | no | no | no | no |
+
+Under v5 no stored run meets the bar. Run 63 reads `no` on slot, on the acknowledgement's `escalate` in `accepts`,
+`reason_required` and the route, where the person said "If it is escalated". v5 moves the bar for run 63 only. Every
+other run already read `no` under v4.
+
+**What the drafts wrote instead.** The forms fall in three groups.
+
+- **The verb for the act**, which the grammar line now names. Runs 41 and 64 wrote `approve` and `reject`, where the
+  person says "They can approve it or reject it" and then "When program approval is approved". Runs 63 and 64 wrote
+  `escalate`.
+- **A word the person says, of something else.** The record stage's answer is `filed` ("Once it is filed the notice is
+  dispositioned"). Runs 45, 47, 58, 59, 60, 62 and 64 wrote `recorded`, the person's word for reaching that stage ("the
+  disposition is recorded"). Runs 48 and 49 wrote `dispositioned`, the person's word for the notice at the end. Runs 42,
+  44, 51, 52 and 54 route the stage on `approved`, the outcome it sends. Run 43 wrote `disposition_sent`.
+- **Others.** Run 45 wrote `approved` for `acknowledged`. Run 61 holds no `reason_required` for escalating, where the
+  person says "Escalating needs a reason".
+
+**For the architect.** The second group is a question the check decides one way. The word is the person's, said of
+something else. v5 reads it as a fault, as the expected bundle does. If a word the person says anywhere should count, that
+is a ruling, and the check would then read the transcript rather than the bundle.
 
 ## Consequences
 
