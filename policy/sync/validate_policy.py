@@ -695,30 +695,24 @@ def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> 
     return out
 
 
-#: The central gateway's route ids a delegate row may name. The gateway owns them (dag-tools,
-#: `central_gateway.identity`). A misspelt route fails here, not as a delegate who never matches.
-#:
-#: A COPY, AND IT SAYS WHERE FROM (architect 11-04). The ruled form is dag-tools publishing the list
-#: as data (`gateway_routes.json`, item 01M6KF821P2C3KRQN86FF0N61N) and this importing it. Until then the list was
-#: read at the commit and image in GATEWAY_ROUTES_READ_AT, and
-#: tests/security/test_gateway_delegates_rail.py goes red when the chart pins another gateway image.
-#: Read at v0.11.0 (4924235), whose `central_gateway/gateway_routes.json` publishes the list: only
-#: `assets.authorize` has `delegate_rows_may_name: true`. `broker.resolve` and `gateway.register`
-#: are internal doors with their own caller lists; they never consult this table, so they are not
-#: here. The same answer was read from the constants at 4096a11. Importing the json needs the
-#: root's dag-tools pin to move to v0.11.0 or later, which is 01M6KF821P2C3KRQN86FF0N61N.
-GATEWAY_ROUTES = ("assets.authorize",)
-GATEWAY_ROUTES_READ_AT = {
-    "dag_tools": "492423577d4e2cb838ba4ed8dd783bbf883ceb60",
-    "central_gateway_digest": "sha256:f71a5b092486354f0d144c467953a6c1c749e1b133c44e133458cf71d6d8cf2c",
-}
+#: The central gateway's route ids a delegate row may name. The gateway owns them, and dag-tools
+#: publishes them as data (architect 11-04): `central_gateway/gateway_routes.json`, read through
+#: `dag_tools.central_gateway.routes`. A route is delegatable when its row says
+#: `delegate_rows_may_name: true`; nothing here restates one. The gateway's other routes are internal
+#: doors with their own caller lists, and they never consult this table. A misspelt route fails
+#: here, not as a delegate who never matches.
 
 #: The BFF's route ids a `door: bff` row may name (architect 11-04). The BFF owns them
 #: (`src/iagent/gateway.py`); tests/security/test_gateway_delegates_rail.py goes red when
-#: `gateway._REGISTER_DELEGATE_ROUTE` is not in this list.
+#: `gateway._REGISTER_DELEGATE_ROUTE` is not in this list. gateway_routes.json carries only the
+#: central gateway's routes, so it does not retire this copy (01M6KF8279KZ843KG5MMM0R3YH).
 BFF_DELEGATE_ROUTES = ("human_tasks.register",)
-#: A row's door is `row.get("door", "gateway")`; each door has its own route list.
-_GD_DOORS = {"gateway": GATEWAY_ROUTES, "bff": BFF_DELEGATE_ROUTES}
+
+
+def _gd_doors() -> dict[str, tuple[str, ...]]:
+    """A row's door is `row.get("door", "gateway")`; each door has its own route list."""
+    from dag_tools.central_gateway.routes import delegatable_route_ids
+    return {"gateway": tuple(delegatable_route_ids()), "bff": BFF_DELEGATE_ROUTES}
 
 _GD_ROW_FIELDS = ("service", "door", "routes", "granted_by", "reason", "ratified_by")
 #: A run with no person behind it (architect 11-04). It acts as itself, so it is never a delegate.
@@ -748,6 +742,7 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
         return [f"{pre}: `gateway_delegates` must be a list of rows (an empty list names no delegate)"]
 
     seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    doors = _gd_doors()
     out: list[str] = []
     seen: set[tuple[str, str]] = set()
     for i, row in enumerate(rows):
@@ -762,9 +757,9 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
 
         door = row.get("door", "gateway")
         door_key = door if isinstance(door, str) else repr(door)
-        door_known = isinstance(door, str) and door in _GD_DOORS
+        door_known = isinstance(door, str) and door in doors
         if not door_known:
-            out.append(f"{where}: unknown door {door!r} (known: {', '.join(_GD_DOORS)})")
+            out.append(f"{where}: unknown door {door!r} (known: {', '.join(doors)})")
 
         if not isinstance(service, str) or not service.strip():
             out.append(f"{where}: `service` must be a non-empty string")
@@ -787,7 +782,7 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
         elif not door_known:
             pass  # one error for the door, not one per route
         else:
-            known = _GD_DOORS[door]
+            known = doors[door]
             for j, r in enumerate(routes):
                 if r not in known:
                     out.append(f"{where}: unknown route {r!r} for door {door} (known: {', '.join(known)})")

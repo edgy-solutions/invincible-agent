@@ -929,13 +929,14 @@ wheels = [
 
 [[package]]
 name = "edgy-dag-tools"
-version = "0.1.1"
-source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.1.1#2118a114aeb1b6b919756fbdc08b693c23164a57" }
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "clickhouse-connect" },
     { name = "connectorx" },
     { name = "deltalake" },
     { name = "httpx" },
+    { name = "jinja2" },
     { name = "oracledb" },
     { name = "polars" },
     { name = "pyarrow" },
@@ -943,6 +944,11 @@ dependencies = [
     { name = "pyodbc" },
     { name = "pyyaml" },
     { name = "requests" },
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6a/10/6050842bb77c91256011cbdb41fedda133238b6c8f3f922b31cc1d60c454/edgy_dag_tools-0.11.0.tar.gz", hash = "sha256:9c1a09e3a9d6d4eb60a05bbfe3c854a342db0c55e9f9a12d2d3f69667ba3801a", size = 1231136, upload-time = "2026-11-05T02:04:23.35Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/29/7a/26970561586ec68077a01f7fdfc9fcca8268e6274160d75fe4ad7b065158/edgy_dag_tools-0.11.0-py3-none-any.whl", hash = "sha256:73e647fce848df939b619f00f3e4e928ee015b3690295e85a3eb9a66add1cbe2", size = 437904, upload-time = "2026-11-05T02:04:21.001Z" },
 ]
 
 [[package]]
@@ -1427,7 +1433,7 @@ requires-dist = [
     { name = "dagster", specifier = ">=1.12.20" },
     { name = "dagster-postgres" },
     { name = "duckdb", marker = "extra == 'agent-fleet'", specifier = "==1.5.2" },
-    { name = "edgy-dag-tools", git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.1.1" },
+    { name = "edgy-dag-tools", specifier = "==0.11.0" },
     { name = "fastapi" },
     { name = "fastapi", marker = "extra == 'agent-fleet'" },
     { name = "h2", marker = "extra == 'agent-fleet'" },
