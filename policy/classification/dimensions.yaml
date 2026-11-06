@@ -1,0 +1,45 @@
+# CLASSIFICATION DIMENSIONS -- the registry of dimensions the `cleared_for:<level>` and
+# `holds:<dimension>:<value>` rails are checked against.
+#
+#   The ruling (gov, Chris, 2026-11-06), verbatim:
+#
+#     gov: policy/classification/levels.yaml → dimensions.yaml
+#     (name, type, vocabulary, owner); `cleared_for:<level>` stays
+#     for the hierarchical dimension; `holds:<dimension>:<value>`
+#     rail for set dimensions; validator refuses a value outside
+#     the vocabulary. Still validator-only. #268's seal updates.
+#
+#   This file was the levels registry (ADR-0064 item B, Proposed, #266); it is now
+#   dimensions.yaml, per the 2026-11-06 ruling above.
+#
+#   The standing rule: "kinds, workflows, options, levels, ontology slices, mappings and contracts are
+#   rows/files a deployment supplies; dag-tools and iagent ship the types and the validators, never a
+#   customer's shape."
+#
+#   * A ROW has `name` (the `<dimension>` of `holds:<dimension>:<value>`; no whitespace, no `:`;
+#     unique), `type` (`hierarchical` or `set`), `vocabulary` (a non-empty list of values, each with no
+#     whitespace and no `:`, none twice), and `owner` (a seat such as `owner`, never an identity in
+#     users.yaml).
+#   * ORDER IS LIST POSITION, for a `hierarchical` dimension: the first value is the least restrictive,
+#     the last the most restrictive. ADR-0064: an unlabelled source is the most restrictive, so it is
+#     the last value. For a `set` dimension, order means nothing.
+#   * AT MOST ONE HIERARCHICAL DIMENSION. gov's reading of "`cleared_for:<level>` stays for the
+#     hierarchical dimension": `cleared_for:<level>` names no dimension, so there is one.
+#   * A hierarchical dimension's values are cleared through policy/level_readers.yaml
+#     (`cleared_for:<level>`); a set dimension's values are held through policy/dimension_holders.yaml
+#     (`holds:<dimension>:<value>`).
+#   * NO DIMENSION OR VALUE IS NAMED IN CODE. A deployment adds a dimension as a row.
+#   * IT SHIPS WITH NO ROWS. No dimension is ruled yet, and the first row is the owner's to ratify.
+#   * ONE FILE, OWNED BY POLICY. Ruling (a), verbatim (Chris, 2026-11-05): "one levels file, owned by
+#     policy (invincible-agent/policy/classification/levels.yaml); dag-tools never ships its own -- it
+#     reads the deployment's copy (ConfigMap from the chart), so code reads what the server serves."
+#     The chart's ConfigMap that serves this file to dag-tools is not built yet (a separate board item;
+#     it changes the chart).
+#   * A GRANT AT A LEVEL IS A CEILING. Ruling (b), verbatim: "Levels are ordered; a grant at a level is
+#     a ceiling and implies every less restrictive one." It applies to the hierarchical dimension: a
+#     group cleared for a value is cleared for every earlier value too (see policy/level_readers.yaml).
+#
+# No code reads this file yet (dag-tools step 5). validate_policy.py checks it WHEN PRESENT
+# (classification_dimensions_errors).
+
+dimensions: []
