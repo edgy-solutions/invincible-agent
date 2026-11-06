@@ -1,9 +1,12 @@
 # ADR-0064 — Classification propagates through derivation
 
 **Status:** Proposed. This is design only: there is no code and no roll. It extends ADR-0052.
+Amended 2026-11-06 to align with OpenDDIL ADR-0055 (see "Amendment 2026-11-06" at the end).
 **Date:** 2026-11-05
-**Deciders:** architect; governance board for the labels and the downgrade rules
+**Deciders:** architect; governance board for the dimensions, the labels and the standing downgrade
+rules
 **Related:**
+  - openddil: ADR-0055 — this ADR's classification model is aligned with it (amendment 2026-11-06).
   - iagent: [ADR-0052](ADR-0052-customer-data-enters-through-dlt-to-datahub-never-into-an-engine.md) —
     customer data enters through `dlt` into the catalog. This ADR extends it and does not supersede
     it (see "Relation to ADR-0052").
@@ -34,6 +37,9 @@ Three sentences are normative. They are quoted in full.
 1. **Classification is per column and propagates along column lineage: an output column's label is
    the maximum of the source columns it was computed from. Undeclared column lineage falls back to
    the table-level maximum. An unlabelled source is the most restrictive. Deny by default.**
+   Since the 2026-11-06 amendment a label has several dimensions, and "the maximum" is taken one
+   dimension at a time, as the most restrictive combination for that dimension's type (see
+   "Classification is a label of declared dimensions").
 2. **Row scope is a cell: a label carried as a predicate on a column, enforced by the broker as a
    filter at ticket time, never as a classification of the whole dataset.**
 3. **A source is an asset with a declared access mode: `brokered` (the service identity reads, and
@@ -47,21 +53,91 @@ Beyond the three sentences:
   attribution is a defect.
 - **Downgrades are recorded decisions.** A downgrade is a record of three things: the new level,
   the reason, and the steward who decided it. A downgrade without a reason is refused.
-- **One downgrade is automatic.** An aggregation that removes every identifying column is
-  downgraded automatically, with a fixed reason. Every other downgrade is a steward's decision.
-- **The standing rule.** Levels, sources, access modes and downgrade rules are registry rows.
-  Nothing in dag-tools or iagent names a database, schema, table, column, program or level in code.
+- **No downgrade is automatic.** A standing downgrade is a declared rule with a named owner. Each
+  time it applies, it applies as that owner's decision, and each application is recorded with the
+  rule, its owner, the new level and the reason. The de-identifying aggregation (an aggregation that
+  removes every identifying column) is the first such rule. Every other downgrade is a steward's
+  decision.
+- **The standing rule.** Dimensions, their vocabularies, sources, access modes and standing
+  downgrade rules are registry rows. Nothing in dag-tools or iagent names a database, schema, table,
+  column, program, dimension or level in code.
+
+## Classification is a label of declared dimensions
+
+*Added by the 2026-11-06 amendment.*
+
+A label is a value for each of a set of declared dimensions. A dimension is a registry row with a
+name, a type, a vocabulary and an owner. There are four types:
+
+| type | the label carries | a reader may read when | the derived label takes |
+| --- | --- | --- | --- |
+| hierarchical | one value from an ordered vocabulary | the reader is cleared at that value or above | the most restrictive value of its sources |
+| permissive set | a set of values | the reader holds at least one of them | the intersection of its sources' sets |
+| restrictive set | a set of values | the reader holds every one of them | the union of its sources' sets |
+| exclusionary | a set of values | the reader holds none of them | the union of its sources' sets |
+
+**Access is the conjunction.** A reader may read a column only when every dimension of its label
+admits them. One dimension that refuses is a refusal.
+
+**The first dimensions:**
+- `level`, hierarchical: the ordered levels this ADR began with.
+- `program`, a restrictive set: the program cell of decision 2. It stays a row filter at ticket
+  time, and decision 2 is unchanged (architect, 2026-11-06).
+- `data_rights_holder`, a restrictive set.
+- `nation`, a permissive set, which arrives from OpenDDIL.
+
+The registry takes all four types. No exclusionary dimension is declared yet. Adding one, or adding
+a value to a vocabulary, is a new row, not a code change.
+
+**The rails.** The hierarchical dimension keeps `cleared_for:<level>`. A set dimension uses
+`holds:<dimension>:<value>`. The validator refuses a label value outside its dimension's
+vocabulary.
+
+**Composition per type (architect, 2026-11-06).** The "derived label takes" column is decision 1's
+"maximum" read one type at a time: the most restrictive combination of the sources' values.
+- It is openddil ADR-0055 §3b's high-water table, unchanged: hierarchical takes the maximum,
+  permissive the intersection of effective audiences, restrictive the union, and exclusionary the
+  union.
+- An unlabelled input gives an unlabelled result (§3b).
+- openddil ADR-0055 §3a's rule is adopted too: a composable rollup splits by audience class. Our
+  cell filter at ticket time already gives a reader exactly their classes' rows, so a rollup
+  computed per cell is the same rule.
+
+**An empty set.** For a permissive set it releases to nobody on that dimension. For a restrictive
+or exclusionary set it means that dimension adds no restriction. A hierarchical dimension always
+has a value. This is openddil ADR-0055 §1's table.
+
+## A default is not a declaration
+
+*Added by the 2026-11-06 amendment. The wording is adopted from openddil ADR-0055 §1a.*
+
+> "A default is a label nobody stated about this record. It is not a declaration, and it labels
+> nothing." (openddil ADR-0055 §1a)
+
+§1a is a ruling recommended for Chris's signature and not yet signed. This ADR adopts the wording;
+the signature belongs to openddil's record.
+
+Here is how it applies in this ADR:
+- **"An unlabelled source is the most restrictive" does not mean the source is stamped at the top
+  level.** No default level is written for it, and nothing is emitted to the catalog for it as a
+  label. It is closed to everyone until someone declares its label, as "Who decides what" already
+  says.
+- **A label is a declaration.** It names its owner and its origin (`board` or `catalog_tag`). A
+  source row without an owner is a default, and it labels nothing.
+- **A standing downgrade rule is a declaration too.** A rule with no named owner applies to nothing.
 
 ## Who decides what
 
 - **Source labels** are set by the board, or by the catalog. Each label records its origin: `board`
   or `catalog_tag`. When the catalog's own tags exist, they take precedence over the board's rows
   without any code change.
-- **Downgrades** are decided by stewards, one recorded decision at a time. The automatic downgrade is
-  the only exception, and its reason is fixed.
-- **The read rights** per level are a rail the owner ratifies: for each level, which groups may read
-  it. The levels themselves are a registry the rail checks against. The governance lane owns both
-  files. No code reads them until build step 5 serves a dataset's level.
+- **Downgrades** are decided by stewards, one recorded decision at a time. A standing downgrade rule
+  is declared once, with a named owner. Each application is that owner's decision and is recorded
+  on its own. Nothing is downgraded without an owner.
+- **The read rights** are rails the owner ratifies. For each level, the rail says which groups are
+  cleared for it. For each value of a set dimension, it says which groups hold that value. The
+  dimensions themselves are a registry that the rails check against. The governance lane owns these
+  files. No code reads them until build step 5 serves a dataset's label.
 
 What a reader of a product can see follows from this. A reader sees the columns whose labels the
 reader's groups may read, and within those columns only the cells they hold. A column the reader may
@@ -89,8 +165,9 @@ and later. The full text of each step is in the appendix.
    explains each, and which tables no asset explains. It comes first because it measures the problem.
 2. **Attribute every read.** The warehouse resource tags each query with who asked, which asset, and
    which run. A query without a tag fails its test.
-3. **Classify the sources.** A registry of ordered levels, and a registry of dataset-to-column-to-level
-   rows with an owner and an origin. Anything unlisted is the most restrictive.
+3. **Classify the sources.** A registry of declared dimensions (since the 2026-11-06 amendment; the
+   ordered levels are the first, hierarchical, one), and dataset-to-column-to-label rows with an
+   owner and an origin. Anything unlisted is the most restrictive.
 4. **Declare source assets and propagate.** Each source becomes an asset with a declared access mode.
    On materialisation each output column takes the maximum of its sources, and labels and downgrade
    decisions are emitted to the catalog. An asset whose inputs carry no label fails.
@@ -106,10 +183,13 @@ it is in. It does not supersede ADR-0052, and nothing in ADR-0052 changes.
 
 ## Open questions
 
-1. **Which URN is the asset of record for a product?** Either the catalog's dataset URN (the
-   `dagster` platform object that `datahub_topaz_sync` creates) or the physical storage URN. This is
-   open. Step 4a's "carrying the catalog's dataset URN" answers it for sources, not for derived
-   products.
+No question is open. The one that was:
+
+1. **Which URN is the asset of record for a product?** *Closed 2026-11-06.* The choice was the
+   catalog's dataset URN (the `dagster` platform object that `datahub_topaz_sync` creates) or the
+   physical storage URN. Ruled 2026-11-05: the asset of record is the physical platform's URN, and
+   the catalog sync registers under it. Step 4a's "carrying the catalog's dataset URN", in the
+   verbatim rollout below, is read through this ruling.
 
 ---
 
@@ -121,18 +201,27 @@ decisions.
 ### Files and seals named by the steps
 
 - `dagtools audit reads` — step 1's command; its output is a file, and test fixtures are synthetic.
-- `classification/levels.yaml` — ordered levels (step 3).
+- `classification/dimensions.yaml` — the declared dimensions, each with a name, a type, a vocabulary
+  and an owner (step 3). It replaces `classification/levels.yaml` since the 2026-11-06 amendment.
+  The ordered levels are the vocabulary of the hierarchical dimension. dag-tools mounts it at the
+  path the levels file used.
 - `classification/sources.yaml` — dataset, column, level, owner, origin of the label (`board` or
   `catalog_tag`) (step 3). Read this through the addendum at the end: these rows are instances of
   the source component, not a second file.
 - `warehouse_source` — the generic asset kind of step 4a. Its `access` field is `brokered` or
-  `passthrough`.
+  `passthrough`. Since the 2026-11-06 amendment its column labels are `{dimension: values}` maps, and
+  the hierarchical dimension is required in each.
 - `TableColumnLineage` metadata — required on Python assets that read a labelled source (step 4b).
-- `can_read:<level>` — the PDP answer step 5 reads. The rail file has one row per level mapped to
-  groups, `ratified_by: owner`.
+- `cleared_for:<level>` — the PDP answer step 5 reads for the hierarchical dimension. Chris ruled the
+  name on 2026-11-05 (ruling (c), quoted in `policy/level_readers.yaml`): "Relation:
+  `cleared_for:<level>` -- `can_read` stays what it is." The rail file has one row per level mapped
+  to groups, `ratified_by: owner`. The verbatim source text below still says `can_read:<level>`.
+- `holds:<dimension>:<value>` — the rail for set dimensions (amendment 2026-11-06).
 - `assets.authorize` — the broker call step 5 changes.
 - Seals: a query issued through the resource without a tag fails (step 2); an asset whose inputs carry
-  no label fails, and a declared downgrade without a reason fails (step 4d).
+  no label fails, and a declared downgrade without a reason fails (step 4d). Since the 2026-11-06
+  amendment, three more fail: a standing downgrade rule with no named owner, an application of one
+  that is not recorded, and a label value outside its dimension's vocabulary.
 
 ### Source text, block A (verbatim)
 
@@ -245,7 +334,9 @@ carries the rows, and a row arrives and leaves as data, which is the standing ru
 than relaxed. A parallel file would have been a second place for the same fact to be wrong in. The
 ordered levels stay a file of their own, because an ordered vocabulary is not an instance of
 anything, and because "anything unlisted is the most restrictive" needs one ordering to be most
-restrictive against.
+restrictive against. Since the 2026-11-06 amendment, that file is `classification/dimensions.yaml`,
+and the ordering is the `level` dimension's vocabulary. The row's URN is the asset of record's: the
+physical platform's (ruled 2026-11-05).
 
 **The compat floor holds, and the one thing that would move it is scheduling in YAML.** The Dagster
 the deployment runs was measured against step 1's shipped component rather than assumed about: the
@@ -261,3 +352,32 @@ measured on another component. If step 4 wants a schedule, the schedule comes fr
 Step 1 is built and merged (dag-tools `#17`), which is what let both answers be measurements rather
 than positions. Its report — the reads no asset explains — is also the number step 2 exists to drive
 to zero.
+
+---
+
+## Amendment 2026-11-06 — aligned to OpenDDIL ADR-0055
+
+The architect directed three changes, so that this ADR and OpenDDIL ADR-0055 describe one model,
+and closed open question 1 in the same amendment.
+This ADR is still Proposed. The changes are made in place above, and this section records them.
+
+1. **No automatic downgrade.** The bullet "One downgrade is automatic" is replaced by "No downgrade
+   is automatic". A standing downgrade is a declared rule with a named owner, applied as that
+   owner's decision and recorded per application. The de-identifying aggregation is the first such
+   rule.
+2. **Classification is a label of declared dimensions, of four types:** hierarchical, permissive
+   set, restrictive set and exclusionary. Access is the conjunction. Our levels are the first
+   hierarchical dimension, and the program cell is the first restrictive one. The new section
+   "Classification is a label of declared dimensions" carries this. The architect ruled two
+   readings on 2026-11-06:
+   - composition per type is openddil ADR-0055 §3b, and its §3a is adopted;
+   - the program dimension stays a row filter at ticket time.
+3. **A default is not a declaration.** openddil ADR-0055 §1a's wording is adopted and cited. It has
+   a section of its own, "A default is not a declaration". The three ways it applies here are Lane
+   1's reading of the wording.
+4. **Open question 1 is closed.** The asset of record is the physical platform's URN (ruled
+   2026-11-05). See "Open questions".
+
+Not changed: the verbatim source text in the appendix (blocks A, the standing rule, the rollout).
+It records what was directed on 2026-11-05. Where it differs from the sections above, the sections
+above hold.
