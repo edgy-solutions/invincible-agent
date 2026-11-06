@@ -21,6 +21,8 @@ from agent_fleet.finance_agent import asset_inputs, entities
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / "contracts" / "ev_fixture.yaml"
 DATASET_OVERLAYS = ROOT / "tests" / "finance" / "overlays"
+SANDBOX_VALUES = ROOT / "helm" / "invincible-agent" / "values-sandbox.yaml"
+LIVE_CASE = ROOT / "tests" / "sandbox_e2e" / "variance_set_live.yaml"
 RAISED = re.compile(r"""ContractViolation\(\s*["']([a-z_]+)["']""")
 
 
@@ -84,3 +86,12 @@ def test_the_dataset_overlays_name_this_contracts_urn_and_banner(contract):
         value = ds["value"]
         named = value["minus"] if isinstance(value, dict) else [value]
         assert set(ds["levels"]) | set(named) <= set(cols), ds
+
+
+def test_the_sandbox_flag_names_this_contracts_asset(contract):
+    # The flag is the only place the running engine learns the URN; a typo there reads nothing.
+    env = yaml.safe_load(SANDBOX_VALUES.read_text(encoding="utf-8"))["engineFinance"]["env"]
+    assert (env["FIN_DATASET_URN"], env["FIN_DATASET_BANNER"]) == (contract["dataset"]["urn"], contract["dataset"]["banner"])
+    live = yaml.safe_load(LIVE_CASE.read_text(encoding="utf-8"))
+    assert live["asset"] == contract["dataset"]["urn"]
+    assert live["banner_must_say"].lower() in env["FIN_DATASET_BANNER"].lower()

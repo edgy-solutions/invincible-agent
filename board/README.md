@@ -23,3 +23,10 @@ Exactly these ten keys, `key: value`, one per line.
 
 - `python scripts/render_board.py`: validate and write `BOARD.md` (exit 2 lists every error).
 - `python scripts/render_board.py --check`: exit 1 with `DRIFT` if `BOARD.md` is stale (CI runs this).
+
+## Process (architect, 2026-11-06)
+
+- **Rulings close items.** A lane that receives an architect ruling answering a board item closes that item, with the ruling text, in its next PR. That is the same commit as the work, or a board-only PR, which merges on green.
+- **The sweep flags a ruled item that is still open.** Lane 1's sweep flags "ruled in a packet, item still open" and names the lane.
+- **A partial ruling** (Lane 1's convention, from the first sweep): the ruled part goes in the item's body and `ruling_ref`, and the item stays open.
+- **Who merges** is recorded in `PRIORITIES.md`.

@@ -1,5 +1,29 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.81 — not yet cut
+
+**Sandbox: engine-fin reads its declared measures from the EV fixture (`FIN_DATASET_URN` is on)**
+
+- **The 0.4.80 line "Don't set it yet" is withdrawn** (architect, 2026-11-05). It was written before
+  the per-asset grant path existed. `engineFinance.env` in `values-sandbox.yaml` now sets
+  `FIN_DATASET_URN` and `FIN_DATASET_BANNER` to `contracts/ev_fixture.yaml`'s URN and banner, and
+  `tests/finance/test_the_ev_contract_agrees_with_the_reader.py` holds them equal.
+- **What it was measured on.** The live leg ran on 0.4.80 (rev 227) with the flag set by hand on
+  `deploy/iagent-engine-fin` and reverted afterwards. `tests/sandbox_e2e/test_variance_set_reads_the_ev_fixture.py`
+  passed 3 of 3: `fin_tcpi` and `fin_vac_cpi` over two windows, the allowed subject read the asset
+  (`data_source.kind: asset`, 12 `asset read` lines), and the denied subject got 403 `access_denied`
+  naming the asset.
+- **What changes for a sandbox caller:**
+  - A declared measure needs a grant on the asset. Without one, the answer is 403 `access_denied`,
+    never the seed.
+  - **An export naming a declared measure is refused with 409 `asset_export_unsupported`.** That
+    covers both sample profiles, `cdrl_a001_ev_summary` and `cdrl_a001_ev_summary_json`, which name
+    `fin_tcpi`. Whether an export may carry asset figures is still an open ruling.
+  - Built-in verbs keep answering from the seed. With the flag on, a subject without the asset grant
+    still gets the same program's built-in figures from the seed.
+- **The roll:** engine-fin's pod template gains two `env` entries, so engine-fin restarts. Nothing
+  else in this entry restarts a pod.
+
 ## 0.4.80 — not yet cut
 
 Entries merged after the 0.4.79 cut (`758811d7`). Forks 1 and 3 of the delegate ruling (#251), which
