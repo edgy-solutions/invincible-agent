@@ -3,10 +3,10 @@ title: A CDRL sourcing a dataset-backed measure exports through the resolver, gr
 feature: finance
 lane: invincible-agent/lane/fin
 repo: invincible-agent
-status: claimed
+status: review
 priority: now
 blocked_on: []
-pr: []
+pr: [invincible-agent#280]
 ruling_ref: architect via Chris 11-05: CDRL export on a dataset-backed measure is a defect, not a consequence; 0.4.81 does not roll until export works on fin_tcpi with the flag on
 updated: 2026-11-05
 ---
