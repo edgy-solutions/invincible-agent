@@ -375,7 +375,7 @@ Where it is: 4 blocked · 7 review · 1 claimed · 32 open · 31 done; next: Rul
 - [Relay-form detector for the refusal ratchet (fork 12)](items/01M6A9QDN19S78PQVCA67NZ9RC.md) — invincible-agent/lane/gov · later · updated 2026-10-31 ⚑ stale: updated 2026-10-31
 - [Critical-delete a4: seed safety_critical, then gate, then delete the lists](items/01M6A9QDN1B9G28188EMXFPHK9.md) — invincible-agent/lane/saf · later · updated 2026-10-26 ⚑ stale: updated 2026-10-26
 - [Gateway route for the Engine S is_safety_critical check (ADR-0060)](items/01M6A9QDN1P8WX74K5QF71838K.md) — invincible-agent/lane/saf · later · updated 2026-11-06 ⚑ stale: updated 2026-10-31
-- [Contract files carry level per column and max_level per dataset, validated against policy/classification/levels.yaml (ADR-0066 provisional)](items/01M6QDH6G42ETEE4WSG6ZEBQAN.md) — invincible-agent/lane/gov · later · updated 2026-11-06
+- [Contract files carry level per column and max_level per dataset, validated against the hierarchical classification dimension (ADR-0066 provisional)](items/01M6QDH6G42ETEE4WSG6ZEBQAN.md) — invincible-agent/lane/gov · later · updated 2026-11-06
 - [Ratify or rename cortex's document review shape](items/01M6QGKGA9ZKYCF6CFEKP5VV9R.md) — invincible-agent/seat/architect · later · updated 2026-11-06
 - [Promotion's SUBJECT_TO edits and deletes bypass the SDK writer](items/01M6QGKGGD7567NGRNWVPETTVC.md) — invincible-agent/lane/74 · later · updated 2026-11-06
 - [ca has no row in .githooks/lanes](items/01M6QGKH0QZ2T4NGSXMPAD7KV1.md) — invincible-agent/seat/architect · later · updated 2026-11-06
