@@ -146,7 +146,7 @@ Where it is: 4 blocked · 3 review · 1 claimed · 8 open · 9 done; next: Move 
 - [Master red: the pick seal finds the wrong slot_resolution emission](items/01M6FRZ2ZYHCDJPMZ39T8KR5WQ.md) — invincible-agent/lane/01 · next · updated 2026-11-03
 - [Master red: the no-leaf relaunch tests don't configure can_drop's directory](items/01M6FRZ34HZN7BQE9RWBGAZQT6.md) — invincible-agent/lane/01 · next · updated 2026-11-03
 - [Master red: provenance has no steward-entered rung, and the ruled behaviour is unbuilt](items/01M6FRZ4R247BDSPRATDP7BE0T.md) — invincible-agent/lane/01 · next · updated 2026-11-03
-- [Rule sampled promote, server-side draft and the per-cell bbox](items/01M6A9QDN1YV17HP29N0A9PYGV.md) — invincible-agent/seat/architect · later · updated 2026-10-29 ⚑ stale: updated 2026-10-29
+- [Rule sampled promote, server-side draft and the per-cell bbox](items/01M6A9QDN1YV17HP29N0A9PYGV.md) — invincible-agent/seat/architect · later · updated 2026-11-06 ⚑ stale: updated 2026-10-29
 
 ## 2. Finance
 
@@ -200,7 +200,7 @@ Where it is: 6 blocked · 0 review · 4 claimed · 15 open · 12 done; next: Rul
 
 ### open
 
-- [Rule the MCP server's open questions](items/01M6A9QDN17SDXEZ4N6DS5G9N9.md) — invincible-agent/seat/architect · now · updated 2026-10-31 ⚑ stale: updated 2026-10-31
+- [Rule the MCP server's open questions](items/01M6A9QDN17SDXEZ4N6DS5G9N9.md) — invincible-agent/seat/architect · now · updated 2026-11-06 ⚑ stale: updated 2026-10-31
 - [SDK carries on TaskKind and card-only review-shape rows](items/01M6A9QDN18JX47S1P2N8D3ED7.md) — iagent-mesh-sdk/lane/ca-0.9.13 · now · updated 2026-10-31 ⚑ stale: updated 2026-10-31
 - [Restate the /orchestrate audit seal under seal 1](items/01M6A9QDN1Q15XZS1VP0PJ729F.md) — invincible-agent/lane/saf · now · updated 2026-10-31 ⚑ stale: updated 2026-10-31
 - [SDK EvidenceRef schema: no null note, bbox exactly 4 numbers 0..1](items/01M6A9QDN1Q77R6CJ3A2ESHED1.md) — iagent-mesh-sdk/lane/ca-0.9.13 · now · updated 2026-10-31 ⚑ stale: updated 2026-10-31
@@ -281,7 +281,7 @@ Where it is: 9 blocked · 3 review · 0 claimed · 5 open · 5 done; next: Rule 
 
 ### open
 
-- [Rule the training questions from wb and tr](items/01M6A9QDN16Q03BPSJAPWDSAEP.md) — invincible-agent/seat/architect · now · updated 2026-10-31 ⚑ stale: updated 2026-10-31
+- [Rule the training questions from wb and tr](items/01M6A9QDN16Q03BPSJAPWDSAEP.md) — invincible-agent/seat/architect · now · updated 2026-11-06 ⚑ stale: updated 2026-10-31
 - [Neo4j Concept-merge migration: sandbox dry run as pod Job](items/01M6A9QDN19V6S0KZZF76ZJ9V3.md) — doc-tools/lane/7f · next · PR doc-tools#167 · updated 2026-10-30 ⚑ PR merged: mark done; stale: updated 2026-10-30
 - [A workbench bucket and a template-prefix grant, so wb can set the deck template store](items/01M6FZQA9BAAXPHQV9BRMHSCDV.md) — invincible-agent/lane/01 · next · updated 2026-11-04
 - [Fold training namespace, MinIO user and Secret into the chart (ADR-0060)](items/01M6A9QDN1B82E4D8Y6MSAYTFE.md) — invincible-agent/lane/01 · later · updated 2026-10-24 ⚑ stale: updated 2026-10-24
@@ -304,7 +304,7 @@ Where it is: 4 blocked · 0 review · 1 claimed · 3 open · 8 done; next: Rule 
 
 ### open
 
-- [Rule ADR-0061's direction after lane/74's runnability report](items/01M6A9QDN1DE3AN1MSJ33T1AJW.md) — invincible-agent/seat/architect · now · updated 2026-10-31 ⚑ stale: updated 2026-10-31
+- [Rule ADR-0061's direction after lane/74's runnability report](items/01M6A9QDN1DE3AN1MSJ33T1AJW.md) — invincible-agent/seat/architect · now · updated 2026-11-06 ⚑ stale: updated 2026-10-31
 - [Master red: the input-declared route doesn't upper-case its scope; one census line is stale](items/01M6FRZ2D6J9BARC850KJDQEKS.md) — invincible-agent/lane/74 · next · updated 2026-11-03
 - [Master red: two socratic sites name a kind with no audit disposition](items/01M6FRZ2PKYJKHX9FW4W18T24A.md) — invincible-agent/lane/74 · next · updated 2026-11-03
 
