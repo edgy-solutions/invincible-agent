@@ -3,10 +3,10 @@ title: The can_decide:<option> rail for obsolescence resolution, validator only 
 feature: cross-cutting
 lane: invincible-agent/lane/gov
 repo: invincible-agent
-status: open
+status: review
 priority: next
 blocked_on: []
-pr: []
+pr: [invincible-agent#276]
 ruling_ref: architect via Chris 11-06 (obsolescence as a process; gov's rails, validator only until Lane 1's workflow row lands)
 updated: 2026-11-06
 ---
