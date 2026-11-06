@@ -1,0 +1,86 @@
+"""contracts/ev_fixture.yaml says what the governed read refuses on; the reader still holds its own copy.
+
+Until `asset_inputs` reads the contract instead of its constants, there are two homes for one
+claim, and the contract is the one that goes on passing after the reader changes. So every fact
+the contract states about the reader is read FROM the reader here: its column sets, the rule ids
+it raises (found by the form `ContractViolation("<id>"` in its source, so a new refusal site is a
+red until the contract names it), its period vocabulary and its row cap.
+
+Run: uv run --no-sync python -I -m pytest -c pyproject.toml --rootdir=. -p no:cacheprovider tests/finance/test_the_ev_contract_agrees_with_the_reader.py
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+import yaml
+
+from agent_fleet.finance_agent import asset_inputs, entities
+
+ROOT = Path(__file__).resolve().parents[2]
+CONTRACT = ROOT / "contracts" / "ev_fixture.yaml"
+DATASET_OVERLAYS = ROOT / "tests" / "finance" / "overlays"
+RAISED = re.compile(r"""ContractViolation\(\s*["']([a-z_]+)["']""")
+
+
+@pytest.fixture(scope="module")
+def contract():
+    return yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
+
+
+def _columns(c):
+    return {col["name"]: col for col in c["columns"]}
+
+
+def test_the_required_columns_are_the_readers_fixed_set(contract):
+    cols = _columns(contract)
+    assert {n for n, col in cols.items() if col["required"]} == set(asset_inputs.COLUMNS)
+    for n in asset_inputs.STRING_COLUMNS:
+        assert cols[n]["type"] == "string", n
+    for n in asset_inputs.NUMERIC_COLUMNS:
+        assert cols[n]["type"] in ("numeric", "integer"), n
+
+
+def test_a_required_column_is_already_produced(contract):
+    # A required column the fixture does not yet carry would refuse every read.
+    unproduced = [n for n, col in _columns(contract).items() if col["required"] and not col["produced_since"]]
+    assert not unproduced
+
+
+def test_every_rule_the_reader_raises_is_named_and_none_is_invented(contract):
+    raised = set(RAISED.findall(Path(asset_inputs.__file__).read_text(encoding="utf-8")))
+    assert set(contract["rules"]) == raised
+
+
+def test_the_rule_detector_sees_the_form():
+    # Positive control: a planted call in either quoting, across a line break, is found.
+    src = 'raise ContractViolation(\n    "planted_rule", "m")\nraise ContractViolation(\'other\', "m")'
+    assert RAISED.findall(src) == ["planted_rule", "other"]
+
+
+def test_the_period_vocabulary_and_row_cap_are_the_readers(contract):
+    assert contract["period"]["vocabulary"] == "FISCAL_PERIODS"
+    assert getattr(entities, contract["period"]["vocabulary"]) is asset_inputs.FISCAL_PERIODS
+    cap = contract["limits"]["max_rows"]
+    assert (cap["env"], cap["default"]) == (asset_inputs.MAX_ROWS_ENV, asset_inputs.DEFAULT_MAX_ROWS)
+
+
+def test_every_name_the_contract_uses_is_a_declared_column(contract):
+    cols = _columns(contract)
+    named = {*contract["grain"], contract["scope"], contract["period"]["column"], contract["status_period"]}
+    for col in cols.values():
+        named |= set(col.get("constant_within", ())) | set(col.get("additive_over", ()))
+    assert named <= set(cols), sorted(named - set(cols))
+
+
+def test_the_dataset_overlays_name_this_contracts_urn_and_banner(contract):
+    rows = [yaml.safe_load(p.read_text(encoding="utf-8")) for p in sorted(DATASET_OVERLAYS.rglob("*.yaml"))]
+    datasets = [r["inputs"]["dataset"] for r in rows if isinstance(r, dict) and "dataset" in r.get("inputs", {})]
+    assert datasets, "positive control: some test overlay reads a dataset"
+    for ds in datasets:
+        assert (ds["urn"], ds["banner"]) == (contract["dataset"]["urn"], contract["dataset"]["banner"])
+        cols = _columns(contract)
+        value = ds["value"]
+        named = value["minus"] if isinstance(value, dict) else [value]
+        assert set(ds["levels"]) | set(named) <= set(cols), ds
