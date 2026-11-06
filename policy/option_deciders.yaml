@@ -1,0 +1,25 @@
+# OPTION DECIDERS -- the `can_decide:<option>` rail for obsolescence resolution, ADR-0065 (provisional,
+# not yet written).
+#
+#   * SOURCE TEXT, verbatim (architect via Chris, 2026-11-06): "Rails for obsolescence_resolution: roles
+#     (who may approve LTB / redesign) as groups + capability rows; `can_decide:
+#     <option>` rail with ratified_by: owner; contract files get a
+#     `classification` field validated against levels.yaml.
+#     Validator only until Lane 1's workflow row lands."
+#   * STANDING RULE, verbatim: "kinds, workflows, options, levels, ontology slices, mappings and
+#     contracts are rows/files a deployment supplies; dag-tools and iagent ship the types and the
+#     validators, never a customer's shape."
+#   * ONE ROW PER OPTION, naming the groups whose members may decide that option. A role is a group:
+#     "who may approve" an option is the groups in its row (groups in groups.yaml with at least one
+#     member; no user is ever named here, membership lives in users.yaml).
+#   * A ROW has `option` (the `<option>` of `can_decide:<option>`; no whitespace, no `:`),
+#     `grant_to_groups`, `granted_by` (`seed` for a shipped row), `reason`, and `ratified_by` (`owner`:
+#     a seat, never an identity).
+#   * DENY BY DEFAULT. An explicit `grant_to_groups: []` with a reason says nobody may decide the option.
+#   * NO OPTION IS NAMED IN CODE OR IN THIS SEED. A deployment adds its options as rows.
+#   * A `can_decide:` capability row in capability_grants.yaml is refused: this file is the one home.
+#
+# No reader applies this file until Lane 1's obsolescence_resolution workflow row lands.
+# validate_policy.py checks it WHEN PRESENT (option_deciders_errors).
+
+option_deciders: []

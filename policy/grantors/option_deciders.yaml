@@ -1,0 +1,9 @@
+# SEED -- deployment-neutral. A deployment names its own approvers in an overlay row
+# (GRANTOR_OVERLAY_DIRS), which replaces this row whole (ADR-0036).
+family: option_deciders
+rail_file: policy/option_deciders.yaml
+object_scoped: false
+who: the approvers of policy/option_deciders.yaml in this deployment's policy repository
+how: >-
+  a reviewed change naming the group in the option's row (granted_by, reason, ratified_by); no reader
+  applies it until the obsolescence_resolution workflow row lands (ADR-0065)

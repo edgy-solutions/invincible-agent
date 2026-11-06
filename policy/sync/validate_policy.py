@@ -40,6 +40,8 @@ definition of "valid", never a parallel re-implementation):
     DATA_FILES -- see the note there): an id is a bare name, unique; a row says why and who ratified
   - level_readers.yaml            → level_readers_errors (WHEN PRESENT; not in DATA_FILES -- see
     the note there): a level is registered, one row per level, a group exists and has members
+  - option_deciders.yaml          → option_deciders_errors (WHEN PRESENT; not in DATA_FILES -- see
+    the note there): an option has one row, a group exists and has members
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
     no sync of its own — can_consume is evaluated in-process)
   - every DATA file must EXIST — explicit-empty (`grants: []`) is a
@@ -121,6 +123,10 @@ DATA_FILES = (
 # classification/levels.yaml and level_readers.yaml (ADR-0064 item B, Proposed, #266) are likewise NOT
 # in DATA_FILES: no code reads either yet (dag-tools step 5), an absent registry registers no level
 # and an absent rail grants no level. Validated WHEN PRESENT.
+#
+# option_deciders.yaml (the `can_decide:<option>` rail, ADR-0065 (provisional, not yet written)) is
+# likewise NOT in DATA_FILES: no code reads it yet (Lane 1's obsolescence_resolution workflow row), and
+# an absent rail grants no option. Validated WHEN PRESENT.
 
 
 def known_content_kinds() -> tuple[set[str], list[str]]:
@@ -952,6 +958,79 @@ def level_readers_errors(raw: dict, levels: list[str] | None, groups: dict, user
                            "`grant_to_groups: []` with a reason says nobody reads it)")
     return out
 
+#: The row fields of policy/option_deciders.yaml (ADR-0065 (provisional, not yet written)). Nothing
+#: reads the file yet; Lane 1's obsolescence_resolution workflow row will carry the options.
+_OD_ROW_FIELDS = ("option", "grant_to_groups", "granted_by", "reason", "ratified_by")
+
+
+def option_deciders_errors(raw: dict, groups: dict, users: list) -> list[str]:
+    """Validate policy/option_deciders.yaml. PURE.
+
+    Each error reads `option_deciders.yaml: <option or row i>: ...`. An option is the `<option>` of
+    `can_decide:<option>`, so it has no whitespace and no `:`; it has one row. `grant_to_groups` names
+    groups that exist and have members, and may be empty (nobody decides the option). A user is never
+    named: `grant_to:` is an unknown key. Every row says why (`reason`) and which seat ratified it
+    (`ratified_by`: a seat, never an identity). Option membership and one-row-per-registered-option are
+    checked once a workflow row carries the options (ADR-0065)."""
+    pre = "option_deciders.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"option_deciders"}:
+        extra = sorted(map(str, set(raw) - {"option_deciders"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `option_deciders`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    rows = raw["option_deciders"]
+    if not isinstance(rows, list):
+        return [f"{pre}: `option_deciders` must be a list of rows (an empty list grants no option)"]
+
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    seen: set[str] = set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        option = row.get("option")
+        where = f"{pre}: {option if isinstance(option, str) and option.strip() else f'row {i}'}"
+        for k in row:
+            if k not in _OD_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_OD_ROW_FIELDS)})")
+
+        if not isinstance(option, str) or not option.strip():
+            out.append(f"{where}: `option` must be a non-empty string")
+        elif any(ch.isspace() for ch in option) or ":" in option:
+            out.append(f"{where}: `option` must have no whitespace and no `:` (it is the `<option>` "
+                       "of `can_decide:<option>`)")
+        else:
+            if option in seen:
+                out.append(f"{where}: more than one row names this option")
+            seen.add(option)
+
+        gtg = row.get("grant_to_groups")
+        if not isinstance(gtg, list):
+            out.append(f"{where}: `grant_to_groups` must be a list (`[]` says nobody may decide the option)")
+        else:
+            names: list[str] = []
+            for g in gtg:
+                if not isinstance(g, str) or not g.strip():
+                    out.append(f"{where}: `grant_to_groups` entries must be non-empty strings")
+                elif g in names:
+                    out.append(f"{where}: group {g!r} is listed more than once")
+                else:
+                    names.append(g)
+            out.extend(unusable_group_audiences(
+                [SimpleNamespace(key=option if isinstance(option, str) else f"row {i}",
+                                 grant_to_groups=names)],
+                groups, users, file_label=pre, noun="option",
+                nobody="the grant would let NOBODY decide"))
+
+        for k in ("granted_by", "reason", "ratified_by"):
+            v = row.get(k)
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and v.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
+    return out
+
 
 def validate(
     policy_dir: Path,
@@ -1053,6 +1132,13 @@ def validate(
             errors.append(
                 f"capability_grants.yaml: capability {c.key!r}: a level's clearances are rows of "
                 f"policy/level_readers.yaml, not a capability row")
+
+    # `can_decide:<option>` is the option rail's key (ADR-0065, provisional), never a capability row.
+    for c in caps:
+        if c.key.startswith("can_decide:"):
+            errors.append(
+                f"capability_grants.yaml: capability {c.key!r}: an option's deciders are rows of "
+                f"policy/option_deciders.yaml, not a capability row")
 
     # `can_drop:<K>` (2026-10-28 ruling): the key gates drops of content kind K by the capability
     # OBJECT's existence, so a misspelt kind (`can_drop:pnc`) would gate a kind nobody drops and
@@ -1185,6 +1271,13 @@ def validate(
         print(f"  level_readers.yaml: {len(_lr_rows) if isinstance(_lr_rows, list) else 0} row(s)")
     elif _cl_levels:
         errors.extend(level_readers_errors({"level_readers": []}, _cl_levels, _groups_map, _users_list))
+    # option_deciders.yaml (ADR-0065, provisional): WHEN PRESENT only; options come from a workflow row.
+    _od_path = policy_dir / "option_deciders.yaml"
+    if _od_path.is_file():
+        od_raw = _read_yaml(_od_path, errors)
+        errors.extend(option_deciders_errors(od_raw, _groups_map, _users_list))
+        _od_rows = od_raw.get("option_deciders")
+        print(f"  option_deciders.yaml: {len(_od_rows) if isinstance(_od_rows, list) else 0} row(s)")
 
     # ADMISSION POSTURE (ADR-0034). Validated through the SAME parser the runtime loads with, so
     # there is ONE definition of a well-formed table and this gate cannot drift from the loader.
