@@ -16,13 +16,25 @@
 - **What changes for a sandbox caller:**
   - A declared measure needs a grant on the asset. Without one, the answer is 403 `access_denied`,
     never the seed.
-  - **An export naming a declared measure is refused with 409 `asset_export_unsupported`.** That
-    covers both sample profiles, `cdrl_a001_ev_summary` and `cdrl_a001_ev_summary_json`, which name
-    `fin_tcpi`. Whether an export may carry asset figures is still an open ruling.
+  - **A CDRL sourcing a declared measure reads the asset, as the caller** (architect, 2026-11-05:
+    the 409 was a defect, not a consequence; profiles unchanged). All three sample profiles source
+    `fin_tcpi` beside the built-in `fin_performance_indices`. Each source runs through
+    `_measure_envelope`, the function `/measure/{fn}` serves, so a CDRL holds the figures the canvas
+    shows. The caller's grant on the asset is checked before anything is measured or written (403
+    `access_denied`, as `/measure` answers). The program's name and id come from the asset. Each
+    entry in the envelope's `sources` carries `data_provenance`, plus `data_source` for an asset
+    read, and the envelope gains `program_source`.
+  - **`GET /artifact/{filename}` checks the fetcher's grant** for a CDRL whose profile sources an
+    asset-backed measure, so a fetcher without the grant cannot read the figures out of another
+    caller's file.
+  - **A package export naming a declared measure is still refused with 409
+    `asset_export_unsupported`.** `state_sha256` cannot describe a package with two sources, and what
+    a recipient reader without the grant may read is a separate, unruled question.
   - Built-in verbs keep answering from the seed. With the flag on, a subject without the asset grant
     still gets the same program's built-in figures from the seed.
 - **The roll:** engine-fin's pod template gains two `env` entries, so engine-fin restarts. Nothing
-  else in this entry restarts a pod.
+  else in this entry restarts a pod. **0.4.81 does not roll until CDRL export works on `fin_tcpi`
+  with the flag on** (architect, 2026-11-05).
 
 ## 0.4.80 — not yet cut
 

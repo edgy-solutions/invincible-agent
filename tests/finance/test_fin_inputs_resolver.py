@@ -589,20 +589,6 @@ def test_a_package_naming_a_declared_measure_is_a_409_before_anything_is_measure
     assert spy == [] and seam.urns == [] and seam.loads == 0
 
 
-def test_a_cdrl_naming_a_declared_measure_is_a_409_before_anything_is_measured(
-        client, seam, spy, monkeypatch, tmp_path):
-    from agent_fleet.finance_agent import export_profiles
-    monkeypatch.setenv("FIN_EXPORT_PROFILE_OVERLAY_DIRS", str(PROFILES_DIR))
-    profiles = {p.name: p for p in export_profiles.load_export_profiles(declared=engine.DECLARED)}
-    monkeypatch.setattr(engine, "PROFILES", profiles)
-    name = "cdrl_a001_ev_summary"
-    assert set(profiles[name].sources) & set(engine.DECLARED), "the profile must source a declared measure"
-    r = client.post("/cdrl_export", json={"profile": name, "program_id": PROGRAM, "user_email": ALICE})
-    assert r.status_code == 409, r.text
-    assert r.json()["detail"]["error"] == "asset_export_unsupported"
-    assert spy == [] and seam.urns == [] and seam.loads == 0
-
-
 def test_a_built_in_only_package_still_works_and_carries_the_notional_banner(
         client, seam, spy, monkeypatch):
     import build_fin_package as builder
@@ -620,6 +606,101 @@ def test_a_built_in_only_package_still_works_and_carries_the_notional_banner(
     assert r.status_code == 200, r.text
     assert spy and all(env["data_provenance"] == seed.notional_banner() for _fn, env in spy)
     assert seam.urns == [] and seam.loads == 0
+
+
+# ── CDRL: read through the resolver, not refused ────────────────────────────────────────
+
+CDRL = "cdrl_a001_ev_summary"
+
+
+@pytest.fixture
+def cdrl_profiles(monkeypatch, tmp_path):
+    from agent_fleet.finance_agent import export_profiles
+    monkeypatch.setenv("FIN_EXPORT_PROFILE_OVERLAY_DIRS", str(PROFILES_DIR))
+    monkeypatch.setenv("FIN_CDRL_ARTIFACT_DIR", str(tmp_path / "cdrl"))
+    profiles = {p.name: p for p in export_profiles.load_export_profiles(declared=engine.DECLARED)}
+    monkeypatch.setattr(engine, "PROFILES", profiles)
+    sources = set(profiles[CDRL].sources)
+    assert sources & set(engine.DECLARED), "the profile must source a declared measure"
+    assert sources - set(engine.DECLARED), "and a built-in, so the file joins the seed and the asset"
+    return tmp_path / "cdrl"
+
+
+def cdrl_post(c, *, tok=token(ALICE)):
+    return c.post("/cdrl_export", headers={"Authorization": f"Bearer {tok}"},
+                  json={"profile": CDRL, "program_id": PROGRAM, "user_email": ALICE})
+
+
+def test_a_cdrl_reads_the_asset_as_the_caller_and_each_source_says_where_its_figures_came_from(
+        client, seam, cdrl_profiles):
+    from agent_fleet.finance_agent import cdrl
+    seam.frame = frame_of().lazy()
+    r = cdrl_post(client)
+    assert r.status_code == 200, r.text
+    env = r.json()["envelope"]
+    by = {s["fn"]: s for s in env["sources"]}
+    assert by["fin_tcpi"]["data_source"] == {"kind": "asset", "urn": URN}
+    assert by["fin_tcpi"]["data_provenance"] == asset_inputs.provenance(URN)
+    assert by["fin_performance_indices"]["data_provenance"] == seed.notional_banner()
+    assert "data_source" not in by["fin_performance_indices"]
+    assert env["program_source"] == {"kind": "asset", "urn": URN}
+    assert seam.urns and set(seam.urns) == {URN}
+    assert {kw["originator_email"] for kw in seam.kwargs} == {ALICE}
+    # THE SAME RESOLVER THE CANVAS READS: the figures the CDRL holds are the ones /measure serves.
+    served = measure(client).json()
+    assert by["fin_tcpi"]["rows_sha256"] == cdrl._sha(served["rows"])
+
+
+def test_a_cdrl_without_the_grant_is_a_403_before_anything_is_read_measured_or_written(
+        client, seam, spy, cdrl_profiles, monkeypatch):
+    asked: list = []
+    real = engine._asset_state
+    monkeypatch.setattr(engine, "_asset_state", lambda *a, **kw: asked.append(a) or real(*a, **kw))
+    seam.raises = NotEntitled("the gate refused")
+    r = cdrl_post(client)
+    assert r.status_code == 403, r.text
+    d = r.json()["detail"]
+    assert d["status"] == "access_denied" and d["denied_assets"] == [URN]
+    assert d["refusal"]["policy_id"] == "asset_grants"
+    assert asked == [] and spy == [], "the grant is asked before the program's facts or any source"
+    assert not cdrl_profiles.exists() or not any(cdrl_profiles.iterdir())
+
+
+def test_the_cdrl_file_is_fetched_under_the_fetchers_grant(client, seam, cdrl_profiles):
+    seam.frame = frame_of().lazy()
+    name = cdrl_post(client).json()["artifact_filename"]
+    headers = {"Authorization": f"Bearer {token(ALICE)}"}
+    assert client.get(f"/artifact/{name}", headers=headers).status_code == 200  # the control
+    seam.raises = NotEntitled("the grant was revoked")
+    r = client.get(f"/artifact/{name}", headers=headers)
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["status"] == "access_denied"
+
+
+def test_the_cdrl_names_the_program_as_the_asset_does_not_as_the_seed(client, seam, cdrl_profiles):
+    frame = frame_of().with_columns(pl.lit("Asset-side program name").alias("program_name"))
+    assert seed.build_seed().programs[0].name != "Asset-side program name"
+    seam.frame = frame.lazy()
+    r = client.post("/cdrl_export", headers={"Authorization": f"Bearer {token(ALICE)}"},
+                    json={"profile": "cdrl_a001_ev_summary_json", "program_id": PROGRAM, "user_email": ALICE})
+    assert r.status_code == 200, r.text
+    written = json.loads((cdrl_profiles / r.json()["artifact_filename"]).read_text(encoding="utf-8"))
+    assert written["header"]["program_name"] == "Asset-side program name"
+
+def test_flag_off_a_cdrl_reads_nothing_and_every_source_carries_the_notional_banner(
+        off_client, cdrl_profiles):
+    r = cdrl_post(off_client)
+    assert r.status_code == 200, r.text
+    env = r.json()["envelope"]
+    assert "program_source" not in env
+    for s in env["sources"]:
+        assert s["data_provenance"] == seed.notional_banner() and "data_source" not in s, s["fn"]
+
+
+def test_which_sources_read_an_asset(declared, monkeypatch):
+    assert engine._asset_reads(["fin_tcpi", "fin_performance_indices"]) == {}
+    monkeypatch.setenv("FIN_DATASET_URN", URN)
+    assert engine._asset_reads(["fin_tcpi", "fin_performance_indices"]) == {"fin_tcpi": URN}
 
 
 # ── provenance ──────────────────────────────────────────────────────────────────────────

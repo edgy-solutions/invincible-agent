@@ -2,7 +2,7 @@
 id:         broker-advertises-unminted-credential
 status:     open
 owner:      agent
-blocked-on: 
+blocked-on: step 2 (a namespace-local host is reported, not yet rewritten), step 5, Snowflake and Superset in step 6, and the hard-break gate. The HIGH finding is fixed for S3, ClickHouse and Postgres: steps 1, 3 and 4, and step 6 for Postgres (Order of work).
 closed-by:  
 adr:        ADR-0044 — ACCEPTED 2026-08-26, amended same day (physical_coordinates() is load-time, so minting moves to resolve_asset; decision unchanged)
 code-site:  dag_tools/io_managers/arrow.py:358, dag_tools/io_managers/sql.py:374, dag_tools/domain_broker/main.py:680
@@ -261,12 +261,12 @@ substitutes for the other.
 | # | step | why this position | status |
 |---|---|---|---|
 | 0 | **approve the protocol requirement** | it is a protocol change, not a patch; approving the sentence is the decision | **DONE 2026-08-26** |
-| 1 | split the ticket: `physical_coordinates()` returns coordinates + `mode` + **scope**, no credentials | per the ADR amendment — minting cannot live in a load-time call | |
+| 1 | split the ticket: `physical_coordinates()` returns coordinates + `mode` + **scope**, no credentials | per the ADR amendment — minting cannot live in a load-time call | **DONE**, dag-tools `c198373` (v0.3.0) |
 | 2 | FQDN constraint on advertised hostnames | same class, one line, unblocks cross-namespace reads immediately | |
-| 3 | MinIO/S3 `mint-sts` **in `resolve_asset`**, per request, from the ticket's scope | the existing STS construction is already in the right function | |
-| 4 | ClickHouse `mint-role` + pinned profile + reaper | strongest enforcement gain; second column green | |
+| 3 | MinIO/S3 `mint-sts` **in `resolve_asset`**, per request, from the ticket's scope | the existing STS construction is already in the right function | **DONE**, dag-tools `c651fac` (v0.3.0; the minting identity, v0.3.1) |
+| 4 | ClickHouse `mint-role` + pinned profile + reaper | strongest enforcement gain; second column green | **DONE**, dag-tools `51f36a7` (v0.4.0) |
 | 5 | notebook access enabled per green column | [[jupyter-user-token-data-access]] | |
-| 6 | Postgres / Snowflake / Superset | remaining columns | |
+| 6 | Postgres / Snowflake / Superset | remaining columns | **Postgres DONE**, dag-tools `51f36a7` (v0.4.0); Snowflake and Superset not checked |
 
 **Step 3 got easier, not harder, from the amendment.** The STS construction already lives in
 `resolve_asset` — the correct function — and has since the fallback path was written. Step 3 is
