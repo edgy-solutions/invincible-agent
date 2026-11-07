@@ -1,6 +1,79 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.81 — not yet cut
+## 0.4.81 — 2026-11-07
+
+Entries merged after the 0.4.80 tag (`73d18c23`), cut by the architect's 11-07 list.
+
+**This cut fixes master's red Build.** #277 (`9bb11c97`) changed `helm/**` while `Chart.yaml` still
+said 0.4.80, already published as `invincible-agent-0.4.80`, so the release guard failed the Build.
+Master's later Builds were green only because their release job skipped (no `helm/**` change). The
+bump to 0.4.81 is the fix.
+
+**What the architect's list names, and where each one is:**
+
+| item | where |
+| --- | --- |
+| #277 the sandbox fin dataset flag | below |
+| #276 the `can_decide:<workflow_id>.<option>` rail, validator only (ADR-0065 provisional) | in this range |
+| #281 ADR-0064 aligned to openddil ADR-0055 | in this range |
+| #283 an occurrence attaches to its open episode; the case read's new fields | below |
+| #289 a delegate attaches only to a case it seeded (saf's finding on #283; not on the architect's list, Chris's ruling for #283's security half) | merged at `2ebb91d0`; in the #283 entry below |
+| #280 fin: an asset-backed CDRL measure is read as the caller | merged at `b71a6aa2`; in the engine-fin entry below |
+| cortex 93d76e8 | below |
+| #260, the digest map, the pub-tools `ed93f7b1` pin, dag-tools v0.11.0, the acryl-datahub fix (#267) | already in 0.4.80; nothing to carry |
+
+The acryl-datahub pin is the lock: since #267, the control-plane image installs the version
+`uv.lock` names, and nothing re-resolves it (see 0.4.80's entry).
+
+Forks 1 and 3 of #251 (item `01M6KF81WMJJXVKQAP12M0QTMY`) are not built, so they are not in this
+cut.
+
+**Also in the range, all shipped through the images:** #257 and #271 (socratic v3, ADR-0061), #266
+(ADR-0064 Proposed), #268 and #282 (the `cleared_for:<level>` and `holds:<dimension>:<value>`
+rails, validator only), #270 (validate_policy reads dag-tools' `gateway_routes.json`), #272 (the
+course overlay pin), #273 and #274 (`mirror-to-artifactory.ps1 -Release`), #206 (the drift gate
+carries pytest's exit), #275 (`contracts/ev_fixture.yaml`), and #278 and #279 (board only).
+
+**An occurrence attaches to its open episode, and the case read serves its stage (#283)**
+
+- **`POST /ingest/events`:** a new occurrence while a case is open on its episode is recorded on
+  that case, and no run starts (`attached: true`). After the case closes, the next occurrence opens a
+  new case whose `predecessor` is the closed case. The same occurrence with the same bytes is
+  idempotent. If `CaseEpisode/attach` answers empty, the door returns 503 `runner_unavailable`.
+- **`GET /cases/{id}`** serves:
+  - the top-level `stage`;
+  - `output_artifact.artifact_id` and the record's own `label`;
+  - `options_declaration`, as `{definition_id, version}`;
+  - the options on a closed case;
+  - `episode_id` and `episode_id_source`, which is `event` when the detector carried the id
+    (OpenDDIL's `openddil_episode_id`) and `derived` when it did not;
+  - `predecessor`.
+- **A delegate attaches only to a case it seeded (#289).** Chris, 2026-11-06: "a delegate cannot
+  attach to a case it didn't seed". The episode records who seeded its open case: the caller's
+  `authz_id` when the caller is a declared delegate, nobody for a person. A delegate attaching to an
+  open case it did not seed gets 403 `not_the_seeding_delegate`, and nothing is written. Three
+  design calls:
+  - A delegate cannot attach to a case a person seeded.
+  - An episode opened before this change is compared on the seeder its case record names.
+  - If a foreign delegate's run loses the attach race, the run fails rather than attaching.
+  The ratchet classifies the new refusal site (`SEEDER`). The same PR fixes four tests that had been red
+  on master since #283: their doubles answered `attach` with an empty body.
+- **The roll:** the gateway and the runner change code only, with no chart value. In-flight runs
+  replay unchanged, because nothing new is journalled. A case opened before the roll has no
+  recorded seeder until the runner reads it once from the case record.
+
+**cortex-ui frontend 93d76e8 (`sha256:13e8dd5a…`)**
+
+- It adds to 26a2049: a refused seed panel says so, not only in colour; front matter draws as body
+  text; and the FLOW_DECOMPOSITION card.
+- **The flow card draws nothing on this cut.** The backend projector row for FLOW_DECOMPOSITION
+  (Chris, 2026-11-05) is built and sealed, but it is held off this cut on
+  `lane/01-flow-decomposition-is-projected`. No registered menu carries a FLOW_DECOMPOSITION
+  capability, so a served flow table is refused as "on no registered menu" with or without the row.
+  It waits on a menu row or a ruling.
+- The case-panel work that reads #283's fields (the artifact link, the options on a closed case,
+  `received` as "intake") comes after 93d76e8, so it is not in this cut.
+- **The roll:** the frontend restarts.
 
 **Sandbox: engine-fin reads its declared measures from the EV fixture (`FIN_DATASET_URN` is on)**
 
@@ -33,12 +106,17 @@
   - Built-in verbs keep answering from the seed. With the flag on, a subject without the asset grant
     still gets the same program's built-in figures from the seed.
 - **The roll:** engine-fin's pod template gains two `env` entries, so engine-fin restarts. Nothing
-  else in this entry restarts a pod. **0.4.81 does not roll until CDRL export works on `fin_tcpi`
-  with the flag on** (architect, 2026-11-05).
+  else in this entry restarts a pod.
+- **The live check runs right after the roll** (Chris, 2026-11-06, replacing the architect's
+  11-05 "does not roll until CDRL export works on `fin_tcpi` with the flag on"). The flag is on
+  through the values. A granted and a denied caller run three times each, plus one CDRL export
+  each, and fin runs it. If either caller fails, the sandbox rolls back to rev 227 under the same
+  lock, and #280 is fixed forward.
 
-## 0.4.80 — not yet cut
+## 0.4.80 — 2026-11-05
 
-Entries merged after the 0.4.79 cut (`758811d7`). Forks 1 and 3 of the delegate ruling (#251), which
+Released from `73d18c23` (tag `invincible-agent-0.4.80`). Entries merged after the 0.4.79 cut
+(`758811d7`). Forks 1 and 3 of the delegate ruling (#251), which
 were to land here, move to 0.4.81 (architect 11-05).
 
 **Every image the chart runs is pinned by digest (architect 11-04)**
