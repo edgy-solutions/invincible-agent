@@ -398,7 +398,8 @@ means the caller acts as itself).
 |---|---|---|
 | **occurrence id** | One opening of an episode. | The kind's `identity_field`, which must equal the trigger's `key` (otherwise 503 `trigger_unconfigured`). For the event kinds this is `event_id`. The producer mints it. |
 | **case id** | The case this occurrence opened. | Equal to the occurrence id. |
-| **`episode_id`** | The fault the occurrences are of. | Derived from the fields the trigger declares as its `episode`: `ep-` followed by the first 32 hex of the sha256 of the JSON `[<trigger>, [<value of each field, in declared order>]]`, with sorted keys. It is served on the case read. **Pending the architect (2026-11-07):** whether `episode_id` is instead the producer's own field, carried verbatim. |
+| **`episode_id`** | The source system's name for the fault the occurrences are of. | **The detector's own id, carried verbatim** at the fact the trigger declares as its `episode_id` (architect, 2026-11-07: "We don't mint identity for someone else's episode"). The case serves it with `episode_id_source: event`. When the event carries none, the case serves the **episode key** instead, with `episode_id_source: derived`. |
+| **episode key** | Which occurrences are one episode. | Derived from the fields the trigger declares as its `episode`: `ep-` followed by the first 32 hex of the sha256 of the JSON `[<trigger>, [<value of each field, in declared order>]]`, with sorted keys. Attach and `predecessor` key on it, whatever `episode_id` says. |
 
 At most one case is open per episode at a time.
 

@@ -300,3 +300,32 @@ def test_AN_ATTACHED_OCCURRENCE_WHOSE_STATUS_ROW_FAILS_IS_STATUS_UNAVAILABLE(wor
     # the occurrence is on the episode already; a resend re-attaches it once, never twice
     assert [o["event_id"] for o in _occurrences(world, _facts(), "E-1")] == ["E-2"]
     assert len(world.ingress.urls("/run/send")) == 1
+
+
+# ── episode_id is the source system's (architect, 2026-11-07) ────────────────────────────────
+#   "An event carries `episode_id` as a declared field owned by the detector; the case serves
+#   that. Our derived `ep-` key is used only when the event carries none, and then the case says
+#   `episode_id_source: derived`. We don't mint identity for someone else's episode."
+
+@pytest.mark.parametrize("carried, want_source", [
+    ("OD-EP-9", "event"), (None, "derived"), ("", "derived"), ("  ", "derived")],
+    ids=["carried", "control-absent", "control-blank", "control-whitespace"])
+def test_THE_CASE_SERVES_THE_SOURCE_SYSTEMS_EPISODE_ID_AND_DERIVES_ONLY_WITHOUT_ONE(
+        world, carried, want_source):
+    _approve(world, "E-1")
+    facts = _facts("E-1") if carried is None else _facts("E-1", source_episode=carried)
+    assert world.post(facts).status_code == 200
+    case = world.cluster.case("E-1")
+    assert case["episode"] == _episode(facts) and case["episode"].startswith("ep-")
+    want = carried if want_source == "event" else case["episode"]
+    assert (case["episode_id"], case["episode_id_source"]) == (want, want_source), case
+    served = case_projection.project_workflow_case(case, {}, [])
+    assert (served["episode_id"], served["episode_id_source"]) == (want, want_source), served
+
+
+def test_A_CASE_OPENED_BEFORE_THE_STAMP_IS_SERVED_ITS_DERIVED_KEY_AND_SAYS_SO():
+    old = {"case_id": "E-0", "episode": "ep-abc", "terminal": None, "state": None}
+    served = case_projection.project_workflow_case(old, {}, [])
+    assert (served["episode_id"], served["episode_id_source"]) == ("ep-abc", "derived")
+    none = case_projection.project_workflow_case(dict(old, episode=None), {}, [])
+    assert (none["episode_id"], none["episode_id_source"]) == (None, None)

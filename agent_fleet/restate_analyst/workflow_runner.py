@@ -306,9 +306,18 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
             f"predecessor must be a non-blank string or absent; got {predecessor!r}",
             status_code=400)
 
+    # The episode's NAME is the source system's when the event carries it; the platform's key
+    # only when it does not, and then the case says so. Read off the journalled intake.
+    source_id = flat.get(trig.episode_id) if trig.episode_id else None
+    if isinstance(source_id, str) and source_id.strip():
+        episode_id, episode_id_source = source_id, "event"
+    else:
+        episode_id, episode_id_source = episode, ("derived" if episode else None)
+
     case: dict = {"case_id": case_id, "trigger": name, "state": None, "terminal": None,
-                  "episode": episode, "instances": [], "transitions": [], "seeded_by": seeded_by,
-                  "predecessor": predecessor}
+                  "episode": episode, "episode_id": episode_id,
+                  "episode_id_source": episode_id_source, "instances": [], "transitions": [],
+                  "seeded_by": seeded_by, "predecessor": predecessor}
     await _record(ctx, case, frm=None, outcome="received", to="received", by="system",
                   at_name="at_received")
     # THE ORIGINAL EVENT IS REVISION 1 (SDK ``ArtifactRevision``). ``input_revisions`` is the

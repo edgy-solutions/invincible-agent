@@ -54,8 +54,11 @@ never guessed, and never emitted empty to look present (an empty list claims "th
 ``stage``: top level. ``closed`` when the case is terminal, else ``failed`` when its state is
   ``failed``, else ``attached`` when its state is ``attached``, else ``running``.
 
-``episode_id`` / ``predecessor``: the case's own ``episode`` key and the closed case it follows
-  on that episode; ``None`` when it has none.
+``episode_id`` / ``episode_id_source``: the SOURCE SYSTEM's id for the episode, as the event
+  carried it at the trigger's declared ``episode_id`` fact (source ``event``); else the platform's
+  ``episode`` key (source ``derived``); ``None`` for both when the case has no episode.
+
+``predecessor``: the closed case this one follows on its episode; ``None`` when it has none.
 """
 from __future__ import annotations
 
@@ -385,7 +388,10 @@ def project_workflow_case(case: dict, definitions: dict[str, Any], task_rows: li
     out = {
         "subject_ref": case.get("case_id"),
         "stage": stage,
-        "episode_id": case.get("episode"),
+        # A case opened before the runner stamped `episode_id` has only its derived key.
+        "episode_id": case.get("episode_id") or case.get("episode"),
+        "episode_id_source": case.get("episode_id_source") or (
+            "derived" if case.get("episode") else None),
         "predecessor": case.get("predecessor"),
         "instances": project_instances(case, definitions, task_rows),
         "history": project_history(case),
