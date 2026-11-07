@@ -1880,6 +1880,13 @@
             ],
             "title": "Authz Id"
           },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
           "cells": {
             "items": {
               "$ref": "#/components/schemas/Cell"
@@ -1945,7 +1952,8 @@
           "cells",
           "default",
           "source",
-          "droppable_kinds"
+          "droppable_kinds",
+          "capabilities"
         ],
         "title": "Entitlements",
         "type": "object"
@@ -7239,7 +7247,7 @@
     },
     "/ingest/events": {
       "post": {
-        "description": "POST /ingest/events (section C, ingest/origin seam) — the JSON door for an event-branch\ncontent kind. An event never arrives as a file: it is a JSON `IngestRequest` payload,\nvalidated against the kind's declared trigger before anything is seeded.\n\n`content_kind` MUST be registered AND `branch == \"event\"` — a document-branch or\nunregistered kind is refused here with a named reason (the multipart `/ingest` door is\ntheirs; this one refuses a file for the same reason in reverse, see that route's own door\ncheck). The kind's registration carries NO schema field of its own (`iagent_mesh.ingest.\nContentKindRegistration` has `passes`/`outputs`, which name OntologyClass kinds for a\ndocument's extraction, not a payload shape) -- so the validatable shape THIS repo actually\nhas is the kind's own trigger's `requires:` (`policy/triggers/<seeds_workflow>.yaml`, the\nsame list `case_routing.Trigger.requires` loads), checked dotted-path by dotted-path against\n`payload` plus the facts this route adds itself (`dropped_by.authz_id`). A payload missing\nany required path is refused 422, naming which.\n\nTHE RESPONSE CONTRACT IS 200 WITH `workflow.case_id` (ruled 2026-10-05). The seam spec said\n202; the door has always answered 200, the first producer is coded against 200, and the\nruling keeps it, so 202 is not an open question. `case_id` is the key the case runner\nholds the case under (the trigger's key, i.e. the producer's own identity field), and the\ndoor only answers 200 once the runner's own intake check has accepted the payload.",
+        "description": "POST /ingest/events (section C, ingest/origin seam) — the JSON door for an event-branch\ncontent kind. An event never arrives as a file: it is a JSON `IngestRequest` payload,\nvalidated against the kind's declared trigger before anything is seeded.\n\n`content_kind` MUST be registered AND `branch == \"event\"` — a document-branch or\nunregistered kind is refused here with a named reason (the multipart `/ingest` door is\ntheirs; this one refuses a file for the same reason in reverse, see that route's own door\ncheck). The kind's registration carries NO schema field of its own (`iagent_mesh.ingest.\nContentKindRegistration` has `passes`/`outputs`, which name OntologyClass kinds for a\ndocument's extraction, not a payload shape) -- so the validatable shape THIS repo actually\nhas is the kind's own trigger's `requires:` (`policy/triggers/<seeds_workflow>.yaml`, the\nsame list `case_routing.Trigger.requires` loads), checked dotted-path by dotted-path against\n`payload` plus the facts this route adds itself (`dropped_by.authz_id`). A payload missing\nany required path is refused 422, naming which.\n\nTHE RESPONSE CONTRACT IS 200 WITH `workflow.case_id` (ruled 2026-10-05). The seam spec said\n202; the door has always answered 200, the first producer is coded against 200, and the\nruling keeps it, so 202 is not an open question. `case_id` is the key the case runner\nholds the case under (the trigger's key, i.e. the producer's own identity field), and the\ndoor only answers 200 once the runner's own intake check has accepted the payload.\n\nAN OCCURRENCE ATTACHES TO ITS OPEN EPISODE (architect, 2026-11-06). An episode is the\ntrigger's declared `episode` fields; an occurrence is one event opening it, `case_id` =\n`event_id`. A first arrival of a trigger that declares one asks `CaseEpisode/attach`: a case\nholding the episode takes the occurrence (recorded, no new case, answer `attached: true` with\nthe holder's `case_id`); with none open a new case opens and names the last closed one as its\n`predecessor`. The same occurrence twice (same event_id, same bytes) is answered, not\nrevised; the same event_id with different bytes is a revision.",
         "operationId": "ingest_event_ingest_events_post",
         "requestBody": {
           "content": {
@@ -8634,7 +8642,7 @@
     },
     "/me/entitlements": {
       "get": {
-        "description": "Return the current user's (persona, domain) entitlement matrix.\n\n`authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop\nechoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it\nas `on_behalf_of` is refused `not_a_delegate` (2026-10-21).",
+        "description": "Return the current user's (persona, domain) entitlement matrix.\n\n`authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop\nechoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it\nas `on_behalf_of` is refused `not_a_delegate` (2026-10-21). `capabilities` is every directory\ncapability key the caller holds `can_invoke` on, sorted; an unreadable directory is 503.",
         "operationId": "get_me_entitlements_me_entitlements_get",
         "responses": {
           "200": {

@@ -850,6 +850,13 @@
             ],
             "title": "Authz Id"
           },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
           "cells": {
             "items": {
               "$ref": "#/components/schemas/Cell"
@@ -915,7 +922,8 @@
           "cells",
           "default",
           "source",
-          "droppable_kinds"
+          "droppable_kinds",
+          "capabilities"
         ],
         "title": "Entitlements",
         "type": "object"
@@ -3381,7 +3389,7 @@
   },
   "info": {
     "title": "Cortex ingest API",
-    "version": "1.6.0"
+    "version": "1.7.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -4128,7 +4136,7 @@
     },
     "/me/entitlements": {
       "get": {
-        "description": "Return the current user's (persona, domain) entitlement matrix.\n\n`authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop\nechoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it\nas `on_behalf_of` is refused `not_a_delegate` (2026-10-21).",
+        "description": "Return the current user's (persona, domain) entitlement matrix.\n\n`authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop\nechoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it\nas `on_behalf_of` is refused `not_a_delegate` (2026-10-21). `capabilities` is every directory\ncapability key the caller holds `can_invoke` on, sorted; an unreadable directory is 503.",
         "operationId": "get_me_entitlements_me_entitlements_get",
         "responses": {
           "200": {
