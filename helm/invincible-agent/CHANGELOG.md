@@ -17,12 +17,12 @@ bump to 0.4.81 is the fix.
 | #276 the `can_decide:<workflow_id>.<option>` rail, validator only (ADR-0065 provisional) | in this range |
 | #281 ADR-0064 aligned to openddil ADR-0055 | in this range |
 | #283 an occurrence attaches to its open episode; the case read's new fields | below |
-| #280 fin: an asset-backed CDRL measure is read as the caller | see the line at the end of this section |
+| #280 fin: an asset-backed CDRL measure is read as the caller | merged at `b71a6aa2`; in the engine-fin entry below |
 | cortex 93d76e8 | below |
 | #260, the digest map, the pub-tools `ed93f7b1` pin, dag-tools v0.11.0, the acryl-datahub fix (#267) | already in 0.4.80; nothing to carry |
 
-acryl-datahub has no exact pin anywhere: the pyproject floor is `>=1.7.0` and `Dockerfile.dagster`
-installs it unversioned. #267 fixed the install, not the version.
+The acryl-datahub pin is the lock: since #267, the control-plane image installs the version
+`uv.lock` names, and nothing re-resolves it (see 0.4.80's entry).
 
 Forks 1 and 3 of #251 (item `01M6KF81WMJJXVKQAP12M0QTMY`) are not built, so they are not in this
 cut.
@@ -72,18 +72,29 @@ carries pytest's exit), #275 (`contracts/ev_fixture.yaml`), and #278 and #279 (b
 - **What changes for a sandbox caller:**
   - A declared measure needs a grant on the asset. Without one, the answer is 403 `access_denied`,
     never the seed.
-  - **An export naming a declared measure is refused with 409 `asset_export_unsupported`.** That
-    covers both sample profiles, `cdrl_a001_ev_summary` and `cdrl_a001_ev_summary_json`, which name
-    `fin_tcpi`. Whether an export may carry asset figures is still an open ruling.
+  - **A CDRL sourcing a declared measure reads the asset, as the caller** (architect, 2026-11-05:
+    the 409 was a defect, not a consequence; profiles unchanged). All three sample profiles source
+    `fin_tcpi` beside the built-in `fin_performance_indices`. Each source runs through
+    `_measure_envelope`, the function `/measure/{fn}` serves, so a CDRL holds the figures the canvas
+    shows. The caller's grant on the asset is checked before anything is measured or written (403
+    `access_denied`, as `/measure` answers). The program's name and id come from the asset. Each
+    entry in the envelope's `sources` carries `data_provenance`, plus `data_source` for an asset
+    read, and the envelope gains `program_source`.
+  - **`GET /artifact/{filename}` checks the fetcher's grant** for a CDRL whose profile sources an
+    asset-backed measure, so a fetcher without the grant cannot read the figures out of another
+    caller's file.
+  - **A package export naming a declared measure is still refused with 409
+    `asset_export_unsupported`.** `state_sha256` cannot describe a package with two sources, and what
+    a recipient reader without the grant may read is a separate, unruled question.
   - Built-in verbs keep answering from the seed. With the flag on, a subject without the asset grant
     still gets the same program's built-in figures from the seed.
 - **The roll:** engine-fin's pod template gains two `env` entries, so engine-fin restarts. Nothing
   else in this entry restarts a pod.
-
-**#280 (fin) was not merged when this cut was opened.** It was green at `981686c4` but conflicted
-on the generated `board/BOARD.md`. If it merges before this cut does, its own lines land in this
-section. If it does not, it goes in 0.4.82, since a `helm/**` change after the tag would trip the
-release guard again.
+- **The live check runs right after the roll** (Chris, 2026-11-06, replacing the architect's
+  11-05 "does not roll until CDRL export works on `fin_tcpi` with the flag on"). The flag is on
+  through the values. A granted and a denied caller run three times each, plus one CDRL export
+  each, and fin runs it. If either caller fails, the sandbox rolls back to rev 227 under the same
+  lock, and #280 is fixed forward.
 
 ## 0.4.80 — 2026-11-05
 

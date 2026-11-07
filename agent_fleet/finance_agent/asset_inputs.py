@@ -374,6 +374,18 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
     return paths
 
 
+def require_grant(read: Callable[[str], Any], urn: str) -> None:
+    """Refuse unless the caller may read `urn`: the ticket `read_rows` takes first (the client's
+    `get_dataframe` asks the gateway's `/authorize` before it returns a frame), and nothing
+    scanned. `read` is `main.mesh_ticketed_read`; its `HTTPException` passes through untouched."""
+    try:
+        read(urn)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _raise_for_read_failure(exc)
+
+
 def _raise_for_read_failure(exc: Exception) -> None:
     """Map the client's outcome to ours. Unknown failures are unavailable, logged by TYPE only."""
     _client, not_entitled, mesh_unavailable = _load_client()

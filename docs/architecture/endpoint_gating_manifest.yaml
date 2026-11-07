@@ -1308,7 +1308,9 @@ services:
           gated instead on program visibility (_require_visible), the check /cdrl_export made,
           because a CDRL is one program's deliverable and has no recipient reader list, and then
           on the `policy.cells` of every declared measure the CDRL's profile sources (403
-          measure_not_in_cell; the file holds those figures).
+          measure_not_in_cell; the file holds those figures), and then on the fetcher's grant on
+          every asset those sources read (403 access_denied, the envelope /measure/{fn} answers),
+          so a fetcher without the grant cannot read asset figures out of another caller's file.
       - method: GET
         path: /cdrl_profiles
         identity: none
@@ -1339,7 +1341,12 @@ services:
           template and WRITE fin-cdrl-<profile>-<program>.xlsx to the shared dist directory,
           answering the package_export locator shape plus the cells_sha256 envelope. A source that
           is a DECLARED measure whose `policy.cells` the caller holds none of refuses the whole
-          request, 403 measure_not_in_cell, before anything is measured or written. 503 (named)
+          request, 403 measure_not_in_cell, before anything is measured or written. A source that
+          reads an asset (a dataset-kind row, or a declared measure while FIN_DATASET_URN is set)
+          is read as the caller: the caller's grant on every such asset is checked first (403
+          access_denied, as /measure/{fn} answers, before the program's facts or any source is
+          read), the program's facts come from the asset, and each source carries its
+          data_provenance (architect, 2026-11-05: profiles unchanged). 503 (named)
           when the image has no package directory to write to.
 
   docs_agent:

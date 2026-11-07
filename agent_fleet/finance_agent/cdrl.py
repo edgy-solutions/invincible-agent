@@ -49,6 +49,9 @@ MEDIA_TYPES = {
 
 _METHODS_HEADER = ("fn", "measure_id", "name", "version", "module_sha256")
 
+#: What a source's envelope says about where its figures came from, carried into the CDRL envelope.
+_SOURCE_PROVENANCE = ("data_provenance", "data_source")
+
 
 def _canonical(obj: Any) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str)
@@ -313,8 +316,14 @@ def build_cdrl(
     as_of: str,
     out_dir: Path,
     run_source: RunSource,
+    program_source: Optional[dict[str, Any]] = None,
 ) -> tuple[Path, dict[str, Any]]:
-    """Write `fin-cdrl-<name>-<program_id>.<format>` into `out_dir`; return (path, envelope)."""
+    """Write `fin-cdrl-<name>-<program_id>.<format>` into `out_dir`; return (path, envelope).
+
+    `state` is where the program's facts are read; `program_source`, when given, says it is not
+    the seed and is carried in the envelope. Each source's `data_provenance` and `data_source`
+    (what its envelope served) are carried beside its method, so a file that joins a seed
+    measure with an asset-backed one says which figure came from where."""
     params = {"program_id": program_id}
     served: dict[str, Source] = {fn: run_source(fn, dict(params)) for fn in profile.sources}
     rows_by_source = {fn: list(env.get("rows") or []) for fn, (env, _m) in served.items()}
@@ -346,11 +355,13 @@ def build_cdrl(
         "as_of": as_of,
         "sources": [
             {"fn": fn, "params": dict(params), "method": methods[fn],
+             **{k: served[fn][0][k] for k in _SOURCE_PROVENANCE if k in served[fn][0]},
              "rows_sha256": _sha(rows_by_source[fn])}
             for fn in profile.sources
         ],
         "cells_sha256": cells_sha256,
         "provenance_sheets": profile.provenance_sheets,
+        **({"program_source": dict(program_source)} if program_source else {}),
     }
 
     out_dir = Path(out_dir)
