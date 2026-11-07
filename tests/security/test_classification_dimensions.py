@@ -1,5 +1,6 @@
 """The classification dimensions registry (`policy/classification/dimensions.yaml`) -- gov ruling
-2026-11-06 (levels.yaml becomes dimensions.yaml: name, type, vocabulary, owner). Validator only.
+2026-11-06 (levels.yaml becomes dimensions.yaml: name, type, vocabulary, owner;
+ratified_by kept on every row per the architect's ruling on #282). Validator only.
 
 WHAT EACH GROUP DEFENDS
   seed        the shipped registry parses clean.
@@ -35,7 +36,7 @@ _B_USERS = [{"id": "svc:a", "groups": ["team-a"]}, {"id": "alice", "groups": ["t
 
 
 def _dim(name="dim-s", typ="set", vocab=("v1", "v2"), **over):
-    row = {"name": name, "type": typ, "vocabulary": list(vocab), "owner": "owner"}
+    row = {"name": name, "type": typ, "vocabulary": list(vocab), "owner": "owner", "ratified_by": "owner"}
     row.update(over)
     return row
 
@@ -96,7 +97,9 @@ def test_a_malformed_registry_is_one_error_and_no_dims(raw, fragment):
     ([_dim(vocab=("v 1",))], "must have no whitespace and no `:`"),
     ([_dim(vocab=("v1", "v1"))], "'v1' is listed more than once"),
     ([_drop(_dim(), "owner")], "`owner` must be a non-empty string"),
-    ([_dim(owner="alice")], "names a seat"),
+    ([_dim(owner="alice")], "`owner` names a seat"),
+    ([_drop(_dim(), "ratified_by")], "`ratified_by` must be a non-empty string"),
+    ([_dim(ratified_by="alice")], "`ratified_by` names a seat"),
     ([_dim(colour="red")], "unknown key 'colour'"),
 ])
 def test_a_bad_row_is_one_error(rows, fragment):
