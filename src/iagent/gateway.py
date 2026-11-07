@@ -13454,7 +13454,8 @@ async def ingest_event(
     holding the episode takes the occurrence (recorded, no new case, answer `attached: true` with
     the holder's `case_id`); with none open a new case opens and names the last closed one as its
     `predecessor`. The same occurrence twice (same event_id, same bytes) is answered, not
-    revised; the same event_id with different bytes is a revision.
+    revised; the same event_id with different bytes is a revision. A delegate attaches only to a
+    case it seeded: otherwise 403 `not_the_seeding_delegate`, and nothing is recorded.
     """
     from . import content_kinds, provenance
 
@@ -13673,7 +13674,7 @@ async def ingest_event(
                 att_resp = await client.post(
                     f"{_RESTATE_INGRESS_URL}/CaseEpisode/{_restate_key(episode)}/attach",
                     json={"event_id": case_id, "received_at": ingested_at,
-                          "ingest_id": ingest_id},
+                          "ingest_id": ingest_id, "seeded_by": seeded_by},
                 )
         except Exception as exc:  # noqa: BLE001 - unreachable runner; do not guess
             raise HTTPException(
@@ -13699,6 +13700,16 @@ async def ingest_event(
                 status_code=503,
                 detail={"error": "runner_unavailable",
                         "message": f"CaseEpisode/attach answered {att!r}"},
+            )
+        # A DELEGATE ATTACHES ONLY TO A CASE IT SEEDED (Chris, 2026-11-06, for #283). The episode
+        # compares this caller's `seeded_by` with the holder's and records nothing on a mismatch;
+        # the refusal names no case, and nothing is written here either.
+        if att.get("refused"):
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "not_the_seeding_delegate",
+                        "message": ("this episode's open case was not seeded by this delegate; "
+                                    "a delegate attaches an occurrence only to a case it seeded")},
             )
         predecessor = att.get("predecessor")
         attached_to = att.get("attached_to")

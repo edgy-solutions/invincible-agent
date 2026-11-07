@@ -17,6 +17,7 @@ bump to 0.4.81 is the fix.
 | #276 the `can_decide:<workflow_id>.<option>` rail, validator only (ADR-0065 provisional) | in this range |
 | #281 ADR-0064 aligned to openddil ADR-0055 | in this range |
 | #283 an occurrence attaches to its open episode; the case read's new fields | below |
+| #289 a delegate attaches only to a case it seeded (saf's finding on #283; not on the architect's list, Chris's ruling for #283's security half) | merged at `2ebb91d0`; in the #283 entry below |
 | #280 fin: an asset-backed CDRL measure is read as the caller | merged at `b71a6aa2`; in the engine-fin entry below |
 | cortex 93d76e8 | below |
 | #260, the digest map, the pub-tools `ed93f7b1` pin, dag-tools v0.11.0, the acryl-datahub fix (#267) | already in 0.4.80; nothing to carry |
@@ -47,13 +48,29 @@ carries pytest's exit), #275 (`contracts/ev_fixture.yaml`), and #278 and #279 (b
   - `episode_id` and `episode_id_source`, which is `event` when the detector carried the id
     (OpenDDIL's `openddil_episode_id`) and `derived` when it did not;
   - `predecessor`.
+- **A delegate attaches only to a case it seeded (#289).** Chris, 2026-11-06: "a delegate cannot
+  attach to a case it didn't seed". The episode records who seeded its open case: the caller's
+  `authz_id` when the caller is a declared delegate, nobody for a person. A delegate attaching to an
+  open case it did not seed gets 403 `not_the_seeding_delegate`, and nothing is written. Three
+  design calls:
+  - A delegate cannot attach to a case a person seeded.
+  - An episode opened before this change is compared on the seeder its case record names.
+  - If a foreign delegate's run loses the attach race, the run fails rather than attaching.
+  The ratchet classifies the new refusal site (`SEEDER`). The same PR fixes four tests that had been red
+  on master since #283: their doubles answered `attach` with an empty body.
 - **The roll:** the gateway and the runner change code only, with no chart value. In-flight runs
-  replay unchanged, because nothing new is journalled.
+  replay unchanged, because nothing new is journalled. A case opened before the roll has no
+  recorded seeder until the runner reads it once from the case record.
 
 **cortex-ui frontend 93d76e8 (`sha256:13e8dd5a…`)**
 
 - It adds to 26a2049: a refused seed panel says so, not only in colour; front matter draws as body
-  text; and the FLOW_DECOMPOSITION archetype.
+  text; and the FLOW_DECOMPOSITION card.
+- **The flow card draws nothing on this cut.** The backend projector row for FLOW_DECOMPOSITION
+  (Chris, 2026-11-05) is built and sealed, but it is held off this cut on
+  `lane/01-flow-decomposition-is-projected`. No registered menu carries a FLOW_DECOMPOSITION
+  capability, so a served flow table is refused as "on no registered menu" with or without the row.
+  It waits on a menu row or a ruling.
 - The case-panel work that reads #283's fields (the artifact link, the options on a closed case,
   `received` as "intake") comes after 93d76e8, so it is not in this cut.
 - **The roll:** the frontend restarts.

@@ -101,6 +101,11 @@ def _routing():
 #: `seeded_by` is stamped at `released` by the runner, not at open.
 SEEDED_BY_STAMP_OUTCOME = "released"
 
+#: `CaseEpisode.attach`'s answer when a delegate's occurrence meets an open case it did not seed
+#: (Chris, 2026-11-06, for #283: "a delegate cannot attach to a case it didn't seed"). The door
+#: answers it as a 403 of the same code.
+NOT_THE_SEEDER = "not_the_seeding_delegate"
+
 
 def _stamp_seeded_by(case_id: str, seeded_by: str) -> dict:
     """POST `{bff}/internal/cases/{case_id}/seeded-by`, as `svc:case-runner` (the same credential
@@ -333,18 +338,27 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
 
     # ── TRIAGE: one open case per episode ───────────────────────────────────────────────────
     if episode:
-        # The holder's claim plants revision 1 as the chain's head, so a push appends after it.
+        # The holder's claim plants revision 1 as the chain's head, so a push appends after it,
+        # and records who seeded the holder, so an attach can refuse another delegate.
         owner = await ctx.object_call(claim, key=episode, arg={
-            "case_id": case_id, "head": {"revision": rev1, "facts": facts}})
+            "case_id": case_id, "head": {"revision": rev1, "facts": facts},
+            "seeded_by": seeded_by})
         if owner != case_id:
+            # The race fallback: this occurrence saw no holder at the door. Record it on the
+            # holder too, under the same rule as the door's: a delegate attaches only to a case
+            # it seeded. A refused one is not attached, and its case does not name the holder.
+            att = await ctx.object_call(attach, key=episode, arg={
+                "event_id": case_id, "received_at": case["transitions"][-1]["at"],
+                "ingest_id": None, "seeded_by": seeded_by})
+            if att.get("refused"):
+                await _record(ctx, case, frm="received", outcome=att["refused"], to="failed",
+                              by="system", reason=f"episode {episode} is open in a case this "
+                              "delegate did not seed", at_name="at_attach_refused")
+                return {"case_id": case_id, "status": "FAILED",
+                        "transitions": case["transitions"]}
             await _record(ctx, case, frm="received", outcome="duplicate", to="attached",
                           by="system", reason=f"episode {episode} is open in case {owner}",
                           at_name="at_attached")
-            # The race fallback: this occurrence saw no holder at the door. Record it on the
-            # holder too. A send, in a branch that returns at once: nothing suspends here.
-            ctx.object_send(attach, key=episode, arg={
-                "event_id": case_id, "received_at": case["transitions"][-1]["at"],
-                "ingest_id": None})
             return {"case_id": case_id, "status": "ATTACHED", "attached_to": owner,
                     "transitions": case["transitions"]}
     await _record(ctx, case, frm="received", outcome="triaged", to="triaged", by="system",
@@ -638,12 +652,14 @@ async def outbox(ctx: WorkflowSharedContext, request: dict) -> list:
 @case_episode.handler()
 async def claim(ctx: ObjectContext, request: dict) -> str:
     """The open case for this episode: the caller's, if none was open. The caller that becomes
-    the holder plants its revision 1 as the head of the episode's chain."""
+    the holder plants its revision 1 as the head of the episode's chain, and records who seeded
+    it (`holder`: the delegate, or None for a person's case) for `attach` to compare against."""
     cur = await ctx.get("open")
     if cur:
         return cur
     ctx.set("open", request["case_id"])
     ctx.set("revision", request.get("head"))
+    ctx.set("holder", {"seeded_by": request.get("seeded_by")})
     return request["case_id"]
 
 
@@ -657,6 +673,7 @@ async def release(ctx: ObjectContext, request: dict) -> None:
     if await ctx.get("open") == request.get("case_id"):
         ctx.clear("open")
         ctx.clear("revision")
+        ctx.clear("holder")
         ctx.set("last_closed", request["case_id"])
 
 
@@ -666,21 +683,44 @@ async def attach(ctx: ObjectContext, request: dict) -> dict:
     occurrence is recorded under the holder (`occurrences:{holder}`, once per `event_id`, so the
     same occurrence twice is one entry) and no case opens. With none open it claims nothing and
     answers the last closed case, which the new case names as its `predecessor`; the run still
-    claims at triage. A case is never recorded as its own occurrence."""
+    claims at triage. A case is never recorded as its own occurrence.
+
+    A DELEGATE ATTACHES ONLY TO A CASE IT SEEDED. `seeded_by` is the door's: the caller when it is
+    a declared delegate, None for a person. A delegate whose id is not the holder's seeder --
+    another delegate's case, or a person's -- records nothing and is answered `refused`, without
+    the holder's id. A person attaches as #283 ruled."""
     event_id = request.get("event_id")
     if not isinstance(event_id, str) or not event_id.strip():
         raise restate.TerminalError(
             f"attach needs a non-blank event_id; got {event_id!r}", status_code=400)
+    seeded_by = request.get("seeded_by")
+    if seeded_by is not None and (not isinstance(seeded_by, str) or not seeded_by.strip()):
+        raise restate.TerminalError(
+            f"seeded_by must be a non-blank string or absent; got {seeded_by!r}", status_code=400)
     holder = await ctx.get("open")
     if not holder:
         return {"attached_to": None, "predecessor": await ctx.get("last_closed")}
     if holder != event_id:
+        if seeded_by is not None and seeded_by != await _holder_seeded_by(ctx, holder):
+            return {"attached_to": None, "predecessor": None, "refused": NOT_THE_SEEDER}
         seen = list(await ctx.get(f"occurrences:{holder}") or [])
         if not any(o.get("event_id") == event_id for o in seen):
             seen.append({"event_id": event_id, "received_at": request.get("received_at"),
                          "ingest_id": request.get("ingest_id")})
             ctx.set(f"occurrences:{holder}", seen)
     return {"attached_to": holder, "predecessor": None}
+
+
+async def _holder_seeded_by(ctx: ObjectContext, holder: str) -> Optional[str]:
+    """Who seeded the open case. `claim` records it; an episode claimed before it did is read
+    once from the holder's own case record and kept, so an older open case is compared on its
+    real seeder rather than refused or admitted on a guess."""
+    rec = await ctx.get("holder")
+    if rec is None:
+        held = await ctx.workflow_call(case, key=holder, arg=None)
+        rec = {"seeded_by": (held or {}).get("seeded_by")}
+        ctx.set("holder", rec)
+    return rec.get("seeded_by")
 
 
 @case_episode.handler()
