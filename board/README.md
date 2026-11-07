@@ -30,3 +30,14 @@ Exactly these ten keys, `key: value`, one per line.
 - **The sweep flags a ruled item that is still open.** Lane 1's sweep flags "ruled in a packet, item still open" and names the lane.
 - **A partial ruling** (Lane 1's convention, from the first sweep): the ruled part goes in the item's body and `ruling_ref`, and the item stays open.
 - **Who merges** is recorded in `PRIORITIES.md`.
+
+## Conventions
+
+- **Lane worktrees live under `C:\Users\cnogr\git\wt\<lane>\`, never `%TEMP%`** (Chris, 2026-11-07).
+  - The rule covers every worktree a lane makes, throwaway and release ones included. A session scratchpad is under `%TEMP%`, so no worktree goes there.
+  - Each lane confirms the move in its next handoff.
+  - The census at the ruling (`git worktree list` in invincible-agent) found worktrees in four places:
+    - 105 under `%TEMP%`;
+    - 24 under `C:\tmp`;
+    - 50 directly under `C:\Users\cnogr\git`;
+    - 11 under `.claude/worktrees`.

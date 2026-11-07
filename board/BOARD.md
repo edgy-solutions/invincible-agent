@@ -311,7 +311,7 @@ Where it is: 4 blocked · 0 review · 1 claimed · 4 open · 9 done; next: ADR-0
 - [Master red: the input-declared route doesn't upper-case its scope; one census line is stale](items/01M6FRZ2D6J9BARC850KJDQEKS.md) — invincible-agent/lane/74 · next · updated 2026-11-03
 - [Master red: two socratic sites name a kind with no audit disposition](items/01M6FRZ2PKYJKHX9FW4W18T24A.md) — invincible-agent/lane/74 · next · updated 2026-11-03
 - [Retire the three hard-coded option lists when the runner reads the decide step's options](items/01M6QHKVK50KZ10GJM77T5051F.md) — invincible-agent/lane/74 · later · updated 2026-11-06
-- [fromMaintenanceBridge.ts names the case: retire it when a case is served](items/01M6T3M9MZ74CZJ4T0W6HRRW5Q.md) — cortex-ui/master · later · updated 2026-11-06
+- [fromMaintenanceBridge.ts names the case: retire it when a case is served](items/01M6T3M9MZ74CZJ4T0W6HRRW5Q.md) — cortex-ui/master · later · updated 2026-11-07
 
 ## 8. engine-r
 
