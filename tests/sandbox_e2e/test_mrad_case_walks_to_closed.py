@@ -18,11 +18,18 @@ flip; this step repeats that walk through product routes only, as two people:
 THE CASE CLOSES ON THE DECIDER'S APPROVAL: the supervisor's approval is the release (ruled
 2026-10-28), so there is no releaser leg and no signal is sent.
 
-WHAT THE PROJECTION CAN SHOW. `GET /cases/{id}` always projects `options: []` (see
-`case_projection`), so the options themselves are not readable here. "A case renders" is
-therefore asserted as what the projection does show: instance 1 is `maint_fault_propose`,
-its definition carries the `walk`, `options` and `decide` steps, and a `decide` approval is
-PENDING, i.e. the case ran through `walk` and `options` and reached the `decide` task.
+WHAT THE PROJECTION CAN SHOW. Since #283, `GET /cases/{id}` serves `options` (with
+`options_declaration`) once a task row carries them, and omits the key before then (see
+`case_projection`). "A case renders" is asserted as the steps: instance 1 is
+`maint_fault_propose`, its definition carries the `walk`, `options` and `decide` steps, and a
+`decide` approval is PENDING, i.e. the case ran through `walk` and `options` and reached the
+`decide` task.
+
+READINESS IS READ, NOT ASSUMED. Before anything is written, each caller's `authz_id` is read
+from its own session at `GET /me/entitlements`, and the walk stops there if it is blank or the
+caller has no cells. A 200 with empty entitlements is the silent failure a readiness check
+exists to catch (Chris, 2026-11-06). A blank `authz_id` means the broker's claim mapper is
+gone. The initiator's `authz_id`, never its email, is the event's `on_behalf_of`.
 
 This WRITES to the live sandbox. It is not a unit test (no pytest function in this file, so a
 unit run collects nothing) and is run by hand after a roll:
@@ -128,10 +135,25 @@ def _renders(payload: dict) -> bool:
     return steps[:3] == ["walk", "options", "decide"] and _pending(payload, "decide") is not None
 
 
+def readiness(w: Walk) -> dict[str, str]:
+    """Each caller's `authz_id`, read from its session; Fail on a blank id or no cells."""
+    ids: dict[str, str] = {}
+    for who in ("initiator", "decider"):
+        ent = w.call(who, "GET", "/me/entitlements", f"{who} readiness").json()
+        aid, cells = ent.get("authz_id"), ent.get("cells") or []
+        if not isinstance(aid, str) or not aid.strip():
+            raise Fail(f"{who} readiness: authz_id is blank", 200, f"authz_id={aid!r}")
+        if not cells:
+            raise Fail(f"{who} readiness: no entitlement cells", 200,
+                       f"authz_id={aid} source={ent.get('source')!r}")
+        print(f"READY {who}: authz_id={aid} cells={len(cells)} source={ent.get('source')}")
+        ids[who] = aid
+    return ids
+
+
 def walk(w: Walk, initiator_id: str | None) -> None:
-    if not initiator_id:
-        ent = w.call("initiator", "GET", "/me/entitlements", "initiator identity").json()
-        initiator_id = ent.get("email")  # in the sandbox authz_id == email
+    ids = readiness(w)
+    initiator_id = initiator_id or ids["initiator"]
     event_id = f"e2e-mrad-{uuid.uuid4().hex[:8]}"
     r = w.call("initiator", "POST", "/ingest/events", "ingest the fault event", json={
         "content_kind": "maintenance-fault-event", "on_behalf_of": initiator_id,
@@ -168,8 +190,8 @@ def main() -> int:
     ap.add_argument("--initiator-token", required=True, help="file holding erin's bearer token")
     ap.add_argument("--decider-token", required=True, help="file holding bob's bearer token")
     ap.add_argument("--initiator-authz-id", default=None,
-                    help="on_behalf_of for the event; default: the initiator's email from "
-                         "/me/entitlements (authz_id == email in the sandbox)")
+                    help="on_behalf_of for the event; default: the initiator's authz_id "
+                         "read from /me/entitlements at the readiness step")
     a = ap.parse_args()
     tokens = {}
     for who in ("initiator", "decider"):
