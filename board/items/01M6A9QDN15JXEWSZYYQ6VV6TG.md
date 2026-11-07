@@ -3,10 +3,10 @@ title: Serve capabilities on /me/entitlements for cortex
 feature: api-sdk-mcp
 lane: invincible-agent/lane/gov
 repo: invincible-agent
-status: claimed
+status: review
 priority: next
 blocked_on: []
-pr: []
+pr: [invincible-agent#290]
 ruling_ref: 
 updated: 2026-11-06
 ---
