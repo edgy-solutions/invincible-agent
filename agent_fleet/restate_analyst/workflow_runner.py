@@ -299,9 +299,25 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
     if seeded_by is not None and (not isinstance(seeded_by, str) or not seeded_by.strip()):
         raise restate.TerminalError(
             f"seeded_by must be a non-blank string or absent; got {seeded_by!r}", status_code=400)
+    # The closed case this one follows on its episode (the door read it off `attach`).
+    predecessor = request.get("predecessor")
+    if predecessor is not None and (not isinstance(predecessor, str) or not predecessor.strip()):
+        raise restate.TerminalError(
+            f"predecessor must be a non-blank string or absent; got {predecessor!r}",
+            status_code=400)
+
+    # The episode's NAME is the source system's when the event carries it; the platform's key
+    # only when it does not, and then the case says so. Read off the journalled intake.
+    source_id = flat.get(trig.episode_id) if trig.episode_id else None
+    if isinstance(source_id, str) and source_id.strip():
+        episode_id, episode_id_source = source_id, "event"
+    else:
+        episode_id, episode_id_source = episode, ("derived" if episode else None)
 
     case: dict = {"case_id": case_id, "trigger": name, "state": None, "terminal": None,
-                  "episode": episode, "instances": [], "transitions": [], "seeded_by": seeded_by}
+                  "episode": episode, "episode_id": episode_id,
+                  "episode_id_source": episode_id_source, "instances": [], "transitions": [],
+                  "seeded_by": seeded_by, "predecessor": predecessor}
     await _record(ctx, case, frm=None, outcome="received", to="received", by="system",
                   at_name="at_received")
     # THE ORIGINAL EVENT IS REVISION 1 (SDK ``ArtifactRevision``). ``input_revisions`` is the
@@ -324,6 +340,11 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
             await _record(ctx, case, frm="received", outcome="duplicate", to="attached",
                           by="system", reason=f"episode {episode} is open in case {owner}",
                           at_name="at_attached")
+            # The race fallback: this occurrence saw no holder at the door. Record it on the
+            # holder too. A send, in a branch that returns at once: nothing suspends here.
+            ctx.object_send(attach, key=episode, arg={
+                "event_id": case_id, "received_at": case["transitions"][-1]["at"],
+                "ingest_id": None})
             return {"case_id": case_id, "status": "ATTACHED", "attached_to": owner,
                     "transitions": case["transitions"]}
     await _record(ctx, case, frm="received", outcome="triaged", to="triaged", by="system",
@@ -629,10 +650,37 @@ async def claim(ctx: ObjectContext, request: dict) -> str:
 @case_episode.handler()
 async def release(ctx: ObjectContext, request: dict) -> None:
     """Close the episode -- only by the case that holds it -- and drop its chain, which belongs
-    to that case: the next case on this episode opens on its own event, as revision 1."""
+    to that case: the next case on this episode opens on its own event, as revision 1. It
+    remembers WHICH case closed last (`last_closed`: a case that closed and one that failed both
+    reach here), so the next occurrence names it as its predecessor. The occurrences recorded
+    against the case (`occurrences:{case}`) outlive the close: they are the case's history."""
     if await ctx.get("open") == request.get("case_id"):
         ctx.clear("open")
         ctx.clear("revision")
+        ctx.set("last_closed", request["case_id"])
+
+
+@case_episode.handler()
+async def attach(ctx: ObjectContext, request: dict) -> dict:
+    """An occurrence of this episode arrives. While a case holds the episode it ATTACHES: the
+    occurrence is recorded under the holder (`occurrences:{holder}`, once per `event_id`, so the
+    same occurrence twice is one entry) and no case opens. With none open it claims nothing and
+    answers the last closed case, which the new case names as its `predecessor`; the run still
+    claims at triage. A case is never recorded as its own occurrence."""
+    event_id = request.get("event_id")
+    if not isinstance(event_id, str) or not event_id.strip():
+        raise restate.TerminalError(
+            f"attach needs a non-blank event_id; got {event_id!r}", status_code=400)
+    holder = await ctx.get("open")
+    if not holder:
+        return {"attached_to": None, "predecessor": await ctx.get("last_closed")}
+    if holder != event_id:
+        seen = list(await ctx.get(f"occurrences:{holder}") or [])
+        if not any(o.get("event_id") == event_id for o in seen):
+            seen.append({"event_id": event_id, "received_at": request.get("received_at"),
+                         "ingest_id": request.get("ingest_id")})
+            ctx.set(f"occurrences:{holder}", seen)
+    return {"attached_to": holder, "predecessor": None}
 
 
 @case_episode.handler()

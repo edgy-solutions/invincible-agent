@@ -240,6 +240,10 @@ async def test_o4_registration_carries_the_resolved_options_only_when_declared(t
     assert decide and review
     carried = _options(c)  # the first proposal's options, as the case carried them on
     assert [o["verb"] for o in carried] == OPTION_VERBS
+    # The options travel with the declaration they were resolved under (id + content version).
+    for t in decide:
+        decl = t["payload"].pop("declaration")
+        assert decl["id"] == "maint_fault_propose" and len(decl["version"]) == 16, t
     assert decide[0]["payload"] == {"options": carried}, decide[0]
     for t in decide:
         assert [o["verb"] for o in t["payload"]["options"]] == OPTION_VERBS, t
@@ -321,7 +325,7 @@ def test_a1_a_released_case_names_its_action_record_and_when_it_was_written(
                 lambda cid: [_rec("old", _T0), _rec("new", _T1)])
     assert resp.status_code == 200, resp.text
     assert resp.json()["output_artifact"] == {
-        "uri": "/cases/c-1/action", "label": "Maintenance action record",
+        "uri": "/cases/c-1/action", "artifact_id": "new", "label": None,
         "released_at": _iso(_T1)}
 
 
@@ -365,3 +369,65 @@ def test_l1_the_consequence_sentence_uses_labels_when_known():
     # a verb with no label is still spelled as its id
     assert "defer_with_restriction" in main._choice_consequence_text(
         "maint_fault_propose", step, facts, {"replace_now": "Replace now"})
+
+
+# ── THE CASE READ: stage, episode, predecessor, the artifact's own label, the declaration ───
+
+def _stage_of(**over):
+    case = {**_case("maint_fault_propose"), **over}
+    return case_projection.project_workflow_case(case, DEFS, [])["stage"]
+
+
+def test_p1_the_case_stage_is_closed_failed_attached_or_running():
+    assert _stage_of(terminal="closed") == "closed"
+    assert _stage_of(state="failed") == "failed"
+    assert _stage_of(state="attached") == "attached"
+    assert _stage_of() == "running"          # the control: an open case is running
+    assert _stage_of(state="failed", terminal="closed") == "closed"
+
+
+def test_p2_the_case_serves_its_episode_and_predecessor_or_none():
+    out = case_projection.project_workflow_case(
+        {**_case("maint_fault_propose"), "episode": "ep-1", "predecessor": "E-0"}, DEFS, [])
+    assert (out["episode_id"], out["predecessor"]) == ("ep-1", "E-0")
+    bare = case_projection.project_workflow_case(_case("maint_fault_propose"), DEFS, [])
+    assert (bare["episode_id"], bare["predecessor"]) == (None, None)
+
+
+def test_p3_the_artifact_serves_its_id_and_the_records_own_label():
+    labelled = {"artifact_id": "a-1", "seeded_by": "x", "valid_as_of": _T1,
+                "record": {"label": "Its own label"}}
+    got = case_projection.release_artifact("c-1", [labelled])
+    assert (got["artifact_id"], got["label"]) == ("a-1", "Its own label")
+    assert case_projection.release_artifact("c-1", [_rec("a-2", _T1)])["label"] is None
+
+
+def _decl_row(wf, decided, declaration):
+    row = _row(wf, "decide", status="decided" if decided else "pending", options=OPTIONS)
+    if declaration is not None:
+        row["payload"]["declaration"] = declaration
+    return row
+
+
+def test_p4_options_serve_the_declaration_they_were_registered_under():
+    decl = {"id": "maint_fault_propose", "version": "abc123"}
+    out = case_projection.project_workflow_case(
+        _case("maint_fault_propose"), DEFS, [_decl_row("c-1~1", False, decl)])
+    assert out["options_declaration"] == {"definition_id": "maint_fault_propose",
+                                          "version": "abc123"}
+    old = case_projection.project_workflow_case(
+        _case("maint_fault_propose"), DEFS, [_decl_row("c-1~1", False, None)])
+    assert "options" in old and old["options_declaration"] is None
+    none = case_projection.project_workflow_case(
+        _case("maint_fault_propose"), DEFS, [_row("c-1~1", "decide")])
+    assert "options" not in none and "options_declaration" not in none
+
+
+def test_p5_a_closed_case_with_every_task_decided_still_serves_its_options():
+    decl = {"id": "maint_fault_propose", "version": "abc123"}
+    closed = {**_case("maint_fault_propose", status="completed")}
+    out = case_projection.project_workflow_case(
+        closed, DEFS, [_decl_row("c-1~1", True, decl)])
+    assert out["stage"] == "closed"
+    assert [o["id"] for o in out["options"]] == ["replace_now", "defer_with_restriction"]
+    assert out["options_declaration"]["version"] == "abc123"
