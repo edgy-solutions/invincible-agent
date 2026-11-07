@@ -116,10 +116,20 @@ def _drive_events(monkeypatch, who, named):
 
     class _Resp:
         status_code = 200
-        content = b""
+
+        def __init__(self, url=""):
+            # `CaseEpisode/attach` always answers a body; with nothing open it is this one.
+            self.content = (b'{"attached_to":null,"predecessor":null}'
+                            if url.endswith("/attach") else b"")
 
         def raise_for_status(self):
             pass
+
+        def json(self):
+            # Real httpx raises on an empty body; so does this.
+            if self.content:
+                return json.loads(self.content)
+            raise json.JSONDecodeError("Expecting value", "", 0)
 
     class _C:
         def __init__(self, *a, **k): ...
@@ -128,7 +138,7 @@ def _drive_events(monkeypatch, who, named):
 
         async def post(self, url, json=None, **k):
             fx.note(url, json)
-            return _Resp()
+            return _Resp(url)
 
     monkeypatch.setattr(gateway.httpx, "AsyncClient", _C)
     _login(who)
