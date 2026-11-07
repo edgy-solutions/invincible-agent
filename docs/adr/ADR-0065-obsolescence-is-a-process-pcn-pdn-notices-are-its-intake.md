@@ -1,7 +1,8 @@
 # ADR-0065 — Obsolescence is a process; PCN/PDN notices are its intake
 
-**Status:** Proposed. This is design only: there is no code and no roll. The number was provisional in the
-architect's 2026-11-06 brief and is allocated by this record.
+**Status:** Accepted, with one amendment (the architect, via Chris, 2026-11-07, on #299). The four questions this
+record raised are ruled; see "Rulings". This is design only: there is no code and no roll. The number was
+provisional in the architect's 2026-11-06 brief and is allocated by this record.
 **Date:** 2026-11-07
 **Deciders:** architect; the program's logistics owner for the vocabularies, options and thresholds a deployment
 supplies; gov for the rails (who may decide, who may approve).
@@ -110,15 +111,26 @@ review shapes. Neither is an OpenAPI enum.
 ### 4. Step 2, where-used: the verb and its impact table
 
 - **The verb.** Given a part, walk `Part ← used in* ← EndItem ← program`, filtered by applicability, and answer one
-  row per end item and program:
+  row per end item and program.
+- **It takes a declared `configuration` argument** (ruling 2): `as_designed`, `as_built` or `as_maintained`. The
+  default is `as_designed`, the EBOM that exists today. A configuration with no data for that end item is **refused
+  loudly**, never answered as an empty table. `as_built` and `as_maintained` arrive later, through OpenDDIL's CM
+  deltas and the PDM mapping.
+- **Every row also states the configuration it was answered from** (ruling 2, the amendment). The argument says what
+  was asked, and the column says what answered, so a design-view answer is never read as installed truth.
+- **The row is `ImpactRow`** (ruling 4):
 
   | field | meaning |
   | --- | --- |
   | `end_item` | the end item's identity |
   | `program` | the program the end item is sustained under |
+  | `component` | the part the question was asked about, by identity |
   | `qty_per` | the part's rolled-up quantity per end item, through every level |
   | `population` | the fielded count of that end item on that program |
   | `stock` | the part's stock on hand for that program |
+  | `configuration` | the configuration the row was answered from |
+  | `as_of` | when the data the row was answered from was current (ruling 3) |
+  | `data_provenance` | where the row came from: dataset URN, as-of and ticket id, as on every served table |
 
 - **Absent is not zero.** `population` and `stock` have no source today. A row with no source for them says so, and
   is never served as 0.
@@ -158,10 +170,11 @@ review shapes. Neither is an OpenAPI enum.
 
 ### 7. The ontology slice and the data contracts
 
-- **The slice** adds `Part`, `Assembly` and `EndItem` (as `iof:MaterialArtifact`, extending IOF Core the way
-  `setup/ontologies/mil_extension.ttl` does), a used-in relation with quantity, reference designator and
-  effectivity, `Configuration {as_designed | as_built | as_maintained}` on an instance, `lifecycle_status` on a Part,
-  and `ltb_decision`. Vocabulary is cited from AP242, S3000L, EIA-649 and S5000F, and never copied.
+- **The slice extends `product_structure_extension.ttl`** (ADR-0051's file; ruling 1). There is no new file and one
+  Part node: `ps:Part`, with the IOF Core alignment added there. `ps:PartUsage` already carries the used-in relation
+  with quantity, reference designator and applicability. The slice adds three classes to that file:
+  `configuration {as_designed | as_built | as_maintained}`, `lifecycle_status` on a Part, and `ltb_decision`.
+  Vocabulary is cited from AP242, S3000L, EIA-649 and S5000F, and never copied.
 - **The data contracts** follow ADR-0066. The BOM contract is the second contract file, after fin's EV contract.
   Population and stock contracts come later, each when a source exists.
 
@@ -178,32 +191,32 @@ All of it queues behind work already in flight.
 | C, the ontology slice | none yet | Lane 1 |
 | D, the registry rows | none yet | Lane 1 |
 
-## Open questions for the architect
+## Rulings
 
-These are the places where the brief and what is on disk disagree. Each needs a ruling before its item is built.
+The draft raised four places where the brief and what is on disk disagreed. The architect ruled all four on
+2026-11-07, via Chris, on #299: questions 1, 3 and 4 as the draft recommended, and question 2 with one amendment.
 
-1. **Where the ontology slice lives.**
-   - The brief names a new `setup/ontologies/product_structure.ttl` over IOF Core, with `component_of`.
-   - `product_structure_extension.ttl` already has `ps:Part` and `ps:PartUsage` over S3000L. `ps:PartUsage` already
-     carries quantity, reference designator and applicability, which is `component_of`'s content. Its header records
-     that S3000L models structure as Breakdown and BreakdownElement, and effectivity as applicability.
-   - **Recommendation:** extend the existing file and add the IOF Core alignment there. Two Part classes would be two
-     nodes, which is what the brief rules out.
-2. **What where-used filters on.**
-   - The brief filters to `as_built` and `as_maintained`.
-   - No as-built or as-maintained data exists. The design view is all there is, and the existing file says so on
-     purpose.
-   - **Recommendation:** the first slice answers from the design view, and each row says which configuration it was
-     answered from, so a design-view answer is never read as installed truth. This adds one field to section 4's
-     table. The architect may prefer the verb to refuse until installed data exists.
-3. **`date` or `as_of` in `lifecycle_status`.**
-   - The brief to Lane 1 says `date`. Section D as quoted to doc-tools on 2026-11-05 says `as_of`, with `successor`
-     optional, and ca's SDK shipped `as_of`.
-   - This record uses `as_of`, because it is what the SDK already carries.
+1. **Where the ontology slice lives: extend `product_structure_extension.ttl`.**
+   - The brief named a new `setup/ontologies/product_structure.ttl` over IOF Core, with `component_of`. The existing
+     file already has `ps:Part` and `ps:PartUsage` over S3000L, and `ps:PartUsage` carries quantity, reference
+     designator and applicability, which is `component_of`'s content.
+   - **Ruled:** no new file, and one Part node. The `configuration`, `lifecycle_status` and `ltb_decision` classes
+     are added to that file (section 7).
+2. **What where-used answers from: both an argument and a column** (the amendment).
+   - The brief filtered to `as_built` and `as_maintained`, and no as-built or as-maintained data exists. The draft
+     recommended answering from the design view, with each row naming its configuration.
+   - **Ruled:** `configuration` is an argument of the verb (`as_designed | as_built | as_maintained`, default
+     `as_designed`), and a configuration with no data for that end item is refused loudly. It is also a column of
+     every impact row (section 4).
+3. **`as_of` in `lifecycle_status`.**
+   - The brief to Lane 1 said `date`. Section D as quoted to doc-tools on 2026-11-05 said `as_of`, and ca's SDK
+     shipped `as_of`.
+   - **Ruled:** `as_of`, matching the contracts and ADR-0056.
 4. **`ImpactRow`'s fields.**
-   - ca's PR #2 ships `{part_ref, used_by, quantity}`.
-   - Section 4 specifies `{end_item, program, qty_per, population, stock}`.
-   - **Recommendation:** ca reshapes to section 4 before tagging v0.9.16. Nothing imports the module yet.
+   - ca's PR #2 shipped `{part_ref, used_by, quantity}`.
+   - **Ruled:** `ImpactRow = {end_item, program, component, qty_per, population, stock, configuration, as_of,
+     data_provenance}`, with `end_item` an identity (section 4). ca reshapes to it.
+   - "Absent is not zero" stands as written.
 
 ## What this does not establish
 
