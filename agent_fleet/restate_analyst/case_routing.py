@@ -79,6 +79,12 @@ class Trigger(_Declared):
     key: str = Field(..., min_length=1)
     #: facts that make two events ONE episode while a case for it is open
     episode: list[str] = Field(default_factory=list)
+    #: the fact that carries the SOURCE SYSTEM's own id for the episode, served on the case as
+    #: ``episode_id`` (architect, 2026-11-07: "We don't mint identity for someone else's
+    #: episode"). An event that carries none is served the ``episode`` key instead, marked
+    #: ``episode_id_source: derived``. It names the episode; ``episode`` still decides which
+    #: events are one.
+    episode_id: Optional[str] = None
     #: facts a LATER table reads -- refused at intake, not after a human has already acted
     requires: list[str] = Field(default_factory=list)
     #: facts the event must CARRY, where any value is an answer: a null, a list, an empty mapping.

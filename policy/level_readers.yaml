@@ -1,7 +1,7 @@
 # LEVEL READERS -- the `cleared_for:<level>` rail of ADR-0064 item B (Proposed, #266).
 #
-#   * ONE ROW PER LEVEL of policy/classification/levels.yaml, naming the groups cleared for it.
-#     Every registered level needs exactly one row.
+#   * ONE ROW PER VALUE of the hierarchical dimension in policy/classification/dimensions.yaml, naming the
+#     groups cleared for it. Every value needs exactly one row.
 #   * RULING (c), verbatim (Chris, 2026-11-05): "Relation: `cleared_for:<level>` -- `can_read` stays
 #     what it is."
 #   * A GRANT IS A CEILING. Ruling (b), verbatim: "Levels are ordered; a grant at a level is a ceiling

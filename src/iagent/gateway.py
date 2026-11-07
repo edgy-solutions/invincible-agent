@@ -12746,7 +12746,8 @@ def _create_ingest_node(*, ingest_id: str, kind: str, sha256: str, object_ref: s
 
 
 async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str,
-                     provenance_block: dict, seeded_by: Optional[str] = None) -> bool:
+                     provenance_block: dict, seeded_by: Optional[str] = None,
+                     predecessor: Optional[str] = None) -> bool:
     """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/run/send` -- the same case-runner
     call `_open_safety_acceptance` makes above (~6590), reused here for the ingest/origin seam's
     two case-opening points (an event-branch content kind on arrival, section 3; an origin
@@ -12766,7 +12767,7 @@ async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str,
             resp = await client.post(
                 f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/run/send",
                 json={"trigger": trigger, "facts": facts, "provenance": provenance_block,
-                      "seeded_by": seeded_by},
+                      "seeded_by": seeded_by, "predecessor": predecessor},
             )
         resp.raise_for_status()
         return True
@@ -13446,6 +13447,14 @@ async def ingest_event(
     ruling keeps it, so 202 is not an open question. `case_id` is the key the case runner
     holds the case under (the trigger's key, i.e. the producer's own identity field), and the
     door only answers 200 once the runner's own intake check has accepted the payload.
+
+    AN OCCURRENCE ATTACHES TO ITS OPEN EPISODE (architect, 2026-11-06). An episode is the
+    trigger's declared `episode` fields; an occurrence is one event opening it, `case_id` =
+    `event_id`. A first arrival of a trigger that declares one asks `CaseEpisode/attach`: a case
+    holding the episode takes the occurrence (recorded, no new case, answer `attached: true` with
+    the holder's `case_id`); with none open a new case opens and names the last closed one as its
+    `predecessor`. The same occurrence twice (same event_id, same bytes) is answered, not
+    revised; the same event_id with different bytes is a revision.
     """
     from . import content_kinds, provenance
 
@@ -13476,7 +13485,7 @@ async def ingest_event(
 
     try:
         from agent_fleet.restate_analyst.case_routing import (  # noqa: PLC0415
-            CaseRoutingError, check_intake, flatten, load_trigger,
+            CaseRoutingError, check_intake, episode_key, flatten, load_trigger,
         )
         trigger = load_trigger(_registered_kind.seeds_workflow)
     except CaseRoutingError as exc:
@@ -13582,7 +13591,9 @@ async def ingest_event(
     # table -- the first live event on OpenDDIL opened its case before this status seam existed,
     # so a row-only check would call that case "new" and crash straight into the runner's own
     # key-reuse refusal. `case` is a shared, no-input handler (workflow_runner.py) that answers
-    # the case record or null; a non-null answer is a repeat.
+    # the case record or null; a non-null answer is a repeat. A repeat with the bytes already
+    # recorded for this ingest_id is the SAME occurrence twice and is answered as such; one
+    # with different bytes is a revision.
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             case_resp = await client.post(
@@ -13612,6 +13623,8 @@ async def ingest_event(
         # at all; a row that already exists keeps its own stage (it is not this route's place to
         # rewrite history for an id it already has an opinion about).
         existing_row = await run_in_threadpool(lambda: ingest_status.get_row(ingest_id))
+        if existing_row is not None and existing_row.get("sha256") == sha256_hex:
+            return {"ingest_id": ingest_id, "workflow": {"case_id": case_id, "started": False}}
         if existing_row is None:
             await run_in_threadpool(lambda: ingest_status.record_received(
                 ingest_id=ingest_id, sha256=sha256_hex, kind=ingest_status.EVENT,
@@ -13650,6 +13663,67 @@ async def ingest_event(
             )
         raise HTTPException(status_code=502, detail={"error": "runner_error"})
 
+    # AN OCCURRENCE OF A DECLARED EPISODE asks the episode before anything is written: a holder
+    # takes it (no case opens); none open answers the last closed case, this case's predecessor.
+    episode = episode_key(trigger, flatten(facts))
+    predecessor: Optional[str] = None
+    if episode is not None:
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                att_resp = await client.post(
+                    f"{_RESTATE_INGRESS_URL}/CaseEpisode/{_restate_key(episode)}/attach",
+                    json={"event_id": case_id, "received_at": ingested_at,
+                          "ingest_id": ingest_id},
+                )
+        except Exception as exc:  # noqa: BLE001 - unreachable runner; do not guess
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "runner_unavailable", "message": str(exc)},
+            )
+        if att_resp.status_code != 200:
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "runner_unavailable", "code": att_resp.status_code},
+            )
+        try:
+            att = _restate_answer(att_resp)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "runner_unavailable", "message": str(exc)},
+            )
+        # `attach` always answers a dict. An empty 200 is not "none open": reading it so would
+        # open a second case on a guess.
+        if not isinstance(att, dict):
+            raise HTTPException(
+                status_code=503,
+                detail={"error": "runner_unavailable",
+                        "message": f"CaseEpisode/attach answered {att!r}"},
+            )
+        predecessor = att.get("predecessor")
+        attached_to = att.get("attached_to")
+        if attached_to:
+            try:
+                if await run_in_threadpool(lambda: ingest_status.get_row(ingest_id)) is None:
+                    await run_in_threadpool(lambda: ingest_status.record_received(
+                        ingest_id=ingest_id, sha256=sha256_hex, kind=ingest_status.EVENT,
+                        object_prefix="", submitted_by=current_user.authz_id,
+                        on_behalf_of=actor, source="events",
+                        content_kind=req.content_kind,
+                    ))
+                await run_in_threadpool(lambda: ingest_status.update_status(
+                    ingest_id, ingest_status.CASE_OPENED, case_id=attached_to,
+                    detail=f"attached to open case {attached_to} (episode {episode})"))
+            except Exception as exc:  # noqa: BLE001 — the occurrence is on the episode; resend
+                raise HTTPException(
+                    status_code=503,
+                    detail={"error": "status_unavailable", "message": str(exc)},
+                )
+            return {
+                "ingest_id": ingest_id,
+                "workflow": {"case_id": attached_to, "started": False, "attached": True},
+            }
+
     # FIRST ARRIVAL: write the status row BEFORE opening the case -- "no case without its
     # record" -- so a write failure here must refuse rather than open a case nobody has a
     # status row for.
@@ -13669,6 +13743,7 @@ async def ingest_event(
     started = await _open_case(
         case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
         ingest_id=ingest_id, provenance_block=provenance_block, seeded_by=seeded_by,
+        predecessor=predecessor,
     )
     if started:
         await run_in_threadpool(lambda: ingest_status.update_status(

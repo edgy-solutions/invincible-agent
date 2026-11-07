@@ -36,10 +36,17 @@ definition of "valid", never a parallel re-implementation):
     DATA_FILES -- see the note there)
   - gateway_delegates.yaml        → gateway_delegates_errors (WHEN PRESENT; not in
     DATA_FILES -- see the note there)
-  - classification/levels.yaml    → classification_levels_errors (WHEN PRESENT; not in
-    DATA_FILES -- see the note there): an id is a bare name, unique; a row says why and who ratified
+  - classification/dimensions.yaml → classification_dimensions_errors (WHEN PRESENT; not in
+    DATA_FILES -- see the note there): a name is a bare name, unique; a type is `hierarchical` or
+    `set`; a vocabulary is a list of bare values; an owner is a seat; at most one hierarchical
   - level_readers.yaml            → level_readers_errors (WHEN PRESENT; not in DATA_FILES -- see
-    the note there): a level is registered, one row per level, a group exists and has members
+    the note there): a level is a value of the hierarchical dimension, one row per value, a group
+    exists and has members
+  - dimension_holders.yaml        → dimension_holders_errors (WHEN PRESENT; not in DATA_FILES -- see
+    the note there): a value is in a set dimension's vocabulary, one row per value, a group exists
+    and has members
+  - option_deciders.yaml          → option_deciders_errors (WHEN PRESENT; not in DATA_FILES -- see
+    the note there): a workflow and option have one row, a group exists and has members
   - domain_consumption.yaml       → domain_consumption_required_fields (this file;
     no sync of its own — can_consume is evaluated in-process)
   - every DATA file must EXIST — explicit-empty (`grants: []`) is a
@@ -118,9 +125,14 @@ DATA_FILES = (
 # assert, and an absent file means the same as an empty one, no service names a person. Validated
 # WHEN PRESENT.
 #
-# classification/levels.yaml and level_readers.yaml (ADR-0064 item B, Proposed, #266) are likewise NOT
-# in DATA_FILES: no code reads either yet (dag-tools step 5), an absent registry registers no level
-# and an absent rail grants no level. Validated WHEN PRESENT.
+# classification/dimensions.yaml, level_readers.yaml and dimension_holders.yaml (ADR-0064 item B,
+# Proposed, #266; dimensions per the 2026-11-06 ruling) are likewise NOT in DATA_FILES: no code reads
+# any of them yet (dag-tools step 5), an absent registry registers no dimension, and an absent rail
+# grants no level and holds no value. Validated WHEN PRESENT.
+#
+# option_deciders.yaml (the `can_decide:<workflow_id>.<option>` rail, ADR-0065 (provisional, not yet
+# written)) is likewise NOT in DATA_FILES: no code reads it yet (a workflow definition's decide step will
+# carry the options, ADR-0065 ruling 3), and an absent rail grants no option. Validated WHEN PRESENT.
 
 
 def known_content_kinds() -> tuple[set[str], list[str]]:
@@ -799,66 +811,127 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
     return out
 
 
-#: The row fields of policy/classification/levels.yaml and policy/level_readers.yaml (ADR-0064 item B,
-#: Proposed, #266). Neither file is read by code yet; dag-tools step 5 serves a dataset's level.
-_CL_ROW_FIELDS = ("id", "reason", "ratified_by")
+#: The row fields of policy/classification/dimensions.yaml, policy/level_readers.yaml and
+#: policy/dimension_holders.yaml (ADR-0064 item B, Proposed, #266; dimensions per the 2026-11-06
+#: ruling). No code reads any of them yet; dag-tools step 5 serves a dataset's level.
+_CD_ROW_FIELDS = ("name", "type", "vocabulary", "owner")
 _LR_ROW_FIELDS = ("level", "grant_to_groups", "granted_by", "reason", "ratified_by")
+_DH_ROW_FIELDS = ("dimension", "value", "grant_to_groups", "granted_by", "reason", "ratified_by")
+_CD_TYPES = ("hierarchical", "set")
 
 
-def classification_levels_errors(raw: dict, users: list) -> tuple[list[str], list[str] | None]:
-    """Validate policy/classification/levels.yaml. PURE.
+def classification_dimensions_errors(
+        raw: dict, users: list) -> tuple[list[str], dict[str, tuple[str, list[str]]] | None]:
+    """Validate policy/classification/dimensions.yaml. PURE.
 
-    Returns `(errors, levels)`. `levels` is the ORDERED list of valid ids, in file order (list
-    position IS the order: least restrictive first), or None when the file is refused at the top
-    level. Each error reads `classification/levels.yaml: <id or row i>: ...`. An id is the
-    `<level>` of `cleared_for:<level>`, so it has no whitespace and no `:`; it is unique. Every row
-    says why (`reason`) and which seat ratified it (`ratified_by`: a seat, never an identity).
-    Unknown keys are refused by name. A row with a bad id contributes no level."""
-    pre = "classification/levels.yaml"
-    if not isinstance(raw, dict) or set(raw) != {"classification_levels"}:
-        extra = sorted(map(str, set(raw) - {"classification_levels"})) if isinstance(raw, dict) else []
-        return ([f"{pre}: top level must be a mapping with exactly one key, `classification_levels`"
+    Shape: `dimensions: [{name, type: hierarchical|set, vocabulary: [value, ...], owner}]`.
+    Returns `(errors, dims)`. `dims` maps each VALID dimension name to `(type, vocabulary)` in file
+    order, or is None when the file is refused at the top level. Each error reads
+    `classification/dimensions.yaml: <name or row i>: ...`. A name is the `<dimension>` of
+    `holds:<dimension>:<value>` and a value is its `<value>`, so neither has whitespace or `:`; names
+    are unique and a value is not listed twice. A hierarchical vocabulary is ordered by position
+    (least restrictive first); a set's order means nothing. `owner` is a seat, never an identity.
+    AT MOST ONE dimension is hierarchical, because `cleared_for:<level>` names no dimension; a second
+    is refused. A row with a bad name, type or vocabulary contributes no dimension."""
+    pre = "classification/dimensions.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"dimensions"}:
+        extra = sorted(map(str, set(raw) - {"dimensions"})) if isinstance(raw, dict) else []
+        return ([f"{pre}: top level must be a mapping with exactly one key, `dimensions`"
                  + (f" (unknown key(s): {', '.join(extra)})" if extra else "")], None)
-    rows = raw["classification_levels"]
+    rows = raw["dimensions"]
     if not isinstance(rows, list):
-        return ([f"{pre}: `classification_levels` must be a list of rows "
-                 "(an empty list registers no level)"], None)
+        return ([f"{pre}: `dimensions` must be a list of rows "
+                 "(an empty list registers no dimension)"], None)
 
     seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
     out: list[str] = []
-    levels: list[str] = []
+    dims: dict[str, tuple[str, list[str]]] = {}
+    names_seen: set[str] = set()
+    have_hier = False
     for i, row in enumerate(rows):
         if not isinstance(row, dict):
             out.append(f"{pre}: row {i}: must be a mapping")
             continue
-        lid = row.get("id")
-        where = f"{pre}: {lid if isinstance(lid, str) and lid.strip() else f'row {i}'}"
+        name = row.get("name")
+        where = f"{pre}: {name if isinstance(name, str) and name.strip() else f'row {i}'}"
         for k in row:
-            if k not in _CL_ROW_FIELDS:
-                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_CL_ROW_FIELDS)})")
-        if not isinstance(lid, str) or not lid.strip():
-            out.append(f"{where}: `id` must be a non-empty string")
-        elif any(ch.isspace() for ch in lid) or ":" in lid:
-            out.append(f"{where}: `id` must have no whitespace and no `:` (it is the `<level>` "
-                       "of `cleared_for:<level>`)")
-        elif lid in levels:
-            out.append(f"{where}: more than one row has this id")
+            if k not in _CD_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_CD_ROW_FIELDS)})")
+        ok = True
+        if not isinstance(name, str) or not name.strip():
+            out.append(f"{where}: `name` must be a non-empty string")
+            ok = False
+        elif any(ch.isspace() for ch in name) or ":" in name:
+            out.append(f"{where}: `name` must have no whitespace and no `:` (it is the `<dimension>` "
+                       "of `holds:<dimension>:<value>`)")
+            ok = False
+        elif name in names_seen:
+            out.append(f"{where}: more than one row has this name")
+            ok = False
         else:
-            levels.append(lid)
-        for k in ("reason", "ratified_by"):
-            v = row.get(k)
-            if not isinstance(v, str) or not v.strip():
-                out.append(f"{where}: `{k}` must be a non-empty string")
-            elif k == "ratified_by" and v.strip() in seeded:
-                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
-                           "in users.yaml")
-    return out, levels
+            names_seen.add(name)
+
+        typ = row.get("type")
+        if typ not in _CD_TYPES:
+            out.append(f"{where}: `type` must be `hierarchical` or `set`")
+            ok = False
+
+        vocab = row.get("vocabulary")
+        if not isinstance(vocab, list) or not vocab:
+            out.append(f"{where}: `vocabulary` must be a non-empty list of values")
+            ok = False
+        else:
+            vals: list[str] = []
+            dup_reported = False
+            for v in vocab:
+                if not isinstance(v, str) or not v.strip():
+                    out.append(f"{where}: `vocabulary` values must be non-empty strings")
+                    ok = False
+                elif any(ch.isspace() for ch in v) or ":" in v:
+                    out.append(f"{where}: vocabulary value {v!r} must have no whitespace and no `:` "
+                               "(it is the `<value>` of `holds:<dimension>:<value>`)")
+                    ok = False
+                elif v in vals:
+                    if not dup_reported:
+                        out.append(f"{where}: vocabulary value {v!r} is listed more than once")
+                        dup_reported = True
+                    ok = False
+                else:
+                    vals.append(v)
+
+        owner = row.get("owner")
+        if not isinstance(owner, str) or not owner.strip():
+            out.append(f"{where}: `owner` must be a non-empty string")
+        elif owner.strip() in seeded:
+            out.append(f"{where}: `owner` names a seat (e.g. `owner`), not an identity "
+                       "in users.yaml")
+
+        if ok and typ == "hierarchical":
+            if have_hier:
+                out.append(f"{where}: a second hierarchical dimension (`cleared_for:<level>` names no "
+                           "dimension, so there is one hierarchical dimension)")
+                continue
+            have_hier = True
+        if ok:
+            dims[name] = (typ, vals)
+    return out, dims
+
+
+def hierarchical_levels(dims) -> list[str] | None:
+    """The one hierarchical dimension's ordered vocabulary; None if `dims` is None, `[]` if none."""
+    if dims is None:
+        return None
+    for typ, vocab in dims.values():
+        if typ == "hierarchical":
+            return list(vocab)
+    return []
 
 
 def level_readers_errors(raw: dict, levels: list[str] | None, groups: dict, users: list) -> list[str]:
     """Validate policy/level_readers.yaml. PURE.
 
-    `levels` is the registry's ordered ids: `[]` when the registry file is absent, None when the
+    `levels` is the ordered vocabulary of the hierarchical dimension in
+    classification/dimensions.yaml: `[]` when the registry file is absent or has none, None when the
     registry was refused (then no level-membership or completeness check runs: the registry's own
     error already stands, and one refused registry must not become one "unknown level" per row).
     Each error reads `level_readers.yaml: <level or row i>: ...`. One row per registered level;
@@ -898,7 +971,7 @@ def level_readers_errors(raw: dict, levels: list[str] | None, groups: dict, user
             out.append(f"{where}: `level` must be a non-empty string")
         else:
             if levels is not None and level not in levels:
-                out.append(f"{where}: {level!r} is not a level in classification/levels.yaml")
+                out.append(f"{where}: {level!r} is not a value of the hierarchical dimension in classification/dimensions.yaml")
             if level in seen:
                 out.append(f"{where}: more than one row names this level")
                 dup_levels.add(level)
@@ -950,6 +1023,178 @@ def level_readers_errors(raw: dict, levels: list[str] | None, groups: dict, user
             if lv not in seen:
                 out.append(f"{pre}: level {lv!r} has no row (one row per level; "
                            "`grant_to_groups: []` with a reason says nobody reads it)")
+    return out
+
+#: The row fields of policy/option_deciders.yaml (ADR-0065 (provisional, not yet written)). One row per
+#: workflow and option, keyed `<workflow_id>.<option>`. Nothing reads the file yet; the options will come
+#: from the workflow definition's decide step (ruling 3).
+_OD_ROW_FIELDS = ("workflow", "option", "grant_to_groups", "granted_by", "reason", "ratified_by")
+
+
+def option_deciders_errors(raw: dict, groups: dict, users: list) -> list[str]:
+    """Validate policy/option_deciders.yaml. PURE.
+
+    Each error reads `option_deciders.yaml: <workflow>.<option> (or row i): ...`. A row is keyed
+    `<workflow_id>.<option>`, the two parts of `can_decide:<workflow_id>.<option>`: each has no whitespace,
+    no `:` and no `.`, so the key splits one way; a key has one row. `grant_to_groups` names
+    groups that exist and have members, and may be empty (nobody chooses the option). A user is never
+    named: `grant_to:` is an unknown key. Every row says why (`reason`) and which seat ratified it
+    (`ratified_by`: a seat, never an identity). Option membership (each `<option>` is one of its workflow's
+    decide-step options) and one row per offered option are checked once a workflow definition carries
+    the options (ADR-0065, ruling 3)."""
+    pre = "option_deciders.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"option_deciders"}:
+        extra = sorted(map(str, set(raw) - {"option_deciders"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `option_deciders`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    rows = raw["option_deciders"]
+    if not isinstance(rows, list):
+        return [f"{pre}: `option_deciders` must be a list of rows (an empty list grants no option)"]
+
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    seen: set[str] = set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        workflow = row.get("workflow")
+        option = row.get("option")
+        parts = all(isinstance(v, str) and v.strip() for v in (workflow, option))
+        key = f"{workflow}.{option}" if parts else f"row {i}"
+        where = f"{pre}: {key}"
+        for k in row:
+            if k not in _OD_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_OD_ROW_FIELDS)})")
+
+        part_ok = True
+        for field, v in (("workflow", workflow), ("option", option)):
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{field}` must be a non-empty string")
+                part_ok = False
+            elif any(ch.isspace() for ch in v) or ":" in v or "." in v:
+                out.append(f"{where}: `{field}` must have no whitespace, no `:` and no `.` (it is a part "
+                           "of `<workflow_id>.<option>` in `can_decide:<workflow_id>.<option>`)")
+                part_ok = False
+        if part_ok:
+            if key in seen:
+                out.append(f"{where}: more than one row names this workflow and option")
+            seen.add(key)
+
+        gtg = row.get("grant_to_groups")
+        if not isinstance(gtg, list):
+            out.append(f"{where}: `grant_to_groups` must be a list (`[]` says nobody may choose the option)")
+        else:
+            names: list[str] = []
+            for g in gtg:
+                if not isinstance(g, str) or not g.strip():
+                    out.append(f"{where}: `grant_to_groups` entries must be non-empty strings")
+                elif g in names:
+                    out.append(f"{where}: group {g!r} is listed more than once")
+                else:
+                    names.append(g)
+            out.extend(unusable_group_audiences(
+                [SimpleNamespace(key=key, grant_to_groups=names)],
+                groups, users, file_label=pre, noun="option",
+                nobody="the grant would let NOBODY choose"))
+
+        for k in ("granted_by", "reason", "ratified_by"):
+            v = row.get(k)
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and v.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
+    return out
+
+
+def dimension_holders_errors(raw: dict, dims: dict | None, groups: dict, users: list) -> list[str]:
+    """Validate policy/dimension_holders.yaml, the `holds:<dimension>:<value>` rail. PURE.
+
+    Shape: `dimension_holders: [{dimension, value, grant_to_groups, granted_by, reason, ratified_by}]`.
+    `dims` is the registry's `{name: (type, vocabulary)}`: `{}` when the registry file is absent, None
+    when it was refused (then no dimension, vocabulary or completeness check runs: the registry's own
+    error already stands, and one refused registry must not become one error per row). Each error
+    reads `dimension_holders.yaml: <dimension>:<value> or row i: ...`. A row names a SET dimension
+    and a value of its vocabulary; a hierarchical dimension is cleared through level_readers.yaml
+    instead. One row per (dimension, value), and every value of every set dimension has one;
+    `grant_to_groups` names groups that exist and have members, and may be empty (nobody holds the
+    value). A user is never named. There is NO ceiling check, unlike the level rail: the values of a
+    set are unordered, so holding one implies nothing about another."""
+    pre = "dimension_holders.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"dimension_holders"}:
+        extra = sorted(map(str, set(raw) - {"dimension_holders"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `dimension_holders`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    rows = raw["dimension_holders"]
+    if not isinstance(rows, list):
+        return [f"{pre}: `dimension_holders` must be a list of rows (an empty list holds no value)"]
+
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        d, v = row.get("dimension"), row.get("value")
+        d_ok = isinstance(d, str) and bool(d.strip())
+        v_ok = isinstance(v, str) and bool(v.strip())
+        where = f"{pre}: {d}:{v}" if d_ok and v_ok else f"{pre}: row {i}"
+        for k in row:
+            if k not in _DH_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_DH_ROW_FIELDS)})")
+        if not d_ok:
+            out.append(f"{where}: `dimension` must be a non-empty string")
+        if not v_ok:
+            out.append(f"{where}: `value` must be a non-empty string")
+        if d_ok and dims is not None:
+            if d not in dims:
+                out.append(f"{where}: `{d}` is not a dimension in classification/dimensions.yaml")
+            elif dims[d][0] == "hierarchical":
+                out.append(f"{where}: `{d}` is hierarchical: its values are cleared through "
+                           "level_readers.yaml (`cleared_for:<level>`), not held")
+            elif v_ok and v not in dims[d][1]:
+                out.append(f"{where}: `{v}` is not in the vocabulary of `{d}`")
+        if d_ok and v_ok:
+            if (d, v) in seen:
+                out.append(f"{where}: more than one row names this dimension and value")
+            seen.add((d, v))
+
+        gtg = row.get("grant_to_groups")
+        if not isinstance(gtg, list):
+            out.append(f"{where}: `grant_to_groups` must be a list (`[]` says nobody holds the value)")
+        else:
+            names: list[str] = []
+            for g in gtg:
+                if not isinstance(g, str) or not g.strip():
+                    out.append(f"{where}: `grant_to_groups` entries must be non-empty strings")
+                elif g in names:
+                    out.append(f"{where}: group {g!r} is listed more than once")
+                else:
+                    names.append(g)
+            out.extend(unusable_group_audiences(
+                [SimpleNamespace(key=f"{d}:{v}" if d_ok and v_ok else f"row {i}",
+                                 grant_to_groups=names)],
+                groups, users, file_label="dimension_holders.yaml", noun="value",
+                nobody="the grant would let NOBODY hold it"))
+
+        for k in ("granted_by", "reason", "ratified_by"):
+            val = row.get(k)
+            if not isinstance(val, str) or not val.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and val.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
+
+    if dims is not None:
+        for dn, (typ, vocab) in dims.items():
+            if typ != "set":
+                continue
+            for val in vocab:
+                if (dn, val) not in seen:
+                    out.append(f"{pre}: value `{dn}:{val}` has no row (one row per value of a set "
+                               "dimension; `grant_to_groups: []` with a reason says nobody holds it)")
     return out
 
 
@@ -1053,6 +1298,22 @@ def validate(
             errors.append(
                 f"capability_grants.yaml: capability {c.key!r}: a level's clearances are rows of "
                 f"policy/level_readers.yaml, not a capability row")
+
+    # `holds:<dimension>:<value>` is the dimension-holders rail's key (2026-11-06 ruling), never a
+    # capability row.
+    for c in caps:
+        if c.key.startswith("holds:"):
+            errors.append(
+                f"capability_grants.yaml: capability {c.key!r}: a dimension value's holders are rows "
+                f"of policy/dimension_holders.yaml, not a capability row")
+
+    # `can_decide:<workflow_id>.<option>` is the option rail's key (ADR-0065, provisional), never a
+    # capability row.
+    for c in caps:
+        if c.key.startswith("can_decide:"):
+            errors.append(
+                f"capability_grants.yaml: capability {c.key!r}: an option's deciders are rows of "
+                f"policy/option_deciders.yaml, not a capability row")
 
     # `can_drop:<K>` (2026-10-28 ruling): the key gates drops of content kind K by the capability
     # OBJECT's existence, so a misspelt kind (`can_drop:pnc`) would gate a kind nobody drops and
@@ -1163,20 +1424,21 @@ def validate(
         _gd_rows = gd_raw.get("gateway_delegates")
         print(f"  gateway_delegates.yaml: {len(_gd_rows) if isinstance(_gd_rows, list) else 0} row(s)")
 
-    # classification/levels.yaml + level_readers.yaml (ADR-0064 item B, Proposed, #266): validated
-    # WHEN PRESENT only (not in DATA_FILES -- see the note there). The rail is checked against the
-    # registry; an absent registry registers no level, and a registered level with the rail absent
-    # reports its missing row.
+    # classification/dimensions.yaml + level_readers.yaml + dimension_holders.yaml (ADR-0064 item B,
+    # Proposed, #266; 2026-11-06 ruling): validated WHEN PRESENT only (not in DATA_FILES -- see the
+    # note there). The rails are checked against the registry; an absent registry registers no
+    # dimension, and a registered level or set value with its rail absent reports its missing row.
     _users_list = users_raw.get("users") or []
     _groups_map = groups_raw.get("groups") or {}
-    _cl_levels: list[str] | None = []
-    _cl_path = policy_dir / "classification" / "levels.yaml"
-    if _cl_path.is_file():
-        cl_raw = _read_yaml(_cl_path, errors)
-        _cl_errors, _cl_levels = classification_levels_errors(cl_raw, _users_list)
-        errors.extend(_cl_errors)
-        _cl_rows = cl_raw.get("classification_levels")
-        print(f"  classification/levels.yaml: {len(_cl_rows) if isinstance(_cl_rows, list) else 0} level(s)")
+    _cd_dims: dict | None = {}
+    _cd_path = policy_dir / "classification" / "dimensions.yaml"
+    if _cd_path.is_file():
+        cd_raw = _read_yaml(_cd_path, errors)
+        _cd_errors, _cd_dims = classification_dimensions_errors(cd_raw, _users_list)
+        errors.extend(_cd_errors)
+        _cd_rows = cd_raw.get("dimensions")
+        print(f"  classification/dimensions.yaml: {len(_cd_rows) if isinstance(_cd_rows, list) else 0} dimension(s)")
+    _cl_levels = hierarchical_levels(_cd_dims)
     _lr_path = policy_dir / "level_readers.yaml"
     if _lr_path.is_file():
         lr_raw = _read_yaml(_lr_path, errors)
@@ -1185,6 +1447,21 @@ def validate(
         print(f"  level_readers.yaml: {len(_lr_rows) if isinstance(_lr_rows, list) else 0} row(s)")
     elif _cl_levels:
         errors.extend(level_readers_errors({"level_readers": []}, _cl_levels, _groups_map, _users_list))
+    _dh_path = policy_dir / "dimension_holders.yaml"
+    if _dh_path.is_file():
+        dh_raw = _read_yaml(_dh_path, errors)
+        errors.extend(dimension_holders_errors(dh_raw, _cd_dims, _groups_map, _users_list))
+        _dh_rows = dh_raw.get("dimension_holders")
+        print(f"  dimension_holders.yaml: {len(_dh_rows) if isinstance(_dh_rows, list) else 0} row(s)")
+    elif _cd_dims and any(t == "set" for t, _ in _cd_dims.values()):
+        errors.extend(dimension_holders_errors({"dimension_holders": []}, _cd_dims, _groups_map, _users_list))
+    # option_deciders.yaml (ADR-0065, provisional): WHEN PRESENT only; no code reads workflow definitions yet.
+    _od_path = policy_dir / "option_deciders.yaml"
+    if _od_path.is_file():
+        od_raw = _read_yaml(_od_path, errors)
+        errors.extend(option_deciders_errors(od_raw, _groups_map, _users_list))
+        _od_rows = od_raw.get("option_deciders")
+        print(f"  option_deciders.yaml: {len(_od_rows) if isinstance(_od_rows, list) else 0} row(s)")
 
     # ADMISSION POSTURE (ADR-0034). Validated through the SAME parser the runtime loads with, so
     # there is ONE definition of a well-formed table and this gate cannot drift from the loader.

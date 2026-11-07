@@ -1,0 +1,26 @@
+# DIMENSION HOLDERS -- the `holds:<dimension>:<value>` rail (gov ruling, Chris, 2026-11-06).
+#
+#   The ruling, verbatim:
+#
+#     gov: policy/classification/levels.yaml → dimensions.yaml
+#     (name, type, vocabulary, owner); `cleared_for:<level>` stays
+#     for the hierarchical dimension; `holds:<dimension>:<value>`
+#     rail for set dimensions; validator refuses a value outside
+#     the vocabulary. Still validator-only. #268's seal updates.
+#
+#   * ONE ROW PER VALUE of each SET dimension in policy/classification/dimensions.yaml, naming the
+#     groups that hold it. Every value of a set dimension needs exactly one row. A hierarchical
+#     dimension is cleared through policy/level_readers.yaml (`cleared_for:<level>`), never here.
+#   * A ROW has `dimension`, `value` (in that dimension's vocabulary), `grant_to_groups` (groups in
+#     groups.yaml with at least one member; no user is ever named here, membership lives in
+#     users.yaml), `granted_by` (`seed` for a shipped row), `reason`, and `ratified_by` (`owner`: a
+#     seat, never an identity). The values of a set are unordered, so holding one implies nothing
+#     about another.
+#   * DENY BY DEFAULT. An explicit `grant_to_groups: []` with a reason says no group holds the value.
+#   * NO DIMENSION OR VALUE IS NAMED IN CODE OR IN THIS SEED. A deployment adds a row.
+#   * A `holds:` key in capability_grants.yaml is refused: a value's holders are rows of this file.
+#
+# No reader applies this file until dag-tools step 5 serves a dataset's classification.
+# validate_policy.py checks it WHEN PRESENT (dimension_holders_errors).
+
+dimension_holders: []

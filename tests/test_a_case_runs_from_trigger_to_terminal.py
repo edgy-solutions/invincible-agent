@@ -154,7 +154,7 @@ def _answer(verb, who="m@x", comments=""):
 
 _TRIGGERS = {
     "fault": {"trigger": "fault", "selection": "sel", "key": "event_id",
-              "episode": ["asset_id", "fault.code"]},
+              "episode": ["asset_id", "fault.code"], "episode_id": "source_episode"},
     "needy": {"trigger": "needy", "selection": "sel", "key": "event_id",
               "requires": ["picture.mission_essential"]},
     "to_orphan": {"trigger": "to_orphan", "selection": "sel_orphan", "key": "event_id"},
