@@ -70,9 +70,15 @@ def _refusal_siblings(delegates):
     return out.status_code
 
 
+# Ruled by Chris (lane/saf, 2026-11-07): Lane 1's attach refuses a foreign delegate with this code,
+# carried where the sibling refusals carry theirs: `detail["error"]`.
+FOREIGN_DELEGATE_CODE = "delegate_not_seeder"
+
+
 @pytest.mark.xfail(strict=True, reason=(
     "#283's attach asks the episode by key alone, so a foreign delegate attaches to a case it did "
-    "not seed (200, attached: true). Packet to invincible-agent/lane/01; not fixed here."))
+    "not seed (200, attached: true). Lane 1 fixes the attach caller and refuses with "
+    "`delegate_not_seeder` (packet, ruled); not fixed here."))
 def test_a_foreign_delegate_cannot_attach_to_a_case_it_did_not_seed(world, delegates):
     _open_a_case_seeded_by(world, DELEGATE_A)
     assert world.cluster.case("E-1")["seeded_by"] == DELEGATE_A
@@ -80,7 +86,7 @@ def test_a_foreign_delegate_cannot_attach_to_a_case_it_did_not_seed(world, deleg
     out = _post(_facts("E-2"), caller=DELEGATE_B)
     assert out.status_code == status, out.text
     detail = out.json()["detail"]
-    assert isinstance(detail, dict) and isinstance(detail.get("error"), str) and detail["error"]
+    assert isinstance(detail, dict) and detail.get("error") == FOREIGN_DELEGATE_CODE, detail
     # a refusal records nothing: no occurrence on the holder, no case of its own, no status row
     assert not _occurrences(world, _facts(), "E-1")
     assert "case" not in world.cluster.ctx("E-2").state
