@@ -23,7 +23,7 @@ INGEST_V1_TAG = "ingest-v1"
 # (sections 1, 2, 5). Tagged ADDITIVELY on the routes (existing tags kept); /interview/stream shares
 # the /orchestrate handler but is NOT in this set.
 MCP_TAG = "mcp"
-INGEST_API_VERSION = "1.7.0"
+INGEST_API_VERSION = "1.8.0"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),
@@ -408,6 +408,40 @@ DROP_GATE_RESPONSES: dict[int | str, dict[str, Any]] = {
               "schema": {"type": "string"}}}},
 }
 
+
+
+class UnauthenticatedBody(_Strict):
+    """The 401 body `auth.get_current_user` sends: no identity, so no policy to name."""
+    detail: str
+
+
+class PolicyRefusalDetail(BaseModel):
+    """A 403's `detail` object. Sites name the refusal `error` (two export sites say `reason`) and
+    add their own keys. `refusal` is OPTIONAL while any 403 an MCP route can reach sends none:
+    tests/security/test_every_mcp_route_declares_401_and_403.py lists those sites exactly and
+    requires this field once its list is empty."""
+    model_config = ConfigDict(extra="allow")
+    error: str | None = None
+    message: str | None = None
+    refusal: RefusalEnvelope | None = None
+
+
+class PolicyRefusalBody(_Strict):
+    """The 403 body of an MCP-tagged route; one site sends `detail` as a string."""
+    detail: Union[PolicyRefusalDetail, str]
+
+
+#: `responses=` entries every MCP-tagged route spreads LAST, so the MCP projection (what the MCP
+#: generator reads) declares the same 401 and 403 on each (G5, ruled 2026-11-06).
+MCP_REFUSAL_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"model": UnauthenticatedBody,
+          "description": "no verified identity on the request",
+          "headers": {"WWW-Authenticate": {"description": "`Bearer`",
+                                           "schema": {"type": "string"}}}},
+    403: {"model": PolicyRefusalBody,
+          "description": "a policy refused the caller; `detail.refusal`, when present, names the "
+                         "policy, the missing binding and who can grant it"},
+}
 
 class TaskDeclaration(_Strict):
     """What the task's kind accepts: accepts is ordered, reason_required is a sorted subset of it."""
