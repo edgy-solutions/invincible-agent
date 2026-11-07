@@ -2,7 +2,7 @@
 id:         fin-inputs-resolver
 status:     open
 owner:      lane/fin
-blocked-on: nothing for the code. A live read needs #213, the asset and its grant.
+blocked-on: nothing. The sandbox sets the flag from 0.4.81 (#277); measured live 3 of 3 on 0.4.80.
 closed-by:
 code-site:  agent_fleet/finance_agent/asset_inputs.py, agent_fleet/finance_agent/main.py (`_declared_envelope`, `mesh_ticketed_read`)
 repo:       invincible-agent
@@ -11,14 +11,15 @@ summary:    Behind `FIN_DATASET_URN`, a declared finance measure computes over r
 
 # The finance inputs resolver
 
-"Inputs resolver" had no earlier written definition, so this design is lane/fin's. Nothing here has run on a cluster.
+"Inputs resolver" had no earlier written definition, so this design is lane/fin's. It ran on the sandbox on 2026-11-05: chart 0.4.80, with the flag set by hand and reverted after, `tests/sandbox_e2e/test_variance_set_reads_the_ev_fixture.py` passed 3 of 3.
 
 **Flag.** `FIN_DATASET_URN` via `engineFinance.env`; no chart change. Unset: no read, no import, byte-identical envelope. Set: boot also requires `FIN_DATASET_BANNER`, `CENTRAL_GATEWAY_URL`, a `urn:li:dataset:` form and an importable client. `FIN_ASSET_MAX_ROWS` defaults to 100000.
 
 **Unchanged.**
 - `run_declared` stays pure and the URN isn't in the row, so one board can't read two sources and a deployment edits no row.
 - Built-in verbs, `/resolve_instance`, `/enumerate_instances` and `/verbs` stay on the seed.
-- With the flag set, a package or CDRL naming a declared measure gets 409 `asset_export_unsupported` before anything is measured: `state_sha256` can't describe a mixed package. So no export holds asset rows, and `/artifact` needs no asset check.
+- With the flag set, a package naming a declared measure gets 409 `asset_export_unsupported` before anything is measured, because `state_sha256` can't describe a mixed package.
+- A CDRL is not refused (ruled 2026-11-05). Its sources run through `_measure_envelope`, as the caller. The caller's grant is checked before anything is measured, and the program's facts come from the asset. `/artifact` checks the fetcher's grant before serving the file.
 
 ## The read, in `_declared_envelope`
 
@@ -68,12 +69,15 @@ A denial stays a 403 because the board's relay keeps it whole. On the chat path 
 
 **Dependency.** `polars` and `edgy-dag-tools@v0.10.0` in engine-fin's lock, as their own commit: +30 packages, about 242 MB of wheels, imported only when the flag is set. Memory under the 512Mi limit is unmeasured.
 
-## Before anyone sets the flag
+## Before anyone sets the flag: all four hold (2026-11-05)
 
-#213 rolled (otherwise a chat verb arrives as `svc:` and gets the 401); the asset and its synced grant; egress from the pod to the object store measured; `broker-advertises-unminted-credential.md` read, since the engine could receive a write-capable key.
+- **#213** (a person's subtask carries that person's token) is merged as `bd351cce`, first in chart 0.4.78. Without it a chat verb arrives as `svc:` and gets the 401.
+- **The asset and its grant.** `ev_fixture` is materialized, and the grant held live: on the leg the allowed subject read it and the denied subject got 403 `access_denied` naming it.
+- **Egress** from the pod to the object store, measured on the live leg: `ticket_ms` 0.3 to 1.1 s, `scan_ms` 0.1 to 0.2 s.
+- **The broker mints the ticket's credential per request** (`broker-advertises-unminted-credential.md`, steps 1 and 3): dag-tools `c651fac`, first released in v0.3.0, and the minting identity in v0.3.1. Engine-fin pins v0.10.0.
 
 ## Forks for the architect
 
 - **Built-ins on the seed.** Off the sandbox, a board shows invented built-ins beside real declared figures, under separate banners. Moving them needs fields the contract doesn't carry.
-- **Exports from an asset.** Allowing them needs a ruling on what a recipient without an asset grant may read.
+- **Exports from an asset.** Ruled for CDRL (architect, 2026-11-05): a CDRL reads the same resolver the canvas does and is grant-checked the same way, at export and at fetch. A package's recipient readers are still unruled, so a package naming one stays a 409.
 - **Calendar and pickers.** `FISCAL_PERIODS` is FY26 only, in code. A program only in the asset can't be named in chat, because `/enumerate_instances` reads the seed.
