@@ -6,7 +6,7 @@ repo: invincible-agent
 status: review
 priority: next
 blocked_on: []
-pr: [invincible-agent#282]
+pr: [invincible-agent#282, invincible-agent#288]
 ruling_ref: Chris 11-06 (levels.yaml -> dimensions.yaml; cleared_for stays for the hierarchical dimension; holds rail for set dimensions), and the architect on #282's readings
 updated: 2026-11-06
 ---

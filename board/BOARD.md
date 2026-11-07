@@ -340,7 +340,7 @@ Where it is: 4 blocked · 7 review · 1 claimed · 32 open · 32 done; next: Rul
 - [Master red: 7b497119 carries a Lane trailer made from a worktree path](items/01M6FRZ1THDGD613VJ047M1YXV.md) — invincible-agent/lane/fin · next · PR invincible-agent#238 · updated 2026-11-03 ⚑ PR merged: mark done
 - [The action-record door records a principal declared only for another delegate](items/01M6FZQ9TK0F5VQS2E1ERZ927Y.md) — invincible-agent/lane/01 · next · PR invincible-agent#251 · updated 2026-11-04
 - [Five of the six identity markers: the case-runner routes, the register gate, the missing program](items/01M6JKEDFSYFDSFPRAQXNG7JSC.md) — invincible-agent/lane/01 · next · PR invincible-agent#251 · updated 2026-11-05
-- [Classification dimensions (levels.yaml -> dimensions.yaml) and the holds:<dimension>:<value> rail, validator only](items/01M6QJN0CFMHH0G58ZTCEKTWV2.md) — invincible-agent/lane/gov · next · PR invincible-agent#282 · updated 2026-11-06
+- [Classification dimensions (levels.yaml -> dimensions.yaml) and the holds:<dimension>:<value> rail, validator only](items/01M6QJN0CFMHH0G58ZTCEKTWV2.md) — invincible-agent/lane/gov · next · PR invincible-agent#282, invincible-agent#288 · updated 2026-11-06
 
 ### claimed
 
