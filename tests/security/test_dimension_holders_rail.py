@@ -195,7 +195,7 @@ _FILES = ("classification/dimensions.yaml", "dimension_holders.yaml")
 
 
 def _set_dim(*vocab):
-    return {"dimensions": [{"name": "dim-s", "type": "set", "vocabulary": list(vocab), "owner": "owner"}]}
+    return {"dimensions": [{"name": "dim-s", "type": "set", "vocabulary": list(vocab), "owner": "owner", "ratified_by": "owner"}]}
 
 
 def test_validate_is_clean_as_copied(tmp_path):
