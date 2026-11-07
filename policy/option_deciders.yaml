@@ -31,7 +31,7 @@
 #   * RULING 3, verbatim: "Options live on the decide step of the workflow definition
 #     (`steps[id=...].options`, the SDK's WorkflowDefinition). The three hard-coded option lists retire when
 #     the runner reads the step -- item for 74, after the Socratic bar work."
-#   * MEASURED: the pinned SDK's steps (v0.9.13; the sibling repo's v0.9.15) have no `options` field yet;
+#   * MEASURED: the pinned SDK's steps (v0.9.15; `options` lands in v0.9.16, not tagged) have no `options` field yet;
 #     a `human_await` step has `chooses_from`, a context path the runner resolves at registration.
 #
 # No reader applies this file, and its options are not checked for membership, until a workflow

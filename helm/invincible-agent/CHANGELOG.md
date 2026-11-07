@@ -1,5 +1,13 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.82 — not yet cut
+
+**The fleet moves to iagent-mesh v0.9.15 (gov, ruled by Chris 11-07: "Pin moves are gov's rail").**
+
+- **What moves:** 17 pyprojects (the root has two lines), `domainBroker.meshSdkVersion`, and the 17 locks that pin the SDK. In each lock the only lines that change are the SDK's `rev`, its commit (`5a526b67`) and its `version`. `__all__` only grows between v0.9.13 and v0.9.15.
+- **Why:** lane 74's migration onto the SDK's DSL classes needs v0.9.15. v0.9.13's frozen `steps` tuple reported a phantom `too_short`; v0.9.15 replaces it with a model-level `_steps_are_present` check.
+- **Closed network:** v0.9.15's package calls itself 0.9.15. The v0.9.13 exception, where it built as 0.9.12, is gone, so `meshSdkSource: index` can serve this pin from an internal PyPI that holds the tag's sdist or wheel.
+
 ## 0.4.81 — 2026-11-07
 
 Entries merged after the 0.4.80 tag (`73d18c23`), cut by the architect's 11-07 list.
