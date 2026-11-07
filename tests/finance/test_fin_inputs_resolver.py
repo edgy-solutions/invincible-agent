@@ -100,7 +100,9 @@ def _clean_env(monkeypatch):
 @pytest.fixture
 def declared(monkeypatch):
     monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(SAMPLE))
-    rows = engine._load_declared()
+    # The flag's subject is a STATE-kind row. A dataset-kind row reads its own asset whatever the
+    # flag says (tests/finance/test_variance_decomposition_*), so it is not this file's population.
+    rows = {fn: r for fn, r in engine._load_declared().items() if r.kind != measure_verbs.KIND_DATASET}
     monkeypatch.setattr(engine, "DECLARED", rows)
     monkeypatch.setitem(engine.VERB_TO_FN, "mesh:finToCompletePerformanceIndex", "fin_tcpi")
     return rows

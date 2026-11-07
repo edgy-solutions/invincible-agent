@@ -119,7 +119,10 @@ def test_b_the_control_is_the_same_row_without_the_key(tmp_path):
 @pytest.fixture
 def two_declared(monkeypatch):
     monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(SAMPLE))
-    declared = engine._load_declared()
+    # State-kind rows, answered by name. A dataset row is served only to a bearer holding the asset
+    # grant; its class is asserted where it is served (test_variance_decomposition_over_the_ev_fixture).
+    declared = {fn: r for fn, r in engine._load_declared().items()
+                if r.kind != measure_verbs.KIND_DATASET}
     assert len(declared) >= 2
     monkeypatch.setattr(engine, "DECLARED", declared)
     monkeypatch.setattr(engine, "can_view_program", lambda *a, **k: True)

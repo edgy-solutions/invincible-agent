@@ -1,13 +1,15 @@
-# TEST overlay -- the EAC variance row, the measure's first user (ruled 2026-11-04): eac - bac, taken
-# once per work package, split down the program's hierarchy (docs/plans/fin-variance-decomposition.md).
-# The test frame adds the two columns with the figures of dag-tools #11. Never loaded from policy/; a
-# deployed row follows the finance data path going live on the sandbox.
+# SAMPLE -- the EAC variance row, the measure's first user (ruled 2026-11-04): eac - bac, taken once
+# per work package, split down the program's hierarchy (docs/plans/fin-variance-decomposition.md). A
+# deployment replaces it with its own. `bac` and `eac` are the fixture's completion columns
+# (contracts/ev_fixture.yaml, produced since dag-tools v0.11.0). A dataset row always reads its asset
+# as the caller, so it answers only a caller who holds the reader grant on the URN below
+# (policy/asset_grants.yaml); everyone else gets 403 access_denied.
 measure_id: fin_flow_eac_variance
 verb: finFlowEacVariance
 name: EAC variance
 description: >-
   Estimate at completion less budget at completion, split down the program's hierarchy into a
-  flow map, taken once per work package. A test row only.
+  flow map, taken once per work package.
 synonyms:
   - eac variance flow
 anti_synonyms:
@@ -40,4 +42,4 @@ policy:
   status: sample
   cells: [PROGRAM_FINANCE]
   granted_by: seed
-  reason: a test overlay proving the EAC row on the synthetic EV fixture
+  reason: a sample row proving the EAC row on the synthetic EV fixture

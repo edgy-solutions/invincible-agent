@@ -207,7 +207,8 @@ There is no visibility key: a measure is only ever shown for a program the user 
 and nothing in a row can widen that.
 
 A second example, a cost amount, shows what changes when the measure is money. This row is in
-the sample overlay too: the sample ships TCPI and VAC. It is shown for its shape, and this doc's own
+the sample overlay too: the sample ships TCPI, VAC and two dataset rows (`fin_flow_acwp`,
+`fin_flow_eac_variance`). It is shown for its shape, and this doc's own
 test loads it through the real loader. VAC (variance at completion) is the budget less the
 estimate at completion, with the estimate worked out by the CPI method.
 

@@ -1,5 +1,19 @@
 # invincible-agent helm chart — changelog
 
+## Unreleased
+
+- **engine-fin: the two flow-decomposition rows ship as samples** (#255's rows, architect dispatch
+  2026-11-06). `fin_flow_acwp` (verb `finFlowActualCost`) and `fin_flow_eac_variance` (verb
+  `finFlowEacVariance`) move from `tests/finance/overlays/` to `policy/overlays/sample/measure_verbs/`, which the sandbox
+  loads (`MEASURE_VERB_OVERLAY_DIRS`). So both verbs register at engine-fin's next start. Each row
+  reads the `ev_fixture` asset as the caller: a caller holding the reader grant on its URN gets the
+  edge table, and anyone else gets 403 `access_denied`. A caller with no bearer gets 401.
+  - **No new reader rows** (Chris, 2026-11-06). alice, an NP-MERIDIAN member, already holds the
+    `ev_fixture` grant. erin, also a member, stays the asset-gate refusal control. bob, who is not
+    a member, stays the program-gate control. Every persona who should see the rows already can.
+  - **Nothing here restarts a pod**: no chart template or values change. The verbs appear when
+    engine-fin next starts, which is at the next roll.
+
 ## 0.4.81 — 2026-11-07
 
 Entries merged after the 0.4.80 tag (`73d18c23`), cut by the architect's 11-07 list.
