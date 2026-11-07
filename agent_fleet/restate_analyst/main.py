@@ -2497,7 +2497,8 @@ async def _run_definition(
             # check still raises exactly as before.
             if step.chooses_from:
                 if _opt_found and isinstance(_opt_list, list):
-                    task["payload"] = {"options": copy.deepcopy(_opt_list)}
+                    task["payload"] = {"options": copy.deepcopy(_opt_list),
+                                       "declaration": {"id": wf.id, "version": version}}
             # THE KIND: declared on the step when the definition came from the registry, else the
             # caller's argument. A DECLARED kind on a definition the CALLER supplied is refused,
             # not ignored -- ignoring it would register a kind other than the one the YAML reads

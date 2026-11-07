@@ -38,11 +38,24 @@ never guessed, and never emitted empty to look present (an empty list claims "th
   ``{id: verb, label: label or verb, data: the rest, artifact_uri: None}``; an element with no
   string ``verb`` is skipped. If no row carries options the ``options`` KEY IS OMITTED.
 
-``output_artifact``: the case's newest maintenance ActionRecord -- the record the release writes,
+``output_artifact``: the case's newest ActionRecord -- the record the release writes,
   read by the route (this module does no I/O) and handed in as ``output_artifact``. Its
   ``released_at`` is the record's own ``valid_as_of`` (epoch ms stamped at the write, which is the
   release). ``None`` when the case has no emit step in any opened definition, or no record yet.
   If the store cannot be read the ROUTE answers 503; a null would claim "not released".
+  It carries the record's ``artifact_id`` and the record's OWN ``label`` (None when it has none:
+  no text is invented).
+
+``options_declaration``: ``{definition_id, version}`` of the declaration the options were
+  registered under, read off the SAME task row as ``options`` (the runner stamps it there with
+  the options). ``None`` for a row written before the runner carried it. Omitted with ``options``.
+  Options are read from task rows whatever their status, so a CLOSED case still serves them.
+
+``stage``: top level. ``closed`` when the case is terminal, else ``failed`` when its state is
+  ``failed``, else ``attached`` when its state is ``attached``, else ``running``.
+
+``episode_id`` / ``predecessor``: the case's own ``episode`` key and the closed case it follows
+  on that episode; ``None`` when it has none.
 """
 from __future__ import annotations
 
@@ -194,31 +207,47 @@ def _options_of(row: dict) -> Optional[list]:
     return opts if isinstance(opts, list) else None
 
 
-def project_options(case: dict, task_rows: list[dict]) -> Optional[list[dict]]:
-    """``CaseOption[]`` from the LATEST instance (chain order) whose task row carries a list at
-    ``payload.options``; ``None`` (key omitted by the caller) when no row does."""
+def _options_row(case: dict, task_rows: list[dict]) -> Optional[dict]:
+    """The task row the options are read from: the LATEST instance's (chain order) first row that
+    carries a list at ``payload.options``; ``None`` when no row does."""
     for inst in reversed(case.get("instances") or []):
         wf = inst.get("instance_id")
         if not wf:
             continue
         for row in task_rows:
-            if row.get("workflow_id") != wf:
-                continue
-            opts = _options_of(row)
-            if opts is None:
-                continue
-            out = []
-            for o in opts:
-                if not isinstance(o, dict) or not isinstance(o.get("verb"), str):
-                    continue
-                out.append({
-                    "id": str(o["verb"]),
-                    "label": o.get("label") or o["verb"],
-                    "data": {k: v for k, v in o.items() if k not in ("verb", "label")},
-                    "artifact_uri": None,
-                })
-            return out
+            if row.get("workflow_id") == wf and _options_of(row) is not None:
+                return row
     return None
+
+
+def project_options(case: dict, task_rows: list[dict]) -> Optional[list[dict]]:
+    """``CaseOption[]`` from the LATEST instance (chain order) whose task row carries a list at
+    ``payload.options``; ``None`` (key omitted by the caller) when no row does."""
+    row = _options_row(case, task_rows)
+    if row is None:
+        return None
+    out = []
+    for o in _options_of(row):
+        if not isinstance(o, dict) or not isinstance(o.get("verb"), str):
+            continue
+        out.append({
+            "id": str(o["verb"]),
+            "label": o.get("label") or o["verb"],
+            "data": {k: v for k, v in o.items() if k not in ("verb", "label")},
+            "artifact_uri": None,
+        })
+    return out
+
+
+def project_options_declaration(case: dict, task_rows: list[dict]) -> Optional[dict]:
+    """``{definition_id, version}`` the options' task row was registered under (its payload's
+    ``declaration``), or ``None`` when the row carries none (written before it did)."""
+    row = _options_row(case, task_rows)
+    payload = row.get("payload") if row else None
+    decl = payload.get("declaration") if isinstance(payload, dict) else None
+    if not isinstance(decl, dict):
+        return None
+    return {"definition_id": decl.get("id"), "version": decl.get("version")}
 
 
 def has_emit_step(case: dict, definitions: dict[str, Any]) -> bool:
@@ -241,7 +270,8 @@ def release_artifact(case_id: str, records: list[dict]) -> Optional[dict]:
     newest = max(dated, key=lambda r: r["valid_as_of"])
     return {
         "uri": f"/cases/{case_id}/action",
-        "label": "Maintenance action record",
+        "artifact_id": newest["artifact_id"],
+        "label": (newest.get("record") or {}).get("label"),
         "released_at": _iso_from_epoch_ms(newest["valid_as_of"]),
     }
 
@@ -349,8 +379,14 @@ def project_workflow_case(case: dict, definitions: dict[str, Any], task_rows: li
     """Build the ``WorkflowCasePayload`` dict. ``output_artifact`` is handed in by the route (this
     module does no I/O); ``options`` is omitted when no task row carries any -- see the module
     docstring."""
+    stage = ("closed" if case.get("terminal") else
+             "failed" if case.get("state") == "failed" else
+             "attached" if case.get("state") == "attached" else "running")
     out = {
         "subject_ref": case.get("case_id"),
+        "stage": stage,
+        "episode_id": case.get("episode"),
+        "predecessor": case.get("predecessor"),
         "instances": project_instances(case, definitions, task_rows),
         "history": project_history(case),
         "approvals": project_approvals(case, task_rows),
@@ -359,4 +395,5 @@ def project_workflow_case(case: dict, definitions: dict[str, Any], task_rows: li
     options = project_options(case, task_rows)
     if options is not None:
         out["options"] = options
+        out["options_declaration"] = project_options_declaration(case, task_rows)
     return out
