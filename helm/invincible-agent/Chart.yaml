@@ -11,5 +11,8 @@ type: application
 # deployment installing "the latest chart" got 0.3.36's contents frozen at the bump
 # commit, with no ENGINE_*_CLIENT_SECRET, so every engine died on `KeyError` at mint
 # and registered zero verbs. See release-helm-charts.yml, which now fails loudly.
-version: 0.4.80
+# A merge that brings helm/** changes in counts as a chart change, but not as a Chart.yaml edit
+# (git log drops a merge that is TREESAME to one parent). Bump after the merge, not before it.
+# 0.4.81 = 73d18c23..2ebb91d0 (#280, #289), cut 2026-11-07.
+version: 0.4.81
 appVersion: "2026.07.02"

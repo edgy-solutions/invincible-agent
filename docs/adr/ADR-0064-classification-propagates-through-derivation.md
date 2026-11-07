@@ -13,6 +13,13 @@ rules
   - iagent: `invincible-agent#229` — the Keycloak token exchange for warehouse external OAuth.
     `passthrough` depends on it.
   - dag-tools: the six build steps below ride dag-tools 0.12.0 and later.
+  - standards, cited by concept:
+    - the unique identifier of the physical item that the asset of record names: ISO/IEC 15459
+      (issuing agency, enterprise, serial), the scheme that IUID's unique item identifier also
+      uses;
+    - record identifiers: RFC 9562 (UUIDs);
+    - the shared model of products, parts and serialized items: S-Series SX002D, the common data
+      model.
 
 ---
 
@@ -114,8 +121,7 @@ has a value. This is openddil ADR-0055 §1's table.
 > "A default is a label nobody stated about this record. It is not a declaration, and it labels
 > nothing." (openddil ADR-0055 §1a)
 
-§1a is a ruling recommended for Chris's signature and not yet signed. This ADR adopts the wording;
-the signature belongs to openddil's record.
+§1a was signed 2026-11-06. This ADR adopts the wording; the signature belongs to openddil's record.
 
 Here is how it applies in this ADR:
 - **"An unlabelled source is the most restrictive" does not mean the source is stamped at the top
@@ -381,3 +387,10 @@ This ADR is still Proposed. The changes are made in place above, and this sectio
 Not changed: the verbatim source text in the appendix (blocks A, the standing rule, the rollout).
 It records what was directed on 2026-11-05. Where it differs from the sections above, the sections
 above hold.
+
+## Edit 2026-11-07, directed by the architect
+
+- openddil ADR-0055 §1a is recorded as signed 2026-11-06. It had been "recommended for signature".
+- Three standards are cited, by concept, under **Related**: ISO/IEC 15459 with IUID, RFC 9562, and
+  SX002D.
+- No decision changes.
