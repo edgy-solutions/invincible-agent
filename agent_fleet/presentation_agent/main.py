@@ -1036,6 +1036,19 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # tests/test_notice_parts_renders_as_instances_by_property.py.
     "INSTANCES_BY_PROPERTY": ("rows", ("title", "target", "columns", "row_identity",
                                        "state_vocabulary")),
+
+    # ── FLOW_DECOMPOSITION (Lane 1, 0.4.81). Runbook site 2. ──────────────────────────────
+    #
+    # Bound for a dataset-kind measure row (#255): `rows` is the edge table, root edge first,
+    # passed through verbatim. Cortex proposed the tuple and Chris accepted it (2026-11-05:
+    # "Projector row accepted as proposed"). It was ruled for 0.4.80 and missed that cut.
+    #
+    # `render` travels WHOLE because `unit` and `other_label` live only inside it; the card
+    # reads `render.value_label` first and the top-level `value_label` only as a fallback.
+    # `data_provenance` is NOT carried, as proposed. Whether the synthetic banner should reach
+    # the card is cortex's open question to Chris (11-06); widening this tuple is that ruling.
+    # The seal is tests/finance/test_the_flow_table_reaches_the_card.py.
+    "FLOW_DECOMPOSITION": ("rows", ("value_label", "render", "verdict")),
 }
 
 
