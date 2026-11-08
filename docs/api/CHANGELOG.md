@@ -2,6 +2,31 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.8.1 — 2026-11-07
+
+Declaration only, no wire change: the structural 403s are their own member (ruled 2026-11-07, G5).
+
+- `PolicyRefusalBody.detail` is one of three members:
+  - `PolicyRefusalDetail`, as in 1.8.0. `refusal` is still optional, and it becomes required once no debt row is left in `tests/security/test_every_mcp_route_declares_401_and_403.py`. The two structural refusals no longer count against that.
+  - `StructuralRefusalDetail`, new: a 403 that no grant lifts, so it never carries `refusal`. `error` is `dropper_cannot_attest_origin` or `service_token_refused` (where no delegate entry applies), with optional `message`, `authz_id` and `task_id`. No other keys are allowed.
+  - a string.
+- Every body that validated against 1.8.0 still validates.
+
+## 1.8.0 — 2026-11-07
+
+Declarations made to match the wire, ruled 2026-11-06 (G5). One body gains a field.
+
+- `GET /me/human_tasks`, `POST /human_tasks/{task_id}/act`, `POST /ingest` (and every other `mcp`-tagged route): declare 401 `UnauthenticatedBody` (`detail` is a string, with `WWW-Authenticate: Bearer`) and 403 `PolicyRefusalBody`.
+- `PolicyRefusalBody.detail` is an object or a string. The object has optional `error`, `message` and `refusal` (a `RefusalEnvelope`) and may carry other keys. `refusal` is optional because some 403s these routes can send carry none yet; `tests/security/test_every_mcp_route_declares_401_and_403.py` lists them, and `refusal` becomes required when that list is empty.
+- `POST /ingest`: the 403 was declared `NotEntitledToDrop`. That body is still sent and still validates as `PolicyRefusalBody`, but the route's door also sends `service_token_refused`, which the old declaration did not describe. A reader that typed the 403 as `NotEntitledToDrop` must now handle `refusal` absent.
+- `service_token_refused` on a route whose body takes `on_behalf_of` (`POST /ingest`, `POST /human_tasks/{task_id}/act`) now carries `refusal` (`policy_id` `config:DELEGATE_ON_BEHALF_OF`). Elsewhere it is unchanged.
+
+## 1.7.0 — 2026-11-06
+
+Additive for a reader.
+
+- `GET /me/entitlements`: new required `capabilities` (strings), every capability key in the authorization directory the caller holds `can_invoke` on, sorted (e.g. `ingest:exportBatch`, `can_export:<profile>`); a directory that cannot be read is 503, never a partial list.
+
 ## 1.6.0 — 2026-10-31
 
 Tightening of one request check, ruled 2026-10-31 (the SDK's `EvidenceRef` rule wins).

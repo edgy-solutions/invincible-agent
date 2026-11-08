@@ -355,7 +355,8 @@ def test_e2_the_backstop_with_topaz_unavailable_leaves_the_row_untouched(rows, g
 
 # ---- f: GET /me/entitlements -------------------------------------------------------------------
 
-def test_f1_droppable_kinds_lists_every_kind_for_a_granted_caller_and_omits_the_gated_for_another(as_user, gate):
+def test_f1_droppable_kinds_lists_every_kind_for_a_granted_caller_and_omits_the_gated_for_another(as_user, gate, monkeypatch):
+    monkeypatch.setattr(ht, "capability_keys", lambda: [])   # `capabilities` has its own seal
     every = [r.kind for r in _REGISTRY]
     r = as_user(GRANTED).get("/me/entitlements")
     assert r.status_code == 200, r.text

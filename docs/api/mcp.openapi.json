@@ -2131,27 +2131,45 @@
         "title": "ItemReviewCoverage",
         "type": "object"
       },
-      "NotEntitledToDrop": {
+      "PolicyRefusalBody": {
         "additionalProperties": false,
-        "description": "The 403 body of a door that refused a kind the dropper is not granted.",
+        "description": "The 403 body of an MCP-tagged route; one site sends `detail` as a string.",
         "properties": {
           "detail": {
-            "$ref": "#/components/schemas/NotEntitledToDropDetail"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PolicyRefusalDetail"
+              },
+              {
+                "$ref": "#/components/schemas/StructuralRefusalDetail"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Detail"
           }
         },
         "required": [
           "detail"
         ],
-        "title": "NotEntitledToDrop",
+        "title": "PolicyRefusalBody",
         "type": "object"
       },
-      "NotEntitledToDropDetail": {
-        "additionalProperties": false,
+      "PolicyRefusalDetail": {
+        "additionalProperties": true,
+        "description": "A 403's `detail` object. Sites name the refusal `error` (two export sites say `reason`) and\nadd their own keys. `refusal` is OPTIONAL while any policy 403 an MCP route can reach sends\nnone: tests/security/test_every_mcp_route_declares_401_and_403.py lists those sites exactly and\nrequires this field once its debt rows are gone.",
         "properties": {
           "error": {
-            "const": "not_entitled_to_drop",
-            "title": "Error",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
           },
           "message": {
             "anyOf": [
@@ -2165,14 +2183,17 @@
             "title": "Message"
           },
           "refusal": {
-            "$ref": "#/components/schemas/RefusalEnvelope"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefusalEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
-        "required": [
-          "error",
-          "refusal"
-        ],
-        "title": "NotEntitledToDropDetail",
+        "title": "PolicyRefusalDetail",
         "type": "object"
       },
       "RefusalEnvelope": {
@@ -2353,6 +2374,58 @@
         "title": "RowEdits",
         "type": "object"
       },
+      "StructuralRefusalDetail": {
+        "additionalProperties": false,
+        "description": "A 403 no grant lifts, so there is no policy to name and it never carries a `refusal`\n(ruled 2026-11-07, G5): separation of duties at promotion, and a service caller on a route\nwhere no delegate entry applies. The same code on a route where one would apply is a policy\nrefusal and reads as `PolicyRefusalDetail`.",
+        "properties": {
+          "authz_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authz Id"
+          },
+          "error": {
+            "enum": [
+              "dropper_cannot_attest_origin",
+              "service_token_refused"
+            ],
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "StructuralRefusalDetail",
+        "type": "object"
+      },
       "TaskDeclaration": {
         "additionalProperties": false,
         "description": "What the task's kind accepts: accepts is ordered, reason_required is a sorted subset of it.",
@@ -2423,6 +2496,21 @@
           "reason_required"
         ],
         "title": "TaskDeclaration",
+        "type": "object"
+      },
+      "UnauthenticatedBody": {
+        "additionalProperties": false,
+        "description": "The 401 body `auth.get_current_user` sends: no identity, so no policy to name.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "UnauthenticatedBody",
         "type": "object"
       },
       "ValidationError": {
@@ -2509,6 +2597,34 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -2565,6 +2681,34 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2620,6 +2764,34 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2654,6 +2826,34 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
           }
         },
         "security": [
@@ -2689,6 +2889,34 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
           },
           "422": {
             "content": {
@@ -2735,6 +2963,34 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
           },
           "422": {
             "content": {
@@ -2792,6 +3048,34 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
           },
           "422": {
             "content": {
@@ -2874,6 +3158,34 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2930,15 +3242,33 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "403": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
                 }
               }
             },
-            "description": "the dropper is not granted can_drop:<kind>"
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
           },
           "422": {
             "content": {
@@ -3044,6 +3374,34 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -3085,6 +3443,34 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
           }
         },
         "security": [
@@ -3113,6 +3499,34 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
           }
         },
         "security": [
@@ -3149,6 +3563,34 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
           },
           "422": {
             "content": {

@@ -192,12 +192,19 @@ def test_EVERY_declared_verb_leads_with_a_figure_and_not_with_a_pointer(monkeypa
 
     sample = Path(__file__).resolve().parents[2] / "policy" / "overlays" / "sample" / "measure_verbs"
     monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(sample))
+    from agent_fleet.finance_agent import measure_verbs
+
     declared = fmain._load_declared()
     assert declared
+    # A dataset row answers only a bearer holding the asset grant, so it is served, and its headline
+    # asserted, in its own test (test_variance_decomposition_*: the brief leads with its verdict).
+    # Named here, so a new dataset row is a red until a test serves it.
+    dataset = {fn for fn, r in declared.items() if r.kind == measure_verbs.KIND_DATASET}
+    assert dataset == {"fin_flow_acwp", "fin_flow_eac_variance"}, dataset
     monkeypatch.setattr(fmain, "DECLARED", declared)
     monkeypatch.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
     with TestClient(app) as c:
-        for fn in sorted(declared):
+        for fn in sorted(set(declared) - dataset):
             headline = _headline(_payload(c, fn))
             assert headline != "reported (see artifact)", f"{fn} leads the brief with a pointer"
             assert headline.strip(), fn

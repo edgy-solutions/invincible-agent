@@ -70,7 +70,12 @@ def test_a_delegate_is_admitted_only_where_the_body_has_on_behalf_of(route, key)
 def test_a_svc_id_that_is_not_a_delegate_is_refused_everywhere(route, key):
     r = TestClient(stub_for(route)).get("/x", headers=_bearer(key, "svc:mcp-server"))
     assert r.status_code == 403, (route.path, r.status_code)
-    assert r.json()["detail"] == {"error": "service_token_refused", "authz_id": "svc:mcp-server"}
+    detail = r.json()["detail"]
+    refusal = detail.pop("refusal", None)
+    assert detail == {"error": "service_token_refused", "authz_id": "svc:mcp-server"}
+    # G5: where a delegate entry would admit it, the refusal names that entry; elsewhere none does.
+    expected = "config:DELEGATE_ON_BEHALF_OF" if _takes_on_behalf_of(route) else None
+    assert (refusal or {}).get("policy_id") == expected, (route.path, refusal)
 
 
 @pytest.mark.parametrize("route", mcp_routes(), ids=_ids(mcp_routes()))

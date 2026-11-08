@@ -752,8 +752,12 @@ def bind_placeholders(definition: dict, trigger: dict) -> dict:
             return _PLACEHOLDER_RE.sub(lambda m: str(bindings[m.group(1)]), node)
         if isinstance(node, dict):
             return {k: _sub(v) for k, v in node.items()}
+        # The same containers collect_placeholders walks: a tuple it counts as required and this
+        # skipped would pass the unbound check and reach the step as its literal.
         if isinstance(node, list):
             return [_sub(v) for v in node]
+        if isinstance(node, tuple):
+            return tuple(_sub(v) for v in node)
         return node
 
     return _sub(definition)

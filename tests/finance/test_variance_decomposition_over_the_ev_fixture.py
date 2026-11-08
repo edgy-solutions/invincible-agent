@@ -1,6 +1,6 @@
 """The flow-decomposition measure proved on the EV fixture, through the REAL engine route.
 
-A TEST overlay (tests/finance/overlays/variance_decomposition/, never policy/) declares one
+A SAMPLE row (policy/overlays/sample/measure_verbs/fin_flow_acwp.yaml) is one
 dataset-kind row over the fixture's own columns. The route is real; the mesh client is replaced at
 `asset_inputs._load_client` by a double holding a gate per caller; the frame is a real parquet
 built from the seed the way `test_the_variance_live_test_can_go_red` builds it. The expected edges
@@ -26,7 +26,9 @@ from tests.finance.test_fin_inputs_resolver import (  # noqa: E402,F401
     MeshUnavailable, NotEntitled, _clean_env, frame_of, token,
 )
 
-OVERLAY = Path(__file__).parent / "overlays" / "variance_decomposition"
+# The shipped sample row, loaded ALONE: copied into a directory of its own, so the other sample
+# rows do not load beside it and the sample file stays the only home of the row.
+ROW = Path(__file__).resolve().parents[2] / "policy" / "overlays" / "sample" / "measure_verbs" / "fin_flow_acwp.yaml"
 FN = "fin_flow_acwp"
 ROW_URN = "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
 PROGRAM = seed.PROGRAM_ID
@@ -58,8 +60,11 @@ class Gate:
 
 
 @pytest.fixture
-def flow_rows(monkeypatch):
-    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(OVERLAY))
+def flow_rows(monkeypatch, tmp_path):
+    overlay = tmp_path / "overlay"
+    overlay.mkdir()
+    (overlay / ROW.name).write_bytes(ROW.read_bytes())
+    monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(overlay))
     rows = engine._load_declared()
     monkeypatch.setattr(engine, "DECLARED", rows)
     monkeypatch.setitem(engine.VERB_TO_FN, "mesh:" + rows[FN].verb, FN)
@@ -313,3 +318,14 @@ def test_the_envelope_serves_the_label_and_the_sink_is_marked_by_node_kind(post)
     assert len(others) == 1 and others[0]["level"] == 1          # accounts 4.1, 1.1, 5.1 collapse
     assert others[0]["source"] == [PROGRAM]
     assert f"{len(others)} 'All other' sink(s)" in env["verdict"]
+
+
+def test_the_brief_leads_with_the_rows_verdict_not_a_pointer(post):
+    # The census in test_every_verb_says_what_it_found cannot serve a dataset row (it needs a bearer
+    # holding the asset grant), so the headline the brief reads is asserted here, where it is served.
+    from agent_fleet.graph_host.graphs.fin_program_brief import _headline
+    status, env = post()
+    assert status == 200, env
+    headline = _headline(env)
+    assert headline == env["verdict"] and headline.strip()
+    assert headline != "reported (see artifact)"

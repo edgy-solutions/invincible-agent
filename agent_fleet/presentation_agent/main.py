@@ -978,7 +978,13 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # The reporting lane read it as a producer bug — "report says emitted, wire says absent" —
     # and it was, at the wire that matters to a card. Both wires were telling the truth about
     # different hops.
-    "MULTI_SERIES": ("rows", ("series", "reference", "verdict", "value_label", "scope_label")),
+    #
+    # `data_provenance` ADDED 2026-11-08 (the architect, via Chris: it "arrives whole: dataset
+    # URN, as-of, ticket id"). It is an ENVELOPE field, so it rides only by being named here. A
+    # producer that does not send it (cost, safety) is unchanged: an absent key is not carried.
+    # Sealed by tests/finance/test_provenance_arrives_whole.py.
+    "MULTI_SERIES": ("rows", ("series", "reference", "verdict", "value_label", "scope_label",
+                              "data_provenance")),
 
     # ── SOURCE_LEDGER (lane 32, 2026-09-19). Runbook site 2. ──────────────────────────────
     #

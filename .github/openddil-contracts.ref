@@ -1,0 +1,13 @@
+# The openddil-contracts commit the reference ADRs in docs/adr/ cite. It is read by
+# scripts/check_reference_adr_pins.py and by .github/workflows/reference-adr-pins.yml, which
+# check that every reference ADR's `Decided in:` line names a sha this file pins, and that the
+# cited file exists at that sha in openddil-contracts.
+#
+# Bump it ONLY in the same commit as the reference ADR's `Decided in:` line (today ADR-0067,
+# citing ADR-0056). A pin that moves alone leaves the ADR citing a text nobody reads; an ADR
+# that moves alone fails the check.
+#
+# Currently openddil-contracts PR #4's head at 2894f0c (2026-11-07). That commit is held by
+# refs/pull/4/head and is NOT on main. The workflow fetches it by sha, which GitHub serves for a
+# PR head. Move this onto main's commit once PR #4 merges.
+2894f0c6030696c72ea38d72626af4281fd97958
