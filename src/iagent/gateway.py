@@ -67,7 +67,7 @@ from . import review_coverage as _rcov
 from .review_coverage import ItemReviewCoverage
 from . import frontend_menu_store
 from .ingest_api import (
-    BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, MCP_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse,
+    BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, MCP_REFUSAL_RESPONSES, MCP_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse,
     Entitlements, ExportProfile, Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing,
     RetriesListing,
     RetryResponse, StatusBody, TitleLeafResponse,
@@ -1741,13 +1741,18 @@ def _mcp_door() -> list:
         # R-089: a declared delegate passes only where the body can name a principal.
         if owner["takes_on_behalf_of"] and authz_id in _delegate_principals():
             return current_user
+        if owner["takes_on_behalf_of"]:
+            # G5: here a delegate entry would have admitted it, so this is a policy refusal.
+            from .authz.refusal import policy_refusal
+            raise policy_refusal("service_token_refused", policy_id="config:DELEGATE_ON_BEHALF_OF",
+                                 missing_binding=f'delegate_of("{authz_id}")', extra={"authz_id": authz_id})
         raise HTTPException(status_code=403, detail={"error": "service_token_refused", "authz_id": authz_id})
 
     door.__mcp_door__ = True
     return [Depends(door)]
 
 
-@app.get("/me/human_tasks", tags=[INGEST_V1_TAG, MCP_TAG], dependencies=_mcp_door(), responses={200: {"model": HumanTasksListing}})
+@app.get("/me/human_tasks", tags=[INGEST_V1_TAG, MCP_TAG], dependencies=_mcp_door(), responses={200: {"model": HumanTasksListing}, **MCP_REFUSAL_RESPONSES})
 async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
     """The caller's pending queue (REST initial-load; the live path is the
     Electric subscription). Filtered by recipient_id=caller.authz_id — the SAME key
@@ -2632,7 +2637,7 @@ class FinanceMeasureBody(_BaseModel):
 _MEASURE_NAME = r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$"
 
 
-@app.post("/finance/measure/{fn}", tags=[MCP_TAG], dependencies=_mcp_door())
+@app.post("/finance/measure/{fn}", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
 async def finance_measure(
     fn: _Annotated[str, _Path(pattern=_MEASURE_NAME)],
     body: FinanceMeasureBody,
@@ -3717,7 +3722,7 @@ async def _export_plan_answers(
     }
 
 
-@app.post("/export/package", tags=[MCP_TAG], dependencies=_mcp_door())
+@app.post("/export/package", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
 async def export_package(
     body: ExportPackageRequest,
     request: Request,
@@ -3922,7 +3927,7 @@ async def export_package(
     }
 
 
-@app.get("/export/package/artifact/{filename}", tags=[MCP_TAG], dependencies=_mcp_door())
+@app.get("/export/package/artifact/{filename}", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
 async def export_package_artifact(
     filename: str,
     request: Request,
@@ -4097,7 +4102,7 @@ def _engine_failure(label: str, rr, route: str = "") -> HTTPException:
     })
 
 
-@app.get("/export/cdrl/profiles", tags=[MCP_TAG], dependencies=_mcp_door())
+@app.get("/export/cdrl/profiles", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
 async def export_cdrl_profiles(request: Request, current_user: User = Depends(get_current_user)):
     """The CDRL picker's option list: the engine's `[{name, format, scope, label}]`, relayed. The
     header keys only; the engine never sends a template path, a hash or a source."""
@@ -4116,7 +4121,7 @@ async def export_cdrl_profiles(request: Request, current_user: User = Depends(ge
     return _engine_answer(rr, "/cdrl_profiles")
 
 
-@app.get("/export/cdrl", tags=[MCP_TAG], dependencies=_mcp_door())
+@app.get("/export/cdrl", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
 async def export_cdrl(
     request: Request,
     profile: str,
@@ -4990,7 +4995,7 @@ async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user:
     return ask
 
 
-@app.post("/canvas/seed", tags=[MCP_TAG], dependencies=_mcp_door(), responses={200: {"model": CanvasSeedResponse}, 409: {"model": CanvasSeedConflict}})
+@app.post("/canvas/seed", tags=[MCP_TAG], dependencies=_mcp_door(), responses={200: {"model": CanvasSeedResponse}, 409: {"model": CanvasSeedConflict}, **MCP_REFUSAL_RESPONSES})
 async def canvas_seed(
     request: CanvasSeedRequest,
     http_request: Request,
@@ -5948,7 +5953,7 @@ async def _stale_extraction(task_id: str, row: dict) -> "HTTPException":
         "stage": row.get("status"), "message": msg})
 
 
-@app.post("/human_tasks/{task_id}/act", tags=[INGEST_V1_TAG, MCP_TAG], dependencies=_mcp_door(), responses={200: {"model": ActResponse}})
+@app.post("/human_tasks/{task_id}/act", tags=[INGEST_V1_TAG, MCP_TAG], dependencies=_mcp_door(), responses={200: {"model": ActResponse}, **MCP_REFUSAL_RESPONSES})
 async def act_on_human_task(
     task_id: str,
     req: HumanTaskActRequest,
@@ -11610,7 +11615,7 @@ async def register_frontend_capabilities(
     )
 
 
-@app.post("/orchestrate", tags=[MCP_TAG], dependencies=_mcp_door())
+@app.post("/orchestrate", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
 @app.post("/interview/stream")
 @_audit_orchestrate_refusals
 async def orchestrate(request: InterviewRequest, http_request: Request,
@@ -12889,7 +12894,7 @@ async def _load_viewable_case(case_id: str, current_user: User) -> tuple[dict, d
     return case, definitions
 
 
-@app.get("/cases/{case_id}", tags=[MCP_TAG], dependencies=_mcp_door())
+@app.get("/cases/{case_id}", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
 async def get_case(case_id: str, current_user: User = Depends(get_current_user)):
     """GET /cases/{case_id} -- project the case runner's state (WorkflowRunner, ADR-0039) as
     cortex's `WorkflowCasePayload` (cortex-ui `src/archetypes/workflow-case/contract.ts`).
@@ -13049,7 +13054,7 @@ def _sniff_file_kind(head: bytes) -> Optional[str]:
     return None
 
 
-@app.post("/ingest", tags=[INGEST_V1_TAG, MCP_TAG], dependencies=_mcp_door(), responses={200: {"model": IngestResponse}, **DROP_GATE_RESPONSES})
+@app.post("/ingest", tags=[INGEST_V1_TAG, MCP_TAG], dependencies=_mcp_door(), responses={200: {"model": IngestResponse}, **DROP_GATE_RESPONSES, **MCP_REFUSAL_RESPONSES})
 async def ingest_document(
     file: UploadFile = File(...),
     kind: str = Form(...),
@@ -14330,7 +14335,7 @@ def _export_response(profile, rows: list, filename: str, **extra) -> Response:
 # route and the CSV body is not JSON. They enter v1 as PREVIEW routes (like /empty) when Lane 1
 # regenerates the v1 doc and shapes lock (overnight item 5).
 @app.get("/ingest/export/profiles", tags=["ingest-export", MCP_TAG], dependencies=_mcp_door(),
-         responses={200: {"model": list[ExportProfile]}})
+         responses={200: {"model": list[ExportProfile]}, **MCP_REFUSAL_RESPONSES})
 async def ingest_export_profiles_route(current_user: User = Depends(get_current_user)):
     """GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:
     `[{name, format, granularity, label}]`. An invalid profile is logged at ERROR and left out.
@@ -14365,7 +14370,7 @@ async def review_shapes_route(current_user: User = Depends(get_current_user)):
     return out
 
 
-@app.get("/ingest/export", tags=["ingest-export", MCP_TAG], dependencies=_mcp_door())
+@app.get("/ingest/export", tags=["ingest-export", MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
 async def ingest_export_batch_route(
         profile: Optional[str] = _Query(None), from_: Optional[str] = _Query(None, alias="from"),
         to: Optional[str] = _Query(None), current_user: User = Depends(get_current_user)):

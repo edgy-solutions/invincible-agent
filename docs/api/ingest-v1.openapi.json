@@ -2452,6 +2452,68 @@
         "title": "Notice",
         "type": "object"
       },
+      "PolicyRefusalBody": {
+        "additionalProperties": false,
+        "description": "The 403 body of an MCP-tagged route; one site sends `detail` as a string.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PolicyRefusalDetail"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "PolicyRefusalBody",
+        "type": "object"
+      },
+      "PolicyRefusalDetail": {
+        "additionalProperties": true,
+        "description": "A 403's `detail` object. Sites name the refusal `error` (two export sites say `reason`) and\nadd their own keys. `refusal` is OPTIONAL while any 403 an MCP route can reach sends none:\ntests/security/test_every_mcp_route_declares_401_and_403.py lists those sites exactly and\nrequires this field once its list is empty.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "refusal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefusalEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "PolicyRefusalDetail",
+        "type": "object"
+      },
       "RefusalEnvelope": {
         "additionalProperties": false,
         "description": "`authz.refusal.refusal`'s envelope: what the caller lacks and who can grant it.",
@@ -3334,6 +3396,21 @@
         "title": "TitleLeafResponse",
         "type": "object"
       },
+      "UnauthenticatedBody": {
+        "additionalProperties": false,
+        "description": "The 401 body `auth.get_current_user` sends: no identity, so no policy to name.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "UnauthenticatedBody",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -3389,7 +3466,7 @@
   },
   "info": {
     "title": "Cortex ingest API",
-    "version": "1.7.0"
+    "version": "1.8.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -3452,6 +3529,34 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -3508,15 +3613,33 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "403": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
                 }
               }
             },
-            "description": "the dropper is not granted can_drop:<kind>"
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
           },
           "422": {
             "content": {
@@ -4193,6 +4316,34 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
           }
         },
         "security": [

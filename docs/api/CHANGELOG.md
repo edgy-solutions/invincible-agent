@@ -2,6 +2,15 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.8.0 — 2026-11-07
+
+Declarations made to match the wire, ruled 2026-11-06 (G5). One body gains a field.
+
+- `GET /me/human_tasks`, `POST /human_tasks/{task_id}/act`, `POST /ingest` (and every other `mcp`-tagged route): declare 401 `UnauthenticatedBody` (`detail` is a string, with `WWW-Authenticate: Bearer`) and 403 `PolicyRefusalBody`.
+- `PolicyRefusalBody.detail` is an object or a string. The object has optional `error`, `message` and `refusal` (a `RefusalEnvelope`) and may carry other keys. `refusal` is optional because some 403s these routes can send carry none yet; `tests/security/test_every_mcp_route_declares_401_and_403.py` lists them, and `refusal` becomes required when that list is empty.
+- `POST /ingest`: the 403 was declared `NotEntitledToDrop`. That body is still sent and still validates as `PolicyRefusalBody`, but the route's door also sends `service_token_refused`, which the old declaration did not describe. A reader that typed the 403 as `NotEntitledToDrop` must now handle `refusal` absent.
+- `service_token_refused` on a route whose body takes `on_behalf_of` (`POST /ingest`, `POST /human_tasks/{task_id}/act`) now carries `refusal` (`policy_id` `config:DELEGATE_ON_BEHALF_OF`). Elsewhere it is unchanged.
+
 ## 1.7.0 — 2026-11-06
 
 Additive for a reader.
