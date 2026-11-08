@@ -13500,7 +13500,7 @@ async def ingest_event(
     the holder's `case_id`); with none open a new case opens and names the last closed one as its
     `predecessor`. The same occurrence twice (same event_id, same bytes) is answered, not
     revised; the same event_id with different bytes is a revision. A delegate attaches only to a
-    case it seeded: otherwise 403 `not_the_seeding_delegate`, and nothing is recorded.
+    case it seeded: otherwise 403 `delegate_not_seeder`, and nothing is recorded.
     """
     from . import content_kinds, provenance
 
@@ -13752,7 +13752,7 @@ async def ingest_event(
         if att.get("refused"):
             raise HTTPException(
                 status_code=403,
-                detail={"error": "not_the_seeding_delegate",
+                detail={"error": "delegate_not_seeder",
                         "message": ("this episode's open case was not seeded by this delegate; "
                                     "a delegate attaches an occurrence only to a case it seeded")},
             )

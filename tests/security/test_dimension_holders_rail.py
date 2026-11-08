@@ -18,6 +18,7 @@ Run:  uv run pytest tests/security/test_dimension_holders_rail.py -q
 from __future__ import annotations
 
 import copy
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -194,8 +195,17 @@ def _errs(pol, *files):
 _FILES = ("classification/dimensions.yaml", "dimension_holders.yaml")
 
 
+def _urn(label):
+    """A valid, distinct term identity per label (UUID v7 shape), derived, never typed."""
+    h = hashlib.sha256(label.encode()).hexdigest()
+    return f"urn:uuid:{h[:8]}-{h[8:12]}-7{h[13:16]}-8{h[17:20]}-{h[20:32]}"
+
+
 def _set_dim(*vocab):
-    return {"dimensions": [{"name": "dim-s", "type": "set", "vocabulary": list(vocab), "owner": "owner", "ratified_by": "owner"}]}
+    return {"generator": "scripts/mint_term_identity.py",
+            "dimensions": [{"name": "dim-s", "identity": _urn("dim-s"), "type": "set", "vocabulary": list(vocab),
+                            "identities": {v: _urn(f"dim-s.{v}") for v in vocab},
+                            "owner": "owner", "ratified_by": "owner"}]}
 
 
 def test_validate_is_clean_as_copied(tmp_path):

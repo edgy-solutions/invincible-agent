@@ -318,7 +318,7 @@ NOT_POLICY: dict[str, str] = {
     'src/iagent/gateway.py::act_on_human_task::task_already_resolved | This review was already resolved': CONFLICT,
     'src/iagent/gateway.py::act_on_human_task::task_already_resolved | This task was already resolved b': CONFLICT,
     'src/iagent/gateway.py::act_on_human_task::task_unresumable | workflow_service {} is not a res': CONFLICT,
-    "src/iagent/gateway.py::ingest_event::not_the_seeding_delegate | this episode's open case was not": SEEDER,
+    "src/iagent/gateway.py::ingest_event::delegate_not_seeder | this episode's open case was not": SEEDER,
     'src/iagent/gateway.py::ingest_event::revision_not_kept | <_restate_refusal_message>': CONFLICT,
     'src/iagent/gateway.py::ingest_leaf_route._moved::leaf_not_changeable | the document moved on while the': CONFLICT,
     'src/iagent/gateway.py::ingest_leaf_route::leaf_moves_audience | the new kind {} routes to {}, no': CONFLICT,

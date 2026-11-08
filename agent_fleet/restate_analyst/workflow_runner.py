@@ -104,7 +104,7 @@ SEEDED_BY_STAMP_OUTCOME = "released"
 #: `CaseEpisode.attach`'s answer when a delegate's occurrence meets an open case it did not seed
 #: (Chris, 2026-11-06, for #283: "a delegate cannot attach to a case it didn't seed"). The door
 #: answers it as a 403 of the same code.
-NOT_THE_SEEDER = "not_the_seeding_delegate"
+NOT_THE_SEEDER = "delegate_not_seeder"
 
 #: The case's promise that holds the id of the FIRST human task one of its instances registered
 #: (Chris, 2026-11-07, saf: `task_id` is taken from the runner that mints the task). The id is
