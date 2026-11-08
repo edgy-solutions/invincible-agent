@@ -7,6 +7,7 @@
 @prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
 @prefix prov:  <http://www.w3.org/ns/prov#> .
 @prefix mesh:  <http://invincible-agent/mesh#> .
+@prefix iof-construct: <https://spec.industrialontologies.org/ontology/construct/> .
 
 # ============================================================================
 # CANONICAL PRODUCT-STRUCTURE VOCABULARY (ADR-0035 data plane)
@@ -35,6 +36,18 @@
 #   * effectivity is APPLICABILITY (s3kl:ApplicabilityStatement)
 # A model authored without reading the standard would have invented all three
 # names and silently forfeited the citation while looking standards-aligned.
+# (ps:Assembly and ps:EndItem, added by ADR-0065, do not undo this: both are
+# subclasses of ps:Part, roles a part plays in the breakdown, and neither cites
+# an S3000L name it does not have.)
+#
+# IOF CORE ALIGNMENT (ADR-0065, 2026-11-08): rdfs:subClassOf into IOF Core's
+# construct namespace, where the class means the same thing; rdfs:seeAlso where
+# IOF names the MATERIAL counterpart of a DESIGN-view class. Every IOF name used
+# here was read in IOF Core as the prime fetches it (iofoundry/ontology master,
+# core/Core.rdf, fetched 2026-11-08, sha256 7e44642681de…): the terms are
+# declared under .../ontology/construct/, not .../core/Core/, which is only
+# their rdfs:isDefinedBy. The prime pulls master UNPINNED, so this set is a
+# reading on a date, not a pin (tests/test_product_structure_vocabulary.py).
 # ============================================================================
 
 ps: a owl:Ontology ;
@@ -45,18 +58,66 @@ it. Never contort the process to fit a citation.""" ;
     owl:imports <http://www.lksoft.com/s3kl> .
 
 # ── Part ────────────────────────────────────────────────────────────────────
+# THE ONE PART NODE (ADR-0065 ruling 1). ps:Assembly and ps:EndItem are subclasses of this
+# class, roles a part plays in a breakdown, never second nodes. The IPD's part and this one
+# resolve to one identity through alias rows (ADR-0056, ADR-0067); a part number with a CAGE
+# code is an alias of that identity, never another node.
+#
+# IOF CORE: a part number + revision is a DESIGN, so this is an iof-construct:DesignSpecification
+# ("information content entity that prescribes something man-made"), not a MaterialArtifact.
+# The serial-numbered unit built to it is the material artifact it prescribes
+# (iof-construct:prescribes), which is the as_built / as_maintained world.
+#
+# These two notes are `#` comments, not rdfs:comment, on purpose: the class comment is embedded
+# as retrieval input, and a sibling's name in it competes for that sibling's traffic
+# (tests/routing/test_definitions_are_retrieval_input.py).
 ps:Part a owl:Class ;
     rdfs:label "Part" ;
+    rdfs:subClassOf iof-construct:DesignSpecification ;
     rdfs:comment """An internally-identified part. Identity + revision; usage lives on ps:PartUsage.
 
     DESIGN VIEW, DELIBERATELY. S3000L splits as-designed from as-maintained, and BOM where-used
     IS the design view: what the engineering structure says goes where — what PDM holds, what a
     change notice's affected-parts question runs against, what qualification dispatch consults.
     As-maintained (what is actually installed in serial-numbered units) is a genuinely different
-    dataset we do not have and must not pretend to. If fleet-configuration data ever arrives it
-    is a DISTINCT vocabulary, not an extension of this one — recorded so the choice reads as a
-    decision when someone asks why installed-config queries do not work.""" ;
+    dataset we do not have and must not pretend to.
+
+    SUPERSEDED IN PART (ADR-0065 ruling 2, 2026-11-07). This comment used to say fleet-
+    configuration data would be a DISTINCT vocabulary. The ruling put the axis here instead:
+    every usage states its ps:configuration (as_designed | as_built | as_maintained). The data
+    is still absent: only as_designed has a source, and a where-used question asked of as_built
+    or as_maintained is refused loudly, never answered as an empty table.""" ;
+    rdfs:seeAlso iof-construct:prescribes ;
     mesh:derivedFrom s3kl:PartAsDesigned .
+
+ps:Assembly a owl:Class ;
+    rdfs:label "Assembly" ;
+    rdfs:subClassOf ps:Part ;
+    owl:equivalentClass [ a owl:Class ;
+        owl:intersectionOf ( ps:Part [ a owl:Restriction ;
+                                       owl:onProperty ps:parentIn ;
+                                       owl:someValuesFrom ps:PartUsage ] ) ] ;
+    rdfs:comment """A part that is the parent of at least one usage. DEFINED, never asserted: a
+    writer does not type a node Assembly, the breakdown makes it one. HOUSE CONVENTION, uncited:
+    S3000L says Breakdown / BreakdownElement and has no Assembly class (see the header).
+    iof-construct:Assembly is the MATERIAL assembly a unit built to this design is, hence seeAlso,
+    not subClassOf.""" ;
+    rdfs:seeAlso iof-construct:Assembly .
+
+ps:EndItem a owl:Class ;
+    rdfs:label "End item" ;
+    rdfs:subClassOf ps:Part ;
+    rdfs:comment """A part a program sustains as a whole: where a where-used walk stops.
+    ASSERTED, never defined: being the top of a breakdown is not enough, because the same
+    assembly can be an end item for one program and a component for another.
+
+    THE PROGRAM IS DELIBERATELY NOT A PROPERTY HERE. Which program sustains an end item is
+    declared per asset (ADR-0056 §8, ADR-0065 §4), so the impact table's program column is a
+    join to that declaration. A program edge in this vocabulary would be a second source for it.
+
+    HOUSE CONVENTION, uncited in S3000L. iof-construct:MaterialProduct is the material
+    counterpart, hence seeAlso.""" ;
+    rdfs:seeAlso iof-construct:MaterialProduct .
 
 ps:partNumber a owl:DatatypeProperty ;
     rdfs:domain ps:Part ; rdfs:range xsd:string ;
@@ -84,8 +145,19 @@ ps:PartUsage a owl:Class ;
     rdfs:comment """One parent-uses-child assertion. REIFIED because (a) provenance rides on
 every assertion (ADR-0035 §4) and an edge cannot carry a provenance block, and (b) two sources
 may assert DIFFERENT usage for the same pair — which must be representable as two assertions
-that disagree, not silently collapsed into one edge that the last writer wins.""" ;
+that disagree, not silently collapsed into one edge that the last writer wins.
+
+THE USED-IN RELATION (ADR-0065): a usage says the child is used in the parent, with a quantity,
+a reference designator and an applicability (effectivity), in one ps:configuration.""" ;
+    # The material relation a usage describes is IOF Core's component-part-of-at-some-time
+    # between units built to the two designs, hence the seeAlso below. Kept out of the comment
+    # because the IRI's local name contains a sibling's label (retrieval-input guard).
+    skos:altLabel "used in" ;
+    rdfs:seeAlso iof-construct:componentPartOfAtSomeTime ;
     mesh:derivedFrom s3kl:BreakdownElementUsageInBreakdown .
+
+ps:parentIn a owl:ObjectProperty ; owl:inverseOf ps:parent ;
+    rdfs:comment "The usages a part is the parent of. Exists so ps:Assembly can be defined, not asserted." .
 
 ps:parent a owl:ObjectProperty ; rdfs:domain ps:PartUsage ; rdfs:range ps:Part ;
     mesh:derivedFrom s3kl:Breakdown .
@@ -102,6 +174,33 @@ ps:applicability a owl:ObjectProperty ;
 this usage apply' as APPLICABILITY, not 'effectivity' — adopting its term keeps the citation
 and avoids a synonym nobody can trace.""" ;
     mesh:derivedFrom s3kl:ApplicabilityStatement .
+
+# ── Configuration — the view a usage was asserted in (ADR-0065 ruling 2) ────
+ps:Configuration a owl:Class ;
+    rdfs:label "Configuration" ;
+    owl:oneOf ( ps:as_designed ps:as_built ps:as_maintained ) ;
+    rdfs:comment """Which view of the product a usage belongs to. A CLOSED set of three, ruled by
+    ADR-0065 (the where-used verb's `configuration` argument and every impact row's column), so it
+    is owl:oneOf here and not a registry: a deployment cannot add a fourth view of a product.
+    Concept from EIA-649 and S3000L's as-designed / as-maintained split, cited, not copied.
+    HOUSE CONVENTION: no S3000L element was verified for the axis itself, so it is uncited.""" .
+
+ps:as_designed a ps:Configuration , owl:NamedIndividual ; rdfs:label "as designed" ;
+    rdfs:comment "The engineering structure (EBOM): the only configuration any source has today." .
+ps:as_built a ps:Configuration , owl:NamedIndividual ; rdfs:label "as built" ;
+    rdfs:comment "What a serial-numbered unit was built with. No source yet: a configuration-management feed or a PDM mapping would be one." .
+ps:as_maintained a ps:Configuration , owl:NamedIndividual ; rdfs:label "as maintained" ;
+    rdfs:comment "What a unit carries now, after maintenance. No source yet." .
+
+ps:configuration a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:domain ps:PartUsage ; rdfs:range ps:Configuration ;
+    rdfs:comment """The configuration this usage was asserted in. One per usage: the same pair in two
+    configurations is two usages, as two disagreeing sources are.
+
+    NOT YET WRITABLE, ON PURPOSE. src/iagent/product_writer.py refuses a field its canonical set
+    does not name, and this one is not in it yet. It joins that set, and the mapping template, with
+    the BOM data contract (ADR-0066's second contract file). Until then every usage written came
+    from the design view, which is why the verb's default is as_designed (ADR-0065 §4).""" .
 
 # ── Approved-source bridge — HOUSE CONVENTION, enrichment over the standard ─
 # RULED 2026-08-01. S3000L carries manufacturer part numbers as IDENTIFIER VARIANTS on a part
@@ -164,6 +263,69 @@ ps:standing a owl:DatatypeProperty ;
     rdfs:comment "The source's trust rung FROZEN at write time (ADR-0034 rungs)." .
 ps:derivedFromSource a owl:ObjectProperty ;
     mesh:derivedFrom prov:wasDerivedFrom .
+
+# ── Lifecycle status — what obsolescence intake writes (ADR-0065 §3) ────────
+ps:LifecycleStatus a owl:Class ;
+    rdfs:label "Lifecycle status" ;
+    skos:altLabel "lifecycle_status" ;
+    rdfs:subClassOf iof-construct:DescriptiveInformationContentEntity ;
+    rdfs:comment """A part's supply-lifecycle status, as one source stated it on one date:
+    {status, source, as_of, successor?}. REIFIED for the reason a usage is: it carries its
+    own source and date, and two sources may disagree.
+
+    ABSENT IS NOT NULL, and both readers and writers keep them apart:
+      * a part with no ps:lifecycleStatus has NOT BEEN ASSESSED;
+      * a ps:LifecycleStatus with no ps:status was ASSESSED, AND NONE IS KNOWN.
+
+    Concept from IEC 62402 and EIA-724, cited, not copied. The disposition writer writes it in
+    the same transaction as the rule match (ADR-0065 §2).""" .
+
+ps:lifecycleStatus a owl:ObjectProperty ;
+    rdfs:domain ps:Part ; rdfs:range ps:LifecycleStatus .
+
+ps:status a owl:DatatypeProperty ;
+    rdfs:domain ps:LifecycleStatus ; rdfs:range xsd:string ;
+    rdfs:comment """A value from policy/registry/lifecycle_status.yaml (seed plus a deployment's
+    overlay), validated as a plain string against the served registry. DELIBERATELY NOT an
+    owl:oneOf here: the menu is data a deployment extends, and an enum in this file would be a
+    second copy of it.""" .
+
+ps:statusSource a owl:DatatypeProperty ;
+    rdfs:domain ps:LifecycleStatus ; rdfs:range xsd:string ;
+    rdfs:comment "The notice, feed or declaration the status came from. Its date is ps:asOf." .
+
+ps:successor a owl:ObjectProperty ;
+    rdfs:domain ps:LifecycleStatus ; rdfs:range ps:Part ;
+    rdfs:comment "The replacement part's identity, when the source names one. Optional." .
+
+# ── Last-time-buy decision — the action record of one resolution (ADR-0065 §5) ─
+ps:LtbDecision a owl:Class ;
+    rdfs:label "Last-time-buy decision" ;
+    skos:altLabel "ltb_decision" ;
+    rdfs:subClassOf iof-construct:PlanSpecification ;
+    rdfs:comment """The action record of a last-time-buy resolution of the obsolescence_resolution
+    workflow: {quantity, by, rationale, approved_by}. It prescribes a buy that has not happened yet,
+    hence a PlanSpecification. Concept from SD-22 / MIL-STD-3018, cited, not copied.""" .
+# THE FOUR FIELDS FOLLOW THE SHIPPED CONTRACT, iagent-mesh v0.9.16 `LtbDecision`
+# {quantity: int, by: str, rationale: str, approved_by: str}. `by` is the DECIDING seat and
+# `approved_by` the APPROVING one: ADR-0065 §5's two rails (option_deciders chooses,
+# task_grants approves). tests/test_product_structure_vocabulary.py checks the two agree.
+
+ps:ltbFor a owl:ObjectProperty ;
+    rdfs:domain ps:LtbDecision ; rdfs:range ps:Part ;
+    rdfs:comment "The part the buy is for. Not a field of the record: the record hangs off the case's part." .
+ps:ltbQuantity a owl:DatatypeProperty ;
+    rdfs:domain ps:LtbDecision ; rdfs:range xsd:integer ;
+    rdfs:comment "quantity: how many units the decision covers." .
+ps:ltbBy a owl:DatatypeProperty ;
+    rdfs:domain ps:LtbDecision ; rdfs:range xsd:string ;
+    rdfs:comment "by: who made the decision (authz_id), a holder of the chosen option's option_deciders row." .
+ps:ltbRationale a owl:DatatypeProperty ;
+    rdfs:domain ps:LtbDecision ; rdfs:range xsd:string ;
+    rdfs:comment "rationale: why, in the decider's words." .
+ps:ltbApprovedBy a owl:DatatypeProperty ;
+    rdfs:domain ps:LtbDecision ; rdfs:range xsd:string ;
+    rdfs:comment "approved_by: the approving seat (authz_id), from the task_grants approver audience; distinct from by." .
 
 # ── Deliberately OUT of v1, each waking on its consumer ─────────────────────
 # CAD structure · alternates / substitution groups · full effectivity algebra.
