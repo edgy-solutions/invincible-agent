@@ -111,14 +111,21 @@ def max_rows() -> int:
     return int(raw) if raw else DEFAULT_MAX_ROWS
 
 
+#: ADR-0065:133 rules that `data_provenance` carries the dataset URN, an as-of and a ticket id. It
+#: is unmet: the broker's ticket carries neither an id nor an as-of, and the client discards the
+#: ticket. Until it does, the string says the ticket is pending rather than inventing one (ruled
+#: 2026-11-08). The URN stays last: the live leg reads `Source: <urn>` as the suffix.
+TICKET_PENDING = "(ticket: pending)"
+
+
 def provenance(urn: str) -> str:
-    """The `data_provenance` an asset answer carries: the operator's banner and the URN."""
-    return f"{dataset_banner()} Source: {urn}"
+    """The `data_provenance` an asset answer carries: the operator's banner, the pending ticket and the URN."""
+    return f"{dataset_banner()} {TICKET_PENDING} Source: {urn}"
 
 
 def dataset_provenance(banner: str, urn: str) -> str:
     """`provenance` for a dataset-kind row, whose banner is the row's own, not the environment's."""
-    return f"{banner} Source: {urn}"
+    return f"{banner} {TICKET_PENDING} Source: {urn}"
 
 
 def _load_client() -> tuple[Any, type, type]:

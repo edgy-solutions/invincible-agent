@@ -197,7 +197,7 @@ FN = CASE["measures"][0]
 
 
 def right_answer(want: list[dict]) -> dict:
-    return {"data_source": {"kind": "asset", "urn": URN}, "data_provenance": f"{BANNER} Source: {URN}",
+    return {"data_source": {"kind": "asset", "urn": URN}, "data_provenance": asset_inputs.dataset_provenance(BANNER, URN),
             "method": {"measure_id": FN}, "rows": want}
 
 

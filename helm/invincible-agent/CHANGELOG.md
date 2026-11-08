@@ -7,6 +7,12 @@
   `not_the_seeding_delegate`; the behaviour is unchanged (403, nothing written), only the code
   is renamed, at its one home (`workflow_runner.NOT_THE_SEEDER`) and the door's 403. saf's seal
   `tests/test_a_delegate_attaches_only_to_a_case_it_seeded.py` loses its strict xfail.
+- **fin's `data_provenance` says its ticket is pending.** Ruled 2026-11-08: ADR-0065:133 (URN,
+  as-of and ticket id) stands and is marked unmet. The broker's ticket carries no id and no
+  as-of, and the client discards the ticket, so an asset answer now reads
+  `<banner> (ticket: pending) Source: <urn>` and claims no as-of. The URN stays last, so the
+  live variance leg's suffix check is unchanged. The as-of/ticket-id seal stays a strict xfail,
+  and its ticket pattern now refuses `pending`.
 
 ## 0.4.82 — 2026-11-08
 

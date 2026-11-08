@@ -10,10 +10,13 @@ Two halves, measured separately because they belong to different lanes:
   - THE HOP (Lane 1's, green). Every fin verb bound to MULTI_SERIES answers through its real
     `/measure/<fn>` route, and the real projector function carries `data_provenance` verbatim.
     The control removes it from the tuple and watches it drop.
-  - THE CONTENT (fin's, strict xfail). An asset answer's string is the operator's banner and
-    " Source: <urn>" (asset_inputs.provenance / dataset_provenance). It names the dataset URN.
-    It carries no as-of and no ticket id. When fin's producer adds them, the xfail turns XPASS
-    and fails, and this marker is deleted in that PR.
+  - THE CONTENT (fin's). An asset answer's string is the operator's banner, "(ticket: pending)"
+    and " Source: <urn>" (asset_inputs.provenance / dataset_provenance). It names the dataset URN.
+    ADR-0065:133's as-of and ticket id are UNMET, ruled 2026-11-08: the broker's ticket carries
+    neither, so the string says the ticket is pending and claims no as-of (green). The full rule
+    stays a strict xfail. Its ticket pattern now refuses "pending", which a bare `ticket` word
+    would accept; when the ticket carries both, the xfail turns XPASS and fails, and the marker
+    is deleted in that PR.
 
 Run: uv run --no-sync python -I -m pytest -c pyproject.toml --rootdir=. -p no:cacheprovider tests/finance/test_provenance_arrives_whole.py
 """
@@ -84,11 +87,31 @@ def test_AN_ASSET_ANSWER_NAMES_ITS_DATASET_URN(monkeypatch):
         assert URN in s, f"{name}: {s!r}"
 
 
+AS_OF = re.compile(r"\bas[- ]of\b", re.I)
+TICKET_ID = re.compile(r"\bticket\b[:\s]+(?!pending\b)\w", re.I)
+
+
+def test_AN_ASSET_ANSWER_SAYS_ITS_TICKET_IS_PENDING_AND_CLAIMS_NO_AS_OF(monkeypatch):
+    # The ruled text, not asset_inputs.TICKET_PENDING: a seal that read the constant would pass it blank.
+    for name, s in _asset_strings(monkeypatch).items():
+        assert "ticket: pending" in s, f"{name}: {s!r}"
+        assert s.endswith(f"Source: {URN}"), f"{name}: the live leg reads the URN as the suffix: {s!r}"
+        assert not AS_OF.search(s), f"{name} claims an as-of nothing measured: {s!r}"
+        assert not TICKET_ID.search(s), f"{name} claims a ticket id nothing minted: {s!r}"
+
+
+def test_THE_TICKET_ID_PATTERN_TELLS_PENDING_FROM_AN_ID():
+    # The control for both arms: a pending ticket is not an id, and an id is.
+    assert not TICKET_ID.search("BANNER (ticket: pending) Source: u")
+    assert TICKET_ID.search("BANNER (as of 2026-11-08T00:00Z, ticket 7f3a) Source: u")
+    assert TICKET_ID.search("ticket: 7f3a") and AS_OF.search("as-of 2026-11-08")
+
+
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "fin's producer gap: asset_inputs.provenance and dataset_provenance emit the banner and "
-    "' Source: <urn>' only; the ruled as-of and ticket id are not emitted (owner: "
-    "invincible-agent/lane/fin)"))
+    "ADR-0065:133 unmet (ruled 2026-11-08): the broker's ticket carries no id and no as-of, and "
+    "the client discards it, so the string says '(ticket: pending)'. Clears when dag-tools mints "
+    "both and fin threads them through (owner: invincible-agent/lane/fin)"))
 def test_AN_ASSET_ANSWER_CARRIES_ITS_AS_OF_AND_TICKET_ID(monkeypatch):
     for name, s in _asset_strings(monkeypatch).items():
-        assert re.search(r"\bas[- ]of\b", s, re.I), f"{name} names no as-of: {s!r}"
-        assert re.search(r"\bticket\b", s, re.I), f"{name} names no ticket id: {s!r}"
+        assert AS_OF.search(s), f"{name} names no as-of: {s!r}"
+        assert TICKET_ID.search(s), f"{name} names no ticket id: {s!r}"
