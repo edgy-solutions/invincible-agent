@@ -595,6 +595,13 @@ class _ChainPromise:
     def __init__(self, ctx, name):
         self.ctx, self.name = ctx, name
 
+    async def peek(self):
+        """The first payload resolved under this name on this ctx, else None (the SDK's peek)."""
+        for name, payload in self.ctx.resolved:
+            if name == self.name:
+                return payload
+        return None
+
     def value(self):
         async def _v():
             answer = self.ctx.cluster.answers.get((self.ctx._key, self.name))
