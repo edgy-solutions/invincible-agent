@@ -3,10 +3,10 @@ title: The where-used verb: an impact table over a product structure
 feature: pcn-pdn
 lane: invincible-agent/lane/74
 repo: invincible-agent
-status: open
+status: review
 priority: next
 blocked_on: []
-pr: []
+pr: [invincible-agent#315]
 ruling_ref: architect via Chris 2026-11-07 on #299, ADR-0065 rulings 2 and 4: where-used takes a declared configuration (default as_designed, no data refused loudly) and every impact row names it; ImpactRow is nine fields. Earlier, architect 2026-11-06: where-used goes to 74; obsolescence is logistics; saf gets only the safety-critical check on a part
 updated: 2026-11-07
 ---
@@ -18,3 +18,5 @@ ADR directive item E (architect, 2026-11-06; order A, then C, D, E, with B along
 - **Tests** run against a synthetic 3-level BOM fixture.
 - **It builds on C**, which extends `product_structure_extension.ttl` (board item 01M6W93VSQMD9W83YCXJHQND5Z), and **on D**, the registry rows (01M6W93W013YFR30HE67S3VF8B).
 - **saf's share** is only the safety-critical check on a part (S3's pattern).
+
+2026-11-07, lane 74: built ahead of C and D, from a notional fixture under `policy/overlays/sample`. It is served as an `INSTANCES_BY_PROPERTY` table with `group_by` on program. The local `ImpactRow` is sealed against ruling 4, and the SDK reshape is ca's. The architect has three questions: classification has no field in ruling 4, E's move to the graph when C and D land, and whether partial configuration is refused whole. Serving it needs a merge and a roll.
