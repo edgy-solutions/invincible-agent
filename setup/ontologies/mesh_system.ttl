@@ -537,6 +537,27 @@ mesh:MultiSeries a owl:Class ;
   rdfs:label "Multi Series" ;
   rdfs:comment "Several named quantities measured over the same periods and drawn together, where the payload DECLARES which of its keys are the series and what each is called. The declaration is the substance: a card that inferred its series from whichever columns held numbers would plot bookkeeping fields as though they were measurements, so a payload that does not say what its series are is refused rather than guessed at. Each series carries its own unit, or carries none at all to say it is a dimensionless ratio; series with different units are refused rather than drawn together, because one axis is a claim that two quantities are comparable and a card should not make that claim on the reader's behalf. There is no ceiling, threshold or limit anywhere in it — nothing here is over or under anything. A LIVE VIEW." .
 
+# ── FLOW_DECOMPOSITION (2026-11-08, 0.4.82) ──────────────────────────────────────────
+#
+# A GENERIC ARCHETYPE, NOT FINANCE'S (Chris, 2026-11-07: "the archetype is not finance's;
+# fin:VarianceDecomposition is a measure, not a card"). Finance's flow verbs are its first
+# producer; any quantity split along named levels draws the same way.
+#
+# MINTED RATHER THAN REUSING mesh:VarianceTree, whose payload is RECURSIVE (a node holding
+# its children) and whose every node states why its drill stopped. This one is a FLAT EDGE
+# TABLE: each row names its source and target by full path, so a renderer draws the flow
+# without walking a tree, and a row cannot be orphaned by a parent it never saw. The root
+# edge comes first and has no source. Small siblings collapse into one sink row whose
+# node_kind says so, and render carries the unit and that sink's label.
+#
+# Declared here ahead of its menu row and projector row (the order: this class, the
+# producer's `menu:` block, the projector row, cortex's menu). No binding names it yet.
+
+mesh:FlowDecomposition a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Flow Decomposition" ;
+  rdfs:comment "One total split into the parts it flows into, level by level, drawn as a flow from the whole to its pieces. The payload is a table of edges: each row names where the quantity came from and where it went by full path, how much moved, and in which direction, so a part that offsets the total is shown as offsetting rather than folded into a net. The first row is the whole itself. Small parts at one level are gathered into a single labelled remainder rather than dropped, so every level still adds up to the level above it. The unit is stated once for the table. A LIVE VIEW." .
+
 mesh:VarianceTree a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Variance Tree" ;
