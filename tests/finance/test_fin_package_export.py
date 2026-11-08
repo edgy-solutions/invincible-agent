@@ -31,11 +31,13 @@ for _p in (ROOT, ROOT / "src", ROOT / "scripts"):
 from agent_fleet.finance_agent import export as fin_export  # noqa: E402
 from agent_fleet.finance_agent import state_codec  # noqa: E402
 from agent_fleet.finance_agent.seed import build_seed  # noqa: E402
+from tests.recipient_rail_double import install as install_rail  # noqa: E402
 from iagent.canvas_template import (  # noqa: E402
     Package, load_template, panel_dispatch, recipient_scope_for, template_ref,
 )
 
 SCOPE = "program_office.NP-MERIDIAN"
+CALLER = "alice@example.com"  # engine-fin refuses a caller who cannot view the scope's program
 BINDINGS = {"program": "NP-MERIDIAN"}
 SHA64 = "sha256:" + "a" * 64
 
@@ -85,6 +87,7 @@ def posts(monkeypatch):
     """Record every POST the gateway makes; answer with a valid engine body."""
     import iagent.gateway as gw
 
+    install_rail(monkeypatch)  # Topaz, doubled with the SHIPPED policy/recipient_readers.yaml rows
     calls: list[dict] = []
 
     class _Client:
@@ -198,8 +201,12 @@ def test_gate_4_binding_gates_fire_before_any_post(posts):
 def test_gate_5_a_disagreeing_scope_is_409_naming_the_derived_one(posts):
     status, detail = _export({**GOOD, "recipient_scope": "program_office.NP-OTHER"})
     assert status == 409 and posts == []
-    assert detail == {"reason": "recipient_scope_disagrees_with_canvas_audience",
-                      "derived": SCOPE}
+    # `message` joined this body in d0f80092 ("every 409 carries a message", sealed fleet-wide
+    # by tests/test_every_409_carries_a_message.py). Its wording is that seal's business; this
+    # arm keeps the exact equality on every OTHER key, so a fourth field still reds it.
+    assert {k: v for k, v in detail.items() if k != "message"} == {
+        "reason": "recipient_scope_disagrees_with_canvas_audience", "derived": SCOPE}
+    assert isinstance(detail.get("message"), str) and detail["message"].strip()
 
 
 def test_gate_6_a_non_reader_is_403_before_any_post(posts):
@@ -219,23 +226,38 @@ def test_gates_7_and_8_CONTROL_a_valid_request_posts_once_and_is_shaped(posts):
     assert out["artifact_uri"] == f"/export/package/artifact/fin-package-{SCOPE}.html"
 
 
-def test_both_export_routes_shape_through_the_ONE_helper():
-    """"exists" is decided in one place, so the cost path and the finance-template path cannot
-    drift into reporting it under different rules. Callers are DERIVED from the AST, not named
-    by what they happen to be called today, and the rule's own text is counted, so a route that
-    grows a private copy reds here even while still calling the helper somewhere."""
+def test_every_export_path_shapes_through_the_ONE_helper():
+    """"exists" is decided in one place, so the cost path, the finance-template path and the
+    plan-answers path (`_export_plan_answers`, a third path since b73d3400) cannot drift into
+    reporting it under different rules. Nothing here names a route: the TRANSPORTS are derived
+    (every function that posts to an engine's `package_export` / `answers_export`), the SHAPERS are
+    derived (every function that calls the helper), and the rule is that a transport shapes, or
+    every caller of it does. A fourth path that calls an engine and builds its response by hand
+    reds here; the rule's own text is counted too, so a private copy reds even while the route
+    still calls the helper somewhere."""
     import ast
+    import re
 
     src = (ROOT / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
-    callers = {
-        fn.name for fn in ast.walk(ast.parse(src))
-        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-                and n.func.id == "_shape_export_package_response" for n in ast.walk(fn))
-    }
-    # the cost path shapes inside `_call_engine_cost_package`, which export_package (single path
-    # and per-engine sections alike) calls: still one shaping call per route.
-    assert callers == {"_call_engine_cost_package", "_export_package_from_template"}, sorted(callers)
+    fns = [f for f in ast.walk(ast.parse(src))
+           if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+    def calls(fn, name):
+        return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == name
+                   for n in ast.walk(fn))
+
+    url = re.compile(r"/(package_export|answers_export)$")
+    shapers = {f.name for f in fns if calls(f, "_shape_export_package_response")}
+    transports = {f.name for f in fns
+                  if any(isinstance(n, ast.Constant) and isinstance(n.value, str)
+                         and url.search(n.value) for n in ast.walk(f))}
+    assert shapers and transports, (sorted(shapers), sorted(transports))
+    unshaped = {}
+    for t in transports - shapers:
+        callers = {f.name for f in fns if calls(f, t)}
+        if not callers or not callers <= shapers:
+            unshaped[t] = sorted(callers - shapers)
+    assert not unshaped, f"an engine export path builds its response without the helper: {unshaped}"
     assert src.count("engine returned no verifiable artifact hash") == 1
     assert src.count("_SHA256_LOCATOR_RE.match(sha)") == 1
 
@@ -265,6 +287,7 @@ def engine(monkeypatch):
                                  "template_hash": kw["template_hash"]},
                     "html_sha256": SHA64, "html_bytes": 1, "duckdb_sha256": SHA64}
 
+    monkeypatch.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
     monkeypatch.setattr(fmain, "_repo_root", lambda: ROOT)
     monkeypatch.setitem(sys.modules, "build_fin_package", _Builder)
     monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
@@ -282,14 +305,14 @@ def _canvas(mutate=None):
 
 def test_engine_refuses_an_unknown_scope_403(engine):
     client, built = engine
-    r = client.post("/package_export", json={"recipient_scope": "program_office.NOPE",
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": "program_office.NOPE",
                                               "canvas": _canvas()})
     assert r.status_code == 403 and built == []
 
 
 def test_engine_refuses_an_empty_canvas_422(engine):
     client, built = engine
-    r = client.post("/package_export", json={"recipient_scope": SCOPE,
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE,
                                               "canvas": {**_canvas(), "panels": []}})
     assert r.status_code == 422 and built == []
 
@@ -297,20 +320,20 @@ def test_engine_refuses_an_empty_canvas_422(engine):
 def test_engine_refuses_an_unknown_verb_422(engine):
     client, built = engine
     c = _canvas(lambda ps: ps[0].update(verb="mesh:finNoSuchVerb"))
-    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": c})
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": c})
     assert r.status_code == 422 and built == []
 
 
 def test_engine_refuses_a_foreign_program_403_and_drops_nothing(engine):
     client, built = engine
     c = _canvas(lambda ps: ps[2]["params"].update(program_id="NP-OTHER"))
-    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": c})
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": c})
     assert r.status_code == 403 and built == []
 
 
 def test_engine_CONTROL_a_valid_canvas_passes_every_refusal_and_reaches_the_builder(engine):
     client, built = engine
-    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": _canvas()})
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert r.status_code == 200, r.text
     assert len(built) == 1 and len(built[0]["panels"]) == 6
 
@@ -331,7 +354,7 @@ def test_engine_names_a_builder_that_cannot_run_503(engine, monkeypatch, raised,
         raise raised
 
     monkeypatch.setattr(sys.modules["build_fin_package"], "build", staticmethod(_raise))
-    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": _canvas()})
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert len(built) == 1, "the builder was never reached -- this arm refused somewhere earlier"
     assert r.status_code == 503, r.text
     assert fragment in r.json()["detail"], r.json()["detail"]
@@ -339,13 +362,13 @@ def test_engine_names_a_builder_that_cannot_run_503(engine, monkeypatch, raised,
 
 def test_each_panels_artifact_id_is_the_one_measure_serves(engine):
     client, built = engine
-    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": _canvas()})
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert r.status_code == 200, r.text
     from agent_fleet.finance_agent import main as fmain
 
     assert len(built[0]["panels"]) == 6
     for p in built[0]["panels"]:
-        m = client.post(f"/measure/{p['fn']}", json={"params": p["params"]})
+        m = client.post(f"/measure/{p['fn']}", json={"params": p["params"], "user_email": CALLER})
         assert m.status_code == 200, f"{p['fn']}: {m.text[:200]}"
         assert m.json()["artifact_id"] == p["artifact_id"], p["fn"]
     assert fmain.VERB_TO_FN[built[0]["panels"][0]["verb"]] == built[0]["panels"][0]["fn"]
@@ -373,7 +396,7 @@ def _served_panels():
     out = []
     for i, (verb, _s, params) in enumerate(_dispatches()):
         fn = fmain.VERB_TO_FN[verb]
-        env = fmain._measure_envelope(fn, dict(params))
+        env = fmain._measure_envelope(fn, dict(params), caller="alice@example.com")
         out.append({"panel": i, "verb": verb, "fn": fn, "params": dict(params),
                     "artifact_id": env["artifact_id"], "rows": env["rows"]})
     return out
@@ -490,6 +513,7 @@ def real_build(tmp_path_factory):
         return real_audit(manifest, **kw)
 
     with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
         mp.setattr(fmain, "_dist_dir", lambda root: dist)
         mp.setattr(fin_export, "audit_line", spy)
         canvas = {
@@ -498,7 +522,7 @@ def real_build(tmp_path_factory):
                        for i, (v, _s, p) in enumerate(_dispatches())],
         }
         with TestClient(fmain.app) as client:
-            r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": canvas})
+            r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": canvas})
     assert r.status_code == 200, r.text[:400]
     html_name, duckdb_name = fin_export.artifact_filenames(SCOPE)
     return {"resp": r.json(), "manifest": manifests[0], "html": dist / html_name,
@@ -592,7 +616,7 @@ def test_as_of_malformed_is_refused_by_the_request_model(bad):
 def test_engine_as_of_in_the_body_reaches_the_builder(engine):
     client, built = engine
     r = client.post("/package_export", json={
-        "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": "2026-02-03"})
+        "user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": "2026-02-03"})
     assert r.status_code == 200, r.text
     assert built[0]["as_of"] == "2026-02-03"
 
@@ -603,7 +627,7 @@ def test_engine_as_of_absent_is_the_request_date_resolved_once(engine, monkeypat
     client, built = engine
     calls = []
     monkeypatch.setattr(fmain, "_request_date", lambda: calls.append(1) or "2031-03-04")
-    r = client.post("/package_export", json={"recipient_scope": SCOPE, "canvas": _canvas()})
+    r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert r.status_code == 200, r.text
     assert len(calls) == 1 and built[0]["as_of"] == "2031-03-04"
 
@@ -612,7 +636,7 @@ def test_engine_as_of_absent_is_the_request_date_resolved_once(engine, monkeypat
 def test_engine_as_of_malformed_is_422_and_builds_nothing(engine, bad):
     client, built = engine
     r = client.post("/package_export", json={
-        "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": bad})
+        "user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": bad})
     assert r.status_code == 422 and built == []
 
 
@@ -638,12 +662,13 @@ def test_the_real_build_carries_as_of_in_the_page_and_the_manifest_and_is_byte_s
         return real_audit(manifest, **kw)
 
     with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
         mp.setattr(fmain, "_dist_dir", lambda root: dist)
         mp.setattr(fin_export, "audit_line", spy)
         with TestClient(fmain.app) as client:
             for _ in range(2):
                 r = client.post("/package_export", json={
-                    "recipient_scope": SCOPE, "canvas": canvas, "as_of": "2026-02-03"})
+                    "user_email": CALLER, "recipient_scope": SCOPE, "canvas": canvas, "as_of": "2026-02-03"})
                 assert r.status_code == 200, r.text[:400]
                 pages.append((dist / html_name).read_bytes())
     assert pages[0] == pages[1]

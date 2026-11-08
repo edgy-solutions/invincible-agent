@@ -64,37 +64,29 @@ Optional override knobs (purely additive; existing callers unaffected):
   "repository" — repository path; concatenated with the registry above.
 */}}
 {{/*
-TAG PRECEDENCE: a component's own `tag`, then `global.imageTag`, then `global.defaultImageTag`.
+TAG PRECEDENCE: a component's own `tag`, then `global.imageTag`, then `global.defaultImageTag`,
+then `Chart.Version`. A tag is only the fallback: an image renders BY DIGEST whenever one is known,
+and `scripts/seal_image_digests.py` fails any rendered image that is left on a tag.
 
-`global.imageTag` is the commit-pin knob, and ONE knob for the whole fleet on purpose: pinning
-services individually is how a cluster ends up running four commits at once with nothing to
-read it off. CI publishes every image under `:<git-sha>` beside `:latest`, so
-`--set global.imageTag=<sha>` needs no new build.
+DIGEST RESOLUTION: the call site's own `digest` wins; otherwise the helper reads
+`global.imageDigests[<registry>/<repository>]`, keyed by the full reference WITHOUT its tag. That
+map is the whole pin: base `values.yaml` holds every image this repo does not build, and the
+release workflow writes `values-release-<version>.yaml` carrying every image it does (from the
+build) and re-confirms the rest (read from the registry), attaching it to the chart release as the
+artifact of record. A roll renders with that file and never resolves a tag.
 
-IT APPLIES ONLY TO IMAGES THIS REPO BUILDS, and the scoping is the whole point.
-MEASURED 2026-09-09: the pin was global over every image the chart renders, so a commit sha
-reached `cortex-ui/frontend`, `dag-tools/central-gateway`, `dag-tools/user-deployment` and
-`pub-tools` — repositories that have never built it. Four deployments into ImagePullBackOff on
-a live cluster, from a knob whose name says "image tag" and whose reach was every image.
-A COMMIT SHA ONLY MEANS SOMETHING INSIDE THE REPOSITORY THAT MINTED IT. So an image is eligible
-only when its repository sits under `global.imagePrefix`; anything with its own `repository`
-elsewhere falls through to its own tag or the floor, exactly as before.
+WHY THE TAG CHAIN NO LONGER NEEDS SCOPING. MEASURED 2026-09-09: a commit-sha pin was global over
+every image the chart renders, so a sha reached `cortex-ui/frontend`, `dag-tools/central-gateway`,
+`dag-tools/user-deployment` and `pub-tools` — repositories that have never built it — and four
+deployments went into ImagePullBackOff on a live cluster; changing the floor from `latest` to
+`Chart.Version` then broke the same four through the fallback. The fix was to scope the pin and the
+floor to repositories under `global.imagePrefix`. The protection is now the digest map plus the
+seal: a cross-repo image is named by a digest that repository really holds, and a render that
+still carries a tag for ANY image fails the seal, wherever the repository sits. Nothing here tests
+a prefix.
 
-THE FLOOR IS ALSO SCOPED, AND IT WAS NOT, WHICH COST THE SAME FOUR DEPLOYMENTS TWICE.
-For images this repo builds the floor is `Chart.Version`, which the release guarantees exists by
-retagging every image of the build matrix to it BY DIGEST. For anything else the floor stays
-`latest`.
-
-`Chart.AppVersion` was the original floor and asks for `:2026.07.02`, which has never existed;
-every values file papered over that with an explicit `tag: "latest"`, which is also what made
-the pin unreachable, since a component tag beats a global one.
-
-THE SCOPING NOTE ABOVE WAS WRITTEN FOR THE PIN AND READ AS IF IT COVERED THE CHAIN. It did not.
-The pin was made `$ours`-only on 2026-09-09; the floor was left global, so changing the floor
-from `latest` to `Chart.Version` sent `cortex-ui/frontend`, `dag-tools/central-gateway`,
-`dag-tools/user-deployment` and `pub-tools` straight back to a tag they have never published —
-the identical break, the identical four repositories, reached through the fallback instead of
-the override. A guard on one term of an expression is not a guard on the expression.
+THE MAP IS KEYED BY REPOSITORY, NOT BY TAG. A component tag override on an image the map holds
+therefore renders the mapped digest and the tag is ignored; change the row to move the image.
 
 EVERY LINE INSIDE THE DEFINE IS DASH-TRIMMED. It renders inline as `image: {{ include ... }}`,
 so a single untrimmed newline produces `could not find expected ':'` in a file that has nothing
@@ -102,33 +94,11 @@ wrong with it. Comments belong out here, not in there.
 */}}
 {{- define "invincible-agent.image" -}}
 {{- $repo := .repository | default (printf "%s/%s" .root.Values.global.imagePrefix .name) -}}
-{{- $ours := hasPrefix (printf "%s/" .root.Values.global.imagePrefix) $repo -}}
-{{/* THE FLOOR IS SCOPED THE SAME WAY THE PIN IS, and for the same reason. `Chart.Version` is a
-     real tag ONLY for images this repo builds, because only those are retagged to it by the
-     release. A cross-repo image falling through to it asks for a tag that repository has never
-     published — which is the 2026-09-09 ImagePullBackOff again, in the same four repositories,
-     through the other end of this chain. */}}
-{{- $floor := ternary .root.Chart.Version "latest" $ours -}}
-{{- $tag := .tag | default (ternary .root.Values.global.imageTag "" $ours) | default .root.Values.global.defaultImageTag | default $floor -}}
+{{- $tag := .tag | default .root.Values.global.imageTag | default .root.Values.global.defaultImageTag | default .root.Chart.Version -}}
 {{- $registry := .registry | default .root.Values.global.imageRegistry -}}
-{{/* DIGEST WINS OVER TAG, AND IT IS THE ONLY WAY TO PIN A CROSS-REPO IMAGE.
-     Added 2026-09-19. Before this, the chart could not express a digest at all — every path
-     ended in `repo:tag`, so a digest could only have been passed as a tag and would have
-     rendered `repo:@sha256:…`, which is not a reference.
-
-     WHY IT MATTERS HERE RATHER THAN EVERYWHERE: for an image this repo builds, the release
-     retags it to `Chart.Version` BY DIGEST, so the tag already names bytes. A CROSS-REPO image
-     is retagged by nobody — `$ours` is false, `$floor` is `latest`, and `latest` is a label
-     that moves on every push to that repository's default branch. The frontend is the live
-     case: the pod runs `:latest` with `pullPolicy: Always`, so the image it serves changes
-     under it at the next restart with no chart change and no commit anywhere in this repo.
-
-     A digest is a statement about bytes; a tag is a statement about a name. Where nothing
-     retags for us, only the first one is a pin. Scoped deliberately: set `digest` on the one
-     image that needs it, not globally — a fleet-wide digest map would have to be regenerated
-     on every build and would rot into the `latest` problem wearing a longer string. */}}
-{{- if .digest -}}
-{{ $registry }}/{{ $repo }}@{{ .digest }}
+{{- $digest := .digest | default (get (.root.Values.global.imageDigests | default dict) (printf "%s/%s" $registry $repo)) -}}
+{{- if $digest -}}
+{{ $registry }}/{{ $repo }}@{{ $digest }}
 {{- else -}}
 {{ $registry }}/{{ $repo }}:{{ $tag }}
 {{- end -}}
@@ -695,3 +665,157 @@ of existingSecret / existingConfigMap; caPem was removed. Called from keycloak.y
   (dict "component" "dagster-webserver" "ports" (list 3000))
 | toJson -}}
 {{- end }}
+
+{{/*
+  policyOverlay -- an initContainer gives NAMED pods NAMED dirs of the private policy repo, at a
+  pinned ref (ruled 2026-11-02: "an initContainer that clones the policy repo at a pinned ref into
+  the pods"). Contract: docs/contracts/finance-overlays.md section 4. Values: `policyOverlay`.
+
+  Five helpers, all taking (dict "root" $ "component" "<component>"). All but the first render
+  NOTHING and are called only behind the first:
+    policyOverlayActive   "true" or "" -- enabled AND the component has a row; the render-time
+                          `fail`s live here
+    policyOverlayInit     the initContainer list item
+    policyOverlayVolumes  the volumes list items
+    policyOverlayMounts   the main container's volumeMounts list item
+    policyOverlayEnv      the main container's env list items
+
+  The repo, image, credential and CA are the SEED's (`topazSeed.policySource.git`): one repo, one
+  credential. The clone lives in `overlay-src`, mounted ONLY in the init container; the main
+  container gets `policy-overlay`, read-only, holding only the dirs its component names -- never
+  the repo's users or grants.
+*/}}
+{{- define "invincible-agent.policyOverlayActive" -}}
+{{- $po := .root.Values.policyOverlay | default (dict) -}}
+{{- if $po.enabled -}}
+{{- if not $po.ref -}}
+{{- fail "policyOverlay.ref is required when policyOverlay.enabled: a full commit sha or a tag (a branch name is refused at clone)" -}}
+{{- end -}}
+{{- if not .root.Values.topazSeed.policySource.git.repoUrl -}}
+{{- fail "topazSeed.policySource.git.repoUrl is required when policyOverlay.enabled: the overlay is cloned from it" -}}
+{{- end -}}
+{{- if index ($po.components | default (dict)) .component -}}true{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "invincible-agent.policyOverlayInit" -}}
+{{- $po := .root.Values.policyOverlay -}}
+{{- $git := .root.Values.topazSeed.policySource.git -}}
+{{- $gitImg := $git.image -}}
+{{- if not (kindIs "string" $gitImg) -}}
+{{- $gitImg = include "invincible-agent.image" (dict "registry" ($gitImg.registry | default "docker.io") "repository" ($gitImg.repository | default "alpine/git") "tag" ($gitImg.tag | default "v2.45.2") "root" .root) -}}
+{{- end -}}
+{{- $mount := $po.mountPath | default "/policy-overlay" | trimSuffix "/" -}}
+{{- $sub := $po.path | default "" | trimAll "/" -}}
+{{- $base := ternary (printf "/overlay-src/repo/%s" $sub) "/overlay-src/repo" (ne $sub "") -}}
+- name: fetch-policy-overlay
+  image: {{ $gitImg | quote }}
+  env:
+    - name: GIT_REPO_URL
+      value: {{ $git.repoUrl | quote }}
+    - name: GIT_REF
+      value: {{ $po.ref | quote }}
+    {{- if $git.caSecretName }}
+    # Verification stays ON against the mounted bundle; there is no skip-verify.
+    - name: GIT_SSL_CAINFO
+      value: /git-ca/ca.crt
+    {{- end }}
+    {{- if $git.authSecretName }}
+    - name: GIT_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: {{ $git.authSecretName | quote }}
+          key: username
+    - name: GIT_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: {{ $git.authSecretName | quote }}
+          key: password
+    {{- end }}
+  command: ["sh", "-c"]
+  args:
+    - |
+      set -e
+      if [ -n "${GIT_USERNAME:-}" ]; then
+        printf '#!/bin/sh\ncase "$1" in\n  Username*) echo "$GIT_USERNAME" ;;\n  Password*) echo "$GIT_PASSWORD" ;;\nesac\n' > /tmp/askpass.sh
+        chmod +x /tmp/askpass.sh
+        export GIT_ASKPASS=/tmp/askpass.sh
+      fi
+      git init -q /overlay-src/repo
+      cd /overlay-src/repo
+      # A full 40-hex sha is fetched as itself; anything else is a TAG. A branch has no
+      # refs/tags/<name>, so a branch name fails at the fetch: the ref is pinned, not tracked.
+      sha=0
+      if printf '%s' "$GIT_REF" | grep -Eq '^[0-9a-f]{40}$'; then
+        sha=1
+        want="$GIT_REF"
+      else
+        want="refs/tags/$GIT_REF"
+      fi
+      git fetch -q --depth 1 -- "$GIT_REPO_URL" "$want"
+      git checkout -q --detach 'FETCH_HEAD^{commit}'
+      if [ "$sha" = 1 ] && [ "$(git rev-parse HEAD)" != "$GIT_REF" ]; then
+        echo "policy overlay: fetched commit $(git rev-parse HEAD) is not the pinned $GIT_REF" >&2
+        exit 1
+      fi
+      echo "policy overlay at commit: $(git rev-parse HEAD)"
+      {{- range index $po.components .component }}
+      {{- if not (regexMatch "^[A-Za-z0-9_.-]+$" .dir) }}
+      {{- fail (printf "policyOverlay.components dir %q must be a plain directory name" .dir) }}
+      {{- end }}
+      if [ -d "{{ $base }}/{{ .dir }}" ]; then
+        cp -R "{{ $base }}/{{ .dir }}" "{{ $mount }}/{{ .dir }}"
+        echo "policy overlay: delivered {{ .dir }}"
+      {{- if .optional }}
+      else
+        echo "policy overlay: {{ .dir }} is absent in the repo (optional); nothing created"
+      {{- else }}
+      else
+        echo "policy overlay: required directory {{ .dir }} is missing from the repo at {{ $base }}" >&2
+        exit 1
+      {{- end }}
+      fi
+      {{- end }}
+  volumeMounts:
+    - name: overlay-src
+      mountPath: /overlay-src
+    - name: policy-overlay
+      mountPath: {{ $mount | quote }}
+    {{- if $git.caSecretName }}
+    - name: git-ca
+      mountPath: /git-ca
+      readOnly: true
+    {{- end }}
+{{- end -}}
+
+{{- define "invincible-agent.policyOverlayVolumes" -}}
+{{- $git := .root.Values.topazSeed.policySource.git -}}
+- name: overlay-src
+  emptyDir: {}
+- name: policy-overlay
+  emptyDir: {}
+{{- if $git.caSecretName }}
+- name: git-ca
+  secret:
+    secretName: {{ $git.caSecretName | quote }}
+    items:
+      - key: ca.crt
+        path: ca.crt
+{{- end }}
+{{- end -}}
+
+{{- define "invincible-agent.policyOverlayMounts" -}}
+- name: policy-overlay
+  mountPath: {{ .root.Values.policyOverlay.mountPath | default "/policy-overlay" | trimSuffix "/" | quote }}
+  readOnly: true
+{{- end -}}
+
+{{- define "invincible-agent.policyOverlayEnv" -}}
+{{- $po := .root.Values.policyOverlay -}}
+{{- $mount := $po.mountPath | default "/policy-overlay" | trimSuffix "/" -}}
+{{- range $i, $row := index $po.components .component -}}
+{{- if $i }}{{ "\n" }}{{ end -}}
+- name: {{ $row.env }}
+  value: {{ printf "%s/%s" $mount $row.dir | quote }}
+{{- end -}}
+{{- end -}}

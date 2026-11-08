@@ -174,9 +174,9 @@ data:
               "attributes": {
                   "pkce.code.challenge.method": "S256",
                   "post.logout.redirect.uris": {{ join "##" $pc.redirectUris | quote }}
-              }
-              {{- if ne $claim "email" }},
+              },
               "protocolMappers": [
+                  {{- if ne $claim "email" }}
                   {
                       "name": "authz-id-user",
                       "protocol": "openid-connect",
@@ -189,9 +189,19 @@ data:
                           "id.token.claim": "true",
                           "userinfo.token.claim": "true"
                       }
+                  },
+                  {{- end }}
+                  {
+                      "name": "audience-self",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-audience-mapper",
+                      "config": {
+                          "included.client.audience": {{ $pc.clientId | quote }},
+                          "access.token.claim": "true",
+                          "id.token.claim": "false"
+                      }
                   }
               ]
-              {{- end }}
           },
           {{- end }}
           {{- include "invincible-agent.validateServiceClients" $ }}

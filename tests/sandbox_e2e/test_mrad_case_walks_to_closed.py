@@ -8,26 +8,35 @@ The e2e step behind "a case renders": the `maint_fault_propose` template's `rend
 the walk) is what builds the options, and only a live case can show a case reaching the
 `decide` task through `walk` and `options`. lane/74's walk of 2026-10-17 (`MRAD-ARR-0417
 walked live to closed`, case 712382d7-00c2-5610-a3cf-0e1c9ef5ea70) is the record of the first
-flip; this step repeats that walk through product routes only, as three people:
+flip; this step repeats that walk through product routes only, as two people:
 
   initiator  POST /ingest/events (cm_discrepancy, MRAD-ARR-0417 on dis:1:1:1008), then reads
              GET /cases/{id}
   decider    POST /human_tasks/{instance}:decide/act  -> replace_now
              POST /human_tasks/{instance}:review/act  -> approved   (the supervisor review)
-  releaser   POST /cases/{case_id}/signals/tier_ack  -> released, BY THE CASE ID (D1)
 
-WHAT THE PROJECTION CAN SHOW. `GET /cases/{id}` always projects `options: []` (see
-`case_projection`), so the options themselves are not readable here. "A case renders" is
-therefore asserted as what the projection does show: instance 1 is `maint_fault_propose`,
-its definition carries the `walk`, `options` and `decide` steps, and a `decide` approval is
-PENDING, i.e. the case ran through `walk` and `options` and reached the `decide` task.
+THE CASE CLOSES ON THE DECIDER'S APPROVAL: the supervisor's approval is the release (ruled
+2026-10-28), so there is no releaser leg and no signal is sent.
+
+WHAT THE PROJECTION CAN SHOW. Since #283, `GET /cases/{id}` serves `options` (with
+`options_declaration`) once a task row carries them, and omits the key before then (see
+`case_projection`). "A case renders" is asserted as the steps: instance 1 is
+`maint_fault_propose`, its definition carries the `walk`, `options` and `decide` steps, and a
+`decide` approval is PENDING, i.e. the case ran through `walk` and `options` and reached the
+`decide` task.
+
+READINESS IS READ, NOT ASSUMED. Before anything is written, each caller's `authz_id` is read
+from its own session at `GET /me/entitlements`, and the walk stops there if it is blank or the
+caller has no cells. A 200 with empty entitlements is the silent failure a readiness check
+exists to catch (Chris, 2026-11-06). A blank `authz_id` means the broker's claim mapper is
+gone. The initiator's `authz_id`, never its email, is the event's `on_behalf_of`.
 
 This WRITES to the live sandbox. It is not a unit test (no pytest function in this file, so a
 unit run collects nothing) and is run by hand after a roll:
 
     kubectl -n sandbox port-forward svc/iagent-cortex-bff 18090:8090 &
     uv run tests/sandbox_e2e/test_mrad_case_walks_to_closed.py \\
-        --initiator-token erin.jwt --decider-token bob.jwt --releaser-token alice.jwt
+        --initiator-token erin.jwt --decider-token bob.jwt
 
 Tokens are read from files and never printed (only length and the first 8 hex of the sha256).
 TLS: httpx honours SSL_CERT_FILE; never disable verification.
@@ -126,10 +135,25 @@ def _renders(payload: dict) -> bool:
     return steps[:3] == ["walk", "options", "decide"] and _pending(payload, "decide") is not None
 
 
+def readiness(w: Walk) -> dict[str, str]:
+    """Each caller's `authz_id`, read from its session; Fail on a blank id or no cells."""
+    ids: dict[str, str] = {}
+    for who in ("initiator", "decider"):
+        ent = w.call(who, "GET", "/me/entitlements", f"{who} readiness").json()
+        aid, cells = ent.get("authz_id"), ent.get("cells") or []
+        if not isinstance(aid, str) or not aid.strip():
+            raise Fail(f"{who} readiness: authz_id is blank", 200, f"authz_id={aid!r}")
+        if not cells:
+            raise Fail(f"{who} readiness: no entitlement cells", 200,
+                       f"authz_id={aid} source={ent.get('source')!r}")
+        print(f"READY {who}: authz_id={aid} cells={len(cells)} source={ent.get('source')}")
+        ids[who] = aid
+    return ids
+
+
 def walk(w: Walk, initiator_id: str | None) -> None:
-    if not initiator_id:
-        ent = w.call("initiator", "GET", "/me/entitlements", "initiator identity").json()
-        initiator_id = ent.get("email")  # in the sandbox authz_id == email
+    ids = readiness(w)
+    initiator_id = initiator_id or ids["initiator"]
     event_id = f"e2e-mrad-{uuid.uuid4().hex[:8]}"
     r = w.call("initiator", "POST", "/ingest/events", "ingest the fault event", json={
         "content_kind": "maintenance-fault-event", "on_behalf_of": initiator_id,
@@ -153,19 +177,6 @@ def walk(w: Walk, initiator_id: str | None) -> None:
            json={"decision": "approved"})
     print("PASS review -> approved")
 
-    # The release instance journals the awaited signal a moment after the review resumes it, so
-    # a 403 "is awaited" is retried (bounded); any other refusal is a failure.
-    deadline = time.monotonic() + POLL_MAX_S
-    while True:
-        r = w.call("releaser", "POST", f"/cases/{case_id}/signals/tier_ack",
-                   "release by the CASE ID (D1)", ok=(200, 403), json={"status": "released"})
-        if r.status_code == 200:
-            break
-        if "awaited" not in r.text or time.monotonic() > deadline:
-            raise Fail("release by the CASE ID (D1)", r.status_code, r.text)
-        time.sleep(POLL_S)
-    print(f"PASS tier_ack by case id -> 200, instance {r.json().get('instance_id')}")
-
     def closed(x):
         h = x.get("history") or []
         return bool(h) and h[-1].get("stage") == "closed"
@@ -178,13 +189,12 @@ def main() -> int:
     ap.add_argument("--bff-url", default=os.getenv("BFF_URL", "http://localhost:18090"))
     ap.add_argument("--initiator-token", required=True, help="file holding erin's bearer token")
     ap.add_argument("--decider-token", required=True, help="file holding bob's bearer token")
-    ap.add_argument("--releaser-token", required=True, help="file holding alice's bearer token")
     ap.add_argument("--initiator-authz-id", default=None,
-                    help="on_behalf_of for the event; default: the initiator's email from "
-                         "/me/entitlements (authz_id == email in the sandbox)")
+                    help="on_behalf_of for the event; default: the initiator's authz_id "
+                         "read from /me/entitlements at the readiness step")
     a = ap.parse_args()
     tokens = {}
-    for who in ("initiator", "decider", "releaser"):
+    for who in ("initiator", "decider"):
         tokens[who], desc = _token(getattr(a, f"{who}_token"))
         print(f"{who} token: {desc}")
     try:

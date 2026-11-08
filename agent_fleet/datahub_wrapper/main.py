@@ -28,6 +28,10 @@ import json
 # with no cluster. Container flattens agent_fleet/datahub_wrapper/ into
 # /app, so the flat import wins in-image; the dev checkout uses the package
 # path — same duality as the mesh_registration imports elsewhere.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import decision_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import decision_answer
 try:
     from lineage_filter import (  # type: ignore[no-redef]
         LINEAGE_MAX_HOP_DEPTH,
@@ -432,7 +436,10 @@ async def _topaz_can_view(caller_email: str, domain: str) -> bool:
 
     Fail-CLOSED: any error, timeout, or unreachable authorizer returns False.
     An auth-service problem must DENY the PII catalog, never open it — the
-    inverse of the fail-open bug the ADR-0025 amendment names.
+    inverse of the fail-open bug the ADR-0025 amendment names. A MALFORMED answer
+    is the outage class and answers 503: it never opens the catalog, and it never
+    claims policy said no (architect ruling 2026-11-02). So does a Topaz that cannot be reached or
+    answers a non-2xx. A policy path Topaz does not know is a 400, which is misconfiguration, not a no.
     """
     payload = {
         "identityContext": {
@@ -451,10 +458,13 @@ async def _topaz_can_view(caller_email: str, domain: str) -> bool:
                 f"{TOPAZ_AUTHORIZER_URL}/api/v2/authz/is", json=payload
             )
             r.raise_for_status()
-            for d in r.json().get("decisions", []):
-                if d.get("decision") == "allowed":
-                    return bool(d.get("is", False))
-        return False
+            return decision_answer(r, "allowed")
+    except httpx.HTTPError as e:  # unreachable, a non-2xx or a malformed answer: the outage class, never a "no"
+        logging.error("QUERY_METADATA: Topaz can_view unavailable for %s: %r", domain, e)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the authorizer could not be asked, or its answer could not be read",
+        }) from e
     except Exception as e:  # noqa: BLE001 — fail-closed on ANY failure
         logging.error(
             "QUERY_METADATA: Topaz can_view ask FAILED for %r/%s "

@@ -62,6 +62,7 @@ spec:
 
 ---
 {{- if .Values.cortexBff.enabled }}
+{{- $ov := include "invincible-agent.policyOverlayActive" (dict "root" . "component" "cortex-bff") }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -85,6 +86,12 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if $ov }}
+      initContainers:
+        {{- include "invincible-agent.policyOverlayInit" (dict "root" . "component" "cortex-bff") | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.cortexBff.tlsTrust.secretName $ov }}
+      volumes:
       {{- if .Values.cortexBff.tlsTrust.secretName }}
       # Cluster-specific TLS trust override — mount a combined PEM
       # bundle (system roots + corporate CA) from a Secret so cortex-bff
@@ -93,13 +100,16 @@ spec:
       # Closes the [[cortex-bff-stale-drift]] seam: the CI image runs
       # unmodified on every cluster; cluster-specific trust lives in
       # config, not in a parallel image lineage.
-      volumes:
         - name: work-ca-bundle
           secret:
             secretName: {{ .Values.cortexBff.tlsTrust.secretName }}
             items:
               - key: {{ .Values.cortexBff.tlsTrust.secretKey | quote }}
                 path: ca.pem
+      {{- end }}
+      {{- if $ov }}
+        {{- include "invincible-agent.policyOverlayVolumes" (dict "root" . "component" "cortex-bff") | nindent 8 }}
+      {{- end }}
       {{- end }}
       containers:
         - name: cortex-bff
@@ -134,6 +144,13 @@ spec:
               value: "http://{{ .Release.Name }}-electric{{ include "invincible-agent.svcDomain" . }}:{{ .Values.electric.port | default 3000 }}"
             {{- end }}
             {{- end }}
+            {{- if .Values.dagster.runMonitoring.maxRuntimeSeconds }}
+            # The identity vault's reference lives as long as the run's budget, from the one
+            # source that bounds a run (docs/plans/identity-propagation-must-not-cross-run-storage.md,
+            # ruling 2026-11-03). Unset, the BFF's own default (3600) applies.
+            - name: IDENTITY_VAULT_TTL_SECONDS
+              value: {{ .Values.dagster.runMonitoring.maxRuntimeSeconds | quote }}
+            {{- end }}
             {{- if .Values.cortexBff.tlsTrust.secretName }}
             # Python's ssl module + the `requests` library both honor
             # these. PyJWKClient (auth.py:42) → urllib → ssl.create_default_context
@@ -151,12 +168,23 @@ spec:
               value: {{ $v | quote }}
             {{- end }}
             {{- end }}
-          {{- if .Values.cortexBff.tlsTrust.secretName }}
+            {{- if $ov }}
+            # policyOverlay: the delivered dirs. LAST, as in engines.yaml: a container env beats the
+            # configmap's envFrom, and the last duplicate beats `cortexBff.env`, so a hand-set path
+            # cannot disagree with what the init container delivered.
+            {{- include "invincible-agent.policyOverlayEnv" (dict "root" . "component" "cortex-bff") | nindent 12 }}
+            {{- end }}
+          {{- if or .Values.cortexBff.tlsTrust.secretName $ov }}
           volumeMounts:
+          {{- if .Values.cortexBff.tlsTrust.secretName }}
             - name: work-ca-bundle
               mountPath: {{ .Values.cortexBff.tlsTrust.mountPath | quote }}
               subPath: ca.pem
               readOnly: true
+          {{- end }}
+          {{- if $ov }}
+            {{- include "invincible-agent.policyOverlayMounts" (dict "root" . "component" "cortex-bff") | nindent 12 }}
+          {{- end }}
           {{- end }}
           resources:
             {{- toYaml .Values.cortexBff.resources | nindent 12 }}

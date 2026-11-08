@@ -63,7 +63,20 @@ def _is_slots_materialization(node) -> bool:
 
 
 def _materialization():
-    found = [n for n in ast.walk(_sup_tree()) if _is_slots_materialization(n)]
+    # The no-verb helper `_log_no_verb_decision` emits the same asset for the early exits; it is
+    # sealed in test_an_early_exit_records_no_verb_and_its_reason.py. This file seals the ROUTED
+    # materialization, so the helper's subtree is excluded.
+    tree = _sup_tree()
+    skip = {
+        id(n)
+        for f in ast.walk(tree)
+        if isinstance(f, ast.FunctionDef) and f.name == "_log_no_verb_decision"
+        for n in ast.walk(f)
+    }
+    found = [
+        n for n in ast.walk(tree)
+        if _is_slots_materialization(n) and id(n) not in skip
+    ]
     assert len(found) == 1, f"expected one {_ASSET} materialization, found {len(found)}"
     return found[0]
 
@@ -172,7 +185,9 @@ def test_the_emission_happens_AFTER_slots_are_accepted():
     before /fill_slots runs, which is why it carries no slots. An emission placed there
     would capture the same nothing while looking correct."""
     accept = _SUP.index("accepted = accept_slots(")
-    emit = _SUP.index(f'asset_key=["{_ASSET}"]')
+    # rindex: the early-exit helper `_log_no_verb_decision` (defined above execute_subtask) emits the
+    # same asset; the routed materialization is the LAST occurrence.
+    emit = _SUP.rindex(f'asset_key=["{_ASSET}"]')
     route_assets = _SUP.index("        _log_subtask_route_assets(")
     assert accept < emit, "the slots materialization must come after accept_slots()"
     assert route_assets < accept, (

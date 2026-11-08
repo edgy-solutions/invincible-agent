@@ -1,0 +1,75 @@
+# RECIPIENT READERS -- who may download a recipient's disclosure package, from the engine that
+# OWNS that recipient scope. Architect, 2026-10-27 ruling 4, refined 2026-10-28: "gov writes the
+# rail shape (a recipient_readers family with grantors); fin and cost each move their own
+# RECIPIENT_READERS onto it." This file is that shape. `finance` and `cost` hold the rows their code
+# tables held (moved by their owning lane, `granted_by: seed`: a shipped row's grantor is the seed,
+# never a person); the engines and the BFF ask Topaz, and no table remains in code
+# (tests/security/test_recipient_readers_rail.py ratchets that).
+#
+# SHAPE: KEY 1 = OWNER, declared HERE: the owners are this file's keys, not a code-held set
+# (architect's standing rule, 2026-10-30), so a deployment adds one in its overlay. Every owner is
+# written out, `{}` when it has no rows. KEY 2 = the recipient scope as that owner names it. A
+# row is `<scope>: {granted_by, reason, grant_to: [emails]}`. The owner is part of the key because
+# each owner's disclosures are entitled INDEPENDENTLY: a reader of one owner's scope is never a
+# reader of another's, even when the scope string collides. The Topaz object is `recipient_scope`
+# with id `<owner>:<scope>`.
+#
+# `plan` (architect, 2026-10-29): the plan recipients named by policy/exports/answers answer-export
+# profiles (fin's #148 asks `can_read_recipient("plan", scope, caller)`). It has no code-held
+# table to move. Its one row, alice on notional-plan-office, was ruled 2026-10-30; any other plan
+# scope is refused until a row grants it a reader.
+#
+# `granted_by` / `reason` / `grant_to` are REQUIRED per row -- an unexplained or targetless row
+# is refused by validate_policy.py / recipient_reader_sync.py, never silently dropped. An owner
+# with no rows is written `{}` explicitly: empty is a statement, not an omission.
+#
+# USERS ONLY, same posture as every other grant family: grant_to is user entitlement keys
+# (emails, matching seeded `user` objects in policy/users.yaml); a group name is NOT resolved.
+#
+# PER ADR-0047 section 5.1: a `svc:` principal must NEVER be a recipient reader -- a disclosure
+# to a service identity entitles every caller that service serves (the confused-deputy shape
+# `service_identity_recipients` already refuses on the other disclosure namespaces).
+#
+# Row shape (each owner adds its own under its key; a new owner is a new key):
+#   <scope>:
+#     granted_by: seed            # a shipped row; a deployment's own row names its approver
+#     reason: >-
+#       <why these readers>
+#     grant_to:
+#       - someone@example.com
+recipient_readers:
+  finance:
+    program_office.NP-MERIDIAN:
+      granted_by: seed
+      reason: >-
+        Moved from finance_agent/export.py's RECIPIENT_READERS under the architect's 2026-10-27 ruling 4: the recipient
+        readers leave code for this file. The scope is notional and the identity is a sandbox
+        one; the readers are exactly the ones the code table held.
+      grant_to:
+        - alice@example.com
+  cost:
+    notional-customer-alpha:
+      granted_by: seed
+      reason: >-
+        Moved from cost_agent/seed.py's RECIPIENT_READERS under the architect's 2026-10-27 ruling 4: the recipient
+        readers leave code for this file. The scope is notional and the identity is a sandbox
+        one; the readers are exactly the ones the code table held.
+      grant_to:
+        - alice@example.com
+    notional-customer-beta:
+      granted_by: seed
+      reason: >-
+        Moved from cost_agent/seed.py's RECIPIENT_READERS under the architect's 2026-10-27 ruling 4: the recipient
+        readers leave code for this file. The scope is notional and the identity is a sandbox
+        one; the readers are exactly the ones the code table held.
+      grant_to:
+        - bob@example.com
+  plan:
+    notional-plan-office:
+      granted_by: seed
+      reason: >-
+        2026-10-30 ruling: alice reads the notional plan office's answer exports (fin's #148
+        plan-answers profile names this recipient). She is the live acceptance test: alice exports
+        a Portfolio board to the plan office. Synthetic sandbox names.
+      grant_to:
+        - alice@example.com

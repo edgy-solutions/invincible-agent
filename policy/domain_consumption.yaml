@@ -5,7 +5,7 @@
 #
 # KEY = consumer domain (a domain the viewer holds via groups.yaml). `allowed_origins` =
 # the origin.owner_domain values that domain's holders may read. Same required-field
-# style as policy/capability_grants.yaml: `granted_by` (accountable human) + `reason` are
+# style as policy/capability_grants.yaml: `granted_by` (accountable grantor) + `reason` are
 # REQUIRED per row; a row missing either (or with an empty `allowed_origins`) is REFUSED
 # by validate_policy.py, not silently dropped.
 #
@@ -29,7 +29,7 @@
 # separately-reviewed grant.
 domain_consumption:
   PORTFOLIO_PLANNING:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Sandbox identity row: portfolio-leads holders (PORTFOLIO_PLANNING) may read an
       artifact whose origin is PORTFOLIO_PLANNING. No implicit identity — this row is
@@ -38,7 +38,7 @@ domain_consumption:
       - PORTFOLIO_PLANNING
 
   PROGRAM_FINANCE:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Sandbox identity row: finance-analysts holders (PROGRAM_FINANCE) may read an
       artifact whose origin is PROGRAM_FINANCE.
@@ -46,7 +46,7 @@ domain_consumption:
       - PROGRAM_FINANCE
 
   PRODUCTION_COST:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Sandbox identity row: cost-analysts holders (PRODUCTION_COST) may read an
       artifact whose origin is PRODUCTION_COST.
@@ -54,7 +54,7 @@ domain_consumption:
       - PRODUCTION_COST
 
   AVIATION:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Sandbox identity row: aviation-stewards / aviation-engineers / aviation-mechanics /
       enterprise-architects holders (AVIATION) may read an artifact whose origin is
@@ -63,7 +63,7 @@ domain_consumption:
       - AVIATION
 
   DEFENSE:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Sandbox identity row: defense-engineers / enterprise-architects holders (DEFENSE)
       may read an artifact whose origin is DEFENSE.
@@ -71,7 +71,7 @@ domain_consumption:
       - DEFENSE
 
   MAINTENANCE:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Sandbox identity row: maintenance-mechanics holders (MAINTENANCE) may read an
       artifact whose origin is MAINTENANCE.
@@ -79,7 +79,7 @@ domain_consumption:
       - MAINTENANCE
 
   MANUFACTURING:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Sandbox identity row: maintenance-mechanics holders (MANUFACTURING, granted beside
       MAINTENANCE per groups.yaml) may read an artifact whose origin is MANUFACTURING.
@@ -87,7 +87,7 @@ domain_consumption:
       - MANUFACTURING
 
   ENTERPRISE:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Sandbox identity row: enterprise-architects holders (ENTERPRISE) may read an
       artifact whose origin is ENTERPRISE.
@@ -95,7 +95,7 @@ domain_consumption:
       - ENTERPRISE
 
   DATA_ENGINEERING:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Sandbox identity row: data-engineers holders (DATA_ENGINEERING) may read an
       artifact whose origin is DATA_ENGINEERING.
@@ -103,7 +103,7 @@ domain_consumption:
       - DATA_ENGINEERING
 
   SUSTAINMENT:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Sandbox identity row: safety-engineers holders (SUSTAINMENT) may read an artifact
       whose origin is SUSTAINMENT.
@@ -111,9 +111,9 @@ domain_consumption:
       - SUSTAINMENT
 
   TRAINING:
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
-      Identity row for the TRAINING domain of doc-tools' `course` kind (Chris's ruling
+      Identity row for the TRAINING domain of doc-tools' `course` kind (architect ruling
       2026-10-23). No group holds TRAINING yet, so this row admits nobody until one does.
     allowed_origins:
       - TRAINING

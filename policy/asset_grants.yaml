@@ -8,11 +8,14 @@
 # directory writes. `grant_sync.py` flows these into Topaz as `reader`
 # relations; removing an entry REVOKES the grant (git is the source of truth).
 #
-# Every entry REQUIRES an accountable human (`granted_by`) and a `reason` —
+# Every entry REQUIRES an accountable grantor (`granted_by`) and a `reason` —
 # an anonymous or unexplained grant is REFUSED by the sync (prove-the-negative
 # on the grant path). `subject` is the entitlement key (email, matching the
 # seeded `user` objects); `asset` is the dataset URN; the relation is `reader`.
-# An optional `kind: document` makes `asset` a document id (doc_id), not a URN.
+# An optional `kind: document` makes `asset` a document id (doc_id), not a URN. The id is the one the
+# document gate asks Topaz about: the chunk's own source_url / uri / doc_id, VERBATIM (an S1000D
+# data module is its full IRI in the declared `mil` namespace; a seeded manual is its bare doc_id).
+# A short `mil#...` form matches no chunk and is sealed out (tests/test_document_grants_are_in_the_form_the_gate_builds.py).
 #
 # Add a grant DELIBERATELY (a chosen, reviewed decision), NOT reactively when
 # someone hits a denial — the honest denial + a reviewed grant is the model;
@@ -25,7 +28,7 @@ grants:
   # rehearsal (alice→reader→customers_gold) with a git-blame-able assertion.
   - subject: alice@example.com
     asset: "urn:li:dataset:(urn:li:dataPlatform:snowflake,gold.sales.customers_gold,PROD)"
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Demo power-user: alice reads the gold customer table to exercise the
       allow-side of the sealed DA-read gate. Fixture grant (not a claim that
@@ -37,22 +40,22 @@ grants:
   # full git-sync doesn't prune it. Deliberate + user-authorized (test
   # sandbox), NOT reactive-on-denial.
   - subject: alice@example.com
-    asset: "urn:li:dataset:(urn:li:dataPlatform:dagster,mesh_demo_customers,PROD)"
-    granted_by: cnogradi
+    asset: "urn:li:dataset:(urn:li:dataPlatform:s3,mesh_demo_customers,PROD)"
+    granted_by: seed
     reason: >-
       Demo: alice reads the mesh_demo_customers dataset (region breakdown) to
       exercise the end-to-end DA-read allow path through the now-working gate.
       Fixture grant — remove when the demo no longer needs a granted reader.
   - subject: alice@example.com
     asset: "urn:li:dataset:(urn:li:dataPlatform:s3,iagent-minio.publog-lake/publog/p_cage,PROD)"
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Demo: alice reads the p_cage dataset for testing.
   # Document grants (`kind: document`): the asset is a doc_id the corpus attests.
   - subject: alice@example.com
     kind: document
     asset: "TM-1H-130H-2-12-01"
-    granted_by: cnogradi
+    granted_by: seed
     reason: >-
       Fixture grant: alice reads one retrievable C-130H manual so the Engine W
       identity census measures parity on an identity that keeps something (roll
@@ -61,8 +64,8 @@ grants:
       reader.
   - subject: alice@example.com
     kind: document
-    asset: "mil#wpn-howtouse"
-    granted_by: cnogradi
+    asset: "http://edgy-solutions.com/ontology/mil#wpn-howtouse"
+    granted_by: seed
     reason: >-
       Folded from a relation hand-written into Topaz on 2026-07-06 that nothing
       reproduced. Folded so the new document prune scope does not revoke it
@@ -70,10 +73,19 @@ grants:
       it is retained, not exercised.
   - subject: alice@example.com
     kind: document
-    asset: "mil#wpn-m0004-1-1680-TNG"
-    granted_by: cnogradi
+    asset: "http://edgy-solutions.com/ontology/mil#wpn-m0004-1-1680-TNG"
+    granted_by: seed
     reason: >-
       Folded from a relation hand-written into Topaz on 2026-07-06 that nothing
       reproduced. Folded so the new document prune scope does not revoke it
       silently. No DocumentChunk carries this doc_id (measured 2026-10-08), so
       it is retained, not exercised.
+  - subject: alice@example.com
+    asset: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: alice reads the synthetic earned-value fixture (dag-tools #7) to
+      exercise the governed read of a declared finance measure (#243). Fixture grant, not a
+      claim about any real program's data. erin holds the program and the cell but not this
+      row, and is the refusal control. Remove when the live leg no longer needs it.

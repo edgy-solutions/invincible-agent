@@ -1,6 +1,6 @@
 # Cortex ingest API, v1
 
-**Version 1.2.0, 2026-10-25.** This is the contract for a team that builds its own UI on the
+**Version 1.6.0, 2026-10-31.** This is the contract for a team that builds its own UI on the
 platform's document ingest: drop a file, follow it through extraction, read what was
 extracted, and act on the review tasks it raises.
 
@@ -258,6 +258,7 @@ do not show.
 | `GET /me/entitlements` | the caller's grants |
 | `GET /me/human_tasks` | the caller's open tasks |
 | `POST /human_tasks/{task_id}/act` | decide a task |
+| `POST /ingest/events` | **an event producer only**: one event opens a case, or attaches to the open one (§6.5) |
 | `GET /ingest/retries`, `POST /ingest/{ingest_id}/title_leaf` | **the extraction service (doc-tools) only**. 403 `not_doc_tools` for anyone else. Published so that you can see what moves a drop; a UI never calls them. |
 
 ### 6.1 `POST /ingest`
@@ -324,6 +325,10 @@ do not show.
   - `quality`: `cell`, `region` or null.
   `rows_without_evidence` counts the rows with none.
 - `notice` carries the header: `mfr`, `mfr_source`, `mfr_parent`, `notice_date`.
+- **`review_shape` and `item_kind`** are optional, and null when the content kind declares none.
+  The extraction's `review_shape` names a row of `GET /review-shapes` (a cortex-bff route,
+  documented in `cortex-bff.openapi.json`). That row carries the `rules_version` that
+  `review_coverage` must send (section 6.4).
 - **A rejected drop** is still readable. Its objects were moved, and `relocated_to` says where.
 - **`/source`** streams the original bytes, with `Content-Disposition: inline` and the original
   filename. The media type is `application/pdf`, `application/xml` or `application/octet-stream`
@@ -352,6 +357,21 @@ do not show.
   `header_edits` (`mfr`, `notice_id`, `notice_date`), each with evidence. This is off unless the
   deployment enables it; when off, the route answers 422 `row_edits_not_for_kind` with
   `enabled: false`.
+- **`review_coverage`** records what the steward opened and grouped. It is valid only with
+  `decision: "promoted"` on a `document_promotion`. Send the item form:
+  `review_shape`, `item_kind` and `rules_version` (from the extraction and its `GET /review-shapes`
+  row, section 6.3), then `looked_at`, `sampled` and `flagged` (item ids, as strings), `groups`
+  and `shared` (each with `items`, as strings), and an optional `sample`. Every item must be opened
+  or folded into a group. The simplest valid body opens every item:
+
+  ```json
+  {"decision": "promoted",
+   "review_coverage": {"review_shape": "notice", "item_kind": "part", "rules_version": "notice.v1",
+                       "looked_at": ["0"], "sampled": [], "flagged": [], "groups": [], "shared": []}}
+  ```
+
+  The 1.4.0 form (`parts`, integer ids) is deprecated and is accepted in 1.5.0 only. A body that
+  mixes the two forms is 422.
 
 **Behaviour:**
 - **A decision is recorded once.** A repeat of the same decision replays the stored answer
@@ -362,6 +382,46 @@ do not show.
 - `GET /me/human_tasks` lists each task with a `declaration` naming its allowed decisions
   (`accepts`) and which of them need a reason (`reason_required`). Build your buttons from that,
   not from this table.
+
+### 6.5 `POST /ingest/events`: an event producer, not a UI
+
+This is the JSON door for an **event-branch** content kind. Such a kind opens a case; nothing is
+extracted. A UI never calls it. It is documented here because its arrivals appear in
+`GET /ingest/mine` and its cases in the case panel. It is not in the OpenAPI file above.
+
+**The body:** `content_kind`, `payload` (the event), and `on_behalf_of` (optional; blank or absent
+means the caller acts as itself).
+
+**Three identities** (ruled 2026-11-06):
+
+| name | what it is | where it comes from |
+|---|---|---|
+| **occurrence id** | One opening of an episode. | The kind's `identity_field`, which must equal the trigger's `key` (otherwise 503 `trigger_unconfigured`). For the event kinds this is `event_id`. The producer mints it. |
+| **case id** | The case this occurrence opened. | Equal to the occurrence id. |
+| **`episode_id`** | The source system's name for the fault the occurrences are of. | **The detector's own id, carried verbatim** at the fact the trigger declares as its `episode_id` (architect, 2026-11-07: "We don't mint identity for someone else's episode"). The case serves it with `episode_id_source: event`. When the event carries none, the case serves the **episode key** instead, with `episode_id_source: derived`. |
+| **episode key** | Which occurrences are one episode. | Derived from the fields the trigger declares as its `episode`: `ep-` followed by the first 32 hex of the sha256 of the JSON `[<trigger>, [<value of each field, in declared order>]]`, with sorted keys. Attach and `predecessor` key on it, whatever `episode_id` says. |
+
+At most one case is open per episode at a time.
+
+**What an arrival does:**
+
+| arrival | outcome | answer |
+|---|---|---|
+| A new occurrence, and no case is open on its episode | A new case opens. If an earlier case on the episode has closed or failed, the new case's `predecessor` is the newest such case's id. | `workflow: {case_id: <occurrence id>, started: true}` |
+| A new occurrence, while a case is open on its episode | **No case opens.** The occurrence is recorded on the open case's episode, and its status row points at the open case (`case_opened`, with that `case_id`). | `workflow: {case_id: <the open case>, started: false, attached: true}` |
+| The same occurrence again, with identical bytes | Idempotent. Nothing is recorded twice. | The first answer's `case_id`, with `started: false` |
+| The same occurrence again, with different bytes | A newer picture of the same event. While the case is open it is kept as revision *k* of the case's input; after the case closes it is refused with 409 `revision_not_kept`. | `rev: <k>`, `workflow: {case_id, started: false}` |
+
+**Two new occurrences of one episode at the same moment** can both find no open case at the door.
+The case runner still admits only one: the other's case record ends at once with stage `attached`,
+naming the holder, and its occurrence is recorded on the holder's episode as well.
+
+**Errors:**
+- 422: `not_an_event_kind`, `payload_missing_identity_field`, `payload_missing_required_fields`
+  or `payload_refused_by_trigger`. The last one names the trigger's check.
+- 503: `trigger_unconfigured`, `runner_unavailable` or `status_unavailable`. None of them opens a
+  case, so resend the same event.
+- 502 `runner_error`.
 
 ## 7. The stage machine
 
@@ -491,6 +551,9 @@ do not show.
 | 422 | `promotion_audience_has_no_domain` | empty, act | the drop has no domain yet | – |
 | 404 | `task_not_found` | act | not your task | – |
 | 409 | `task_already_resolved` | act | decided; `decision`, `acted_by`, `acted_at` say how | – |
+| 422 | `review_coverage_invalid` | act | `check` says which: `review_shape`, `item_kind`, `unknown_rules_version`, `unknown_rule`, `unknown_<item_kind>`, `duplicate_<item_kind>`, `overlap`, `uncovered` | fix the coverage |
+| 422 | `evidence_ref_invalid` | act | `check` says which: `not_object`, `extra_key:<key>`, `page`, `bbox_not_fractions`, `bbox_degenerate`, `note_blank`, `invalid` (the SDK's `EvidenceRef` refused a ref that passes every named check). An `evidence_ref` on a row or header edit is `{page, bbox, note?}` with `bbox` in page fractions (`0 <= x0 < x1 <= 1`, `0 <= y0 < y1 <= 1`) or null; pixels are refused. `note` is absent or a string, never null: the BFF refuses `note: null` (ruling 2026-10-31); the SDK aligns in v0.9.13 | send the box as page fractions |
+| 503 | `review_coverage_unverifiable` | act | the extraction's items could not be read, or the `item_kind` has no reader here; nothing was written | retry later |
 | 409 | `stale_extraction` | act | the drop moved on; `new_task_id` names the current task | act on that one |
 | 403 | `not_authorized_to_act` | act | you no longer hold the task's audience | – |
 | 409 | `delegated_act_unsupported` | act | a delegate cannot act on ingest tasks | act with a person's token |

@@ -90,8 +90,50 @@
   Topaz, MinIO, Tika, ClickHouse, utilities). Omit to mirror only the
   iagent-owned images (the things that change every CI build).
 
+.PARAMETER Release
+  Mirror one chart release's images BY DIGEST instead of by tag, e.g.
+  -Release 0.4.80. The artifact of record is that release's
+  values-release-<version>.yaml (downloaded from the GitHub release over HTTPS,
+  no login needed,
+  unless -ReleaseValues names a local copy). For every image in it:
+    - the source is <repository>@<release digest>, never a tag, so a
+      newer :latest build cannot slip in;
+    - the destination tag is the row's tag below, with :latest replaced
+      by :<version> (so the release's images stay tagged in Artifactory
+      after the next :latest mirror);
+    - after the copy the destination digest is read back and must equal
+      the <Platform> child of the release digest.
+  A release image with no row below is mirrored to its path minus the
+  registry host, and named in the output. Rows below that the release
+  does not carry (doc-tools, the DataHub chart, ...) mirror by tag as
+  usual, external ones only with -IncludeExternal.
+
+  Writes values-artifactory-digests-<version>.yaml: global.imageDigests
+  keyed <RepoBase>/<destination repository> with the CHILD digests.
+  The release file's own rows cannot be used at work: they are keyed by
+  ghcr.io/docker.io, and they are OCI index digests, which Artifactory
+  rejects (see "WHY" above), so the digest Artifactory holds is the
+  child's. Pass it after your Artifactory overlay, then check the render:
+    helm template ... -f values-artifactory.yaml -f values-artifactory-digests-<version>.yaml |
+      python scripts/seal_image_digests.py
+  A key that misses (the overlay renders a different registry/repository
+  split than the destination path) shows up there as an image on a tag.
+
+.PARAMETER ReleaseValues
+  A local values-release-<version>.yaml to use with -Release instead of
+  downloading it. Its "Chart version" line must name -Release.
+
+.PARAMETER DigestsOut
+  Where -Release writes the digest map. Default
+  values-artifactory-digests-<version>.yaml in the current directory
+  (.dry-run.yaml with -DryRun: nothing was copied or read back).
+
 .PARAMETER DryRun
   Print the commands without executing.
+
+.EXAMPLE
+  # Mirror chart 0.4.80's images by digest and write the work digest map
+  .\mirror-to-artifactory.ps1 -RepoBase artifactory.mycorp.com/docker-cortex -Release 0.4.80
 
 .EXAMPLE
   # Default: mirror only iagent-owned images (15 engines + cortex-ui + central-gateway = 17)
@@ -116,6 +158,12 @@ param(
     [string]$Platform = 'linux/amd64',
 
     [switch]$IncludeExternal,
+
+    [string]$Release = '',
+
+    [string]$ReleaseValues = '',
+
+    [string]$DigestsOut = '',
 
     [switch]$DryRun
 )
@@ -413,11 +461,86 @@ if ($IncludeExternal) {
 }
 
 # -----------------------------------------------------------------------
-# Strip the :tag suffix from an image reference, leaving the repository.
+# Strip the @digest or :tag suffix from an image reference, leaving the
+# repository.
 # -----------------------------------------------------------------------
 function Get-RepoOnly {
     param([string]$Ref)
-    return ($Ref -replace ':[^:/]+$', '')
+    return (($Ref -replace '@.*$', '') -replace ':[^:/]+$', '')
+}
+
+# -----------------------------------------------------------------------
+# The repository as the release file keys it: registry host included,
+# Docker Hub's implicit docker.io/ and library/ written out.
+# -----------------------------------------------------------------------
+function Get-CanonicalRepo {
+    param([string]$Ref)
+    $repo  = Get-RepoOnly $Ref
+    $first = $repo.Split('/')[0]
+    if ($repo.Contains('/') -and ($first -match '[.:]' -or $first -eq 'localhost')) { return $repo }
+    if ($repo.Contains('/')) { return "docker.io/$repo" }
+    return "docker.io/library/$repo"
+}
+
+# -----------------------------------------------------------------------
+# -Release: replace each row the release carries with a by-digest row.
+# -----------------------------------------------------------------------
+$ReleaseMap = [ordered]@{}
+if ($Release) {
+    if (-not $ReleaseValues) {
+        $relDir = Join-Path ([IO.Path]::GetTempPath()) "ia-release-$Release"
+        New-Item -ItemType Directory -Force $relDir | Out-Null
+        $ReleaseValues = Join-Path $relDir "values-release-$Release.yaml"
+        $relUrl = "https://github.com/edgy-solutions/invincible-agent/releases/download/invincible-agent-$Release/values-release-$Release.yaml"
+        # Windows PowerShell 5.1 may not offer TLS 1.2 by default; GitHub requires it.
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        try {
+            Invoke-WebRequest -Uri $relUrl -OutFile $ReleaseValues -UseBasicParsing
+        } catch {
+            Write-Host "ERROR: could not download $relUrl ($($_.Exception.Message))." -ForegroundColor Red
+            Write-Host "Does release invincible-agent-$Release exist? Or download the file another way and pass -ReleaseValues." -ForegroundColor Yellow
+            exit 1
+        }
+    }
+    $relText = Get-Content -Raw -Encoding UTF8 $ReleaseValues
+    if ($relText -notmatch "Chart version $([regex]::Escape($Release)),") {
+        Write-Host "ERROR: $ReleaseValues is not chart $Release's release file (no 'Chart version $Release,' line)." -ForegroundColor Red
+        exit 1
+    }
+    $relDigests = [ordered]@{}
+    foreach ($m in [regex]::Matches($relText, '(?m)^\s+"([^"]+)":\s*"(sha256:[0-9a-f]{64})"\s*$')) {
+        $relDigests[$m.Groups[1].Value] = $m.Groups[2].Value
+    }
+    if ($relDigests.Count -eq 0) {
+        Write-Host "ERROR: no global.imageDigests rows in $ReleaseValues." -ForegroundColor Red
+        exit 1
+    }
+
+    $byDigest = @()
+    $byTag    = @()
+    $taken    = @{}
+    foreach ($group in @(@{ rows = $IagentImages; on = $true }, @{ rows = $ExternalImages; on = [bool]$IncludeExternal })) {
+        foreach ($img in $group.rows) {
+            $repo = Get-CanonicalRepo $img.src
+            if ($relDigests.Contains($repo) -and -not $taken[$repo]) {
+                $taken[$repo] = $true
+                $dstRepo = Get-RepoOnly $img.dst
+                $dstTag  = $img.dst.Substring($dstRepo.Length + 1)
+                if ($dstTag -eq 'latest') { $dstTag = $Release }
+                $byDigest += @{ src = "$repo@$($relDigests[$repo])"; dst = "${dstRepo}:$dstTag"; release = $true }
+            } elseif ($group.on) {
+                $byTag += $img
+            }
+        }
+    }
+    foreach ($repo in $relDigests.Keys) {
+        if ($taken[$repo]) { continue }
+        $dstRepo = $repo.Substring($repo.IndexOf('/') + 1)
+        Write-Host "NOTE: $repo is in release $Release but has no row in this script; mirroring it to ${dstRepo}:$Release" -ForegroundColor Yellow
+        $byDigest += @{ src = "$repo@$($relDigests[$repo])"; dst = "${dstRepo}:$Release"; release = $true }
+    }
+    Write-Host "Release ${Release}: $($byDigest.Count) images by digest from $ReleaseValues, $($byTag.Count) more by tag" -ForegroundColor Cyan
+    $Images = $byDigest + $byTag
 }
 
 # -----------------------------------------------------------------------
@@ -540,6 +663,7 @@ foreach ($img in $Images) {
         if ($dstDigest -eq $srcDigest) {
             Write-Host "    UNCHANGED: destination already at $srcDigest" -ForegroundColor DarkGray
             $unchanged += $src
+            if ($img.release) { $ReleaseMap["$RepoBase/$(Get-RepoOnly $img.dst)"] = $srcDigest }
             Write-Host ""
             continue
         }
@@ -555,6 +679,16 @@ foreach ($img in $Images) {
             Copy-WithCrane  -Src $src -Dst $dst -Platform $Platform
         } else {
             Copy-WithBuildx -Src $src -Dst $dst -Platform $Platform -SrcDigest $srcDigest
+        }
+        if ($img.release) {
+            if (-not $DryRun) {
+                $gotDigest = Resolve-DesiredDigest -Ref $dst -Platform $Platform
+                if ($gotDigest -ne $srcDigest) {
+                    throw "read-back: $dst is at '$gotDigest', expected $srcDigest"
+                }
+                Write-Host "    READ BACK: $dst = $srcDigest" -ForegroundColor DarkGray
+            }
+            $ReleaseMap["$RepoBase/$(Get-RepoOnly $img.dst)"] = $srcDigest
         }
         $mirrored += $src
     } catch {
@@ -581,7 +715,27 @@ if ($mirrored.Count -gt 0) {
 if ($failed.Count -gt 0) {
     Write-Host "Failed images:" -ForegroundColor Red
     $failed | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+    if ($Release) { Write-Host "No digest map written: a failed image would leave a key without its image." -ForegroundColor Red }
     exit 1
+}
+
+if ($Release) {
+    if (-not $DigestsOut) {
+        $DigestsOut = if ($DryRun) { "values-artifactory-digests-$Release.dry-run.yaml" } else { "values-artifactory-digests-$Release.yaml" }
+    }
+    $lines = @(
+        "# values-artifactory-digests-$Release.yaml -- written by scripts/mirror-to-artifactory.ps1 -Release $Release.",
+        "# Each digest is the $Platform child of the digest values-release-$Release.yaml records, as $RepoBase holds it.",
+        $(if ($DryRun) { "# DRY RUN: nothing was copied or read back." } else { "# Every row was read back from $RepoBase after the copy." }),
+        "global:",
+        "  imageDigests:"
+    )
+    foreach ($key in ($ReleaseMap.Keys | Sort-Object)) { $lines += "    `"$key`": `"$($ReleaseMap[$key])`"" }
+    $outPath = if ([IO.Path]::IsPathRooted($DigestsOut)) { $DigestsOut } else { Join-Path (Get-Location) $DigestsOut }
+    [IO.File]::WriteAllLines($outPath, $lines)
+    Write-Host "Wrote $outPath ($($ReleaseMap.Count) digests). Pass it after your Artifactory overlay, then pipe the" -ForegroundColor Cyan
+    Write-Host "render through scripts/seal_image_digests.py: any image it lists is a key that missed." -ForegroundColor Cyan
+    Write-Host ""
 }
 
 if ($mirrored.Count -eq 0) {
@@ -597,3 +751,7 @@ Write-Host "Re-run periodically with the default flags (no -IncludeExternal) to"
 Write-Host "pick up new CI builds of the iagent / cortex-ui images. Re-run with" -ForegroundColor White
 Write-Host "-IncludeExternal when bumping chart versions for datahub, opensearch," -ForegroundColor White
 Write-Host "redpanda, keycloak, etc." -ForegroundColor White
+# Failures exit 1 above. Without this the script's status is whatever the
+# last native command left in $LASTEXITCODE (e.g. the absent-destination
+# lookup of a NEW image), so a clean run could report failure.
+exit 0

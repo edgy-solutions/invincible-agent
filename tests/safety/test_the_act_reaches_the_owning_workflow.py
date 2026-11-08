@@ -82,7 +82,8 @@ def fresh_declarations(monkeypatch):
 
 
 @pytest.fixture
-def route(monkeypatch, fresh_declarations):
+def route(monkeypatch, fresh_declarations, register_rail):
+    register_rail(["bob"])
     calls = {"resolved": [], "settled": None}
 
     def mark_resolved(tid, **kw):

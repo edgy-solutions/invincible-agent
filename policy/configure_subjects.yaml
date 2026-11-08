@@ -1,0 +1,18 @@
+# THE REGISTRY OF CONFIGURE SUBJECTS (architect's ruling, 2026-11-02: yes to a registry for
+# `can_configure:`, as `can_review:` has in policy/review_subjects.yaml).
+#
+# A `can_configure:<S>` capability in capability_grants.yaml is refused by validate_policy unless S
+# is named here. S is what a surface's own check asks Topaz about, so a misspelt key would gate
+# nothing and leave the real subject configurable by nobody.
+#
+# This file lists the subjects a surface checks. It is not a list of who configures: that is the row
+# in capability_grants.yaml, and a registered subject with no row is configurable by nobody. It ships
+# with the product image and is read from there, not from a deployment's policy directory, so it is
+# not in validate_policy.DATA_FILES and a deployment's policy repository does not carry it. A new
+# subject is a new row here, in the same change as the surface that starts asking for it.
+configure_subjects:
+  - name: deck_template
+    surface: training-consolidation-workbench deck template configuration (the workbench's check and route)
+    reason: >-
+      2026-11-02 ruling: "new capability `can_configure:deck_template` on the rail". The first ruled
+      subject. The workbench has not yet added the check, so nothing asks about it today.

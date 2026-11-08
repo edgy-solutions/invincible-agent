@@ -1,0 +1,27 @@
+# SAMPLE -- a notional CDRL as JSON. A001 / DI-NOTIONAL-0001 name no real contract or data item.
+# Same sources and fields as cdrl_a001_ev_summary.yaml; NO template: a profile alone is a deliverable.
+name: cdrl_a001_ev_summary_json
+format: json
+scope: program                       # one file per program
+label: CDRL A001 - Notional EV summary, JSON (synthetic)
+audience: program_office
+cdrl: {item: A001, title: Notional Earned Value Summary, data_item: DI-NOTIONAL-0001, frequency: monthly}
+cells:                               # /a/b pointers, object keys only; written in this order
+  /header/program_name: program.name
+  /header/program_id: program.id
+  /header/as_of: as_of
+  /header/cdrl_item: cdrl.item
+sources:
+  - fn: fin_performance_indices
+  - fn: fin_tcpi
+table:
+  at: /summary/periods               # the row array: one object per period
+  key: period
+  columns:
+    - {from: period, as: period}
+    - {from: fin_performance_indices.cum_bcws, as: cum_bcws}
+    - {from: fin_performance_indices.cum_bcwp, as: cum_bcwp}
+    - {from: fin_performance_indices.cum_acwp, as: cum_acwp}
+    - {from: fin_performance_indices.cum_cpi, as: cum_cpi}
+    - {from: fin_performance_indices.cum_spi, as: cum_spi}
+    - {from: fin_tcpi.tcpi, as: tcpi}

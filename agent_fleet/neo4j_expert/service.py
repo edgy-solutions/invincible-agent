@@ -45,7 +45,7 @@ except ImportError:
         pass
     MAPPING = None
 
-from restate import Context, Service
+from restate import Context, Service, TerminalError
 from smolagents import CodeAgent, ToolCallingAgent
 
 # ---------------------------------------------------------------------------
@@ -102,8 +102,11 @@ def _can_read_document(caller_email: str, source_id: str) -> bool:
     """Ask Topaz whether ``caller_email`` may READ the source ``document``.
     DENY-BY-DEFAULT, explicit owner/reader grant only (same gate/objects/grants
     as Engine W — shared `document` namespace). FAIL-CLOSED on empty
-    caller/source, unresolvable source, or ANY error → the chunk is DROPPED,
-    never synthesized (an unidentifiable chunk is the leak)."""
+    caller/source, unresolvable source, a 404, or a defect here → the chunk is
+    DROPPED, never synthesized (an unidentifiable chunk is the leak). A Topaz that
+    cannot be reached, answers another non-2xx or answers malformed is the outage
+    class: ``httpx.HTTPError`` propagates, ``_may_read`` latches it, and the run
+    answers 503 instead of an answer."""
     if not caller_email or not source_id:
         return False
     try:
@@ -118,8 +121,12 @@ def _can_read_document(caller_email: str, source_id: str) -> bool:
             },
             timeout=5.0,
         )
+        if r.status_code == 404:
+            return False
         r.raise_for_status()
-        return bool(r.json().get("check", False))
+        return check_answer(r)
+    except httpx.HTTPError:  # unreachable, a non-2xx or a malformed answer: the outage class, never a "no"
+        raise
     except Exception as e:  # noqa: BLE001 — fail-closed on ANY failure
         print(f"[Engine E] can_read check FAILED (fail-closed deny) src={source_id!r}: {e}")
         return False
@@ -141,6 +148,11 @@ except ImportError:
             b = init_baml_client(b)
         except ImportError:
             pass
+
+try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import check_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import check_answer
 
 try:
     from tools import execute_cypher as _module_execute_cypher, get_graph_schema, get_neo4j_driver
@@ -494,6 +506,21 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
         # (COUNTS + a final-answer bool only, never step observations/output).
         run_stats: dict = {"n_steps": 0, "step_errors": 0, "reached_final": False}
 
+        # An authorizer outage is 503, but a tool's raise never leaves the agent loop: smolagents
+        # feeds it back to the model as a step error. So the gate latches it and reads as a no for
+        # this call, and run_smolagent answers 503 after the loop, discarding the model's answer.
+        # Once latched the run is lost, so no later chunk waits out a timeout to learn the same.
+        pdp_unavailable: list = []
+
+        def _may_read(uri) -> bool:
+            if pdp_unavailable:
+                return False
+            try:
+                return _can_read_document(caller_email, uri)
+            except httpx.HTTPError as e:
+                pdp_unavailable.append(type(e).__name__)
+                return False
+
         def _calib(**event) -> None:
             # Defensive: strip any accidental content-bearing key so a future
             # edit can't silently turn this into a leak. Only the allow-listed
@@ -594,7 +621,7 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                     continue
                 # GATE before returning any content — shared document namespace
                 # with W; fail-closed. This is the ONLY content path in the DSL.
-                if ENABLE_AGENTIC_AUTH and not _can_read_document(caller_email, uri):
+                if ENABLE_AGENTIC_AUTH and not _may_read(uri):
                     denied.append(uri)
                     continue
                 try:
@@ -640,7 +667,7 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 return {"error": f"count_accessible error: {e}"}
             # GATE-THEN-AGGREGATE: count only the caller's granted uris.
             if ENABLE_AGENTIC_AUTH:
-                n = sum(1 for r in rows if _can_read_document(caller_email, r.get("uri")))
+                n = sum(1 for r in rows if _may_read(r.get("uri")))
             else:
                 n = len(rows)
             _calib(op="count_accessible", label=label, accessible_count=n)
@@ -718,7 +745,7 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                     )
                     if source_id == "Unknown Document":
                         source_id = None
-                    if ENABLE_AGENTIC_AUTH and not _can_read_document(caller_email, source_id):
+                    if ENABLE_AGENTIC_AUTH and not _may_read(source_id):
                         dropped += 1
                         continue
                     results.append(obj.properties.get("text", ""))
@@ -848,6 +875,8 @@ paths and titles in your final_answer so the downstream formatter can render the
                 # changes: these spans nest through the ordinary OTel context either way.
                 # Mirrors Engine A, the reference impl, which uses the same primitives.
                 result = await asyncio.to_thread(agent.run, final_prompt)
+                if pdp_unavailable:
+                    raise TerminalError("the authorizer could not be asked, or its answer could not be read", status_code=503)
                 
                 # Build the UI trace from `agent.memory.steps` (smolagents 1.24;
                 # the old `agent.logs` attribute is gone — the previous block

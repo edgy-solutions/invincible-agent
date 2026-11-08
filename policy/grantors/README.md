@@ -10,7 +10,8 @@ When a policy refusal happens, its `grantable_by` is read from this map
   one or more directories of rows, pathsep-separated.
   - An overlay row replaces the seed row whole (ADR-0036).
   - An overlay row of `family: <name>` and `deleted: true` removes a row. A family with no row
-    still refuses with 403, and its `grantable_by` says the row is missing.
+    still refuses with the site's status (401, 403 or 409), and its `grantable_by` says the
+    row is missing.
   - A tombstone for a family the seed does not ship is an error (the SDK's `compose_rows`).
 
 | field | meaning |
@@ -20,6 +21,14 @@ When a policy refusal happens, its `grantable_by` is read from this map
 | `how` | what the grant is: the change and the step that applies it |
 | `object_scoped` | `true` when a key would name a program, asset or compartment. A refusal then names the family alone, so a withheld target answers like an absent one (ADR-0047 §5.1, ADR-0049 Ruling 4). |
 | `rail_file` | the policy file the family's rows live in. Absent for `config` and `code`. |
+
+## A shipped row's grantor is `seed`
+
+Every `granted_by` in a rail file this repository ships says `seed`, never a person (ruled
+2026-10-31). The platform seed is what grants a shipped row. A deployment's own rows name
+their approver: rows in its policy repository or an overlay, and the reader grant an approval
+writes at runtime. The seal derives the rail files from this map's `rail_file` values:
+`tests/security/test_a_shipped_grantor_is_the_seed.py`.
 
 ## Rules for new families
 

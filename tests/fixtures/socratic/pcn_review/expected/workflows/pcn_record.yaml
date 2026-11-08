@@ -1,0 +1,18 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+id: pcn_record
+name: PCN record
+steps:
+- kind: emit
+  id: disposition
+  channel: pcn_disposition
+  template:
+    pcn_id: '{trigger.pcn_id}'
+    part_number: '{trigger.part_number}'
+    outcome: approved
+    approval_chain: '{case.approval_chain}'
+- kind: signal_await
+  id: filed
+  signal: pcn_filed
+  audience: pcn_records:SUSTAINMENT
+  accepts:
+  - filed

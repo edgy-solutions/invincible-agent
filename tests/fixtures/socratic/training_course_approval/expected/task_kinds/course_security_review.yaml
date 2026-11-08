@@ -1,0 +1,11 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+kind: course_security_review
+accepts:
+- cleared
+- not_releasable
+reason_required:
+- not_releasable
+renders_as:
+  badge: COURSE-SECUR
+  title: Course security review
+  archetype: APPROVAL_TASK

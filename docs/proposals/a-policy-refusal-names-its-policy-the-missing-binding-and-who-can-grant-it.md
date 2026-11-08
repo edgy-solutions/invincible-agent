@@ -1,7 +1,8 @@
 # A policy refusal names its policy, the missing binding, and who can grant it
 
 **Proposed by lane/gov, 2026-10-25, in answer to the architect's overnight directive of 10-24.
-DRAFT RULE: it binds no call site yet.**
+DRAFT RULE: it binds finance's three 409s and no other call site yet.**
+Widened 2026-10-25 to the 409 that asks (architect, via Chris): see "The finance first instance".
 
 The code is in `src/iagent/authz/refusal.py`. The seal is
 `tests/security/test_every_policy_refusal_names_policy_binding_grantor.py`. The seed grantor
@@ -62,7 +63,8 @@ model's fields, and on the bump it validates against `Refusal` unchanged.
 
 The detector finds sites by form, not by name. It derives them from every tracked `.py` under
 `src/` and `agent_fleet/`:
-- any call carrying `status_code` 401 or 403;
+- any call carrying a 401, 403 or 409 status: as `status_code=` or `status=`, or as the first
+  positional argument (409 added 2026-10-25, after the ruling above);
 - ADR-0049's in-band `_refusal("unentitled", ...)`;
 - any dict whose `status`, `outcome`, `error` or `reason` is a refusal word.
 
@@ -71,7 +73,16 @@ An independent hand census of the same tree reconciles with it exactly:
 - the detector counts 4 `auth.py` sites the hand census didn't;
 - the hand census found 1 site, `notice_parts`, that the detector then gained.
 
-On master `7a45a3cb` that gives **69 sites, 0 compliant**:
+**Correction (2026-10-25).** The hand census and the detector agreed because both missed the
+same form. `PromotionRefused(..., status=403)` in `promotion.py` names its status as
+`status=`. The "reconciles exactly" claim was wrong. The detector now reads that form.
+
+**Re-measured on master `78315212`, 2026-10-25**, with 409 and the missed forms: 117 keys.
+The finance three are now compliant, leaving **114 keys over 116 sites**, partitioned 73
+NOT_POLICY and 41 PENDING. The seal's header carries the derivation. The table below is the
+10-24 baseline.
+
+On master `7a45a3cb` that gave **69 sites, 0 compliant**:
 
 | bucket | n | detail |
 | --- | --- | --- |
@@ -85,7 +96,11 @@ On master `7a45a3cb` that gives **69 sites, 0 compliant**:
   gone or compliant. So the pending list shrinks as sites are fixed, and it never carries a
   dead row.
 - **The detector has a positive control** on synthetic source holding every form.
-- **Seven mutants**, each killed by a named arm:
+- **Thirteen more mutants (2026-10-25, the 409 widening)**, each killed by a named arm. Each of
+  the three sites is reverted; the ask is ignored; the member grants are emptied; every slot
+  maps to `code`; each repair branch and the options mapping is broken; `candidates` is
+  ignored; `extra` is dropped; the exception's slots are dropped.
+- **Seven mutants (#96)**, each killed by a named arm:
   - a dropped detector form;
   - an object key allowed;
   - the overlay ignored;
@@ -96,38 +111,97 @@ On master `7a45a3cb` that gives **69 sites, 0 compliant**:
 
 ## The finance first instance
 
-The finance failure the directive refers to ("the finance failure above") **was not in the
-paste**. It is also not in any `sessions/` file from 10-22 to 10-24, and not on `lane/fin`. A
-packet asks fin for it.
+**Ruled 2026-10-25 (architect, via Chris):** the finance failure is fin's canvas 409, the
+`program` binding left unbound. It is not `get_artifact`, which this draft had guessed. The
+ruling widens the rule:
 
-Until fin answers, the likely candidate is `finance_agent get_artifact`, a 403 reading
-"not entitled to {scope}'s package".
-- Its binding is `RECIPIENT_READERS`, a table hardcoded in `finance_agent/export.py` with no
-  `granted_by`.
-- So today its honest family is `code`. Its `grantable_by` can only say "the platform
-  maintainers", which is why the table should move onto the rail.
-- `package_export`'s two 403s are structural, not policy refusals.
+> a refusal is any 401, 403, or 409 that asks the caller to choose or request something — a 409
+> with an empty candidate list and no grantor is a non-compliant refusal.
 
-## Open questions for the architect
+A 409 about the target's own state asks for nothing, so it is not a refusal. Examples are
+already resolved, terminal, immutable and moved on (`CONFLICT` in the seal). Neither is a 409
+whose body names its one resolution (`NAMED`), or one for a verb that is not built yet
+(`NOT_BUILT`).
 
-1. **Restate `TerminalError` carries only a string.** For the 10 relay sites, does the
-   `refusal` ride as JSON in the message, or does the SDK grow a field?
-2. **May a refusal echo a key the caller itself sent?** For example a capability id from the
-   request. The rule as drafted allows it for families that are not object-scoped. It forbids
-   it for object-scoped ones even when the caller sent the key, because the key's presence in
-   the refusal must not vary by existence.
-3. **`candidates` stays empty.** An alternative is itself existence-bearing. Which candidates
-   may a caller be told?
-4. **Code-held bindings.** `RECIPIENT_READERS` exists in both finance and cost. Should moving it
-   onto the rail be the finance instance's real fix, rather than naming `code`?
-5. **The sandbox overlay.** Should it name the sandbox's actual approver, or stay on the seed
-   wording?
-6. **Joining.** The ratchet reds on any new 401/403 site. If Lane 1's open heads (`01-207`,
-   `01-208`) add one, the join needs that site classified in the same merge.
+**The three sites.** `unbound_required_slot` is raised at `/export/package`, at `/canvas/seed`
+and at `seed_panel`. Each now goes through `policy_refusal(..., status_code=409)`.
+`canvas_template.slot_refusal` derives the fields. At `/canvas/seed` it derives them from
+fin's own `ask` (`_canvas_seed_ask`). The ask stays in the body unchanged, so the refusal
+tells the caller nothing the ask does not already say.
+
+| fin's ask | `policy_id` | `missing_binding` | `candidates` |
+| --- | --- | --- | --- |
+| options (the caller's menu) | `program_members` | `bind(program)` | the option values |
+| no options and no policy (too many to offer, or nobody asked) | `groups` | `bind(program)` | `[]` |
+| `switch_cell` | `groups` | `active_cell(<persona> · <domain>)` | `[<persona> · <domain>]` |
+| `join_group` | `groups` | `member_of(<group> \| ...)` | `[]` |
+| `declare_group` | `groups` | `a_group_granting(<persona> · <domain>)` | `[]` |
+| `grant_member` | `program_members` | `can_view_program(program)` | `[]` |
+| none, or `ask_unavailable` | `groups` | `bind(program)` | `[]` |
+
+Export and `seed_panel` build no ask, so they give the default row.
+
+**The family is the owning cell's.** A slot whose referent a cell owns (`REFERENT_CELLS`) is
+chosen from what that cell sees, and a cell is granted by `groups`. A slot that no cell owns is
+named under `code`.
+
+**The menu is the member grant's** (architect, 2026-10-27). The options case names
+`program_members`, because that is the grant that gates the menu. Measured 2026-10-25: no layer
+filtered `fin#Program` members by caller. engine-o's enumerate gate reaches only sustainment
+IRIs, and engine-fin's `EnumerateRequest` carried no caller. Ruled fin's defect; #113 fixes it.
+engine-fin now lists and resolves only the members whose program the caller can view
+(`can_view_program`). It filters before its limit and answers 503 when the check cannot be made.
+
+So the options a caller sees are exactly what `program_members` grants them. A caller in the
+owning cell who is granted none gets the `grant_member` repair. An ask with no options shows no menu the grant
+bounds, so it keeps the cell's family. A slot no cell owns keeps `code`, menu or not.
+
+**This rests on #113** (merged, `235a125b`, which also adds the `NP-MERIDIAN` row to
+`policy/program_members.yaml`). Without that filter the options row would name a grant nothing checks.
+
+**The hard-coded readers.** Ruled: "platform maintainers" is an acceptable grantor text now.
+Moving `RECIPIENT_READERS` onto the policy rail is ruling 4 below.
+
+## The architect's rulings on the open questions (2026-10-27)
+
+1. **Restate relays.** The refusal rides as JSON in the `TerminalError` message under a fixed
+   prefix, `refusal:` + the Refusal dict, and is parsed at the BFF. The SDK adds a typed
+   `Refusal.to_terminal()` / `from_terminal()` pair in v0.9.12. **Built in the meantime:**
+   `agent_fleet/utils/terminal_refusal.py` (the engines' half) and `TERMINAL_PREFIX` /
+   `from_terminal` in `src/iagent/authz/refusal.py` (the BFF's).
+   `tests/security/test_a_relayed_refusal_parses_the_same_on_both_sides.py` holds the two to the
+   same dict on every message. The 10 relay rows stay pending until each site sends and reads the
+   pair.
+2. **Echoing a key the caller sent:** as drafted. An object-scoped family never echoes its key,
+   even when the caller sent it, because a wrong guess and a withheld object must look identical.
+   The finance recipient scope is object-scoped.
+3. **`candidates`:** only objects the caller already holds a view grant on, never "others
+   exist". For a caller with no grants the list is empty, and `grantable_by` is the whole answer.
+   - Finance's options come from engine-fin's filtered list (#113).
+   - `switch_cell`'s single candidate is a cell the caller already holds.
+   - `relay_refusal` does not carry an engine's candidates through, so a relay offers none.
+4. **`RECIPIENT_READERS` moves onto the rail.** "The platform maintainers" is the honest grantor
+   until that lands. Refined 2026-10-28: "gov writes the rail shape (a recipient_readers family
+   with grantors); fin and cost each move their own RECIPIENT_READERS onto it. Owners build, gov
+   seals." So the family is `recipient_readers`, not `program_members` as first written here.
+   - **The rail is built:** `policy/recipient_readers.yaml`, keyed by owner (`finance`, `cost`)
+     then recipient scope, each row with `granted_by`, `reason` and `grant_to`.
+     - It reaches Topaz through `policy/sync/recipient_reader_sync.py`, as `recipient_scope`
+       `<owner>:<scope>`, relation `reader`.
+     - Engines ask `can_read_recipient` through `agent_fleet/utils/recipient_readers.py`.
+     - Its grantor row is `policy/grantors/recipient_readers.yaml`, and it is object-scoped.
+   - **The two code tables stay** until their owners move them. The ratchet in
+     `tests/security/test_recipient_readers_rail.py` refuses a third, and reds when a moved one
+     is still listed as pending.
+5. **The sandbox overlay** names the sandbox's actual approver; the seed stays neutral. Overlays
+   are what deployments are for.
+6. **Joining.** Any merge that adds a 401/403/409-ask site classifies it in the same merge. The
+   ratchet enforces this.
 
 ## What this does not do
 
-- It changes no refusal site. Every site stays as it is until its instance lands.
+- It changes no refusal site beyond finance's three 409s. Every other site stays as it is
+  until its instance lands.
 - It does not check that a compliant site names the *right* binding. That is each instance's
   own seal, starting with finance's.
 - It does not check that a relayed refusal reaches the caller filled. That is each relay's seal.

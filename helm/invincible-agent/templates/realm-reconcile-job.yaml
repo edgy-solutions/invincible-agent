@@ -464,9 +464,9 @@ spec:
                     "attributes": {
                       "pkce.code.challenge.method": "S256",
                       "post.logout.redirect.uris": {{ join "##" $pc.redirectUris | quote }}
-                    }
-                    {{- if ne $claim "email" }},
-                    "protocolMappers": [{
+                    },
+                    "protocolMappers": [
+                    {{- if ne $claim "email" }}{
                       "name": "authz-id-user",
                       "protocol": "openid-connect",
                       "protocolMapper": "oidc-usermodel-attribute-mapper",
@@ -478,11 +478,36 @@ spec:
                         "id.token.claim": "true",
                         "userinfo.token.claim": "true"
                       }
+                    }, {{ end }}{
+                      "name": "audience-self",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-audience-mapper",
+                      "config": {
+                        "included.client.audience": {{ $pc.clientId | quote }},
+                        "access.token.claim": "true",
+                        "id.token.claim": "false"
+                      }
                     }]
-                    {{- end }}
                   }' && echo "   created" || { echo "   FAIL $PCID: create failed"; rc=1; }
               else
                 echo "   present"
+                # AUDIENCE: the workbench api accepts a token only when aud names its own client (ruled b5).
+                # Keyed on what the mapper EMITS, not its name: any mapper already putting this client in
+                # aud satisfies it, and a wrong-but-same-named one is left for the readback to refuse.
+                if [ "$(curl -sf -H "$AUTH" "$API/clients/$PCU/protocol-mappers/models" | grep -cF '"included.client.audience":"{{ $pc.clientId }}"' || true)" = "0" ]; then
+                  echo "   audience mapper absent -> adding"
+                  curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                    "$API/clients/$PCU/protocol-mappers/models" -d '{
+                      "name": "audience-self",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-audience-mapper",
+                      "config": {
+                        "included.client.audience": {{ $pc.clientId | quote }},
+                        "access.token.claim": "true",
+                        "id.token.claim": "false"
+                      }
+                    }' || { echo "   FAIL $PCID: could not add audience-self mapper"; rc=1; }
+                fi
                 {{- if ne $claim "email" }}
                 if [ "$(curl -sf -H "$AUTH" "$API/clients/$PCU/protocol-mappers/models" | grep -c 'authz-id-user' || true)" = "0" ]; then
                   echo "   authz-id-user mapper absent -> adding"
@@ -846,7 +871,13 @@ spec:
                 curl -sf -H "$AUTH" "$API/clients/$PCU/protocol-mappers/models" | grep -qF '"claim.name":"{{ $claim }}"' \
                   || { echo "   FAIL $PCID: no mapper emits claim {{ $claim }} (the BFF would fall back to sub)"; rc=1; PCOK=0; }
                 {{- end }}
-                if [ "$PCOK" = "1" ]; then echo "   ok   $PCID public, pkce S256, emits {{ $claim }}"; fi
+                # One config object per line (a mapper's config holds only strings), so the audience and its
+                # access-token flag are judged on the SAME mapper, in whatever key order Keycloak serves them.
+                PCAUD=$(curl -sf -H "$AUTH" "$API/clients/$PCU/protocol-mappers/models" | grep -o '"config":{[^}]*}' \
+                        | grep -F '"included.client.audience":"{{ $pc.clientId }}"' || true)
+                printf '%s' "$PCAUD" | grep -qF '"access.token.claim":"true"' \
+                  || { echo "   FAIL $PCID: no mapper puts {{ $pc.clientId }} in the access token's aud (its api would refuse every login)"; rc=1; PCOK=0; }
+                if [ "$PCOK" = "1" ]; then echo "   ok   $PCID public, pkce S256, emits {{ $claim }}, aud {{ $pc.clientId }}"; fi
               fi
               {{- end }}
 

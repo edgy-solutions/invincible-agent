@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -204,6 +206,25 @@ def template_ref(t: CanvasTemplate) -> str:
 
 _CANVAS_DIR = Path(__file__).resolve().parents[2] / "policy" / "canvases"
 
+_log = logging.getLogger(__name__)
+_LOGGED_LAYERS: set[tuple[str, str]] = set()
+
+
+def canvas_overlay_dirs() -> list[Path]:
+    """`CANVAS_OVERLAY_DIRS` (os.pathsep-separated, default EMPTY), read at call time.
+
+    ADR-0036 for canvases: a deployment's panel for its own measure lives in its own overlay
+    (`policy/overlays/<name>/canvases/`), not in a platform template. An overlay `<id>.yaml`
+    REPLACES the seed template of that id whole -- no field-level merge -- and passes the same
+    schema validation as a seed one. An explicit `directory=` argument keeps its old meaning:
+    that directory alone, no overlays.
+    """
+    return [Path(p) for p in os.getenv("CANVAS_OVERLAY_DIRS", "").split(os.pathsep) if p]
+
+
+def _layers(directory: "Path | None") -> list[Path]:
+    return [directory] if directory else [_CANVAS_DIR, *canvas_overlay_dirs()]
+
 
 def ratified_template_ids(directory: "Path | None" = None) -> list[str]:
     """Every ratified template id, sorted. Derived from the directory each call.
@@ -212,10 +233,7 @@ def ratified_template_ids(directory: "Path | None" = None) -> list[str]:
     offers a menu that no longer matches the substrate — the same staleness that makes a
     registration outlive the thing it registered.
     """
-    d = directory or _CANVAS_DIR
-    if not d.is_dir():
-        return []
-    return sorted(p.stem for p in d.glob("*.yaml"))
+    return sorted({p.stem for d in _layers(directory) if d.is_dir() for p in d.glob("*.yaml")})
 
 
 def load_template(template_id: str, directory: "Path | None" = None) -> CanvasTemplate:
@@ -228,13 +246,17 @@ def load_template(template_id: str, directory: "Path | None" = None) -> CanvasTe
     """
     import yaml  # local: the gateway imports this module at startup and yaml is not free
 
-    d = directory or _CANVAS_DIR
-    path = d / f"{template_id}.yaml"
-    if not template_id or not path.is_file():
+    # THE LAST LAYER HOLDING THE ID WINS (seed first, then each overlay in order).
+    path = next((d / f"{template_id}.yaml" for d in reversed(_layers(directory))
+                 if template_id and (d / f"{template_id}.yaml").is_file()), None)
+    if path is None:
         raise KeyError(
             f"no ratified canvas template {template_id!r}; ratified: "
-            f"{ratified_template_ids(d)}"
+            f"{ratified_template_ids(directory)}"
         )
+    if directory is None and path.parent != _CANVAS_DIR and (template_id, str(path)) not in _LOGGED_LAYERS:
+        _LOGGED_LAYERS.add((template_id, str(path)))
+        _log.info("canvas template %s read from overlay layer %s", template_id, path.parent)
     t = CanvasTemplate.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
     if t.template_id != template_id:
         # Offerable under one name, loadable under the other — the menu and the substrate
@@ -333,7 +355,12 @@ class UnknownBinding(ValueError):
 
 class UnboundRequiredSlot(ValueError):
     """A declared, consumed shared slot has nothing bound to it yet — the ADR-0050 §3 carry,
-    not a fault in either the template or the request. 409."""
+    not a fault in either the template or the request. 409, and a POLICY REFUSAL: it asks the
+    caller to choose a value (`slot_refusal` names who widens the choice)."""
+
+    def __init__(self, message: str, slots: "list[str] | tuple[str, ...]" = ()):
+        super().__init__(message)
+        self.slots = sorted(slots)
 
 
 def validate_bindings(template: CanvasTemplate, bindings: dict[str, Any]) -> dict[str, Any]:
@@ -369,7 +396,8 @@ def validate_bindings(template: CanvasTemplate, bindings: dict[str, Any]) -> dic
             f"template {template.template_id!r} has panel(s) consuming shared slot(s) "
             f"{unbound} that nothing binds yet, so those panels would refuse. Supply it "
             f"in `bindings`. This is the ADR-0050 §3 carry, not a fault in the template or "
-            f"the request."
+            f"the request.",
+            unbound,
         )
     return clean
 
@@ -606,3 +634,82 @@ def policy_hint(
         )
     return {"cell": {"persona": persona, "domain": domain}, "groups": names,
             "repair": repair, "message": message}
+
+
+#: Which rail grants a caller one MEMBER of a referent: named by `slot_refusal` for `policy_hint`'s
+#: `grant_member` repair ("ask an administrator to grant you a program") and for an ask's options,
+#: which engine-fin filters by that grant (#113). One row per `REFERENT_CELLS` key (sealed by
+#: `tests/security/test_every_policy_refusal_names_policy_binding_grantor.py`).
+MEMBER_GRANTS: dict[str, tuple[str, str]] = {
+    "http://invincible-agent/fin#Program": ("program_members", "can_view_program"),
+}
+
+
+def slot_refusal(template: CanvasTemplate, slots: "list[str] | tuple[str, ...]",
+                 ask: "dict[str, Any] | None" = None) -> dict[str, Any]:
+    """`policy_refusal`'s `policy_id`, `missing_binding` and `candidates` for an unbound shared
+    slot -- the 409 is a policy refusal because it asks the caller to CHOOSE (architect,
+    2026-10-25), so it names who can widen the choice (`src/iagent/authz/refusal.py`).
+
+    THE FAMILY IS THE OWNING CELL'S. A slot whose referent a cell owns (`REFERENT_CELLS`) is
+    chosen from what that cell sees, and a cell is granted by `groups`. A slot no cell owns is
+    named under `code`: mapping it is a platform change. Several unbound slots name the first
+    one's family; the message names them all.
+
+    THE MENU IS THE MEMBER GRANT'S (architect, 2026-10-27). engine-fin lists and resolves only
+    the members whose program the caller may view (`can_view_program`, #113), filtered before its
+    limit, so the options a caller is offered are exactly what `program_members` grants them.
+    When the ask carries options for a referent with a `MEMBER_GRANTS` row, that family is the
+    grant that gates, and it is the one named. An ask with no options (a list too long to offer,
+    or nobody asked) shows no menu the grant bounds, so it keeps the cell's family.
+
+    WITH THE ASK (`gateway._canvas_seed_ask`) the refusal says what the ask says, and tells the
+    caller nothing the ask does not already carry:
+      options        candidates = the option values (the caller's own menu); policy_id =
+                     `MEMBER_GRANTS`' family where the referent has one
+      switch_cell    candidates = [the owning cell]; missing_binding = active_cell(<cell>)
+      join_group     missing_binding = member_of(<group> | ...)
+      declare_group  missing_binding = a_group_granting(<cell>)
+      grant_member   `MEMBER_GRANTS`' family, named alone (object-scoped), and its relation
+    A broken ask (`{"error": ...}`) or none gives the slot's default, never a 500.
+    """
+    slots = sorted(slots)
+    by_name = {s.name: s for s in template.shared_slots}
+
+    def _referent(slot: str) -> Optional[str]:
+        s = by_name.get(slot)
+        return SHARED_SLOT_REFERENTS.get(s.bind_as) if s is not None else None
+
+    def _family(slot: str) -> str:
+        return "groups" if _referent(slot) in REFERENT_CELLS else "code"
+
+    family = _family(slots[0]) if slots else "code"
+    named = [s for s in slots if _family(s) == family] or ["?"]
+    out: dict[str, Any] = {"policy_id": family,
+                           "missing_binding": ", ".join(f"bind({s})" for s in named),
+                           "candidates": []}
+    if not isinstance(ask, dict) or ask.get("error"):
+        return out
+    policy = ask.get("policy")
+    if isinstance(policy, dict):
+        cell = policy.get("cell") or {}
+        label = f"{cell.get('persona')} · {cell.get('domain')}"
+        repair = policy.get("repair")
+        if repair == "switch_cell":
+            out.update(missing_binding=f"active_cell({label})", candidates=[label])
+        elif repair == "join_group" and policy.get("groups"):
+            out.update(policy_id="groups",
+                       missing_binding="member_of(" + " | ".join(policy["groups"]) + ")")
+        elif repair == "declare_group":
+            out.update(policy_id="groups", missing_binding=f"a_group_granting({label})")
+        elif repair == "grant_member":
+            grant = MEMBER_GRANTS.get(_referent(named[0]) or "")
+            if grant is not None:
+                out.update(policy_id=grant[0], missing_binding=f"{grant[1]}({named[0]})")
+        return out
+    options = ask.get("options") or []
+    out["candidates"] = [o["value"] for o in options if isinstance(o, dict) and o.get("value")]
+    grant = MEMBER_GRANTS.get(_referent(named[0]) or "")
+    if out["candidates"] and grant is not None:
+        out["policy_id"] = grant[0]
+    return out

@@ -44,10 +44,18 @@ from iagent_mesh.declarations import DeclarationError, compose_rows
 #: WHERE THE COMPOSED ROWS ARE READ FROM, spelled exactly like `GRAPH_POLICY_DIR`. The seed
 #: ships in this repo; a work-side overlay adds, replaces or deletes (ADR-0036); composition
 #: happens at the repo and the composed directory is what this reads.
-MEASURE_POLICY_DIR = Path(os.getenv(
-    "MEASURE_POLICY_DIR",
-    str(Path(__file__).resolve().parents[2] / "policy" / "measures"),
-))
+def _default_seed_dir() -> Path:
+    """`<repo>/policy/measures`, found by walking up rather than counting levels: in the
+    flattened image this file is `/app/<module>.py` and a fixed `parents[2]` does not exist."""
+    here = Path(__file__).resolve()
+    for ancestor in here.parents:
+        candidate = ancestor / "policy" / "measures"
+        if candidate.is_dir():
+            return candidate
+    return Path("/app/policy/measures")
+
+
+MEASURE_POLICY_DIR = Path(os.getenv("MEASURE_POLICY_DIR") or str(_default_seed_dir()))
 MEASURE_OVERLAY_DIRS = [
     Path(p) for p in os.getenv("MEASURE_OVERLAY_DIRS", "").split(os.pathsep) if p
 ]

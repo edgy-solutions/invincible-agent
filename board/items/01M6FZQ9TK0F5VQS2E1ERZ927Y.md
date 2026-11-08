@@ -1,0 +1,20 @@
+---
+title: The action-record door records a principal declared only for another delegate
+feature: cross-cutting
+lane: invincible-agent/lane/01
+repo: invincible-agent
+status: done
+priority: next
+blocked_on: []
+pr: [invincible-agent#251]
+ruling_ref: A2 fork ruling; saf's 11-03 packet asks whether it reaches records
+updated: 2026-11-08
+---
+
+saf measured it: `POST /internal/cases/{case_id}/action-record` answers 200 and writes `req.on_behalf_of` as `produced_for.user_id` for a principal declared only for another delegate. It never asks `_delegate_principals()`. Strict xfail: `test_a_delegate_cannot_name_a_principal_declared_only_for_another_delegate[site3]`.
+
+The architect's ruling (bounded by the list, or "records, not acts") also decides `requested_by` on `/internal/human_tasks/register`, `dropped_by` and `approver` on `/internal/origin/write`, and `seeded_by` on `/internal/cases/{id}/seeded-by` and `/summary`. Lane 1 recommended bounded.
+
+Ruled through saf: action-record and every case-runner route that takes a person's name are bound. #251 builds it for action-record, `origin/write` and `seeded_by`, by delegate list, seeding delegate or task-holder on the case. `requested_by` on register is held, on `01M6JKEEP6S06CQHXQZ2AA2JZV`.
+
+Sweep 2026-11-08: done. #251 merged and shipped in 0.4.79; 0.4.81 is live on sandbox (rev 228). The other person-naming routes are on 01M6JKEDFSYFDSFPRAQXNG7JSC.

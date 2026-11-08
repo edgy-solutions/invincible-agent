@@ -127,8 +127,12 @@ def test_sandbox_job_runs_task_grant_sync_and_nothing_else(sandbox: str):
     # word boundary (nothing alphanumeric/underscore immediately before the module name).
     other_syncs = (
         "topaz_sync.py", "datahub_topaz_sync.py", "grant_sync.py",
-        "ontology_compartment_sync.py", "capability_grant_sync.py",
+        "ontology_compartment_sync.py",
     )
+    # capability_grant_sync.py is the one leg added after this test was written (2026-10-28): the
+    # ingest door's `can_drop:<kind>` gate exists only as the Topaz object that sync writes, so the
+    # Job MUST run it. Presence is asserted; its exit propagates through `set -e`.
+    assert re.search(r"(?<![\w])capability_grant_sync\.py", block), "the Job must run capability_grant_sync"
     present = [s for s in other_syncs if re.search(r"(?<![\w])" + re.escape(s), block)]
     assert not present, f"the startup Job must run ONLY task_grant_sync, found: {present}"
 
@@ -194,7 +198,7 @@ def test_configmap_mode_render_carries_the_program_members_fatal():
         "--set", "topazSeed.policySource.configMap.name=iagent-policy-overlay",
     )
     i = out.index("name: t-task-grant-sync")
-    block = out[i:i + 4500]
+    block = out[i:i + 7000]
     assert "FATAL: policy overlay is missing program_members.yaml" in block
     assert "FATAL: policy overlay is missing task_grants.yaml" in block
     assert 'export PROGRAM_MEMBERS_FILE="$POLICY_DIR/program_members.yaml"' in block

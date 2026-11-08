@@ -39,34 +39,23 @@ class _Config:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
-# The gate: an ALLOW-LIST, not a blanket switch
+# The gate: a PERSON behind the run (architect ruling 2026-11-02), not a list of verbs
 # ══════════════════════════════════════════════════════════════════════════════════
 
-@pytest.mark.parametrize("verb,expected", [
-    ("mesh:seedPortfolioCanvas", True),
-    ("http://invincible-agent/mesh#seedPortfolioCanvas", True),   # tolerated, see below
-    ("mesh:queryKnowledgeGraph", False),
-    ("mesh:resolveInstance", False),
-    ("mesh:startReview", False),
+@pytest.mark.parametrize("who,expected", [
+    ("alice@example.com", True),
+    ("  alice@example.com  ", True),
     ("", False),
+    ("   ", False),
     (None, False),
+    ("svc:supervisor", False),
+    ("SVC:supervisor", False),
 ])
-def test_only_the_seed_verb_asks_for_the_callers_identity(verb, expected):
-    """SCOPED, DELIBERATELY. Flipping every specialist dispatch from `svc:supervisor` to the
-    caller's token is a behaviour change far beyond the seed — it would move every engine off
-    the service identity at once and take the OBSERVE-phase caller-readiness gauge with it.
-    That may be the destination, but it is a separate ruling with its own blast radius.
-
-    Both IRI forms are accepted because the registry stores verbs COMPACT today (verified
-    convention, 24 live rows) and a later expansion must not silently switch this gate OFF —
-    a silently-off gate here means a seed that 403s exactly the way it did before the fix.
-    """
-    assert ds._verb_needs_caller_identity({"verb_iri": verb}) is expected
-
-
-def test_a_missing_predicate_does_not_ask_for_an_identity():
-    assert ds._verb_needs_caller_identity({}) is False
-    assert ds._verb_needs_caller_identity(None) is False
+def test_a_run_has_a_person_when_user_email_is_a_non_service_identity(who, expected):
+    cfg = type("C", (), {"user_email": who})()
+    assert ds._run_has_a_person(cfg) is expected
+    # (the per-verb allow-list this replaced is sealed absent in
+    # tests/identity/test_the_dispatch_forwards_the_caller.py)
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -136,6 +125,10 @@ class _Resp:
 
 class _Ctx:
     run_id = "0f1e2d3c-run"
+
+    # Dagster's real OpExecutionContext has get_mapping_key(); a fanned-out execute_subtask always has one.
+    def get_mapping_key(self):
+        return "task_0"
 
     class log:
         @staticmethod
@@ -352,7 +345,7 @@ def test_an_unconfigured_service_identity_NEVER_CONTACTS_THE_VAULT(monkeypatch):
 
 
 def test_the_causes_are_DISTINCT_because_their_owners_are(monkeypatch):
-    """A service-identity fault is a deployment matter; an expired reference is 'ask again';
+    """A service-identity fault is a deployment matter; a consumed reference is "ask again";
     a replay is a security event. One shared cause would misdirect two of the three."""
     seen = set()
 
@@ -362,7 +355,7 @@ def test_the_causes_are_DISTINCT_because_their_owners_are(monkeypatch):
     monkeypatch.setattr(
         "agent_fleet.utils.service_identity.mint_supervisor_token", _mint_ok, raising=False
     )
-    for status, cause in [(404, "not_found"), (404, "expired"),
+    for status, cause in [(404, "not_found"), (404, "launcher_mismatch"),
                           (409, "already_redeemed"), (403, "not_the_redeemer")]:
         monkeypatch.setattr(
             ds.requests, "post",
@@ -372,7 +365,7 @@ def test_the_causes_are_DISTINCT_because_their_owners_are(monkeypatch):
             ds._redeem_caller_token(_Ctx(), _Config())
         seen.add(exc.value.cause)
 
-    assert seen == {"not_found", "expired", "already_redeemed", "not_the_redeemer"}
+    assert seen == {"not_found", "launcher_mismatch", "already_redeemed", "not_the_redeemer"}
     assert "service_identity_unconfigured" not in seen
 
 

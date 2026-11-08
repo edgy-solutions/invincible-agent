@@ -104,6 +104,9 @@ KNOWN_ARCHETYPES = frozenset({
     # frontend advertises it — not after. Four live-view archetypes were refused on their
     # first registration for exactly this.
     "MULTI_SERIES",
+    # The finance flow-map measure's shape (docs/plans/fin-variance-decomposition.md). Admitted
+    # HERE FIRST, before cortex renders it, for the same ordering reason as MULTI_SERIES above.
+    "FLOW_DECOMPOSITION",
     # THE FIRST ARCHETYPE THAT IS ACTED ON RATHER THAN DRAWN, 2026-08-26. "make me a portfolio
     # canvas" answers with slot-ordered artifact ids and `canvasSeedFromArtifact` arranges them;
     # no component renders it. Added HERE FIRST, before the binding exists -- the ontology class
@@ -161,6 +164,13 @@ KNOWN_ARCHETYPES = frozenset({
     # registration naming either was refused at the door with every other site green.
     "ILLUSTRATION",
     "WORKFLOW_CASE",
+    # MODEL_EXPLANATION, 2026-10-28 -- the NINTH round. cortex-ui 9b23135 declared its
+    # contract (src/archetypes/model-explanation/, behind the modelCanvas flag) as ADR-0057's
+    # explainModel read side, cortex-PROPOSED: no producer serves it yet, the same standing
+    # ILLUSTRATION had. test_every_bound_archetype_is_in_the_ADMISSION_VOCABULARY was red on
+    # master from then on, and three lanes stepped around it rather than read it. Site 1 only,
+    # as above: the projector row waits for a producer whose wire shape it would carry.
+    "MODEL_EXPLANATION",
 })
 
 # Field encodings a registered contract may declare. `json-string` is the one that

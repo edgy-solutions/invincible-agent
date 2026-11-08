@@ -11,7 +11,7 @@ N="${N:-6}"
 LABEL="${LABEL:-arm}"
 DA="${DA_URL:-http://localhost:18089}"
 KC="${KEYCLOAK_URL:-http://localhost:18083/realms/invincible-agent}/protocol/openid-connect/token"
-URN="urn:li:dataset:(urn:li:dataPlatform:dagster,mesh_demo_customers,PROD)"
+URN="urn:li:dataset:(urn:li:dataPlatform:s3,mesh_demo_customers,PROD)"
 QUERY="what is the breakdown of mesh_demo_customers by region"
 
 resp=$(curl -s -X POST "$KC" -d "client_id=cortex-ui" -d "grant_type=password" \

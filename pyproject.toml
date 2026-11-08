@@ -48,11 +48,13 @@ dependencies = [
     # rename into a metadata/name mismatch: uv refuses ("Package metadata name `edgy-dag-tools`
     # does not match given name `dag-tools`"), pip tolerates it. A Windows venv installed before
     # the rename kept working, so the break surfaced only on a fresh resolve — the floating-ref
-    # failure mode exactly. Pinned to a TAG; the import name is still `dag_tools` at v0.1.1.
-    # NOTE: agent_fleet/data_analyst pins the pre-rename SHA 61cbfa92 and is the only real
-    # importer. Moving it to v0.1.1 is an upstream UPGRADE, not this rename fix, so it is
-    # deliberately left alone — see the two-dists-one-module hazard if both land in one env.
-    "edgy-dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@v0.1.1",
+    # failure mode exactly. Pinned to one release (never a floating ref); the import name is still
+    # `dag_tools`. 0.11.0 (PyPI, built from 4924235) ships `central_gateway/gateway_routes.json`,
+    # which policy/sync/validate_policy.py reads for the gateway door's delegatable routes
+    # (01M6KF8279KZ843KG5MMM0R3YH).
+    # NOTE: agent_fleet/data_analyst pins the pre-rename SHA 61cbfa92, and agent_fleet/finance_agent
+    # pins v0.10.0, each in its own project. See the two-dists-one-module hazard if both land in one env.
+    "edgy-dag-tools==0.11.0",
     # PROMOTED from the dev group 2026-08-07. The projector and the sandbox domain broker are
     # mesh services that ship in the iagent image and now take the SDK's inbound transport-auth
     # dependency, so `iagent_mesh` must be present at RUNTIME. As a dev-only dependency it
@@ -63,7 +65,7 @@ dependencies = [
     # TODO(0.9.6): re-pin to the v0.9.6 TAG once it is cut. Pinned past v0.9.5 to lane/ca's
     # c5fec43 (branch only, no tag yet) for write_node on MeshGraphWriter — the ingest node's
     # move off raw Cypher MERGE needs it now.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.10",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.15",
     "mcp",
     # boto3 for cortex-bff's /federated_image endpoint: proxies MinIO image
     # reads through the same JWT + entitled_domains gate the rest of the bff
@@ -111,6 +113,10 @@ agent-fleet = [
     # file's sha256, and a test venv on another duckdb version verifies a container the engine
     # never writes. Before this line the importorskip("duckdb") sites skipped in every lane venv.
     "duckdb==1.5.2",
+    "openpyxl>=3.1.5",
+    "python-docx>=1.1.2",
+    # engine-r core (ADR-0062 section 2): libgit2, in-process, no git binary.
+    "pygit2",
 ]
 
 [dependency-groups]
@@ -139,7 +145,7 @@ dev = [
     # every engine's security behaviour at rebuild — the library-bump outage class with
     # credentials attached (cf. the doc-tools floating-@rev finding).
     # TODO(0.9.6): re-pin to the v0.9.6 TAG once it is cut — see the matching pin above.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.10",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.15",
     "provenance-telemetry==0.1.0",
 ]
 

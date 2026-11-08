@@ -59,6 +59,7 @@ DELEGATE = "svc:openddil"
 PRINCIPAL_ATLANTIA = "11111111-1111-4111-8111-111111111111"  # brokered sub (keycloak.brokers.openddil.principals)
 PRINCIPAL_BORDURIA = "22222222-2222-4222-8222-222222222222"
 PRINCIPAL_LIAISON = "33333333-3333-4333-8333-333333333333"
+PRINCIPAL_REGIONEAST = "55555555-5555-4555-8555-555555555555"  # ruled 2026-10-21 (6a10a62a)
 
 
 # =============================================================================================
@@ -349,7 +350,9 @@ def test_H_a_malformed_delegate_map_fails_closed(route, monkeypatch):
     resp = _act(c, on_behalf_of=PRINCIPAL_ATLANTIA)
 
     assert resp.status_code == 403, resp.text
-    assert resp.json()["detail"]["error"] == "not_a_delegate", resp.json()
+    # With no readable delegate map the caller is a plain service account, so the MCP door
+    # (seal 1) refuses it before the act's own `not_a_delegate` check is reached.
+    assert resp.json()["detail"]["error"] == "service_token_refused", resp.json()
     assert fake.posts == []
     assert calls["list_tasks_for"] == []
 
@@ -397,10 +400,10 @@ def test_I_the_base_chart_renders_an_empty_delegate_map():
 
 
 @pytestmark_helm
-def test_I_the_sandbox_renders_openddils_three_principals():
+def test_I_the_sandbox_renders_openddils_four_principals():
     data = _config_data(_render(*_SANDBOX_ARGS))
     parsed = json.loads(data[ENV_NAME])
-    assert parsed[DELEGATE] == sorted([PRINCIPAL_ATLANTIA, PRINCIPAL_BORDURIA, PRINCIPAL_LIAISON])
+    assert parsed[DELEGATE] == sorted([PRINCIPAL_ATLANTIA, PRINCIPAL_BORDURIA, PRINCIPAL_LIAISON, PRINCIPAL_REGIONEAST])
 
 
 @pytestmark_helm

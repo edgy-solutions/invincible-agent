@@ -35,6 +35,9 @@ from src.iagent import content_kinds as ck  # noqa: E402
 from src.iagent import gateway  # noqa: E402
 from src.iagent import human_tasks as ht  # noqa: E402
 from src.iagent import ingest_status as ist  # noqa: E402
+from tests._can_drop_open import can_drop_open  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("can_drop_open")
 
 _HEX = "a" * 64
 ID = "sha256:" + _HEX

@@ -1,5 +1,1126 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.83 — not yet cut
+
+- **A foreign delegate's attach is refused as `delegate_not_seeder`.** Chris, 2026-11-07 (saf):
+  the code is `delegate_not_seeder`, in `detail["error"]`. #289 refused it as
+  `not_the_seeding_delegate`; the behaviour is unchanged (403, nothing written), only the code
+  is renamed, at its one home (`workflow_runner.NOT_THE_SEEDER`) and the door's 403. saf's seal
+  `tests/test_a_delegate_attaches_only_to_a_case_it_seeded.py` loses its strict xfail.
+
+## 0.4.82 — 2026-11-08
+
+Entries merged after the 0.4.81 tag (`f08217b2`), cut by Chris's 11-07 train: "#290, #298, #300,
+#287 → #291 → #295, #294, #285, #271; then cut 0.4.82 (01fa313, the class mesh:FlowDecomposition,
+the seal change above)".
+
+**What the train names, and where each one is:**
+
+| item | where |
+| --- | --- |
+| #290 `/me/entitlements` serves the caller's capabilities (G6, ingest-v1 1.7.0) | merged at `c3b51ed7`; through the images |
+| #298 G5, every MCP route declares its 401 and 403 | merged at `fbe7b3e7`; through the images |
+| #303 master's PDP-503 red from #290, and G5's structural 403 member (ingest-v1 1.8.1) | merged at `71401055`; through the images |
+| #287 every brokered read carries a principal; a delegate attaches only to its own case | merged at `c9e676e9`; seal only |
+| #291 the foreign-delegate refusal names `delegate_not_seeder` | merged at `ee56706f`; seal only |
+| #295 the draft card task_id against the minted long form (strict xfail) | merged at `0d9d33b1`; seal only |
+| #285 a placeholder held in a tuple binds | merged at `3949ade8`; through the images |
+| #271 | already in 0.4.81; nothing to carry |
+| #300 the fleet on iagent-mesh v0.9.15 | merged into this cut; below |
+| #294 #255's two flow rows ship as samples | merged into this cut; below |
+| the chart-version seal | below |
+| `mesh:FlowDecomposition` | below |
+| `data_provenance` on MULTI_SERIES | below |
+| cortex 01fa313 | below |
+
+**Also in the range, docs and board only:** #292, #297, #302 and #304 (the board), #293 (ADR-0064
+signed), #296 (ADR-0067 references openddil ADR-0056), and #299 (ADR-0065 Proposed).
+
+**A pending bump is not drift: the chart-version seal (the architect, via Chris, 11-08).**
+
+- **What changed:** the release guard accepts a `## <next> — not yet cut` CHANGELOG entry as the
+  pending bump. It fails only when `helm/**` changes with neither a bump nor that entry. Before,
+  every `helm/**` PR merged between cuts turned master red (#277, #262, #300, #294).
+- **How:** `scripts/chart_version_seal.py` decides one of three verdicts.
+  - `release`: Chart.yaml's version is unpublished.
+  - `pending`: the version is published, and the CHANGELOG opens `## X — not yet cut` for an
+    unpublished X above it. The run publishes nothing and is green.
+  - `refuse`: neither a bump nor that entry. The 0.3.36 failure stays refused. A release whose
+    own heading still says `not yet cut` is also refused: the cut dates the heading.
+- `release-helm-charts.yml` runs it as step `version_seal` and gates every later step on
+  `pending != 'true'`. `tests/test_chart_version_seal.py` seals the verdicts, five near-miss
+  headings, the real files and the wiring.
+- **For lanes:** a PR that changes `helm/**` between cuts opens or extends the
+  `## <next> — not yet cut` entry at the top of this file.
+
+**The mcp-chart reference seal searches the chart, not the directory.** The test that the main
+chart does not reference `iagent-mesh-mcp` walked every file under `helm/invincible-agent`. So the
+prose in this file's 0.4.74 entry turned it red. It now applies the chart's own `.helmignore`, so
+`*.md` is out. A control shows that the same words in a CHANGELOG are not a hit and a planted
+template line is.
+
+**`mesh:FlowDecomposition`, a generic archetype (Chris, 11-07: "the archetype is not finance's").**
+
+- One total split into the parts it flows into, as a flat edge table, root edge first. It sits
+  beside `mesh:MultiSeries` in `setup/ontologies/mesh_system.ttl`.
+- It is step 1 of the flow order: this class, then fin's `menu:` block on the overlay rows, then
+  the projector row, then cortex's menu. No binding names it yet, so the flow card still draws
+  nothing on this cut. The projector row stays held on `lane/01-flow-decomposition-is-projected`
+  until fin's `menu:` block exists.
+- It reaches the graph at the next prime.
+
+**`data_provenance` arrives on the MULTI_SERIES card.**
+
+- The projector's MULTI_SERIES tuple gains `data_provenance`. fin sent it, and no card received it.
+  The target is `("rows", ("series", "reference", "verdict", "value_label", "scope_label",
+  "data_provenance"))`. cost's and safety's MULTI_SERIES producers do not send it, and an absent
+  key is not carried.
+- `tests/finance/test_provenance_arrives_whole.py` drives fin_burn_rate and
+  fin_performance_indices through their real routes and the real projector. The field arrives
+  verbatim, and a control watches it drop without the tuple entry.
+- **Still owed, by fin:** the ruled content is "dataset URN, as-of, ticket id". An asset answer
+  names its URN. It carries no as-of and no ticket id, because `asset_inputs.provenance` emits the
+  banner and ` Source: <urn>` only. That arm is a strict xfail and turns red when fin adds them.
+
+**cortex-ui frontend 01fa313 (`sha256:2b625433…`)**
+
+- It adds to 93d76e8: the flow card reads the served `render` block (0dc5366) and draws the
+  `data_provenance` banner (01fa313). Cortex's MULTI_SERIES card does not read `data_provenance`
+  yet; its validator ignores the extra key.
+- The flow card still draws nothing on this cut, for the reason above.
+
+**The fleet moves to iagent-mesh v0.9.15 (gov, ruled by Chris 11-07: "Pin moves are gov's rail").**
+
+- **What moves:** 17 pyprojects (the root has two lines), `domainBroker.meshSdkVersion`, and the 17 locks that pin the SDK. In each lock the only lines that change are the SDK's `rev`, its commit (`5a526b67`) and its `version`. `__all__` only grows between v0.9.13 and v0.9.15.
+- **Why:** lane 74's migration onto the SDK's DSL classes needs v0.9.15. v0.9.13's frozen `steps` tuple reported a phantom `too_short`; v0.9.15 replaces it with a model-level `_steps_are_present` check.
+- **Closed network:** v0.9.15's package calls itself 0.9.15. The v0.9.13 exception, where it built as 0.9.12, is gone, so `meshSdkSource: index` can serve this pin from an internal PyPI that holds the tag's sdist or wheel.
+
+- **engine-fin: the two flow-decomposition rows ship as samples** (#255's rows, architect dispatch
+  2026-11-06). `fin_flow_acwp` (verb `finFlowActualCost`) and `fin_flow_eac_variance` (verb
+  `finFlowEacVariance`) move from `tests/finance/overlays/` to `policy/overlays/sample/measure_verbs/`, which the sandbox
+  loads (`MEASURE_VERB_OVERLAY_DIRS`). So both verbs register at engine-fin's next start. Each row
+  reads the `ev_fixture` asset as the caller: a caller holding the reader grant on its URN gets the
+  edge table, and anyone else gets 403 `access_denied`. A caller with no bearer gets 401.
+  - **No new reader rows** (Chris, 2026-11-06). alice, an NP-MERIDIAN member, already holds the
+    `ev_fixture` grant. erin, also a member, stays the asset-gate refusal control. bob, who is not
+    a member, stays the program-gate control. Every persona who should see the rows already can.
+  - **Nothing here restarts a pod**: no chart template or values change. The verbs appear when
+    engine-fin next starts, which is at the next roll.
+
+## 0.4.81 — 2026-11-07
+
+Entries merged after the 0.4.80 tag (`73d18c23`), cut by the architect's 11-07 list.
+
+**This cut fixes master's red Build.** #277 (`9bb11c97`) changed `helm/**` while `Chart.yaml` still
+said 0.4.80, already published as `invincible-agent-0.4.80`, so the release guard failed the Build.
+Master's later Builds were green only because their release job skipped (no `helm/**` change). The
+bump to 0.4.81 is the fix.
+
+**What the architect's list names, and where each one is:**
+
+| item | where |
+| --- | --- |
+| #277 the sandbox fin dataset flag | below |
+| #276 the `can_decide:<workflow_id>.<option>` rail, validator only (ADR-0065 provisional) | in this range |
+| #281 ADR-0064 aligned to openddil ADR-0055 | in this range |
+| #283 an occurrence attaches to its open episode; the case read's new fields | below |
+| #289 a delegate attaches only to a case it seeded (saf's finding on #283; not on the architect's list, Chris's ruling for #283's security half) | merged at `2ebb91d0`; in the #283 entry below |
+| #280 fin: an asset-backed CDRL measure is read as the caller | merged at `b71a6aa2`; in the engine-fin entry below |
+| cortex 93d76e8 | below |
+| #260, the digest map, the pub-tools `ed93f7b1` pin, dag-tools v0.11.0, the acryl-datahub fix (#267) | already in 0.4.80; nothing to carry |
+
+The acryl-datahub pin is the lock: since #267, the control-plane image installs the version
+`uv.lock` names, and nothing re-resolves it (see 0.4.80's entry).
+
+Forks 1 and 3 of #251 (item `01M6KF81WMJJXVKQAP12M0QTMY`) are not built, so they are not in this
+cut.
+
+**Also in the range, all shipped through the images:** #257 and #271 (socratic v3, ADR-0061), #266
+(ADR-0064 Proposed), #268 and #282 (the `cleared_for:<level>` and `holds:<dimension>:<value>`
+rails, validator only), #270 (validate_policy reads dag-tools' `gateway_routes.json`), #272 (the
+course overlay pin), #273 and #274 (`mirror-to-artifactory.ps1 -Release`), #206 (the drift gate
+carries pytest's exit), #275 (`contracts/ev_fixture.yaml`), and #278 and #279 (board only).
+
+**An occurrence attaches to its open episode, and the case read serves its stage (#283)**
+
+- **`POST /ingest/events`:** a new occurrence while a case is open on its episode is recorded on
+  that case, and no run starts (`attached: true`). After the case closes, the next occurrence opens a
+  new case whose `predecessor` is the closed case. The same occurrence with the same bytes is
+  idempotent. If `CaseEpisode/attach` answers empty, the door returns 503 `runner_unavailable`.
+- **`GET /cases/{id}`** serves:
+  - the top-level `stage`;
+  - `output_artifact.artifact_id` and the record's own `label`;
+  - `options_declaration`, as `{definition_id, version}`;
+  - the options on a closed case;
+  - `episode_id` and `episode_id_source`, which is `event` when the detector carried the id
+    (OpenDDIL's `openddil_episode_id`) and `derived` when it did not;
+  - `predecessor`.
+- **A delegate attaches only to a case it seeded (#289).** Chris, 2026-11-06: "a delegate cannot
+  attach to a case it didn't seed". The episode records who seeded its open case: the caller's
+  `authz_id` when the caller is a declared delegate, nobody for a person. A delegate attaching to an
+  open case it did not seed gets 403 `not_the_seeding_delegate`, and nothing is written. Three
+  design calls:
+  - A delegate cannot attach to a case a person seeded.
+  - An episode opened before this change is compared on the seeder its case record names.
+  - If a foreign delegate's run loses the attach race, the run fails rather than attaching.
+  The ratchet classifies the new refusal site (`SEEDER`). The same PR fixes four tests that had been red
+  on master since #283: their doubles answered `attach` with an empty body.
+- **The roll:** the gateway and the runner change code only, with no chart value. In-flight runs
+  replay unchanged, because nothing new is journalled. A case opened before the roll has no
+  recorded seeder until the runner reads it once from the case record.
+
+**cortex-ui frontend 93d76e8 (`sha256:13e8dd5a…`)**
+
+- It adds to 26a2049: a refused seed panel says so, not only in colour; front matter draws as body
+  text; and the FLOW_DECOMPOSITION card.
+- **The flow card draws nothing on this cut.** The backend projector row for FLOW_DECOMPOSITION
+  (Chris, 2026-11-05) is built and sealed, but it is held off this cut on
+  `lane/01-flow-decomposition-is-projected`. No registered menu carries a FLOW_DECOMPOSITION
+  capability, so a served flow table is refused as "on no registered menu" with or without the row.
+  It waits on a menu row or a ruling.
+- The case-panel work that reads #283's fields (the artifact link, the options on a closed case,
+  `received` as "intake") comes after 93d76e8, so it is not in this cut.
+- **The roll:** the frontend restarts.
+
+**Sandbox: engine-fin reads its declared measures from the EV fixture (`FIN_DATASET_URN` is on)**
+
+- **The 0.4.80 line "Don't set it yet" is withdrawn** (architect, 2026-11-05). It was written before
+  the per-asset grant path existed. `engineFinance.env` in `values-sandbox.yaml` now sets
+  `FIN_DATASET_URN` and `FIN_DATASET_BANNER` to `contracts/ev_fixture.yaml`'s URN and banner, and
+  `tests/finance/test_the_ev_contract_agrees_with_the_reader.py` holds them equal.
+- **What it was measured on.** The live leg ran on 0.4.80 (rev 227) with the flag set by hand on
+  `deploy/iagent-engine-fin` and reverted afterwards. `tests/sandbox_e2e/test_variance_set_reads_the_ev_fixture.py`
+  passed 3 of 3: `fin_tcpi` and `fin_vac_cpi` over two windows, the allowed subject read the asset
+  (`data_source.kind: asset`, 12 `asset read` lines), and the denied subject got 403 `access_denied`
+  naming the asset.
+- **What changes for a sandbox caller:**
+  - A declared measure needs a grant on the asset. Without one, the answer is 403 `access_denied`,
+    never the seed.
+  - **A CDRL sourcing a declared measure reads the asset, as the caller** (architect, 2026-11-05:
+    the 409 was a defect, not a consequence; profiles unchanged). All three sample profiles source
+    `fin_tcpi` beside the built-in `fin_performance_indices`. Each source runs through
+    `_measure_envelope`, the function `/measure/{fn}` serves, so a CDRL holds the figures the canvas
+    shows. The caller's grant on the asset is checked before anything is measured or written (403
+    `access_denied`, as `/measure` answers). The program's name and id come from the asset. Each
+    entry in the envelope's `sources` carries `data_provenance`, plus `data_source` for an asset
+    read, and the envelope gains `program_source`.
+  - **`GET /artifact/{filename}` checks the fetcher's grant** for a CDRL whose profile sources an
+    asset-backed measure, so a fetcher without the grant cannot read the figures out of another
+    caller's file.
+  - **A package export naming a declared measure is still refused with 409
+    `asset_export_unsupported`.** `state_sha256` cannot describe a package with two sources, and what
+    a recipient reader without the grant may read is a separate, unruled question.
+  - Built-in verbs keep answering from the seed. With the flag on, a subject without the asset grant
+    still gets the same program's built-in figures from the seed.
+- **The roll:** engine-fin's pod template gains two `env` entries, so engine-fin restarts. Nothing
+  else in this entry restarts a pod.
+- **The live check runs right after the roll** (Chris, 2026-11-06, replacing the architect's
+  11-05 "does not roll until CDRL export works on `fin_tcpi` with the flag on"). The flag is on
+  through the values. A granted and a denied caller run three times each, plus one CDRL export
+  each, and fin runs it. If either caller fails, the sandbox rolls back to rev 227 under the same
+  lock, and #280 is fixed forward.
+
+## 0.4.80 — 2026-11-05
+
+Released from `73d18c23` (tag `invincible-agent-0.4.80`). Entries merged after the 0.4.79 cut
+(`758811d7`). Forks 1 and 3 of the delegate ruling (#251), which
+were to land here, move to 0.4.81 (architect 11-05).
+
+**Every image the chart runs is pinned by digest (architect 11-04)**
+
+- **One map holds the digests, and the release carries the file.** `global.imageDigests` is keyed
+  `<registry>/<repository>`; a row renders the image as `<registry>/<repository>@sha256:...`, and a
+  `digest:` at a call site still wins. The prefix test the helper used to run (2026-09-09) is gone: a
+  map lookup pins an image or does not. The release workflow now writes
+  `values-release-<version>.yaml` (ours from `image-digests.json`, third party from the digests
+  `values.yaml` pins, each confirmed in its registry by digest) and attaches it to the chart release.
+  It renders the chart with that file, and again with every optional workload on, and fails the
+  release before publish if any container or initContainer image is not `@sha256:`.
+- **The roll reads that file and resolves nothing.** `scripts/upgrade-sandbox.sh` downloads
+  `values-release-<version>.yaml` from `invincible-agent-<version>`, renders it last, seals the
+  render, and stops on any tag-only image. A release without the file (0.4.79 and earlier) can't be
+  rolled by it. `--set global.imageTag=...` is refused; a roll is of a released version.
+- **Base moves to what sandbox ran.** `postgresql.image` is `bitnamilegacy/postgresql` and
+  `utilImages.mc` is `ghcr.io/edgy-solutions/mirror/mc`, at today's tags; `dagster.userCode` defaults to
+  the control-plane image, because the old default, `dagster-user-code`, has never been built (GHCR
+  answers 403 at every tag) and could never have had a digest. The sandbox rows that became identical to
+  base are deleted.
+- **Sandbox moves two images.** dag-tools goes from `4096a11`'s digests to v0.11.0's (tag `0.11.0` in
+  base), and pub-tools is pinned at `ed93f7b1` (`master` build of 1aa2cbe, reviewed 09-23); sandbox ran
+  `1555b341` ("not reviewed") until now, so the roll moves it back. **What sandbox loses:** `1555b341` is
+  source `e5612fa`, one commit past `1aa2cbe`, and that commit carries two changes: the PUB LOG CP1252
+  byte repair and the V_CHARACTERISTICS overflow fold. Because it is more than the CP1252 fix, the
+  architect ruled on 11-05 to keep `ed93f7b1` and carry both forward on a reviewed build (board
+  01M6P5ZAJ382FBHEQDA23941EA).
+- **`values-roll-frontend-digest.yaml` is retired.** It was the 09-23 order's file: pub-tools `ed93f7b1`
+  reviewed and `1555b341` not, and the four digests it carried. The frontend digest it fed now lives in
+  `global.imageDigests` with its pin history, and the dag-tools and pub-tools pins are above.
+
+**acryl-datahub comes from the lock in the control-plane image (Chris 11-05, board 01M6MZ6HK5PMK9VQ2PM95DC7E2)**
+
+- **The unversioned install after the locked sync is gone** (`.github/docker/Dockerfile.dagster`). The root
+  `pyproject.toml` declares `acryl-datahub>=1.7.0`, so `uv sync --locked` already installs the version
+  `uv.lock` names. The old line re-resolved it from PyPI at build time, and its transitive pins with it.
+- **A seal holds the line:** `tests/test_no_unversioned_install_after_a_locked_sync.py` reads every
+  `.github/docker/Dockerfile*`. Its one remainder is the agent image's `packaging setuptools wheel`, which
+  isn't changed here because that would change every engine image (board 01M6N07ZJJ37W9NQ7KGRE1VRW9).
+
+**The demoSeed's DataHub owners are the canonical users (G3 note, the two alice objects)**
+
+- **`scripts/seed_datahub_catalog.py` names `alice@example.com` and `bob@example.com`,** the
+  `policy/users.yaml` rows. Before this it named `@company.com`, and `datahub_topaz_sync` created a second
+  Topaz user from each owner.
+- **charlie@company.com and dave@company.com are unchanged.** They have no canonical row to move to.
+- **Operator steps, not done by the chart, in this order:**
+  1. Re-run `scripts/seed_datahub_catalog.py` against the cluster's DataHub, or edit the owners there.
+     A roll doesn't do this unless `demoSeed.enabled` is set, and sandbox doesn't set it. Until then,
+     DataHub keeps the `@company.com` owners.
+  2. Run `datahub_topaz_sync`. It moves each owner relation to the `@example.com` user and prunes the
+     old one.
+  3. Delete the Topaz users `alice@company.com` and `bob@company.com` by hand (live write). The sync
+     ensures owner users and never prunes one, so a delete before step 1 is undone by the next sync.
+
+**Every Job and CronJob pod names its component.** The `restate-init` and `db-init` pods now carry
+`app.kubernetes.io/component`, and the NetworkPolicy join seal reads pod-template labels across
+Deployments, StatefulSets, Jobs and CronJobs. This is preconditions 1 and 2 of the NetworkPolicy gate-on
+(board item `01M6MCV3QR2YEBC6WQFAMQ52M1`). No NetworkPolicy is enabled. Both Jobs are hooks, so the changed
+pod template is recreated, not patched.
+
+**`validate_policy` composes export profiles with the SDK (architect 10-30, fork 7)**
+
+- **The composition is `iagent_mesh.compose_export_profiles`,** with one row per kind in the new
+  `policy/export_profile_sources.yaml`. The validator's own copy and its kind-label table are gone. The
+  three engine loaders still read their own constants, so the file restates them, and a seal goes red
+  when a loader renames one. Moving the engines onto the file is 01M6A9QDN1GQ20347W16EM0D3X.
+- **A profile file the old copy skipped is now refused:** an empty or nameless file, two files of one
+  name in one directory, and a tombstone for a name nothing before it ships. Every profile in this
+  repo passes. A refusal stops the seed job before any write, so check a deployment's own
+  export-profile overlays before its next sync.
+- **Refusals name the kinds `review-export`, `answer-export` and `fin-cdrl`** ("fin CDRL" before).
+- **The validator imports the SDK.** The seed job and the documented policy-repo CI form
+  (`policy/README.md`) both run it from the cortex-bff image, which carries it. A CI that runs it
+  from a bare Python with `policy/sync/requirements.txt` fails at the import.
+
+## 0.4.79 — 2026-11-04
+
+Entries merged after the 0.4.78 cut (`8a2717e0`). Released at 21:35Z on 11-04 from `758811d7`, the #251
+merge. Chart.yaml was already at 0.4.79 (`988a0e14`), and the master-push build releases any version that
+isn't published yet. Until 0.4.80's PR this header said "not yet cut", which was wrong from 21:35Z on.
+The release carries `image-digests.json` and the chart, and no `values-release-0.4.79.yaml`: that file
+arrives in 0.4.80, so `scripts/upgrade-sandbox.sh` as of 0.4.80 can't roll 0.4.79. Sandbox never ran it.
+
+**The fleet moves to iagent-mesh v0.9.13, and the BFF's refusal goes through its `PartialRefusal`
+(architect 10-31, fork 2)**
+
+- **Every engine image re-resolves one package, and the broker takes the new tag.** The lock diff is the
+  SDK's own lines. Don't split the fleet: the pin is one value by construction.
+- **v0.9.13's package calls itself 0.9.12.** A pod reports 0.9.12 from `importlib.metadata`, and that's
+  the tag's defect, not a failed roll. Import `PartialRefusal` in the pod to tell them apart.
+- **Closed network: `meshSdkSource: index` can't serve this pin.** It installs `iagent-mesh==0.9.13`, which
+  isn't on PyPI and can't be built from this tag. The default `url` source isn't affected. A deployment on
+  `index` waits for the SDK's patch release.
+- **A review-shape row that sets `item_kind` and leaves out `rules` is now invalid.** It's logged and left out
+  of `GET /review-shapes`, and `validate_policy` refuses it. Say `rules: []`. Every row in this repo already
+  does; check a deployment's own overlay before the roll.
+- **`docs/api/cortex-bff.openapi.json` moved.** `ReviewShapeRow`'s `item_kind`, `rules_version` and `rules` are
+  now optional and nullable, for card-only rows. No such row is seeded, so what's served
+  doesn't change, but cortex's generated types will when it next moves its producer pin.
+- **A well-formed refusal is unchanged.** What changes is the malformed case. An engine's refusal that can't
+  be completed, or a grantor map that won't load, relays the deny without its `refusal` object and logs an
+  error; it was a 500 or an odd envelope. A blank or non-string candidate at a BFF site is omitted and
+  logged.
+
+**The case-runner routes bound the person they name.** `POST /internal/origin/write`,
+`/internal/cases/{id}/action-record`, `/summary` and `/seeded-by` check the name they are given against what
+can vouch for it: the caller's declared delegate list, the case's seeding delegate, or a person who holds a
+task on that case. Each admit and refusal logs one line on `iagent.audit.delegate_named`. A missing `program`
+(and `owner_domain`, `obtained_via`) on an origin body is now a `write_refused`, not a 500. The runner's
+action-record write retries on a 503.
+
+**⚠ A case in flight at the roll has no `case_id` on its `written` step and will be refused** (422): the
+`origin_record` definition now sends `case_id`, and `origin/write` requires it. List the in-flight
+`origin_record` cases first, and let them finish or re-run them after the roll.
+
+**`/internal/human_tasks/register` is gated on a service identity.** The caller must be `requested_by`
+itself, a service listed for `human_tasks.register` on a `door: bff` row of `policy/gateway_delegates.yaml`
+(seed rows: `svc:review-starter`, `svc:case-runner`), or a declared delegate naming a principal declared for
+it; anyone else is 403 `not_a_delegate` or `principal_not_declared_for_delegate`, logged on
+`iagent.audit.delegate_named`. A deployment that registers tasks from another service needs a `door: bff` row
+for it before this roll (in its policy repository, or a file mounted at `GATEWAY_DELEGATES_FILE`).
+
+**`cortex-bff` and the code location must roll together.** The route needs the field the new definition sends,
+and the definition sends it to the route.
+
+**A gateway delegate row says who ratified it (architect 11-04, on #224)**
+
+- **Every row in `policy/gateway_delegates.yaml` carries `reason` and `ratified_by`,** and
+  `ratified_by` names a seat such as `owner`, never a person. `validate_policy` refuses a row
+  without either. Nothing reads the file yet, so no answer changes; a deployment's own overlay
+  rows need the field before their next sync.
+- **A `pipeline:<name>` service gets its own refusal:** a run with no person acts as itself and is
+  never a delegate row.
+- **`GATEWAY_ROUTES` records the dag-tools commit and gateway image it was copied from,** and a seal
+  goes red when the chart pins another gateway image without the list being re-read. It stays a
+  copy until dag-tools publishes `gateway_routes.json` (01M6KF821P2C3KRQN86FF0N61N).
+
+## 0.4.78 — 2026-11-04
+
+**0.4.77 stands as cut at `8fc02746` and rolls nowhere. The sandbox goes from 0.4.75 to this chart.** This
+section holds everything merged after that commit. 0.4.77's section is unchanged, and its rows, images and
+notes all reach the sandbox with this chart, as 0.4.76's do.
+
+**⚠ This chart carries the identity vault (#229), and by the architect's ruling of 2026-11-03 it does not
+roll until cortex's paused-run card ships or the Keycloak exchange is configured.** Neither is true at this
+cut. No values file sets `IDENTITY_EXCHANGE_*`, and the card (spec: `run-reauth-card.md` in cortex-ui)
+is not in the cortex pin below. Without one of them, a run whose token nears expiry pauses with nothing to
+show the person, and it holds one of the two run slots until its budget ends.
+
+**So this chart can't meet that ruling as cut, on either branch.** The card takes a later chart: this one pins
+cortex by digest to an image without it, and `paused_call`, `instruction` and `GET /me/paused-runs`, which the
+card reads, aren't in this tree. The exchange needs a Keycloak client with token exchange switched on, and
+`realm-reconcile-job` sets no per-client attributes, so it takes a chart change too unless that client is made
+by hand. Rolling this chart anyway takes a new ruling.
+
+**⚠ Once that is settled, in this order:**
+
+1. **Make the release tree.** `scripts/upgrade-sandbox.sh` now refuses (exit 4) unless HEAD is the tag named
+   by `Chart.yaml` and the tree is clean. The recipe is in `docs/runbooks/rolling-a-service.md`.
+2. **One `topaz_sync`, from this tag's policy.** It is the sync 0.4.77 names: `training-admins`,
+   `alignment-reviewers` and the `safety_finding_review:SUSTAINMENT` audience. `recipient_reader_sync` is not
+   owed. Nothing merged since adds a group; the `task_grants.yaml` changes are `granted_by` only.
+3. **`grant_sync`, only after the catalog holds the `s3` object.** 0.4.77's note applies unchanged: until
+   then it exits 3 and applies nothing, and no hook runs it, so it cannot stop a roll.
+4. **Roll.** `cortex-bff` and the code location move together, which one helm upgrade does.
+
+**The `training-workbench` bucket and its grant are already on the sandbox**, made and applied by hand on
+2026-11-04. The hook finds the bucket there. Nothing is owed for it.
+
+**Images: cortex-ui stays at `26a2049`** (`sha256:3077dfa6…`), as 0.4.77 pinned it.
+
+**Images: the central gateway is pinned to `sha-4096a11`** (`sha256:ac93ba19…`). It ran `latest` with
+`pullPolicy: Always`, so the image it restarted on was whatever that tag named. This delivers dag-tools #6
+(the gateway verifies a token before deciding who a request reads as) and #8 (a service token on the two
+internal doors).
+
+- **Both stay in `observe`, so no call is refused for this.** `GATEWAY_IDENTITY_POSTURE: "observe"` is now
+  set in `values-sandbox.yaml`, because any value the gateway doesn't recognise means `enforce`.
+  `INTERNAL_DOOR_POSTURE` stays unset, which means `observe` on both doors.
+- **`iagent-domain-broker` (`python:3.12-slim`) and `iagent-pub-tools-broker` (`pub-tools:latest`) don't
+  move.** They are not dag-tools images.
+- **To roll back, pin the digest it runs today** (`sha256:eee15c15…`). Deleting the line falls through to
+  `latest`, which is now this image.
+
+**Images: the dag-tools user deployment moves to `sha-4096a11`** (`sha256:44c54e5a…`, from `sha-6609fe6`).
+Its two pods roll with the chart: the code location and the broker. This is what delivers `ev_fixture`,
+dag-tools #6 and #8 (both from their PR bodies default to `observe`) and the commits since the old pin.
+
+- **The image re-resolves, so 59 of its 156 packages changed,** including polars 1.44 -> 2.1 and protobuf
+  6 -> 7. `values-sandbox.yaml` has the list and what was measured off-cluster.
+- **After the roll, read the pod:** `sqlalchemy.__version__` should be 2.0.57 with the psycopg2 dialect, and a
+  sensor tick shouldn't raise. No sensor has run on these versions, and neither has a write to the object store.
+- **`ev_fixture` is materialized by hand, afterwards.** Nothing reads it until `FIN_DATASET_URN` is set, and
+  that stays unset.
+- **To roll back, restore the old digest.** Deleting the line falls through to `latest`.
+
+**Engine changes (engine-fin can read a declared measure's rows from an asset, off by default)**
+
+- **`FIN_DATASET_URN` unset changes no answer.** There is no read, the client isn't imported, and the
+  envelope is today's. Set, a declared measure computes over rows read as the caller, and a failed
+  read never falls back to the seed. Don't set it yet: `docs/plans/fin-inputs-resolver.md` lists what
+  has to be true first, and nothing here has run on a cluster.
+- **The engine-fin image grows by about 242 MB with the flag on or off** (`polars` and
+  `edgy-dag-tools`, +30 packages). They're imported only when the flag is set.
+- **A chat-dispatched denial now reaches request-access.** `_refusal_from_engine_4xx` carries `status`,
+  `denied_assets`, `subject` and `message` when, and only when, the engine says `access_denied`.
+- **`docs/runbooks/adding-an-engine.md` changed, so its row in `setup/ontologies/docs_corpus.ttl` moved
+  with it.** The next prime re-reads that one page.
+
+**Policy changes (the grantor a shipped row names)**
+
+- **Every row this rail added says `granted_by: seed`**, as a shipped row must (ruled 2026-10-31).
+  18 rows had reached master naming a person: 12 in `repository_paths.yaml` and 5 in `task_grants.yaml`
+  from #149, and `safety_finding_review:SUSTAINMENT` from #141. 0.4.76 carries them. The field is a
+  record; no answer changes.
+
+**Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
+
+- **New file `policy/configure_subjects.yaml`**, the registry of configure subjects (ruled
+  2026-11-02): `validate_policy` refuses a `can_configure:<S>` key whose S is not in it, so a misspelt
+  key fails the seed before any write. It ships in the cortex-bff image and is not a data file: a
+  deployment's policy repository does not carry it. An overlay's `can_configure:` row names a subject
+  registered here.
+
+**Policy changes (which service may name a person on a central-gateway route)**
+
+- **`policy/gateway_delegates.yaml` and `policy/grantors/gateway_delegates.yaml` are new.** No reader
+  yet: the gateway's `is_delegate` seam still answers no, so this release changes no answer.
+  `validate_policy` checks the rail when present. A row's `service` must be a seeded `svc:` identity
+  and each route a known one. First row: `svc:data-analyst` on `assets.authorize`.
+
+**An authorizer outage (architect ruling, the transport half of 2026-11-02's malformed-answer class)**
+
+- **A Topaz that cannot be reached, or answers a non-2xx, is a 503 at the sites 0.4.76 lists under
+  "A malformed PDP answer"**: 0.4.76 says it is still a deny, and it no longer is. **This changes what
+  callers see during a Topaz blip:** a 503 where it was a 403, and neo4j and weaviate fail the run
+  terminally with a 503 where they gave a partial answer. A deny was terminal too, so terminality does
+  not change. Still a no: a 404 from a directory check, an unset directory URL, an empty identity, and
+  a defect in the asking code. A 404 from a decision (`/api/v2/authz/is`) is a 503. The sandbox's Topaz
+  answers an ungranted or unknown subject 200 `check: false`, read live, so an ordinary "no" does not
+  become a 503. weaviate's retrieval failures stay the tool's own error. No values change.
+
+**The identity vault is one reference per run, redeemed per call (architect ruling 2026-11-03)**
+
+- **Redemption is per call, not per fan-out slot.** The supervisor sends a `call_id` with each
+  outbound call; two calls with two ids both get the person's token, one id twice is a 409 and an
+  ERROR audit line. Every leg that speaks for the person redeems: `/plan`, `/resolve`,
+  `/classify_predicate`, the analyze call, the enumerator, `/fill_slots`, the dispatch, `/support`
+  and `/render_ui`. A vault refusal fails the step and is never absorbed into a fallback answer.
+- **The 600 s bound is gone.** The reference lives as long as the run's budget:
+  `IDENTITY_VAULT_TTL_SECONDS` on `cortex-bff` renders from `dagster.runMonitoring.maxRuntimeSeconds`
+  (one source). Near the token's expiry the gateway asks Keycloak for a fresh token through
+  `identity_exchange`; if that fails the step pauses as `awaiting_reauth`.
+- **New SSE events** `run_awaiting_reauth` and `run_reauth_resumed`, on the run stream; the status
+  union is unchanged, so an older cortex ignores them.
+- **New door** `POST /orchestrate/{run_id}/reauth`: the person presents their own fresh token. An
+  absent run and another person's run answer the same 404.
+- **`cortex-bff` and the code location roll together.** An old supervisor's redeem sends no `call_id`
+  and gets 422.
+- **The Keycloak exchange is unset by default.** `IDENTITY_EXCHANGE_TOKEN_URL`,
+  `IDENTITY_EXCHANGE_CLIENT_ID` and `IDENTITY_EXCHANGE_CLIENT_SECRET` are set by no values file, so
+  near-expiry goes straight to `awaiting_reauth` until a deployment sets them.
+- **A subtask dispatched for a person always carries that person's token, on every verb (#213).** Before,
+  five verbs forwarded it. An engine that checked the service's grants now checks the person's, so **an engine
+  answer can change** for a person who lacks a grant the service holds. Cost and ontology did not answer the
+  packet that asked about this. A run with no person keeps today's service token until the pipeline principal
+  is built.
+
+**The upgrade script rolls from the release tag (architect ruling 2026-11-03).** See step 1 above.
+`--dry-run` still renders from any tree and says when that tree could not roll, so the values diff can be
+taken anywhere. `docs/runbooks/rolling-a-service.md` changed, so its row in
+`setup/ontologies/docs_corpus.ttl` moved with it, and the next prime re-reads that page.
+
+**No deploy effect:** #236, #239 and #241 (seals, with six strict xfails that the identity fix removes), and
+#234 (`board/`).
+
+## 0.4.77 — 2026-11-04
+
+Entries merged after the 0.4.76 cut (`ce589473`), up to `ee07dfe8`. **Roll this chart, not 0.4.76.**
+
+**What was wrong with 0.4.76**
+
+- **Its post-upgrade prime would refuse where `primeSubstrate.enabled` is true, as it is on the sandbox.**
+  #212 edited `docs/runbooks/rolling-a-service.md` and left `setup/ontologies/docs_corpus.ttl` stale, so
+  `upload_doc_pages` raises `REFUSED: docs_corpus.ttl has drifted`. The job has `backoffLimit: 0`, and
+  the later hooks would not be created. Measured with the prime's own predicate against the tag, which
+  named that one page; 0.4.76 was never rolled. #230 regenerated the corpus. The tag stays where it is.
+- **Its note said there was no prime step.** The prime hook runs on every upgrade where it is enabled.
+- **17 shipped rows carry a person as grantor** (`policy/repository_paths.yaml`, `policy/task_grants.yaml`),
+  and this chart still carries them, with saf's one row, until gov's #221 lands. The seal
+  `test_a_shipped_grantor_is_the_seed` is red on both params.
+
+**The sandbox reaches this chart from 0.4.75, so the 0.4.76 section's rows and images come with it.**
+
+**Sync: one `topaz_sync` before the roll**, covering `training-admins`, `alignment-reviewers` and the
+`safety_finding_review:SUSTAINMENT` audience. `recipient_reader_sync` is not owed.
+
+**The `mesh_demo_customers` grant moves to the `s3` form** (Chris, 2026-11-03), the form of the live route
+key. **The `s3` object is not in the sandbox directory**: a lookup answers 404, with `p_cage` as the
+positive control at 200, and the `dagster` object still answers 200. So `grant_sync` run on this file
+would refuse the whole file (exit 3, nothing applied) until the catalog sync has added it. No hook runs
+`grant_sync` on the sandbox, so this cannot stop a roll. Whether the catalog holds the `s3` form is not
+measured: the search answered 401, and no token was fetched to get past it. Until it is applied, alice's
+`dagster`-form relation stays in the directory and the demo read stays as it is.
+
+**A bucket for the training workbench.** `minioBucketInit.buckets` gains `training-workbench`. The grant is
+**not in this chart**: the workbench's MinIO user is hand-provisioned and interim (ADR-0060 pending), so a
+hook could not attach to it on a fresh install. `setup/minio/wb-deck-templates.policy.json` holds the
+policy (read, write and delete on `templates/*`, list on that prefix only), and it is applied by hand
+after the bucket exists. Work needs the same bucket, policy and store value.
+
+**Images.** A chart bump restarts every pod. **cortex-ui** is pinned to `26a2049` (`sha256:3077dfa6…`): on
+top of `e06e08a`, a payload that claims the document shape and cannot be read says why; k of n holds the
+first total and names refused panels; a card the answer declared no longer reads NOT declared.
+
+**Policy changes (a course is reviewed as a document: `review_shape: document`)**
+
+- **The `course` content kind now declares `review_shape: document`** (it declared `course`, a shape
+  no card keys on). A course's promotion task payload carries `review_shape` and `sections[]`
+  (`{section_id, title, page, page_end?}`), read from the `extraction.json` beside the manifest, ids
+  derived by the training contract (`{ingest_id}_s{i}`, nested `{parent}_s{i}`). A promote's
+  `review_coverage` with `item_kind: section` is verified against exactly that stored list. One bad
+  row, or no readable outline, leaves `sections` absent (never partial, never empty): the card shows
+  its reason line and a coverage answers 503 `review_coverage_unverifiable`. A `notice` task's payload
+  is unchanged. The `course` row in `policy/review_shapes/` stays.
+- **Dormant until doc-tools #172 is deployed**: no course extraction carries the outline before it,
+  so until then every course task files without `sections`.
+
+## 0.4.76 — 2026-11-03
+
+Entries merged after the 0.4.75 cut (`aac9900b`), up to `121272dc`.
+
+**A malformed PDP answer (architect ruling 2026-11-02, the same class as 2026-10-31's non-boolean `check`)**
+
+- **A malformed answer is a 503 at every site** (ruling 2026-11-02), including the ones where every
+  other failure is a deny: docs, neo4j, weaviate, ontology, datahub, the SPO executor, the review
+  starter and the BFF's `check_can_act` / `check_can_invoke`. At a Restate engine it is a terminal
+  failure carrying 503, and neo4j and weaviate discard the model's answer. A transport outage at
+  those sites is still a deny. No values change.
+- **`POST /internal/origin/write` answers 503 when program membership cannot be checked** (Topaz down or a
+  malformed answer); it answered 500.
+- **The autonomous run's `can_invoke` gate now fails terminally on a deny, as its comment said.** It
+  raised inside `ctx.run` and translated outside it, so Restate retried a deny as transient.
+
+**Policy changes (ADR-0062 section 5: the repository-paths rail)**
+
+- **Five new `task_grants.yaml` audiences**: `repo_review:POLICY`, `repo_review:ADR`,
+  `repo_review:FIXTURES`, `repo_review:SESSIONS` and `repo_release:invincible-agent`, each
+  `grant_to` alice and bob; `repo_review:POLICY` and `repo_release:invincible-agent` also carol
+  (ruled 2026-10-29: a two-approver change or release tag keeps two eligible approvers after the
+  proposer).
+- **`access_grant:DATA_ENGINEERING` gains bob** (ruled 2026-10-29), so the rail's
+  `policy/asset_grants.yaml` row (`access_grant:<DOMAIN>`, per changed row, at 2; fallback
+  `repo_review:POLICY`) can be satisfied. bob can now approve DATA_ENGINEERING access requests; the
+  sandbox grantor overlay names alice or bob.
+- **No new group or user, so no `topaz_sync` precondition**: alice, bob and carol already exist in
+  `users.yaml`. The audience changes ride the next planned fleet release.
+- **`policy/repository_paths.yaml` and `policy/grantors/repository_paths.yaml` are new**, consumed
+  by engine-r only (it reads its baked copy; there is no sync). `validate_policy` checks the rail
+  when present.
+
+**Policy changes (who may configure: `can_configure:<subject>`, architect ruling 2026-11-02)**
+
+- **New group `training-admins`** (capability-only, no persona.domain cell); sandbox member alice.
+- **Row `can_configure:deck_template`**, `granted_by: seed`, `grant_to_groups: [training-admins]`.
+  Deny-by-default: the surface that changes a configuration asks `can_invoke` on
+  `can_configure:<S>`, so a subject with no row is configurable by nobody. **Inert in this chart**:
+  the check belongs to the workbench, which does not ask yet.
+- **`alignment-reviewers`' sandbox member moves from bob to alice** (#204, architect ruling
+  2026-11-02). 0.4.75's policy still names bob.
+
+**⚠ Before installing, in this order:**
+
+1. **`topaz_sync`, by a human, in the form that reads this release's policy** (the command is in
+   0.4.75's entry). It adds `training-admins` with alice, and moves `alignment-reviewers` to alice.
+   Without the group, the hook's capability leg exits 5 and the release fails. Run on an older image
+   with `--policy-dir policy/`, `topaz_sync` deletes the group, because that image's policy does not
+   name it.
+2. **This chart's roll.** Its hook's `capability_grant_sync` writes the row. Until it runs, `can_invoke`
+   is false for everyone, alice included.
+3. **The workbench roll that carries the check.** Before steps 1 and 2, that check refuses everyone.
+
+**Policy changes that ride this chart, with no entry of their own above**
+
+- **`safety_finding_review:SUSTAINMENT`** (#141, ADR-0063 section 2): a new `task_grants.yaml` audience
+  granted to the existing `safety-engineers` group, plus its workflow and task-kind rows. No new group
+  or membership. The row's own comment gives the order: merge, `topaz_sync`, roll.
+- **The `course` overlay row** names `training.baml::ExtractSectionConcepts` and `concepts.normalise`
+  (#209).
+
+**The sync above is the only one owed.** One `topaz_sync` covers `training-admins`,
+`alignment-reviewers` and the new audience. `recipient_reader_sync` is not owed, because its file has
+not changed since 0.4.75. No ontology file changed either, so there is no prime step and no edge to read.
+
+**Images.** A chart bump restarts every pod.
+
+- **cortex-ui** is pinned to `e06e08a` (`sha256:2ed53946…`): #62 on top of `8afc0e7`, the document
+  review card, chosen from the served review-shape list. **Dormant here:** no kind declares
+  `review_shape: document` and no task serves `sections[]` in this chart, so no card changes.
+- **cortex-bff** and every engine the malformed-answer entry names carry that change.
+- **restate-analyst** (#208): the Socratic elicitation's confirm and structural-error rules (ADR-0061).
+  The module still ships with no route, verb or canvas.
+
+**The central gateway's verified identity is configured here, and not yet in force.** Sandbox values
+now set `GATEWAY_JWKS_URL` and `GATEWAY_JWT_ISSUER` on `centralGateway`. **Neither does anything until
+a dag-tools image carrying PR #6 is deployed.** That PR is open for Chris to merge, and this chart does
+not change the gateway's image. When it lands, the posture defaults to `observe`: requests are still
+served and a would-be refusal is logged. Do not set `enforce` before that log reads clean and the
+delegate rail exists.
+
+**Merges with no deploy effect:** #203 and #195 (tests), #212 (tests and a runbook section), #211 and
+#216 (board), #123 (ADR-0062), #214 (docs). **Not in this release:** #206, whose drift gate is still
+red, and #213, which changes who engines are asked as and waits on the owners' replies.
+
+## 0.4.75 — 2026-11-02
+
+Cut from master `caf560d9`. It carries every master merge since 0.4.74 (`ab339ceb`): #198, #194,
+#190, #191, #196, #193, #201, #199, #200, #202, #192, #187 and #205. Not in it: #203 (saf, open),
+#204 (gov, open), #206 (the drift workflow's exit code, open, CI only), #195, #149, #141 and #123.
+
+**Images.** A chart bump restarts every pod.
+
+- **cortex-ui** is pinned to `8afc0e7` (`sha256:8c60760d…`). That is #61, where `review_coverage` is
+  sent in the **item** form, plus `6c2f0cc` (New Canvas seeds once). Nothing changed in the Dockerfile
+  or `package.json`, `build.yml` changed only at its `PRODUCER_REF` contract pin, and no new
+  `import.meta.env` read was added.
+- **The legacy `review_coverage` parts form is still accepted.** Fork 3, which deletes it, lands only
+  after this pin has rolled, because the cortex in 0.4.74 still sends parts behind `promotionRuns`.
+  #173's "for 0.4.73 only" is extended by one more release.
+- **cortex-bff** (#187, with #192): the MCP door. A service token on an MCP-tagged route gets 403
+  `service_token_refused`. A declared delegate passes only where the body has `on_behalf_of`.
+  `/interview/stream` and `/seed/portfolio_canvas` are not behind the door yet; that is with the
+  architect.
+- **engine-fin** (#193, #202):
+  - One shared class for every declared measure, `fin:DeclaredMeasureSeries`, with the measure id as
+    a property. A row can no longer name a class: `outputs.output_uri` is refused at load.
+  - VAC ships as the second sample measure.
+  - `policy.cells` is enforced on `/measure/{fn}`, `/package_export`, `/cdrl_export` and
+    `/artifact/{filename}`: 403 `measure_not_in_cell`, 503 on a directory outage.
+    **A program member with no grant in a row's cells loses that measure** and any CDRL sourcing it,
+    and keeps the built-ins. On sandbox the sample rows' cell is `PROGRAM_FINANCE`, granted by
+    `finance-analysts`.
+- **restate-analyst** (#201): `socratic_elicitation.py` ships inert, with no route, verb or canvas.
+  ADR-0061 stands at Proposed.
+
+**⚠ Before installing:** three hand syncs, by a human, **in the form that reads this release's
+policy.**
+
+1. **`topaz_sync`** for `mcp-callers` (if the 0.4.74 sync has not landed it) and for
+   `alignment-reviewers` (#196). Without them, the hook's capability leg exits 5 and the release fails.
+2. **`recipient_reader_sync`**, run the same way.
+
+**Run in a live pod with `--policy-dir policy/`, these read the OLD image's `/app/policy`.** There,
+"(no changes)" and "SYNC OK" say nothing about a group only this release names. **`topaz_sync` also
+prunes groups, so that form deletes a group only a newer release names.** Stream the release's policy
+into the pod instead, and read the group back from the directory before rolling:
+
+```
+git archive <release sha> policy | kubectl exec -i deploy/iagent-cortex-bff -- sh -c \
+  'rm -rf /tmp/p && mkdir /tmp/p && tar -xf - -C /tmp/p && cd /tmp/p \
+   && python policy/sync/topaz_sync.py --topaz-url "$TOPAZ_DIRECTORY_URL" --policy-dir policy/ \
+   && RECIPIENT_READERS_FILE=policy/recipient_readers.yaml python policy/sync/recipient_reader_sync.py; \
+   echo rc=$?; rm -rf /tmp/p'
+```
+
+**⚠ The ontology changed (#202): prime, then restart engine-fin, then read the edges.** Registration
+needs the class ingested. Without it the declared verbs get a 422 that is never retried, and the pod
+still reads healthy.
+
+- **Where `primeSubstrate.enabled` is true (sandbox):** the chart does this order itself. The prime is
+  a post-upgrade hook that reads the TTL baked into this release's image, and the re-register hook then
+  restarts `iagent-engine-fin`. A prime run by hand before the roll cannot help, because the old image
+  does not hold the new class. This order is from reading the chart. It has not run on a cluster.
+- **Where it is false (the bare default):** prime from this release's TTLs yourself, then restart
+  engine-fin.
+- **Then read the edges, not the pod status.** On a cluster that has served a declared measure, run
+  this once, because re-registering does not retire an edge whose output class changed:
+
+```
+MATCH ()-[r]->(o:OntologyClass)
+WHERE o.uri ENDS WITH '#ToCompletePerformanceIndexSeries'
+   OR o.uri ENDS WITH '#VarianceAtCompletionSeries'
+DELETE r
+```
+
+**Values.** `cortexUi.image.digest` changes (`values.yaml` and `values-sandbox.yaml`). New block
+`policyOverlay` (#200) is off by default and in sandbox; fin measured renders byte-identical with it
+off. When on, every pod start clones the policy repository at a pinned `ref`, so a restarted pod stays
+down while the git host is down.
+
+**No deploy effect:** #191 and #194 (tests), #198 and #199 (`board/`), and #205 (the `course` row in the
+`openddil-lab` overlay, which `values-sandbox.yaml` does not name, and its doc-tools pin).
+
+**A Topaz answer is a JSON boolean or an outage (every Topaz reader)**
+
+- Ruled 2026-10-31: a non-boolean `check` is a malformed PDP answer, the outage class: 503, never
+  a 403. Sixteen readers of `/api/v3/directory/check` and `/api/v2/authz/is` read the field with
+  `bool(...)`, which admitted `"false"`, `"no"` and `"0"` as a yes. They now read it through
+  `agent_fleet/utils/pdp_answer.py` (`topaz_sync` inline). An absent field is still a no.
+- **Where an outage is a 503** (finance's program door, the BFF's task checks, the three rail
+  checks): a malformed answer is a 503. **Where every failure is a deny** (docs, neo4j, weaviate,
+  ontology, datahub, the SPO executor, the review starter): it is a deny. No values change.
+
+**Policy changes (who may review: `can_review:<subject>`, 2026-10-31 directive)**
+
+- **New group `alignment-reviewers`** (capability-only, no persona.domain cell); sandbox member bob,
+  the stand-in TRAINING reviewer. **`topaz_sync` precondition**: sync the new group before the roll
+  that carries the row (else the capability leg names an unknown group).
+- **Row `can_review:alignment`**, `grant_to_groups: [alignment-reviewers]`. Deny-by-default: the
+  surface that writes a review asks `can_invoke` on `can_review:<S>`, so a subject with no row is
+  reviewable by nobody. **Inert in this chart**: the check belongs to the workbench, which today
+  gates `POST /alignment/proposals/review` only by login and `WB_STORE_WRITES`.
+- **New file `policy/review_subjects.yaml`**, the registry of review subjects (ruled 2026-11-02):
+  `validate_policy` refuses a `can_review:<S>` key whose S is not in it, so a misspelt key fails the
+  seed before any write. It ships in the cortex-bff image and is not a data file: a deployment's
+  policy repository does not carry it. An overlay's `can_review:` row names a subject registered here.
+
+## 0.4.74 — 2026-10-31
+
+Cut from master `0e6e6862`. It carries every master merge since 0.4.73 (`41230a7e`): #147, #176,
+#177, #178, #180, #182, #175, #179, #183, #184, #181, #185, #186, #188 and #189. Not in it: #149
+(gov, open), #187 (seal 1, waiting on saf), and #195 (the identity-census hop 23, opened after the
+train).
+
+**Images.** A chart bump restarts every pod.
+
+- **cortex-ui** is pinned to `c27e6d3` (`sha256:fa7e51ff…`). That is #59, where an export
+  profile's format is read verbatim, plus everything since `fe4d787`. Nothing changed in
+  `build.yml`, the Dockerfile or `package.json`, and no new `import.meta.env` read was added.
+  This cortex still sends `review_coverage` in the **parts** form. Its item form is cortex-ui #61,
+  which is open.
+- **cortex-bff** (`src/iagent`):
+  - #182: an `evidence_ref` follows the SDK's rule. A ref with page fractions passes; any other
+    is a 422 `evidence_ref_invalid` naming the failed check. ingest-v1 goes to 1.6.0. On sandbox
+    the stored population has no `evidence_ref` at all (fork 1, measured 10-31), so the rule
+    refuses no stored row.
+  - #181: the recipient readers for finance and cost come from the rail, through Topaz
+    `can_read_recipient`, not from code. A Topaz outage at a door answers 503
+    `recipient_readers_unavailable`.
+  - #179: the `can_call:<tag>` door. It does nothing until the chart sets
+    `CAN_CALL_DOOR_CLIENTS`, which no values file does yet.
+  - #184: a seed the persona cannot see is a policy refusal. It names the persona and the
+    missing domain.
+  - #186: an engine's 409 or 422 is relayed with its status and keys intact. An empty answer is
+    a named 502.
+  - #188: the BFF and the runner refuse a pixel box the same way.
+- **restate-analyst** (#188): `normalize_evidence_ref` applies the SDK's `EvidenceRef`.
+- **engine-fin** (#181, #185):
+  - its `/artifact` door asks the rail;
+  - a measure row declares its render shape, and the engine serves it.
+- **engine-cost** (#181): its `/artifact` door asks the rail.
+- **presentation-agent** (#185): it selects the archetype from the declared render, before the
+  output class.
+- **The legacy `review_coverage` parts form is still accepted.** Fork 3, which deletes it, is held
+  until cortex-ui #61 is on master. #173's "for 0.4.73 only" is extended by one release.
+
+**⚠ Before installing:** two hand syncs, both by a human, before the roll.
+
+1. **`topaz_sync` for the new group `mcp-callers`** (#179, below). Without it, the hook's
+   capability leg exits 5 and the release fails.
+2. **`recipient_reader_sync`, run once by hand from the 0.4.74 cortex-bff image** (#181). The
+   hook runs it at weight 3, which is after the engines roll. Until then, every finance and cost
+   download and export is refused (fail-closed). Sandbox is in image mode, so the rows come from
+   the 0.4.74 image's `policy/recipient_readers.yaml`.
+
+**Values.** No values change since 0.4.73 apart from the cortex-ui digest
+(`values.yaml` and `values-sandbox.yaml`).
+
+**No deploy effect:** #147 (the finance overlay contract doc and its key seal), #176 (a docx CDRL
+sample under `policy/`), #177 (the `iagent-mesh-mcp` chart, which is a separate chart and is not
+rolled with this one), #178 (the SDK-adoption seal), #180 (ingest-v1 1.5.0 docs), #175 (the MCP
+seals), #183 (`granted_by: seed`, an audit field; see below) and #189 (`board/`).
+
+**Policy changes (the MCP surface's call policy: `can_call:<tag>`)**
+
+- **New group `mcp-callers`** (capability-only, no persona.domain cell); sandbox members alice and
+  bob only (ruled 2026-10-31). **`topaz_sync` precondition**: a new group must be synced before the
+  roll that carries the rows (else the capability leg names an unknown group).
+- **The walker seal exempts capability-only groups** (ruled 2026-10-31): a walker mirrors alice's
+  persona groups, not her capability fixtures (`alert-processors`, `mcp-callers`). The exempt set is
+  derived from the rail (an empty group that a capability row grants to), never listed. This
+  repairs the seal, red on master since the 10-28 `can_drop` grant.
+- **Rows `can_call:ingest-export`, `can_call:ingest-v1`, `can_call:mcp`**, each `grant_to_groups:
+  [mcp-callers]`. Inert until the chart sets `CAN_CALL_DOOR_CLIENTS` (lane/01's).
+- **The door (BFF):** a token whose `azp` is in `CAN_CALL_DOOR_CLIENTS` reaches only the MCP
+  surface, and on it needs `can_call:<t>` for every tag of the route; everything else is 403
+  `not_entitled_to_call`, app-wide. Other callers are untouched; unset env, no-op.
+
+**Policy changes (a shipped row's grantor is `seed`, ruled 2026-10-31)**
+
+- **71 shipped rows** across seven rail files now say `granted_by: seed` instead of a person:
+  `asset_grants` 6, `capability_grants` 20, `domain_consumption` 11, `ontology_compartments` 1,
+  `program_members` 3, `recipient_readers` 1, `task_grants` 29. No other field changed.
+- **No live effect.** `granted_by` is an audit field; no sync writes it to Topaz, so no
+  `topaz_sync` is owed for this.
+- **A deployment's own rows still name their approver**: its policy repository, an overlay, and
+  the reader grant an approval writes at runtime. So the rule is a repo seal
+  (`tests/security/test_a_shipped_grantor_is_the_seed.py`), not a `validate_policy` row, which
+  runs on the deployed policy. The rail files are derived from `policy/grantors/*.yaml`.
+
+## 0.4.73 — 2026-10-30
+
+Cut from master `e2c03799`. It carries every master merge since 0.4.72 (`77fb1d73`): #148, #151,
+#159, #144, #166, #161, #164, #167, #168, #162, #163, #171, #172, #169, #170 and #173. #149 (gov)
+and #147 (fin) are not in it; they go to 0.4.74 once their lanes act. The three policy blocks
+below were written into the 0.4.72 section by the PRs that landed after that cut; they are moved
+here, where they ship.
+
+**Images.** A chart bump restarts every pod.
+
+- **Every Python image pins iagent-mesh v0.9.12** (#172). The domain broker's
+  `meshSdkVersion` moves `v0.9.10` → `v0.9.12` with it; that is the one values change in this
+  release.
+- **cortex-bff** (`src/iagent`):
+  - #163: the export door checks `can_export:<profile>`, on single and batch exports alike. It is
+    deny-by-default, so a profile with no row cannot be exported by anyone.
+  - #148: the BFF reads the answer-export profiles that engine-cost serves, not its own copy.
+  - #172: `GET /review-shapes` serves one registry (`policy/review_shapes`). The review shapes
+    notice, document, course and finding are rows there, not code.
+  - #173: a promotion's `review_coverage` is accepted in both the legacy and the registry form
+    for this one release. A legacy body is converted on read, and ingest-v1 goes to 1.5.0. The
+    `document_promotion` literals become `promotion.KIND`.
+  - #169: thirteen BFF operations carry the `mcp` tag, the wrapping surface for the MCP server.
+    `docs/api/mcp.openapi.json` is generated and sealed, and ingest-v1 went to 1.4.1. `/orchestrate`
+    leaves one `orchestrate_access` audit line per call.
+  - #170: `POST /finance/measure/{fn}` is a thin relay to finance-agent that forwards the real
+    caller, declared `delegates` in the endpoint-gating manifest.
+  - #167: the minted acceptance case key is stamped where the engine response is read.
+  - #144: the BFF side of the CDRL format change.
+- **Dagster code location**: #167 also changes `dynamic_supervisor.py`. #168 records
+  `human_task_projection.on_behalf_of` apart from `requested_by`. The column is added by the
+  module's own `ADD COLUMN IF NOT EXISTS ... DEFAULT ''`, so no migration Job is needed.
+- **finance-agent**: #144. A CDRL profile names its format: docx tables, csv and json under the
+  xlsx contract. `cdrl_a001_ev_summary_json` ships in the sample overlay.
+- **cost-agent**: #148. It serves the answer-export profiles, including `plan-answers`.
+- **safety-agent**: #166. The draft card reads its task kind and reason verbs from the served
+  declarations.
+- **Policy baked into the images:**
+  - #151, #159 and #171 are described in the policy blocks below.
+  - #161: `mesh:s1000dFaultWalk` grants operator.regioneast, a user that is already in
+    `policy/users.yaml` (since 2026-10-20).
+  - #172 adds `policy/review_shapes/` and the openddil-lab content kinds' `review_shape`.
+
+**⚠ Before installing:** no human `topaz_sync` is expected.
+- `policy/groups.yaml`, `users.yaml`, `task_grants.yaml` and `program_members.yaml` are unchanged
+  since 0.4.72 (`git diff --quiet 77fb1d73 e2c03799` on the four files).
+- Every group a new `can_export:` row names already exists in `policy/groups.yaml`:
+  alert-processors (synced at rev 222), portfolio-leads and finance-analysts.
+- The capability leg of the task-grant-sync hook writes the new rows at the roll.
+
+At work, an overlay that sets `EXPORT_PROFILE_OVERLAY_DIRS` or carries fin CDRL profiles needs a
+`can_export:` row for each profile it adds, or `validate_policy` refuses it.
+
+**No deploy effect:** #162 (an ADR). #164 changes the walk census (`scripts/` and
+`src/iagent_pure/walk_census.py`); it is tooling, and no service reads it.
+
+**Policy changes (2026-10-29/30 rulings: who may export a profile)**
+
+- **The `can_export:<profile>` convention** (header comment in `policy/capability_grants.yaml`):
+  who may export export profile `<profile>`, deny-by-default (no row, nobody). `validate_policy`
+  gains three refusals: a `can_export:` key naming an unknown profile; a profile name in two of the
+  review-export, answer-export and fin CDRL sets; ANY known profile with no row. That refusal's
+  advice is derived from the rows deciding other profiles of the same kind; no group is named in
+  code (architect's standing rule, 2026-10-30). The ruled grantees are rows: review-export
+  `[alert-processors]`, fin CDRL `[finance-analysts]` (ruled 2026-10-29), and `plan-answers`
+  `[portfolio-leads]` (ruled 2026-10-29/30; alice, erin and chris hold it already, so no
+  `topaz_sync` precondition). That row shipped in #171.
+  One row gates a single export and a batch alike. Each kind is read where its own loader reads it:
+  `INGEST_EXPORT_PROFILE_DIR` or `policy/exports`; `EXPORT_PROFILE_POLICY_DIR` or
+  `policy/exports/answers`, plus `EXPORT_PROFILE_OVERLAY_DIRS`; fin's CDRL seed and overlays.
+  Answer-export profiles (fin's #148) need a row too (ruled 2026-10-30).
+- **Five rows ship**, one per profile the seed knows:
+  - `can_export:default-csv` and `can_export:default-json` (Lane 1's `policy/exports`),
+    `grant_to_groups: [alert-processors]`;
+  - `can_export:plan-answers` (#171), `[portfolio-leads]`;
+  - `can_export:cdrl_a001_ev_summary` and, from #171, `can_export:cdrl_a001_ev_summary_json`,
+    `[finance-analysts]`.
+
+  Every group already exists, so there is no `topaz_sync` precondition. The capability leg writes
+  the rows at the roll. They gate from this release on: #163's export door checks
+  `can_export:<P>`, on single and batch exports alike.
+
+**Policy changes (2026-10-29 ruling: a `plan` owner on the recipient_readers rail)**
+
+- **`recipient_readers` gains the owner `plan`** (`policy/recipient_readers.yaml`). It is the owner fin's #148 asks for plan recipients
+  (`can_read_recipient("plan", scope, caller)`). One row ships (ruled 2026-10-30): alice reads
+  `plan:notional-plan-office`, the recipient #148's `plan-answers` profile names. Any other plan
+  scope is refused. No sync precondition: the `recipient_scope` type exists and alice is a seeded
+  user; the recipient-readers leg writes the object and its one relation at the next roll.
+- **The owners are configuration, not code** (architect's standing rule, 2026-10-30). The rail's
+  owners are the keys the file declares; `recipient_reader_sync.OWNERS`, a closed set that made a new
+  owner a code edit, is gone. A deployment's overlay may declare its own owner. An owner key must be
+  a name (`OWNER_NAME_RE`, no `:`, which would make `<owner>:<scope>` ambiguous) or the overlay is
+  refused whole.
+
+## 0.4.72 — 2026-10-30
+
+Cut from master `3ff2235f` for the 2026-10-30 rehearsal, so that the work cluster installs
+a version and never a master sha. It carries every master merge since 0.4.71 (`23db2006`): #114,
+#115, #116, #119, #16, #17, #128, #125, #124, #129, #131, #132, #130, #133, #134, #126, #44, #135,
+#138, #136, #137, #139, #140, #127, #152, #146, #153, #155, #154, #156, #145, #150, #157, #158
+and #143. The release branch also regenerates `docs/api/cortex-bff.openapi.json`: #157 changed
+the docstring of `POST /cases/{case_id}/signals/{signal}` without regenerating it, which left
+`tests/test_bff_openapi_is_current.py` red on master. The fix is one line of generator output.
+
+**Policy changes (2026-10-28 ruling: pcn and pdn droppable by the alert-processors group only)**
+
+- **`capability_grant_sync` learns `grant_to_groups`** and prunes orphan `can_drop:` objects. A
+  group is written as `group:<G>#member` on `invoker`; the sync never creates the group and exits 5,
+  before any write, when it is absent from live Topaz. With prune on, it deletes live `capability`
+  objects named `can_drop:*` that no row names (never any other capability object).
+- **Two `can_drop:` rows** in `policy/capability_grants.yaml`: `can_drop:pcn` and `can_drop:pdn`,
+  both `grant_to_groups: [alert-processors]`. A kind is gated iff `capability:can_drop:<kind>`
+  exists, so deleting a row reopens the kind to every caller.
+- **The door landed in #153**, so these rows now gate a drop: the ingest door refuses a caller
+  outside the group.
+- **The sync runs in the task-grant-sync hook Job** (#153,
+  `templates/task-grant-sync-job.yaml:258`), and in the overlay modes the Job FATALs, exit 2, when
+  the overlay lacks `capability_grants.yaml`.
+- **Before that roll, a human `topaz_sync` must create `group:alert-processors`** (new group in
+  `policy/groups.yaml`, alice in `policy/users.yaml`), or the capability leg exits 5.
+
+**Chart changes**
+
+- **A `recipient_readers` policy rail.** Who may download a recipient's disclosure package, from
+  the engine that owns the scope, becomes a git-asserted Topaz relation (architect, 2026-10-27
+  ruling 4, refined 2026-10-28). The Topaz manifest gains a `recipient_scope` type
+  (`reader: user`, `can_read_recipient`; object id `<owner>:<scope>`, owner `finance` | `cost`),
+  and the `task-grant-sync` Job gains a last leg, `recipient_reader_sync`. In the configMap/git
+  overlay modes `recipient_readers.yaml` is optional: absent logs a `WARN:` and skips the leg
+  (no reader asserted, every recipient check denies); whether absence becomes FATAL is open.
+  `policy/recipient_readers.yaml` ships with both owners empty; the finance and cost lanes move
+  their own rows. No engine reads the rail yet. Loading the new manifest type is done by the
+  existing `topaz-manifest-load` Job.
+- **The frontend pin** in `values.yaml` and `values-sandbox.yaml`: `cortexUi.image.digest` →
+  `sha256:4d6dd208…` (cortex-ui `fe4d787`), the case-panel fix the rehearsal lands on
+  (architect, 2026-10-30). It descends from `42c470c`, the image that sends `review_coverage`.
+- **Sandbox values.** `VITE_FEATURES` gains `promotionRuns`, in the same roll that first stores
+  `review_coverage` (architect, 2026-10-30). Four overlay-dir keys arrive with their merges:
+  `MEASURE_VERB_OVERLAY_DIRS` and `CANVAS_OVERLAY_DIRS` (#135), `FIN_EXPORT_PROFILE_OVERLAY_DIRS`
+  (#136), and `GRANTOR_OVERLAY_DIRS` (#126).
+
+**Images.** A chart bump restarts every pod.
+- **cortex-bff (`src/iagent`):**
+  - The case panel reads `current_stage`, `options` and `output_artifact` from the workflow
+    definition and the case projection (#155).
+  - A choice card says what each choice leads to, read from the chaining table (#140).
+  - A timed-out task leaves the queue, and the REST route and the feed read one predicate (#146).
+  - A Topaz outage at the ingest door is a 503 with `Retry-After`, not a 403 (#153). The door reads
+    `capability:can_drop:<kind>`; with the rows in `policy/capability_grants.yaml` it gates `pcn`
+    and `pdn` to the alert-processors group.
+  - `GET /ingest/export` (the batch) and the export of a notice the caller did not drop need the
+    domain-scoped `ingest:exportBatch` capability: a notice is admitted only when its promotion
+    domain is one of the caller's entitlement-cell domains (#154). New `src/iagent/export_profiles.py`
+    and two default profiles, `policy/exports/default-csv.yaml` and `default-json.yaml`.
+  - `POST /human_tasks/{id}/act` on a `document_promotion` takes `review_coverage`: the parts
+    opened and the named groups. The server checks that every part is one or the other (422
+    `review_coverage_invalid`) and stores it on the provenance record. ingest-v1 1.4.0
+    (#156).
+  - An early exit records "no verb" and its reason (#152); an engine's refusal-bearing 401/403/409
+    is relayed as a refusal, not an outage (#131); a relayed refusal parses the same on both sides
+    (#119).
+  - The canvas seed's enumerator and the two engine-fin export posts forward the caller's own
+    edge identity, and are registered as hops 18–21 of the person chain; the enumerator's
+    parameters are keyword-only and required (#145).
+  - `/canvas/seed` derives the cell a persona names, and a panel's caller error is a 4xx naming
+    the field (#132); the export offer names what each recipient takes (#137); an answer routed
+    before the intent hop exports its verb (#139); an ask's program options name `program_members`
+    (#116).
+  - A reference per fan-out slot in the identity vault (#44); `write_grant_and_sync` writes an audit
+    line (#124).
+- **restate-analyst / workflow runner:**
+  - Approvals wait 72 h in the sandbox workflows (#152); a timed-out task leaves the queue (#146).
+  - The case routing reads the chaining table for card text (#140); the workflow definition
+    carries the stage and options the panel reads (#155).
+  - #157 — the supervisor's approval is the release (maint_release drops tier_ack).
+- **finance-agent:**
+  - The finance verbs refuse a program the caller cannot view, with the refusal envelope (#130).
+  - A measure is an overlay row (the TCPI verb) and a CDRL is an export profile (#135, #136); a
+    lotless answer on a refused cost board is named, not dropped (#137).
+  - A CDRL profile may set `provenance_sheets: false`, so the delivered file is exactly the
+    customer form. The envelope and `X-Cells-Sha256` still carry the provenance (#143).
+- **safety-agent:**
+  - One rule for `safety_critical`, a domain-scoped seed, and unmatched rows reported on the
+    PrimeRun row (#125, #115). No automated path clears `safety_critical` (#128).
+- **repository-agent (engine-r):** the repository-of-record core: propose, merge by sha, tag and
+  audit notes (#133); its 19 refusal keys are classified (#138). The chart has no template for
+  it; this is image content only.
+- **presentation-agent:** `MODEL_EXPLANATION` is admitted by name (#129).
+- **ontology_service:** an empty required slot is asked, and the parts answer holds (#16, #17).
+- **Policy baked into the images:**
+  - `can_drop:pcn`, `can_drop:pdn` and `ingest:exportBatch` rows, the `alert-processors` group and
+    alice's membership (#134, #154);
+  - `policy/recipient_readers.yaml` (both owners empty) and its grantor seed (#127);
+  - the maintenance workflows' card text, 72 h approvals and case-panel fields (#140, #152, #155);
+  - the sandbox grantor overlay and the sample TCPI, CDRL and canvas overlays (#126, #135, #136).
+
+**⚠ Before installing:**
+- **A human `topaz_sync` first.** `policy/groups.yaml:143` adds `alert-processors`, and
+  `policy/users.yaml:64` adds alice to it. `capability_grant_sync` never creates a group and exits
+  5 when it is absent from live Topaz, which fails the `task-grant-sync` Job (the leg is
+  `helm/invincible-agent/templates/task-grant-sync-job.yaml:258`). `ingest:exportBatch`
+  (`policy/capability_grants.yaml:315`) grants the same group, so one sync covers all three rows.
+- **The capability rows are written by the `task-grant-sync` Job** (`can_drop:pcn` at
+  `policy/capability_grants.yaml:297`, `can_drop:pdn` at `:305`, `ingest:exportBatch` at `:315`).
+  In the overlay modes the Job now FATALs, exit 2, if the overlay has no `capability_grants.yaml`.
+  `topaz-seed-cronjob.yaml` runs the same script.
+- **The `recipient_scope` manifest type** is declared at
+  `helm/invincible-agent/templates/topaz-configmap.yaml:269` and loaded by the existing
+  `topaz-manifest-load` Job (`templates/topaz-manifest-load-job.yaml`). A manifest SET replaces
+  the whole schema, so let that Job run before the `recipient_reader_sync` leg.
+
+**No deploy effect:** #114, #128, #150 and #158 (tests only). No merge in this range is docs-only.
+
+## 0.4.71 — 2026-10-28
+
+Cut from master `4a5ff6b6` (architect, 2026-10-28), so that the work cluster installs a version
+and never a master sha. Sandbox has run these images since roll 221, by `global.imageTag`. It
+carries every master merge since 0.4.70 (`b59e4a0f`): #112, #95, #108, #101, #107, #113, #118,
+#120 and #121.
+
+**Chart changes**
+
+- **The default values pin the frontend.** `cortexUi.image.digest` in `values.yaml` →
+  `sha256:57e40789…`, cortex-ui `e09e2ac`, which re-pins its producer to `4a5ff6b6`'s published
+  contract. Until 0.4.70 the default was empty and fell through to `:latest`. An environment's
+  own values still override it. `values-sandbox.yaml` moves to the same digest, from `c02ee0d2…`
+  (cortex-ui `e0c3c6d`).
+
+**Images.** A chart bump restarts every pod.
+- **cortex-bff (`src/iagent`):**
+  - `GET /ingest/{id}/extraction` serves doc-tools' `wire_evidence_ref` unchanged, and the
+    published `EvidenceRef` is exactly `{page, bbox, note?}` with `additionalProperties: false`
+    (#121, PCN-2683). A row with no ref, or with a ref that fails the contract, is served
+    `evidence_ref: null` and counted. A failing ref also logs one WARNING naming the check. The
+    old synthesized keys (`page_dims`, `bboxes`, `units`, `quality`) are gone; a review.json
+    written before doc-tools v0.2.2 now reads `null` on every row.
+  - a 409 that asks is declared as a refusal, with its grantor (#107).
+- **finance-agent:** program enumeration and resolve return only the programs the caller
+  `can_view_program` (#113).
+- **Policy baked into the images:**
+  - edge-02 task audiences mirror edge-01's, and the OpenDDIL maintenance-fault event kind's
+    domain is MAINTENANCE (#118);
+  - the openddil-lab course row mirrors doc-tools' third pass, `render.pages` (#120).
+
+**⚠ Before installing on a cluster that has not synced Topaz since #118:** `task_grants.yaml`
+names three new groups (`maint-approvers-edge-02`, `maint-tier-ack-edge-02`,
+`maint-supervisors-edge-02`). Sync Topaz first, or `task-grant-sync` exits 5 and the release
+reads failed. Sandbox was synced before roll 220.
+
+**No deploy effect:** #95 (tests), #101, #108 and #112 (docs and sessions).
+
+## 0.4.70 — 2026-10-26
+
+Roll 208. It carries every master merge since 0.4.69 (`7a45a3cb`): #93, #100, #97, #99, #96,
+#106, #105, #104, #109, #102, #103 and #110.
+
+**Chart changes**
+
+- **A public client puts itself in its access token's `aud` (#110).** The architect ruled on
+  2026-10-26 that the `training-workbench` client emits `authz_id` and `aud`. wb's api accepts a
+  token only when `aud` names `training-workbench`.
+  - Every `keycloak.publicClients` entry gets an `audience-self` mapper: `oidc-audience-mapper`,
+    with `included.client.audience` set to the client's own id, on the access token only.
+  - It ships in the realm import, in the reconcile's create, and in the reconcile's repair of a
+    live client. The repair keys on what a mapper emits, not on its name, and never rewrites an
+    existing mapper.
+  - The readback judges the audience and its access-token flag on one mapper's config, in any
+    key order. The ok line becomes
+    `ok   training-workbench public, pkce S256, emits authz_id, aud training-workbench`.
+- **cortex-ui's redirect readback compares sets (#100).** 0.4.69's readback compared the
+  redirect lists in order. Keycloak serves them in its own order, so revision 217 failed a
+  correct realm. The readback now compares them as sets.
+
+**Release pipeline (#93).** The chart release now needs the image build, and a missing image is
+fatal. 0.4.66, 0.4.68 and 0.4.69 each published a manifest with 0 of 19 images tagged, because
+the retag ran before the build finished.
+
+**Images.** A chart bump restarts every pod, so all of these land on this roll.
+- **cortex-bff (`src/iagent`):**
+  - a seeded canvas answer names its template, and a finance canvas asks which program (#97);
+  - ingest-v1, a published contract with a shape lock, and the status row that names the task a
+    steward acts on; a zero-row notice is asked about, not failed (#99);
+  - a has-parts defect filing with no requester is a terminal 422 (#104);
+  - `/canvas/seed` declares its 200 and 409 bodies (#103);
+  - a policy refusal names its policy, the missing binding, and who can grant it (#96).
+  - **One schema change:** `ingest_status_projection` gains `force_text_fallback BOOLEAN NOT NULL
+    DEFAULT FALSE` (#99). cortex-bff adds it on startup with `ADD COLUMN IF NOT EXISTS` and logs
+    `ingest_status_projection migration applied`; a failure logs a warning and leaves the
+    ingestion seam dormant.
+- **presentation-agent:** `safety:FailureRecordSet` binds `KNOWLEDGE_DOCUMENT`, matching cortex
+  (#105).
+
+**No deploy effect:** the lane-trailer hook (#106), and the test-only #109 and #102.
+
 ## 0.4.69 — 2026-10-25
 
 **Finding: the `cortex-ui` client accepted any redirect.** Its realm import carried

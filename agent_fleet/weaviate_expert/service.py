@@ -4,7 +4,7 @@ import httpx
 from types import SimpleNamespace
 from typing import Dict, Any, List, Optional, Tuple
 
-from restate import Context, Service
+from restate import Context, Service, TerminalError
 from smolagents import CodeAgent, ToolCallingAgent, tool
 import weaviate
 from weaviate.connect import ConnectionParams
@@ -49,6 +49,10 @@ from iagent_mesh.interfaces import Initiator
 # The SAME canonicalizer doc-tools' S1000D parser mints its root URI with
 # (`mil#dmc-<canonical>`, s1000d_rdf.parse_data_module), so the label below is
 # read back through the function that wrote it, never re-parsed by hand.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import check_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import check_answer
 try:
     from utils.dmc_canonicalizer import canonicalize_dmc
 except ImportError:
@@ -98,6 +102,11 @@ print(
 )
 
 
+class _AuthorizerUnavailable(Exception):
+    """The authorizer could not answer. Its own class, because the tools' `try` also encloses
+    retrieval: an `httpx.ConnectError` from the embedder is not the authorizer's."""
+
+
 def _can_read_document(caller_email: str, source_id: str) -> bool:
     """Ask Topaz whether ``caller_email`` may READ the source ``document``.
 
@@ -107,10 +116,13 @@ def _can_read_document(caller_email: str, source_id: str) -> bool:
     Entitlement / persona / domain are NEVER sufficient — a chunk's source
     document requires an explicit grant (asset_grants.yaml → grant_sync).
 
-    FAIL-CLOSED on empty caller/source, an UNRESOLVABLE source, or ANY error
-    → the chunk is DROPPED, never synthesized. An ungated-because-
+    FAIL-CLOSED on empty caller/source, an UNRESOLVABLE source, a 404, or a defect
+    here → the chunk is DROPPED, never synthesized. An ungated-because-
     unidentifiable chunk is exactly the leak this gate exists to prevent, so
-    "can't identify the source" resolves to deny, not allow.
+    "can't identify the source" resolves to deny, not allow. A Topaz that cannot be
+    reached, answers another non-2xx or answers malformed is the outage class:
+    `_AuthorizerUnavailable` propagates, the tool latches it, and the run answers
+    503 instead of an answer.
     """
     if not caller_email or not source_id:
         return False
@@ -126,8 +138,12 @@ def _can_read_document(caller_email: str, source_id: str) -> bool:
             },
             timeout=5.0,
         )
+        if r.status_code == 404:
+            return False
         r.raise_for_status()
-        return bool(r.json().get("check", False))
+        return check_answer(r)
+    except httpx.HTTPError as e:  # unreachable, a non-2xx or a malformed answer: the outage class, never a "no"
+        raise _AuthorizerUnavailable(type(e).__name__) from e
     except Exception as e:  # noqa: BLE001 — fail-closed on ANY failure
         print(f"[Engine W] can_read check FAILED (fail-closed deny) src={source_id!r}: {e}")
         return False
@@ -176,6 +192,11 @@ print(
 )
 
 KNOWLEDGE_SEARCH_LIMIT = 5
+
+PDP_UNAVAILABLE_REFUSAL = (
+    "Knowledge search unavailable: the authorizer could not be asked, or its answer could not be "
+    "read, so no document could be checked. Do not retry; say the information is unavailable."
+)
 
 KNOWLEDGE_CALLER_REQUIRED_REFUSAL = (
     "Knowledge search refused: it reads on a person's behalf, and this request names no caller "
@@ -396,6 +417,11 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
     caller_email = request.get("user_email") or ""
     print(f"[Engine W] query_knowledge caller_email={caller_email!r} domain={domain}")
 
+    # A malformed PDP answer is 503, but a tool's raise never leaves the agent loop: smolagents
+    # feeds it back to the model as a step error. So the tool latches it here, and run_smolagent
+    # answers 503 after the loop, discarding whatever the model made of the rest.
+    pdp_unavailable: List[str] = []
+
     # Safely fetch the persistent client without blocking the async loop
     weaviate_client = await asyncio.to_thread(get_weaviate_client)
 
@@ -592,6 +618,9 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                     f"read access to them — request access to the specific document."
                 )
             return "\n\n".join(results)
+        except _AuthorizerUnavailable as e:
+            pdp_unavailable.append(str(e))
+            return PDP_UNAVAILABLE_REFUSAL
         except Exception as e:
             return f"Error executing semantic search: {str(e)}"
 
@@ -715,6 +744,9 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                 return "\n\n".join(results)
             except CallerRequired:
                 return KNOWLEDGE_CALLER_REQUIRED_REFUSAL
+            except _AuthorizerUnavailable as e:
+                pdp_unavailable.append(str(e))
+                return PDP_UNAVAILABLE_REFUSAL
             except Exception as e:
                 return f"Error executing semantic search: {str(e)}"
 
@@ -753,6 +785,8 @@ final answer so the user knows where the information came from.
 
         full_query = f"{system_prompt}\n{tool_reminder}\n\nUser Query: {user_query}"
         agent_response = str(await asyncio.to_thread(agent.run, full_query))
+        if pdp_unavailable:
+            raise TerminalError("the authorizer could not be asked, or its answer could not be read", status_code=503)
         # Both pieces of state cross the ctx.run boundary together. On
         # replay the entire dict (including local_sources) is returned
         # from the journal — sources survive.

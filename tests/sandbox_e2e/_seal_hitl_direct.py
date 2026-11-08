@@ -11,7 +11,7 @@ import asyncio, json, os, httpx
 import mesh_client as mc
 
 ASSET = os.getenv("SEAL_ASSET",
-    "urn:li:dataset:(urn:li:dataPlatform:dagster,mesh_demo_customers,PROD)")
+    "urn:li:dataset:(urn:li:dataPlatform:s3,mesh_demo_customers,PROD)")
 DOMAIN = "DATA_ENGINEERING"
 
 async def token(client, user, pw):

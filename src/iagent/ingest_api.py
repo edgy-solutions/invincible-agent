@@ -12,12 +12,18 @@ Deliberately EXCLUDED from v1:
 """
 from __future__ import annotations
 
-from typing import Any, Literal, Union
+from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from iagent_mesh import Refusal
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 INGEST_V1_TAG = "ingest-v1"
-INGEST_API_VERSION = "1.2.0"
+# The `mcp` surface: the thirteen BFF operations an MCP server wraps. Spec:
+# sessions/2026-10-30-packet-to-architect-cc-ca-saf-from-lane-01-mcp-server-over-the-bff-one-page-spec.md
+# (sections 1, 2, 5). Tagged ADDITIVELY on the routes (existing tags kept); /interview/stream shares
+# the /orchestrate handler but is NOT in this set.
+MCP_TAG = "mcp"
+INGEST_API_VERSION = "1.8.1"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),
@@ -33,6 +39,22 @@ V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/ingest/mine"),
     ("POST", "/ingest/{ingest_id}/title_leaf"),
     ("POST", "/ingest/{ingest_id}/leaf"),
+})
+
+MCP_ROUTES: frozenset[tuple[str, str]] = frozenset({
+    ("POST", "/orchestrate"),
+    ("GET", "/cases/{case_id}"),
+    ("GET", "/me/human_tasks"),
+    ("POST", "/human_tasks/{task_id}/act"),
+    ("POST", "/ingest"),
+    ("GET", "/ingest/export"),
+    ("GET", "/ingest/export/profiles"),
+    ("POST", "/canvas/seed"),
+    ("POST", "/export/package"),
+    ("GET", "/export/package/artifact/{filename}"),
+    ("GET", "/export/cdrl"),
+    ("GET", "/export/cdrl/profiles"),
+    ("POST", "/finance/measure/{fn}"),
 })
 
 PREVIEW_ROUTES: frozenset[tuple[str, str]] = frozenset({("POST", "/ingest/{ingest_id}/empty")})
@@ -177,13 +199,30 @@ class Notice(_Strict):
 
 
 class EvidenceRef(_Strict):
-    """Where on the page an extracted value was read (units pt for a cell match, else px)."""
-    page: int
-    bbox: list[float]
-    bboxes: list[list[float]]
-    page_dims: Any
-    units: Literal["pt", "px"]
-    quality: Literal["cell", "region"] | None
+    """7f's `wire_evidence_ref`, served as is (architect rulings 2026-10-21 and 2026-10-28).
+
+    `bbox` is page fractions `[x0, y0, x1, y1]`, origin top-left, `0 <= x0 < x1 <= 1` and
+    `0 <= y0 < y1 <= 1`. A null bbox means "on this page, no box" (ruling 205). Nothing else
+    is served: no `bboxes`, `page_dims`, `units` or `quality`.
+
+    The authority is `iagent_mesh.provenance.EvidenceRef` (architect ruling 2026-10-31: the SDK rule
+    wins). This model is imported from it once the SDK (v0.9.13) renders `note` as omitted rather
+    than null and `bbox` as a 4-item array of 0..1 items; until then
+    `tests/test_an_evidence_ref_is_the_sdks_rule_page_fractions_or_a_422.py` holds the two to the
+    same verdict (this model may only be STRICTER: no null note, no bool page).
+    """
+    page: Annotated[int, Field(strict=True, ge=1)]
+    bbox: Annotated[list[Annotated[float, Field(ge=0, le=1)]], Field(min_length=4, max_length=4)] | None = None
+    # `note?: string` -- omitted when there is none, never null (7f omits it; cortex refuses null).
+    note: Annotated[str, Field(pattern=r"\S")] = None
+
+    @model_validator(mode="after")
+    def _box_has_area(self):
+        if self.bbox is not None:
+            x0, y0, x1, y1 = self.bbox
+            if not (x1 > x0 and y1 > y0):
+                raise ValueError("bbox needs x0 < x1 and y0 < y1 (zero or negative area cites nothing)")
+        return self
 
 
 class ExtractionRow(_Strict):
@@ -216,6 +255,19 @@ class Extraction(_Strict):
     rows_without_evidence: int
     review_ref: str
     relocated_to: str | None
+    review_shape: str | None = None
+    """The content kind's declared review shape, a row of the review-shape registry
+    (`GET /review-shapes`); null when the kind declares none or the row is not valid."""
+    item_kind: str | None = None
+    """That shape row's `item_kind` (what the ids in `review_coverage` address); null as above."""
+
+
+class ExportProfile(_Strict):
+    """One row of GET /ingest/export/profiles (a valid `policy/exports/<name>.yaml`)."""
+    name: str
+    format: Literal["csv", "json"]
+    granularity: Literal["notice_part", "notice"]
+    label: str
 
 
 class RetryReopened(_Strict):
@@ -312,7 +364,95 @@ class Entitlements(_Strict):
     cells: list[Cell]
     default: Cell | None
     source: str | None
+    droppable_kinds: list[str]
+    # held `can_invoke` capability keys from the directory, sorted; never partial
+    capabilities: list[str]
 
+
+class RefusalEnvelope(Refusal):
+    """`authz.refusal.refusal`'s envelope: what the caller lacks and who can grant it."""
+    # The SDK defaults this to empty; this contract has always published it as required.
+    candidates: list[str]
+
+
+class NotEntitledToDropDetail(_Strict):
+    error: Literal["not_entitled_to_drop"]
+    message: str | None = None
+    refusal: RefusalEnvelope
+
+
+class NotEntitledToDrop(_Strict):
+    """The 403 body of a door that refused a kind the dropper is not granted."""
+    detail: NotEntitledToDropDetail
+
+
+class AuthorizationUnavailableDetail(_Strict):
+    error: Literal["authorization_unavailable", "authorization_unconfigured"]
+    message: str
+
+
+class AuthorizationUnavailableBody(_Strict):
+    """The 503 body when the authorization directory cannot say whether a kind is gated."""
+    detail: AuthorizationUnavailableDetail
+
+
+#: `responses=` entries for a route that checks `can_drop:<kind>`.
+DROP_GATE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    403: {"model": NotEntitledToDrop,
+          "description": "the dropper is not granted can_drop:<kind>"},
+    503: {"model": AuthorizationUnavailableBody,
+          "description": "the directory could not say whether the kind is gated; nothing was recorded",
+          "headers": {"Retry-After": {
+              "description": "seconds to wait before retrying; sent with `authorization_unavailable` "
+                             "(a transient directory failure), not with `authorization_unconfigured`",
+              "schema": {"type": "string"}}}},
+}
+
+
+
+class UnauthenticatedBody(_Strict):
+    """The 401 body `auth.get_current_user` sends: no identity, so no policy to name."""
+    detail: str
+
+
+class PolicyRefusalDetail(BaseModel):
+    """A 403's `detail` object. Sites name the refusal `error` (two export sites say `reason`) and
+    add their own keys. `refusal` is OPTIONAL while any policy 403 an MCP route can reach sends
+    none: tests/security/test_every_mcp_route_declares_401_and_403.py lists those sites exactly and
+    requires this field once its debt rows are gone."""
+    model_config = ConfigDict(extra="allow")
+    error: str | None = None
+    message: str | None = None
+    refusal: RefusalEnvelope | None = None
+
+
+class StructuralRefusalDetail(_Strict):
+    """A 403 no grant lifts, so there is no policy to name and it never carries a `refusal`
+    (ruled 2026-11-07, G5): separation of duties at promotion, and a service caller on a route
+    where no delegate entry applies. The same code on a route where one would apply is a policy
+    refusal and reads as `PolicyRefusalDetail`."""
+    error: Literal["dropper_cannot_attest_origin", "service_token_refused"]
+    message: str | None = None
+    authz_id: str | None = None
+    task_id: str | None = None
+
+
+class PolicyRefusalBody(_Strict):
+    """The 403 body of an MCP-tagged route; one site sends `detail` as a string."""
+    detail: Union[PolicyRefusalDetail, StructuralRefusalDetail, str]
+
+
+#: `responses=` entries every MCP-tagged route spreads LAST, so the MCP projection (what the MCP
+#: generator reads) declares the same 401 and 403 on each (G5, ruled 2026-11-06).
+MCP_REFUSAL_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"model": UnauthenticatedBody,
+          "description": "no verified identity on the request",
+          "headers": {"WWW-Authenticate": {"description": "`Bearer`",
+                                           "schema": {"type": "string"}}}},
+    403: {"model": PolicyRefusalBody,
+          "description": "a policy refused the caller; `detail.refusal`, when present, names the "
+                         "policy, the missing binding and who can grant it"},
+}
 
 class TaskDeclaration(_Strict):
     """What the task's kind accepts: accepts is ordered, reason_required is a sorted subset of it."""

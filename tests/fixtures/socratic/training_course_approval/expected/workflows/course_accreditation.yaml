@@ -1,0 +1,17 @@
+# SYNTHETIC — ADR-0061 fixture. Invented; names no real program, person or part.
+id: course_accreditation
+name: Course accreditation
+steps:
+- kind: human_await
+  id: accreditation
+  audience: training_manager:TRAINING
+  task_kind: course_accreditation
+  role: training_manager
+  approves:
+  - accredited
+  subject_ref: '{trigger.course_id}'
+  title: Course {trigger.course_id} -- accreditation
+  excludes:
+  - '{trigger.author.authz_id}'
+participants:
+- role: training_manager

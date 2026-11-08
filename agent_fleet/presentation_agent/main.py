@@ -461,11 +461,13 @@ def _degrade_edgeless_topology_to_document(
 # honest_fallback.py. Flatten-aware imports, same shape as before.
 try:
     from capability_registry import select_presentation as _select_presentation  # type: ignore[no-redef]
+    from capability_registry import select_by_declared_shape as _select_by_declared_shape  # type: ignore[no-redef]
     from capability_validator import validate_chart_payload as _validate_chart_payload  # type: ignore[no-redef]
     from honest_fallback import honest_text_from_response as _honest_text_from_response  # type: ignore[no-redef]
 except ImportError:
     from agent_fleet.presentation_agent.capability_registry import (
         select_presentation as _select_presentation,
+        select_by_declared_shape as _select_by_declared_shape,
     )
     from agent_fleet.presentation_agent.capability_validator import (
         validate_chart_payload as _validate_chart_payload,
@@ -976,7 +978,13 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # The reporting lane read it as a producer bug — "report says emitted, wire says absent" —
     # and it was, at the wire that matters to a card. Both wires were telling the truth about
     # different hops.
-    "MULTI_SERIES": ("rows", ("series", "reference", "verdict", "value_label", "scope_label")),
+    #
+    # `data_provenance` ADDED 2026-11-08 (the architect, via Chris: it "arrives whole: dataset
+    # URN, as-of, ticket id"). It is an ENVELOPE field, so it rides only by being named here. A
+    # producer that does not send it (cost, safety) is unchanged: an absent key is not carried.
+    # Sealed by tests/finance/test_provenance_arrives_whole.py.
+    "MULTI_SERIES": ("rows", ("series", "reference", "verdict", "value_label", "scope_label",
+                              "data_provenance")),
 
     # ── SOURCE_LEDGER (lane 32, 2026-09-19). Runbook site 2. ──────────────────────────────
     #
@@ -1681,11 +1689,33 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                 "chart_data": _agent_resp.get("data"),
                 "chart_type": None,
             }
-            cap, _sel_prov = _select_presentation(
-                request.frontend_id, request.output_uri, _sel_payload,
-                persona=effective_persona, domain=request.domain,
-                frontend_version=request.frontend_version,
-            )
+            # A SERVED `render.shape` is the producer's declaration of how this answer is
+            # drawn, and it is tried BEFORE the output class: a class an overlay added is on no
+            # menu. With none, or when nothing fits, `select_presentation` runs unchanged.
+            _render = _agent_resp.get("render")
+            _declared_shape = _render.get("shape") if isinstance(_render, dict) else None
+            _declared_prov: Dict[str, Any] = {}
+            if isinstance(_declared_shape, str) and _declared_shape:
+                cap, _sel_prov = _select_by_declared_shape(
+                    request.frontend_id, _declared_shape, _sel_payload,
+                    frontend_version=request.frontend_version,
+                    output_uri=request.output_uri,
+                )
+                if cap is None:
+                    _declared_prov = {"declared_shape": _declared_shape,
+                                      "declared_unfit": _sel_prov.get("declared_unfit")}
+                    logger.info(
+                        "render_ui: declared render shape %s did not fit (%s); falling "
+                        "through to output_uri selection", _declared_shape,
+                        _declared_prov["declared_unfit"],
+                    )
+            if cap is None:
+                cap, _sel_prov = _select_presentation(
+                    request.frontend_id, request.output_uri, _sel_payload,
+                    persona=effective_persona, domain=request.domain,
+                    frontend_version=request.frontend_version,
+                )
+                _sel_prov.update(_declared_prov)
             logger.info(
                 "render_ui: menu-scoped selection frontend_id=%s source=%s basis=%s -> %s",
                 request.frontend_id,

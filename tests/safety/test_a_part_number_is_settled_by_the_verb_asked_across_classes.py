@@ -114,7 +114,7 @@ def test_a_component_with_records_and_no_listing_returns_its_records(monkeypatch
     from agent_fleet.safety_agent import failure_source as fs
     seed = fs.gather(fs.BY_PART, "PN-8801")[0]
     plain = "5530-190"
-    assert plain not in measures.CRITICAL_PART_NUMBERS
+    assert plain not in {c.part_number for c in measures.SAFETY_ITEMS}
     rec = fs.FailureRecord(record_id="FR-T-1", part_number=plain, platform=seed.platform,
                            system_of_record=seed.system_of_record, failure_mode="seized",
                            observed_on=seed.observed_on, citation=seed.citation)

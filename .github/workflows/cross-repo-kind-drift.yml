@@ -7,7 +7,7 @@
 # how the doors-export passes drift went unseen. This job checks out doc-tools at the commit in
 # .github/doc-tools.ref, beside this tree, and runs that one test.
 #
-# THREE THINGS KEEP THIS FROM BEING A DECORATIVE GREEN:
+# FOUR THINGS KEEP THIS FROM BEING A DECORATIVE GREEN:
 #   * The overlay path is given through IAGENT_CONTENT_KIND_OVERLAY_DIR. With it set, the test
 #     FAILS on a path that does not resolve; it does not skip.
 #   * The run must report at least one test and ZERO skipped, read from the JUnit report. A run
@@ -15,6 +15,11 @@
 #   * A broken-on-purpose control reverts the one overlay line the drift was in. It asserts the
 #     test reds on the passes arm and names doors-export, so that a red from any other cause
 #     cannot pass as the control working.
+#   * The test step sets pipefail. A step with no `shell:` runs `bash -e` without it, so the `| tee`
+#     made rc tee's exit: from 2026-10-24, when that line landed, this step could not fail. All 26
+#     runs up to 2026-11-02 concluded success, and the three read on 11-01 and 11-02 show the pin
+#     leg at `1 failed` on `course`. The control could not see it: it runs pytest with no pipe.
+#     tests/test_a_ci_pipeline_keeps_its_exit_code.py holds the class.
 #
 # Wired to pull_request with no base-branch filter, so a stacked lane PR gets it too, unlike
 # build-containers.yml. It is hermetic: two pip packages, YAML files, no cluster and no network
@@ -109,6 +114,7 @@ jobs:
           IAGENT_CONTENT_KIND_OVERLAY_DIR: ${{ env.OVERLAY }}
         run: |
           log="$RUNNER_TEMP/drift.log"
+          set -o pipefail
           python -m pytest -q -rs -rf -p no:cacheprovider tests/test_overlay_kind_drift.py --junitxml="$RUNNER_TEMP/drift.xml" 2>&1 | tee "$log" && rc=0 || rc=$?
           if [ "$rc" -ne 0 ]; then
             {

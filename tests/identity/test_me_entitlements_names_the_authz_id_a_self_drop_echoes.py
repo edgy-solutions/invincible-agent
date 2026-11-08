@@ -12,13 +12,19 @@ import asyncio
 import pytest
 from fastapi import HTTPException
 
-from src.iagent import gateway
+from src.iagent import gateway, human_tasks
 from src.iagent.auth import User
 
 _WORK_CALLER = User(
     id="0f3c2a9e-sub", email="alice@corp.example", authz_id="E104233",
     entitlement_source="none",
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_directory(monkeypatch):
+    # The subject is authz_id; the capabilities read has its own seal and needs a directory.
+    monkeypatch.setattr(human_tasks, "held_capabilities", lambda caller_id: [])
 
 
 def _body(user: User) -> dict:

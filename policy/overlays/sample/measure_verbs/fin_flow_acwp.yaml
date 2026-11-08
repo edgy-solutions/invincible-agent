@@ -1,0 +1,44 @@
+# SAMPLE -- invented in this repo to prove the dataset-kind measure row on the synthetic EV fixture
+# (docs/plans/fin-variance-decomposition.md). A deployment replaces it with its own. It decomposes
+# actual cost over the fixture's own columns, which proves the mechanics and is not an EAC row.
+# A dataset row always reads its asset as the caller, so it answers only a caller who holds the
+# reader grant on the URN below (policy/asset_grants.yaml); everyone else gets 403 access_denied.
+measure_id: fin_flow_acwp
+verb: finFlowActualCost
+name: Actual cost flow
+description: >-
+  Where the actual cost went, split down the program's hierarchy into a flow map. NOT a variance
+  and NOT a forecast.
+synonyms:
+  - actual cost flow
+anti_synonyms:
+  - estimate at completion
+inputs:
+  params: {program_id: {required: true}}
+  dataset:
+    urn: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
+    banner: "SYNTHETIC earned-value fixture, not a real program."
+    levels: [program_id, control_account, work_package]
+    value: acwp
+  # Shares of the program's actual cost by control account are .10 .145 .35 .121 .283, so 0.15
+  # collapses three of the five into an "All other" sink; inside account 3.1 the work package
+  # WP-3102 is .115 of its parent, below 0.15 but alone, so it keeps its name.
+  other_threshold: "0.15"
+computation:
+  module: agent_fleet.finance_agent.measure_modules.variance_decomposition
+  function: flow_edges
+  version: "1.3.0"
+  derived_from:
+    authority: Test fixture, no external method
+    clause: A signed sum split down a hierarchy
+    citation: name-only
+    transcription: each edge is the signed sum beneath its child
+render:
+  shape: FLOW_DECOMPOSITION
+  value_label: Actual cost
+  unit: USD
+policy:
+  status: sample
+  cells: [PROGRAM_FINANCE]
+  granted_by: seed
+  reason: a sample row proving the dataset kind on the synthetic EV fixture

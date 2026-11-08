@@ -4,8 +4,9 @@ TWO HALVES OF ONE DEFECT CLASS -- a YAML that reads as declaring something the e
 
 1. pydantic's default `extra="ignore"` validated a misspelled or unimplemented field and dropped
    it. `deadline_secs: 3600` loaded cleanly and waited forever. Every model a definition author
-   writes now inherits `_Declared` (`extra="forbid"`); the population is DERIVED from the
-   module's models, so a new step kind that forgets the base is a red here, not a quiet hole.
+   writes now refuses an unknown field (`extra="forbid"`: the SDK's DSL models, and `_Declared`
+   for the ones the engine still declares); the population is DERIVED from the models the module
+   exposes, so a new step kind that forgets it is a red here, not a quiet hole.
 
 2. The task kind -- what `/act` keys a decision's vocabulary and reason requirement on -- was an
    argument the SERVICE passed for every step of a run. `safety_concurrence` therefore registered
@@ -80,14 +81,16 @@ _MINIMAL = {
 
 
 def _declared_models():
-    """Every pydantic model DEFINED in the definitions module -- the population an author writes.
-    Derived from the module, not from the strict base, so a model that forgets the base is IN the
-    population and reds below rather than falling out of it."""
+    """Every public pydantic model the definitions module EXPOSES -- the population an author writes,
+    wherever it is defined: the DSL's models are the SDK's and re-exported, so a population read by
+    `__module__` lost all ten of them and passed over them. Derived from the module, not from the
+    strict base, so a model that forgets the base is IN the population and reds below rather than
+    falling out of it."""
     from pydantic import BaseModel
     return sorted(
         (v for v in vars(wd).values()
          if isinstance(v, type) and issubclass(v, BaseModel) and v is not BaseModel
-         and v.__module__ == wd.__name__ and not v.__name__.startswith("_")),
+         and not v.__name__.startswith("_")),
         key=lambda c: c.__name__)
 
 

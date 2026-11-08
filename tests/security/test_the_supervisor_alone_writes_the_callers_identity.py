@@ -185,6 +185,9 @@ def _specialist(monkeypatch, task_def):
                  "owner_persona": "SUSTAINMENT_LEAD", "domains": ["SUSTAINMENT"], "slots": []}
     telemetry = {"subject_uri": "http://x#Thing", "subject_instance_id": "",
                  "subject_instance_label": ""}
+    # The run has a person, so the dispatch redeems on every verb (architect, 2026-11-02); this
+    # file is about the payload, so the redemption is a stub.
+    monkeypatch.setattr(sup, "_redeem_caller_token", lambda *a, **k: "CALLER-TOKEN")
     monkeypatch.setattr(sup, "_classify_route",
                         lambda *a, **k: ("matched", dict(predicate), dict(telemetry)))
     out = sup.execute_subtask.compute_fn.decorated_fn(_ctx(), _Cfg(), task_def)
@@ -212,6 +215,9 @@ def test_a_task_asserted_identity_never_reaches_the_specialist_payload(monkeypat
 # ── 3. the supervisor, fallback path ──────────────────────────────────────────────────────────
 
 def test_a_task_asserted_identity_never_reaches_the_fallback_payload(monkeypatch, posted):
+    # This arm is about the identity KEYS in the payload; the token the leg redeems is proven in
+    # tests/identity/test_a_reference_per_call.py.
+    monkeypatch.setattr(sup, "_caller_token_for", lambda *a, **k: "")
     def _go(telemetry, rejected):
         posted.clear()
         sup._call_engine_a_fallback(

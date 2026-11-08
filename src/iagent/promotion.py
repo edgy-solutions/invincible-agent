@@ -18,7 +18,8 @@ THE PLANE. Both verbs are the species `document_promotion`, resolved through
 `/human_tasks/{id}/act` like every other task: `can_act` on the task's audience, the verb
 checked against the species' declaration, `acted_by` = the caller. `act` re-asks `can_act`
 itself, because the route's check is one caller's discipline and this function is the effect.
-Any doubt is a refusal: an empty identity, a False, or a raise from the check.
+Any doubt is a refusal: an empty identity, a False, or a raise from the check; a malformed answer
+from the decider refuses 503, not 403.
 
 ORDER, AND WHICH PARTIAL STATE IS SAFE. Every store the verb needs is checked present BEFORE
 anything is written, and a promotion checks that the ingest artifact node exists, so a refusal
@@ -57,6 +58,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Protocol
 
+from iagent.authz import AuthorizationUnavailable
+
 from .decision_record import build_decision_record, make_check
 
 logger = logging.getLogger(__name__)
@@ -75,6 +78,10 @@ except ImportError:  # pragma: no cover - run outside the repo root
 KIND = "document_promotion"
 PROMOTED, REJECTED = "promoted", "rejected"
 VERBS = (PROMOTED, REJECTED)
+
+#: The request fields this handler reads, so the route's kind gate asks the handler rather than
+#: naming a kind (a field sent to a kind that does not consume it would be dropped silently).
+CONSUMES = frozenset({"row_edits", "header_edits", "review_coverage"})
 
 #: The codes a `rejected` comment may name (architect ruling 2026-10-17, "Reject codes, final").
 #: A wrong value, a wrong part or missing rows is a CORRECTION -- the steward fixes the row in
@@ -313,7 +320,8 @@ def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, aud
                  comment: str, governing: dict, era: str,
                  row_edits: Optional[list] = None,
                  reconciliation: Optional[dict] = None,
-                 leaf: Optional[dict] = None) -> dict:
+                 leaf: Optional[dict] = None,
+                 review_coverage: Optional[dict] = None) -> dict:
     """The decision record. A steward's corrections (`row_edits`, each stamped
     `obtained_via=steward-corrected`) ride on the human_review check's inputs; the record is the
     grant. With none, the inputs are exactly what they always were (no new key).
@@ -331,6 +339,8 @@ def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, aud
     }
     if isinstance(row_edits, list) and row_edits:
         inputs["row_edits"] = row_edits
+    if isinstance(review_coverage, dict):
+        inputs["review_coverage"] = review_coverage
     if isinstance(reconciliation, dict):
         inputs["reconciliation"] = reconciliation
     # The leaf's source rides on the check when the act knows it (spec 203b): `leaf_source` always,
@@ -376,6 +386,9 @@ def _may_act(can_act: Callable[[str, str], bool], audience: str, acted_by: str) 
         return False
     try:
         return can_act(audience, acted_by) is True
+    except AuthorizationUnavailable as exc:  # `check_can_act` raises this only for an outage
+        raise PromotionRefused("authorization_unavailable",
+                               "the authorizer could not be asked, or its answer could not be read", status=503) from exc
     except Exception:  # noqa: BLE001 — fail-closed: an unanswerable check is a no
         return False
 
@@ -529,6 +542,25 @@ def _apply(decision: str, subject: PromotionSubject, stores: PromotionStores, *,
             f"acting again completes it", status=503) from exc
 
 
+def recorded_domain(stored: Any) -> Optional[str]:
+    """The domain a stored decision record's promotion attested: `domain_of` of the human_review
+    check's `audience` (the mapping `act` uses). None when the record, the check, the audience or
+    the domain is missing or unreadable -- a record with no readable domain is in no domain."""
+    if isinstance(stored, str):
+        try:
+            stored = json.loads(stored)
+        except ValueError:
+            return None
+    checks = stored.get("checks") if isinstance(stored, dict) else None
+    for c in checks if isinstance(checks, list) else []:
+        if isinstance(c, dict) and c.get("name") == "human_review":
+            try:
+                return domain_of((c.get("inputs") or {}).get("audience") or "")
+            except PromotionRefused:
+                return None
+    return None
+
+
 def _recorded_row_edits(stored: Any) -> Optional[list]:
     """The `row_edits` on a stored record's human_review check, or None (none, or unreadable)."""
     if isinstance(stored, str):
@@ -541,6 +573,27 @@ def _recorded_row_edits(stored: Any) -> Optional[list]:
         if isinstance(c, dict) and c.get("name") == "human_review":
             edits = (c.get("inputs") or {}).get("row_edits")
             return edits if isinstance(edits, list) else None
+    return None
+
+
+def _recorded_review_coverage(stored: Any) -> Optional[dict]:
+    """The `review_coverage` on a stored record's human_review check, or None. A record stored in
+    the 1.4.0 `parts` form is read as items under the record's own content_kind (read-time
+    conversion, never rewritten), so a replay compares like with like."""
+    if isinstance(stored, str):
+        try:
+            stored = json.loads(stored)
+        except ValueError:
+            return None
+    checks = stored.get("checks") if isinstance(stored, dict) else None
+    for c in checks if isinstance(checks, list) else []:
+        if isinstance(c, dict) and c.get("name") == "human_review":
+            inputs = c.get("inputs") or {}
+            cov = inputs.get("review_coverage")
+            if not isinstance(cov, dict):
+                return None
+            from . import review_coverage as _rc
+            return _rc.normalise(cov, content_kind=inputs.get("content_kind"))
     return None
 
 
@@ -593,7 +646,7 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
         stores: Optional[PromotionStores],
         governing: dict, era: str, now_ms: int, row_edits: Optional[list] = None,
         reviewed_mpns: Optional[list] = None, earlier_ingests: Optional[list] = None,
-        leaf: Optional[dict] = None) -> dict:
+        leaf: Optional[dict] = None, review_coverage: Optional[dict] = None) -> dict:
     """Promote or reject one document. Returns what happened; raises `PromotionRefused` for
     everything that did not. `row_edits` (the steward's corrections, already validated by the
     route) is written onto the decision record, which is the grant."""
@@ -668,7 +721,8 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
 
     record = build_record(subject, decision=decision, acted_by=acted_by, audience=audience,
                           comment=comment, governing=governing, era=era, row_edits=row_edits,
-                          reconciliation=reconciliation, leaf=leaf)
+                          reconciliation=reconciliation, leaf=leaf,
+                          review_coverage=review_coverage)
     try:
         written = stores.ledger.append(record, acted_by=acted_by, acted_at=now_ms)
     except Exception as exc:  # noqa: BLE001 — a ledger that raises has not said ok
@@ -698,6 +752,12 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
                 "row_edits_differ_from_the_record",
                 f"{subject.ingest_id} is already {decision!r} and its record carries different "
                 f"steward corrections; the record stands as written. Nothing was written",
+                status=409)
+        if (review_coverage or None) != (_recorded_review_coverage(existing.get("record")) or None):
+            raise PromotionRefused(
+                "review_coverage_differs_from_the_record",
+                f"{subject.ingest_id} is already {decision!r} and its record carries different "
+                f"review coverage; the record stands as written. Nothing was written",
                 status=409)
         effect_by, effect_at, replayed = existing["acted_by"], existing["acted_at"], True
         # A replay prunes what the STORED record names, never a recomputed list.

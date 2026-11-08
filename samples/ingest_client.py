@@ -1,6 +1,7 @@
 """Client for the ingest-v1 API: drop a file, follow it, read what was extracted, decide the review.
 
-Read docs/api/ingest-v1.md first. This file is the working example for it.
+Read docs/api/ingest-v1.md first. This file is the working example for it, and it targets
+ingest-v1 1.5.0.
 
 Configuration (environment):
 
@@ -42,6 +43,9 @@ ROUTES: dict[str, tuple[str, str]] = {
     "extraction": ("GET", "/ingest/{ingest_id}/extraction"),
     "tasks": ("GET", "/me/human_tasks"),
     "act": ("POST", "/human_tasks/{task_id}/act"),
+    # A cortex-bff route (documented in cortex-bff.openapi.json, not in the ingest-v1 document):
+    # the review-shape registry, whose row carries the rules_version a review_coverage must send.
+    "shapes": ("GET", "/review-shapes"),
 }
 
 # The response keys this client reads, per route. "mine" and "tasks" are listed in ROUTES for
@@ -50,9 +54,11 @@ READS: dict[str, frozenset[str]] = {
     "drop": frozenset({"ingest_id"}),
     "status": frozenset({"stage", "detail", "review_task_id", "review_shape"}),
     "mine": frozenset(),
-    "extraction": frozenset({"part_count", "rows_without_evidence"}),
+    "extraction": frozenset({"part_count", "rows_without_evidence", "rows", "review_shape",
+                             "item_kind"}),
     "tasks": frozenset(),
     "act": frozenset({"record_id", "decision", "replayed"}),
+    "shapes": frozenset(),      # the body is a list of rows; coverage_all_opened reads them by key
 }
 
 # Stages that move on their own. Any other stage is waiting for a person or is final.
@@ -139,9 +145,38 @@ def review_task(status_body) -> str | None:
     return field(status_body, "status", "review_task_id")
 
 
-def promote(api, base, task_id) -> dict:
-    """Promote the document behind a `document_promotion` task. Returns the act response."""
-    return call(api, base, "act", params={"task_id": task_id}, json={"decision": "promoted"}).json()
+def review_shapes(api, base) -> list:
+    """The review-shape registry rows (GET /review-shapes, a cortex-bff route)."""
+    return call(api, base, "shapes").json()
+
+
+def coverage_all_opened(extraction, shapes) -> dict:
+    """The simplest valid 1.5.0 item-form `review_coverage`: every item opened, no groups.
+
+    `extraction` is the body of GET /ingest/{id}/extraction; `shapes` is the body of
+    review_shapes(). The extraction's `review_shape` names the registry row whose `rules_version`
+    the coverage must send. ValueError if the extraction names no shape or no row matches.
+    """
+    shape = field(extraction, "extraction", "review_shape")
+    if shape is None:
+        raise ValueError("the extraction declares no review_shape, so there is no item form to send")
+    rows = [row for row in shapes if row["review_shape"] == shape]
+    if not rows:
+        raise ValueError(f"review_shape {shape!r} is not a row of GET /review-shapes")
+    items = sorted({str(row["part_index"]) for row in field(extraction, "extraction", "rows")},
+                   key=int)
+    return {"review_shape": shape, "item_kind": field(extraction, "extraction", "item_kind"),
+            "rules_version": rows[0]["rules_version"], "looked_at": items, "sampled": [],
+            "flagged": [], "groups": [], "shared": []}
+
+
+def promote(api, base, task_id, review_coverage=None) -> dict:
+    """Promote the document behind a `document_promotion` task. Returns the act response.
+    `review_coverage` (an item-form dict, see coverage_all_opened) is sent only when given."""
+    body = {"decision": "promoted"}
+    if review_coverage is not None:
+        body = {**body, "review_coverage": review_coverage}
+    return call(api, base, "act", params={"task_id": task_id}, json=body).json()
 
 
 def reject(api, base, task_id, code, note="") -> dict:

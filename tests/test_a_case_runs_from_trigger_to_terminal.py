@@ -154,7 +154,7 @@ def _answer(verb, who="m@x", comments=""):
 
 _TRIGGERS = {
     "fault": {"trigger": "fault", "selection": "sel", "key": "event_id",
-              "episode": ["asset_id", "fault.code"]},
+              "episode": ["asset_id", "fault.code"], "episode_id": "source_episode"},
     "needy": {"trigger": "needy", "selection": "sel", "key": "event_id",
               "requires": ["picture.mission_essential"]},
     "to_orphan": {"trigger": "to_orphan", "selection": "sel_orphan", "key": "event_id"},
@@ -229,6 +229,8 @@ def registered(monkeypatch):
     monkeypatch.setattr(main, "_register_human_task",
                         lambda wf, task, kind="workflow_ack", case_id=None: rows.append(
                             (wf, task["audience"], kind)) or {})
+    # An expired await now retires its queue row over HTTP; this file is not about that leg.
+    monkeypatch.setattr(main, "_expire_human_task", lambda wf, task: None)
     return rows
 
 

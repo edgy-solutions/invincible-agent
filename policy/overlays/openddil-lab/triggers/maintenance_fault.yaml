@@ -13,6 +13,10 @@ key: event_id
 # attaches to the open case instead of opening a second proposal for one broken part.
 episode: [asset_id, fault.item, fault.fault_code]
 
+# THE EPISODE'S NAME IS THE DETECTOR'S: the case serves the id OpenDDIL carries for it. An event
+# without one is served the episode key above, marked `episode_id_source: derived`.
+episode_id: openddil_episode_id
+
 # EVERY FACT A LATER TABLE OR TEMPLATE READS, refused at intake rather than after a maintainer
 # has already chosen an option.
 #

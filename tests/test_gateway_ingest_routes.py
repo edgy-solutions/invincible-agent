@@ -42,6 +42,9 @@ from src.iagent import gateway  # noqa: E402
 from src.iagent import human_tasks as ht  # noqa: E402
 from src.iagent import ingest_status as ist  # noqa: E402
 from src.iagent import promotion  # noqa: E402
+from tests._can_drop_open import can_drop_open  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("can_drop_open")
 
 
 @pytest.fixture
@@ -570,9 +573,11 @@ def stub_restate_post(monkeypatch):
     state = {"fail": False}
 
     class _Resp:
-        def __init__(self):
+        def __init__(self, url=""):
             self.status_code = 200
-            self.content = b""
+            # `CaseEpisode/attach` always answers a body; with nothing open it is this one.
+            self.content = (b'{"attached_to":null,"predecessor":null}'
+                            if url.endswith("/attach") else b"")
         def raise_for_status(self):
             if state["fail"]:
                 raise RuntimeError("boom: restate unreachable (stubbed)")
@@ -585,6 +590,8 @@ def stub_restate_post(monkeypatch):
             # (`WorkflowRunner/{key}/case`): "no case yet", i.e. not a repeat. Tests
             # exercising a repeat replace this fixture's AsyncClient outright (see the events
             # revision tests below) rather than overloading this one default.
+            if self.content:
+                return json.loads(self.content)
             raise json.JSONDecodeError("Expecting value", "", 0)
 
     class _Client:
@@ -593,7 +600,7 @@ def stub_restate_post(monkeypatch):
         async def __aexit__(self, *a): return False
         async def post(self, url, json=None, **k):
             calls.append({"url": url, "json": json})
-            return _Resp()
+            return _Resp(url)
 
     monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
     return calls, state
@@ -782,10 +789,13 @@ def test_ingest_events_seeds_with_the_triggers_requires_satisfied(
     })
     assert r.status_code == 200, r.text
     body = r.json()
-    # TWO restate calls now: the repeat-detection lookup (`/case`), then `/run/send`.
-    assert len(calls) == 2, calls
+    # THREE restate calls: the repeat-detection lookup (`/case`), the episode's `attach` (the
+    # trigger declares one; none open here), then `/run/send`.
+    assert len(calls) == 3, calls
     assert calls[0]["url"].endswith("/case"), calls
-    sent = calls[1]
+    assert "/CaseEpisode/" in calls[1]["url"] and calls[1]["url"].endswith("/attach"), calls
+    assert calls[1]["json"]["event_id"] == "evt-001", calls
+    sent = calls[2]
     assert sent["json"]["trigger"] == "maintenance_fault"
     assert sent["json"]["facts"]["asset_id"] == "ASSET-1"
     assert sent["json"]["facts"]["domain_type"] == "maintenance-bridge"
@@ -827,9 +837,10 @@ def test_ingest_events_the_case_key_is_one_the_runner_accepts(
     })
     # THE CONTRACT (ruled 2026-10-05): 200 with workflow.case_id, never the spec's 202.
     assert r.status_code == 200, r.text
-    assert len(calls) == 2, calls
+    assert len(calls) == 3, calls
     assert calls[0]["url"].endswith("/case"), calls
-    url, sent = calls[1]["url"], calls[1]["json"]
+    assert calls[1]["url"].endswith("/attach"), calls
+    url, sent = calls[2]["url"], calls[2]["json"]
     head, sep, tail = url.partition("/WorkflowRunner/")
     assert sep and tail.endswith("/run/send"), url
     key = unquote(tail[: -len("/run/send")])
@@ -967,10 +978,12 @@ def test_ingest_events_restate_error_still_returns_200_with_started_false(
         "payload": _VALID_EVENT_PAYLOAD,
     })
     assert r.status_code == 200, r.text
-    # calls[0] is the repeat-detection lookup (`.../case`, not a repeat here); calls[1] is
-    # `_open_case`'s own POST, which raise_for_status() turns into the swallowed RuntimeError.
-    assert len(calls) == 2, calls
+    # calls[0] is the repeat-detection lookup (`.../case`, not a repeat here); calls[1] the
+    # episode's `attach`; calls[2] is `_open_case`'s own POST, which raise_for_status() turns
+    # into the swallowed RuntimeError.
+    assert len(calls) == 3, calls
     assert calls[0]["url"].endswith("/case"), calls
+    assert calls[1]["url"].endswith("/attach"), calls
     assert r.json()["workflow"]["started"] is False
     # Requirement 2: the row was written `received` (record_received DID run, before the case
     # open attempt) but NEVER moved to case_opened -- `_open_case` returning False must leave it
@@ -1007,11 +1020,13 @@ def test_ingest_events_status_write_failure_refuses_503_and_never_opens_the_case
     })
     assert r.status_code == 503, r.text
     assert r.json()["detail"]["error"] == "status_unavailable", r.json()
-    # Only the repeat-detection lookup ran -- record_received's own failure happens before
-    # `_open_case` would make its own `/run/send` POST, so a second call here would BE
-    # `_open_case` having fired anyway.
-    assert len(calls) == 1, calls
+    # The repeat-detection lookup and the episode's `attach` (asked BEFORE the status row is
+    # written) ran -- record_received's own failure happens before `_open_case` would make its
+    # own `/run/send` POST, so a `/run/send` here would BE `_open_case` having fired anyway.
+    assert len(calls) == 2, calls
     assert calls[0]["url"].endswith("/case"), calls
+    assert calls[1]["url"].endswith("/attach"), calls
+    assert not any(c["url"].endswith("/run/send") for c in calls), calls
 
 
 def _stub_restate_routed(monkeypatch, *, case_body=None, case_error=None,
@@ -1235,6 +1250,9 @@ def _stub_restate_real_wire(monkeypatch, *, case_content=b""):
             req = httpx.Request("POST", url)
             if url.endswith("/case"):
                 return httpx.Response(200, content=case_content, request=req)
+            if url.endswith("/attach"):  # nothing open: the handler answers a body, 200
+                return httpx.Response(
+                    200, content=b'{"attached_to":null,"predecessor":null}', request=req)
             return httpx.Response(202, content=b'{"invocationId":"inv-1"}', request=req)
 
     monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
@@ -1247,9 +1265,10 @@ def test_ingest_events_a_first_event_on_the_real_wire_opens_its_case(client, mon
     calls = _stub_restate_real_wire(monkeypatch)
     r = _events_post(client)
     assert r.status_code == 200, r.text
-    assert len(calls) == 2, calls
+    assert len(calls) == 3, calls
     assert calls[0]["url"].endswith("/case"), calls
-    assert calls[1]["url"].endswith("/run/send"), calls
+    assert calls[1]["url"].endswith("/attach"), calls
+    assert calls[2]["url"].endswith("/run/send"), calls
     assert r.json()["workflow"]["started"] is True
     assert len(received_calls) == 1, received_calls
 

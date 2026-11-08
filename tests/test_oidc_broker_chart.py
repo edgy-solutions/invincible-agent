@@ -174,7 +174,12 @@ def _in_scope(rendered: str, templates: set[str]) -> str:
 
 def _norm_old(old: str) -> str:
     ver = re.search(r"^version:\s*(\S+)", (_REPO / _CHART / "Chart.yaml").read_text(encoding="utf-8"), re.M).group(1)
-    return re.sub(r"0.4.35", ver, old)
+    old = re.sub(r"0.4.35", ver, old)
+    # 0.4.80 (every image by digest): the base sha rendered the reconcile Job's curl by tag; this chart
+    # renders the same tag by the digest `global.imageDigests` pins. That is the one image change.
+    import yaml
+    rows = yaml.safe_load((_REPO / _CHART / "values.yaml").read_text(encoding="utf-8"))["global"]["imageDigests"]
+    return re.sub(r"(image: docker\.io/curlimages/curl):8\.11\.0", lambda m: f"{m.group(1)}@{rows['docker.io/curlimages/curl']}", old)
 
 
 def _line_diff(a: str, b: str) -> list[str]:
@@ -228,7 +233,8 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     old_realm = copy.deepcopy(old_realm)
     _cui(old_realm).update(redirectUris=[], webOrigins=[])
     assert {**old_realm, "users": []} == {**new_realm, "users": []}
-    assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == ['+  USER_ENTITLEMENT_CLAIM: "email"']
+    assert _diff(_blank_realm(old_rest), _blank_realm(new_rest)) == [
+        '+  USER_ENTITLEMENT_CLAIM: "email"']
     # 0.4.38: the reconcile Job's present-branch for an existing authz-id-svc mapper was rewritten
     # (chart-owned stale mapper migrated, not merely counted). The ONLY lines the base render may
     # lose from the Job are the old create-only check and its comment; nothing else is removed.
@@ -540,7 +546,9 @@ def test_regioneast_is_mapped_the_way_borduria_was_and_liaison_holds_the_approva
     assert regioneast["default"] == borduria["default"] == {"persona": "MECHANIC", "domains": ["MAINTENANCE"]}
     liaison = by_id[_LIAISON_SUB]
     # the dry run needs liaison to hold maint_fault_approval:edge-01; the supervisor group stays
-    assert set(liaison["groups"]) == {"maint-approvers-edge-01", "maint-supervisors-edge-01"}
+    # 2026-10-27: and their edge-02 mirrors (architect directive item 1)
+    assert set(liaison["groups"]) == {"maint-approvers-edge-01", "maint-supervisors-edge-01",
+                                      "maint-approvers-edge-02", "maint-supervisors-edge-02"}
     assert "default" not in liaison  # still actor-only: no persona cell
 
 
@@ -772,8 +780,17 @@ def test_users_yaml_humans_and_the_realm_import_are_the_same_population(sandbox)
 def test_the_walkers_hold_alices_groups_and_default_and_nothing_else(who):
     by_id = {u["id"]: u for u in _users_yaml()}
     alice, walker = by_id["alice@example.com"], by_id[f"{who}@example.com"]
-    assert len(alice["groups"]) == 10, alice["groups"]                   # positive control: the set is non-trivial (10: + maint-tier-ack-edge-01, ruling 2026-10-11)
-    assert set(walker["groups"]) == set(alice["groups"]) and len(walker["groups"]) == len(alice["groups"])
+    # CAPABILITY-ONLY groups are exempt (ruled 2026-10-31): a group with no persona.domain cell that a
+    # capability row grants to. Membership is a capability fixture (alice's alert-processors, alice's and
+    # bob's mcp-callers), not part of the persona set a walker mirrors. Derived from the rail, never listed.
+    cells = yaml.safe_load((_REPO / "policy" / "groups.yaml").read_text(encoding="utf-8"))["groups"]
+    rows = yaml.safe_load((_REPO / "policy" / "capability_grants.yaml").read_text(encoding="utf-8"))["capabilities"]
+    cap_only = {g for r in rows.values() for g in (r.get("grant_to_groups") or []) if not cells.get(g)}
+    assert cap_only & set(alice["groups"]), "positive control: alice holds a capability-only group"
+    mirrored = [g for g in alice["groups"] if g not in cap_only]
+    assert len(mirrored) == 11, mirrored                                 # positive control: the set is non-trivial (11: + maint-tier-ack-edge-01, ruling 2026-10-11; + maint-tier-ack-edge-02, 2026-10-27)
+    held = [g for g in walker["groups"] if g not in cap_only]
+    assert set(held) == set(mirrored) and len(held) == len(mirrored)
     assert walker["default"] == alice["default"]
     # NO DIRECT GRANT. The only rows naming a walker are the capability rows whose grant_to is DERIVED from
     # group membership (the two derived-invoker seals pin each such row to the derived set exactly, both

@@ -8,9 +8,11 @@ it into Persona-specific sub-tasks, fans those out concurrently to Engine E
 
 import os
 import json
+import re
 import requests
 import sys
 import time
+import uuid
 import logging
 from contextlib import contextmanager
 from pathlib import Path
@@ -171,7 +173,7 @@ class SupervisorQueryConfig(Config):
 
 
 @op(out=DynamicOut(Dict[str, Any]))
-def create_task_plan(config: SupervisorQueryConfig):
+def create_task_plan(context, config: SupervisorQueryConfig):
     """
     Calls Engine O (Ontology Reasoner) to decompose a complex query into a
     SupervisorTaskPlan containing persona-specific sub-tasks.
@@ -191,6 +193,9 @@ def create_task_plan(config: SupervisorQueryConfig):
         # specialist legs. This site was the odd one out — and the reason it was missed is worth
         # keeping: it sits in the `else:` branch, while the `try` a scanner finds nearby guards the
         # `if config.task_plan_json:` branch above. Proximity is not enclosure.
+        # The person's own token for this call, or "" when no person is behind the run. A vault
+        # refusal raises and fails the op: there is no fallback to the service here.
+        _plan_token = _caller_token_for(context, config, "plan")
         response = requests.post(
             f"{ONTOLOGY_SVC_URL}/plan",
             json={
@@ -198,7 +203,7 @@ def create_task_plan(config: SupervisorQueryConfig):
                 "domain": config.domain
             },
             timeout=300,
-            headers=_telemetry_headers(config),
+            headers=_telemetry_headers(config, _plan_token),
         )
         response.raise_for_status()
         plan = response.json()
@@ -448,10 +453,12 @@ def _resolve_subject(
             payload["user_email"] = user_email
         # SERIALIZED. The wait happens OUTSIDE this call, so the 30s below starts when this
         # subtask gets its turn rather than while it queues. See _resolve_serialized.
+        _tok = _caller_token_for(context, user_email, "resolve")
         with _resolve_serialized(context):
             resp = requests.post(
                 f"{ONTOLOGY_SVC_URL}/resolve",
                 json=payload,
+                **_bearer_kwargs(_tok),
             # 15s was too tight under realistic engine-o load: BAML's
             # ClassifyDomainIntent runs ~5-10s, Recipe v2's
             # instance-resolution fan-out adds 3-5s for engine_d's
@@ -476,6 +483,10 @@ def _resolve_subject(
             )
         resp.raise_for_status()
         data = resp.json()
+    except CallerIdentityUnavailable:
+        # NEVER ABSORBED. Degrading to subject UNKNOWN would answer the person's question as
+        # the service, the silent fallback this exception exists to prevent.
+        raise
     except Exception as exc:
         context.log.warning(
             "resolve_subject failed for query=%r: %s — predicate classifier "
@@ -1178,6 +1189,7 @@ def _classify_route(
         }
 
     try:
+        _tok = _caller_token_for(context, user_email, "classify_predicate")
         resp = requests.post(
             f"{ONTOLOGY_SVC_URL}/classify_predicate",
             json={
@@ -1202,9 +1214,12 @@ def _classify_route(
                 "user_email": user_email,
             },
             timeout=CLASSIFY_PREDICATE_TIMEOUT_S,  # LLM call inside; see the constant.
+            **_bearer_kwargs(_tok),
         )
         resp.raise_for_status()
         data = resp.json()
+    except CallerIdentityUnavailable:
+        raise  # never degraded to an infra-error route; see `_resolve_subject`
     except Exception as exc:
         context.log.error(
             "classify_predicate infrastructure error for query=%r: %s",
@@ -1478,7 +1493,7 @@ def _telemetry_headers(config, caller_token: str = "") -> Dict[str, str]:
     """
     headers: Dict[str, str] = {}
 
-    # ── THE CALLER'S OWN IDENTITY, WHEN THE VERB REQUIRES IT ───────────────────────
+    # ── THE CALLER'S OWN IDENTITY, WHEN A PERSON IS BEHIND THE RUN ───────────────────────
     # `caller_token` is alice's own Ping-rooted token, redeemed from the BFF's identity
     # vault over the live in-cluster hop (see `_redeem_caller_token`). When present it
     # REPLACES the service identity, because the whole point of the ruled design is that
@@ -1591,41 +1606,42 @@ from iagent.service_urls import cortex_bff_base_url as _cortex_bff_base_url
 
 _CORTEX_BFF_URL = _cortex_bff_base_url()
 
-# WHICH VERBS NEED THE CALLER'S OWN IDENTITY — an ALLOW-LIST, deliberately.
+# THE DISPATCH FORWARDS THE CALLER — ON EVERY VERB, NOT A LIST OF THEM.
 #
-# Scoped rather than universal because flipping every specialist dispatch from
-# svc:supervisor to alice's token is a behaviour change far beyond the seed: it would
-# move every engine off the service identity at once and take the OBSERVE-phase
-# caller-readiness gauge with it. That may well be the eventual destination, but it is a
-# separate ruling with its own blast radius, not a side effect of shipping the canvas.
+# Architect ruling 2026-11-02: "Every engine call the supervisor makes forwards the user's
+# token; 'five hard-coded verbs' is a defect: the forwarding is in the dispatch, not per
+# verb." This replaces the 2026-10-17 ruling that scoped the forwarding to an allow-list.
 #
-# Stored COMPACT to match the registry. Verified convention (mesh_registrar/main.py, from
-# 24 live rows on 2026-08-21): the verb position is stored compact, subject/object full.
-# The local-name comparison below tolerates either form anyway — a registry that later
-# expands verbs must not silently turn this gate off, and a silently-off gate here means
-# a seed that 403s exactly the way it did before the fix.
-# `seedCanvas` is `seedPortfolioCanvas` with the template as a slot (ADR-0050 §4). BOTH
-# are listed: the older verb is superseded, not removed, because cortex calls its route
-# today and a live surface must not break for a rename. A successor added here without
-# its predecessor would silently drop caller identity on every phrase still in use.
+# A run that has a person behind it redeems that person's own token and dispatches with it,
+# whatever the verb. A run with no person (a blank `user_email`, or a service identity such
+# as `svc:...`) dispatches as svc:supervisor, as it always did. That arm is INTERIM: the
+# architect has ruled a run with no person is a declared `pipeline:<name>` machine principal,
+# landing in the next PR. There is no third case, and
+# above all no fallback: a person's run whose redemption fails is REFUSED
+# (`caller_identity_unavailable`), never sent on as the service. Dispatched as the service the
+# engine would decide about the wrong subject, and grant or deny for everyone at once.
 #
-# `explain` (engine-docs) joins because its page gate decides on the ASKER: a page is withheld
-# unless the asker may invoke every verb it explains. Dispatched as svc:supervisor, the asker
-# is the service, so the gate would decide about the wrong subject: it would grant or deny
-# for everyone at once. It is listed before that gate turns on (ENABLE_AGENTIC_AUTH), because
-# the identity has to be right on the day the gate starts to read it.
+# Why a list was the defect: every verb added since needed someone to remember to add it, and
+# a verb that was not listed silently dropped the asker (the engine saw svc:supervisor, so a
+# gate that decides on the asker, e.g. a page gate or a program filter, answered for nobody).
+# The canvas seed's inner asks each re-check the caller's Topaz cell, so a seed dispatched
+# without the person's token fails as a string of 403s and an empty canvas, which looks like
+# an entitlement problem and is not.
 #
-# `whatFailedOnThisPart` and `failureTrendForThisPlatformByMonth` (Engine S) join because
-# Engine S's program filter (ADR-0056 Q2) decides on the ASKER, read only from the bearer: a
-# service identity is never a member of a program, so dispatched as svc:supervisor the answer
-# is a 422 `no_person` (lane saf's 192 walk, FRACAS 5530-184). These are the measures that reach
-# `_visible_records` (derived, and sealed by tests/identity/
-# test_the_per_person_verb_call_carries_the_caller.py). Architect ruling 2026-10-17: the verb
-# CALL carries the acting identity, through this set, not by flipping every dispatch.
-_CALLER_IDENTITY_VERBS = frozenset({
-    "seedPortfolioCanvas", "seedCanvas", "explain",
-    "whatFailedOnThisPart", "failureTrendForThisPlatformByMonth",
-})
+# THE RULING (2026-11-03): ONE reference per run, redeemed once per outbound call, for as long
+# as the run's budget. Every leg that speaks for the person goes through `_caller_token_for`.
+# A `pipeline:<name>` principal for runs with no person is NOT here; it is a later change with
+# its own rail rows.
+
+
+def _run_has_a_person(config) -> bool:
+    """True when this run was launched for a person: `user_email`, stripped, is non-blank and
+    is not a service identity (`svc:` prefix, any case). `user_email` is the gateway's
+    `current_user.authz_id` (the entitlement key, not necessarily an email address) and
+    defaults to blank on a run launched without one."""
+    raw = getattr(config, "user_email", config)
+    who = str(raw or "").strip()
+    return bool(who) and not who.lower().startswith("svc:")
 
 
 class CallerIdentityUnavailable(Exception):
@@ -1675,13 +1691,9 @@ _CALLER_IDENTITY_MESSAGES = {
         "The credential reference for this request was no longer available, so nothing "
         "was attempted. Asking again creates a fresh one."
     ),
-    "expired": (
-        "This request took longer to start than its credential reference lasts, so "
-        "nothing was attempted. Asking again creates a fresh one."
-    ),
     "already_redeemed": (
-        "The credential reference for this request had already been used, so nothing was "
-        "attempted. Asking again creates a fresh one."
+        "This call's credential had already been used, so nothing was attempted. Asking "
+        "again creates a fresh one."
     ),
     "launcher_mismatch": (
         "The credential reference did not match the request that created it, so nothing "
@@ -1710,23 +1722,40 @@ def _verb_local_name(verb_iri: str) -> str:
     return v
 
 
-def _verb_needs_caller_identity(predicate: Dict[str, Any]) -> bool:
-    return _verb_local_name(str((predicate or {}).get("verb_iri") or "")) in _CALLER_IDENTITY_VERBS
+def _step_key(context) -> str:
+    """Dagster's own name for this step (never read back from run config)."""
+    try:
+        return str(context.get_step_execution_context().step.key)
+    except Exception:  # noqa: BLE001 -- a context without a step still names its op
+        pass
+    try:
+        _mk = context.get_mapping_key()
+        _op = context.op.name
+        return f"{_op}[{_mk}]" if _mk else str(_op)
+    except Exception:  # noqa: BLE001
+        return "step"
 
 
-def _redeem_caller_token(context, config) -> str:
-    """Exchange this run's id for the caller's own token. Once, or not at all.
+def _redeem_caller_token(context, who, leg: str = "call") -> str:
+    """Redeem the caller's own token from the BFF's vault for ONE outbound call.
 
-    ``context.run_id`` is DAGSTER'S OWN record of which run this is — not a value read
-    back out of run config, which a caller could have written. Asking with the
-    authoritative id is what makes the BFF's launcher cross-check meaningful rather than
-    a comparison of two caller-supplied strings.
+    ``who`` is the run config or the launcher's ``user_email``. ``context.run_id`` is
+    DAGSTER'S OWN record of which run this is, not a value read back out of run config,
+    which a caller could have written. Each call carries its own ``call_id``
+    (``<step>/<leg>/<uuid>``): a call seen twice is the replay tell. The token is returned
+    to the one caller and kept nowhere.
+
+    ``awaiting_reauth`` is a pause, not a failure: ask again after
+    ``IDENTITY_REAUTH_POLL_SECONDS`` with a fresh call id. There is no timer here; the
+    bound is the reference's own life, after which the vault answers ``not_found``.
     """
     run_id = str(getattr(context, "run_id", "") or "")
     if not run_id:
         raise CallerIdentityUnavailable(
             "no_run_id", "this op has no run id, so there is no reference to redeem"
         )
+    step = _step_key(context)
+    launcher = getattr(who, "user_email", who) or ""
 
     # ── STEP ONE: AUTHENTICATE OURSELVES. A DISTINCT FAILURE FROM A VAULT REFUSAL ──
     #
@@ -1745,36 +1774,49 @@ def _redeem_caller_token(context, config) -> str:
     # the user-code deployment, which injects at POD START. A pod that started while the
     # secret was absent stays broken for its whole life even after the secret is fixed —
     # so the remedy is a RESTART, not only a chart edit.
-    try:
-        from agent_fleet.utils.service_identity import mint_supervisor_token
-        _svc_token = mint_supervisor_token()
-    except Exception as _mint_exc:  # noqa: BLE001
-        raise CallerIdentityUnavailable(
-            "service_identity_unconfigured",
-            f"{type(_mint_exc).__name__}: {_mint_exc}",
-        ) from _mint_exc
+    while True:
+        try:
+            from agent_fleet.utils.service_identity import mint_supervisor_token
+            _svc_token = mint_supervisor_token()
+        except Exception as _mint_exc:  # noqa: BLE001
+            raise CallerIdentityUnavailable(
+                "service_identity_unconfigured",
+                f"{type(_mint_exc).__name__}: {_mint_exc}",
+            ) from _mint_exc
 
-    resp = requests.post(
-        f"{_CORTEX_BFF_URL}/internal/identity/redeem",
-        json={
-            "run_id": run_id,
-            # Invariant 4: the launcher THIS RUN records, cross-checked at the BFF
-            # against the subject of the token that was stashed.
-            "claimed_launcher": getattr(config, "user_email", "") or "",
-        },
-        headers={"Authorization": f"Bearer {_svc_token}"},
-        timeout=15,
-    )
-    if resp.status_code != 200:
-        # NAME THE CAUSE. The BFF distinguishes not_found / expired / already_redeemed /
-        # launcher_mismatch, and collapsing them into "redemption failed" here would
-        # discard exactly the discrimination the vault was built to make.
+        call_id = f"{step}/{leg}/{uuid.uuid4().hex}"
+        resp = requests.post(
+            f"{_CORTEX_BFF_URL}/internal/identity/redeem",
+            json={
+                "run_id": run_id,
+                "call_id": call_id,
+                # Invariant 4: the launcher THIS RUN records, cross-checked at the BFF
+                # against the subject of the token that was stashed.
+                "claimed_launcher": launcher,
+                "leg": leg,
+            },
+            headers={"Authorization": f"Bearer {_svc_token}"},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            break
+        # NAME THE CAUSE. The BFF distinguishes not_found / already_redeemed /
+        # launcher_mismatch / awaiting_reauth, and collapsing them into "redemption
+        # failed" here would discard exactly the discrimination the vault was built to make.
         try:
             _err = (resp.json() or {}).get("detail") or {}
             _cause = _err.get("error") or f"http_{resp.status_code}"
             _msg = _err.get("message") or ""
         except Exception:  # noqa: BLE001
             _cause, _msg = f"http_{resp.status_code}", (resp.text or "")[:200]
+        if _cause == "awaiting_reauth":
+            _poll = float(os.getenv("IDENTITY_REAUTH_POLL_SECONDS", "10") or 10)
+            context.log.info(
+                "%s/%s: the run is awaiting the person's re-authentication; asking again in %ss",
+                step, leg, _poll,
+            )
+            time.sleep(_poll)
+            continue
         raise CallerIdentityUnavailable(_cause, _msg)
 
     token = str((resp.json() or {}).get("token") or "")
@@ -1786,6 +1828,20 @@ def _redeem_caller_token(context, config) -> str:
             "malformed_vault_response", "the vault answered 200 with no token"
         )
     return token
+
+
+def _caller_token_for(context, who, leg: str) -> str:
+    """The ONE gate every outbound leg goes through. "" when no person is behind the run
+    (unchanged: the call goes as the service); otherwise the person's token, redeemed for
+    this call. A refusal raises ``CallerIdentityUnavailable``, which no leg may absorb."""
+    if not _run_has_a_person(who):
+        return ""
+    return _redeem_caller_token(context, who, leg)
+
+
+def _bearer_kwargs(token: str) -> Dict[str, Any]:
+    """``headers=`` for a leg that sent none before; nothing at all when there is no token."""
+    return {"headers": {"Authorization": f"Bearer {token}"}} if token else {}
 
 
 def _call_engine_a_fallback(
@@ -1934,7 +1990,8 @@ def _call_engine_a_fallback(
     # Forward the request's trace + session ids so Engine A's /analyze proxy adopts them
     # (X-Trace-Id -> the analyst trace's seed; X-Session-Id -> the Langfuse session). The
     # conversation-path leg of ADR-0038: cortex-ui -> BFF -> supervisor -> Engine A.
-    _tele_headers = _telemetry_headers(config)
+    _tele_headers = _telemetry_headers(
+        config, _caller_token_for(context, config, "analyze"))
     response = requests.post(
         f"{RESTATE_ANALYST_URL}/analyze",
         json=payload,
@@ -2136,6 +2193,7 @@ from iagent_pure.slot_acceptance import (
 # second copy. Aliased to their old private names: every call site and seal below reads
 # unchanged, and the diff stays about the move rather than about renaming.
 from iagent.verb_lookup import find_compatible_verbs as _lookup_compatible_verbs
+from iagent.authz.refusal import relay_refusal
 from iagent_pure.verb_eligibility import (
     filter_verbs_by_arity as _filter_verbs_by_arity,
     predicate_from_compat_record as _predicate_from_compat_record,
@@ -2257,12 +2315,24 @@ def _make_enumerator(context, *, user_email: str = "",
     _caller = {"user_email": user_email,
                "entitled_domains": list(entitled_domains or [])}
 
+    # THE ENUMERATOR'S CONSUMERS (`slot_disposition`) CATCH `Exception` AROUND THIS CALL and
+    # turn it into a no-provider ask, which would absorb a vault refusal and carry on as if
+    # nothing were wrong. So the refusal is also RECORDED here, on the function, and the
+    # step re-raises it after the consumer returns (`_raise_if_identity_failed`).
+    _identity_failures: list = []
+
     def _enumerate(class_uri: str, *, bound_slots: Dict[str, Any] | None = None) -> Dict[str, Any]:
         _bound = {str(k): str(v) for k, v in (bound_slots or {}).items() if v not in (None, "")}
+        try:
+            _tok = _caller_token_for(context, user_email, "enumerate")
+        except CallerIdentityUnavailable as _exc:
+            _identity_failures.append(_exc)
+            raise
         resp = requests.post(
             _ENUMERATE_URL,
             json={"class_uri": class_uri, "bound_slots": _bound, **_caller},
             timeout=_ENUMERATE_TIMEOUT_S,
+            **_bearer_kwargs(_tok),
         )
         if resp.status_code == 422:
             try:
@@ -2280,7 +2350,15 @@ def _make_enumerator(context, *, user_email: str = "",
         )
         return body
 
+    _enumerate.identity_failures = _identity_failures  # type: ignore[attr-defined]
     return _enumerate
+
+
+def _raise_if_identity_failed(enumerator) -> None:
+    """Re-raise a vault refusal a consumer swallowed on the enumerator's behalf."""
+    _failed = getattr(enumerator, "identity_failures", None)
+    if _failed:
+        raise _failed[0]
 
 
 class _FillResult(NamedTuple):
@@ -2335,6 +2413,7 @@ def _fill_slots_from_query(
     it is deliberately not made here.
     """
     try:
+        _tok = _caller_token_for(context, user_email, "fill_slots")
         resp = requests.post(
             f"{ONTOLOGY_SVC_URL}/fill_slots",
             # `acting_domains` FORWARDED so the resolver fan-out can demote providers outside
@@ -2362,6 +2441,7 @@ def _fill_slots_from_query(
                 "user_email": user_email,
             },
             timeout=_fill_slots_budget(declarations),
+            **_bearer_kwargs(_tok),
         )
         if resp.status_code == 422:
             # A REFUSED PERSON IS NAMED, THEN DEGRADED. engine-o refuses `/fill_slots` with 422
@@ -2387,6 +2467,8 @@ def _fill_slots_from_query(
             )
             return _FillResult({}, {})
         body = resp.json() or {}
+    except CallerIdentityUnavailable:
+        raise  # never "running on defaults": that is the service's answer to a person's question
     except Exception as exc:  # noqa: BLE001
         context.log.warning(
             "fill_slots unavailable verb_iri=%s (%s) — running on defaults", verb_iri, exc
@@ -2534,6 +2616,10 @@ def _log_subtask_review_request_asset(
     rr = acceptance_request.review_request_of(engine_response)
     if not rr:
         return False
+    # I3: stamp the minted case key in place, so the asset below AND the engine response the
+    # caller goes on to render both carry it.
+    rr = acceptance_request.with_minted_ids(rr)
+    engine_response["review_request"] = rr
     context.log_event(
         AssetMaterialization(
             asset_key=["subtask_review_request"],
@@ -2548,6 +2634,116 @@ def _log_subtask_review_request_asset(
         )
     )
     return True
+
+
+_RELAYED_REFUSAL_STATUSES = (401, 403, 409)
+
+
+def _refusal_from_engine_4xx(context, endpoint, response) -> Optional[Dict[str, Any]]:
+    """The 200-style refusal dict for an engine's refusal-bearing 401/403/409, else None.
+
+    None means "not a refusal": a status outside the three, a body that is not JSON, or JSON
+    that carries no refusal. The caller then takes today's `raise_for_status()` path. Never
+    raises -- this runs ahead of the transport handler.
+    """
+    status = getattr(response, "status_code", None)
+    if status not in _RELAYED_REFUSAL_STATUSES:
+        return None
+    try:
+        body = response.json()
+    except Exception:  # noqa: BLE001 -- not JSON means not a refusal
+        return None
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if not isinstance(detail, dict):
+        detail = body
+    if not isinstance(detail, dict):
+        return None
+    r = detail.get("refusal")
+    r_ok = isinstance(r, dict) and bool(r.get("policy_id")) and bool(r.get("missing_binding"))
+    if not (r_ok or detail.get("refused") is True):
+        return None
+    err = detail.get("error")
+    outcome = err if isinstance(err, str) and err else (detail.get("outcome") or "refused")
+    data: Dict[str, Any] = {
+        "refused": True,
+        "outcome": outcome,
+        "reason": detail.get("message") or detail.get("reason"),
+        "status_code": status,
+    }
+    if r_ok:
+        # The grantor map is LOADED here, on the deny path, from this image's policy rail. A
+        # load failure or a malformed engine field must not turn a refusal back into a crashed
+        # op, so it degrades to the engine's two names WITHOUT `grantable_by` -- an engine
+        # never speaks for the deployment's grantor, even by default.
+        try:
+            data["refusal"] = relay_refusal({"refusal": r})["refusal"]
+        except Exception:  # noqa: BLE001 -- the refusal still travels
+            context.log.error("execute_subtask: could not fill the grantor for %s's refusal",
+                              endpoint, exc_info=True)
+            data["refusal"] = {"policy_id": str(r["policy_id"]),
+                               "missing_binding": str(r["missing_binding"])}
+    for k in ("connector", "fn", "hazard_id", "gap", "ask"):
+        if k in detail:
+            data[k] = detail[k]
+    # A TYPED DENIAL KEEPS WHAT OPENS THE REQUEST-ACCESS FLOW. `_log_subtask_access_denied_asset`
+    # reads these off this dict; without them the person gets a refusal and no way to ask.
+    if detail.get("status") == "access_denied":
+        for k in ("status", "denied_assets", "subject", "message"):
+            if k in detail:
+                data[k] = detail[k]
+    context.log.info(
+        "execute_subtask: engine at %s refused with %s %s", endpoint, status, outcome
+    )
+    return data
+
+
+def _log_no_verb_decision(
+    context,
+    *,
+    disposition: str,
+    no_verb_reason: str,
+    telemetry,
+    rejected_verb_iri: str = "",
+) -> None:
+    """Record that a subtask ended with NO verb, and why.
+
+    `execute_subtask` returns early at four points before the `subtask_slots_decision`
+    materialization, so the gateway's `resolved_intent` kept /route_intent's extraction and an
+    answer with no verb carried neither a verb nor any record of why. `verb_iri` is "" here:
+    the rejected verb (exit 4) travels in `rejected_verb_iri`, never in `verb_iri`.
+    """
+    tel = telemetry or {}
+    try:
+        context.log_event(
+            AssetMaterialization(
+                asset_key=["subtask_slots_decision"],
+                metadata={
+                    "verb_iri": MetadataValue.text(""),
+                    "disposition": MetadataValue.text(str(disposition or "")),
+                    "no_verb_reason": MetadataValue.text(str(no_verb_reason or "")),
+                    "fallback_detail": MetadataValue.text(
+                        str(tel.get("fallback_reason") or "")
+                    ),
+                    "rejected_verb_iri": MetadataValue.text(str(rejected_verb_iri or "")),
+                    "owner_persona": MetadataValue.text(""),
+                    "subject_uri": MetadataValue.text(str(tel.get("subject_uri") or "")),
+                    "subject_instance_id": MetadataValue.text(
+                        str(tel.get("subject_instance_id") or "")
+                    ),
+                    "subject_instance_label": MetadataValue.text(
+                        str(tel.get("subject_instance_label") or "")
+                    ),
+                    "accepted_slots": MetadataValue.text("{}"),
+                    "bound_slot_sources": MetadataValue.text("{}"),
+                    "refused_slots": MetadataValue.text("[]"),
+                    "slot_resolution": MetadataValue.text("{}"),
+                    "fill_slots": MetadataValue.text(""),
+                },
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        # NON-FATAL: provenance must not take an answer down.
+        context.log.warning("subtask_slots_decision (no verb) materialization failed: %s", exc)
 
 
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
@@ -2660,6 +2856,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     #   no_match                          → Engine A fallback (no_predicate_matched)
     #   infra_error                       → abort with INFRA_ERROR signal
     if status == _ROUTING_INFRA_ERROR:
+        _log_no_verb_decision(
+            context, disposition="infra_error", no_verb_reason="routing_infra_error",
+            telemetry=telemetry,
+        )
         # Infrastructure outage — must surface, NOT mask via fallback.
         # Same reasoning that drove the ADR-0009 Cypher-fallback removal:
         # silent degradation hides the signal ops needs to fix the outage.
@@ -2718,6 +2918,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             if c and c != "UNKNOWN"
         ]
         if _fb_reason == "no_verb_classified":
+            _log_no_verb_decision(
+                context, disposition="abstain", no_verb_reason="no_verb_classified",
+                telemetry=telemetry,
+            )
             context.log.info(
                 "routing_abstain_rendered sub_query=%r considered=%s — NOT falling through to "
                 "the generalist; the classifier declined among real candidates.",
@@ -2755,6 +2959,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             }
 
         # Per ADR-0008: registry coverage gap → generalist fallback.
+        _log_no_verb_decision(
+            context, disposition="fallback", no_verb_reason="no_predicate_matched",
+            telemetry=telemetry,
+        )
         return _call_engine_a_fallback(
             context,
             sub_query=sub_query,
@@ -2782,6 +2990,11 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     )
 
     if score is None or score < threshold:
+        _log_no_verb_decision(
+            context, disposition="fallback", no_verb_reason="low_confidence",
+            telemetry=telemetry,
+            rejected_verb_iri=str(predicate.get("verb_iri") or ""),
+        )
         return _call_engine_a_fallback(
             context,
             sub_query=sub_query,
@@ -2874,14 +3087,16 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # extraction and a caller-supplied default — ADR-0033 #5's user-confirmed provenance,
     # applied at the only point that can check it.
     if config.bound_slots and declared:
+        _pick_enum = _make_enumerator(
+            context, user_email=config.user_email,
+            entitled_domains=list(config.entitled_domains or []),
+        )
         picked, refusals, bound_resolution = validate_bound_slots(
             config.bound_slots,
             declared=declared,
-            enumerate_class=_make_enumerator(
-                context, user_email=config.user_email,
-                entitled_domains=list(config.entitled_domains or []),
-            ),
+            enumerate_class=_pick_enum,
         )
+        _raise_if_identity_failed(_pick_enum)
         for refusal in refusals:
             # LOUD. A refused pick is the menu-integrity guard doing its job, and it is the
             # one refusal a user can actually see the consequence of.
@@ -2952,15 +3167,17 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # information the user supplied, and both MUST still route. ADR-0033 #4: a system that
     # asks when it knows is worse than one that guesses when it doesn't.
     # -----------------------------------------------------------------------------------
+    _disp_enum = _make_enumerator(
+        context, user_email=config.user_email,
+        entitled_domains=list(config.entitled_domains or []),
+    )
     disposition = decide_disposition(
         accepted=accepted.params,
         declared=declared,
         resolution=resolution,
-        enumerate_class=_make_enumerator(
-            context, user_email=config.user_email,
-            entitled_domains=list(config.entitled_domains or []),
-        ),
+        enumerate_class=_disp_enum,
     )
+    _raise_if_identity_failed(_disp_enum)
 
     # ── A FLAGGED VERB MAY NOT DISPATCH WITHOUT ITS INSTANCE ────────────────────────────
     #
@@ -3035,6 +3252,11 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 metadata={
                     "verb_iri": MetadataValue.text(str(predicate.get("verb_iri") or "")),
                     "disposition": MetadataValue.text(str(disposition.action or "")),
+                    "no_verb_reason": MetadataValue.text(""),
+                    "fallback_detail": MetadataValue.text(
+                        str((telemetry or {}).get("fallback_reason") or "")
+                    ),
+                    "rejected_verb_iri": MetadataValue.text(""),
                     # THE SUBJECT, BESIDE THE VERB IT WAS CHOSEN FOR. `resolved_intent`
                     # recorded the verb alone, which makes the pair unreconstructible: an
                     # answered ask carries `mesh:planCapabilityPath` and no record of the
@@ -3343,16 +3565,22 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # counted. If a run-level red is wanted back, it belongs in a final op that reads the
     # collected results and fails when all of them are `engine_unreachable` — after the payload
     # has been produced, never instead of it.
-    # ── REDEEM THE CALLER'S IDENTITY, for the verbs that require it ────────────────
+    # ── REDEEM THE CALLER'S IDENTITY, when a person is behind the run ──────────────
     # This runs BEFORE the POST so a redemption failure never reaches the engine as an
     # under-privileged call. The seed's five inner asks each re-check the caller's Topaz
     # cell, so dispatching without alice's token does not fail open — it fails as five
     # 403s and an empty canvas, which is a WORSE failure than not dispatching, because it
     # looks like an entitlement problem.
     _caller_token = ""
-    if _verb_needs_caller_identity(predicate):
+    if not _run_has_a_person(config):
+        context.log.info(
+            "execute_subtask: no person is behind this run (user_email is blank or a service "
+            "identity), so %s is dispatched as the service.",
+            predicate.get("verb_iri"),
+        )
+    else:
         try:
-            _caller_token = _redeem_caller_token(context, config)
+            _caller_token = _caller_token_for(context, config, "dispatch")
             context.log.info(
                 "execute_subtask: redeemed the caller's identity for %s — dispatching as "
                 "the ORIGINAL caller, exactly as the button path does.",
@@ -3422,8 +3650,14 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             headers=_telemetry_headers(config, caller_token=_caller_token) or None,
             timeout=1800,
         )
-        response.raise_for_status()
-        data = response.json()
+        # A REFUSAL IS AN ANSWER. An engine that says "this caller lacks the grant" has
+        # answered correctly; reading its 401/403/409 as an outage tells the user the system
+        # is broken when it is the grant that is missing. So a refusal-bearing body travels
+        # the success path as the same `{refused: true, ...}` dict a 200-refusal does.
+        data = _refusal_from_engine_4xx(context, endpoint, response)
+        if data is None:
+            response.raise_for_status()
+            data = response.json()
     except (requests.exceptions.RequestException, ValueError) as exc:
         # ValueError covers a 200 with an unparseable body — the engine answered with
         # something that is not JSON, which is a failure to answer, not a successful answer.
@@ -3590,6 +3824,7 @@ def synthesize_stateful(context, config: SupervisorQueryConfig, results: List[Di
     successful pipeline — execute_subtask + generate_ui_payload have
     already produced the user-visible payload. Log and return a stub.
     """
+    _tok = _caller_token_for(context, config, "support")
     try:
         response = requests.post(
             f"{LANGGRAPH_SUPPORT_SVC_URL}/support",
@@ -3600,6 +3835,7 @@ def synthesize_stateful(context, config: SupervisorQueryConfig, results: List[Di
                 "dagster_context": results,
             },
             timeout=300,
+            **_bearer_kwargs(_tok),
         )
         response.raise_for_status()
         return response.json()
@@ -3701,6 +3937,7 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
     if _primary is not None:
         results = [_primary] + [r for r in results if r is not _primary]
 
+    _tok = _caller_token_for(context, config, "render_ui")
     response = requests.post(
         f"{PRESENTATION_AGENT_SVC_URL}/render_ui",
         json={
@@ -3719,6 +3956,7 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
             "frontend_version": config.frontend_version or None,
         },
         timeout=300,
+        **_bearer_kwargs(_tok),
     )
     response.raise_for_status()
     ui_payload_dict = response.json()

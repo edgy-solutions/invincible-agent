@@ -100,9 +100,10 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
   before `git add`, and stage named paths only — a green belongs to a sha, not a directory.
 - **Commit from a file**: `git commit -F <file>`, never `-m` with backticks (command substitution
   has silently deleted terms from messages here).
-- **Every commit needs a `Lane: <worktree-dir>/<branch>` trailer**, or `.githooks/pre-push`
-  refuses the push (R-058). Derive it, don't type it: basename of `git rev-parse --show-toplevel`,
-  then `git branch --show-current`. Add it with `git commit --trailer`.
+- **Every commit needs a `Lane: <lane id>/<branch>` trailer**, or `.githooks/pre-push`
+  refuses the push (R-058). The id is a row of `.githooks/lanes`, **never a worktree path**
+  (ruled 2026-10-26): a throwaway worktree commits as its lane, e.g. `Lane: ia-01/lane/01-x`.
+  Derive it, don't type it: `.githooks/pre-push --expected`. Add it with `git commit --trailer`.
 - **Only the owning lane commits in this repo; packets are placed, never committed, by anyone
   else.** Another repo's lane drops its packet into `sessions/` and leaves it untracked (or
   staged); the owning lane reads it and commits it with its own work.
@@ -121,6 +122,9 @@ Python is pinned `>=3.12,<3.13`; deps are uv-managed, never pip-installed ad hoc
   effective values against the live release (`helm get values`); put the diff — not "no
   change expected" — in front of whoever approves the roll. Secret-bearing keys appear by
   length and hash prefix only (the rule above).
+- **An upgrade rolls from the release tag.** `scripts/upgrade-sandbox.sh` runs from a worktree
+  checked out at the release tag, never from master's working tree; `scripts/require-release-tree.sh`
+  refuses anything else (recipe in its header). `--dry-run` renders from any tree.
 - **Python through this worktree's venv only**: `uv run …` or `.venv/Scripts/python`. Never a
   bare `python`/`py` from PATH, never another worktree's venv — a name on PATH is not the
   program you mean. AGENTS.md:101–102 is the check that the venv imports this tree.

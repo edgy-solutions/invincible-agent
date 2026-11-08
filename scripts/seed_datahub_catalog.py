@@ -32,8 +32,8 @@ asks about):
             customers_gold, Customer 360 dashboard
 
     Owners (CorpUsers)
-      alice@company.com   — owns gold-layer + Customer 360
-      bob@company.com     — owns silver-layer + Sales Performance Q1
+      alice@example.com   — owns gold-layer + Customer 360
+      bob@example.com     — owns silver-layer + Sales Performance Q1
       charlie@company.com — owns bronze-layer + Revenue by Region
       dave@company.com    — owns the postgres raw layer
 
@@ -191,7 +191,7 @@ DATASETS = [
         "name": "silver.sales.orders_fact",
         "description": "Fact table joining orders with customer attributes. "
                        "Used by dashboards.",
-        "owner": "bob@company.com",
+        "owner": "bob@example.com",
         "last_updated_ms": RECENT,
         "tags": [],
         "columns": [
@@ -211,7 +211,7 @@ DATASETS = [
         "name": "silver.sales.customers_silver",
         "description": "Cleaned customer table with derived attributes "
                        "(tenure_days, lifetime_value). Contains PII.",
-        "owner": "bob@company.com",
+        "owner": "bob@example.com",
         "last_updated_ms": RECENT,
         "tags": ["pii"],
         "columns": [
@@ -229,7 +229,7 @@ DATASETS = [
         "name": "gold.sales.revenue_summary",
         "description": "Daily revenue rollup by region. Powers the Revenue "
                        "by Region and Sales Performance Q1 dashboards.",
-        "owner": "alice@company.com",
+        "owner": "alice@example.com",
         "last_updated_ms": RECENT,
         "tags": [],
         "columns": [
@@ -245,7 +245,7 @@ DATASETS = [
         "name": "gold.sales.customers_gold",
         "description": "Customer table with computed segments and PII masked "
                        "for analytics access.",
-        "owner": "alice@company.com",
+        "owner": "alice@example.com",
         "last_updated_ms": STALE,  # intentionally stale
         "tags": ["pii"],
         "columns": [
@@ -265,7 +265,7 @@ DASHBOARDS = [
         "urn": make_superset_dashboard_urn("sales_performance_q1"),
         "title": "Sales Performance Q1",
         "description": "Quarterly sales performance dashboard. Owned by Bob.",
-        "owner": "bob@company.com",
+        "owner": "bob@example.com",
         "charts": [],
         "datasets": [make_snowflake_urn("gold.sales.revenue_summary")],
     },
@@ -286,7 +286,7 @@ DASHBOARDS = [
         "title": "Customer 360",
         "description": "Per-customer view with segment and lifetime value. "
                        "Contains PII.",
-        "owner": "alice@company.com",
+        "owner": "alice@example.com",
         "charts": [],
         "datasets": [make_snowflake_urn("gold.sales.customers_gold")],
         "tags": ["pii"],
@@ -299,14 +299,14 @@ CHARTS = [
         "urn": make_superset_chart_urn("top_customers"),
         "title": "Top Customers",
         "description": "Top 10 customers by lifetime value.",
-        "owner": "alice@company.com",
+        "owner": "alice@example.com",
         "datasets": [make_snowflake_urn("gold.sales.customers_gold")],
     },
     {
         "urn": make_superset_chart_urn("monthly_revenue"),
         "title": "Monthly Revenue",
         "description": "Monthly revenue trend, last 12 months.",
-        "owner": "bob@company.com",
+        "owner": "bob@example.com",
         "datasets": [make_snowflake_urn("gold.sales.revenue_summary")],
     },
     {

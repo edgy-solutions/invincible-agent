@@ -1,0 +1,1025 @@
+"""Measure the ADR-0061 socratic elicitation loop on the three synthetic fixtures. PROTOTYPE.
+
+    uv run scripts/socratic_measure.py --arm oracle --out dist/socratic_oracle.json
+    SOCRATIC_LLM_BASE_URL=... SOCRATIC_LLM_MODEL=... \\
+        uv run scripts/socratic_measure.py --arm model --out dist/socratic_model.json
+
+It measures; it does not gate. Exit 0 always (a missing environment for the model arm exits with a
+message). The model arm never sees ``facts`` or ``expected/`` -- only each answer's ``says``.
+"""
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import os
+import re
+import sys
+import time
+from collections import Counter, deque
+from pathlib import Path
+from typing import Optional, Tuple
+
+import yaml
+
+REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from agent_fleet.restate_analyst import socratic_elicitation as se  # noqa: E402
+
+FIXTURES = REPO / "tests" / "fixtures" / "socratic"
+NAMES = tuple(sorted(p.name for p in FIXTURES.iterdir() if (p / "transcript.yaml").is_file()))
+_FOLDERS = ("triggers", "decisions", "workflows", "task_kinds")
+
+
+def load_expected(fixture_dir: Path) -> dict:
+    files = {}
+    for folder in _FOLDERS:
+        for p in sorted((fixture_dir / "expected" / folder).glob("*.yaml")):
+            files[f"{folder}/{p.name}"] = yaml.safe_load(p.read_text(encoding="utf-8"))
+    return files
+
+
+def _flatten(prefix: str, value, out: dict) -> None:
+    if isinstance(value, dict) and value:
+        for k, v in value.items():
+            _flatten(f"{prefix}.{k}" if prefix else str(k), v, out)
+    else:
+        out[prefix] = value
+
+
+def leaf_diffs(final: dict, expected: dict) -> list:
+    a: dict = {}
+    b: dict = {}
+    for f, d in final.items():
+        _flatten(f, d, a)
+    for f, d in expected.items():
+        _flatten(f, d, b)
+    return sorted(k for k in set(a) | set(b) if k not in a or k not in b or a[k] != b[k])
+
+
+# ── canonical (semantic) form -- names and free text do not count ────────────────────────────
+
+def _when_key(when: dict) -> tuple:
+    return tuple(sorted((str(k), str(v)) for k, v in (when or {}).items()))
+
+
+def canonical(files: dict) -> dict:
+    triggers = [d for f, d in files.items() if f.startswith("triggers/")]
+    decisions = {str(d.get("decision")): d for f, d in files.items() if f.startswith("decisions/")}
+    wfs = {str(d.get("id")): d for f, d in files.items() if f.startswith("workflows/")}
+    kinds = {str(d.get("kind")): d for f, d in files.items() if f.startswith("task_kinds/")}
+    chain_of = {str(d["after"]): d for d in decisions.values() if d.get("after")}
+    terminals = {t for d in decisions.values() for t in (d.get("terminals") or [])}
+    trig = triggers[0] if triggers else {}
+    sel = decisions.get(str(trig.get("selection")), {})
+    names: dict = {}
+    order: deque = deque()
+
+    def target(then):
+        if then is None:
+            return None
+        if then in terminals or then not in wfs:
+            return "END"
+        if then not in names:
+            names[then] = f"wf{len(names)}"
+            order.append(then)
+        return names[then]
+
+    sel_rows = sorted(sel.get("rows") or [], key=lambda r: _when_key(r.get("when")))
+    canon_sel = {"matches": sorted(sel.get("matches") or []),
+                 "rows": sorted((_when_key(r.get("when")), target(r.get("then"))) for r in sel_rows)}
+    defs: dict = {}
+    while order:
+        wid = order.popleft()
+        wf = wfs[wid]
+        steps = []
+        for s in wf.get("steps") or []:
+            k = kinds.get(str(s.get("task_kind"))) if s.get("kind") == "human_await" else s
+            k = k or {}
+            steps.append((s.get("kind"), s.get("audience"),
+                          tuple(sorted(k.get("accepts") or [])), tuple(sorted(k.get("reason_required") or [])),
+                          s.get("deadline_seconds", "ABSENT"), bool(s.get("excludes")),
+                          tuple(sorted(s.get("accepts") or [])) if s.get("kind") == "signal_await" else ()))
+        ch = chain_of.get(wid)
+        rows = []
+        if ch:
+            for r in sorted(ch.get("rows") or [], key=lambda r: _when_key(r.get("when"))):
+                rows.append((_when_key(r.get("when")), target(r.get("then"))))
+        defs[names[wid]] = {"steps": steps, "chain": sorted(rows, key=repr),
+                            "matches": sorted((ch or {}).get("matches") or [])}
+    return {"trigger": {"key": trig.get("key"), "episode": sorted(trig.get("episode") or []),
+                        "requires": sorted(trig.get("requires") or [])},
+            "selection": canon_sel, "defs": defs}
+
+
+def _walk(prefix: str, a, b, out: list) -> None:
+    if isinstance(a, dict) and isinstance(b, dict):
+        for k in sorted(set(a) | set(b), key=str):
+            if k not in a or k not in b:
+                out.append(f"{prefix}.{k}")
+            else:
+                _walk(f"{prefix}.{k}", a[k], b[k], out)
+    elif a != b:
+        out.append(prefix)
+
+
+def semantic_diffs(final: dict, expected: dict) -> list:
+    out: list = []
+    try:
+        drafted = canonical(final)
+    except (AttributeError, TypeError) as exc:  # a shape the loop tolerates must not lose the run's row
+        return [f"the draft has no canonical form ({type(exc).__name__}: {exc})"]
+    _walk("", drafted, canonical(expected), out)
+    return out
+
+
+# ── the scripted user who understands a question whatever its id ────────────────────────────
+
+def _index(files: dict) -> dict:
+    triggers = [d for f, d in files.items() if f.startswith("triggers/") and isinstance(d, dict)]
+    decisions = {str(d.get("decision") or Path(f).stem): d for f, d in files.items()
+                 if f.startswith("decisions/") and isinstance(d, dict)}
+    wfs = {str(d.get("id") or Path(f).stem): d for f, d in files.items()
+           if f.startswith("workflows/") and isinstance(d, dict)}
+    kinds = {str(d.get("kind") or Path(f).stem): d for f, d in files.items()
+             if f.startswith("task_kinds/") and isinstance(d, dict)}
+    chain = {str(d["after"]): (n, d) for n, d in decisions.items() if d.get("after")}
+    terminals = {t for d in decisions.values() for t in (d.get("terminals") or [])}
+    trig = triggers[0] if triggers else {}
+    sel_name = str(trig.get("selection")) if trig.get("selection") else None
+    if sel_name not in decisions and trig.get("trigger"):
+        # Run 23 (ADR-0061 §10): the trigger's `selection` named a field, and the table named the
+        # trigger by `after`. That reference is structural too, when exactly one table makes it.
+        after = [n for n, x in decisions.items() if str(x.get("after")) == str(trig["trigger"])]
+        if len(after) == 1:
+            sel_name = after[0]
+    return {"trigger": trig, "sel": decisions.get(sel_name), "sel_name": sel_name,
+            "decisions": decisions, "wfs": wfs, "kinds": kinds, "chain": chain, "terminals": terminals}
+
+
+def _steps_of(wf: dict) -> list:
+    steps = wf.get("steps")
+    return [s for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
+
+
+def _fact_target(key: str) -> Optional[Tuple[str, str]]:
+    """(file, path) a TRANSLATED question key asks about, or None for a key with no such path."""
+    s = key.split(".")
+    if len(s) == 4 and s[0] == "actors" and s[3] == "excludes":
+        return f"workflows/{s[1]}.yaml", f"steps[id={s[2]}].excludes"
+    if len(s) == 4 and s[0] == "approvals" and s[3] == "task_kind":
+        return f"workflows/{s[1]}.yaml", f"steps[id={s[2]}].task_kind"
+    if len(s) == 4 and s[0] == "approvals" and s[3] == "deadline":
+        return f"workflows/{s[1]}.yaml", f"steps[id={s[2]}].deadline_seconds"
+    return None
+
+
+_CHAIN_SLOT = re.compile(r"^(?:approvals|outputs)\.([^.]+)\.next\.(.+)$")
+_STEP_SLOT = re.compile(r"^(?:actors|approvals)\.([^.]+)\.([^.]+)\.(?:excludes|task_kind|reason_required)$")
+_REASON_SLOT = re.compile(r"^approvals\.([^.]+)\.([^.]+)\.reason_required$")
+_ROUTED_SLOT = re.compile(r"^steps\.([^.]+)\.routed$")
+_ENDS_SLOT = re.compile(r"^outputs\.([^.]+)\.ends$")
+_CHAIN_ROW = re.compile(r"^contradiction:chaining\.([^.]+)\.(.+)$")
+_APPROVES_SLOT = re.compile(r"^approvals\.([^.]+)\.([^.]+)\.approves$")
+
+
+def _chain_target(key: str, expected: dict) -> Optional[Tuple[str, str]]:
+    """(file, path) a TRANSLATED chaining slot asks about: the expected table whose `after` is the
+    slot's definition, found by `after` and not by file name. A value slot asks `domain.<input>`;
+    a row slot asks `rows`."""
+    m = _CHAIN_SLOT.match(key)
+    if not m:
+        return None
+    f = next((f for f, d in sorted(expected.items()) if f.startswith("decisions/")
+              and isinstance(d, dict) and str(d.get("after")) == m.group(1)), None)
+    if f is None:
+        return None
+    return f, (m.group(2) if m.group(2).startswith("domain.") else "rows")
+
+
+def _slot_target(key: str, expected: dict) -> Optional[Tuple[str, str]]:
+    """(file, path) a TRANSLATED slot asks about when only the expected bundle can say where: a
+    step's reasons sit on the task kind it names, a stage is routed to by whichever table has a row
+    for it, and a stage ends at its last disposing step."""
+    wfs, kinds = se._workflows(expected), se._kinds(expected)
+    m = _REASON_SLOT.match(key)
+    if m:
+        wf = wfs.get(m.group(1))
+        step = next((s for s in _steps_of(wf[1]) if str(s.get("id")) == m.group(2)), None) if wf else None
+        named = se._kinds_for(str(step.get("task_kind") or ""), kinds) if step else []
+        return (kinds[named[0]][0], "reason_required") if named else None
+    m = _ROUTED_SLOT.match(key)
+    if m:
+        f = next((f for f, d in sorted(expected.items()) if f.startswith("decisions/")
+                  and isinstance(d, dict) and any(isinstance(r, dict) and r.get("then") == m.group(1)
+                                                  for r in d.get("rows") or [])), None)
+        return (f, "rows") if f else None
+    m = _ENDS_SLOT.match(key)
+    if m and m.group(1) in wfs:
+        f, wf = wfs[m.group(1)]
+        ending = [s for s in _steps_of(wf) if se._disposes(s)]
+        return (f, f"steps[id={ending[-1].get('id')}].kind") if ending else None
+    return None
+
+
+def _sets_path(entry: dict, file: str, path: str) -> bool:
+    """True iff one `set` fact of ``entry`` on ``file`` puts ``path`` in a scratch bundle, applied
+    by the elicitation module's own setter. Present-with-null counts."""
+    for fact in ((entry.get("facts") or {}).get("set") or []):
+        if not isinstance(fact, dict) or fact.get("file") != file:
+            continue
+        scratch = {file: {}}
+        se.apply_patch(se.Draft(files=scratch), {"set": [fact]}, 0)
+        if se._get(scratch, file, path)[0]:
+            return True
+    return False
+
+
+def _narrowed(entry: dict, file: str, path: str) -> dict:
+    """``entry`` with its facts cut to the one ``path`` of ``file`` the question asks: a person
+    asked one thing repeats that thing, not the whole earlier statement. Replaying all of it re-set
+    values a later answer had revised, and raised contradictions nobody planted (ADR-0061 §10)."""
+    scratch = {file: {}}
+    for fact in ((entry.get("facts") or {}).get("set") or []):
+        if isinstance(fact, dict) and fact.get("file") == file:
+            se.apply_patch(se.Draft(files=scratch), {"set": [fact]}, 0)
+    return {**entry, "facts": {"set": [{"file": file, "path": path,
+                                        "value": se._get(scratch, file, path)[1]}]}}
+
+
+def _routes_on(then, ix: dict) -> bool:
+    """True iff a row's ``then`` goes on to a stage of ``ix``. Anything else ends the case."""
+    return bool(then) and then not in ix["terminals"]
+
+
+def _paired_rows(drows: list, erows: list, d: dict, e: dict) -> list:
+    """(draft row, expected row) of one pair of tables. A row pairs by its `when` where both spell it
+    alike. An outcome's name is the person's vocabulary and a stage's identity is what it routes to
+    (architect, 2026-11-03): run 41 wrote "approve" for "approved" and lost the stage behind it. So
+    the outcomes left over pair by where they go, one on to a stage with one on to a stage, one
+    ending with one ending. Two left on either side pair nothing, since nothing says which is which.
+    A selection's `when` is an event's value, not a verb, and stays literal."""
+    by_when = {_when_key(r.get("when")): r for r in erows if isinstance(r, dict)}
+    out, left = [], []
+    for r in sorted((r for r in drows if isinstance(r, dict)), key=lambda r: _when_key(r.get("when"))):
+        other = by_when.pop(_when_key(r.get("when")), None)
+        if other is None:
+            left.append(r)
+        else:
+            out.append((r, other))
+
+    def verb(r):
+        when = r.get("when")
+        return isinstance(when, dict) and set(when) == {se._CHAIN_INPUT}
+    for on in (True, False):
+        ds = [r for r in left if verb(r) and _routes_on(r.get("then"), d) is on]
+        es = [r for r in by_when.values() if verb(r) and _routes_on(r.get("then"), e) is on]
+        if len(ds) == len(es) == 1:
+            out.append((ds[0], es[0]))
+    return out
+
+
+class AligningUser:
+    """The scripted user for a model run. A person answers a question about "the impact review"
+    whatever the model called it; this looks the question up by the EXPECTED bundle's names.
+
+    ALIGNMENT IS STRUCTURAL ONLY, never by similarity: the draft and the expected bundle are walked
+    in lock step from their selection tables, pairing rows as ``_paired_rows`` does, so a definition
+    is paired by the path a case reaches it by (the canonical BFS position). Steps pair k-th of a kind with k-th of the same kind; task kinds are the ones aligned
+    human_await steps name; a chaining table follows its aligned `after`. A name no path reaches is
+    NOT aligned -- the question is unanswerable, never answered as some other stage -- unless it is
+    a stage the trigger declares, paired by its place in the person's list of stages."""
+
+    def __init__(self, transcript: dict, expected_files: dict):
+        self.bank = transcript.get("answers") or {}
+        self.expected = expected_files
+        self.aligned_answers: list = []
+        self.unaligned: list = []
+        self.unbanked: list = []
+        self.answered_by_path: list = []
+        self.rejected: list = []
+        self.denied_rows: list = []
+        self.answered_contradictions: list = []
+        self.answered_approvals: list = []
+        self.opening = transcript.get("opening")
+        # the person's own list of stages, from the entry that declares it: `finalize` drops the
+        # list from the served trigger, so the expected bundle does not carry it
+        self.stages = None
+        for e in [self.opening] + list(self.bank.values()):
+            for fact in (((e or {}).get("facts") or {}).get("set") or []):
+                if (isinstance(fact, dict) and str(fact.get("file", "")).startswith("triggers/")
+                        and fact.get("path") == "stages"):
+                    self.stages = fact.get("value")
+
+    def entry_for_path(self, file: str, path: str) -> Optional[Tuple[str, dict]]:
+        """The (source key, entry) whose facts set ``path`` of ``file``; the opening first, then the
+        bank in order. The person repeats what they said FIRST; a later revision of the same fact
+        arrives only through the contradiction path, which stays reachable (PCN's planted excludes
+        contradiction is the opening's `[]` against the later "barred from both reviews"); a
+        `contradiction:` entry is never an answer to a plain question."""
+        cands = []
+        if self.opening:
+            cands.append(("opening", self.opening))
+        cands += [(k, v) for k, v in self.bank.items() if not k.startswith("contradiction:")]
+        for k, v in cands:
+            if isinstance(v, dict) and _sets_path(v, file, path):
+                return k, v
+        return None
+
+    def _pair_definitions(self, d: dict, e: dict) -> dict:
+        """draft stage name -> expected stage name, by lock-step walk from the selection tables."""
+        m: dict = {}
+        bad: set = set()
+        queue = deque([(d["sel"].get("rows") or [], e["sel"].get("rows") or [])]
+                      if d["sel"] and e["sel"] else [])
+        while queue:
+            drows, erows = queue.popleft()
+            for r, other in _paired_rows(drows, erows, d, e):
+                dt, et = r.get("then"), other.get("then")
+                if not dt or not et or dt in d["terminals"] or et in e["terminals"]:
+                    continue
+                if (dt in m and m[dt] != et) or (dt not in m and et in m.values()):
+                    bad.add(dt)
+                    continue
+                if dt not in m:
+                    m[dt] = et
+                    dc, ec = d["chain"].get(dt), e["chain"].get(et)
+                    if dc and ec:
+                        queue.append((dc[1].get("rows") or [], ec[1].get("rows") or []))
+        m = {k: v for k, v in m.items() if k not in bad}
+        # A stage the trigger declares may have no path to walk yet (asked for before any row names
+        # it); it pairs by its place in the person's own list, only when both lists name the same
+        # number of stages, and never over a pairing the walk made.
+        ds, es = d["trigger"].get("stages"), self.stages
+        if isinstance(ds, list) and isinstance(es, list) and len(ds) == len(es):
+            for a, b in zip(map(str, ds), map(str, es)):
+                if a not in m and b not in m.values():
+                    m[a] = b
+        return m
+
+    def _maps(self, draft_files: dict) -> dict:
+        d, e = _index(draft_files), _index(self.expected)
+        defs = self._pair_definitions(d, e)
+        steps: dict = {}
+        kinds: dict = {}
+        tables: dict = {}
+        if d["sel_name"] and e["sel_name"]:
+            tables[d["sel_name"]] = e["sel_name"]
+        for dw, ew in defs.items():
+            if dw in d["chain"] and ew in e["chain"]:
+                tables[d["chain"][dw][0]] = e["chain"][ew][0]
+            if dw not in d["wfs"] or ew not in e["wfs"]:
+                continue
+            for kind in {s.get("kind") for s in _steps_of(d["wfs"][dw])}:
+                ds = [s for s in _steps_of(d["wfs"][dw]) if s.get("kind") == kind]
+                es = [s for s in _steps_of(e["wfs"][ew]) if s.get("kind") == kind]
+                for a, b in zip(ds, es):
+                    steps[(dw, str(a.get("id")))] = str(b.get("id"))
+                    if kind == "human_await" and a.get("task_kind") and b.get("task_kind"):
+                        kinds[str(a["task_kind"])] = str(b["task_kind"])
+        trig = {}
+        if d["trigger"] and e["trigger"]:
+            trig = {str(d["trigger"].get("trigger")): str(e["trigger"].get("trigger"))}
+        return {"defs": defs, "steps": steps, "kinds": kinds, "tables": tables, "trigger": trig, "d": d}
+
+    def translate(self, key: str, draft_files: dict) -> Optional[str]:
+        """The expected bundle's spelling of ``key``; None when any id segment cannot be aligned."""
+        m = self._maps(draft_files)
+        d = m["d"]
+        if key.startswith("contradiction:") and "#" in key:
+            file, path = key[len("contradiction:"):].split("#", 1)
+            folder, _, fname = file.partition("/")
+            stem, suffix = Path(fname).stem, Path(fname).suffix
+            lookup = {"workflows": m["defs"], "decisions": m["tables"], "task_kinds": m["kinds"],
+                      "triggers": m["trigger"]}.get(folder)
+            tgt = lookup.get(stem) if lookup is not None else None
+            if tgt is None:
+                return None
+            if folder == "workflows":
+                out, pos = "", 0
+                for mo in re.finditer(r"\[id=([^\]]*)\]", path):
+                    s2 = m["steps"].get((stem, mo.group(1)))
+                    if s2 is None:
+                        return None
+                    out += path[pos:mo.start()] + f"[id={s2}]"
+                    pos = mo.end()
+                path = out + path[pos:]
+            return f"contradiction:{folder}/{tgt}{suffix}#{path}"
+        if key.startswith("contradiction:"):
+            kind, _, tail = key[len("contradiction:"):].partition(".")
+            parts = tail.split(".")
+            if kind == "trigger":
+                return key
+            target = {"routing": m["tables"], "chaining": m["tables"], "workflow": m["defs"],
+                      "task_kind": m["kinds"]}.get(kind)
+            t = target.get(parts[0]) if target is not None else None
+            return None if t is None else ".".join([f"contradiction:{kind}", t] + parts[1:])
+        segs = key.split(".")
+        head = segs[0]
+        if head == "trigger" or key in ("outputs.record", "outputs.end"):
+            return key
+        if head == "steps" and len(segs) == 2:
+            w = m["defs"].get(segs[1])
+            return None if w is None else f"steps.{w}"
+        if head in ("steps", "actors", "approvals", "outputs") and len(segs) >= 3:
+            a = segs[1]
+            if a in m["defs"] or a in d["wfs"]:
+                w = m["defs"].get(a)
+                if w is None:
+                    return None
+                step_ids = {str(s.get("id")) for s in _steps_of(d["wfs"].get(a) or {})}
+                if segs[2] in step_ids:
+                    s2 = m["steps"].get((a, segs[2]))
+                    return None if s2 is None else ".".join([head, w, s2] + segs[3:])
+                return ".".join([head, w] + segs[2:])
+            if a in m["kinds"] or a in d["kinds"]:
+                k = m["kinds"].get(a)
+                return None if k is None else ".".join([head, k] + segs[2:])
+        return None
+
+    def _rejection(self, gap, draft_files: dict, t: Optional[str]) -> Optional[dict]:
+        """A person asked to confirm a step their process does not have says so, in the words they
+        used for that stage (ADR-0061 §10, the confirm rejection, architect 2026-10-30). Only a
+        confirm of a step's slot, and only in a stage that aligns: the step has no counterpart of
+        its kind in the expected stage, or the expected step holds no such value. A value the
+        expected bundle holds is never denied; anything else stays unanswerable."""
+        m = _STEP_SLOT.match(gap.key) if gap.kind == "confirm" else None
+        if m is None:
+            return None
+        maps = self._maps(draft_files)
+        w = maps["defs"].get(m.group(1))
+        if w is None:
+            return None
+        counterpart = maps["steps"].get((m.group(1), m.group(2)))
+        if t is not None and counterpart is not None:
+            tgt = _fact_target(t)
+            if tgt is None or se._get(self.expected, *tgt)[0]:
+                return None
+        self.rejected.append(gap.key)
+        stage = self.bank.get(f"steps.{w}") or {}
+        return {"says": "No, that is not right." + (f" {stage['says']}" if stage.get("says") else ""),
+                "facts": self._correction(gap, maps, w, m.group(1), m.group(2), counterpart),
+                "corrects": gap.key}
+
+    def _settled_by_sending(self, gap, draft_files: dict, t: str) -> Optional[dict]:
+        """A person asked whether sending a stage's emit settles it, when someone confirms afterwards,
+        says no, in the words they used for that stage (architect 2026-11-02). Runs 38 and 39 repeated
+        the stage's description here and the confirm closed. Only a confirm, and only of an emit that
+        pairs with an expected emit holding no ``disposes``: ``_maps`` pairs an emit only with an emit,
+        and a value the bundle holds is never denied."""
+        m = _ENDS_SLOT.match(t)
+        if gap.kind != "confirm" or m is None:
+            return None
+        wf_file, base = next(((f, p) for f, p in gap.rewrites if p.startswith("steps[id=")), (None, None))
+        if base is None:
+            return None
+        paired = self._maps(draft_files)["steps"].get((gap.key.split(".")[1], base[len("steps[id="):-1]))
+        step = next((s for s in _steps_of(_index(self.expected)["wfs"].get(m.group(1)) or {})
+                     if str(s.get("id")) == paired), None)
+        if step is None or step.get("disposes") is not None:
+            return None
+        self.rejected.append(gap.key)
+        stage = self.bank.get(f"steps.{m.group(1)}") or {}
+        return {"says": "No, that is not right." + (f" {stage['says']}" if stage.get("says") else ""),
+                "facts": {"unset": [{"file": wf_file, "path": f"{base}.disposes"}]},
+                "corrects": gap.key}
+
+    def _correction(self, gap, maps: dict, w: str, dw: str, sid: str, counterpart) -> dict:
+        """The stage's facts for a rejected step, in the draft's own names (architect 2026-10-31).
+        A step with a counterpart of its kind loses only the slot's value the expected step does
+        not hold. A step with none is replaced, leaf by leaf, by the one expected step of that
+        stage nothing is paired with, and the task kind only it named is removed. Empty when no
+        single expected step is the replacement, or the replacement names a task kind."""
+        wf_file = next((f for f, p in gap.rewrites if p == f"steps[id={sid}]"), None)
+        kind_file = next((f for f, p in gap.rewrites if p == ""), None)
+        dstep = next((s for s in _steps_of(maps["d"]["wfs"].get(dw) or {}) if str(s.get("id")) == sid),
+                     None)
+        if wf_file is None or dstep is None:
+            return {}
+        base = f"steps[id={sid}]"
+        if counterpart is not None:
+            leaf = gap.key.rsplit(".", 1)[1]
+            return {"unset": [{"file": wf_file, "path": f"{base}.{leaf}"}]} if leaf in dstep else {}
+        paired = {v for (a, _), v in maps["steps"].items() if a == dw}
+        spare = [s for s in _steps_of(_index(self.expected)["wfs"].get(w) or {})
+                 if str(s.get("id")) not in paired]
+        if len(spare) != 1 or spare[0].get("task_kind"):
+            return {}
+        new = spare[0]
+        unset = [{"file": wf_file, "path": f"{base}.{k}"} for k in dstep if k != "id" and k not in new]
+        if kind_file:
+            unset.append({"file": kind_file, "path": ""})
+        sets = [{"file": wf_file, "path": f"{base}.{k}", "value": copy.deepcopy(v)}
+                for k, v in new.items() if k != "id" and dstep.get(k) != v]
+        return {"set": sets, "unset": unset}
+
+    def _no_such_outcome(self, gap, draft_files: dict, t: Optional[str]) -> Optional[dict]:
+        """A person who knows their process, asked whether a stage can end a way it cannot, says no,
+        and the row goes (architect 2026-11-02). Only for a table that aligns, and only an outcome
+        the expected table does not route: a value the expected bundle holds is never denied."""
+        mine, theirs = _CHAIN_ROW.match(gap.key), _CHAIN_ROW.match(t or "")
+        if gap.kind != "contradiction" or mine is None or theirs is None:
+            return None
+        table = _index(draft_files)["decisions"].get(mine.group(1))
+        other = _index(self.expected)["decisions"].get(theirs.group(1))
+        file = next((f for f, p in gap.revises if p == "rows"), None)
+        if table is None or other is None or file is None:
+            return None
+        v = mine.group(2)
+        if v in ((other.get("domain") or {}).get(se._CHAIN_INPUT) or []):
+            return None
+        self.denied_rows.append(gap.key)
+        domain = [x for x in ((table.get("domain") or {}).get(se._CHAIN_INPUT) or []) if x != v]
+        rows = [r for r in (table.get("rows") or []) if not (
+            isinstance(r, dict) and (r.get("when") or {}).get(se._CHAIN_INPUT) == v)]
+        return {"says": f"No, it cannot end '{v}'. That stage has no such outcome.",
+                "facts": {"set": [{"file": file, "path": f"domain.{se._CHAIN_INPUT}", "value": domain},
+                                  {"file": file, "path": "rows", "value": copy.deepcopy(rows)}]},
+                "corrects": gap.key}
+
+    def _contradiction_target(self, t: str) -> Optional[Tuple[str, str]]:
+        """(file, path) of the expected bundle a TRANSLATED contradiction asks about; None for a
+        form with no one value."""
+        body = t[len("contradiction:"):]
+        if "#" in body:
+            file, path = body.split("#", 1)
+            return file, path
+        kind, _, name = body.partition(".")
+        table = se._decisions(self.expected).get(name)
+        wf, task = se._workflows(self.expected).get(name), se._kinds(self.expected).get(name)
+        if kind in ("chaining", "routing") and table:
+            return table[0], "rows"
+        if kind == "workflow" and wf:
+            return wf[0], "steps"
+        if kind == "task_kind" and task:
+            return task[0], "accepts"
+        return None
+
+    def _described(self, file: str) -> Optional[str]:
+        """What the person said of the definition or routing table in ``file``, from the entry that
+        asks for it."""
+        for w, (f, _) in se._workflows(self.expected).items():
+            if f == file:
+                return (self.bank.get(f"steps.{w}") or {}).get("says")
+        for f, t in se._decisions(self.expected).values():
+            if f == file:
+                entry = self.bank.get(f"approvals.{t.get('after')}.next") or self.bank.get(f"outputs.{t.get('after')}.next")
+                return (entry or {}).get("says")
+        return None
+
+    def _in_draft_names(self, value, draft_files: dict, file: str):
+        """``value`` with each name of a definition, task kind, table or terminal in the draft's
+        spelling, or None when the draft has no counterpart for one. A person says what the draft
+        calls it: run 39 answered in the expected bundle's names and the model wrote names no row
+        used. A terminal pairs by the row that reaches it in the table at ``file``, the one asked
+        about: tables may share a terminal. A verb, field or audience is literal."""
+        m = self._maps(draft_files)
+        d, e = m["d"], _index(self.expected)
+        names = set(e["wfs"]) | set(e["kinds"]) | set(e["decisions"]) | set(e["terminals"])
+        theirs = {v: k for pairs in (m["defs"], m["kinds"], m["tables"]) for k, v in pairs.items()}
+        for dt, et in m["tables"].items():
+            if se._decisions(self.expected)[et][0] != file:
+                continue
+            for r, other in _paired_rows(d["decisions"][dt].get("rows") or [],
+                                         e["decisions"][et].get("rows") or [], d, e):
+                if other.get("then") and r.get("then"):
+                    theirs.setdefault(other["then"], r["then"])
+        held = value if isinstance(value, list) else [value]
+        if any(isinstance(v, str) and v in names and v not in theirs for v in held):
+            return None
+        said = [theirs.get(v, v) if isinstance(v, str) and v in names else v for v in held]
+        return list(dict.fromkeys(said)) if isinstance(value, list) else said[0]
+
+    def _approval(self, gap, t: Optional[str]) -> Optional[dict]:
+        """A person asked which answers at an approval step count as an approval, and in what role,
+        answers from the expected bundle in words, as for a contradiction on a path. The stage's own
+        entry may be the opening, and replaying that would plant its contradiction again. No facts."""
+        m = _APPROVES_SLOT.match(t or "")
+        wf = se._workflows(self.expected).get(m.group(1)) if m else None
+        step = next((s for s in _steps_of(wf[1]) if str(s.get("id")) == m.group(2)), None) if wf else None
+        if step is None:
+            return None
+        verbs = [str(v) for v in step.get("approves") or []]
+        if verbs and step.get("role"):
+            says = (f"Only {' and '.join(verbs)} {'counts' if len(verbs) == 1 else 'count'} as an approval, "
+                    f"and the role is {step['role']}.")
+        elif verbs:
+            return None
+        else:
+            says = "None of them counts as an approval."
+        self.answered_approvals.append(gap.key)
+        return {"says": says}
+
+    def _contradiction(self, gap, draft_files: dict, t: Optional[str]) -> Optional[dict]:
+        """A person who knows their process answers a contradiction the loop raised, from the
+        expected bundle (architect 2026-11-02), in words. No facts: the model is measured on the
+        words, as for any other answer. A value with a structure is said as the person described it,
+        by the entry that asks for it. A value the bundle does not hold stays unanswerable, and a
+        planted contradiction is banked and never comes here."""
+        if gap.kind != "contradiction" or t is None:
+            return None
+        row = _CHAIN_ROW.match(t)
+        table = se._decisions(self.expected).get(row.group(1)) if row else None
+        if table:
+            domain = (table[1].get("domain") or {}).get(se._CHAIN_INPUT) or []
+            if row.group(2) not in domain:
+                return None
+            says = f"Yes, it can end '{row.group(2)}'. It can end: {', '.join(map(str, domain))}."
+        else:
+            tgt = self._contradiction_target(t)
+            held, value = se._get(self.expected, *tgt) if tgt else (False, None)
+            if not held:
+                return None
+            if isinstance(value, dict) or (isinstance(value, list) and any(isinstance(v, dict) for v in value)):
+                says = self._described(tgt[0])
+                if not says:
+                    return None
+            elif value in ([], None):
+                says = "It is none."
+            else:
+                said = self._in_draft_names(value, draft_files, tgt[0])
+                if said is None:
+                    return None
+                says = f"It is {se._fmt(said, tgt[1])}."
+        self.answered_contradictions.append(gap.key)
+        return {"says": says}
+
+    def __call__(self, gap, draft) -> Optional[dict]:
+        t = self.translate(gap.key, draft.files)
+        if t is None:
+            rejection = self._rejection(gap, draft.files, t)
+            if rejection is not None:
+                return rejection
+            self.unaligned.append(gap.key)
+            return None
+        settled = self._settled_by_sending(gap, draft.files, t)
+        if settled is not None:
+            return settled
+        approval = self._approval(gap, t)
+        if approval is not None:
+            return approval
+        entry = self.bank.get(t)
+        if entry is None:
+            tgt = _fact_target(t) or _chain_target(t, self.expected) or _slot_target(t, self.expected)
+            hit = self.entry_for_path(*tgt) if tgt else None
+            if hit is not None:
+                self.answered_by_path.append((gap.key, hit[0]))
+                return _narrowed(hit[1], *tgt)
+            rejection = (self._rejection(gap, draft.files, t) or self._no_such_outcome(gap, draft.files, t)
+                         or self._contradiction(gap, draft.files, t))
+            if rejection is not None:
+                return rejection
+            self.unbanked.append(gap.key)
+            return None
+        if t != gap.key:
+            self.aligned_answers.append(gap.key)
+        return entry
+
+
+# ── the measurement ─────────────────────────────────────────────────────────────────────────
+
+def dropped_steps(files: dict, expected: dict, pairs: dict) -> list:
+    """Each expected stage whose draft counterpart lacks a step the person described (architect
+    2026-11-02: a runnable spec that drops a step is not the workflow). ``pairs`` is draft stage ->
+    expected stage. Steps compare by kind, in order; a step the draft added is not a dropped one,
+    and ``semantic_diffs`` carries it. A stage nothing pairs with has dropped all of its steps."""
+    d, e = _index(files), _index(expected)
+    back = {v: k for k, v in pairs.items()}
+    out = []
+    for ew, wf in sorted(e["wfs"].items()):
+        described = [str(s.get("kind")) for s in _steps_of(wf)]
+        drafted = [str(s.get("kind")) for s in _steps_of(d["wfs"].get(back.get(ew)) or {})]
+        rest = iter(drafted)
+        if not all(k in rest for k in described):
+            out.append({"stage": ew, "draft": back.get(ew), "described": described, "drafted": drafted})
+    return out
+
+
+def dropped_routes(files: dict, expected: dict, pairs: dict) -> list:
+    """Each expected outcome the draft routes elsewhere (architect, 2026-11-03: a rejected notice
+    that ends ``completed`` is a wrong workflow with every step present). An outcome that goes on to
+    a stage goes on to that stage's pair, and one that ends, ends. Two ends the expected bundle keeps
+    apart must not reach one end of the draft: the person named them apart, and the model's names
+    for them are its own. ``canonical`` cannot read this, since every end is END there. A row the
+    draft added is not read, and ``semantic_diffs`` carries it. A stage nothing pairs with has no
+    row to route by, so each of its outcomes reads here too."""
+    d, e = _index(files), _index(expected)
+    back = {v: k for k, v in pairs.items()}
+    tables = [(e["sel_name"], e["sel"], d["sel"])] + [
+        (name, table, (d["chain"].get(back.get(ew)) or (None, {}))[1])
+        for ew, (name, table) in sorted(e["chain"].items())]
+    read = []
+    for name, etable, dtable in tables:
+        erows = [r for r in etable.get("rows") or [] if isinstance(r, dict)]
+        paired = {id(o): r for r, o in _paired_rows(dtable.get("rows") or [], erows, d, e)}
+        read += [(name, o, paired.get(id(o))) for o in erows]
+    ends: dict = {}
+    for _, o, r in read:
+        if r is not None and r.get("then") and not _routes_on(o.get("then"), e):
+            ends.setdefault(r["then"], set()).add(o.get("then"))
+    out = []
+    for name, o, r in read:
+        then = r.get("then") if r is not None else None
+        if _routes_on(o.get("then"), e):
+            right = pairs.get(then) == o.get("then")
+        else:
+            right = bool(then) and not _routes_on(then, d) and len(ends[then]) == 1
+        if not right:
+            out.append({"table": name, "when": o.get("when"), "expected": o.get("then"), "drafted": then})
+    return out
+
+
+def wrong_excludes(files: dict, expected: dict, pairs: dict) -> list:
+    """Each described step whose bar on who may answer is not the draft's (architect, 2026-11-03: a
+    bar that can't see the self-signoff exclusion read ``yes`` on a workflow the person ruled out).
+    The value is read, since ``canonical`` keeps only whether there is one. Steps pair by kind, in
+    order, as ``dropped_steps`` reads them, and a step with no counterpart reads here too."""
+    d, e = _index(files), _index(expected)
+    back = {v: k for k, v in pairs.items()}
+    out = []
+    for ew, wf in sorted(e["wfs"].items()):
+        rest = iter(_steps_of(d["wfs"].get(back.get(ew)) or {}))
+        for step in _steps_of(wf):
+            if "excludes" not in step:
+                continue
+            drafted = next((s for s in rest if s.get("kind") == step.get("kind")), None)
+            held = drafted.get("excludes") if drafted is not None else None
+            if drafted is None or _names(held) != _names(step["excludes"]):
+                out.append({"stage": ew, "step": step.get("id"), "expected": step["excludes"], "drafted": held})
+    return out
+
+
+def wrong_requires(files: dict, expected: dict) -> list:
+    """The trigger's required details, when they are not the ones the person named (architect,
+    2026-11-03). An absent list reads as empty, as ``canonical`` reads it."""
+    d, e = _index(files)["trigger"].get("requires"), _index(expected)["trigger"].get("requires")
+    return [] if _names(d) == _names(e) else [{"expected": e, "drafted": d}]
+
+
+def wrong_approvals(files: dict, expected: dict, pairs: dict) -> list:
+    """Each described approval step whose draft doesn't name the answers that count as approval and
+    the role the approver signs in (architect, 2026-11-04: ``approves`` and ``role`` ruled in). The
+    executor appends an approval-chain entry only for a verb in ``approves``, so a step without it
+    records no approver, and ``canonical`` keeps neither field. The verbs read in any order. A role
+    reads in the person's words, with case and separators ignored. The awaits pair in order, and an
+    await with no counterpart reads here too, as does one whose answers nobody called an approval."""
+    d, e = _index(files), _index(expected)
+    back = {v: k for k, v in pairs.items()}
+    out = []
+    for ew, wf in sorted(e["wfs"].items()):
+        rest = iter([s for s in _steps_of(d["wfs"].get(back.get(ew)) or {}) if s.get("kind") == "human_await"])
+        for step in _steps_of(wf):
+            if step.get("kind") != "human_await":
+                continue
+            drafted = next(rest, None)
+            want = {"approves": _names(step.get("approves")), "role": _role(step.get("role"))}
+            held = None if drafted is None else {"approves": _names(drafted.get("approves")), "role": _role(drafted.get("role"))}
+            if held != want:
+                out.append({"stage": ew, "step": step.get("id"), "expected": want, "drafted": held})
+    return out
+
+
+def wrong_outcomes(files: dict, expected: dict, pairs: dict) -> list:
+    """Each described answer word the draft holds in another form (architect, 2026-11-05: the slot
+    check compares the person's own words, and ``escalate`` against ``escalated`` is a slot fault,
+    not noise). The person's words are the expected bundle's, read wherever an answer is held: a
+    human_await's task kind (``accepts``, ``reason_required``), a signal_await's ``accepts``, and
+    the outcomes the stage's chaining table routes. The words read in any order and exactly as
+    spelled. ``dropped_routes`` pairs a row whose outcome is spelled otherwise by where it goes, so
+    a route can read right while its word reads here, and rows pair here as they pair there. Steps
+    pair k-th of a kind with k-th of the same kind. A stage, step, table or row with no counterpart
+    is not read here (run 58 lacked the escalated row, which dropped_routes reads): ``dropped_steps`` and
+    ``dropped_routes`` read it, so one fault doesn't read in two bars. No bundle holds an emit's
+    ``disposes``, and an emit that settles a stage the person had someone confirm is a dropped
+    step, so ``disposes`` is not read either."""
+    d, e = _index(files), _index(expected)
+    back = {v: k for k, v in pairs.items()}
+
+    def held(ix, step):
+        if step.get("kind") == "human_await":
+            k = ix["kinds"].get(str(step.get("task_kind")))
+            k = k if isinstance(k, dict) else {}
+            return {"accepts": _names(k.get("accepts")), "reason_required": _names(k.get("reason_required"))}
+        return {"accepts": _names(step.get("accepts"))}
+
+    def verb(r):
+        return isinstance(r.get("when"), dict) and set(r["when"]) == {se._CHAIN_INPUT}
+
+    out = []
+    for ew, wf in sorted(e["wfs"].items()):
+        dw = back.get(ew)
+        if dw not in d["wfs"]:
+            continue
+        drafted = _steps_of(d["wfs"][dw])
+        for kind in ("human_await", "signal_await"):
+            rest = iter([s for s in drafted if s.get("kind") == kind])
+            for step in _steps_of(wf):
+                if step.get("kind") != kind:
+                    continue
+                other = next(rest, None)
+                if other is None:
+                    break
+                want, have = held(e, step), held(d, other)
+                if have != want:
+                    out.append({"stage": ew, "step": step.get("id"), "expected": want, "drafted": have})
+        if ew in e["chain"]:
+            erows = [r for r in e["chain"][ew][1].get("rows") or [] if isinstance(r, dict)]
+            drows = (d["chain"].get(dw) or (None, {}))[1].get("rows") or []
+            both = [(r, o) for r, o in _paired_rows(drows, erows, d, e)
+                    if verb(r) and verb(o)]
+            want = sorted(str(o["when"][se._CHAIN_INPUT]) for _, o in both)
+            have = sorted(str(r["when"][se._CHAIN_INPUT]) for r, _ in both)
+            if have != want:
+                out.append({"stage": ew, "step": None, "expected": {"routes": want}, "drafted": {"routes": have}})
+    return out
+
+
+def _role(value) -> Optional[str]:
+    return re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_") or None if value else None
+
+
+def _names(value) -> list:
+    return sorted(map(str, value)) if isinstance(value, list) else [] if value is None else [str(value)]
+
+
+def rewritten_slots(turns: list) -> list:
+    """Each value the person stated that the model took out on a turn that didn't put it to them
+    (architect, 2026-11-03: run 47's outcome reverted, and the confirm check didn't fire). Replays
+    what landed from the stored turns alone, so a stored run re-reads with no model time: a write a
+    later ``contradiction:<file>#<path>`` turn asks about pended, and a refused reply never landed.
+    What an answer on a confirm, contradiction or null turn wrote is stated. A stored turn doesn't
+    say what its question asked, so a value confirmed and left unchanged isn't read here, and the
+    loop's own check holds more than this reads. Adding to a leaf takes nothing out."""
+    talk = ("confirm", "contradiction", "null")
+    draft, stated, out = se.Draft(), {}, []
+    for i, t in enumerate(turns):
+        patch = next((r.get("patch") for r in t.get("replies") or [] if not r.get("refused")), None) or {}
+        for e in patch.get("unset") or []:
+            if isinstance(e, dict) and "file" in e and "path" in e and not se._is_rendering(str(e["file"]), str(e["path"])):
+                se._unset(draft, str(e["file"]), str(e["path"]))
+        wrote = []
+        for e in patch.get("set") or []:
+            if not (isinstance(e, dict) and "file" in e and "path" in e and "value" in e):
+                continue
+            f = str(e["file"])
+            for path, value in se._leaves(str(e["path"]), copy.deepcopy(e["value"])):
+                if path == "" or se._is_rendering(f, path):
+                    continue
+                c, k = se._locate(draft.files.setdefault(f, {}), se.parse_path(path), create=True)
+                if k in c:
+                    if c[k] == value:
+                        continue
+                    asked = f"contradiction:{f}#{path}"
+                    if t.get("key") != asked and any(x.get("key") == asked for x in turns[i + 1:]):
+                        continue
+                was = se._values(c[k]) if k in c else []
+                c[k] = value
+                wrote.append((f, path, [x for x in se._values(value) if x not in was]))
+        for (f, path), (said_at, values) in list(stated.items()):
+            ok, now = se._get(draft.files, f, path)
+            gone = [x for x in values if not ok or x not in se._values(now)]
+            if gone and t.get("kind") not in talk:
+                out.append({"turn": t.get("turn"), "key": t.get("key"), "file": f, "path": path,
+                            "stated_at": said_at, "gone": gone})
+            stated[(f, path)] = (said_at, [x for x in values if x not in gone])
+        if t.get("kind") in talk:
+            for f, path, new in wrote:
+                if new:
+                    was = stated.get((f, path), (None, []))[1]
+                    stated[(f, path)] = (t.get("turn"), was + [x for x in new if x not in was])
+    return out
+
+
+def _as_expected(keys, user: Optional[AligningUser], files: dict) -> set:
+    """The recorded ``keys`` in the expected bundle's spelling, aligned against the final ``files``
+    as the scripted user aligns a question. A planted key is named in the expected bundle's ids; a
+    model drafts under its own, so an untranslated compare read run 7's recorded deferral as 0/1
+    (ADR-0061 §10). A key that cannot be aligned stays as recorded and matches only verbatim."""
+    if user is None:
+        return set(keys)
+    return {user.translate(k, files) or k for k in keys}
+
+
+def measure(name: str, extractor, errors_of=lambda e: 0, aligned: bool = False) -> dict:
+    d = FIXTURES / name
+    transcript = yaml.safe_load((d / "transcript.yaml").read_text(encoding="utf-8"))
+    expected = load_expected(d)
+    t0 = time.time()
+    user = AligningUser(transcript, expected) if aligned else None
+    r = se.run(transcript, extractor, answer=user)
+    secs = round(time.time() - t0, 2)
+    keys = [q["key"] for q in r["questions"]]
+    bank = list((transcript.get("answers") or {}).keys())
+    planted = transcript.get("planted") or {}
+    pc, pd = planted.get("contradictions") or [], planted.get("deferrals") or []
+    asked_c, recorded_d = _as_expected(r["contradictions_asked"], user, r["files"]), \
+        _as_expected(r["deferrals"], user, r["files"])
+    ld, sd = leaf_diffs(r["files"], expected), semantic_diffs(r["files"], expected)
+    unreachable = sorted(set(se._workflows(r["files"])) - se._reachable(r["files"]))
+    pairs = AligningUser(transcript, expected)._pair_definitions(_index(r["files"]), _index(expected))
+    dropped, routes = dropped_steps(r["files"], expected, pairs), dropped_routes(r["files"], expected, pairs)
+    barred, required = wrong_excludes(r["files"], expected, pairs), wrong_requires(r["files"], expected)
+    rewritten = rewritten_slots(r["messages"])
+    approvals = wrong_approvals(r["files"], expected, pairs)
+    outcomes = wrong_outcomes(r["files"], expected, pairs)
+    route_bar = r["status"] == "runnable" and not unreachable and not dropped and not routes
+    slot_bar = not barred and not required and not rewritten and not outcomes
+    approval_bar = not approvals
+    return {
+        "fixture": name,
+        "questions": len(keys), "bank": len(bank),
+        "redundant": sorted(k for k, n in Counter(keys).items() if n > 1),
+        "unanswerable": r["unanswerable"], "unresolved": r["unresolved"],
+        "unused_bank": sorted(set(bank) - set(keys)),
+        "contradictions_planted": len(pc),
+        "contradictions_detected": len(set(pc) & asked_c),
+        "deferrals_planted": len(pd),
+        "deferrals_recorded": len(set(pd) & recorded_d),
+        "gaps_left": r["gaps_left"],
+        "status": r["status"],
+        "missing": {"count": len(r["missing"]), "first": r["missing"][:10]},
+        "open": r["open"],
+        "runnable_errors": {"count": len(r["runnable"]), "first": r["runnable"][:5]},
+        "unreachable": unreachable,
+        "dropped_steps": dropped,
+        "dropped_routes": routes,
+        "wrong_excludes": barred,
+        "wrong_requires": required,
+        "rewritten_slots": rewritten,
+        "rewrites_refused": [m for m in r["model_errors"] if m.get("fault") == "rewrite"],
+        "wrong_approvals": approvals,
+        "wrong_outcomes": outcomes,
+        "route_bar": route_bar,
+        "slot_bar": slot_bar,
+        "approval_bar": approval_bar,
+        "bar_met": route_bar and slot_bar and approval_bar,
+        "exact": r["files"] == expected,
+        "leaf_diffs": {"count": len(ld), "first": ld[:20]},
+        "semantic_diffs": {"count": len(sd), "first": sd[:20]},
+        "aligned_answers": list(user.aligned_answers) if user else [],
+        "unaligned": list(user.unaligned) if user else [],
+        "answered_by_path": [list(p) for p in user.answered_by_path] if user else [],
+        "rejected": list(user.rejected) if user else [],
+        "denied_rows": list(user.denied_rows) if user else [],
+        "answered_contradictions": list(user.answered_contradictions) if user else [],
+        "answered_approvals": list(user.answered_approvals) if user else [],
+        "unbanked": list(user.unbanked) if user else sorted(k for k in keys if k not in set(bank)),
+        "deferred_refusals": [k for k in r["deferred_refusals"] if k in r["deferrals"]],
+        "model_errors": errors_of(extractor) + len(r["model_errors"]),
+        "refused_patches": r["model_errors"],
+        "transport_errors": list(getattr(extractor, "transport_errors", [])),
+        "asked": keys,
+        "confirms": [q["key"] for q in r["questions"] if q["kind"] == "confirm"],
+        "nulls_asked": [q["key"] for q in r["questions"] if q["kind"] == "null"],
+        "stalled": r["stalled"],
+        "contradictions_asked": r["contradictions_asked"],
+        "deferrals": r["deferrals"],
+        "dropped_deferrals": r["dropped_deferrals"],
+        "files": r["files"],
+        "turns": r["messages"],
+        "seconds": secs,
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--arm", choices=("oracle", "model"), required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--aligned", action="store_true", help="oracle arm: use the aligning user (identity)")
+    ap.add_argument("--fixture", choices=NAMES, action="append")
+    args = ap.parse_args()
+    names = [n for n in NAMES if n in args.fixture] if args.fixture else list(NAMES)
+    if args.arm == "model":
+        base, model = os.environ.get("SOCRATIC_LLM_BASE_URL"), os.environ.get("SOCRATIC_LLM_MODEL")
+        if not base or not model:
+            print("the model arm needs SOCRATIC_LLM_BASE_URL and SOCRATIC_LLM_MODEL in the environment; "
+                  "there is no default.")
+            return 0
+    rows = []
+    for name in names:
+        if args.arm == "oracle":
+            rows.append(measure(name, se.OracleExtractor(), aligned=args.aligned))
+        else:
+            ex = se.ModelExtractor(base, model)
+            rows.append(measure(name, ex, errors_of=lambda e: e.errors, aligned=True))
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"arm": args.arm, "fixtures": rows}, indent=2, default=str), encoding="utf-8")
+    hdr = f"{'fixture':26} {'q':>3} {'bank':>4} {'red':>3} {'unans':>5} {'unres':>5} {'contra':>6} {'defer':>5} " \
+          f"{'left':>4} {'rn_err':>6} {'exact':>5} {'leaf':>4} {'sem':>4} {'mdl_err':>7} {'alg':>3} {'unal':>4} {'unbk':>4} {'path':>4} {'dref':>4} {'drop':>4} {'route':>5} {'slot':>5} {'appr':>5} {'status':>10} {'sec':>6}"
+    print(hdr)
+    for r in rows:
+        print(f"{r['fixture']:26} {r['questions']:>3} {r['bank']:>4} {len(r['redundant']):>3} "
+              f"{r['unanswerable']:>5} {r['unresolved']:>5} "
+              f"{r['contradictions_detected']}/{r['contradictions_planted']:>4} "
+              f"{r['deferrals_recorded']}/{r['deferrals_planted']:>3} {len(r['gaps_left']):>4} "
+              f"{r['runnable_errors']['count']:>6} {str(r['exact']):>5} {r['leaf_diffs']['count']:>4} "
+              f"{r['semantic_diffs']['count']:>4} {r['model_errors']:>7} {len(r['aligned_answers']):>3} {len(r['unaligned']):>4} "
+              f"{len(r['unbanked']):>4} {len(r['answered_by_path']):>4} {len(r['deferred_refusals']):>4} {len(r['dropped_steps']):>4} {len(r['dropped_routes']):>4} {str(r['route_bar']):>5} {str(r['slot_bar']):>5} {str(r['approval_bar']):>5} {r['status']:>10} {r['seconds']:>6}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

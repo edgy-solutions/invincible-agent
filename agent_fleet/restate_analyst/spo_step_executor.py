@@ -54,6 +54,10 @@ except ImportError:  # pragma: no cover
     )
 
 try:  # pragma: no cover - import path differs by runtime
+    from utils.pdp_answer import check_answer  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.pdp_answer import check_answer
+try:  # pragma: no cover - import path differs by runtime
     from utils.declared_query import QueryVerb  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover
     from agent_fleet.utils.declared_query import QueryVerb
@@ -92,7 +96,8 @@ class StepFailAndRelease(Exception):
     (a denial is a failure, never a suspend; retrying/parking a denied step is the
     DoS surface). The runner catches this and raises ``restate.TerminalError`` so
     Restate fails the workflow and frees the journal. ``status_code`` carries the
-    denial code (403 access, 400 config, 500 infra)."""
+    denial code (403 access, 400 config, 500 infra), or 503 for a malformed PDP
+    answer, which is the outage class and asserts nothing about policy."""
 
     def __init__(self, message: str, *, status_code: int = 403) -> None:
         super().__init__(message)
@@ -222,7 +227,9 @@ def check_can_invoke(
 ) -> bool:
     """RULING Q3: a direct_call is gated on the SINGLE DECIDER. Topaz
     ``can_invoke(caller, capability)`` on the ``capability`` object namespace.
-    Deny-by-default: empty identity/capability/URL or any error → False."""
+    Deny-by-default: empty identity/capability/URL, a 404 or a defect here → False. A
+    Topaz that cannot be reached, answers another non-2xx or answers malformed is the
+    outage class: :class:`StepFailAndRelease` with a 503, not a False."""
     if not caller_authz_id or not capability or not topaz_url:
         return False
     payload = {
@@ -234,8 +241,13 @@ def check_can_invoke(
     }
     try:
         r = httpx.post(f"{topaz_url}/api/v3/directory/check", json=payload, timeout=5.0)
+        if r.status_code == 404:
+            return False
         r.raise_for_status()
-        return bool(r.json().get("check"))
+        return check_answer(r)
+    except httpx.HTTPError as exc:  # unreachable, a non-2xx or a malformed answer: the outage class, never a "no"
+        raise StepFailAndRelease(
+            "the authorizer could not be asked, or its answer could not be read", status_code=503) from exc
     except Exception:
         return False  # fail-closed
 
@@ -275,9 +287,11 @@ def check_can_act(
     depend on the ``iagent`` package (which is why ``check_can_invoke`` above is also a
     local twin). If that ever changes, both should collapse into one import.
 
-    Deny-by-default: empty identity/audience/URL or any error → False. A False is a
-    REFUSAL THE CALLER REPORTS, never a reason to proceed quietly — a gate that
-    swallows what it guards is broken-closed, not safe.
+    Deny-by-default: empty identity/audience/URL, a 404 or a defect here → False. A False
+    is a REFUSAL THE CALLER REPORTS, never a reason to proceed quietly — a gate that
+    swallows what it guards is broken-closed, not safe. A Topaz that cannot be reached,
+    answers another non-2xx or answers malformed is the outage class:
+    ``httpx.HTTPError`` propagates, and each caller's wrapper answers it as a terminal 503.
     """
     if not caller_authz_id or not audience or not topaz_url:
         return False
@@ -290,8 +304,12 @@ def check_can_act(
     }
     try:
         r = httpx.post(f"{topaz_url}/api/v3/directory/check", json=payload, timeout=5.0)
+        if r.status_code == 404:
+            return False
         r.raise_for_status()
-        return bool(r.json().get("check"))
+        return check_answer(r)
+    except httpx.HTTPError:  # unreachable, a non-2xx or a malformed answer: the outage class, never a "no"
+        raise
     except Exception:
         return False  # fail-closed
 
