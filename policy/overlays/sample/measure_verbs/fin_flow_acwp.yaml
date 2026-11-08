@@ -1,6 +1,8 @@
-# TEST overlay -- invented to prove the dataset-kind measure row on the EV fixture (docs/plans/
-# fin-variance-decomposition.md). It decomposes actual cost over the fixture's own columns, which
-# proves the mechanics and is not an EAC row. Never loaded from policy/.
+# SAMPLE -- invented in this repo to prove the dataset-kind measure row on the synthetic EV fixture
+# (docs/plans/fin-variance-decomposition.md). A deployment replaces it with its own. It decomposes
+# actual cost over the fixture's own columns, which proves the mechanics and is not an EAC row.
+# A dataset row always reads its asset as the caller, so it answers only a caller who holds the
+# reader grant on the URN below (policy/asset_grants.yaml); everyone else gets 403 access_denied.
 measure_id: fin_flow_acwp
 verb: finFlowActualCost
 name: Actual cost flow
@@ -39,4 +41,4 @@ policy:
   status: sample
   cells: [PROGRAM_FINANCE]
   granted_by: seed
-  reason: a test overlay proving the dataset kind on the synthetic EV fixture
+  reason: a sample row proving the dataset kind on the synthetic EV fixture

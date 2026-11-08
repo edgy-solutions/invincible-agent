@@ -20,7 +20,7 @@ from agent_fleet.finance_agent import asset_inputs, entities
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / "contracts" / "ev_fixture.yaml"
-DATASET_OVERLAYS = ROOT / "tests" / "finance" / "overlays"
+DATASET_OVERLAYS = ROOT / "policy" / "overlays" / "sample" / "measure_verbs"
 SANDBOX_VALUES = ROOT / "helm" / "invincible-agent" / "values-sandbox.yaml"
 LIVE_CASE = ROOT / "tests" / "sandbox_e2e" / "variance_set_live.yaml"
 RAISED = re.compile(r"""ContractViolation\(\s*["']([a-z_]+)["']""")
@@ -79,7 +79,7 @@ def test_every_name_the_contract_uses_is_a_declared_column(contract):
 def test_the_dataset_overlays_name_this_contracts_urn_and_banner(contract):
     rows = [yaml.safe_load(p.read_text(encoding="utf-8")) for p in sorted(DATASET_OVERLAYS.rglob("*.yaml"))]
     datasets = [r["inputs"]["dataset"] for r in rows if isinstance(r, dict) and "dataset" in r.get("inputs", {})]
-    assert datasets, "positive control: some test overlay reads a dataset"
+    assert datasets, "positive control: some sample row reads a dataset"
     for ds in datasets:
         assert (ds["urn"], ds["banner"]) == (contract["dataset"]["urn"], contract["dataset"]["banner"])
         cols = _columns(contract)

@@ -2310,8 +2310,15 @@ def test_a_declared_measure_carries_its_rows_declaration_on_the_wire(monkeypatch
     monkeypatch.setenv("MEASURE_VERB_OVERLAY_DIRS", str(sample))
     declared = fmain._load_declared()
     assert declared, "the sample overlay declares no measure"
+    # A dataset row carries no series and no reference: its wire (shape, source, verdict) is
+    # asserted where it is served as the caller (test_variance_decomposition_over_the_ev_fixture).
+    # Named here, so a new dataset row is a red until a test serves it.
+    dataset = {fn for fn, r in declared.items() if r.kind == measure_verbs.KIND_DATASET}
+    assert dataset == {"fin_flow_acwp", "fin_flow_eac_variance"}, dataset
     monkeypatch.setattr(fmain, "DECLARED", declared)
     for fn, row in declared.items():
+        if fn in dataset:
+            continue
         body = _envelope(fn)
         assert body["series"] == [dict(s) for s in row.series], fn
         assert body["reference"] == dict(row.reference), fn

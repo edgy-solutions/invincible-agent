@@ -16,7 +16,7 @@ import yaml
 from agent_fleet.finance_agent import measure_verbs
 
 REPO = Path(__file__).resolve().parents[2]
-TEST_ROW = Path(__file__).parent / "overlays" / "variance_decomposition" / "fin_flow_acwp.yaml"
+TEST_ROW = Path(__file__).resolve().parents[2] / "policy" / "overlays" / "sample" / "measure_verbs" / "fin_flow_acwp.yaml"
 STATE_ROW = REPO / "policy" / "overlays" / "sample" / "measure_verbs" / "fin_vac.yaml"
 RAW = yaml.safe_load(TEST_ROW.read_text(encoding="utf-8"))
 FILE = "bad_row.yaml"
