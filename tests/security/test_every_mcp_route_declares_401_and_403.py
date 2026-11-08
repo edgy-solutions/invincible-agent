@@ -17,10 +17,15 @@ So this file holds:
              route's dependencies, so it over-approximates: a row is "may reach", and a site
              missing from the census is the claim to trust. A new reachable site fails; a listed
              site that is gone or now carries a refusal fails
-  COUPLING   `PolicyRefusalDetail.refusal` is optional exactly while that list is non-empty
+  COUPLING   `PolicyRefusalDetail.refusal` is optional exactly while the list has a DEBT row
+  STRUCTURAL the architect, 2026-11-07: "the two structural refusals ... are declared as anyOf
+             members and never carry an envelope". `StructuralRefusalDetail`'s codes are the
+             STRUCTURAL rows' codes exactly, it has no `refusal` and refuses extra keys, and the
+             act route's rendering of a `PromotionRefused` fits it
   401        every 401 the routes can reach sends a string `detail`
   THE DOOR   driven live: where a delegate entry would admit a `svc:` caller, the refusal names
-             `config:DELEGATE_ON_BEHALF_OF` and the grantor the map holds; elsewhere none
+             `config:DELEGATE_ON_BEHALF_OF` and the grantor the map holds; elsewhere the body
+             reads as `StructuralRefusalDetail`
 
 NOT CHECKED: a status an engine sends and a route forwards (`status_code=rr.status_code`); that
 body is the engine's, and `relay_refusal` completes a refusal only when the engine sent one.
@@ -42,11 +47,13 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import Depends, FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from src.iagent import auth, gateway
 from src.iagent.authz import refusal as refusal_mod
 from src.iagent.ingest_api import (
-    MCP_REFUSAL_RESPONSES, MCP_TAG, PolicyRefusalBody, PolicyRefusalDetail, UnauthenticatedBody,
+    MCP_REFUSAL_RESPONSES, MCP_TAG, PolicyRefusalBody, PolicyRefusalDetail, StructuralRefusalDetail,
+    UnauthenticatedBody,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,7 +65,7 @@ _spec.loader.exec_module(R)
 GW = "src/iagent/gateway.py"
 PR = "src/iagent/promotion.py"
 DEBT = "a policy refusal on the ratchet's PENDING list"
-STRUCTURAL = "no grant lifts it (the ratchet's NOT_POLICY); it can comply only by carrying a refusal anyway"
+STRUCTURAL = "no grant lifts it (the ratchet's NOT_POLICY); declared as StructuralRefusalDetail, never an envelope"
 
 #: Measured 2026-11-07 on lane/gov-mcp-refusal-responses. Keys are the ratchet's.
 ENVELOPELESS_403: dict[str, str] = {
@@ -122,8 +129,12 @@ def test_the_openapi_carries_both_on_every_mcp_operation(source):
     want = {"401": _ref(UnauthenticatedBody), "403": _ref(PolicyRefusalBody)}
     wrong = [r for r in rows if r[3] != want[r[2]]]
     assert not wrong, wrong
-    for model in (UnauthenticatedBody, PolicyRefusalBody, PolicyRefusalDetail):
+    for model in (UnauthenticatedBody, PolicyRefusalBody, PolicyRefusalDetail, StructuralRefusalDetail):
         assert model.__name__ in doc["components"]["schemas"], (source, model.__name__)
+    # the structural refusals are their own anyOf member (ruled 2026-11-07), not a reading of the open one
+    members = doc["components"]["schemas"][PolicyRefusalBody.__name__]["properties"]["detail"]["anyOf"]
+    assert sorted(m.get("$ref") or m.get("type") for m in members) == sorted(
+        [_ref(PolicyRefusalDetail), _ref(StructuralRefusalDetail), "string"]), (source, members)
 
 
 def test_the_401_declares_the_challenge_header():
@@ -241,11 +252,55 @@ def test_the_census_reaches_the_door_and_a_compliant_site():
     assert any(ok for rows in census(403).values() for ok, _ in rows if rows is not door)
 
 
-def test_refusal_is_optional_exactly_while_the_list_is_non_empty():
+def test_refusal_is_optional_exactly_while_a_debt_row_is_listed():
+    debt = [k for k, why in ENVELOPELESS_403.items() if why == DEBT]
     required = PolicyRefusalDetail.model_fields["refusal"].is_required()
-    assert required == (not ENVELOPELESS_403), (
-        "the list is empty: make PolicyRefusalDetail.refusal required (ingest-v1 minor bump)"
-        if not ENVELOPELESS_403 else "refusal is required but listed sites send none")
+    assert required == (not debt), (
+        "no DEBT row is left: make PolicyRefusalDetail.refusal required (ingest-v1 minor bump)"
+        if not debt else "refusal is required but listed DEBT sites send none")
+
+
+def _code(key: str) -> str:
+    return key.split("::")[2].split(" | ")[0]
+
+
+def test_the_structural_member_declares_exactly_the_structural_rows():
+    """The join between the list and the declaration: a code is structural in both or neither."""
+    declared = set(StructuralRefusalDetail.model_fields["error"].annotation.__args__)
+    listed = {_code(k) for k, why in ENVELOPELESS_403.items() if why == STRUCTURAL}
+    assert declared == listed, (sorted(declared), sorted(listed))
+
+
+def test_the_structural_member_can_never_carry_an_envelope():
+    assert "refusal" not in StructuralRefusalDetail.model_fields
+    assert StructuralRefusalDetail.model_config.get("extra") == "forbid"
+    with pytest.raises(ValidationError):
+        StructuralRefusalDetail.model_validate(
+            {"error": "service_token_refused",
+             "refusal": refusal_mod.refusal("config:DELEGATE_ON_BEHALF_OF", 'delegate_of("svc:x")')})
+
+
+def _promotion_refused_renderings() -> list[set[str]]:
+    """The `detail` keys of every HTTPException the gateway raises in an `except PromotionRefused`."""
+    tree = ast.parse((ROOT / GW).read_text(encoding="utf-8"))
+    out = []
+    for h in ast.walk(tree):
+        if isinstance(h, ast.ExceptHandler) and h.type is not None and "PromotionRefused" in ast.unparse(h.type):
+            for n in ast.walk(h):
+                # by name: the status is `exc.status`, never a constant `R._status` can read
+                if isinstance(n, ast.Call) and R._fname(n) == "HTTPException":
+                    d = next((k.value for k in n.keywords if k.arg == "detail"), None)
+                    if isinstance(d, ast.Dict):
+                        out.append({k.value for k in d.keys if isinstance(k, ast.Constant)})
+    return out
+
+
+def test_a_promotion_refusal_renders_as_the_structural_member():
+    """`dropper_cannot_attest_origin` reaches the wire through these renderings, so each fits."""
+    got = _promotion_refused_renderings()
+    assert got, "no `except PromotionRefused` rendering found: the census of renderings is empty"
+    for keys in got:
+        assert "error" in keys and keys <= set(StructuralRefusalDetail.model_fields), keys
 
 
 def test_every_reachable_401_sends_a_string():
@@ -295,14 +350,17 @@ def _stub(route: APIRoute) -> TestClient:
 def test_a_refused_service_caller_reads_the_declared_403(route, key):
     r = _stub(route).get("/x", headers=_bearer(key, "svc:zz-not-a-delegate"))
     assert r.status_code == 403, (route.path, r.status_code)
-    body = PolicyRefusalBody.model_validate(r.json())
-    got = body.detail.refusal
+    PolicyRefusalBody.model_validate(r.json())
+    detail = r.json()["detail"]
     if gateway._body_names_on_behalf_of(route):
         mb = 'delegate_of("svc:zz-not-a-delegate")'
         want = refusal_mod.refusal("config:DELEGATE_ON_BEHALF_OF", mb)   # the grantor map's answer
+        got = PolicyRefusalDetail.model_validate(detail).refusal
         assert got is not None and got.model_dump(mode="json") == want, (route.path, got)
+        with pytest.raises(ValidationError):                             # a policy refusal is not structural
+            StructuralRefusalDetail.model_validate(detail)
     else:
-        assert got is None, (route.path, got)
+        StructuralRefusalDetail.model_validate(detail)
 
 
 @pytest.mark.parametrize("route", mcp_routes(), ids=_ids(mcp_routes()))

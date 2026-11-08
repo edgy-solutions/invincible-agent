@@ -2,6 +2,16 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.8.1 — 2026-11-07
+
+Declaration only, no wire change: the structural 403s are their own member (ruled 2026-11-07, G5).
+
+- `PolicyRefusalBody.detail` is one of three members:
+  - `PolicyRefusalDetail`, as in 1.8.0. `refusal` is still optional, and it becomes required once no debt row is left in `tests/security/test_every_mcp_route_declares_401_and_403.py`. The two structural refusals no longer count against that.
+  - `StructuralRefusalDetail`, new: a 403 that no grant lifts, so it never carries `refusal`. `error` is `dropper_cannot_attest_origin` or `service_token_refused` (where no delegate entry applies), with optional `message`, `authz_id` and `task_id`. No other keys are allowed.
+  - a string.
+- Every body that validated against 1.8.0 still validates.
+
 ## 1.8.0 — 2026-11-07
 
 Declarations made to match the wire, ruled 2026-11-06 (G5). One body gains a field.
