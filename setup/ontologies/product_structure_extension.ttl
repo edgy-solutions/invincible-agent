@@ -305,25 +305,27 @@ ps:LtbDecision a owl:Class ;
     rdfs:subClassOf iof-construct:PlanSpecification ;
     rdfs:comment """The action record of a last-time-buy resolution of the obsolescence_resolution
     workflow: {quantity, by, rationale, approved_by}. It prescribes a buy that has not happened yet,
-    hence a PlanSpecification. The brief named the four fields without definitions; the
-    definitions below are Lane 1's, built with D, for ruling. Concept from SD-22 / MIL-STD-3018,
-    cited, not copied.""" .
+    hence a PlanSpecification. Concept from SD-22 / MIL-STD-3018, cited, not copied.""" .
+# THE FOUR FIELDS FOLLOW THE SHIPPED CONTRACT, iagent-mesh v0.9.16 `LtbDecision`
+# {quantity: int, by: str, rationale: str, approved_by: str}. `by` is the DECIDING seat and
+# `approved_by` the APPROVING one: ADR-0065 §5's two rails (option_deciders chooses,
+# task_grants approves). tests/test_product_structure_vocabulary.py checks the two agree.
 
 ps:ltbFor a owl:ObjectProperty ;
     rdfs:domain ps:LtbDecision ; rdfs:range ps:Part ;
-    rdfs:comment "The part the buy is for." .
+    rdfs:comment "The part the buy is for. Not a field of the record: the record hangs off the case's part." .
 ps:ltbQuantity a owl:DatatypeProperty ;
-    rdfs:domain ps:LtbDecision ; rdfs:range xsd:decimal ;
-    rdfs:comment "quantity: how many to buy, in the part's unit of issue." .
+    rdfs:domain ps:LtbDecision ; rdfs:range xsd:integer ;
+    rdfs:comment "quantity: how many units the decision covers." .
 ps:ltbBy a owl:DatatypeProperty ;
-    rdfs:domain ps:LtbDecision ; rdfs:range xsd:date ;
-    rdfs:comment "by: the date the order must be placed by, usually the notice's last-order date. A date, not a person." .
+    rdfs:domain ps:LtbDecision ; rdfs:range xsd:string ;
+    rdfs:comment "by: who made the decision (authz_id), a holder of the chosen option's option_deciders row." .
 ps:ltbRationale a owl:DatatypeProperty ;
     rdfs:domain ps:LtbDecision ; rdfs:range xsd:string ;
-    rdfs:comment "rationale: why this quantity, in the decider's words." .
+    rdfs:comment "rationale: why, in the decider's words." .
 ps:ltbApprovedBy a owl:DatatypeProperty ;
     rdfs:domain ps:LtbDecision ; rdfs:range xsd:string ;
-    rdfs:comment "approved_by: the approver's identity (authz_id), from the task_grants approver audience." .
+    rdfs:comment "approved_by: the approving seat (authz_id), from the task_grants approver audience; distinct from by." .
 
 # ── Deliberately OUT of v1, each waking on its consumer ─────────────────────
 # CAD structure · alternates / substitution groups · full effectivity algebra.

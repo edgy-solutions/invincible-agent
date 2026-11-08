@@ -219,6 +219,31 @@ def test_the_ltb_decision_carries_the_four_named_fields():
         assert (_ps(f), RDFS.domain, _ps("LtbDecision")) in g, f
 
 
+# The vocabulary's LTB fields and the SDK's shipped `LtbDecision`, read from v0.9.16 on 2026-11-08.
+# `by` is the deciding seat, not a date: the first draft here said a date, and the shipped
+# contract (and ADR-0065 §5's two rails) said otherwise.
+_LTB_SDK = {"quantity": ("ltbQuantity", "integer"), "by": ("ltbBy", "string"),
+            "rationale": ("ltbRationale", "string"), "approved_by": ("ltbApprovedBy", "string")}
+
+
+def test_the_ltb_fields_agree_with_the_shipped_contract():
+    from rdflib import RDFS, XSD
+    g = _graph()
+    for wire, (prop, xsd) in _LTB_SDK.items():
+        assert g.value(_ps(prop), RDFS.range) == XSD[xsd], (wire, prop)
+
+
+def test_the_shipped_contract_is_the_one_read_here():
+    """Skips on a pin before v0.9.16, which has no lifecycle_status module. Once the pin moves,
+    a field the SDK adds or renames turns this red, so the vocabulary is re-read with it."""
+    import pytest
+    mod = pytest.importorskip("iagent_mesh.lifecycle_status")
+    fields = mod.LtbDecision.model_fields
+    assert set(fields) == set(_LTB_SDK)
+    assert fields["quantity"].annotation is int
+    assert all(fields[f].annotation is str for f in ("by", "rationale", "approved_by"))
+
+
 def test_the_configurations_writability_claim_matches_the_writer():
     """The file says ps:configuration is NOT YET WRITABLE because the writer's canonical set lacks
     it. When the BOM contract adds it there, this goes red until the comment says so too."""
