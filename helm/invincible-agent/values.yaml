@@ -967,7 +967,7 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.9.13"
+  meshSdkVersion: "v0.9.15"
   # CLOSED NETWORK (no route to github.com / pypi.org): point the install at a mirror.
   # The SDK is fetched from <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz, so the mirror holds the
   # GitHub tag tarball under that same file name (e.g. an Artifactory generic repo holding
@@ -976,8 +976,8 @@ domainBroker:
   #   meshSdkSource: url    -> "iagent-mesh @ <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz" (default)
   #   meshSdkSource: index  -> "iagent-mesh==<meshSdkVersion without the v>" from pip.indexUrl,
   #                            for an internal PyPI that holds the SDK (upload the sdist or a
-  #                            wheel built from the tag; the package's version equals the tag's, except at
-  #                            v0.9.13, which builds as 0.9.12, so `index` cannot serve that pin).
+  #                            wheel built from the tag; the package's version equals the tag's:
+  #                            v0.9.15 builds as 0.9.15, so `index` serves this pin).
   meshSdkSource: "url"
   meshSdkBaseUrl: "https://github.com/edgy-solutions/iagent-mesh-sdk/archive/refs/tags"
   pip:
