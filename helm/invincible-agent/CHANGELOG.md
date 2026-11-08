@@ -4,6 +4,11 @@
 
 Entries merged after the 0.4.82 cut. The chart version is not bumped until the cut.
 
+- **A foreign delegate's attach is refused as `delegate_not_seeder`.** Chris, 2026-11-07 (saf):
+  the code is `delegate_not_seeder`, in `detail["error"]`. #289 refused it as
+  `not_the_seeding_delegate`; the behaviour is unchanged (403, nothing written), only the code
+  is renamed, at its one home (`workflow_runner.NOT_THE_SEEDER`) and the door's 403. saf's seal
+  `tests/test_a_delegate_attaches_only_to_a_case_it_seeded.py` loses its strict xfail.
 - **engine-fin registers each verb with the verb in its `endpoint_url` path, at the call.**
   `_registration_calls()` now carries each measure's `fn`, and the lifespan builds
   `endpoint_url=f"{base}/measure/{_call['fn']}"`. Before, the list carried the finished URL and the
