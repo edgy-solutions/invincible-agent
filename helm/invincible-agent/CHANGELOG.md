@@ -1,6 +1,85 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.82 — not yet cut
+## 0.4.82 — 2026-11-08
+
+Entries merged after the 0.4.81 tag (`f08217b2`), cut by Chris's 11-07 train: "#290, #298, #300,
+#287 → #291 → #295, #294, #285, #271; then cut 0.4.82 (01fa313, the class mesh:FlowDecomposition,
+the seal change above)".
+
+**What the train names, and where each one is:**
+
+| item | where |
+| --- | --- |
+| #290 `/me/entitlements` serves the caller's capabilities (G6, ingest-v1 1.7.0) | merged at `c3b51ed7`; through the images |
+| #298 G5, every MCP route declares its 401 and 403 | merged at `fbe7b3e7`; through the images |
+| #303 master's PDP-503 red from #290, and G5's structural 403 member (ingest-v1 1.8.1) | merged at `71401055`; through the images |
+| #287 every brokered read carries a principal; a delegate attaches only to its own case | merged at `c9e676e9`; seal only |
+| #291 the foreign-delegate refusal names `delegate_not_seeder` | merged at `ee56706f`; seal only |
+| #295 the draft card task_id against the minted long form (strict xfail) | merged at `0d9d33b1`; seal only |
+| #285 a placeholder held in a tuple binds | merged at `3949ade8`; through the images |
+| #271 | already in 0.4.81; nothing to carry |
+| #300 the fleet on iagent-mesh v0.9.15 | merged into this cut; below |
+| #294 #255's two flow rows ship as samples | merged into this cut; below |
+| the chart-version seal | below |
+| `mesh:FlowDecomposition` | below |
+| `data_provenance` on MULTI_SERIES | below |
+| cortex 01fa313 | below |
+
+**Also in the range, docs and board only:** #292, #297, #302 and #304 (the board), #293 (ADR-0064
+signed), #296 (ADR-0067 references openddil ADR-0056), and #299 (ADR-0065 Proposed).
+
+**A pending bump is not drift: the chart-version seal (the architect, via Chris, 11-08).**
+
+- **What changed:** the release guard accepts a `## <next> — not yet cut` CHANGELOG entry as the
+  pending bump. It fails only when `helm/**` changes with neither a bump nor that entry. Before,
+  every `helm/**` PR merged between cuts turned master red (#277, #262, #300, #294).
+- **How:** `scripts/chart_version_seal.py` decides one of three verdicts.
+  - `release`: Chart.yaml's version is unpublished.
+  - `pending`: the version is published, and the CHANGELOG opens `## X — not yet cut` for an
+    unpublished X above it. The run publishes nothing and is green.
+  - `refuse`: neither a bump nor that entry. The 0.3.36 failure stays refused. A release whose
+    own heading still says `not yet cut` is also refused: the cut dates the heading.
+- `release-helm-charts.yml` runs it as step `version_seal` and gates every later step on
+  `pending != 'true'`. `tests/test_chart_version_seal.py` seals the verdicts, five near-miss
+  headings, the real files and the wiring.
+- **For lanes:** a PR that changes `helm/**` between cuts opens or extends the
+  `## <next> — not yet cut` entry at the top of this file.
+
+**The mcp-chart reference seal searches the chart, not the directory.** The test that the main
+chart does not reference `iagent-mesh-mcp` walked every file under `helm/invincible-agent`. So the
+prose in this file's 0.4.74 entry turned it red. It now applies the chart's own `.helmignore`, so
+`*.md` is out. A control shows that the same words in a CHANGELOG are not a hit and a planted
+template line is.
+
+**`mesh:FlowDecomposition`, a generic archetype (Chris, 11-07: "the archetype is not finance's").**
+
+- One total split into the parts it flows into, as a flat edge table, root edge first. It sits
+  beside `mesh:MultiSeries` in `setup/ontologies/mesh_system.ttl`.
+- It is step 1 of the flow order: this class, then fin's `menu:` block on the overlay rows, then
+  the projector row, then cortex's menu. No binding names it yet, so the flow card still draws
+  nothing on this cut. The projector row stays held on `lane/01-flow-decomposition-is-projected`
+  until fin's `menu:` block exists.
+- It reaches the graph at the next prime.
+
+**`data_provenance` arrives on the MULTI_SERIES card.**
+
+- The projector's MULTI_SERIES tuple gains `data_provenance`. fin sent it, and no card received it.
+  The target is `("rows", ("series", "reference", "verdict", "value_label", "scope_label",
+  "data_provenance"))`. cost's and safety's MULTI_SERIES producers do not send it, and an absent
+  key is not carried.
+- `tests/finance/test_provenance_arrives_whole.py` drives fin_burn_rate and
+  fin_performance_indices through their real routes and the real projector. The field arrives
+  verbatim, and a control watches it drop without the tuple entry.
+- **Still owed, by fin:** the ruled content is "dataset URN, as-of, ticket id". An asset answer
+  names its URN. It carries no as-of and no ticket id, because `asset_inputs.provenance` emits the
+  banner and ` Source: <urn>` only. That arm is a strict xfail and turns red when fin adds them.
+
+**cortex-ui frontend 01fa313 (`sha256:2b625433…`)**
+
+- It adds to 93d76e8: the flow card reads the served `render` block (0dc5366) and draws the
+  `data_provenance` banner (01fa313). Cortex's MULTI_SERIES card does not read `data_provenance`
+  yet; its validator ignores the extra key.
+- The flow card still draws nothing on this cut, for the reason above.
 
 **The fleet moves to iagent-mesh v0.9.15 (gov, ruled by Chris 11-07: "Pin moves are gov's rail").**
 
