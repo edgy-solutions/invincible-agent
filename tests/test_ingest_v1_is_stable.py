@@ -301,6 +301,7 @@ def test_me_routes_answer_in_their_declared_shape(monkeypatch):
            "created_at": datetime.datetime(2026, 1, 1), "workflow_service": None,
            "promise_name": None, "case_id": None}
     monkeypatch.setattr(human_tasks, "list_tasks_for", lambda caller_id, **kw: [dict(row)])
+    monkeypatch.setattr(human_tasks, "held_capabilities", lambda caller_id: [])
     gateway.app.dependency_overrides[get_current_user] = lambda: user
     try:
         client = TestClient(gateway.app)

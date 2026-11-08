@@ -2,6 +2,12 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.7.0 — 2026-11-06
+
+Additive for a reader.
+
+- `GET /me/entitlements`: new required `capabilities` (strings), every capability key in the authorization directory the caller holds `can_invoke` on, sorted (e.g. `ingest:exportBatch`, `can_export:<profile>`); a directory that cannot be read is 503, never a partial list.
+
 ## 1.6.0 — 2026-10-31
 
 Tightening of one request check, ruled 2026-10-31 (the SDK's `EvidenceRef` rule wins).
