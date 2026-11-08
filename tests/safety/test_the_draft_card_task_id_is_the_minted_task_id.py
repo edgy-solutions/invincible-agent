@@ -9,8 +9,8 @@ engine builds neither string: this file replaces the two seals that pinned the m
 Arms
   a  before creation the drafted card has NO `task_id` key (absent, not None);
   b  after creation the card carries exactly the id the runner answered. The double answers a
-     random token Engine S could not derive, so a copied format cannot pass. STRICT XFAIL: the
-     gateway dispatches `run/send` and records no id (Lane 1's code; packet placed);
+     random token Engine S could not derive, so a copied format cannot pass. Lane 1 fills the card
+     (and the dispatch record) from the runner's `opened_task` answer;
   c  no format copy: no string literal in the engine builds a task id or case key, found by
      FORM (the `risk-acceptance-` head, a `~<n>` instance suffix, a `:<step>` tail), with a
      positive control against a planted copy.
@@ -78,10 +78,6 @@ class _Runner:
 
 
 @requires_rdflib
-@pytest.mark.xfail(strict=True, reason=(
-    "the gateway opens the acceptance with a fire-and-forget run/send and records no task id, so "
-    "nothing fills the card from the runner's answer yet. Lane 1's code: packet placed; this arm "
-    "pins the observable (the dispatch record) and Lane 1 may move it to the card itself."))
 def test_after_creation_the_card_carries_exactly_the_id_the_runner_answered(monkeypatch):
     import iagent.gateway as gw
     from iagent_pure import acceptance_request as ar
@@ -95,6 +91,7 @@ def test_after_creation_the_card_carries_exactly_the_id_the_runner_answered(monk
     assert err is None and runner.posts, "the acceptance did not open"
     [rec] = bundle["resolved_intent"]["acceptance_dispatched"]
     assert rec.get("task_id") == token
+    assert rr["task_id"] == token
 
 
 # --------------------------------------------------------------------------- c: no format copy

@@ -1,5 +1,12 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.83 — not yet cut
+
+- The case answers the task it opened (`WorkflowRunner/<case>/opened_task`): the instance tells its
+  case the id it minted (`task_opened`, the first task wins), the gateway asks the case for it and
+  fills the draft card's `task_id` from the answer (absent when unanswered, never null), and saf's
+  strict xfail is removed. Chris, 2026-11-07 (saf).
+
 ## 0.4.82 — 2026-11-08
 
 Entries merged after the 0.4.81 tag (`f08217b2`), cut by Chris's 11-07 train: "#290, #298, #300,
