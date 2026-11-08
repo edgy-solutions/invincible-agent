@@ -5,8 +5,14 @@ date: 2026-11-08
 supersedes: 2026-11-08-handoff-lane-gov-303-carries-the-pdp-fix-and-the-structural-member-the-lifecycle-dispatch-is-next.md
 ---
 
-worktrees: under wt\gov\ (lifecycle-dimensions, pin-0-9-15, g5-structural-member; mcp-refusal-responses,
-me-entitlements-capabilities and 282-tail removed, each cherry-checked against master first; 0 under %TEMP%)
+worktrees: none under wt\gov\. After #314 merged, all six were removed (each cherry-checked against
+master first). 0 under %TEMP%.
+
+**Update 2026-11-08 ~14:45Z**
+- Chris merged #314 at `3ebfd706`, and `5863a491` is on master.
+- lane/gov merged master `74a0ccca` at `d8bb4aef`. Its hook and `.githooks/lanes` are now current, and `--expected` derives on lane/gov.
+- Approvers ruled for POLICY: Chris and Lane 1.
+- Chris syncs Topaz for `obsolescence-deciders` before the 0.4.83 roll; that is not gov's job.
 
 # Where it stands
 
@@ -44,6 +50,5 @@ me-entitlements-capabilities and 282-tail removed, each cherry-checked against m
 # Next step
 
 1. Re-read the master tree's `sessions/` for packets to `invincible-agent/lane/gov`.
-2. Read #314's checks and reviews. A green `build-containers` is a real gate here: the base is master.
-3. Answer the architect's four questions if a ruling arrives. Then remove `wt\gov\lifecycle-dimensions`, `pin-0-9-15` and `g5-structural-member` once their PRs are merged and cherry-checked.
-4. Take the first unblocked `next` item in board order: "Answer 7f's 10-29 and 10-30 packets" (`01M6A9QDN1QSSWQ74F6JV74W0B`).
+2. #314 is merged and no work on it is left. Answer the architect's four questions if a ruling arrives.
+3. Take the first unblocked `next` item in board order: "Answer 7f's 10-29 and 10-30 packets" (`01M6A9QDN1QSSWQ74F6JV74W0B`).
