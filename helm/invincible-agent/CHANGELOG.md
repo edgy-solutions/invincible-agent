@@ -7,6 +7,10 @@
   `not_the_seeding_delegate`; the behaviour is unchanged (403, nothing written), only the code
   is renamed, at its one home (`workflow_runner.NOT_THE_SEEDER`) and the door's 403. saf's seal
   `tests/test_a_delegate_attaches_only_to_a_case_it_seeded.py` loses its strict xfail.
+- The case answers the task it opened (`WorkflowRunner/<case>/opened_task`): the instance tells its
+  case the id it minted (`task_opened`, the first task wins), the gateway asks the case for it and
+  fills the draft card's `task_id` from the answer (absent when unanswered, never null), and saf's
+  strict xfail is removed. Chris, 2026-11-07 (saf).
 
 ## 0.4.82 — 2026-11-08
 
