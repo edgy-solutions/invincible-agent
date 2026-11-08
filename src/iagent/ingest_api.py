@@ -417,18 +417,29 @@ class UnauthenticatedBody(_Strict):
 
 class PolicyRefusalDetail(BaseModel):
     """A 403's `detail` object. Sites name the refusal `error` (two export sites say `reason`) and
-    add their own keys. `refusal` is OPTIONAL while any 403 an MCP route can reach sends none:
-    tests/security/test_every_mcp_route_declares_401_and_403.py lists those sites exactly and
-    requires this field once its list is empty."""
+    add their own keys. `refusal` is OPTIONAL while any policy 403 an MCP route can reach sends
+    none: tests/security/test_every_mcp_route_declares_401_and_403.py lists those sites exactly and
+    requires this field once its debt rows are gone."""
     model_config = ConfigDict(extra="allow")
     error: str | None = None
     message: str | None = None
     refusal: RefusalEnvelope | None = None
 
 
+class StructuralRefusalDetail(_Strict):
+    """A 403 no grant lifts, so there is no policy to name and it never carries a `refusal`
+    (ruled 2026-11-07, G5): separation of duties at promotion, and a service caller on a route
+    where no delegate entry applies. The same code on a route where one would apply is a policy
+    refusal and reads as `PolicyRefusalDetail`."""
+    error: Literal["dropper_cannot_attest_origin", "service_token_refused"]
+    message: str | None = None
+    authz_id: str | None = None
+    task_id: str | None = None
+
+
 class PolicyRefusalBody(_Strict):
     """The 403 body of an MCP-tagged route; one site sends `detail` as a string."""
-    detail: Union[PolicyRefusalDetail, str]
+    detail: Union[PolicyRefusalDetail, StructuralRefusalDetail, str]
 
 
 #: `responses=` entries every MCP-tagged route spreads LAST, so the MCP projection (what the MCP

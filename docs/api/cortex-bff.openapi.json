@@ -4409,6 +4409,9 @@
                 "$ref": "#/components/schemas/PolicyRefusalDetail"
               },
               {
+                "$ref": "#/components/schemas/StructuralRefusalDetail"
+              },
+              {
                 "type": "string"
               }
             ],
@@ -4423,7 +4426,7 @@
       },
       "PolicyRefusalDetail": {
         "additionalProperties": true,
-        "description": "A 403's `detail` object. Sites name the refusal `error` (two export sites say `reason`) and\nadd their own keys. `refusal` is OPTIONAL while any 403 an MCP route can reach sends none:\ntests/security/test_every_mcp_route_declares_401_and_403.py lists those sites exactly and\nrequires this field once its list is empty.",
+        "description": "A 403's `detail` object. Sites name the refusal `error` (two export sites say `reason`) and\nadd their own keys. `refusal` is OPTIONAL while any policy 403 an MCP route can reach sends\nnone: tests/security/test_every_mcp_route_declares_401_and_403.py lists those sites exactly and\nrequires this field once its debt rows are gone.",
         "properties": {
           "error": {
             "anyOf": [
@@ -5511,6 +5514,58 @@
           "account"
         ],
         "title": "StatusBody",
+        "type": "object"
+      },
+      "StructuralRefusalDetail": {
+        "additionalProperties": false,
+        "description": "A 403 no grant lifts, so there is no policy to name and it never carries a `refusal`\n(ruled 2026-11-07, G5): separation of duties at promotion, and a service caller on a route\nwhere no delegate entry applies. The same code on a route where one would apply is a policy\nrefusal and reads as `PolicyRefusalDetail`.",
+        "properties": {
+          "authz_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authz Id"
+          },
+          "error": {
+            "enum": [
+              "dropper_cannot_attest_origin",
+              "service_token_refused"
+            ],
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "StructuralRefusalDetail",
         "type": "object"
       },
       "TaskDeclaration": {
