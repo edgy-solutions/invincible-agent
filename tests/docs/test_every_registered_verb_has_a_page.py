@@ -94,9 +94,10 @@ _RESOLVERS = {
     "agent_fleet/planning_agent/main.py": _in_file("agent_fleet/planning_agent/main.py"),
     "agent_fleet/safety_agent/main.py": _in_file("agent_fleet/safety_agent/main.py"),
     "agent_fleet/graph_host/main.py": _graph_manifest_verbs,
-    # `verb=_notice_parts.VERB`
-    "agent_fleet/ontology_service/main.py": lambda: _module_constant(
-        _REPO / "agent_fleet/ontology_service/notice_parts.py", "VERB"),
+    # `verb=_notice_parts.VERB` and `verb=_where_used.VERB`
+    "agent_fleet/ontology_service/main.py": lambda: (
+        _module_constant(_REPO / "agent_fleet/ontology_service/notice_parts.py", "VERB")
+        | _module_constant(_REPO / "agent_fleet/ontology_service/where_used.py", "VERB")),
 }
 
 
@@ -205,6 +206,7 @@ _ALLOWLIST = frozenset({
     "mesh:traceLineage",
     "mesh:whatFailedOnThisPart",
     "mesh:whichPartsDoesThisNoticeAffect",
+    "mesh:whereIsThisPartUsed",
 })
 
 

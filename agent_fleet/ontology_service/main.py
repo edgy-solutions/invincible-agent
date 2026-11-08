@@ -984,6 +984,63 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[ontology-service] {_notice_parts.VERB} registration failed: {e}")
 
+    # THE SUSTAINMENT READ "where is this part used" (where_used.py). Reads one repository
+    # dataset, so it is gated on that dataset loading: the store it reads.
+    try:
+        _where_used_endpoint = os.getenv(
+            "ONTOLOGY_SVC_SELF_URL", "http://iagent-engine-o:8084"
+        ).rstrip("/") + "/where_used"
+
+        def _where_used_answers() -> bool:
+            try:
+                _where_used.load_dataset()
+                return True
+            except _where_used.DatasetRefused:
+                return False
+
+        def _register_where_used():
+            mr.register_engine_to_mesh(
+                mint=mr.engine_mint(client_id="iagent-engine-o", secret_env="ENGINE_O_CLIENT_SECRET"),
+                name="engine_o_where_is_this_part_used",
+                description=(
+                    "Answers which end items use one part and which program each is sustained "
+                    "under, one row per end item and program, with the part's quantity per end "
+                    "item rolled up through every level of the product structure. Takes a "
+                    "declared configuration (as_designed, as_built, as_maintained; default "
+                    "as_designed) and every row states the configuration it was answered from. "
+                    "REFUSES, never an empty table: part_required, unknown_part (also the answer "
+                    "when every end item is withheld from the caller), ambiguous_part, "
+                    "unknown_configuration, configuration_not_available (naming the end items "
+                    "with no data for it) and no_usage. Population and stock have no source: "
+                    "they are absent on every row, never 0. READ-ONLY."
+                ),
+                verb=_where_used.VERB,
+                input_uri=_where_used.INPUT_URI,
+                output_uri=_where_used.OUTPUT_URI,
+                verb_synonyms=[
+                    "where is this part used", "where used", "which end items use this part",
+                    "what uses this part", "impact of this part",
+                ],
+                verb_anti_synonyms=["what failed on this part", "propose a disposition"],
+                endpoint_url=_where_used_endpoint,
+                owner_persona="SUSTAINMENT_ENGINEER",
+                domains=[_where_used.DOMAIN],
+                cost_class="fast",
+                requires_human_approval=False,
+                provider="engine_o_sustainment",
+                timeout_s=5.0,
+                slots=_where_used.slots(),
+            )
+            print(f"[ontology-service] registered {_where_used.VERB} -> {_where_used_endpoint}")
+
+        mr.when_stores_answer(
+            "engine_o_where_is_this_part_used:stores",
+            {"where_used_dataset": _where_used_answers},
+            _register_where_used,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[ontology-service] {_where_used.VERB} registration failed: {e}")
+
     await _check_jena_populated()
     yield
     if _WEAVIATE_CLIENT:
@@ -1014,6 +1071,11 @@ try:
     import notice_parts as _notice_parts  # type: ignore[no-redef]
 except ImportError:
     from agent_fleet.ontology_service import notice_parts as _notice_parts
+
+try:
+    import where_used as _where_used  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.ontology_service import where_used as _where_used
 
 try:
     from utils import origin_entitlement as _origin_entitlement  # type: ignore[no-redef]
@@ -5738,6 +5800,47 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"notice parts read failed: {exc}") from exc
+
+
+class WhereUsedRequest(BaseModel):
+    """The specialist dispatch body, read for the fields this verb uses; the rest is ignored."""
+    params: dict = Field(default_factory=dict)
+    resolved_instance_id: str = ""
+    entitled_domains: list[str] = Field(default_factory=list)
+    #: The caller's authz_id, body-asserted at the same trust level as `entitled_domains`.
+    user_email: str = ""
+
+
+@app.post("/where_used")
+async def where_used_route(request: WhereUsedRequest) -> dict:
+    """`mesh:whereIsThisPartUsed` (dataset and shaping: where_used.py). READ.
+
+    DOMAIN-SCOPED, deny by default: a caller whose entitled domains do not include SUSTAINMENT is
+    refused before the dataset is read."""
+    if _where_used.DOMAIN not in (request.entitled_domains or []):
+        return {
+            "status": "refused",
+            "refused": True,
+            "outcome": "refused",
+            "reason": "not_entitled",
+            "verb": _where_used.VERB,
+            "message": "This read needs the SUSTAINMENT domain, which the caller is not entitled to.",
+        }
+    try:
+        dataset = await asyncio.to_thread(_where_used.load_dataset)
+    except _where_used.DatasetRefused as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    configuration = (request.params or {}).get("configuration") or _where_used.DEFAULT_CONFIGURATION
+    # The program check reads the Topaz directory: its outage is a 503, every other raise a 500
+    # (the _VISIBILITY_OUTAGE rule). Either way no row is returned.
+    try:
+        return await asyncio.to_thread(
+            _where_used.where_used, dataset,
+            _where_used.part_of(request.params, request.resolved_instance_id), configuration,
+            caller_id=request.user_email, can_view_program=_notice_parts_can_view_program,
+        )
+    except _VISIBILITY_OUTAGE as exc:
+        raise HTTPException(status_code=503, detail=f"where used read failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

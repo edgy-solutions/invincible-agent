@@ -1040,8 +1040,12 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # chosen. `columns` is required by the view (it maps over it), so a producer that omits it
     # is a card that throws. The producer's conformance case is
     # tests/test_notice_parts_renders_as_instances_by_property.py.
+    #
+    # `group_by` (mesh:WhereUsedSet, ADR-0065 section 4): the column key the rows group by,
+    # named by the producer so the card never guesses one. Envelope-level, so it is carried
+    # only because it is declared here (tests/finance/test_the_wire_carries_what_the_engine_declares.py).
     "INSTANCES_BY_PROPERTY": ("rows", ("title", "target", "columns", "row_identity",
-                                       "state_vocabulary")),
+                                       "state_vocabulary", "group_by")),
 }
 
 
