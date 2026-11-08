@@ -18,13 +18,17 @@
 #
 #   * A ROW has `name` (the `<dimension>` of `holds:<dimension>:<value>`; no whitespace, no `:`;
 #     unique), `type` (`hierarchical` or `set`), `vocabulary` (a non-empty list of values, each with no
-#     whitespace and no `:`, none twice), and `owner` (a seat such as `owner`, never an identity in
-#     users.yaml).
+#     whitespace and no `:`, none twice), `owner` and `ratified_by`. Each of the last two is a seat
+#     such as `owner`, never an identity in users.yaml.
+#   * OWNER AND RATIFIED_BY ANSWER DIFFERENT QUESTIONS. The architect's ruling on #282 (via Chris,
+#     2026-11-06), verbatim: "No: rows keep `ratified_by: owner` (house rule for every shipped row);
+#     `owner` on a dimension is who decides what its values mean — both fields, different questions."
 #   * ORDER IS LIST POSITION, for a `hierarchical` dimension: the first value is the least restrictive,
 #     the last the most restrictive. ADR-0064: an unlabelled source is the most restrictive, so it is
 #     the last value. For a `set` dimension, order means nothing.
-#   * AT MOST ONE HIERARCHICAL DIMENSION. gov's reading of "`cleared_for:<level>` stays for the
-#     hierarchical dimension": `cleared_for:<level>` names no dimension, so there is one.
+#   * AT MOST ONE HIERARCHICAL DIMENSION. `cleared_for:<level>` names no dimension, so there is one.
+#     The architect confirmed it on #282 (via Chris, 2026-11-06), verbatim: "one hierarchical
+#     dimension at most — yes, as ADR-0055 has it (one classification, many categories)."
 #   * A hierarchical dimension's values are cleared through policy/level_readers.yaml
 #     (`cleared_for:<level>`); a set dimension's values are held through policy/dimension_holders.yaml
 #     (`holds:<dimension>:<value>`).

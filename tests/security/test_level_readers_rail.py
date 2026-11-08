@@ -54,7 +54,7 @@ def _real_group() -> str:
 
 
 def _hier(*values, **over):
-    row = {"name": "dim-h", "type": "hierarchical", "vocabulary": list(values), "owner": "owner"}
+    row = {"name": "dim-h", "type": "hierarchical", "vocabulary": list(values), "owner": "owner", "ratified_by": "owner"}
     row.update(over)
     return row
 
