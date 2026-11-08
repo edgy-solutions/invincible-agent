@@ -1167,22 +1167,23 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
     def _held() -> list[str]:
         return human_tasks.held_capabilities(current_user.authz_id)
 
-    async def _serve(fn, what: str):
-        try:
-            return await run_in_threadpool(fn)
-        except human_tasks.AuthorizationUnconfigured as exc:
-            raise HTTPException(status_code=503, detail={
-                "error": "authorization_unconfigured",
-                "message": "the deployment declares no authorization directory"}) from exc
-        except human_tasks.AuthorizationUnavailable as exc:
-            logger.warning("%s unavailable: %s", what, exc)
-            raise HTTPException(status_code=503, detail={
-                "error": "authorization_unavailable",
-                "message": f"could not verify {what}"},
-                headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
-
-    droppable_kinds = await _serve(_droppable, "which kinds are restricted")
-    capabilities = await _serve(_held, "which capabilities the caller holds")
+    # Both reads sit in this one try, called through `run_in_threadpool` by name: the PDP seal
+    # follows a reader into that form and no other (a helper taking `fn` hides it).
+    what = "which kinds are restricted"
+    try:
+        droppable_kinds = await run_in_threadpool(_droppable)
+        what = "which capabilities the caller holds"
+        capabilities = await run_in_threadpool(_held)
+    except human_tasks.AuthorizationUnconfigured as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unconfigured",
+            "message": "the deployment declares no authorization directory"}) from exc
+    except human_tasks.AuthorizationUnavailable as exc:
+        logger.warning("%s unavailable: %s", what, exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": f"could not verify {what}"},
+            headers={"Retry-After": _CAN_DROP_RETRY_AFTER}) from exc
     return {
         "user_id": current_user.id,
         "authz_id": current_user.authz_id,
