@@ -1,5 +1,17 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.83 — not yet cut
+
+Entries merged after the 0.4.82 cut. The chart version is not bumped until the cut.
+
+- **engine-fin registers each verb with the verb in its `endpoint_url` path, at the call.**
+  `_registration_calls()` now carries each measure's `fn`, and the lifespan builds
+  `endpoint_url=f"{base}/measure/{_call['fn']}"`. Before, the list carried the finished URL and the
+  call passed `_call["endpoint_url"]`, which hid the verb from safety's
+  `test_THE_VERB_IS_IN_THE_PATH_not_in_the_body` and turned it red. The registered URLs are the
+  same strings as before, so the mesh sees no change.
+- **The roll:** engine-fin's image changes; nothing in its values or pod template does.
+
 ## 0.4.82 — 2026-11-08
 
 Entries merged after the 0.4.81 tag (`f08217b2`), cut by Chris's 11-07 train: "#290, #298, #300,
