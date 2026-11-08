@@ -3,7 +3,7 @@ title: The can_decide:<workflow_id>.<option> rail for obsolescence resolution, v
 feature: cross-cutting
 lane: invincible-agent/lane/gov
 repo: invincible-agent
-status: review
+status: done
 priority: next
 blocked_on: []
 pr: [invincible-agent#276]

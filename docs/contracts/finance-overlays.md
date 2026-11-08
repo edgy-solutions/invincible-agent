@@ -207,7 +207,8 @@ There is no visibility key: a measure is only ever shown for a program the user 
 and nothing in a row can widen that.
 
 A second example, a cost amount, shows what changes when the measure is money. This row is in
-the sample overlay too: the sample ships TCPI and VAC. It is shown for its shape, and this doc's own
+the sample overlay too: the sample ships TCPI, VAC and two dataset rows (`fin_flow_acwp`,
+`fin_flow_eac_variance`). It is shown for its shape, and this doc's own
 test loads it through the real loader. VAC (variance at completion) is the budget less the
 estimate at completion, with the estimate worked out by the CPI method.
 
@@ -565,9 +566,13 @@ of the `urn:li:dataset:` form, or the mesh client cannot be imported.
 | no user identity on the request | 401 |
 
 Answers carry `data_source: {kind: "asset", urn}` and the banner in place of the notional text.
-Package and CDRL exports naming a declared measure return 409 `asset_export_unsupported` while the
-URN is set; built-in measures still export. A dataset-kind measure (section 2) always reads its own
-asset, so an export naming one is refused the same way whether or not the URN is set.
+A CDRL sourcing a declared measure reads it the same way, as the caller who asks for the CDRL. A
+caller without the grant gets 403 `access_denied` before anything is written. Each source in the
+envelope carries its `data_provenance` and `data_source`. Fetching the file checks the fetcher's
+grant too. A package export naming a declared measure returns 409 `asset_export_unsupported` while
+the URN is set; built-in measures still export. A dataset-kind measure (section 2) always reads its
+own asset, so a package naming one is refused the same way whether or not the URN is set, and a
+CDRL sourcing one reads it.
 
 ## 6. Not covered yet
 

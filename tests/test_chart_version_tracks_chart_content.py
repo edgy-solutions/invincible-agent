@@ -48,12 +48,38 @@ label" — which neither guard can see.
 """
 from __future__ import annotations
 
+import importlib.util
 import subprocess
+from pathlib import Path
 
 import pytest
 
 _CHART = "helm/invincible-agent/Chart.yaml"
+_CHANGELOG = "helm/invincible-agent/CHANGELOG.md"
 _CHART_DIR = "helm/"
+
+# THE RELEASE GUARD'S OWN DECISION, not a restatement of it (2026-11-08, the architect via
+# Chris: a `## <next> — not yet cut` entry is the pending bump). This file is the guard's local
+# twin; if it kept the older rule it would read red after every helm PR between cuts while the
+# release workflow read green.
+_spec = importlib.util.spec_from_file_location(
+    "chart_version_seal", Path(__file__).resolve().parents[1] / "scripts" / "chart_version_seal.py")
+seal = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(seal)
+
+
+def _pending_bump(chart_yaml: str, changelog: str, is_published) -> str | None:
+    """The version a `not yet cut` entry owes, when the guard's verdict is `pending`; else None.
+    Fail-closed without tags: an unfetched tag reads as unpublished, the verdict is `release`
+    rather than `pending`, and the arms below fail as they did before."""
+    m = seal.VERSION.search(chart_yaml)
+    if not m:
+        return None
+    verdict, _ = seal.decide(m.group(1), changelog, is_published)
+    if verdict != "pending":
+        return None
+    return next(v for v in seal.PENDING.findall(changelog)
+                if seal._key(v) > seal._key(m.group(1)) and not is_published(v))
 
 
 def _git(*args: str) -> str:
@@ -98,6 +124,10 @@ def test_a_chart_change_bumped_the_chart_version():
         capture_output=True, check=False,
     ).returncode == 0
 
+    if not same_or_older and _pending_bump(
+        _git("show", f"HEAD:{_CHART}"), _git("show", f"HEAD:{_CHANGELOG}"), seal._tag_exists
+    ):
+        return  # the content waits under a `not yet cut` entry for a version no tag carries
     if not same_or_older:
         subject = _git("log", "-1", "--format=%s", last_other)
         files = _git("show", "--stat", "--format=", last_other)
@@ -210,6 +240,11 @@ def test_an_UNCOMMITTED_chart_change_is_caught_before_it_is_committed():
         pytest.skip("no uncommitted chart changes in this working tree")
 
     others = _unbumped_chart_paths(proc.stdout)
+    if others and _pending_bump(
+        Path(_CHART).read_text(encoding="utf-8"), Path(_CHANGELOG).read_text(encoding="utf-8"),
+        seal._tag_exists,
+    ):
+        return
     if others:
         pytest.fail(
             "Uncommitted chart content with no Chart.yaml bump — commit this and the version is\n"
@@ -218,3 +253,28 @@ def test_an_UNCOMMITTED_chart_change_is_caught_before_it_is_committed():
             "Bump `version:` in " + _CHART + " IN THIS COMMIT. The deployed label is what to\n"
             "clear: `helm list -n sandbox` shows what the cluster is running."
         )
+
+
+_PUBLISHED = {"0.4.81"}
+
+
+@pytest.mark.parametrize(
+    "chart_yaml,heading,owed",
+    [
+        # THE ACCEPTED CASE: published version, an entry naming the next, unpublished one.
+        ("version: 0.4.81", "## 0.4.82 — not yet cut", "0.4.82"),
+        # No entry at all: the old refusal stands.
+        ("version: 0.4.81", "## 0.4.81 — 2026-11-07", None),
+        # An entry for a version already published is not a promise of anything.
+        ("version: 0.4.81", "## 0.4.81 — not yet cut", None),
+        # An entry BELOW the published version cannot be the bump.
+        ("version: 0.4.81", "## 0.4.80 — not yet cut", None),
+        # The cut itself: an unpublished version is a release, not a pending bump.
+        ("version: 0.4.82", "## 0.4.82 — 2026-11-08", None),
+    ],
+)
+def test_A_NOT_YET_CUT_ENTRY_IS_THE_PENDING_BUMP_AND_NOTHING_ELSE_IS(chart_yaml, heading, owed):
+    """THE FIXTURE for both arms' new exemption. Synthetic text and a fake tag set, so the
+    discriminating cases do not depend on what this tree's CHANGELOG happens to say today."""
+    changelog = "# Changelog\n\n" + heading + "\n\n- a change\n"
+    assert _pending_bump(chart_yaml, changelog, _PUBLISHED.__contains__) == owed

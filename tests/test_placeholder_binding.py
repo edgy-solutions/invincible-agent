@@ -173,6 +173,22 @@ def test_the_literal_never_reaches_a_client():
     assert ep.startswith("http"), f"endpoint has no scheme: {ep!r}"
 
 
+@pytest.mark.parametrize("seq", [list, tuple], ids=["list", "tuple"])
+def test_what_the_collector_requires_the_binder_substitutes(seq):
+    """The unbound check and the substitution are two walks of one definition. A container the
+    collector descends into and the binder does not passes the check and leaves the literal in
+    place: a dumped frozen model holds its sequences as tuples, so `excludes: ("{who}",)` bound
+    with `who` excluded the literal string `{who}`, which is nobody, and no error was raised."""
+    defn = {"id": "x", "steps": seq([{"kind": "human_await", "id": "a", "excludes": seq(["{who}"]),
+                                      "template": {"rows": seq([seq(["{who}"])])}}])}
+    assert collect_placeholders(defn) == {"who"}
+    bound = bind_placeholders(defn, {"who": "alice"})
+    assert collect_placeholders(bound) == set(), f"a required placeholder survived binding: {bound!r}"
+    step = list(bound["steps"])[0]
+    assert list(step["excludes"]) == ["alice"]
+    assert [list(r) for r in step["template"]["rows"]] == [["alice"]]
+
+
 def test_comments_and_prose_cannot_manufacture_a_requirement():
     """Placeholders are collected from the PARSED definition, so `{...}` inside YAML comments is
     already gone. Guards against a seal that fails on documentation."""

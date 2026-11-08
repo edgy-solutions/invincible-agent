@@ -346,6 +346,63 @@ def capability_object_exists(capability: str) -> bool:
     return True
 
 
+def capability_keys() -> list[str]:
+    """The id of every Topaz directory object of type `capability`, read from the SERVER (the
+    paginated `GET /api/v3/directory/objects`, walked as `policy/sync/topaz_sync.py`'s `list_objects`
+    walks it), never from `policy/capability_grants.yaml`. An unset TOPAZ_DIRECTORY_URL RAISES
+    `AuthorizationUnconfigured`. A transport error, any non-2xx, a body that is not JSON, a body or
+    entry of the wrong shape, or a page token seen twice RAISES `AuthorizationUnavailable`: a failure
+    is never a partial list."""
+    if not _TOPAZ_DIRECTORY_URL:
+        raise AuthorizationUnconfigured("TOPAZ_DIRECTORY_URL is unset")
+    out: list[str] = []
+    seen: set[str] = set()
+    token = ""
+    try:
+        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+            while True:
+                params = {"object_type": "capability"}
+                if token:
+                    params["page.token"] = token
+                r = c.get("/api/v3/directory/objects", params=params)
+                if not r.is_success:
+                    raise AuthorizationUnavailable(f"HTTP {r.status_code}")
+                body = r.json()
+                if not isinstance(body, dict):
+                    raise AuthorizationUnavailable("directory list body is not an object")
+                rows = body.get("results") or body.get("objects") or []
+                if not isinstance(rows, list):
+                    raise AuthorizationUnavailable("directory list entries are not a list")
+                for row in rows:
+                    key = row.get("id") if isinstance(row, dict) else None
+                    if not isinstance(key, str) or not key:
+                        raise AuthorizationUnavailable("a directory entry has no id")
+                    out.append(key)
+                page = body.get("page") or {}
+                if not isinstance(page, dict):
+                    raise AuthorizationUnavailable("directory page is not an object")
+                token = page.get("next_token") or ""
+                if not token:
+                    return out
+                if not isinstance(token, str) or token in seen:
+                    raise AuthorizationUnavailable("directory page token repeated or malformed")
+                seen.add(token)
+    except (httpx.HTTPError, ValueError) as exc:  # ValueError: a body that is not JSON
+        raise AuthorizationUnavailable(type(exc).__name__) from exc
+
+
+def held_capabilities(caller_id: str) -> list[str]:
+    """The sorted, de-duplicated capability keys the caller holds `can_invoke` on: every key
+    :func:`capability_keys` reads from the directory SERVER, kept when `can_invoke_or_unavailable`
+    is True. Empty `caller_id` -> `[]` with no directory call. A raise from either propagates
+    (503 for the caller), so a failure is never a partial list. It serves HELD keys only: a
+    `can_drop:<kind>` object the caller does not hold is absent here; `droppable_kinds` remains the
+    drop answer."""
+    if not caller_id:
+        return []
+    return sorted({k for k in capability_keys() if can_invoke_or_unavailable(k, caller_id)})
+
+
 def can_drop_refusal(kind: str, dropper_id: str) -> "dict | None":
     """The `can_drop:<kind>` gate. None = the dropper may drop this kind; otherwise the fields of
     the refusal, for the gateway to raise through `policy_refusal`. A kind is gated iff

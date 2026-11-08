@@ -1,6 +1,178 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.81 — not yet cut
+## 0.4.82 — 2026-11-08
+
+Entries merged after the 0.4.81 tag (`f08217b2`), cut by Chris's 11-07 train: "#290, #298, #300,
+#287 → #291 → #295, #294, #285, #271; then cut 0.4.82 (01fa313, the class mesh:FlowDecomposition,
+the seal change above)".
+
+**What the train names, and where each one is:**
+
+| item | where |
+| --- | --- |
+| #290 `/me/entitlements` serves the caller's capabilities (G6, ingest-v1 1.7.0) | merged at `c3b51ed7`; through the images |
+| #298 G5, every MCP route declares its 401 and 403 | merged at `fbe7b3e7`; through the images |
+| #303 master's PDP-503 red from #290, and G5's structural 403 member (ingest-v1 1.8.1) | merged at `71401055`; through the images |
+| #287 every brokered read carries a principal; a delegate attaches only to its own case | merged at `c9e676e9`; seal only |
+| #291 the foreign-delegate refusal names `delegate_not_seeder` | merged at `ee56706f`; seal only |
+| #295 the draft card task_id against the minted long form (strict xfail) | merged at `0d9d33b1`; seal only |
+| #285 a placeholder held in a tuple binds | merged at `3949ade8`; through the images |
+| #271 | already in 0.4.81; nothing to carry |
+| #300 the fleet on iagent-mesh v0.9.15 | merged into this cut; below |
+| #294 #255's two flow rows ship as samples | merged into this cut; below |
+| the chart-version seal | below |
+| `mesh:FlowDecomposition` | below |
+| `data_provenance` on MULTI_SERIES | below |
+| cortex 01fa313 | below |
+
+**Also in the range, docs and board only:** #292, #297, #302 and #304 (the board), #293 (ADR-0064
+signed), #296 (ADR-0067 references openddil ADR-0056), and #299 (ADR-0065 Proposed).
+
+**A pending bump is not drift: the chart-version seal (the architect, via Chris, 11-08).**
+
+- **What changed:** the release guard accepts a `## <next> — not yet cut` CHANGELOG entry as the
+  pending bump. It fails only when `helm/**` changes with neither a bump nor that entry. Before,
+  every `helm/**` PR merged between cuts turned master red (#277, #262, #300, #294).
+- **How:** `scripts/chart_version_seal.py` decides one of three verdicts.
+  - `release`: Chart.yaml's version is unpublished.
+  - `pending`: the version is published, and the CHANGELOG opens `## X — not yet cut` for an
+    unpublished X above it. The run publishes nothing and is green.
+  - `refuse`: neither a bump nor that entry. The 0.3.36 failure stays refused. A release whose
+    own heading still says `not yet cut` is also refused: the cut dates the heading.
+- `release-helm-charts.yml` runs it as step `version_seal` and gates every later step on
+  `pending != 'true'`. `tests/test_chart_version_seal.py` seals the verdicts, five near-miss
+  headings, the real files and the wiring.
+- **For lanes:** a PR that changes `helm/**` between cuts opens or extends the
+  `## <next> — not yet cut` entry at the top of this file.
+
+**The mcp-chart reference seal searches the chart, not the directory.** The test that the main
+chart does not reference `iagent-mesh-mcp` walked every file under `helm/invincible-agent`. So the
+prose in this file's 0.4.74 entry turned it red. It now applies the chart's own `.helmignore`, so
+`*.md` is out. A control shows that the same words in a CHANGELOG are not a hit and a planted
+template line is.
+
+**`mesh:FlowDecomposition`, a generic archetype (Chris, 11-07: "the archetype is not finance's").**
+
+- One total split into the parts it flows into, as a flat edge table, root edge first. It sits
+  beside `mesh:MultiSeries` in `setup/ontologies/mesh_system.ttl`.
+- It is step 1 of the flow order: this class, then fin's `menu:` block on the overlay rows, then
+  the projector row, then cortex's menu. No binding names it yet, so the flow card still draws
+  nothing on this cut. The projector row stays held on `lane/01-flow-decomposition-is-projected`
+  until fin's `menu:` block exists.
+- It reaches the graph at the next prime.
+
+**`data_provenance` arrives on the MULTI_SERIES card.**
+
+- The projector's MULTI_SERIES tuple gains `data_provenance`. fin sent it, and no card received it.
+  The target is `("rows", ("series", "reference", "verdict", "value_label", "scope_label",
+  "data_provenance"))`. cost's and safety's MULTI_SERIES producers do not send it, and an absent
+  key is not carried.
+- `tests/finance/test_provenance_arrives_whole.py` drives fin_burn_rate and
+  fin_performance_indices through their real routes and the real projector. The field arrives
+  verbatim, and a control watches it drop without the tuple entry.
+- **Still owed, by fin:** the ruled content is "dataset URN, as-of, ticket id". An asset answer
+  names its URN. It carries no as-of and no ticket id, because `asset_inputs.provenance` emits the
+  banner and ` Source: <urn>` only. That arm is a strict xfail and turns red when fin adds them.
+
+**cortex-ui frontend 01fa313 (`sha256:2b625433…`)**
+
+- It adds to 93d76e8: the flow card reads the served `render` block (0dc5366) and draws the
+  `data_provenance` banner (01fa313). Cortex's MULTI_SERIES card does not read `data_provenance`
+  yet; its validator ignores the extra key.
+- The flow card still draws nothing on this cut, for the reason above.
+
+**The fleet moves to iagent-mesh v0.9.15 (gov, ruled by Chris 11-07: "Pin moves are gov's rail").**
+
+- **What moves:** 17 pyprojects (the root has two lines), `domainBroker.meshSdkVersion`, and the 17 locks that pin the SDK. In each lock the only lines that change are the SDK's `rev`, its commit (`5a526b67`) and its `version`. `__all__` only grows between v0.9.13 and v0.9.15.
+- **Why:** lane 74's migration onto the SDK's DSL classes needs v0.9.15. v0.9.13's frozen `steps` tuple reported a phantom `too_short`; v0.9.15 replaces it with a model-level `_steps_are_present` check.
+- **Closed network:** v0.9.15's package calls itself 0.9.15. The v0.9.13 exception, where it built as 0.9.12, is gone, so `meshSdkSource: index` can serve this pin from an internal PyPI that holds the tag's sdist or wheel.
+
+- **engine-fin: the two flow-decomposition rows ship as samples** (#255's rows, architect dispatch
+  2026-11-06). `fin_flow_acwp` (verb `finFlowActualCost`) and `fin_flow_eac_variance` (verb
+  `finFlowEacVariance`) move from `tests/finance/overlays/` to `policy/overlays/sample/measure_verbs/`, which the sandbox
+  loads (`MEASURE_VERB_OVERLAY_DIRS`). So both verbs register at engine-fin's next start. Each row
+  reads the `ev_fixture` asset as the caller: a caller holding the reader grant on its URN gets the
+  edge table, and anyone else gets 403 `access_denied`. A caller with no bearer gets 401.
+  - **No new reader rows** (Chris, 2026-11-06). alice, an NP-MERIDIAN member, already holds the
+    `ev_fixture` grant. erin, also a member, stays the asset-gate refusal control. bob, who is not
+    a member, stays the program-gate control. Every persona who should see the rows already can.
+  - **Nothing here restarts a pod**: no chart template or values change. The verbs appear when
+    engine-fin next starts, which is at the next roll.
+
+## 0.4.81 — 2026-11-07
+
+Entries merged after the 0.4.80 tag (`73d18c23`), cut by the architect's 11-07 list.
+
+**This cut fixes master's red Build.** #277 (`9bb11c97`) changed `helm/**` while `Chart.yaml` still
+said 0.4.80, already published as `invincible-agent-0.4.80`, so the release guard failed the Build.
+Master's later Builds were green only because their release job skipped (no `helm/**` change). The
+bump to 0.4.81 is the fix.
+
+**What the architect's list names, and where each one is:**
+
+| item | where |
+| --- | --- |
+| #277 the sandbox fin dataset flag | below |
+| #276 the `can_decide:<workflow_id>.<option>` rail, validator only (ADR-0065 provisional) | in this range |
+| #281 ADR-0064 aligned to openddil ADR-0055 | in this range |
+| #283 an occurrence attaches to its open episode; the case read's new fields | below |
+| #289 a delegate attaches only to a case it seeded (saf's finding on #283; not on the architect's list, Chris's ruling for #283's security half) | merged at `2ebb91d0`; in the #283 entry below |
+| #280 fin: an asset-backed CDRL measure is read as the caller | merged at `b71a6aa2`; in the engine-fin entry below |
+| cortex 93d76e8 | below |
+| #260, the digest map, the pub-tools `ed93f7b1` pin, dag-tools v0.11.0, the acryl-datahub fix (#267) | already in 0.4.80; nothing to carry |
+
+The acryl-datahub pin is the lock: since #267, the control-plane image installs the version
+`uv.lock` names, and nothing re-resolves it (see 0.4.80's entry).
+
+Forks 1 and 3 of #251 (item `01M6KF81WMJJXVKQAP12M0QTMY`) are not built, so they are not in this
+cut.
+
+**Also in the range, all shipped through the images:** #257 and #271 (socratic v3, ADR-0061), #266
+(ADR-0064 Proposed), #268 and #282 (the `cleared_for:<level>` and `holds:<dimension>:<value>`
+rails, validator only), #270 (validate_policy reads dag-tools' `gateway_routes.json`), #272 (the
+course overlay pin), #273 and #274 (`mirror-to-artifactory.ps1 -Release`), #206 (the drift gate
+carries pytest's exit), #275 (`contracts/ev_fixture.yaml`), and #278 and #279 (board only).
+
+**An occurrence attaches to its open episode, and the case read serves its stage (#283)**
+
+- **`POST /ingest/events`:** a new occurrence while a case is open on its episode is recorded on
+  that case, and no run starts (`attached: true`). After the case closes, the next occurrence opens a
+  new case whose `predecessor` is the closed case. The same occurrence with the same bytes is
+  idempotent. If `CaseEpisode/attach` answers empty, the door returns 503 `runner_unavailable`.
+- **`GET /cases/{id}`** serves:
+  - the top-level `stage`;
+  - `output_artifact.artifact_id` and the record's own `label`;
+  - `options_declaration`, as `{definition_id, version}`;
+  - the options on a closed case;
+  - `episode_id` and `episode_id_source`, which is `event` when the detector carried the id
+    (OpenDDIL's `openddil_episode_id`) and `derived` when it did not;
+  - `predecessor`.
+- **A delegate attaches only to a case it seeded (#289).** Chris, 2026-11-06: "a delegate cannot
+  attach to a case it didn't seed". The episode records who seeded its open case: the caller's
+  `authz_id` when the caller is a declared delegate, nobody for a person. A delegate attaching to an
+  open case it did not seed gets 403 `not_the_seeding_delegate`, and nothing is written. Three
+  design calls:
+  - A delegate cannot attach to a case a person seeded.
+  - An episode opened before this change is compared on the seeder its case record names.
+  - If a foreign delegate's run loses the attach race, the run fails rather than attaching.
+  The ratchet classifies the new refusal site (`SEEDER`). The same PR fixes four tests that had been red
+  on master since #283: their doubles answered `attach` with an empty body.
+- **The roll:** the gateway and the runner change code only, with no chart value. In-flight runs
+  replay unchanged, because nothing new is journalled. A case opened before the roll has no
+  recorded seeder until the runner reads it once from the case record.
+
+**cortex-ui frontend 93d76e8 (`sha256:13e8dd5a…`)**
+
+- It adds to 26a2049: a refused seed panel says so, not only in colour; front matter draws as body
+  text; and the FLOW_DECOMPOSITION card.
+- **The flow card draws nothing on this cut.** The backend projector row for FLOW_DECOMPOSITION
+  (Chris, 2026-11-05) is built and sealed, but it is held off this cut on
+  `lane/01-flow-decomposition-is-projected`. No registered menu carries a FLOW_DECOMPOSITION
+  capability, so a served flow table is refused as "on no registered menu" with or without the row.
+  It waits on a menu row or a ruling.
+- The case-panel work that reads #283's fields (the artifact link, the options on a closed case,
+  `received` as "intake") comes after 93d76e8, so it is not in this cut.
+- **The roll:** the frontend restarts.
 
 **Sandbox: engine-fin reads its declared measures from the EV fixture (`FIN_DATASET_URN` is on)**
 
@@ -16,17 +188,34 @@
 - **What changes for a sandbox caller:**
   - A declared measure needs a grant on the asset. Without one, the answer is 403 `access_denied`,
     never the seed.
-  - **An export naming a declared measure is refused with 409 `asset_export_unsupported`.** That
-    covers both sample profiles, `cdrl_a001_ev_summary` and `cdrl_a001_ev_summary_json`, which name
-    `fin_tcpi`. Whether an export may carry asset figures is still an open ruling.
+  - **A CDRL sourcing a declared measure reads the asset, as the caller** (architect, 2026-11-05:
+    the 409 was a defect, not a consequence; profiles unchanged). All three sample profiles source
+    `fin_tcpi` beside the built-in `fin_performance_indices`. Each source runs through
+    `_measure_envelope`, the function `/measure/{fn}` serves, so a CDRL holds the figures the canvas
+    shows. The caller's grant on the asset is checked before anything is measured or written (403
+    `access_denied`, as `/measure` answers). The program's name and id come from the asset. Each
+    entry in the envelope's `sources` carries `data_provenance`, plus `data_source` for an asset
+    read, and the envelope gains `program_source`.
+  - **`GET /artifact/{filename}` checks the fetcher's grant** for a CDRL whose profile sources an
+    asset-backed measure, so a fetcher without the grant cannot read the figures out of another
+    caller's file.
+  - **A package export naming a declared measure is still refused with 409
+    `asset_export_unsupported`.** `state_sha256` cannot describe a package with two sources, and what
+    a recipient reader without the grant may read is a separate, unruled question.
   - Built-in verbs keep answering from the seed. With the flag on, a subject without the asset grant
     still gets the same program's built-in figures from the seed.
 - **The roll:** engine-fin's pod template gains two `env` entries, so engine-fin restarts. Nothing
   else in this entry restarts a pod.
+- **The live check runs right after the roll** (Chris, 2026-11-06, replacing the architect's
+  11-05 "does not roll until CDRL export works on `fin_tcpi` with the flag on"). The flag is on
+  through the values. A granted and a denied caller run three times each, plus one CDRL export
+  each, and fin runs it. If either caller fails, the sandbox rolls back to rev 227 under the same
+  lock, and #280 is fixed forward.
 
-## 0.4.80 — not yet cut
+## 0.4.80 — 2026-11-05
 
-Entries merged after the 0.4.79 cut (`758811d7`). Forks 1 and 3 of the delegate ruling (#251), which
+Released from `73d18c23` (tag `invincible-agent-0.4.80`). Entries merged after the 0.4.79 cut
+(`758811d7`). Forks 1 and 3 of the delegate ruling (#251), which
 were to land here, move to 0.4.81 (architect 11-05).
 
 **Every image the chart runs is pinned by digest (architect 11-04)**

@@ -34,7 +34,7 @@ import os
 from contextlib import asynccontextmanager, contextmanager
 import re
 from datetime import date, datetime, timezone
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -1055,15 +1055,32 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
     return envelope
 
 
-def _refuse_asset_exports(fns: list[str]) -> None:
-    """409 when the flag is set and an export names a declared measure, BEFORE anything is
-    measured: `state_sha256` cannot describe a package whose figures come from two sources, and
-    whether a recipient without the asset grant may read an export of it is an open ruling. A
-    built-in-only export is unaffected."""
+def _asset_reads(fns: Iterable[str]) -> dict[str, str]:
+    """`{fn: urn}` for every source among `fns` that computes over a governed asset: a
+    dataset-kind row always reads its own row's URN; a state-kind declared row reads
+    `FIN_DATASET_URN` when it is set. A built-in reads the seed and is absent. THE one statement
+    of which export source holds asset figures, for the package refusal, the CDRL's grant check
+    and `/artifact`'s."""
     urn = asset_inputs.dataset_urn()
-    # A dataset-kind measure always reads a governed asset (its row's URN), flag or no flag.
-    named = sorted({fn for fn in fns if fn in DECLARED
-                    and (urn is not None or DECLARED[fn].kind == measure_verbs.KIND_DATASET)})
+    reads: dict[str, str] = {}
+    for fn in fns:
+        row = DECLARED.get(fn)
+        if row is None:
+            continue
+        if row.kind == measure_verbs.KIND_DATASET:
+            reads[fn] = row.dataset_urn
+        elif urn is not None:
+            reads[fn] = urn
+    return reads
+
+
+def _refuse_asset_exports(fns: list[str]) -> None:
+    """409 when a PACKAGE names a measure that computes over a governed asset, BEFORE anything is
+    measured: `state_sha256` cannot describe a package whose figures come from two sources, and
+    whether a recipient reader without the asset grant may read it is an open ruling. A
+    built-in-only package is unaffected. A CDRL is not refused: it reads the same resolver the
+    canvas does, under the caller's grant (`cdrl_export`), and is fetched under the fetcher's."""
+    named = sorted(_asset_reads(fns))
     if named:
         raise HTTPException(status_code=409, detail={
             "error": "asset_export_unsupported",
@@ -1072,6 +1089,15 @@ def _refuse_asset_exports(fns: list[str]) -> None:
                        f"{named} compute over it. Export the built-in measures, or read these "
                        "through /measure.",
         })
+
+
+def _require_asset_grants(urns: Iterable[str]) -> None:
+    """The caller's grant on each asset, by the ticket a read takes first and nothing scanned;
+    a refusal is `_asset_read_errors`' status (403 `access_denied` naming the grant), exactly as
+    `/measure` answers it."""
+    for urn in sorted(set(urns)):
+        with _asset_read_errors(urn):
+            asset_inputs.require_grant(mesh_ticketed_read, urn)
 
 
 def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
@@ -1339,7 +1365,16 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
     BEFORE anything is measured and before a byte is written; a profile sourcing a DECLARED
     measure whose cells the caller holds none of is 403 `measure_not_in_cell` for the whole
     request (a deliverable with a column silently missing is worse than a refusal), also before
-    anything is measured; a deployment that cannot write an artifact here is 503. Only then does `build_cdrl` run each source through `_cdrl_source`.
+    anything is measured; a source that computes over a governed asset the caller holds no grant
+    on is 403 `access_denied` (`_require_asset_grants`), also before anything is measured; a
+    deployment that cannot write an artifact here is 503. Only then does `build_cdrl` run each
+    source through `_cdrl_source`.
+
+    AN ASSET-BACKED SOURCE IS READ, NOT REFUSED: `_cdrl_source` is `_measure_envelope`, so a
+    declared measure with `FIN_DATASET_URN` set computes over the asset as the caller, as the
+    canvas does, and each source's provenance travels in the envelope. When one does, the
+    program's facts (`program.name`, `program.id`) are read from that asset too, never the seed
+    beside the asset's figures.
     """
     profile = PROFILES.get(body.profile)
     if profile is None:
@@ -1352,15 +1387,25 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
     _require_visible(body.program_id, caller)
     for fn in profile.sources:  # the early check; `_measure_envelope` holds the one no route skips
         _require_cell(fn, caller)
-    _refuse_asset_exports(list(profile.sources))
+    reads = _asset_reads(profile.sources)
+    _require_asset_grants(reads.values())
+    program_state, program_source = STATE, None
+    urn = asset_inputs.dataset_urn()
+    if any(DECLARED[fn].kind != measure_verbs.KIND_DATASET for fn in reads):
+        try:
+            program_state = _asset_state(urn, {"program_id": body.program_id})
+        except NotInModel as exc:
+            raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
+        program_source = {"kind": "asset", "urn": urn}
     as_of = body.as_of or _request_date()
 
     out_dir = _cdrl_out_dir()
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         path, envelope = cdrl.build_cdrl(
-            STATE, profile, program_id=body.program_id, as_of=as_of,
+            program_state, profile, program_id=body.program_id, as_of=as_of,
             out_dir=out_dir, run_source=lambda fn, params: _cdrl_source(fn, params, caller=caller),
+            program_source=program_source,
         )
     except OSError as e:
         # THE ONLY 503: the artifact directory cannot be created or written.
@@ -1426,6 +1471,9 @@ def get_artifact(filename: str) -> FileResponse:
         _require_visible(cdrl_program, caller)
         for fn in cdrl_origin[0].sources:
             _require_cell(fn, caller)
+        # AND the grant on every asset those measures compute over: the file holds figures read
+        # under its producer's grant, and a fetcher without one must not read them out of it.
+        _require_asset_grants(_asset_reads(cdrl_origin[0].sources).values())
     else:
         caller = _current_caller()
         authz_id = getattr(caller, "authz_id", None) if caller else None

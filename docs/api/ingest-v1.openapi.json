@@ -850,6 +850,13 @@
             ],
             "title": "Authz Id"
           },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
           "cells": {
             "items": {
               "$ref": "#/components/schemas/Cell"
@@ -915,7 +922,8 @@
           "cells",
           "default",
           "source",
-          "droppable_kinds"
+          "droppable_kinds",
+          "capabilities"
         ],
         "title": "Entitlements",
         "type": "object"
@@ -2444,6 +2452,71 @@
         "title": "Notice",
         "type": "object"
       },
+      "PolicyRefusalBody": {
+        "additionalProperties": false,
+        "description": "The 403 body of an MCP-tagged route; one site sends `detail` as a string.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PolicyRefusalDetail"
+              },
+              {
+                "$ref": "#/components/schemas/StructuralRefusalDetail"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "PolicyRefusalBody",
+        "type": "object"
+      },
+      "PolicyRefusalDetail": {
+        "additionalProperties": true,
+        "description": "A 403's `detail` object. Sites name the refusal `error` (two export sites say `reason`) and\nadd their own keys. `refusal` is OPTIONAL while any policy 403 an MCP route can reach sends\nnone: tests/security/test_every_mcp_route_declares_401_and_403.py lists those sites exactly and\nrequires this field once its debt rows are gone.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "refusal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefusalEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "PolicyRefusalDetail",
+        "type": "object"
+      },
       "RefusalEnvelope": {
         "additionalProperties": false,
         "description": "`authz.refusal.refusal`'s envelope: what the caller lacks and who can grant it.",
@@ -3089,6 +3162,58 @@
         "title": "StatusBody",
         "type": "object"
       },
+      "StructuralRefusalDetail": {
+        "additionalProperties": false,
+        "description": "A 403 no grant lifts, so there is no policy to name and it never carries a `refusal`\n(ruled 2026-11-07, G5): separation of duties at promotion, and a service caller on a route\nwhere no delegate entry applies. The same code on a route where one would apply is a policy\nrefusal and reads as `PolicyRefusalDetail`.",
+        "properties": {
+          "authz_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authz Id"
+          },
+          "error": {
+            "enum": [
+              "dropper_cannot_attest_origin",
+              "service_token_refused"
+            ],
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "StructuralRefusalDetail",
+        "type": "object"
+      },
       "TaskDeclaration": {
         "additionalProperties": false,
         "description": "What the task's kind accepts: accepts is ordered, reason_required is a sorted subset of it.",
@@ -3326,6 +3451,21 @@
         "title": "TitleLeafResponse",
         "type": "object"
       },
+      "UnauthenticatedBody": {
+        "additionalProperties": false,
+        "description": "The 401 body `auth.get_current_user` sends: no identity, so no policy to name.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "UnauthenticatedBody",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -3381,7 +3521,7 @@
   },
   "info": {
     "title": "Cortex ingest API",
-    "version": "1.6.0"
+    "version": "1.8.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -3444,6 +3584,34 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -3500,15 +3668,33 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "403": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NotEntitledToDrop"
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
                 }
               }
             },
-            "description": "the dropper is not granted can_drop:<kind>"
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
           },
           "422": {
             "content": {
@@ -4128,7 +4314,7 @@
     },
     "/me/entitlements": {
       "get": {
-        "description": "Return the current user's (persona, domain) entitlement matrix.\n\n`authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop\nechoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it\nas `on_behalf_of` is refused `not_a_delegate` (2026-10-21).",
+        "description": "Return the current user's (persona, domain) entitlement matrix.\n\n`authz_id` is the key every route that takes `on_behalf_of` compares against: a self-drop\nechoes it. `email` is display only; at work-deploy it is not the authz_id, and sending it\nas `on_behalf_of` is refused `not_a_delegate` (2026-10-21). `capabilities` is every directory\ncapability key the caller holds `can_invoke` on, sorted; an unreadable directory is 503.",
         "operationId": "get_me_entitlements_me_entitlements_get",
         "responses": {
           "200": {
@@ -4185,6 +4371,34 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
           }
         },
         "security": [

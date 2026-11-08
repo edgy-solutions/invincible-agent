@@ -814,7 +814,7 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
 #: The row fields of policy/classification/dimensions.yaml, policy/level_readers.yaml and
 #: policy/dimension_holders.yaml (ADR-0064 item B, Proposed, #266; dimensions per the 2026-11-06
 #: ruling). No code reads any of them yet; dag-tools step 5 serves a dataset's level.
-_CD_ROW_FIELDS = ("name", "type", "vocabulary", "owner")
+_CD_ROW_FIELDS = ("name", "type", "vocabulary", "owner", "ratified_by")
 _LR_ROW_FIELDS = ("level", "grant_to_groups", "granted_by", "reason", "ratified_by")
 _DH_ROW_FIELDS = ("dimension", "value", "grant_to_groups", "granted_by", "reason", "ratified_by")
 _CD_TYPES = ("hierarchical", "set")
@@ -824,15 +824,17 @@ def classification_dimensions_errors(
         raw: dict, users: list) -> tuple[list[str], dict[str, tuple[str, list[str]]] | None]:
     """Validate policy/classification/dimensions.yaml. PURE.
 
-    Shape: `dimensions: [{name, type: hierarchical|set, vocabulary: [value, ...], owner}]`.
+    Shape: `dimensions: [{name, type: hierarchical|set, vocabulary: [value, ...], owner, ratified_by}]`.
     Returns `(errors, dims)`. `dims` maps each VALID dimension name to `(type, vocabulary)` in file
     order, or is None when the file is refused at the top level. Each error reads
     `classification/dimensions.yaml: <name or row i>: ...`. A name is the `<dimension>` of
     `holds:<dimension>:<value>` and a value is its `<value>`, so neither has whitespace or `:`; names
     are unique and a value is not listed twice. A hierarchical vocabulary is ordered by position
-    (least restrictive first); a set's order means nothing. `owner` is a seat, never an identity.
-    AT MOST ONE dimension is hierarchical, because `cleared_for:<level>` names no dimension; a second
-    is refused. A row with a bad name, type or vocabulary contributes no dimension."""
+    (least restrictive first); a set's order means nothing. `owner` (who decides what the values mean)
+    and `ratified_by` (the house rule for every shipped row) answer different questions; each is a
+    seat, never an identity. AT MOST ONE dimension is hierarchical, because `cleared_for:<level>` names
+    no dimension; a second is refused. A row with a bad name, type or vocabulary contributes no
+    dimension."""
     pre = "classification/dimensions.yaml"
     if not isinstance(raw, dict) or set(raw) != {"dimensions"}:
         extra = sorted(map(str, set(raw) - {"dimensions"})) if isinstance(raw, dict) else []
@@ -899,12 +901,13 @@ def classification_dimensions_errors(
                 else:
                     vals.append(v)
 
-        owner = row.get("owner")
-        if not isinstance(owner, str) or not owner.strip():
-            out.append(f"{where}: `owner` must be a non-empty string")
-        elif owner.strip() in seeded:
-            out.append(f"{where}: `owner` names a seat (e.g. `owner`), not an identity "
-                       "in users.yaml")
+        for k in ("owner", "ratified_by"):
+            seat = row.get(k)
+            if not isinstance(seat, str) or not seat.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif seat.strip() in seeded:
+                out.append(f"{where}: `{k}` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
 
         if ok and typ == "hierarchical":
             if have_hier:
