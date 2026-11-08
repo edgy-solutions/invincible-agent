@@ -64,6 +64,7 @@ users:
       - alert-processors         # FIXTURE grant, 2026-10-28: alice is the sandbox alert processor (PCN/PDN drops); not a claim about who drops notices in production.
       - alignment-reviewers      # FIXTURE grant, 2026-11-02 ruling: sandbox alignment reviewer (can_review:alignment); not a claim about who reviews in production.
       - training-admins          # FIXTURE grant, 2026-11-02 ruling: sandbox deck template admin (can_configure:deck_template); not a claim about who configures it in production
+      - obsolescence-deciders    # FIXTURE grant, 2026-11-07 dispatch: sandbox obsolescence decider (can_decide:obsolescence_resolution.<option>); not a claim about who chooses a resolution in production.
       - mcp-callers              # FIXTURE grant, 2026-10-31: sandbox MCP caller; not a claim about who calls the MCP surface in production.
       - finance-analysts    # FIXTURE grant, 2026-08-31: alice is the
                             # Engine F demo actor, so the persona/domain picker offers
