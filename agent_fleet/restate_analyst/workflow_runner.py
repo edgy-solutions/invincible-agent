@@ -104,7 +104,7 @@ SEEDED_BY_STAMP_OUTCOME = "released"
 #: `CaseEpisode.attach`'s answer when a delegate's occurrence meets an open case it did not seed
 #: (Chris, 2026-11-06, for #283: "a delegate cannot attach to a case it didn't seed"). The door
 #: answers it as a 403 of the same code.
-NOT_THE_SEEDER = "not_the_seeding_delegate"
+NOT_THE_SEEDER = "delegate_not_seeder"
 
 
 def _stamp_seeded_by(case_id: str, seeded_by: str) -> dict:
