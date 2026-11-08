@@ -8,6 +8,17 @@
   is renamed, at its one home (`workflow_runner.NOT_THE_SEEDER`) and the door's 403. saf's seal
   `tests/test_a_delegate_attaches_only_to_a_case_it_seeded.py` loses its strict xfail.
 
+- **fin serves the CDRL a program only the asset holds.** `/cdrl_export` exported such a program
+  (a profile sourcing only declared measures computes over the asset), and the BFF's fetch of the
+  file it had just written was a 404: `/artifact`'s closed set is the composed profiles crossed
+  with the seed's programs. The engine now records what it wrote for a program outside the seed
+  (`.fin-cdrl-origins.json`, beside the files) and the fetch reads that record only when the
+  derived set misses, re-deriving the name through `cdrl.artifact_filename` (a planted entry
+  serves nothing). Visibility, cells and grants are checked as before, except that a non-member
+  gets 404 rather than 403, because a 403 would confirm that the program exists. A profile with a
+  built-in source still refuses such a program with a 422 `not_in_model` at export: the built-in
+  reads the seed.
+
 ## 0.4.82 — 2026-11-08
 
 Entries merged after the 0.4.81 tag (`f08217b2`), cut by Chris's 11-07 train: "#290, #298, #300,
