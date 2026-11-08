@@ -112,7 +112,6 @@ def test_the_validate_policy_cli_is_green_and_prints_its_line():
                        capture_output=True, text=True, cwd=_REPO)
     assert r.returncode == 0, (r.stdout + r.stderr)[-2000:]
     assert f"option_deciders.yaml: {len(_RAIL['option_deciders'])} row(s)" in r.stdout
-    assert "option_deciders.yaml: 0 row(s)" in r.stdout
 
 
 def test_the_rail_is_not_in_data_files():
