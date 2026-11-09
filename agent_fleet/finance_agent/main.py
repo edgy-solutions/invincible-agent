@@ -33,6 +33,7 @@ import logging
 import os
 from contextlib import asynccontextmanager, contextmanager
 import re
+import threading
 from datetime import date, datetime, timezone
 from typing import Any, Iterable, Optional
 
@@ -172,6 +173,11 @@ def _dist_dir(root: pathlib.Path) -> pathlib.Path:
 #: filesystem under /app is writable.
 _CDRL_FALLBACK_DIR = pathlib.Path("/app/agent_workspace/fin_cdrl")
 _CDRL_DIR_ENV = "FIN_CDRL_ARTIFACT_DIR"
+
+#: What `/cdrl_export` wrote, by file name: `{filename: {"profile", "program_id"}}`, beside the files
+#: in `_cdrl_out_dir()`. The leading dot keeps it out of the set `cdrl.artifact_filename` can name.
+_CDRL_ORIGINS = ".fin-cdrl-origins.json"
+_CDRL_ORIGINS_LOCK = threading.Lock()
 
 
 def _cdrl_out_dir() -> pathlib.Path:
@@ -1408,6 +1414,8 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
             out_dir=out_dir, run_source=lambda fn, params: _cdrl_source(fn, params, caller=caller),
             program_source=program_source,
         )
+        if body.program_id not in {p.program_id for p in STATE.programs}:
+            _record_cdrl_origin(out_dir, path.name, profile.name, body.program_id)
     except OSError as e:
         # THE ONLY 503: the artifact directory cannot be created or written.
         raise HTTPException(
@@ -1449,6 +1457,42 @@ def _cdrl_artifact_origin(filename: str) -> Optional[tuple[Any, str]]:
     return None
 
 
+def _record_cdrl_origin(out_dir: pathlib.Path, filename: str, profile: str, program_id: str) -> None:
+    """Record that `filename` was written for a program the seed does not hold. The closed set
+    `_cdrl_artifact_origin` derives cannot name it; this record is how the fetch can."""
+    record = out_dir / _CDRL_ORIGINS
+    with _CDRL_ORIGINS_LOCK:
+        origins = _read_cdrl_origins(out_dir)
+        origins[filename] = {"profile": profile, "program_id": program_id}
+        tmp = record.with_name(record.name + ".tmp")
+        tmp.write_text(json.dumps(origins, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, record)
+
+
+def _read_cdrl_origins(out_dir: pathlib.Path) -> dict[str, Any]:
+    try:
+        origins = json.loads((out_dir / _CDRL_ORIGINS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return origins if isinstance(origins, dict) else {}
+
+
+def _recorded_cdrl_origin(filename: str) -> Optional[tuple[Any, str]]:
+    """`(profile, program_id)` for a CDRL `/cdrl_export` recorded writing, or None. The record names
+    a file; it does not widen the set: the entry holds only if its profile is composed and
+    `cdrl.artifact_filename` gives back exactly this name for it."""
+    entry = _read_cdrl_origins(_cdrl_out_dir()).get(filename)
+    if not isinstance(entry, dict):
+        return None
+    profile = PROFILES.get(entry.get("profile")) if isinstance(entry.get("profile"), str) else None
+    program_id = entry.get("program_id")
+    if profile is None or not isinstance(program_id, str) or not program_id:
+        return None
+    if filename != cdrl.artifact_filename(profile.name, program_id, profile.format):
+        return None
+    return profile, program_id
+
+
 @app.get("/artifact/{filename}")
 def get_artifact(filename: str) -> FileResponse:
     """Serve a produced package file — CLOSED SET, then ENTITLEMENT, mirroring
@@ -1457,6 +1501,10 @@ def get_artifact(filename: str) -> FileResponse:
     """
     scope = export.scope_of_artifact(filename)
     cdrl_origin = _cdrl_artifact_origin(filename) if scope is None else None
+    # A program only the asset holds is outside the derived set; `/cdrl_export` recorded its file.
+    recorded_only = scope is None and cdrl_origin is None
+    if recorded_only:
+        cdrl_origin = _recorded_cdrl_origin(filename)
     cdrl_program = cdrl_origin[1] if cdrl_origin else None
     if scope is None and cdrl_program is None:
         # A NAME NOT IN THE CLOSED SET IS A 404, BEFORE ANY ENTITLEMENT CHECK. Answering an
@@ -1469,6 +1517,15 @@ def get_artifact(filename: str) -> FileResponse:
         # AND the cells of every declared measure the profile sources: the file holds those figures,
         # and a caller outside a cell must not read them out of another caller's export.
         caller = _verb_caller("")
+        if recorded_only:
+            # The seed's program ids are deployment data; an asset-only one is not. A 403 here would
+            # tell a non-member the program exists and was exported, so it answers as never written.
+            try:
+                visible = _can_view(cdrl_program, caller)
+            except httpx.HTTPError as e:
+                raise HTTPException(503, f"program membership check failed: {e}") from e
+            if not visible:
+                raise HTTPException(status_code=404, detail="no such artifact")
         _require_visible(cdrl_program, caller)
         for fn in cdrl_origin[0].sources:
             _require_cell(fn, caller)
