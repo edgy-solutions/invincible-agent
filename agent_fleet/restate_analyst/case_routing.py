@@ -85,6 +85,11 @@ class Trigger(_Declared):
     #: ``episode_id_source: derived``. It names the episode; ``episode`` still decides which
     #: events are one.
     episode_id: Optional[str] = None
+    #: the label of the case's ``received`` row (architect, 2026-11-08: "served by the runner
+    #: from the workflow declaration"). The row is recorded before any definition is selected, so
+    #: the trigger -- the declaration the case opens on -- is the only one that can name it.
+    #: Stamped on the case at open; absent, the case serves no ``intake``.
+    intake: Optional[str] = Field(None, min_length=1, pattern=r"\S")
     #: facts a LATER table reads -- refused at intake, not after a human has already acted
     requires: list[str] = Field(default_factory=list)
     #: facts the event must CARRY, where any value is an answer: a null, a list, an empty mapping.
