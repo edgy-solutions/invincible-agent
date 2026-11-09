@@ -11,10 +11,7 @@ Sweep: 2026-11-08T05:30Z · 230 items · 80 open, 9 claimed, 30 blocked, 23 revi
 - [Upstream DPP issue: three gaps (draft for Chris to post)](items/01M6A9QDN1F6S4MG91F376WBKP.md) — post the DPP issue draft under his name · Docs · doc-tools/lane/7f
 - [Ingest-time options: concept calls dominate, 15 min needs a second server](items/01M6A9QDN1B30SWZ64939VF2SS.md) — drop a real deck · Training · doc-tools/lane/tr
 - [Training workbench v0.1.0 released, aud/iss enforced, awaiting real login check](items/01M6A9QDN1X3MGD4YY0QD1SZ41.md) — confirm a browser login on revision 18 or later · Training · training-consolidation-workbench/lane/wb
-- [Run the two-actor rehearsal checklist with Chris and watch the ledger](items/01M6A9QDN1AQ29HDJSXBW4HPGK.md) — approve the read-only ledger reads again for the Monday window · Workflow (Socratic) · invincible-agent/lane/74
-- [Run the two-actor rehearsal checklist with Chris and watch the ledger](items/01M6A9QDN1AQ29HDJSXBW4HPGK.md) — pick an asset with no open fault episode · Workflow (Socratic) · invincible-agent/lane/74
-- [Run the two-actor rehearsal checklist with Chris and watch the ledger](items/01M6A9QDN1AQ29HDJSXBW4HPGK.md) — set the window and who holds the roll lock · Workflow (Socratic) · invincible-agent/lane/74
-- [Run the two-actor rehearsal checklist with Chris and watch the ledger](items/01M6A9QDN1AQ29HDJSXBW4HPGK.md) — run the two-actor rehearsal script · Workflow (Socratic) · invincible-agent/lane/74
+- [Run the two-actor rehearsal checklist with Chris and watch the ledger](items/01M6A9QDN1AQ29HDJSXBW4HPGK.md) — run the two-actor rehearsal script on Monday 2026-11-09 at 19:00Z · Workflow (Socratic) · invincible-agent/lane/74
 - [FLOW_DECOMPOSITION is declared and projected, carrying fin's edge table](items/01M6M6NCVDMN12NHT7F8R0J5ME.md) — fin step 3 so that #255's edge table is served on sandbox · Cross-cutting (releases, governance, safety, the board) · invincible-agent/lane/fin
 - [The chart serves policy/classification/dimensions.yaml to dag-tools as a ConfigMap (ADR-0064 ruling a)](items/01M6P8PTFES1FTRD1JAKSSVFFC.md) — name the chart version the dimensions ConfigMap ships in · Cross-cutting (releases, governance, safety, the board) · invincible-agent/lane/gov
 
@@ -295,7 +292,7 @@ Where it is: 4 blocked · 0 review · 1 claimed · 4 open · 9 done; next: ADR-0
 ### blocked
 
 - [ADR-0061 Socratic workflow building: decision on one runnable PCN spec](items/01M6A9QDN107DJ6YGHPX7J0MR6.md) — invincible-agent/lane/74 · next · blocked on [Rule ADR-0061's direction after lane/74's runnability report](items/01M6A9QDN1DE3AN1MSJ33T1AJW.md) · updated 2026-10-27 ⚑ blocker Rule ADR-0061's direction after lane/74's runnability report is done ⚑ stale: updated 2026-10-27
-- [Run the two-actor rehearsal checklist with Chris and watch the ledger](items/01M6A9QDN1AQ29HDJSXBW4HPGK.md) — invincible-agent/lane/74 · next · blocked on chris:approve the read-only ledger reads again for the Monday window, chris:pick an asset with no open fault episode, chris:set the window and who holds the roll lock, chris:run the two-actor rehearsal script · updated 2026-11-07
+- [Run the two-actor rehearsal checklist with Chris and watch the ledger](items/01M6A9QDN1AQ29HDJSXBW4HPGK.md) — invincible-agent/lane/74 · next · blocked on chris:run the two-actor rehearsal script on Monday 2026-11-09 at 19:00Z · updated 2026-11-07
 - [Case panel reads carries and applies_when from declaration](items/01M6A9QDN1X5Z55D7DDQJNP4TX.md) — cortex-ui/master · next · blocked on [carries/applies_when/consequence on verb declaration type (item 5)](items/01M6A9QDN14FFSFJWYS90CBM71.md) · updated 2026-10-31 ⚑ stale: updated 2026-10-31
 - [carries/applies_when/consequence on verb declaration type (item 5)](items/01M6A9QDN14FFSFJWYS90CBM71.md) — invincible-agent/lane/gov · later · blocked on [SDK v0.9.13 release cut](items/01M6A9QDN1KAR37N824W55YGA3.md) · updated 2026-11-06
 
