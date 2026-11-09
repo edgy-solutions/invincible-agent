@@ -11,6 +11,11 @@
   case the id it minted (`task_opened`, the first task wins), the gateway asks the case for it and
   fills the draft card's `task_id` from the answer (absent when unanswered, never null), and saf's
   strict xfail is removed. Chris, 2026-11-07 (saf).
+- The case serves its `intake` label: the label of its `received` row, as the trigger declares it
+  (`intake:`). The runner stamps it on the case at open, and the case read serves it. The key is
+  absent when the trigger declares none, or for a case opened before the stamp. The architect,
+  2026-11-08: "served by the runner from the workflow declaration ... No word in code on either
+  side." Cortex reads it.
 
 ## 0.4.82 — 2026-11-08
 
