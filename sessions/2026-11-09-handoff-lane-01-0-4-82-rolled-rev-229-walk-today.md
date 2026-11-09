@@ -19,6 +19,13 @@ The roll lock reads `free`. The Monday-morning note is placed:
 **Owed by a person, not by this lane:** the 07:30 CT logins (`authz_id` read from the session, non-empty `/me`
 entitlements, `/me/paused-runs`, the propose-card text). Never mint a token to read these yourself.
 
+**Langfuse, 15:21Z (Chris's direct exception to the hands-off order).** Chris replaced the keys in the overlay and the
+live Secret. Lane 1 restarted the 20 Deployments importing `iagent-secrets` (15:18Z to 15:20Z, under the lock, all
+rolled out, lock released), skipping electric and doc-tools. **No trace is confirmed:** pod logs say nothing either
+way, and Lane 1 holds no key. lane/perf has the packet in the master tree's `sessions/`. The live public key is 43
+bytes against an expected 42 (trailing newline is the first suspect). The old key's fingerprint is unchanged from
+10-26 to rev 229, so no roll carried a different key. Any later roll must use the master tree's overlay copy.
+
 ## Next, in order
 
 1. **fin's #312 → #316 → #319** as each is resolved: `join-ratchet.sh N`, then `train-one2.sh N`. All three still
