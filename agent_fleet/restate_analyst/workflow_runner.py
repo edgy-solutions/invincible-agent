@@ -357,7 +357,7 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
     case: dict = {"case_id": case_id, "trigger": name, "state": None, "terminal": None,
                   "episode": episode, "episode_id": episode_id,
                   "episode_id_source": episode_id_source, "instances": [], "transitions": [],
-                  "seeded_by": seeded_by, "predecessor": predecessor}
+                  "seeded_by": seeded_by, "predecessor": predecessor, "intake": trig.intake}
     await _record(ctx, case, frm=None, outcome="received", to="received", by="system",
                   at_name="at_received")
     # THE ORIGINAL EVENT IS REVISION 1 (SDK ``ArtifactRevision``). ``input_revisions`` is the

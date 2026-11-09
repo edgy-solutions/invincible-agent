@@ -11,6 +11,21 @@
   case the id it minted (`task_opened`, the first task wins), the gateway asks the case for it and
   fills the draft card's `task_id` from the answer (absent when unanswered, never null), and saf's
   strict xfail is removed. Chris, 2026-11-07 (saf).
+- The case serves its `intake` label: the label of its `received` row, as the trigger declares it
+  (`intake:`). The runner stamps it on the case at open, and the case read serves it. The key is
+  absent when the trigger declares none, or for a case opened before the stamp. The architect,
+  2026-11-08: "served by the runner from the workflow declaration ... No word in code on either
+  side." Cortex reads it.
+
+- **fin serves the CDRL a program only the asset holds.** `/cdrl_export` exported such a program
+  (a profile sourcing only declared measures computes over the asset), and the BFF's fetch of the
+  file it had just written was a 404: `/artifact`'s closed set is the composed profiles crossed
+  with the seed's programs. The engine now records what it wrote for a program outside the seed
+  (`.fin-cdrl-origins.json`, beside the files) and the fetch reads that record only when the
+  derived set misses, re-deriving the name through `cdrl.artifact_filename` (a planted entry
+  serves nothing). Visibility, cells and grants are checked as before, except that a non-member
+  gets 404 rather than 403, because a 403 would confirm that the program exists. (A profile with a
+  built-in source refused such a program with a 422 until the built-ins read the asset, below.)
 - **engine-fin: with `FIN_DATASET_URN` set, the built-in measures read the asset as the caller**
   (ruled 2026-11-08 (fin): that is what the flag means). They now carry the asset's provenance and
   `data_source`, and a CDRL that sources one no longer refuses a program only the asset holds
