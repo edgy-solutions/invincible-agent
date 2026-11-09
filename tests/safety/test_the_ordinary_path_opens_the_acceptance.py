@@ -120,6 +120,10 @@ class _Restate:
         return False
 
     async def post(self, url, json=None, headers=None):
+        if url.endswith("/opened_task"):
+            # the question to the case, not a dispatch: kept apart so `posts` stays the sends
+            self.asks = getattr(self, "asks", []) + [url]
+            return self
         self.posts.append({"url": url, "json": json, "headers": dict(headers or {})})
         if self.boom:
             raise RuntimeError("restate ingress refused")

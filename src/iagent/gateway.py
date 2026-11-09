@@ -1102,6 +1102,9 @@ _DATAHUB_WRAPPER_URL = _required_service_url(
     "DATAHUB_WRAPPER_URL", used_for="engine-d — lineage_edges, and the census target"
 )
 _RESTATE_INGRESS_URL = os.getenv("RESTATE_INGRESS_URL", "http://restate:8080")
+#: How long the turn waits for the id of the TASK a just-opened acceptance case registered
+#: (Chris, 2026-11-07, saf: `task_id` is the runner's, not ours). Never a wait for the human.
+_ACCEPTANCE_TASK_WAIT_S = float(os.getenv("ACCEPTANCE_TASK_WAIT_S", "15.0"))
 
 @app.get("/mesh/config")
 async def get_mesh_config(current_user: User = Depends(get_current_user)):
@@ -10695,6 +10698,30 @@ async def _open_safety_acceptance(
                 # same key is answered as previously accepted, not run twice.
             )
         _ar.raise_for_status()
+        # THE TASK'S ID IS THE RUNNER'S: the instance mints it where it registers the task, and
+        # the case answers `opened_task`. Absent (never None) when unanswered; the case opened.
+        _tid = None
+        _why = ""
+        try:
+            async with httpx.AsyncClient(timeout=_ACCEPTANCE_TASK_WAIT_S) as _tclient:
+                _tr = await _tclient.post(
+                    f"{_RESTATE_INGRESS_URL}/WorkflowRunner/"
+                    f"{_restate_key(_wf_key)}/opened_task",
+                    json={},
+                )
+            _tr.raise_for_status()
+            _got = (_tr.json() or {}).get("task_id")
+            if isinstance(_got, str) and _got:
+                _tid = _got
+            else:
+                _why = "the case answered no task id"
+        except Exception as _texc:  # noqa: BLE001 — the case opened; the card just lacks the id
+            _why = f"{type(_texc).__name__}: {_texc}"
+        if _tid:
+            rr["task_id"] = _tid
+        else:
+            logger.warning(
+                "safety acceptance task id not answered: workflow=%s reason=%s", _wf_key, _why)
         logger.info(
             "safety acceptance dispatched: hazard=%s level=%s workflow=%s kind=%s path=%s",
             _trigger["hazard_id"], _trigger["level"], _wf_key, _trigger["kind"], path,
@@ -10706,6 +10733,7 @@ async def _open_safety_acceptance(
             "audience": _trigger["audience"],
             "subject_ref": rr.get("subject_ref"),
             "path": path,
+            **({"task_id": _tid} if _tid else {}),
         })
         return None
     except Exception as exc:  # noqa: BLE001 — the draft still renders; see the call sites
@@ -10942,9 +10970,11 @@ async def _stream_direct_outcome(
     # why the walk census scores this row `drawn` while the engine asks for a task properly: the
     # census reads the rendered turn, which never carried the request.)
     #
-    # AND IT DOES NOT BLOCK THE TURN. The acceptance suspends on a human promise for as long as
-    # a human takes; calling the workflow synchronously would hold this request open for days.
-    # `/send` is one-way — Restate journals it and the turn carries on rendering the draft.
+    # AND IT DOES NOT BLOCK THE TURN ON THE HUMAN. The acceptance suspends on a human promise for as
+    # long as a human takes; calling the workflow synchronously would hold this request open for
+    # days. `/send` is one-way — Restate journals it. The turn does wait a BOUNDED time
+    # (`_ACCEPTANCE_TASK_WAIT_S`) for the TASK's id, from the instance minting it, never for the
+    # human; unanswered, the card carries no `task_id`.
     #
     # A FAILURE HERE DOES NOT FAIL THE TURN, AND IT IS NOT SILENT EITHER. The hazard WAS drafted
     # and the user must see it; but "the draft rendered" and "the acceptance was opened" are
@@ -13470,7 +13500,7 @@ async def ingest_event(
     the holder's `case_id`); with none open a new case opens and names the last closed one as its
     `predecessor`. The same occurrence twice (same event_id, same bytes) is answered, not
     revised; the same event_id with different bytes is a revision. A delegate attaches only to a
-    case it seeded: otherwise 403 `not_the_seeding_delegate`, and nothing is recorded.
+    case it seeded: otherwise 403 `delegate_not_seeder`, and nothing is recorded.
     """
     from . import content_kinds, provenance
 
@@ -13722,7 +13752,7 @@ async def ingest_event(
         if att.get("refused"):
             raise HTTPException(
                 status_code=403,
-                detail={"error": "not_the_seeding_delegate",
+                detail={"error": "delegate_not_seeder",
                         "message": ("this episode's open case was not seeded by this delegate; "
                                     "a delegate attaches an occurrence only to a case it seeded")},
             )
