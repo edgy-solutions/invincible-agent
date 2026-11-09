@@ -189,6 +189,13 @@ mesh:NoticePartSet a owl:Class ;
   rdfs:label "Notice Part Set" ;
   rdfs:comment "The parts one sustainment notice affects, read from the sustainment graph, one source per part, each carrying the notice's provenance as recorded: how it was obtained, the ingest id, who dropped it and who promoted it. An unknown notice is refused; a known notice naming no part is an explicit empty set. Read-only." .
 
+# Output of mesh:whereIsThisPartUsed (engine-o, where_used.py), declared in the same commit as the
+# verb so the registrar MATCHes it on a fresh cluster.
+mesh:WhereUsedSet a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Where Used Set" ;
+  rdfs:comment "Where one part is used: one row per end item and program, with the part's quantity per end item rolled up through every level, the configuration the row was answered from and its data provenance. Population and stock are absent where no source exists, never zero. A part used in no end item, or one the caller may not see, is refused. Read-only." .
+
 # DECLARED 2026-09-06 SO ENGINE B STOPS BORROWING ENGINE A'S. Engine B (LangGraph support)
 # returns BAML `AgentResponse`, whose graph class `mesh:AgentResponse` is documented as
 # "The final output of a smolagents CodeAgent run" — Engine A's loop, not Engine B's graph.
