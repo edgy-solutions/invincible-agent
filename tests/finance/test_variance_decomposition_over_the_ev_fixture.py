@@ -276,28 +276,34 @@ def test_a_null_program_is_refused_and_carries_no_figure(post):
 
 # ── exports and registration ──────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("flag", [None, ROW_URN])
-def test_an_export_naming_a_dataset_measure_is_refused_with_the_existing_code(flow_rows, flag, monkeypatch):
-    if flag:
-        monkeypatch.setenv("FIN_DATASET_URN", flag)
-    with pytest.raises(engine.HTTPException) as e:
-        engine._refuse_asset_exports([FN])
-    assert e.value.status_code == 409 and e.value.detail["error"] == "asset_export_unsupported"
-    assert e.value.detail["measures"] == [FN]
-
-
-def test_a_built_in_only_export_is_unaffected(flow_rows):
-    engine._refuse_asset_exports(["fin_performance_indices"])
-
-
-def test_a_package_naming_it_is_a_409_before_anything_is_measured(post, gate, monkeypatch):
-    body = {"user_email": ALLOWED, "recipient_scope": f"program_office.{PROGRAM}",
+def _a_package_naming_it(post, role):
+    who = {"allowed": ALLOWED, "denied": DENIED}[role]
+    body = {"user_email": who, "recipient_scope": f"program_office.{PROGRAM}",
             "canvas": {"template_id": "program_finance", "template_hash": "h",
                        "panels": [{"panel": 0, "verb": "mesh:finFlowActualCost",
                                    "params": {"program_id": PROGRAM}}]}}
-    r = post.client.post("/package_export", json=body, headers={"Authorization": f"Bearer {token(ALLOWED)}"})
-    assert r.status_code == 409, r.text
-    assert r.json()["detail"]["error"] == "asset_export_unsupported" and gate.asked == []
+    return post.client.post("/package_export", json=body, headers={"Authorization": f"Bearer {token(who)}"})
+
+
+def test_a_package_naming_it_asks_its_rows_grant_and_the_builder_refuses_it_by_name(
+        post, gate, monkeypatch, tmp_path):
+    """The row's figures are not in the program's facts and the page's `measures.py` does not hold
+    the row, so nothing a recipient could recompute exists: the builder's refusal, nothing written."""
+    monkeypatch.setattr(engine, "_repo_root", lambda: Path(__file__).resolve().parents[2])
+    dist = tmp_path / "dist"
+    monkeypatch.setattr(engine, "_dist_dir", lambda root: dist)
+    monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
+    r = _a_package_naming_it(post, "allowed")
+    assert r.status_code == 503, r.text
+    assert FN in r.json()["detail"] and "embedded measures.py" in r.json()["detail"]
+    assert (ALLOWED, ROW_URN) in gate.asked and not dist.exists()
+
+
+def test_a_package_naming_it_without_the_grant_is_a_403(post, gate):
+    r = _a_package_naming_it(post, "denied")
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["denied_assets"] == [ROW_URN]
+    assert gate.asked == [(DENIED, ROW_URN)], "one ask, before any panel is measured"
 
 
 def test_the_verb_registers_like_a_state_row(flow_rows):

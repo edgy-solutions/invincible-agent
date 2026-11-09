@@ -1070,8 +1070,7 @@ def _asset_reads(fns: Iterable[str]) -> dict[str, str]:
     """`{fn: urn}` for every source among `fns` that computes over a governed asset: a
     dataset-kind row always reads its own row's URN; a state-kind declared row reads
     `FIN_DATASET_URN` when it is set, and so does a built-in (ruled 2026-11-08). THE one statement
-    of which export source holds asset figures, for the package refusal, the CDRL's grant check
-    and `/artifact`'s."""
+    of which export source holds asset figures, for both exports' grant checks and `/artifact`'s."""
     urn = asset_inputs.dataset_urn()
     reads: dict[str, str] = {}
     for fn in fns:
@@ -1083,23 +1082,6 @@ def _asset_reads(fns: Iterable[str]) -> dict[str, str]:
     return reads
 
 
-def _refuse_asset_exports(fns: list[str]) -> None:
-    """409 when a PACKAGE names a measure that computes over a governed asset, BEFORE anything is
-    measured: `state_sha256` describes the seed, not an asset read, and whether a recipient
-    reader without the asset grant may read it is an open ruling. With the flag set a built-in
-    reads the asset too (ruled 2026-11-08), so every package is a 409 until that ruling; with it
-    unset nothing is refused. A CDRL is not refused: it reads the same resolver the canvas does,
-    under the caller's grant (`cdrl_export`), and is fetched under the fetcher's."""
-    named = sorted(_asset_reads(fns))
-    if named:
-        raise HTTPException(status_code=409, detail={
-            "error": "asset_export_unsupported",
-            "measures": named,
-            "message": "An export cannot carry figures read from a governed asset yet: "
-                       f"{named} compute over it. Read them through /measure.",
-        })
-
-
 def _require_asset_grants(urns: Iterable[str]) -> None:
     """The caller's grant on each asset, by the ticket a read takes first and nothing scanned;
     a refusal is `_asset_read_errors`' status (403 `access_denied` naming the grant), exactly as
@@ -1107,6 +1089,21 @@ def _require_asset_grants(urns: Iterable[str]) -> None:
     for urn in sorted(set(urns)):
         with _asset_read_errors(urn):
             asset_inputs.require_grant(mesh_ticketed_read, urn)
+
+
+def _export_program_state(reads: dict[str, str], program_id: str) -> tuple[Any, Optional[dict[str, str]]]:
+    """`(state, source)`: where an export's program facts are read. The seed and no source when no
+    source reads `FIN_DATASET_URN` (a dataset-kind row reads its own asset, which holds no
+    program's facts); otherwise the asset, as the caller, and `{kind, urn}` saying so. A program
+    the asset does not hold is a 422, never the seed's copy of it."""
+    if not any(fn not in DECLARED or DECLARED[fn].kind != measure_verbs.KIND_DATASET for fn in reads):
+        return STATE, None
+    urn = asset_inputs.dataset_urn()
+    try:
+        state = _asset_state(urn, {"program_id": program_id})
+    except NotInModel as exc:
+        raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
+    return state, {"kind": "asset", "urn": urn}
 
 
 def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
@@ -1203,8 +1200,11 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
       6. a panel naming a DECLARED measure whose cells the caller holds none of — 403
          `measure_not_in_cell`, the whole request refused, BEFORE any panel is measured (a package
          with a panel silently missing is worse than a refusal).
+      7. the caller lacks the grant on an asset a panel computes over: 403 `access_denied`, as
+         `/cdrl_export` answers it. The export runs as the caller; `recipient_readers` says who
+         may receive the file (`/artifact`), not who may read the asset.
 
-    Only once all six pass does this call `_measure_envelope` — THE SAME FUNCTION
+    Only once all seven pass does this call `_measure_envelope` — THE SAME FUNCTION
     `/measure/{fn}` calls — once per panel, then hand the served envelopes to
     `scripts.build_fin_package.build` to write the artifact. Nothing here recomputes a row a
     second way.
@@ -1239,7 +1239,9 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
         resolved.append((p, fn))
     for _p, fn in resolved:  # refusal 6: every panel's cells, before ANY panel is measured
         _require_cell(fn, caller)
-    _refuse_asset_exports([fn for _p, fn in resolved])
+    reads = _asset_reads([fn for _p, fn in resolved])
+    _require_asset_grants(reads.values())  # refusal 7, before ANY panel is measured
+    package_state, program_source = _export_program_state(reads, program_id)
 
     panels: list[dict[str, Any]] = []
     for p, fn in resolved:
@@ -1282,11 +1284,12 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
             _sys.path.insert(0, str(root / "scripts"))
         import build_fin_package as _builder
         result = _builder.build(
-            recipient_scope=body.recipient_scope, program_id=program_id, state=STATE,
+            recipient_scope=body.recipient_scope, program_id=program_id, state=package_state,
             template_id=body.canvas.template_id, template_hash=body.canvas.template_hash,
             panels=panels, runtime_dir=root / _RUNTIME_DIR, sha=sha,
             html_path=dist / html_name, duckdb_path=dist / duckdb_name,
-            as_of=as_of,
+            as_of=as_of, program_source=program_source,
+            data_provenance=asset_inputs.provenance(program_source["urn"]) if program_source else None,
         )
     except SourceUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -1398,14 +1401,7 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
         _require_cell(fn, caller)
     reads = _asset_reads(profile.sources)
     _require_asset_grants(reads.values())
-    program_state, program_source = STATE, None
-    urn = asset_inputs.dataset_urn()
-    if any(fn not in DECLARED or DECLARED[fn].kind != measure_verbs.KIND_DATASET for fn in reads):
-        try:
-            program_state = _asset_state(urn, {"program_id": body.program_id})
-        except NotInModel as exc:
-            raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
-        program_source = {"kind": "asset", "urn": urn}
+    program_state, program_source = _export_program_state(reads, body.program_id)
     as_of = body.as_of or _request_date()
 
     out_dir = _cdrl_out_dir()

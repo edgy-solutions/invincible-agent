@@ -569,10 +569,12 @@ Answers carry `data_source: {kind: "asset", urn}` and the banner in place of the
 A CDRL sourcing a declared measure reads it the same way, as the caller who asks for the CDRL. A
 caller without the grant gets 403 `access_denied` before anything is written. Each source in the
 envelope carries its `data_provenance` and `data_source`. Fetching the file checks the fetcher's
-grant too. A package export naming a declared measure returns 409 `asset_export_unsupported` while
-the URN is set; built-in measures still export. A dataset-kind measure (section 2) always reads its
-own asset, so a package naming one is refused the same way whether or not the URN is set, and a
-CDRL sourcing one reads it.
+grant too. A package export runs the same way, as the caller, with the grant on each asset checked
+before anything is measured, and its manifest and page name the asset. `recipient_readers` governs
+who may fetch the package, not who reads the asset, so fetching one asks no asset grant. A package's
+page recomputes every panel with its embedded `measures.py`, so a package naming a declared or
+dataset-kind measure (section 2) is a 503 from the builder, naming the panel, with nothing written.
+A CDRL sourcing one reads it.
 
 ## 6. Not covered yet
 

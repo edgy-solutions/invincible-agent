@@ -17,8 +17,8 @@ summary:    Behind `FIN_DATASET_URN`, a declared finance measure computes over r
 
 **Unchanged.**
 - `run_declared` stays pure and the URN isn't in the row, so one board can't read two sources and a deployment edits no row.
-- Built-in verbs, `/resolve_instance`, `/enumerate_instances` and `/verbs` stay on the seed.
-- With the flag set, a package naming a declared measure gets 409 `asset_export_unsupported` before anything is measured, because `state_sha256` can't describe a mixed package.
+- `/resolve_instance`, `/enumerate_instances` and `/verbs` stay on the seed.
+- A package reads the asset as the caller, grant-checked before anything is measured, like a CDRL (see the forks below).
 - A CDRL is not refused (ruled 2026-11-05). Its sources run through `_measure_envelope`, as the caller. The caller's grant is checked before anything is measured, and the program's facts come from the asset. `/artifact` checks the fetcher's grant before serving the file.
 
 ## The read, in `_declared_envelope`
@@ -51,7 +51,7 @@ Fixed names, no column map. File-backed only: a table-backed asset runs `SELECT 
 
 Integer or float both compute the same figures. A float budget only prints differently in the audit strings (`12000000.0`, `vac_exact` `-60000.0`), and the sandbox fixture keeps the seed's split so its envelope matches the seed's exactly.
 
-`program_bac` is a column because a window filter can drop a work package, and a sum of package budgets would then quietly shrink TCPI's and VAC's input. Entity fields `run_declared` never reads hold placeholders, and `check_consistency` doesn't run on this state.
+`program_bac` is a column because a window filter can drop a work package, and a sum of package budgets would then quietly shrink TCPI's and VAC's input. Entity fields the contract does not carry are `None`, and `check_consistency` doesn't run on this state.
 
 ## Outcomes, never a seed fallback
 
@@ -78,6 +78,6 @@ A denial stays a 403 because the board's relay keeps it whole. On the chat path 
 
 ## Forks for the architect
 
-- **Built-ins on the seed.** Ruled 2026-11-08: with the flag set the built-ins read the asset, because that is what the flag means. Funding is a 422 over the asset, and the fields the contract does not carry (a CA's BAC, WBS and OBS, a package's BAC and technique) are absent. Still on the seed: `/enumerate_instances` and the instance listing, the registration's and `/verbs`' reported periods, and a package's `state`.
-- **Exports from an asset.** Ruled for CDRL (architect, 2026-11-05): a CDRL reads the same resolver the canvas does and is grant-checked the same way, at export and at fetch. A package's recipient readers are still unruled, so a package naming one stays a 409.
+- **Built-ins on the seed.** Ruled 2026-11-08: with the flag set the built-ins read the asset, because that is what the flag means. Funding is a 422 over the asset, and the fields the contract does not carry (a CA's BAC, WBS and OBS, a package's BAC and technique) are absent. Still on the seed: `/enumerate_instances` and the instance listing, and the registration's and `/verbs`' reported periods.
+- **Exports from an asset.** Ruled for CDRL (architect, 2026-11-05): a CDRL reads the same resolver the canvas does and is grant-checked the same way, at export and at fetch. A package is the same: it runs as the caller, grant-checked at the asset, and `state_sha256` hashes the asset state it computed from. `recipient_readers` governs who may receive the file, not who reads the asset, so its fetch asks no asset grant. A funding panel is a 422, so `program_finance` (which has one) is a 422 under the flag until the contract carries funding. A declared or dataset-kind panel stays a 503 from the builder: the page recomputes with its embedded `measures.py`, which does not hold them.
 - **Calendar and pickers.** `FISCAL_PERIODS` is FY26 only, in code. A program only in the asset can't be named in chat, because `/enumerate_instances` reads the seed.

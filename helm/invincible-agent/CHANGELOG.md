@@ -31,9 +31,16 @@
   `data_source`, and a CDRL that sources one no longer refuses a program only the asset holds
   with a 422. Over the asset, `fin_funding_status` is a 422 `not_in_model`, because the contract
   carries no funding lines. A CA's `bac`, `wbs_id` and `obs_id`, and a work package's `bac` and
-  `technique`, are absent rather than placeholders. **Under the flag every `/package_export` is a
-  409** `asset_export_unsupported` until the recipient-reader ruling; the sandbox has the flag on.
-  With it unset nothing changes.
+  `technique`, are absent rather than placeholders. With it unset nothing changes.
+- **engine-fin: under `FIN_DATASET_URN`, `/package_export` runs as the caller over the asset,
+  grant-checked like a CDRL**, in place of the 409 `asset_export_unsupported`. A caller without the
+  grant is a 403 `access_denied` before anything is measured or written. `state_sha256` hashes the
+  asset state the panels computed from, and the manifest and page name the asset. `recipient_readers`
+  still governs who may receive the file, and its fetch asks no asset grant. **`program_finance` has
+  a funding panel, so that canvas is a 422 under the flag** until the contract carries funding lines;
+  the sandbox has the flag on. A declared or dataset-kind panel is a 503 from the builder, naming the
+  panel, with nothing written, because the page's embedded `measures.py` cannot recompute it. A
+  dataset-kind panel was a 409 with the flag unset too and is now that 503.
 
 ## 0.4.82 — 2026-11-08
 

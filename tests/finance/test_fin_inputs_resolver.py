@@ -583,28 +583,14 @@ def spy(monkeypatch):
     return calls
 
 
-@pytest.mark.parametrize("builtin_only, named", [
-    (False, ["fin_performance_indices", "fin_tcpi"]),
-    # RULED 2026-11-08: with the flag set a built-in reads the asset, so a built-in-only package
-    # is no longer the way round the refusal -- every package is a 409 until the recipient-reader
-    # ruling. The flag-off control below is what still exports.
-    (True, ["fin_performance_indices"]),
-])
-def test_under_the_flag_a_package_is_a_409_before_anything_is_measured(
-        client, seam, spy, builtin_only, named):
-    r = client.post("/package_export", json=_package_body(builtin_only=builtin_only))
-    assert r.status_code == 409, r.text
-    d = r.json()["detail"]
-    assert d["error"] == "asset_export_unsupported" and d["measures"] == named
-    assert "built-in" not in d["message"], "no built-in is the way round it any more"
-    assert spy == [] and seam.urns == [] and seam.loads == 0
-
-
-def test_flag_off_a_built_in_only_package_still_works_and_carries_the_notional_banner(
-        off_client, spy, monkeypatch):
+@pytest.fixture
+def built(monkeypatch):
+    """Stands in for the builder and records what `package_export` handed it."""
     import build_fin_package as builder
+    calls: list[dict] = []
 
     def fake_build(**kw):
+        calls.append(kw)
         return {"manifest": {"recipient_scope": f"program_office.{PROGRAM}", "as_of": "t",
                              "algorithm_sha": "0" * 40, "template_id": "program_finance",
                              "template_hash": "h", "panels": [{"artifact_id": "a"}]},
@@ -613,6 +599,155 @@ def test_flag_off_a_built_in_only_package_still_works_and_carries_the_notional_b
     monkeypatch.setattr(builder, "build", fake_build)
     monkeypatch.setattr(engine, "_repo_root", lambda: REPO)
     monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
+    return calls
+
+
+def package_post(c, body=None, *, tok=token(ALICE)):
+    return c.post("/package_export", headers={"Authorization": f"Bearer {tok}"},
+                  json=body or _package_body(builtin_only=True))
+
+
+def test_under_the_flag_a_package_runs_as_the_caller_over_the_asset(client, seam, spy, built):
+    """Export runs as the caller, grant-checked at the asset like a CDRL. The frame doubles ACWP,
+    so a build handed the seed cannot pass for one handed the asset."""
+    frame = frame_of().with_columns((pl.col("acwp") * 2).alias("acwp"))
+    seam.frame = frame.lazy()
+    r = package_post(client)
+    assert r.status_code == 200, r.text
+    assert set(seam.urns) == {URN} and all(k["originator_email"] == ALICE for k in seam.kwargs)
+    assert spy and all(env["data_source"] == {"kind": "asset", "urn": URN} for _fn, env in spy)
+
+    kw = built[0]
+    assert isinstance(kw["state"], asset_inputs.AssetState), "the build reads what the panels read"
+    expected = asset_inputs.state_from_rows(frame, PROGRAM)
+    assert {f.period: f.acwp for f in kw["state"].facts} == {f.period: f.acwp for f in expected.facts}
+    assert kw["state"].facts != seed.build_seed().facts, "the control: the frame moves the facts"
+    assert kw["program_source"] == {"kind": "asset", "urn": URN}
+    assert kw["data_provenance"] == asset_inputs.provenance(URN)
+
+
+def test_a_package_without_the_grant_is_a_403_before_anything_is_read_measured_or_written(
+        client, seam, spy, built, monkeypatch):
+    asked: list = []
+    real = engine._asset_state
+    monkeypatch.setattr(engine, "_asset_state", lambda *a, **kw: asked.append(a) or real(*a, **kw))
+    seam.raises = NotEntitled("the gate refused")
+    r = package_post(client)
+    assert r.status_code == 403, r.text
+    d = r.json()["detail"]
+    assert d["status"] == "access_denied" and d["denied_assets"] == [URN]
+    assert d["refusal"]["policy_id"] == "asset_grants"
+    assert asked == [] and spy == [] and built == [], "the grant is asked before anything else"
+
+
+def test_a_package_with_a_funding_panel_is_a_422_and_nothing_is_built(client, seam, built):
+    """RULED: funding over the asset is a 422, never zero rows, and a package with a panel silently
+    missing is worse than a refusal."""
+    seam.frame = frame_of().lazy()
+    body = _package_body(builtin_only=True)
+    body["canvas"]["panels"].append({"panel": 1, "verb": "mesh:finFundingStatus",
+                                     "params": {"program_id": PROGRAM}})
+    r = package_post(client, body)
+    assert r.status_code == 422, r.text
+    assert "funding" in r.json()["detail"]["not_in_model"]
+    assert built == []
+
+
+def test_a_package_for_a_program_the_asset_does_not_hold_is_a_422_not_the_seeds_copy(
+        client, seam, built, monkeypatch):
+    # Not `spy`: it records after a measure returns, and a panel over this frame refuses too, so
+    # only counting the calls that START shows the program was refused before any panel ran.
+    started: list = []
+    real = engine._measure_envelope
+    monkeypatch.setattr(engine, "_measure_envelope", lambda *a, **kw: started.append(a) or real(*a, **kw))
+    seam.frame = frame_of().filter(pl.col("program_id") == "NOT-IN-THE-ASSET").lazy()
+    r = package_post(client)
+    assert r.status_code == 422, r.text
+    assert "not_in_model" in r.json()["detail"]
+    assert started == [] and built == []
+
+
+def test_a_declared_panel_is_refused_by_the_builder_by_name_with_nothing_written(
+        client, seam, monkeypatch, tmp_path):
+    """The page recomputes every panel with its embedded `measures.py`, which holds no declared
+    measure, so the builder's own check refuses it before a byte is written."""
+    monkeypatch.setattr(engine, "_repo_root", lambda: REPO)
+    monkeypatch.setattr(engine, "_dist_dir", lambda root: tmp_path)
+    monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
+    seam.frame = frame_of().lazy()
+    r = package_post(client, _package_body())
+    assert r.status_code == 503, r.text
+    assert "fin_tcpi" in r.json()["detail"] and "embedded measures.py" in r.json()["detail"]
+    assert list(tmp_path.iterdir()) == []
+
+
+def _a_written_package(monkeypatch, tmp_path):
+    from agent_fleet.finance_agent import export
+    monkeypatch.setattr(engine, "_repo_root", lambda: REPO)
+    monkeypatch.setattr(engine, "_dist_dir", lambda root: tmp_path)
+    name = export.artifact_filenames(f"program_office.{PROGRAM}")[0]
+    (tmp_path / name).write_bytes(b"<html></html>")
+    return name
+
+
+def test_recipient_readers_govern_the_file_and_the_asset_grant_does_not(client, seam, monkeypatch, tmp_path):
+    """RULED: `recipient_readers` governs who may receive the file, not who reads the asset. A
+    reader with no grant on the asset fetches it; asking for the grant here would be a second gate
+    the ruling refused."""
+    name = _a_written_package(monkeypatch, tmp_path)
+    headers = {"Authorization": f"Bearer {token(ALICE)}"}
+    seam.raises = NotEntitled("no grant on the asset")
+    monkeypatch.setattr(engine, "can_read_recipient", lambda owner, scope, authz_id: True)
+    r = client.get(f"/artifact/{name}", headers=headers)
+    assert r.status_code == 200, r.text
+    assert seam.urns == [], "a package's fetch does not ask the asset"
+
+
+def test_a_grant_on_the_asset_does_not_make_someone_a_recipient(client, seam, monkeypatch, tmp_path):
+    name = _a_written_package(monkeypatch, tmp_path)
+    seam.frame = frame_of().lazy()  # the grant is held; the rail still says no
+    monkeypatch.setattr(engine, "can_read_recipient", lambda owner, scope, authz_id: False)
+    r = client.get(f"/artifact/{name}", headers={"Authorization": f"Bearer {token(ALICE)}"})
+    assert r.status_code == 403, r.text
+    assert "not entitled" in r.json()["detail"]
+
+
+def test_the_real_build_over_the_asset_verifies_and_names_where_its_figures_came_from(
+        client, seam, monkeypatch, tmp_path):
+    """The whole builder: the page's recomputation and the .duckdb's agreement over a state whose
+    uncarried fields are None."""
+    pytest.importorskip("duckdb")
+    if not (REPO / ".pyodide-cache").is_dir():
+        pytest.skip("no .pyodide-cache in this checkout; the real build cannot run")
+    from agent_fleet.finance_agent import export, state_codec
+    manifests: list[dict] = []
+    real_audit = export.audit_line
+    monkeypatch.setattr(export, "audit_line", lambda m, **kw: manifests.append(m) or real_audit(m, **kw))
+    monkeypatch.setattr(engine, "_repo_root", lambda: REPO)
+    monkeypatch.setattr(engine, "_dist_dir", lambda root: tmp_path)
+    monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
+    frame = frame_of()
+    seam.frame = frame.lazy()
+    r = package_post(client)
+    assert r.status_code == 200, r.text
+    manifest = manifests[0]
+    assert manifest["program_source"] == {"kind": "asset", "urn": URN}
+    assert manifest["data_provenance"] == asset_inputs.provenance(URN)
+    narrowed = state_codec.narrow(asset_inputs.state_from_rows(frame, PROGRAM), PROGRAM)
+    assert manifest["state_sha256"] == export.content_hash(state_codec.state_to_dict(narrowed))
+    page = (tmp_path / r.json()["artifact_filename"]).read_text(encoding="utf-8")
+    assert URN in page and BANNER in page
+
+
+def test_flag_off_a_package_says_nothing_about_a_source(off_client, spy, built):
+    r = off_client.post("/package_export", json=_package_body(builtin_only=True))
+    assert r.status_code == 200, r.text
+    assert built[0]["state"] is engine.STATE
+    assert built[0]["program_source"] is None and built[0]["data_provenance"] is None
+
+
+def test_flag_off_a_built_in_only_package_still_works_and_carries_the_notional_banner(
+        off_client, spy, built):
     r = off_client.post("/package_export", json=_package_body(builtin_only=True))
     assert r.status_code == 200, r.text
     assert spy and all(env["data_provenance"] == seed.notional_banner() for _fn, env in spy)
