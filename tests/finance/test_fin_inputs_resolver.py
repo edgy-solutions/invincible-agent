@@ -679,6 +679,100 @@ def test_the_cdrl_file_is_fetched_under_the_fetchers_grant(client, seam, cdrl_pr
     assert r.json()["detail"]["status"] == "access_denied"
 
 
+# ── CDRL: a program only the asset holds ────────────────────────────────────────────────
+# The seed's programs are not the population. A profile sourcing only declared measures computes
+# every figure over the asset, so a program the asset alone holds exports; the file it wrote is
+# fetched by the same engine (the BFF does both at once). A profile with a built-in source reads
+# the seed for it and is a 422 `not_in_model` for such a program, before any file exists.
+
+ASSET_ONLY = "cdrl_tcpi_only_json"
+BOB = "bob@example.com"   # views neither program under `members`
+
+
+@pytest.fixture
+def asset_only_profile(cdrl_profiles, monkeypatch, tmp_path):
+    from agent_fleet.finance_agent import export_profiles
+    d = tmp_path / "asset_only_profiles"
+    d.mkdir()
+    (d / f"{ASSET_ONLY}.yaml").write_text(
+        f"name: {ASSET_ONLY}\nformat: json\nscope: program\nlabel: TCPI only (synthetic)\n"
+        "audience: program_office\n"
+        "cdrl: {item: A001, title: Notional TCPI, data_item: DI-NOTIONAL-0001, frequency: monthly}\n"
+        "cells:\n  /header/program_id: program.id\n"
+        "sources:\n  - fn: fin_tcpi\n"
+        "table:\n  at: /periods\n  key: period\n  columns:\n"
+        "    - {from: period, as: period}\n    - {from: fin_tcpi.tcpi, as: tcpi}\n",
+        encoding="utf-8")
+    loaded = {p.name: p for p in export_profiles.load_export_profiles(overlay_dirs=[d], declared=engine.DECLARED)}
+    monkeypatch.setitem(engine.PROFILES, ASSET_ONLY, loaded[ASSET_ONLY])
+    return cdrl_profiles
+
+
+def _export_other(c, profile=ASSET_ONLY, *, tok=token(ALICE)):
+    return c.post("/cdrl_export", headers={"Authorization": f"Bearer {tok}"},
+                  json={"profile": profile, "program_id": OTHER_PROGRAM, "user_email": ALICE})
+
+
+@pytest.fixture
+def other_only_in_the_asset(seam, tmp_path):
+    assert OTHER_PROGRAM not in {p.program_id for p in engine.STATE.programs}
+    seam.frame = pl.scan_parquet(_two_program_parquet(tmp_path)[0])
+
+
+def test_a_program_only_the_asset_holds_exports_and_its_file_is_fetched(
+        client, asset_only_profile, other_only_in_the_asset):
+    r = _export_other(client)
+    assert r.status_code == 200, r.text
+    name = r.json()["artifact_filename"]
+    got = client.get(f"/artifact/{name}", headers={"Authorization": f"Bearer {token(ALICE)}"})
+    assert got.status_code == 200, got.text
+    assert got.content == (asset_only_profile / name).read_bytes()
+    assert json.loads(got.content)["header"]["program_id"] == OTHER_PROGRAM
+
+
+def test_a_built_in_source_refuses_such_a_program_before_a_file_exists(
+        client, asset_only_profile, other_only_in_the_asset):
+    r = _export_other(client, CDRL)
+    assert r.status_code == 422 and "not_in_model" in r.json()["detail"], r.text
+    assert not asset_only_profile.exists() or not any(asset_only_profile.iterdir())
+
+
+def test_such_a_file_is_a_404_to_a_non_member_as_if_never_written(
+        client, asset_only_profile, other_only_in_the_asset, monkeypatch):
+    # A seed program's id is deployment data, so its file names nothing a 403 could reveal. A
+    # program only the asset holds is not: a 403 would tell a non-member that it exists and was
+    # exported. So to a non-member the name answers as one never written, byte for byte.
+    name = _export_other(client).json()["artifact_filename"]
+    never = name.replace(OTHER_PROGRAM, "NP-NEVER")
+    bob = {"Authorization": f"Bearer {token(BOB)}"}
+    for n in (name, never):
+        r = client.get(f"/artifact/{n}", headers=bob)
+        assert r.status_code == 404, (n, r.text)
+    assert client.get(f"/artifact/{name}", headers=bob).content == client.get(f"/artifact/{never}", headers=bob).content
+    assert client.get(f"/artifact/{name}", headers={"Authorization": f"Bearer {token(ALICE)}"}).status_code == 200
+
+
+def test_the_record_is_not_trusted_a_planted_entry_serves_nothing(
+        client, asset_only_profile, other_only_in_the_asset):
+    # The record names what was written; it does not widen the set. An entry whose profile is not
+    # composed, or whose name is not what `cdrl.artifact_filename` gives for it, is no entry.
+    name = _export_other(client).json()["artifact_filename"]
+    record = asset_only_profile / engine._CDRL_ORIGINS
+    planted = asset_only_profile / "fin-cdrl-planted-NP-OTHER.json"
+    misnamed = asset_only_profile / "fin-cdrl-x.json"
+    for f in (planted, misnamed):
+        f.write_text("{}", encoding="utf-8")
+    origins = json.loads(record.read_text(encoding="utf-8"))
+    origins[planted.name] = {"profile": "planted", "program_id": OTHER_PROGRAM}
+    origins[misnamed.name] = {"profile": ASSET_ONLY, "program_id": OTHER_PROGRAM}
+    record.write_text(json.dumps(origins), encoding="utf-8")
+    alice = {"Authorization": f"Bearer {token(ALICE)}"}
+    assert client.get(f"/artifact/{planted.name}", headers=alice).status_code == 404
+    assert client.get(f"/artifact/{misnamed.name}", headers=alice).status_code == 404
+    assert client.get(f"/artifact/{engine._CDRL_ORIGINS}", headers=alice).status_code == 404
+    assert client.get(f"/artifact/{name}", headers=alice).status_code == 200    # the control
+
+
 def test_the_cdrl_names_the_program_as_the_asset_does_not_as_the_seed(client, seam, cdrl_profiles):
     frame = frame_of().with_columns(pl.lit("Asset-side program name").alias("program_name"))
     assert seed.build_seed().programs[0].name != "Asset-side program name"
