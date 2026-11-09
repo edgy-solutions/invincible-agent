@@ -6,7 +6,7 @@ supersedes: 2026-11-08-handoff-lane-gov-322-carries-the-503-seals-7f-is-answered
 
 ## Next step
 
-Read CI on #322 (head `04e656ea`) and #323 (head `23fd13f2`). CI on #322 was still running when this was written. If either is red, fix it on its own branch. If both are green, they wait for the merger, which is not gov. Then check for the v0.9.17 tag:
+Read CI on #322 (head `04e656ea`) and #323 (head `23fd13f2`). CI on both was still running when this was written. On #323, `drift (main)` is red and needs no fix: it is the report leg, `continue-on-error`, showing that `course`'s `passes` differ from doc-tools main, which #323 does not touch. `drift (pin)`, the gate, passes. If anything else is red, fix it on its own branch. If both are green, they wait for the merger, which is not gov. Then check for the v0.9.17 tag:
 
 `git -C C:/Users/cnogr/git/iagent-mesh-sdk ls-remote --tags origin 'v0.9.1*'`
 
