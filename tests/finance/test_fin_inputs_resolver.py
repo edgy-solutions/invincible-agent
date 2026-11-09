@@ -583,16 +583,25 @@ def spy(monkeypatch):
     return calls
 
 
-def test_a_package_naming_a_declared_measure_is_a_409_before_anything_is_measured(client, seam, spy):
-    r = client.post("/package_export", json=_package_body())
+@pytest.mark.parametrize("builtin_only, named", [
+    (False, ["fin_performance_indices", "fin_tcpi"]),
+    # RULED 2026-11-08: with the flag set a built-in reads the asset, so a built-in-only package
+    # is no longer the way round the refusal -- every package is a 409 until the recipient-reader
+    # ruling. The flag-off control below is what still exports.
+    (True, ["fin_performance_indices"]),
+])
+def test_under_the_flag_a_package_is_a_409_before_anything_is_measured(
+        client, seam, spy, builtin_only, named):
+    r = client.post("/package_export", json=_package_body(builtin_only=builtin_only))
     assert r.status_code == 409, r.text
     d = r.json()["detail"]
-    assert d["error"] == "asset_export_unsupported" and d["measures"] == ["fin_tcpi"]
+    assert d["error"] == "asset_export_unsupported" and d["measures"] == named
+    assert "built-in" not in d["message"], "no built-in is the way round it any more"
     assert spy == [] and seam.urns == [] and seam.loads == 0
 
 
-def test_a_built_in_only_package_still_works_and_carries_the_notional_banner(
-        client, seam, spy, monkeypatch):
+def test_flag_off_a_built_in_only_package_still_works_and_carries_the_notional_banner(
+        off_client, spy, monkeypatch):
     import build_fin_package as builder
 
     def fake_build(**kw):
@@ -604,10 +613,10 @@ def test_a_built_in_only_package_still_works_and_carries_the_notional_banner(
     monkeypatch.setattr(builder, "build", fake_build)
     monkeypatch.setattr(engine, "_repo_root", lambda: REPO)
     monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
-    r = client.post("/package_export", json=_package_body(builtin_only=True))
+    r = off_client.post("/package_export", json=_package_body(builtin_only=True))
     assert r.status_code == 200, r.text
     assert spy and all(env["data_provenance"] == seed.notional_banner() for _fn, env in spy)
-    assert seam.urns == [] and seam.loads == 0
+    assert all("data_source" not in env for _fn, env in spy)
 
 
 # ── CDRL: read through the resolver, not refused ────────────────────────────────────────
@@ -624,7 +633,7 @@ def cdrl_profiles(monkeypatch, tmp_path):
     monkeypatch.setattr(engine, "PROFILES", profiles)
     sources = set(profiles[CDRL].sources)
     assert sources & set(engine.DECLARED), "the profile must source a declared measure"
-    assert sources - set(engine.DECLARED), "and a built-in, so the file joins the seed and the asset"
+    assert sources - set(engine.DECLARED), "and a built-in, so both kinds of source read the asset"
     return tmp_path / "cdrl"
 
 
@@ -643,8 +652,9 @@ def test_a_cdrl_reads_the_asset_as_the_caller_and_each_source_says_where_its_fig
     by = {s["fn"]: s for s in env["sources"]}
     assert by["fin_tcpi"]["data_source"] == {"kind": "asset", "urn": URN}
     assert by["fin_tcpi"]["data_provenance"] == asset_inputs.provenance(URN)
-    assert by["fin_performance_indices"]["data_provenance"] == seed.notional_banner()
-    assert "data_source" not in by["fin_performance_indices"]
+    # A BUILT-IN SOURCE READS THE SAME ASSET (ruled 2026-11-08), so the file joins one source.
+    assert by["fin_performance_indices"]["data_source"] == {"kind": "asset", "urn": URN}
+    assert by["fin_performance_indices"]["data_provenance"] == asset_inputs.provenance(URN)
     assert env["program_source"] == {"kind": "asset", "urn": URN}
     assert seam.urns and set(seam.urns) == {URN}
     assert {kw["originator_email"] for kw in seam.kwargs} == {ALICE}
@@ -702,7 +712,9 @@ def test_flag_off_a_cdrl_reads_nothing_and_every_source_carries_the_notional_ban
 def test_which_sources_read_an_asset(declared, monkeypatch):
     assert engine._asset_reads(["fin_tcpi", "fin_performance_indices"]) == {}
     monkeypatch.setenv("FIN_DATASET_URN", URN)
-    assert engine._asset_reads(["fin_tcpi", "fin_performance_indices"]) == {"fin_tcpi": URN}
+    assert engine._asset_reads(["fin_tcpi", "fin_performance_indices"]) == {
+        "fin_tcpi": URN, "fin_performance_indices": URN}
+    assert engine._asset_reads(["fin_no_such_measure"]) == {}, "a name that is neither reads nothing"
 
 
 # ── provenance ──────────────────────────────────────────────────────────────────────────
@@ -715,13 +727,104 @@ def test_an_asset_answer_carries_the_banner_and_the_urn_and_not_the_notional_tex
     assert env["data_source"] == {"kind": "asset", "urn": URN}
 
 
-def test_a_built_in_with_the_flag_set_keeps_the_notional_banner_and_reads_nothing(client, seam):
-    r = client.post("/measure/fin_performance_indices", headers={"Authorization": f"Bearer {token(ALICE)}"},
-                    json={"params": {"program_id": PROGRAM}, "user_email": ALICE})
+def test_a_built_in_with_the_flag_set_reads_the_asset_as_the_caller(client, seam):
+    """RULED 2026-11-08: that is what the flag means. The frame doubles ACWP, so the seed's
+    figures and the asset's differ and the artifact id says which the answer was computed over."""
+    from agent_fleet.finance_agent import measures
+    frame = frame_of().with_columns((pl.col("acwp") * 2).alias("acwp"))
+    seam.frame = frame.lazy()
+    fn, params = "fin_performance_indices", {"program_id": PROGRAM}
+    r = measure(client, fn, params=params)
     assert r.status_code == 200, r.text
     env = r.json()
-    assert env["data_provenance"] == seed.notional_banner() and "data_source" not in env
-    assert seam.urns == [] and seam.loads == 0
+    over_asset = measures.fin_performance_indices(asset_inputs.state_from_rows(frame, PROGRAM), **params)
+    over_seed = measures.fin_performance_indices(seed.build_seed(), **params)
+    assert engine._artifact_id(fn, params, over_asset) != engine._artifact_id(fn, params, over_seed), (
+        "the control: the frame must move the figures")
+    assert env["artifact_id"] == engine._artifact_id(fn, params, over_asset)
+    assert env["data_provenance"] == asset_inputs.provenance(URN)
+    assert env["data_source"] == {"kind": "asset", "urn": URN}
+    assert seam.urns == [URN] and {kw["originator_email"] for kw in seam.kwargs} == {ALICE}
+
+
+_BUILT_IN_PARAMS = {"fin_eac_calculation": {"method": "CPI"}}
+
+#: DECIDED BY READING THEM: `fin_funding_status` is the one built-in that reads a collection the
+#: contract does not carry (`state.funding`); no verb reads `obs` or `wbs`. An empty list there
+#: is not "no funding", so it refuses rather than answer 0 rows.
+_REFUSED_OVER_THE_ASSET = {"fin_funding_status"}
+
+
+def _built_ins():
+    from agent_fleet.finance_agent import measures
+    return sorted(measures.OUTPUT_URI)
+
+
+@pytest.mark.parametrize("fn", _built_ins())
+def test_every_built_in_under_the_flag_answers_from_the_asset_or_refuses_by_name(client, seam, fn):
+    seam.frame = frame_of().lazy()
+    r = measure(client, fn, params={"program_id": PROGRAM, **_BUILT_IN_PARAMS.get(fn, {})})
+    if fn in _REFUSED_OVER_THE_ASSET:
+        assert r.status_code == 422, r.text
+        assert "funding" in r.json()["detail"]["not_in_model"]
+    else:
+        assert r.status_code == 200, r.text
+        env = r.json()
+        assert env["data_provenance"] == asset_inputs.provenance(URN)
+        assert env["data_source"] == {"kind": "asset", "urn": URN}
+    assert seam.urns == [URN]
+
+
+def test_the_refused_set_names_only_built_ins():
+    assert _REFUSED_OVER_THE_ASSET <= set(_built_ins())
+
+
+def test_flag_off_funding_still_answers_from_the_seed(off_client):
+    r = measure(off_client, "fin_funding_status")
+    assert r.status_code == 200, r.text
+    assert r.json()["rows"] and r.json()["data_provenance"] == seed.notional_banner()
+
+
+#: The fields the asset's contract does not carry, by the level that would carry them.
+_UNCARRIED_FIELDS = {"control_account": {"wbs_id", "obs_id", "bac"},
+                     "work_package": {"bac", "technique"}}
+
+
+def _nodes(tree):
+    for n in tree:
+        yield n
+        yield from _nodes(n.get("contributors", []))
+
+
+def test_over_the_asset_no_row_carries_a_field_the_contract_does_not(client, seam):
+    """Absent, not a placeholder: a CA's BAC of 0.0 or a package's technique of LEVEL_OF_EFFORT
+    was a figure the asset never said. The seed carries each field, which is the control."""
+    from agent_fleet.finance_agent import measures
+    seam.frame = frame_of().lazy()
+    tree_params = {"program_id": PROGRAM, "materiality": 0.001}
+    drv_params = {"program_id": PROGRAM, "level": "work_package", "variance_kind": "schedule"}
+    asset = {
+        "tree": list(_nodes(measure(client, "fin_variance_analysis", params=tree_params).json()["rows"])),
+        "drivers": [{**r, "level": "work_package"} for r in
+                    measure(client, "fin_variance_drivers", params=drv_params).json()["rows"]],
+    }
+    s = seed.build_seed()
+    control = {
+        "tree": list(_nodes(measures.fin_variance_analysis(s, **tree_params))),
+        "drivers": [{**r, "level": "work_package"} for r in measures.fin_variance_drivers(s, **drv_params)],
+    }
+    for name, rows in control.items():
+        seen = {lvl for r in rows for lvl in _UNCARRIED_FIELDS if r["level"] == lvl}
+        assert seen, f"the control {name} has no CA or WP row"
+        for r in rows:
+            missing = _UNCARRIED_FIELDS.get(r["level"], set()) - set(r)
+            assert not missing, f"the seed's {name} {r['entity_id']} lacks {sorted(missing)}"
+    for name, rows in asset.items():
+        assert any(r["level"] in _UNCARRIED_FIELDS for r in rows), f"the asset's {name} has no CA or WP row"
+        for r in rows:
+            held = _UNCARRIED_FIELDS.get(r["level"], set()) & set(r)
+            assert not held, f"the asset's {name} {r['entity_id']} carries {sorted(held)}"
+            assert "note" not in r
 
 
 # ── timing ──────────────────────────────────────────────────────────────────────────────

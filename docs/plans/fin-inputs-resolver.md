@@ -78,6 +78,6 @@ A denial stays a 403 because the board's relay keeps it whole. On the chat path 
 
 ## Forks for the architect
 
-- **Built-ins on the seed.** Off the sandbox, a board shows invented built-ins beside real declared figures, under separate banners. Moving them needs fields the contract doesn't carry.
+- **Built-ins on the seed.** Ruled 2026-11-08: with the flag set the built-ins read the asset, because that is what the flag means. Funding is a 422 over the asset, and the fields the contract does not carry (a CA's BAC, WBS and OBS, a package's BAC and technique) are absent. Still on the seed: `/enumerate_instances` and the instance listing, the registration's and `/verbs`' reported periods, and a package's `state`.
 - **Exports from an asset.** Ruled for CDRL (architect, 2026-11-05): a CDRL reads the same resolver the canvas does and is grant-checked the same way, at export and at fetch. A package's recipient readers are still unruled, so a package naming one stays a 409.
 - **Calendar and pickers.** `FISCAL_PERIODS` is FY26 only, in code. A program only in the asset can't be named in chat, because `/enumerate_instances` reads the seed.

@@ -852,8 +852,12 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
             "slots": missing,
         })
 
+    urn = asset_inputs.dataset_urn()
     try:
-        rows = func(STATE, **params)
+        # THE SAME SELECTION `_declared_envelope` makes: with the flag set a built-in computes over
+        # the asset as the caller, never the seed (ruled 2026-11-08: that is what the flag means).
+        state = STATE if urn is None else _asset_state(urn, params)
+        rows = func(state, **params)
     except MethodRequired as exc:
         # THE SECOND GATE. Unreachable through this route (the declaration check above fires
         # first) and kept anyway, because ADR-0045 requires the refusal to live in the VERB
@@ -892,7 +896,8 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
         # THE DISCLOSURE RIDES ON THE PAYLOAD, not only in a docstring. A finance figure that
         # leaves this engine without saying it is notional is a figure somebody can paste
         # into a deck, and a docstring is not visible from a screenshot.
-        "data_provenance": notional_banner(),
+        "data_provenance": notional_banner() if urn is None else asset_inputs.provenance(urn),
+        **({} if urn is None else {"data_source": {"kind": "asset", "urn": urn}}),
         # COMPUTED FROM THE ROWS, so it is emitted here rather than declared in a table — and
         # ABSENT WHEN THERE IS NOTHING TO SAY. A verdict key holding None would make the card
         # render an empty caption slot; omission is the honest-absence rule this envelope
@@ -1058,36 +1063,34 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
 def _asset_reads(fns: Iterable[str]) -> dict[str, str]:
     """`{fn: urn}` for every source among `fns` that computes over a governed asset: a
     dataset-kind row always reads its own row's URN; a state-kind declared row reads
-    `FIN_DATASET_URN` when it is set. A built-in reads the seed and is absent. THE one statement
+    `FIN_DATASET_URN` when it is set, and so does a built-in (ruled 2026-11-08). THE one statement
     of which export source holds asset figures, for the package refusal, the CDRL's grant check
     and `/artifact`'s."""
     urn = asset_inputs.dataset_urn()
     reads: dict[str, str] = {}
     for fn in fns:
         row = DECLARED.get(fn)
-        if row is None:
-            continue
-        if row.kind == measure_verbs.KIND_DATASET:
+        if row is not None and row.kind == measure_verbs.KIND_DATASET:
             reads[fn] = row.dataset_urn
-        elif urn is not None:
+        elif urn is not None and (row is not None or fn in measures.OUTPUT_URI):
             reads[fn] = urn
     return reads
 
 
 def _refuse_asset_exports(fns: list[str]) -> None:
     """409 when a PACKAGE names a measure that computes over a governed asset, BEFORE anything is
-    measured: `state_sha256` cannot describe a package whose figures come from two sources, and
-    whether a recipient reader without the asset grant may read it is an open ruling. A
-    built-in-only package is unaffected. A CDRL is not refused: it reads the same resolver the
-    canvas does, under the caller's grant (`cdrl_export`), and is fetched under the fetcher's."""
+    measured: `state_sha256` describes the seed, not an asset read, and whether a recipient
+    reader without the asset grant may read it is an open ruling. With the flag set a built-in
+    reads the asset too (ruled 2026-11-08), so every package is a 409 until that ruling; with it
+    unset nothing is refused. A CDRL is not refused: it reads the same resolver the canvas does,
+    under the caller's grant (`cdrl_export`), and is fetched under the fetcher's."""
     named = sorted(_asset_reads(fns))
     if named:
         raise HTTPException(status_code=409, detail={
             "error": "asset_export_unsupported",
             "measures": named,
             "message": "An export cannot carry figures read from a governed asset yet: "
-                       f"{named} compute over it. Export the built-in measures, or read these "
-                       "through /measure.",
+                       f"{named} compute over it. Read them through /measure.",
         })
 
 
@@ -1391,7 +1394,7 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
     _require_asset_grants(reads.values())
     program_state, program_source = STATE, None
     urn = asset_inputs.dataset_urn()
-    if any(DECLARED[fn].kind != measure_verbs.KIND_DATASET for fn in reads):
+    if any(fn not in DECLARED or DECLARED[fn].kind != measure_verbs.KIND_DATASET for fn in reads):
         try:
             program_state = _asset_state(urn, {"program_id": body.program_id})
         except NotInModel as exc:

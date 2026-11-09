@@ -673,6 +673,53 @@ def test_the_envelope_POPULATION_ONLY_GROWS():
 # `_envelope_tables()`'s population.
 _NOT_FROM_A_TABLE = frozenset({"measure", "data_provenance", "rows", "artifact_id"})
 
+# A composed key that is ABSENT unless the dataset flag is set, so it arrives through a
+# conditional spread rather than as a literal key -- and the walker above counts every dict
+# inside a spread, so its value's own members are "emitted" too. Joined 2026-11-08 with
+# `data_source` (ruled that day: with the flag set a built-in reads the asset, and says which).
+# Named WITH its members, and `_composed_spread_keys` checks the shape rather than trusting the
+# name: exactly one element, `{}` on one branch and only this key on the other, the members
+# exactly these, no table read, and none of the names spelled anywhere else in the builder.
+_COMPOSED_SPREAD = {"data_source": frozenset({"kind", "urn"})}
+
+
+def _composed_spread_keys(builder: ast.Dict) -> set[str]:
+    """The keys `_COMPOSED_SPREAD` accounts for, after checking each one's single element."""
+    accounted: set[str] = set()
+    for key, members in sorted(_COMPOSED_SPREAD.items()):
+        names = {key, *members}
+        holding = [
+            v for k, v in zip(builder.keys, builder.values)
+            if k is None and any(isinstance(n, ast.Dict) and any(
+                isinstance(c, ast.Constant) and c.value == key for c in n.keys)
+                for n in ast.walk(v))
+        ]
+        assert len(holding) == 1, f"`{key}` is spread {len(holding)} times, excused for one"
+        element = holding[0]
+        assert isinstance(element, ast.IfExp), f"`{key}`: {ast.unparse(element)!r} is not `a if c else b`"
+        branches = [element.body, element.orelse]
+        empty = [b for b in branches if isinstance(b, ast.Dict) and not b.keys]
+        full = [b for b in branches if isinstance(b, ast.Dict) and b.keys]
+        assert len(empty) == 1 and len(full) == 1, f"`{key}`: one branch must be `{{}}`, the other its dict"
+        (outer,) = full
+        assert [getattr(k, "value", None) for k in outer.keys] == [key], (
+            f"`{key}`'s branch carries {ast.unparse(outer)!r} -- only `{key}` is excused there")
+        value = outer.values[0]
+        assert isinstance(value, ast.Dict) and {getattr(k, "value", None) for k in value.keys} == members, (
+            f"`{key}` carries {ast.unparse(value)!r}, excused for exactly {sorted(members)}")
+        reads = _table_refs(element)
+        assert not reads, f"`{key}` is excused as composed, but reads {sorted(reads)}"
+        elsewhere = {
+            c.value
+            for k, v in zip(builder.keys, builder.values) if v is not element
+            for c in ([k] if k is not None else [
+                c for n in ast.walk(v) if isinstance(n, ast.Dict) for c in n.keys])
+            if isinstance(c, ast.Constant)
+        } & names
+        assert not elsewhere, f"{sorted(elsewhere)} are excused inside `{key}` and spelled elsewhere too"
+        accounted |= names
+    return accounted
+
 # The tables an opaque `**` spread may draw from. Each name here MUST appear in
 # _MEMBER_REGISTERS below -- written-down members plus the producer mapping to compare them
 # against -- and the registers are asserted in BOTH DIRECTIONS by
@@ -1074,7 +1121,7 @@ def test_EVERY_key_the_ENVELOPE_EMITS_is_ACCOUNTED_FOR():
         f"literal -- do not leave the wire deciding it by element order."
     )
 
-    unaccounted = emitted - from_tables - _NOT_FROM_A_TABLE
+    unaccounted = emitted - from_tables - _NOT_FROM_A_TABLE - _composed_spread_keys(_builder_dict())
     assert not unaccounted, (
         f"these keys reach the /measure envelope and no arm in this file asserts them: "
         f"{sorted(unaccounted)}. If one reads a declaration table by a form "

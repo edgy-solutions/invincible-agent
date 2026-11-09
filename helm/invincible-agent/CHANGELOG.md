@@ -11,6 +11,14 @@
   case the id it minted (`task_opened`, the first task wins), the gateway asks the case for it and
   fills the draft card's `task_id` from the answer (absent when unanswered, never null), and saf's
   strict xfail is removed. Chris, 2026-11-07 (saf).
+- **engine-fin: with `FIN_DATASET_URN` set, the built-in measures read the asset as the caller**
+  (ruled 2026-11-08 (fin): that is what the flag means). They now carry the asset's provenance and
+  `data_source`, and a CDRL that sources one no longer refuses a program only the asset holds
+  with a 422. Over the asset, `fin_funding_status` is a 422 `not_in_model`, because the contract
+  carries no funding lines. A CA's `bac`, `wbs_id` and `obs_id`, and a work package's `bac` and
+  `technique`, are absent rather than placeholders. **Under the flag every `/package_export` is a
+  409** `asset_export_unsupported` until the recipient-reader ruling; the sandbox has the flag on.
+  With it unset nothing changes.
 
 ## 0.4.82 — 2026-11-08
 
