@@ -7,9 +7,10 @@ supersedes: 2026-11-08-handoff-lane-01-overnight-list-worked-0-4-82-waits-on-chr
 
 ## NOW
 
-**Nothing touches sandbox before the 16:00Z walk.** That is the architect's order. After the walk, 74 holds the
-roll lock for its 19:00Z rehearsal, and Lane 1 does not roll, fire or walk until 74 hands it back in writing.
-Lane 1 watches and holds nothing.
+**Nothing touches sandbox before the walk, now 14:00 CT (20:00Z; OpenDDIL's clear 19:00Z, pre-check 19:45Z).** That
+is the architect's order, with Chris's new time. After the walk, 74 holds the roll lock for its rehearsal, moved by
+Chris to 15:30 CT (21:30Z), and Lane 1 does not roll, fire or walk until 74 hands it back in writing. Lane 1 watches
+and holds nothing.
 
 The roll lock reads `free`. The Monday-morning note is placed:
 `sessions/2026-11-09-packet-to-architect-from-lane-01-monday-morning-0-4-82-is-live-and-what-readiness-still-needs.md`
