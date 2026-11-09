@@ -5736,7 +5736,7 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
             table=_load_domain_consumption_for_notice_parts(),
             can_view_program=_notice_parts_can_view_program,
         )
-    except Exception as exc:  # noqa: BLE001
+    except _VISIBILITY_OUTAGE as exc:  # NARROWED ON PURPOSE: a defect answers 500, see _VISIBILITY_OUTAGE
         raise HTTPException(status_code=503, detail=f"notice parts read failed: {exc}") from exc
 
 
