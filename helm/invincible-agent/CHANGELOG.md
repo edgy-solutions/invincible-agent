@@ -4,7 +4,8 @@
 
 Entries merged after the 0.4.82 cut (`98c824aa`). Cut on Chris's 11-09 word: "cut 0.4.83 tonight,
 do not roll". The cortex pin is the architect's ("0.4.83 cortex pin = db45763"), and the attestation
-change is ruled 2026-11-09.
+change is ruled 2026-11-09. The tag is held: "I tag 0.4.83 at the new head tomorrow after the walk"
+(Chris, 11-09). PRs merged before the tag ride this version, and their entries go under this heading.
 
 **What merged, and where each one is:**
 
@@ -22,6 +23,10 @@ change is ruled 2026-11-09.
 | #288 gov: #282's two missed commits | merged at `319b3af4`; policy |
 | #307, #308, #318 | docs and board only; nothing to carry |
 | cortex db45763 | below |
+| #310 engine-fin registers the verb in its `endpoint_url` path | merged at `57f16df2`, after the cut commit; through the images; below |
+| #322 the 503 seals find their sites by what they call | merged at `5fa0f3e4`, after the cut commit; through the images |
+| #323 gov: `arrives_as` and `label` on the nine kinds that have a row | merged at `8095d651`, after the cut commit; policy overlay |
+| dag-tools 0.13.0 | this PR; below |
 
 **Before this cut rolls** (not tonight: "do not roll"):
 
@@ -32,9 +37,8 @@ change is ruled 2026-11-09.
 
 **Not in this cut:**
 
-- **dag-tools 0.13.0.** It is on dag-tools' `release/0.13.0` branch only: not merged, not tagged and
-  not on PyPI. The pin stays at 0.11.0 until it is published. Its digest is taken at publish time.
-- **iagent-mesh v0.9.17.** It is not tagged, and the fleet stays on v0.9.15.
+- **iagent-mesh v0.9.17.** It was tagged at 03:49Z on 11-10. The fleet pin is gov's rail, and it
+  rides this version only if gov's PR merges before the tag. Until then the fleet stays on v0.9.15.
 - **ADR-0065 D, Lane 1's half** (the `obsolescence_resolution` workflow row and the runner-side
   trigger) is not built. #314 ships the deciders' rail it will read.
 
@@ -65,7 +69,42 @@ validates, promotes and exports it.
   and arm64. The short tag and an altered digest give 404.
 - Until this cut rolls, the live card still hides Promote from the dropper.
 
-Entries merged after the 0.4.82 cut. The chart version is not bumped until the cut.
+**dag-tools 0.13.0 (tag at `bed53b9`)** (the architect, via Chris: "dag-tools pin for 0.4.83 is
+0.13.0")
+
+- **What moves:**
+  - the root `pyproject.toml` pin, `edgy-dag-tools==0.13.0`; the lock moves that one package only;
+  - `central-gateway` → `sha256:9c9a99ee…`;
+  - `user-deployment` → `sha256:d385757d…`;
+  - the brokered-read seal (below).
+- **The digests were read 11-10 by Docker-Content-Digest:**
+  - `:0.13.0`, `:0.13` and `:sha-bed53b9` resolve to the same index for both images, with
+    linux/amd64 and linux/arm64. This is the first release since dag-tools #16 in which the tag and
+    the commit build are one artifact.
+  - A tag that does not exist gives 404.
+- **What 0.13.0 adds over 0.11.0:**
+  - #31: a broker ticket names which read it is and over what version of the data.
+  - #32: the `ev_fixture` demo rows a governed read is supposed to refuse, one per contract rule.
+  - From 0.12.0, which this repo never pinned:
+    - the `ev_fixture` status period and reported estimate;
+    - the query tag (`dag_tools.audit.tag`, the tagged warehouse resource that refuses to send a
+      read with no principal) and the read audit;
+    - classification label propagation through column lineage;
+    - the otel-api-sync concurrency cap;
+    - contract-mapping;
+    - the qual probe work.
+  - No owner packet for 0.13.0 has reached Lane 1, so which of these are inert for this chart is
+    not measured here.
+- **The brokered-read seal turns on.** `tests/test_every_brokered_read_carries_a_principal.py` held
+  its arms behind xfail markers conditioned on `dag_tools.audit.tag`, the tagged warehouse resource
+  and the gateway identity module being absent. 0.13.0 ships all three.
+  - A marker like that switches itself off when the pin moves and never reports an XPASS, so the
+    markers are removed. The arms now run unconditionally: five pass.
+  - The observe-posture arm (an authorize naming nobody hands the broker `subject=None`) stays a
+    strict xfail on the code.
+- **Not moved:** `agent_fleet/finance_agent` (v0.10.0) and `agent_fleet/data_analyst` (the pre-rename
+  SHA) pin dag-tools in their own projects.
+- **The roll:** after it, re-materialise `ev_fixture` and the three refusal assets (the list above).
 
 - **A foreign delegate's attach is refused as `delegate_not_seeder`.** Chris, 2026-11-07 (saf):
   the code is `delegate_not_seeder`, in `detail["error"]`. #289 refused it as
