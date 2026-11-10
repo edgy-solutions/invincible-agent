@@ -7,6 +7,20 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-10 ~19:45Z: 0.4.84 IS ROLLED (revision 230) AND 1010'S EPISODE IS FREE.**
+- Chris: "Topaz synced at f9fa4d7b. Diff approved. Roll 0.4.84, then release on 9062f943's episode".
+- The roll ran from `wt\01\rel484`, the tag tree. All pods are ready, and engine-a is on `ec4735ed…`. The roll lock is released.
+- `CaseEpisode/ep-292a06284244b860fca1eb512c6f1dd6/release` answered 200.
+  - After it: `open`, `holder` and `revision` are absent, `last_closed` = 9062f943, and `occurrences:9062f943` is kept.
+  - The next occurrence of 1010's fault opens a NEW case, with predecessor 9062f943.
+- **NAMED LANDMINE (accepted by Chris, 11-10): `WorkflowRunner/9062f943-9b93-574c-bdf0-6497175c9e1f` `run` and `~5` stay
+  SUSPENDED for ever. Never cancel, kill or signal either.**
+  - Killing `~5` wakes the parent, whose except branch records the case as "failed".
+  - Killing the parent starts the 30-day purge of the case record.
+  - Signalling `~5` (`tier_ack`) replays its October journal on new code.
+- Old failed Jobs `pcn-gate-preroll-*` (12d, 8d and 2d old) are not this roll's. Not read.
+- Not done (no word yet): re-materialise `ev_fixture` and the three refusal assets.
+
 **11-10 ~18:20Z: 0.4.84 IS CUT AND TAGGED; the next step is Chris's Topaz sync and roll.**
 
 The architect's sequence: cut 0.4.84 → Chris's Topaz sync (obsolescence-deciders) → values diff → roll → `release` on
