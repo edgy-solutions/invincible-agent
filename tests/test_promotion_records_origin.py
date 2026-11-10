@@ -63,8 +63,9 @@ class Graph:
         self.facts.append((iid, fact))
         self.writes += 1
 
-    def attest_origin(self, iid, *, owner_domain, record_id):
+    def attest_origin(self, iid, *, owner_domain, record_id, attested_by="", self_attested=None):
         self.attests.append((iid, owner_domain, record_id))
+        self.attest_kw = {"attested_by": attested_by, "self_attested": self_attested}
         return self.outcome
 
     def delete_carrying(self, iid):
@@ -169,7 +170,20 @@ def test_the_store_writes_exactly_the_three_origin_properties_and_the_SDK_accept
            evidence=(payload["origin_evidence"],))
 
 
-# ── 2. the keep rule ──────────────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize("self_attested", [True, False])
+def test_the_store_names_WHO_attested_and_whether_they_dropped_it(self_attested):
+    """Ruled 2026-11-09: the origin record names who attested, so a later second-approval stage
+    can find the self-attested notices on the node."""
+    graph, state = _home({INGEST_ID: {}})
+    assert graph.attest_origin(INGEST_ID, owner_domain="SUSTAINMENT", record_id="dr-1",
+                               attested_by="steward-1", self_attested=self_attested) == "written"
+    ((_, _, _, payload),) = state.write_node_calls
+    assert payload["origin_attested_by"] == "steward-1"
+    assert payload["origin_self_attested"] is self_attested
+    assert state.nodes[INGEST_ID]["origin_self_attested"] is self_attested
+
+
+# ── 2. the keep rule──────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("rung,outcome,writes", [
     ("record", "kept_record", 0), ("steward", "kept_steward", 0),
@@ -199,7 +213,9 @@ def test_a_REJECTION_writes_no_origin():
 
 @pytest.mark.parametrize("dropped_by", [
     {"authz_id": "bob"}, {"authz_id": "alice", "on_behalf_of": "bob"}])
-def test_the_DROPPER_cannot_promote_403_before_the_ledger_and_the_graph(dropped_by):
+def test_the_DROPPER_cannot_promote_403_before_the_ledger_and_the_graph(dropped_by, monkeypatch):
+    # The refusal is the `second_party` rule (ruled 2026-11-09); under `self` the dropper may promote.
+    monkeypatch.setattr(promotion, "_declared_attestation", lambda ck: "second_party")
     ledger, graph = Ledger(), Graph()
     with pytest.raises(promotion.PromotionRefused) as ei:
         _act(_stores(ledger, graph), payload={**PAYLOAD, "dropped_by": dropped_by})

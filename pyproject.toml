@@ -49,12 +49,12 @@ dependencies = [
     # does not match given name `dag-tools`"), pip tolerates it. A Windows venv installed before
     # the rename kept working, so the break surfaced only on a fresh resolve — the floating-ref
     # failure mode exactly. Pinned to one release (never a floating ref); the import name is still
-    # `dag_tools`. 0.11.0 (PyPI, built from 4924235) ships `central_gateway/gateway_routes.json`,
+    # `dag_tools`. 0.13.0 (PyPI, tag at bed53b9) ships `central_gateway/gateway_routes.json`,
     # which policy/sync/validate_policy.py reads for the gateway door's delegatable routes
     # (01M6KF8279KZ843KG5MMM0R3YH).
     # NOTE: agent_fleet/data_analyst pins the pre-rename SHA 61cbfa92, and agent_fleet/finance_agent
     # pins v0.10.0, each in its own project. See the two-dists-one-module hazard if both land in one env.
-    "edgy-dag-tools==0.11.0",
+    "edgy-dag-tools==0.13.0",
     # PROMOTED from the dev group 2026-08-07. The projector and the sandbox domain broker are
     # mesh services that ship in the iagent image and now take the SDK's inbound transport-auth
     # dependency, so `iagent_mesh` must be present at RUNTIME. As a dev-only dependency it
@@ -108,7 +108,8 @@ agent-fleet = [
     "httptools",
     "hypercorn",
     "python-dotenv",
-    "langfuse",
+    # >=4.7.0,<5: older SDKs lag the v2 observations read by ~15 min (perf, 2026-11; architect 11-10: "langfuse >= 4.7.0 in the root lock").
+    "langfuse>=4.7.0,<5",
     # PINNED EQUAL to agent_fleet/cost_agent/pyproject.toml: the package page carries the .duckdb
     # file's sha256, and a test venv on another duckdb version verifies a container the engine
     # never writes. Before this line the importorskip("duckdb") sites skipped in every lane venv.

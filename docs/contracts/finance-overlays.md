@@ -68,9 +68,11 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 | `outputs` | What "undefined" means. It names no result type: every declared measure is a `fin:DeclaredMeasureSeries`. |
 | `render` | How the result is drawn: the shape, the one series (and its unit), the value label, and a target line. |
 | `policy` | Who may see it, who approved it, and why. |
+| `menu` | Optional. Where the card sits on the menu: what it places, the card it draws as, and who it fits. |
 
 **A second kind of row: a dataset row.** A row whose `inputs` holds `dataset` instead of `state` is
-a flow decomposition: it reads named columns of one asset and answers once, with an edge table.
+drawn one of two ways. Drawn as `FLOW_DECOMPOSITION`, it reads named columns of one asset and answers once,
+with an edge table (below); drawn as `MULTI_SERIES`, it answers with a row per period (the next part).
 Design: `docs/plans/fin-variance-decomposition.md`. It uses the same top-level keys, with these
 differences under `inputs` and `render`:
 
@@ -89,8 +91,8 @@ differences under `inputs` and `render`:
   two or more siblings collapse into an "All other" sink. `0` collapses nothing.
 - `inputs.state` is refused, and the module's function takes exactly the keyword-only `root`,
   `paths` and `other_threshold`.
-- `render.shape` is `FLOW_DECOMPOSITION` (a state row is `MULTI_SERIES`, and a mismatch is refused
-  either way); `render.series` is not required.
+- `render.shape` is `FLOW_DECOMPOSITION` (a state row is always `MULTI_SERIES`, and a state row drawn
+  as a flow is refused); `render.series` is not required.
 - Each edge carries `sign`, one of `"positive"`, `"negative"` or `"zero"` (the sign of the child's
   signed net), and `value`, its absolute value. A child that nets to exactly zero IS emitted
   (`value` 0, `sign` `"zero"`, `node_kind` `"item"`) and its subtree is walked, so every level
@@ -106,6 +108,39 @@ differences under `inputs` and `render`:
   by matching the label.
 - A level value named "All other" under a parent that gets a sink is a 502 `asset_contract_violation`
   with rule `refused_by_module`; the message names no row value.
+
+**A dataset row drawn as series.** A dataset row whose `render.shape` is `MULTI_SERIES` reads its
+asset the same way (as the caller, its own URN, `program_id` only, `window` refused) but answers
+with one row per period instead of an edge table. The fixtures
+`tests/finance/fixtures/measure_verbs/fin_ev_cumulative.yaml` and `fin_eac_trend.yaml` are the
+worked examples. The differences from a flow row:
+
+- `inputs.dataset` holds `urn`, `banner`, `scope` (the column the read filters to `program_id`),
+  `period` (the x axis), optionally `status` (the column naming the period the program is reported
+  through), `per_period` and `per_program`. `levels`, `value`, `per_path` and
+  `inputs.other_threshold` are refused.
+- `per_period` maps a function keyword to a numeric column, summed exactly over the program's rows
+  at each period. It must have at least one entry. `per_program` maps a keyword to a numeric column
+  that holds one value across the program's rows. A keyword is a lower-case identifier other than
+  `period`, it appears in one map only, and no column is named twice.
+- A `per_program` column, or the `status` column, that differs between the program's rows is a 502
+  `asset_contract_violation` with rule `varies_within_scope`. A period or a status outside the
+  fiscal calendar is `period_outside_calendar`. A message names the rule and the column, never a
+  value.
+- The function takes exactly the keyword-only `periods`: a list, in calendar order, of one mapping
+  per period holding `period` and each keyword's Decimal. It returns one mapping per period whose
+  keys are exactly the series keys, each a Decimal. The module declares `READS[function]` (the
+  keywords it reads) and `SERIES[function]` (the keys it returns). The row's keywords must equal
+  `READS`, and its `render.series` keys must equal `SERIES`, or the row is refused at load. A
+  running sum is the module's: the reader sums only within a period.
+- `render.series` is required, and each entry is the SDK's `MeasureSeries` (`key`, `label`,
+  optional `unit`, `cumulative`). The series share one unit. `cumulative: true` says the module
+  served a running total, so a renderer must not sum it again. `render.target` is the SDK's
+  `MeasureSeriesReference`: a constant `value`, or `series` naming a declared key (a state row's
+  target is always a value).
+- Each served row carries `period`, each series key (money as a cent float with `<key>_exact`
+  beside it when the series has a unit, a ratio when it has none) and `inputs`. The envelope adds
+  `series`, `reference` and, when the row names a status column, `status_period` from the data.
 
 The worked example, copied from the sample file. TCPI (to-complete performance index) is the
 efficiency the remaining work must achieve to finish on budget.
@@ -192,6 +227,18 @@ board draws the declared shape even though the shared class is on no menu. A row
 is refused at load; a result that is served with none is shown to the viewer as its raw fields.
 `outputs.archetype`, `outputs.series` and `outputs.reference` were the old layout and are refused,
 with a message naming `render.shape`, `render.series` and `render.target`.
+
+**Menu.** Optional. A row with a `menu:` block declares its own menu placement, which the BFF serves
+and the board reads; no menu entry is written anywhere else. It holds exactly four keys:
+
+| key | what it holds |
+|---|---|
+| `subject` | `fin:DeclaredMeasureSeries`, the class the row produces. Any other value is refused. |
+| `archetype` | The mesh class of `render.shape`: `mesh:FlowDecomposition` for `FLOW_DECOMPOSITION`, `mesh:MultiSeries` for `MULTI_SERIES`. Any other value is refused. |
+| `persona_fit` | A non-empty list of personas the card suits. It ranks; it grants nothing. |
+| `domain_fit` | A non-empty list of domains the card suits, each one of `policy.cells` (a domain outside them is refused: its callers cannot open the measure). |
+
+The two sample flow rows declare one, for `PROGRAM_FINANCE_ANALYST` in `PROGRAM_FINANCE`.
 
 **Policy.** `status` is `sample`, `proposed` or `ratified`. `cells` is a non-empty list of access
 DOMAINS (the entitlement matrix is persona by domain; the sample uses `PROGRAM_FINANCE`), and it is

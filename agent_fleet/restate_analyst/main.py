@@ -2523,6 +2523,11 @@ async def _run_definition(
                 lambda t=task, k=step_kind, c=(case or {}).get("case_id"): _register_human_task(
                     workflow_id, t, k, c),
             )
+            # Tell the case the id it just minted, so the door can ask the case for it (the first
+            # task wins) instead of deriving the format.
+            if workflow_service == "WorkflowRunner" and (case or {}).get("case_id"):
+                await ctx.workflow_call(
+                    task_opened, key=case["case_id"], arg={"task_id": task["id"]})
             # ── THE DEADLINE RACE, AND IT IS DURABLE ON BOTH ARMS ──────────────────────────────
             #
             # No `deadline_seconds` means wait forever — today's behaviour, and the default stays
@@ -2892,6 +2897,11 @@ async def _run_definition(
             # it disposes nothing.
             if step.disposes is not None:
                 results[-1]["disposition"] = step.disposes
+                # A DISPOSING EMIT ENDS THE DEFINITION (ruled 2026-11-10): the decision is made
+                # and sent, so the instance returns its outcome now. A step after it would keep
+                # a decided case's workflow alive -- October's maint_release emitted `released`
+                # and then waited on a `tier_ack` nobody sends, which held its episode open.
+                break
 
     # ── THE TERMINAL OUTCOME, AND WHY IT IS NOT `status` ──────────────────────────────────────
     #
@@ -4268,10 +4278,11 @@ except ImportError:
 # every definition its own instance. Generic: what it runs is entirely triggers, decision tables
 # and definitions under policy/. Registered unconditionally, for the reason SafetyAcceptance is.
 try:
-    from workflow_runner import case_episode, workflow_runner  # noqa: E402  — container path
+    from workflow_runner import case_episode, task_opened, workflow_runner  # noqa: E402  — container path
 except ImportError:
     from agent_fleet.restate_analyst.workflow_runner import (  # noqa: E402
         case_episode,
+        task_opened,
         workflow_runner,
     )
 

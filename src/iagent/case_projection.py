@@ -59,6 +59,10 @@ never guessed, and never emitted empty to look present (an empty list claims "th
   ``episode`` key (source ``derived``); ``None`` for both when the case has no episode.
 
 ``predecessor``: the closed case this one follows on its episode; ``None`` when it has none.
+
+``intake``: the label of the case's ``received`` row, as the trigger the case opened on declares
+  it (``intake:``), stamped on the case at open. The KEY IS OMITTED when the trigger declares
+  none, and for a case opened before the runner stamped it.
 """
 from __future__ import annotations
 
@@ -398,6 +402,8 @@ def project_workflow_case(case: dict, definitions: dict[str, Any], task_rows: li
         "approvals": project_approvals(case, task_rows),
         "output_artifact": output_artifact,
     }
+    if case.get("intake"):
+        out["intake"] = case["intake"]
     options = project_options(case, task_rows)
     if options is not None:
         out["options"] = options
