@@ -40,8 +40,9 @@ those answers.
 The dropper may promote under `self`; the 403 fires only under `second_party`. The task payload carries
 `attestation {mode, excluded}`. Ingest API 1.9.0. The seam `_declared_attestation` returns None until gov names the
 row (packet in master `sessions/`, 11-10). Cortex has a packet in `cortex-ui/sessions/`. The architect owes a word on
-the one choice in the PR body: a task keeps the mode it was filed under. Next: read CI, then
-`join-ratchet.sh 324`, then `train-one2.sh 324`.
+the one choice in the PR body: a task keeps the mode it was filed under. **Merged** at `de1873c2`
+(second parent `dc0fdc40`, on master; CI 20 green and 3 skipped, join ratchet 24 passed). It ships in 0.4.83, which
+also needs Cortex's card change pinned: until then the card still hides Promote from the dropper.
 
 ## Next, in order
 
