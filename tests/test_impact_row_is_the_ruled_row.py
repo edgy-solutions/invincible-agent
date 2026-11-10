@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from agent_fleet.ontology_service import where_used as w
 from agent_fleet.ontology_service.where_used import ImpactRow
 
 ADR = next((Path(__file__).resolve().parents[1] / "docs/adr").glob("ADR-0065-*.md"))
@@ -44,7 +45,7 @@ def test_ABSENT_POPULATION_AND_STOCK_DEFAULT_TO_NONE_NOT_ZERO():
     assert r.population is None and r.stock is None
 
 
-def test_TRIPWIRE_THE_SDKS_IMPACT_ROW_ONCE_IT_IS_THE_RULED_ONE_REPLACES_THE_LOCAL_COPY():
+def _sdk_impact_row():
     sdk = None
     for mod in ("iagent_mesh", "iagent_mesh.contracts"):
         try:
@@ -52,7 +53,42 @@ def test_TRIPWIRE_THE_SDKS_IMPACT_ROW_ONCE_IT_IS_THE_RULED_ONE_REPLACES_THE_LOCA
         except ImportError:
             continue
         sdk = getattr(m, "ImpactRow", None) or sdk
-    fields = list(getattr(sdk, "model_fields", {})) if sdk is not None else []
-    if fields != _ruled_fields():
-        pytest.skip("the SDK has no ImpactRow, or one of the old shape")
-    pytest.fail("re-export the SDK's ImpactRow")
+    return sdk
+
+
+def _served_rows():
+    """The rows the shipped fixture serves, every program visible."""
+    ds = w.load_dataset(Path(__file__).resolve().parents[1] / w.SHIPPED_LOCATOR)
+    part = next(i for i, v in ds.identities.items()
+                if any(str(a.get("value", "")).endswith("PN-1001") for a in v.get("aliases", [])))
+    got = w.where_used(ds, part, caller_id="t", can_view_program=lambda p, c: True)
+    assert got["status"] == "ok", got
+    return got["where_used"]
+
+
+def test_THE_SDKS_IMPACT_ROW_HAS_THE_RULED_FIELDS():
+    sdk = _sdk_impact_row()
+    if sdk is None:
+        pytest.skip("the SDK has no ImpactRow")
+    assert list(sdk.model_fields) == _ruled_fields()
+
+
+def test_TRIPWIRE_THE_SDKS_ROW_CANNOT_CARRY_A_SERVED_ROW_AND_ONLY_ITS_PROVENANCE_IS_WHY():
+    """v0.9.17's `DataProvenance` is one `{dataset_urn, as_of, ticket_id}` triple, each a required
+    string. A served row has one provenance entry per input, and the shipped fixture states no
+    dataset URN (no catalogue entry) and no ticket (no broker read). Re-exporting would mean
+    inventing those values, so the local row stays. When the SDK's row accepts a served row as
+    it is, this fails: re-export it then. A refusal outside `data_provenance` fails too."""
+    sdk = _sdk_impact_row()
+    if sdk is None:
+        pytest.skip("the SDK has no ImpactRow")
+    rows = _served_rows()
+    assert rows
+    for row in rows:
+        try:
+            sdk(**row)
+        except ValidationError as e:
+            outside = [x["loc"] for x in e.errors() if x["loc"][:1] != ("data_provenance",)]
+            assert not outside, f"the SDK row refuses a served row outside its provenance: {outside}"
+        else:
+            pytest.fail("the SDK's ImpactRow now carries a served row: re-export it")
