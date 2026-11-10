@@ -14,5 +14,7 @@ type: application
 # A merge that brings helm/** changes in counts as a chart change, but not as a Chart.yaml edit
 # (git log drops a merge that is TREESAME to one parent). Bump after the merge, not before it.
 # 0.4.81 = 73d18c23..2ebb91d0 (#280, #289), cut 2026-11-07.
-version: 0.4.83
+# 0.4.84 = 3a23fce4..27d59a39 (#310, #322, #323, #328, #312, #332), cut 2026-11-10. 0.4.83 (tag at
+# 3a23fce4) lacks the walk hotfix and never rolls (architect, 2026-11-10).
+version: 0.4.84
 appVersion: "2026.07.02"
