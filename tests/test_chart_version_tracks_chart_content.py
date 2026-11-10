@@ -84,7 +84,7 @@ def _pending_bump(chart_yaml: str, changelog: str, is_published) -> str | None:
 
 def _git(*args: str) -> str:
     return subprocess.run(
-        ["git", *args], capture_output=True, text=True, check=False
+        ["git", *args], capture_output=True, text=True, encoding="utf-8", check=False
     ).stdout.strip()
 
 
@@ -234,7 +234,7 @@ def test_an_UNCOMMITTED_chart_change_is_caught_before_it_is_committed():
     # instrument defect.
     proc = subprocess.run(
         ["git", "status", "--porcelain", "--", _CHART_DIR],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, encoding="utf-8", check=False,
     )
     if not proc.stdout.strip():
         pytest.skip("no uncommitted chart changes in this working tree")
