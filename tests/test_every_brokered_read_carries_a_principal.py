@@ -10,11 +10,12 @@ PINNED SOURCES (derived, not typed here):
     (`dag_tools.domain_broker.main.ResolveRequest.subject`), the identity the credential is
     minted for. The returned ticket carries no principal field of its own.
 
-THE CODE LIVES IN dag-tools, not here. The version this repo pins (edgy-dag-tools 0.11.0) predates
-the tag module and the tagged warehouse resource, so every arm below is a STRICT xfail while that is
-true, and the body is run against a dag-tools checkout (PYTHONPATH) to prove it. When the pin moves
-to a release that carries them the xfail goes XPASS and the strict marker FAILS the run: remove the
-marker then, which turns the seal on. Nothing in dag-tools is edited from here. Fixtures are
+THE CODE LIVES IN dag-tools, not here. The version this repo pins (edgy-dag-tools 0.13.0) carries
+the tag module, the tagged warehouse resource and the gateway identity module, so every arm runs
+unconditionally against the installed package. Until 0.13.0 the arms sat behind xfail markers whose
+CONDITION was "the module is absent": a marker like that switches itself off when the pin moves and
+never reports an XPASS, so the seal turned on silently. They are gone; a pin that loses a module
+now fails here on the import. Nothing in dag-tools is edited from here. Fixtures are
 synthetic: no real database, schema, table, program or level names (ADR-0064's standing rule).
 
 Arms:
@@ -25,7 +26,7 @@ Arms:
            code, with a packet);
   agree    the principal's value in the tag is the ticket's subject for the same read.
   identity the ticket the broker mints and the gateway relays carries `ticket_id`, `issued_at` and
-           `as_of` (dag-tools 62581a65, #31: `dag_tools.domain_broker.ticket_identity`, stamped at
+           `as_of` (dag-tools #31, in 0.13.0: `dag_tools.domain_broker.ticket_identity`, stamped at
            `resolve_asset`; the names are `TicketIdentity.fields()`'s, read from that code). The
            gateway's TICKET_ISSUED line names the ticket id against the principal it minted for,
            and that principal is the tag's. `as_of` is the data's version and `issued_at` the
@@ -46,18 +47,6 @@ def _present(dotted: str) -> bool:
     except (ImportError, ValueError):
         return False
 
-
-_HAVE_TAG = _present("dag_tools.audit.tag") and _present("dag_tools.resources.warehouse")
-_HAVE_GATEWAY = _present("dag_tools.central_gateway.identity")
-_HAVE_IDENTITY = _present("dag_tools.domain_broker.ticket_identity")
-
-_PIN = ("the pinned edgy-dag-tools predates dag_tools.audit.tag / the tagged warehouse resource / "
-        "the gateway identity module; the body is proven against a dag-tools checkout")
-needs_tag = pytest.mark.xfail(condition=not _HAVE_TAG, strict=True, reason=_PIN)
-needs_gateway = pytest.mark.xfail(condition=not _HAVE_GATEWAY, strict=True, reason=_PIN)
-needs_identity = pytest.mark.xfail(condition=not _HAVE_IDENTITY, strict=True, reason=(
-    "the pinned edgy-dag-tools predates dag_tools.domain_broker.ticket_identity (dag-tools#31); "
-    "the body is proven against a dag-tools checkout"))
 
 PIPE = "synthetic-pipeline"
 PERSON = "person-1@example.test"
@@ -87,14 +76,12 @@ def _principal_on_the_wire(plan):
     return attribution.principal, kind, value
 
 
-@needs_tag
 def test_a_pipeline_read_carries_the_pipeline_principal_in_the_query_tag():
     from dag_tools.audit.tag import PIPELINE, pipeline_principal
     principal, kind, value = _principal_on_the_wire(_resource(pipeline_name=PIPE).plan("SELECT 1"))
     assert (principal, kind, value) == (pipeline_principal(PIPE), PIPELINE, PIPE)
 
 
-@needs_tag
 def test_an_on_behalf_of_read_carries_the_verified_caller_in_the_query_tag():
     from dag_tools.audit.tag import ON_BEHALF_OF, on_behalf_of_principal
     bound = _resource(pipeline_name=PIPE).for_user(PERSON)
@@ -102,7 +89,6 @@ def test_an_on_behalf_of_read_carries_the_verified_caller_in_the_query_tag():
     assert (principal, kind, value) == (on_behalf_of_principal(PERSON), ON_BEHALF_OF, PERSON)
 
 
-@needs_tag
 def test_a_resource_with_no_principal_refuses_rather_than_sends_an_unattributed_read():
     from dag_tools.audit.warehouse import UntaggedQuery
     with pytest.raises(UntaggedQuery):
@@ -178,7 +164,6 @@ def _authorize(client, caller_email, **headers):
                        headers={"Authorization": f"Bearer {_token(caller_email)}", **headers})
 
 
-@needs_gateway
 def test_an_authorize_naming_a_person_hands_the_broker_that_person(monkeypatch):
     sent, client = _gateway_world(monkeypatch)
     r = _authorize(client, "svc-reader@example.test", on_behalf_of=PERSON)
@@ -197,8 +182,6 @@ def test_an_authorize_naming_nobody_still_hands_the_broker_a_principal(monkeypat
 
 
 # --------------------------------------------------------------------------- the two agree
-@needs_tag
-@needs_gateway
 def test_the_tags_principal_value_is_the_tickets_subject_for_the_same_read(monkeypatch):
     sent, client = _gateway_world(monkeypatch)
     assert _authorize(client, "svc-reader@example.test", on_behalf_of=PERSON).status_code == 200
@@ -237,8 +220,6 @@ def _issued_line(caplog) -> dict:
     return dict(p.split("=", 1) for p in lines[0].split()[1:])
 
 
-@needs_identity
-@needs_gateway
 @pytest.mark.parametrize("field", ["ticket_id", "issued_at", "as_of"])
 def test_a_brokered_ticket_the_gateway_relays_carries_the_identity_field(monkeypatch, field):
     sent, client = _gateway_world(monkeypatch, _real_broker(monkeypatch, snapshot_id=_ADVERTISED_VERSION))
@@ -249,8 +230,6 @@ def test_a_brokered_ticket_the_gateway_relays_carries_the_identity_field(monkeyp
     assert ticket[field], f"`{field}` is empty"
 
 
-@needs_identity
-@needs_gateway
 def test_the_identity_fields_say_which_read_when_and_over_what_version(monkeypatch):
     from datetime import datetime
     sent, client = _gateway_world(monkeypatch, _real_broker(monkeypatch, snapshot_id=_ADVERTISED_VERSION))
@@ -262,8 +241,6 @@ def test_the_identity_fields_say_which_read_when_and_over_what_version(monkeypat
     assert first["as_of"] != first["issued_at"]  # the data's version is not the clock
 
 
-@needs_identity
-@needs_gateway
 def test_an_absent_as_of_is_none_never_the_issue_time(monkeypatch):
     sent, client = _gateway_world(monkeypatch, _real_broker(monkeypatch))
     ticket = _authorize(client, "svc-reader@example.test", on_behalf_of=PERSON).json()
@@ -271,9 +248,6 @@ def test_an_absent_as_of_is_none_never_the_issue_time(monkeypatch):
     assert ticket["issued_at"], "the issue time is still stamped"
 
 
-@needs_identity
-@needs_tag
-@needs_gateway
 def test_the_principal_the_ticket_is_minted_for_is_the_tags_principal_for_the_same_read(
         monkeypatch, caplog):
     """The ticket carries no principal field; the principal it is minted for is the `subject` the
