@@ -680,7 +680,32 @@ _NOT_FROM_A_TABLE = frozenset({"measure", "data_provenance", "rows", "artifact_i
 # Named WITH its members, and `_composed_spread_keys` checks the shape rather than trusting the
 # name: exactly one element, `{}` on one branch and only this key on the other, the members
 # exactly these, no table read, and none of the names spelled anywhere else in the builder.
-_COMPOSED_SPREAD = {"data_source": frozenset({"kind", "urn"})}
+# Widened 2026-11-09 with `reason` and `ratified_by` (ruled: a row declaring `source: seed` keeps
+# answering from the seed under the flag, and says why). The value is now composed one call away,
+# in `_SOURCE_COMPOSER`, so the check follows the name there: every dict it returns carries `kind`,
+# and together they carry exactly these members -- a key added there reds here.
+_COMPOSED_SPREAD = {"data_source": frozenset({"kind", "urn", "reason", "ratified_by"})}
+_SOURCE_COMPOSER = "_measure_source"
+
+
+def _composer_dicts(name: str) -> list[ast.Dict]:
+    """The `data_source` dicts `_SOURCE_COMPOSER` returns: the second element of each `return
+    (state, source)`. A return of any other shape, or a dict that is not a literal, reds."""
+    fns = [n for n in ast.walk(ast.parse(_main_src()))
+           if isinstance(n, ast.FunctionDef) and n.name == _SOURCE_COMPOSER]
+    assert len(fns) == 1, f"`{name}` is composed by `{_SOURCE_COMPOSER}`, found {len(fns)}"
+    found = []
+    for ret in (n for n in ast.walk(fns[0]) if isinstance(n, ast.Return)):
+        assert isinstance(ret.value, ast.Tuple) and len(ret.value.elts) == 2, (
+            f"`{_SOURCE_COMPOSER}` returns {ast.unparse(ret.value)!r}, not `(state, source)`")
+        source = ret.value.elts[1]
+        if isinstance(source, ast.Constant) and source.value is None:
+            continue
+        assert isinstance(source, ast.Dict), (
+            f"`{_SOURCE_COMPOSER}` returns source {ast.unparse(source)!r}, not a literal dict")
+        found.append(source)
+    assert found, f"`{_SOURCE_COMPOSER}` returns no source dict"
+    return found
 
 
 def _composed_spread_keys(builder: ast.Dict) -> set[str]:
@@ -705,8 +730,12 @@ def _composed_spread_keys(builder: ast.Dict) -> set[str]:
         assert [getattr(k, "value", None) for k in outer.keys] == [key], (
             f"`{key}`'s branch carries {ast.unparse(outer)!r} -- only `{key}` is excused there")
         value = outer.values[0]
-        assert isinstance(value, ast.Dict) and {getattr(k, "value", None) for k in value.keys} == members, (
-            f"`{key}` carries {ast.unparse(value)!r}, excused for exactly {sorted(members)}")
+        dicts = _composer_dicts(value.id) if isinstance(value, ast.Name) else [value]
+        assert all(isinstance(d, ast.Dict) for d in dicts), (
+            f"`{key}` carries {ast.unparse(value)!r}, not a dict")
+        spelled = [{getattr(k, "value", None) for k in d.keys} for d in dicts]
+        assert all("kind" in s for s in spelled) and set().union(*spelled) == members, (
+            f"`{key}` carries {[sorted(s) for s in spelled]}, excused for exactly {sorted(members)}")
         reads = _table_refs(element)
         assert not reads, f"`{key}` is excused as composed, but reads {sorted(reads)}"
         elsewhere = {

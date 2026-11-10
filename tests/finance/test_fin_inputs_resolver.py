@@ -31,7 +31,7 @@ for _p in (REPO, REPO / "src", REPO / "scripts"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from agent_fleet.finance_agent import asset_inputs, measure_verbs, seed  # noqa: E402
+from agent_fleet.finance_agent import asset_inputs, measure_verbs, seed, state_codec  # noqa: E402
 from agent_fleet.finance_agent import main as engine  # noqa: E402
 from agent_fleet.finance_agent.entities import FISCAL_PERIODS, NotInModel  # noqa: E402
 
@@ -640,17 +640,60 @@ def test_a_package_without_the_grant_is_a_403_before_anything_is_read_measured_o
     assert asked == [] and spy == [] and built == [], "the grant is asked before anything else"
 
 
-def test_a_package_with_a_funding_panel_is_a_422_and_nothing_is_built(client, seam, built):
-    """RULED: funding over the asset is a 422, never zero rows, and a package with a panel silently
-    missing is worse than a refusal."""
-    seam.frame = frame_of().lazy()
+def _with_funding_panel():
     body = _package_body(builtin_only=True)
     body["canvas"]["panels"].append({"panel": 1, "verb": "mesh:finFundingStatus",
                                      "params": {"program_id": PROGRAM}})
+    return body
+
+
+def test_a_package_with_a_seed_sourced_funding_panel_builds_over_one_mixed_state(
+        client, seam, spy, built):
+    """RULED 2026-11-09: the source is declared per ROW. Funding's row says `source: seed`, so
+    program_finance's funding panel reads the seed beside asset panels, and the package says which
+    panel is notional and why. The frame doubles ACWP, so the carried facts are the asset's."""
+    frame = frame_of().with_columns((pl.col("acwp") * 2).alias("acwp"))
+    seam.frame = frame.lazy()
+    r = package_post(client, _with_funding_panel())
+    assert r.status_code == 200, r.text
+    reason = engine.SOURCES["fin_funding_status"].source_reason
+    sources = {fn: env["data_source"] for fn, env in spy}
+    assert sources["fin_funding_status"]["kind"] == "seed"
+    assert sources["fin_performance_indices"] == {"kind": "asset", "urn": URN}
+
+    kw = built[0]
+    state = kw["state"]
+    expected = asset_inputs.state_from_rows(frame, PROGRAM)
+    assert {f.period: f.acwp for f in state.facts} == {f.period: f.acwp for f in expected.facts}, (
+        "the carried collections are the asset's")
+    assert state.funding and state.funding == state_codec.narrow(seed.build_seed(), PROGRAM).funding, (
+        "the uncarried collections are the seed's copy of THIS program")
+    assert kw["program_source"] == {"kind": "asset", "urn": URN,
+                                    "seeded": {"fin_funding_status": reason}}
+    assert kw["data_provenance"].startswith(asset_inputs.provenance(URN))
+    assert "fin_funding_status" in kw["data_provenance"] and reason in kw["data_provenance"]
+    assert seed.notional_banner() in kw["data_provenance"]
+
+
+def test_a_package_of_only_seed_sourced_panels_asks_the_asset_nothing(client, seam, built):
+    """A seed-sourced panel reads no asset, so it needs no grant on one: refused here, and the
+    package still builds over the seed with no source."""
+    seam.raises = NotEntitled("the gate refused")
+    body = _with_funding_panel()
+    body["canvas"]["panels"] = [p for p in body["canvas"]["panels"] if p["verb"] == "mesh:finFundingStatus"]
     r = package_post(client, body)
-    assert r.status_code == 422, r.text
-    assert "funding" in r.json()["detail"]["not_in_model"]
-    assert built == []
+    assert r.status_code == 200, r.text
+    assert seam.urns == [] and built[0]["state"] is engine.STATE
+    assert built[0]["program_source"] is None
+
+
+def test_a_package_with_only_asset_panels_names_nothing_seeded(client, seam, built):
+    """The control for the one above: no seed-sourced panel, no `seeded` key, no seed collection."""
+    seam.frame = frame_of().lazy()
+    r = package_post(client)
+    assert r.status_code == 200, r.text
+    assert "seeded" not in built[0]["program_source"]
+    assert isinstance(built[0]["state"], asset_inputs.AssetState)
 
 
 def test_a_package_for_a_program_the_asset_does_not_hold_is_a_422_not_the_seeds_copy(
@@ -737,6 +780,29 @@ def test_the_real_build_over_the_asset_verifies_and_names_where_its_figures_came
     assert manifest["state_sha256"] == export.content_hash(state_codec.state_to_dict(narrowed))
     page = (tmp_path / r.json()["artifact_filename"]).read_text(encoding="utf-8")
     assert URN in page and BANNER in page
+
+
+def test_the_real_build_of_a_mixed_package_verifies_and_names_the_seeded_panel(
+        client, seam, monkeypatch, tmp_path):
+    """The whole builder over the mixed state: the page recomputes the funding panel from the
+    seed's funding lines and the others from the asset's facts, and every panel reproduces."""
+    pytest.importorskip("duckdb")
+    if not (REPO / ".pyodide-cache").is_dir():
+        pytest.skip("no .pyodide-cache in this checkout; the real build cannot run")
+    from agent_fleet.finance_agent import export
+    manifests: list[dict] = []
+    real_audit = export.audit_line
+    monkeypatch.setattr(export, "audit_line", lambda m, **kw: manifests.append(m) or real_audit(m, **kw))
+    monkeypatch.setattr(engine, "_repo_root", lambda: REPO)
+    monkeypatch.setattr(engine, "_dist_dir", lambda root: tmp_path)
+    monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
+    seam.frame = frame_of().lazy()
+    r = package_post(client, _with_funding_panel())
+    assert r.status_code == 200, r.text
+    reason = engine.SOURCES["fin_funding_status"].source_reason
+    assert manifests[0]["program_source"]["seeded"] == {"fin_funding_status": reason}
+    page = (tmp_path / r.json()["artifact_filename"]).read_text(encoding="utf-8")
+    assert URN in page and reason in page
 
 
 def test_flag_off_a_package_says_nothing_about_a_source(off_client, spy, built):
@@ -986,10 +1052,11 @@ def test_a_built_in_with_the_flag_set_reads_the_asset_as_the_caller(client, seam
 
 _BUILT_IN_PARAMS = {"fin_eac_calculation": {"method": "CPI"}}
 
-#: DECIDED BY READING THEM: `fin_funding_status` is the one built-in that reads a collection the
-#: contract does not carry (`state.funding`); no verb reads `obs` or `wbs`. An empty list there
-#: is not "no funding", so it refuses rather than answer 0 rows.
-_REFUSED_OVER_THE_ASSET = {"fin_funding_status"}
+#: RULED 2026-11-09, the shipped row: `fin_funding_status` is the one built-in that reads a
+#: collection the contract does not carry (`state.funding`), and its row keeps it on the seed until
+#: the EV contract gains funding lines. Spelled here once, against the row the engine loaded.
+_SEED_SOURCED = {"fin_funding_status": {"kind": "seed", "reason": "contract carries no funding lines yet",
+                                        "ratified_by": "finance"}}
 
 
 def _built_ins():
@@ -997,23 +1064,44 @@ def _built_ins():
     return sorted(measures.OUTPUT_URI)
 
 
+def test_the_shipped_source_rows_are_the_ruled_ones():
+    assert {fn: {"kind": r.source, "reason": r.source_reason, "ratified_by": r.ratified_by}
+            for fn, r in engine.SOURCES.items()} == _SEED_SOURCED
+
+
 @pytest.mark.parametrize("fn", _built_ins())
-def test_every_built_in_under_the_flag_answers_from_the_asset_or_refuses_by_name(client, seam, fn):
+def test_every_built_in_under_the_flag_answers_from_where_its_row_says(client, seam, fn):
+    """The asset as the caller, unless the row declares the seed. A seed-sourced answer never asks
+    the asset and carries the notional banner and the row's reason."""
     seam.frame = frame_of().lazy()
     r = measure(client, fn, params={"program_id": PROGRAM, **_BUILT_IN_PARAMS.get(fn, {})})
-    if fn in _REFUSED_OVER_THE_ASSET:
-        assert r.status_code == 422, r.text
-        assert "funding" in r.json()["detail"]["not_in_model"]
+    assert r.status_code == 200, r.text
+    env = r.json()
+    if fn in _SEED_SOURCED:
+        assert env["data_source"] == _SEED_SOURCED[fn]
+        assert env["data_provenance"] == seed.notional_banner()
+        assert env["rows"], "the seed carries funding lines; a seed answer is never 0 rows"
+        assert seam.urns == []
     else:
-        assert r.status_code == 200, r.text
-        env = r.json()
         assert env["data_provenance"] == asset_inputs.provenance(URN)
         assert env["data_source"] == {"kind": "asset", "urn": URN}
+        assert seam.urns == [URN]
+
+
+def test_the_seed_sourced_set_names_only_built_ins():
+    assert set(_SEED_SOURCED) <= set(_built_ins())
+
+
+def test_an_overlay_row_saying_asset_puts_funding_back_on_the_asset_and_it_refuses_by_name(
+        client, seam, monkeypatch):
+    """With the row replaced (`source: asset`), funding reads the asset, which carries no funding
+    lines: a 422 naming them, never 0 rows (ruled 2026-11-08)."""
+    monkeypatch.setattr(engine, "SOURCES", {})
+    seam.frame = frame_of().lazy()
+    r = measure(client, "fin_funding_status")
+    assert r.status_code == 422, r.text
+    assert "funding" in r.json()["detail"]["not_in_model"]
     assert seam.urns == [URN]
-
-
-def test_the_refused_set_names_only_built_ins():
-    assert _REFUSED_OVER_THE_ASSET <= set(_built_ins())
 
 
 def test_flag_off_funding_still_answers_from_the_seed(off_client):

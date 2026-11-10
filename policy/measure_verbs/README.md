@@ -5,9 +5,15 @@ it, the series it returns and the policy it ships under. The proposal is
 [`docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md`](../../docs/proposals/a-measure-is-an-overlay-row-and-a-cdrl-is-an-export-profile.md)
 (Part 1); the loader is `agent_fleet/finance_agent/measure_verbs.py`.
 
-**The platform seeds none.** The seven built-in finance verbs are code (`VERBS` in
+**The platform seeds no measure.** The seven built-in finance verbs are code (`VERBS` in
 `agent_fleet/finance_agent/main.py`); this directory exists so the seed layer of ADR-0036 has a
-place, and so the image carries the path. A deployment adds rows in an overlay:
+place, and so the image carries the path. Its one row, `fin_funding_status.yaml`, is a
+**source-only row** for a built-in: with `FIN_DATASET_URN` set, funding keeps reading the notional
+seed (`source: seed`, `reason: contract carries no funding lines yet`, `ratified_by: finance`)
+until the EV contract carries funding lines (ruled 2026-11-09). A row naming a built-in may carry
+only `measure_id`, `source`, `reason` and `ratified_by`; anything else is refused at load. Under
+the flag every other measure reads the asset (`source: asset` is the default). A deployment adds
+rows in an overlay:
 
     MEASURE_VERB_OVERLAY_DIRS=/app/policy/overlays/sample/measure_verbs
 

@@ -1,0 +1,8 @@
+# Ruled 2026-11-09: with FIN_DATASET_URN set, funding keeps answering from the notional seed until
+# the EV contract gains funding lines (asset_inputs.CARRIED holds none). A source-only row: a row
+# naming a built-in may say where it reads, and nothing else. An overlay row of the same id
+# replaces it whole.
+measure_id: fin_funding_status
+source: seed
+reason: contract carries no funding lines yet
+ratified_by: finance

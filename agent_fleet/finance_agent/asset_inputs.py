@@ -64,6 +64,15 @@ class AssetState(FinanceState):
     """A `FinanceState` the contract's columns filled. The collections they do not fill are `uncarried`."""
     uncarried = frozenset(f.name for f in dataclasses.fields(FinanceState) if f.name not in CARRIED)
 
+
+def with_uncarried_from(state: AssetState, seed: FinanceState) -> FinanceState:
+    """`state`'s carried collections with every `uncarried` one taken from `seed` (one program's
+    narrowed seed): the one state a mixed export computes over, where a `source: seed` measure
+    (ruled 2026-11-09) reads what the contract does not carry. A plain `FinanceState`, so nothing
+    in it is uncarried any more; the carried collections are the asset's, never the seed's."""
+    return FinanceState(**{f.name: getattr(seed if f.name in state.uncarried else state, f.name)
+                           for f in dataclasses.fields(FinanceState)})
+
 # ── the logger ──────────────────────────────────────────────────────────────────────────
 # engine-fin configures no logging, so a bare `logging.getLogger(...).info(...)` is dropped at
 # the root's WARNING level. This logger carries its own INFO handler so the timing line prints

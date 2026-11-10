@@ -49,6 +49,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     import export_profiles
     import measure_verbs
     import measures
+    import state_codec
     from entities import (
         FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled, periods_in,
     )
@@ -61,6 +62,7 @@ except ImportError:
     from agent_fleet.finance_agent import export_profiles
     from agent_fleet.finance_agent import measure_verbs
     from agent_fleet.finance_agent import measures
+    from agent_fleet.finance_agent import state_codec
     from agent_fleet.finance_agent.entities import (
         FISCAL_PERIODS, MethodRequired, NotInModel, SourceUnavailable, Unentitled, periods_in,
     )
@@ -433,6 +435,37 @@ def _load_declared() -> dict[str, "measure_verbs.MeasureVerbRow"]:
 #: measure_id -> row. Loaded ONCE, here, like every other compose loader. The routes read this
 #: name at call time, so a test that replaces it replaces what the engine serves.
 DECLARED: dict[str, "measure_verbs.MeasureVerbRow"] = _load_declared()
+
+#: measure_id -> the source-only row naming a BUILT-IN (`measure_verbs.SourceRow`). Same composition
+#: as `DECLARED`; the seed layer ships `fin_funding_status: seed`.
+SOURCES: dict[str, "measure_verbs.SourceRow"] = {r.measure_id: r for r in measure_verbs.load_measure_sources(
+    builtins=(measures.OUTPUT_URI, [v["verb"].split(":", 1)[-1] for v in VERBS]),
+)}
+
+
+def _seed_row(fn: str):
+    """The row declaring that `fn` reads the seed under `FIN_DATASET_URN`, or None: the source is
+    declared per ROW, and a row saying nothing reads the asset (ruled 2026-11-09). Code reads the row."""
+    row = DECLARED.get(fn) or SOURCES.get(fn)
+    return row if row is not None and row.source == measure_verbs.SOURCE_SEED else None
+
+
+def _measure_source(fn: str, params: dict[str, Any]) -> tuple[Any, Optional[dict[str, str]]]:
+    """`(state, data_source)` one state-kind measure computes over. Flag unset: the seed and no
+    source, byte-identical to before the flag. Set: the asset as the caller, unless the measure's
+    row declares `source: seed`, which answers from the seed and says so, with the row's reason.
+    Never a fallback from the asset to the seed: a refused or failed read is an error."""
+    urn = asset_inputs.dataset_urn()
+    if urn is None:
+        return STATE, None
+    seed = _seed_row(fn)
+    if seed is not None:
+        return STATE, {"kind": "seed", "reason": seed.source_reason, "ratified_by": seed.ratified_by}
+    return _asset_state(urn, params), {"kind": "asset", "urn": urn}
+
+
+def _source_provenance(source: Optional[dict[str, str]]) -> str:
+    return asset_inputs.provenance(source["urn"]) if source and source["kind"] == "asset" else notional_banner()
 
 
 def _load_profiles() -> dict[str, "export_profiles.ExportProfile"]:
@@ -858,11 +891,10 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
             "slots": missing,
         })
 
-    urn = asset_inputs.dataset_urn()
     try:
         # THE SAME SELECTION `_declared_envelope` makes: with the flag set a built-in computes over
-        # the asset as the caller, never the seed (ruled 2026-11-08: that is what the flag means).
-        state = STATE if urn is None else _asset_state(urn, params)
+        # the asset as the caller (ruled 2026-11-08), unless its row declares `source: seed`.
+        state, source = _measure_source(fn, params)
         rows = func(state, **params)
     except MethodRequired as exc:
         # THE SECOND GATE. Unreachable through this route (the declaration check above fires
@@ -902,8 +934,8 @@ def _measure_envelope(fn: str, params: dict[str, Any], *, caller: str) -> dict[s
         # THE DISCLOSURE RIDES ON THE PAYLOAD, not only in a docstring. A finance figure that
         # leaves this engine without saying it is notional is a figure somebody can paste
         # into a deck, and a docstring is not visible from a screenshot.
-        "data_provenance": notional_banner() if urn is None else asset_inputs.provenance(urn),
-        **({} if urn is None else {"data_source": {"kind": "asset", "urn": urn}}),
+        "data_provenance": _source_provenance(source),
+        **({} if source is None else {"data_source": source}),
         # COMPUTED FROM THE ROWS, so it is emitted here rather than declared in a table — and
         # ABSENT WHEN THERE IS NOTHING TO SAY. A verdict key holding None would make the card
         # render an empty caption slot; omission is the honest-absence rule this envelope
@@ -947,12 +979,10 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
         })
     if row.kind == measure_verbs.KIND_DATASET:
         return _dataset_envelope(row, params)
-    urn = asset_inputs.dataset_urn()
     try:
-        # THE ONE SELECTION OF THE STATE. Unset, the seed (byte-identical to before the flag
-        # existed); set, one catalogued asset read as the caller. Never a fallback from the
-        # second to the first: a refused or failed read is an error, not the seed's figures.
-        state = STATE if urn is None else _asset_state(urn, params)
+        # THE ONE SELECTION OF THE STATE (`_measure_source`): unset, the seed; set, the asset as
+        # the caller, or the seed where the row declares `source: seed`.
+        state, source = _measure_source(row.measure_id, params)
         rows = measure_verbs.run_declared(state, row, **params)
     except NotInModel as exc:
         raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
@@ -965,8 +995,8 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
         "series": [dict(s) for s in row.series],
         "render": copy.deepcopy(row.render),
         **({"reference": dict(row.reference)} if row.reference else {}),
-        "data_provenance": notional_banner() if urn is None else asset_inputs.provenance(urn),
-        **({} if urn is None else {"data_source": {"kind": "asset", "urn": urn}}),
+        "data_provenance": _source_provenance(source),
+        **({} if source is None else {"data_source": source}),
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
         **({"verdict": _v} if (_v := measure_verbs.declared_verdict(row, rows)) is not None else {}),
@@ -1069,15 +1099,17 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
 def _asset_reads(fns: Iterable[str]) -> dict[str, str]:
     """`{fn: urn}` for every source among `fns` that computes over a governed asset: a
     dataset-kind row always reads its own row's URN; a state-kind declared row reads
-    `FIN_DATASET_URN` when it is set, and so does a built-in (ruled 2026-11-08). THE one statement
-    of which export source holds asset figures, for both exports' grant checks and `/artifact`'s."""
+    `FIN_DATASET_URN` when it is set, and so does a built-in (ruled 2026-11-08), unless its row
+    declares `source: seed` (ruled 2026-11-09), which reads nothing and asks no grant. THE one
+    statement of which export source holds asset figures, for both exports' grant checks and
+    `/artifact`'s."""
     urn = asset_inputs.dataset_urn()
     reads: dict[str, str] = {}
     for fn in fns:
         row = DECLARED.get(fn)
         if row is not None and row.kind == measure_verbs.KIND_DATASET:
             reads[fn] = row.dataset_urn
-        elif urn is not None and (row is not None or fn in measures.OUTPUT_URI):
+        elif urn is not None and (row is not None or fn in measures.OUTPUT_URI) and _seed_row(fn) is None:
             reads[fn] = urn
     return reads
 
@@ -1091,19 +1123,40 @@ def _require_asset_grants(urns: Iterable[str]) -> None:
             asset_inputs.require_grant(mesh_ticketed_read, urn)
 
 
-def _export_program_state(reads: dict[str, str], program_id: str) -> tuple[Any, Optional[dict[str, str]]]:
+def _export_program_state(reads: dict[str, str], program_id: str,
+                          fns: Iterable[str] = ()) -> tuple[Any, Optional[dict[str, Any]]]:
     """`(state, source)`: where an export's program facts are read. The seed and no source when no
     source reads `FIN_DATASET_URN` (a dataset-kind row reads its own asset, which holds no
-    program's facts); otherwise the asset, as the caller, and `{kind, urn}` saying so. A program
-    the asset does not hold is a 422, never the seed's copy of it."""
+    program's facts; a `source: seed` row reads the seed); otherwise the asset, as the caller, and
+    `{kind, urn}` saying so. A program the asset does not hold is a 422, never the seed's copy of it.
+
+    A MIXED EXPORT -- asset sources beside a `source: seed` one among `fns` (program_finance's
+    funding panel) -- gets the asset state with the collections the asset does not carry filled
+    from the seed's copy of the program, and `source["seeded"]` naming each seed-sourced measure
+    with its row's reason. A package's page recomputes every panel from that ONE state, and its
+    builder refuses when any panel does not reproduce, so a seeded collection a panel did not read
+    from the seed cannot pass unnoticed."""
     if not any(fn not in DECLARED or DECLARED[fn].kind != measure_verbs.KIND_DATASET for fn in reads):
         return STATE, None
     urn = asset_inputs.dataset_urn()
+    seeded = {fn: row.source_reason for fn in sorted(set(fns)) if (row := _seed_row(fn)) is not None}
     try:
         state = _asset_state(urn, {"program_id": program_id})
+        if seeded:
+            state = asset_inputs.with_uncarried_from(state, state_codec.narrow(STATE, program_id))
     except NotInModel as exc:
         raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
-    return state, {"kind": "asset", "urn": urn}
+    return state, {"kind": "asset", "urn": urn, **({"seeded": seeded} if seeded else {})}
+
+
+def _package_provenance(program_source: Optional[dict[str, Any]]) -> Optional[str]:
+    """The page's provenance line: the asset's, and each seed-sourced panel named with its reason,
+    so a seed figure in an asset package says it is notional."""
+    if not program_source:
+        return None
+    seeded = program_source.get("seeded") or {}
+    return " ".join([asset_inputs.provenance(program_source["urn"])] + [
+        f"{fn} reads the notional seed ({reason}): {notional_banner()}" for fn, reason in seeded.items()])
 
 
 def _declared_param_required(row: "measure_verbs.MeasureVerbRow", name: str) -> bool:
@@ -1241,7 +1294,7 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
         _require_cell(fn, caller)
     reads = _asset_reads([fn for _p, fn in resolved])
     _require_asset_grants(reads.values())  # refusal 7, before ANY panel is measured
-    package_state, program_source = _export_program_state(reads, program_id)
+    package_state, program_source = _export_program_state(reads, program_id, [fn for _p, fn in resolved])
 
     panels: list[dict[str, Any]] = []
     for p, fn in resolved:
@@ -1289,7 +1342,7 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
             panels=panels, runtime_dir=root / _RUNTIME_DIR, sha=sha,
             html_path=dist / html_name, duckdb_path=dist / duckdb_name,
             as_of=as_of, program_source=program_source,
-            data_provenance=asset_inputs.provenance(program_source["urn"]) if program_source else None,
+            data_provenance=_package_provenance(program_source),
         )
     except SourceUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -1401,7 +1454,7 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
         _require_cell(fn, caller)
     reads = _asset_reads(profile.sources)
     _require_asset_grants(reads.values())
-    program_state, program_source = _export_program_state(reads, body.program_id)
+    program_state, program_source = _export_program_state(reads, body.program_id, profile.sources)
     as_of = body.as_of or _request_date()
 
     out_dir = _cdrl_out_dir()
