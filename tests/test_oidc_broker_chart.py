@@ -788,7 +788,7 @@ def test_the_walkers_hold_alices_groups_and_default_and_nothing_else(who):
     cap_only = {g for r in rows.values() for g in (r.get("grant_to_groups") or []) if not cells.get(g)}
     assert cap_only & set(alice["groups"]), "positive control: alice holds a capability-only group"
     mirrored = [g for g in alice["groups"] if g not in cap_only]
-    assert len(mirrored) == 11, mirrored                                 # positive control: the set is non-trivial (11: + maint-tier-ack-edge-01, ruling 2026-10-11; + maint-tier-ack-edge-02, 2026-10-27)
+    assert len(mirrored) == 12, mirrored                                 # positive control: the set is non-trivial (11: + maint-tier-ack-edge-01, ruling 2026-10-11; + maint-tier-ack-edge-02, 2026-10-27; 12: + obsolescence-deciders, ruling 2026-11-10 "the walkers mirror alice")
     held = [g for g in walker["groups"] if g not in cap_only]
     assert set(held) == set(mirrored) and len(held) == len(mirrored)
     assert walker["default"] == alice["default"]

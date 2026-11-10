@@ -160,6 +160,7 @@ users:
       - cost-analysts
       - maint-tier-ack-edge-01
       - maint-tier-ack-edge-02
+      - obsolescence-deciders    # 2026-11-10 ruling: the walkers mirror alice, so they decide obsolescence options too
       - finance-analysts
       - portfolio-leads
       - data-engineers
@@ -179,6 +180,7 @@ users:
       - cost-analysts
       - maint-tier-ack-edge-01
       - maint-tier-ack-edge-02
+      - obsolescence-deciders    # 2026-11-10 ruling: the walkers mirror alice, so they decide obsolescence options too
       - finance-analysts
       - portfolio-leads
       - data-engineers

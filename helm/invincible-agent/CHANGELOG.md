@@ -17,6 +17,15 @@ automation tags on merge." Every entry below goes under this heading until the c
   The `<5` cap is Lane 1's: unbounded, the lock resolves 5.2.0 and moves opentelemetry with it. The
   lock change is langfuse alone. Engine images that build from the root lock pick it up on the next
   build; nothing in the chart moves.
+- **The walkers join `obsolescence-deciders`** (`policy/users.yaml`, `policy/groups.yaml`,
+  `tests/test_oidc_broker_chart.py`; gov). The architect ruled on 2026-11-10: "the walkers mirror alice, so
+  erin and chris join obsolescence-deciders in the same PR that fixes it". #314 gave the group to alice
+  only. The group has no persona.domain cell and no capability row grants it, so the walker seal counts it
+  as part of the persona set the walkers mirror. Its arms were therefore red on master and on 0.4.84. The
+  seal now counts 12 mirrored groups, citing the ruling. These are fixture grants, not a claim about who
+  chooses a resolution in production. **Before this version rolls,** Chris runs topaz_sync by hand for
+  erin's and chris's membership (the architect, 11-10). The realm import carries no groups, so nothing
+  else needs syncing.
 
 - **A dataset row can be drawn as `MULTI_SERIES`: several series over periods, read from the
   row's own asset.** Its `inputs.dataset` names `scope`, `period`, an optional `status` column,
