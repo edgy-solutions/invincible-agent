@@ -68,6 +68,7 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 | `outputs` | What "undefined" means. It names no result type: every declared measure is a `fin:DeclaredMeasureSeries`. |
 | `render` | How the result is drawn: the shape, the one series (and its unit), the value label, and a target line. |
 | `policy` | Who may see it, who approved it, and why. |
+| `menu` | Optional. Where the card sits on the menu: what it places, the card it draws as, and who it fits. |
 
 **A second kind of row: a dataset row.** A row whose `inputs` holds `dataset` instead of `state` is
 a flow decomposition: it reads named columns of one asset and answers once, with an edge table.
@@ -192,6 +193,18 @@ board draws the declared shape even though the shared class is on no menu. A row
 is refused at load; a result that is served with none is shown to the viewer as its raw fields.
 `outputs.archetype`, `outputs.series` and `outputs.reference` were the old layout and are refused,
 with a message naming `render.shape`, `render.series` and `render.target`.
+
+**Menu.** Optional. A row with a `menu:` block declares its own menu placement, which the BFF serves
+and the board reads; no menu entry is written anywhere else. It holds exactly four keys:
+
+| key | what it holds |
+|---|---|
+| `subject` | `fin:DeclaredMeasureSeries`, the class the row produces. Any other value is refused. |
+| `archetype` | The mesh class of `render.shape`: `mesh:FlowDecomposition` for `FLOW_DECOMPOSITION`, `mesh:MultiSeries` for `MULTI_SERIES`. Any other value is refused. |
+| `persona_fit` | A non-empty list of personas the card suits. It ranks; it grants nothing. |
+| `domain_fit` | A non-empty list of domains the card suits, each one of `policy.cells` (a domain outside them is refused: its callers cannot open the measure). |
+
+The two sample flow rows declare one, for `PROGRAM_FINANCE_ANALYST` in `PROGRAM_FINANCE`.
 
 **Policy.** `status` is `sample`, `proposed` or `ratified`. `cells` is a non-empty list of access
 DOMAINS (the entitlement matrix is persona by domain; the sample uses `PROGRAM_FINANCE`), and it is

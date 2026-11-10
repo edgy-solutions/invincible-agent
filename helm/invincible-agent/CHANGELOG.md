@@ -1,8 +1,8 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.84 — not yet cut
+## 0.4.85 — not yet cut
 
-**The fleet moves to iagent-mesh v0.9.17** (gov; the architect, 11-08: "the v0.9.16 fleet pin is gov's (same as 0.9.15; one PR)"; 11-10: "v0.9.17 fleet pin PR when the tag exists").
+**The fleet moves to iagent-mesh v0.9.17** (gov; the architect, 11-08: "the v0.9.16 fleet pin is gov's (same as 0.9.15; one PR)"; 11-10: "v0.9.17 fleet pin PR when the tag exists"). 0.4.84 was cut without it, so it ships here.
 
 - **What moves:** 17 pyprojects (the root has two lines), `domainBroker.meshSdkVersion` and its closed-network comment, and the 17 locks that pin the SDK. Every lock names the tag's commit (`8d1ee304`) and none still names v0.9.15's. Sixteen locks change 3 lines and the root 4, the same shape as the v0.9.15 move. `option_deciders.yaml`'s measured note names the pin.
 - **Why:** ADR-0065 D (Lane 1's `obsolescence_resolution` row) puts `options` on its decide step. v0.9.15's step model forbids unknown fields and has no `options`. v0.9.16 added `HumanAwaitStep.options` and the `lifecycle_status` module. v0.9.17 reshapes `ImpactRow` to the ruled nine fields (ADR-0065 §4). The fleet skips v0.9.16, whose three-field `ImpactRow` is superseded.
@@ -10,11 +10,140 @@
 - **Closed network:** v0.9.17's package calls itself 0.9.17, so `meshSdkSource: index` serves this pin.
 - **Not in this pin: `attestation` on the content-kind row.** v0.9.17 was tagged without it (ruled 11-10: "0.9.17 if #3 is still open, else 0.9.18"; #3 had merged). The field rides v0.9.18. `attestation: self` on `pcn` and `pdn` ride that pin, because an overlay row that declares the field does not load on an SDK without it.
 
-## 0.4.83 — 2026-11-10
+## 0.4.84 — 2026-11-10
 
-Entries merged after the 0.4.82 cut (`98c824aa`). Cut on Chris's 11-09 word: "cut 0.4.83 tonight,
-do not roll". The cortex pin is the architect's ("0.4.83 cortex pin = db45763"), and the attestation
-change is ruled 2026-11-09.
+Entries merged after the 0.4.83 tag (`3a23fce4`), through `27d59a39`. The architect, 2026-11-10:
+"0.4.83 stands where the automation put it (3a23fce4) and never rolls; it lacks the hotfix.
+Everything after it ships as 0.4.84." This is the version the sandbox rolls next.
+
+**What merged, and where each one is:**
+
+| item | where |
+| --- | --- |
+| #310 engine-fin registers the verb in its `endpoint_url` path | merged at `57f16df2`; through the images; below |
+| #322 the 503 seals find their sites by what they call | merged at `5fa0f3e4`; through the images |
+| #323 gov: `arrives_as` and `label` on the nine kinds that have a row | merged at `8095d651`; policy overlay |
+| #328 dag-tools 0.13.0 | merged at `af87f0c0`; root pin, two digests; below |
+| #312 fin: a measure row declares its menu placement | merged at `7a9b19e4`; through the images; below |
+| #332 the walk hotfix: a case at its terminal frees its episode | merged at `27d59a39`; through the images; below |
+
+0.4.84 also carries everything in 0.4.83, which never rolled. The sandbox goes from 0.4.82 to this
+version.
+
+**Before this version rolls:**
+
+1. Chris syncs Topaz for `obsolescence-deciders` (#314, in 0.4.83). task-grant-sync exits 5 on a
+   group Topaz does not hold, so the sync comes before the roll.
+2. The values diff against the live release goes in front of whoever approves the roll.
+3. After the roll, `release` is sent on `9062f943`'s episode (the hotfix entry below), and the
+   episode is read free.
+4. After the roll, re-materialise `ev_fixture` and the three refusal assets.
+
+**Not in this version:**
+
+- **gov's walker fix** (erin and chris join `obsolescence-deciders`, mirroring alice). No PR had
+  merged at the cut. Until it does, `test_oidc_broker_chart`'s walker arms stay red, and erin and
+  chris are not obsolescence deciders on this version.
+- **iagent-mesh v0.9.17** (gov's pin PR #329, not merged at the cut). The fleet stays on v0.9.15.
+- **fin's #316, #319 and #331**, not merged at the cut.
+- **perf's tracing PR #327** (Chris, 11-10: perf is re-basing on provenance-telemetry).
+- **ADR-0065 D, Lane 1's half** (the `obsolescence_resolution` workflow row and the runner-side
+  trigger) is not built. #314 ships the deciders' rail it will read.
+
+**A case at its terminal frees its episode; a disposing emit ends its definition** (#332, the walk
+hotfix; architect, 2026-11-10: "'open' means the case has not reached a terminal stage
+(released/closed/rejected), never that a workflow is alive").
+
+- **What failed:** at 16:33Z on the walk, OpenDDIL's occurrence `62b9e840` attached to case
+  `9062f943`, which was released on 10-29. That case's last instance started on the pre-0.4.72
+  `maint_release`, which emitted `released` and then waited on a `tier_ack` nobody sends. Its
+  workflow never returned, so its episode never released, and the door answered with October's
+  case.
+- **Open is now the stage, not the run.** `_run_case` sends `CaseEpisode.release` as soon as a
+  chaining table names a terminal, before the action-record writes, the stamp and the summary.
+  It is no longer sent after the loop. A failure after the terminal sends it again, and `release`
+  from a case that no longer holds the episode is a no-op. The terminals are the tables'
+  `terminals:`, so no case word enters code.
+- **A disposing emit ends its definition.** In `_run_definition`, an `emit` with `disposes` returns
+  the instance's outcome at once. Steps after it never run. No shipped definition has a step after
+  a disposing emit (census of the 14 under `policy/`), so nothing current changes.
+- **The seal:** `tests/test_an_occurrence_attaches_to_its_open_episode.py` gains two arms:
+  - A decided case whose definition still has an await after its disposing emit closes, and a new
+    occurrence opens a new case naming it as `predecessor`. Without the break, it never closes.
+  - A case whose run is still writing after its terminal frees its episode. With the release
+    after the loop, the new occurrence attaches.
+  - The control is the existing open-case arm: a case parked before its decision still holds.
+- **Already-stuck cases are not repaired by this code.** `9062f943`'s run and its instance `~5`
+  stay suspended, and the episode stays held, until a live action frees them. Ruled (architect,
+  2026-11-10): after the roll, `release` is sent on its episode. The case was released in October;
+  that is its true history, and it becomes the next case's predecessor. It is never cancelled into
+  "failed". Instance `~5` is never resumed on this code: its journal holds the old trailing step.
+  `62b9e840` stays recorded as attached to `9062f943`; the re-walk uses a new occurrence.
+- **The roll:** the restate_analyst engine's image changes; nothing in its values or pod template does.
+
+- **A measure row may declare its menu placement in a `menu:` block** (#312), and the two sample
+  flow rows (`fin_flow_acwp`, `fin_flow_eac_variance`) do: subject `fin:DeclaredMeasureSeries`,
+  archetype `mesh:FlowDecomposition`, `persona_fit` `[PROGRAM_FINANCE_ANALYST]`, `domain_fit`
+  `[PROGRAM_FINANCE]` (architect, 2026-11-07: the menu row is a registry row, not a cortex
+  constant). The loader holds exactly those four keys. It refuses a `subject` other than the
+  declared class, an `archetype` other than the class of `render.shape`, and a `domain_fit`
+  outside `policy.cells`. Nothing serves the block yet; the BFF serving it is the next step.
+- **The roll:** engine-fin's image and the sample overlay change; nothing in the values or pod
+  templates does.
+
+- **engine-fin registers each verb with the verb in its `endpoint_url` path, at the call** (#310).
+  `_registration_calls()` now carries each measure's `fn`, and the lifespan builds
+  `endpoint_url=f"{base}/measure/{_call['fn']}"`. Before, the list carried the finished URL and the
+  call passed `_call["endpoint_url"]`, which hid the verb from safety's
+  `test_THE_VERB_IS_IN_THE_PATH_not_in_the_body` and turned it red. The registered URLs are the
+  same strings as before, so the mesh sees no change.
+- **The roll:** engine-fin's image changes; nothing in its values or pod template does.
+
+**dag-tools 0.13.0 (tag at `bed53b9`)** (#328; the architect, via Chris: "dag-tools pin for 0.4.83
+is 0.13.0". It merged after the 0.4.83 tag, so it ships here.)
+
+- **What moves:**
+  - the root `pyproject.toml` pin, `edgy-dag-tools==0.13.0`; the lock moves that one package only;
+  - `central-gateway` → `sha256:9c9a99ee…`;
+  - `user-deployment` → `sha256:d385757d…`;
+  - the brokered-read seal (below).
+- **The digests were read 11-10 by Docker-Content-Digest:**
+  - `:0.13.0`, `:0.13` and `:sha-bed53b9` resolve to the same index for both images, with
+    linux/amd64 and linux/arm64. This is the first release since dag-tools #16 in which the tag and
+    the commit build are one artifact.
+  - A tag that does not exist gives 404.
+- **What 0.13.0 adds over 0.11.0:**
+  - #31: a broker ticket names which read it is and over what version of the data.
+  - #32: the `ev_fixture` demo rows a governed read is supposed to refuse, one per contract rule.
+  - From 0.12.0, which this repo never pinned:
+    - the `ev_fixture` status period and reported estimate;
+    - the query tag (`dag_tools.audit.tag`, the tagged warehouse resource that refuses to send a
+      read with no principal) and the read audit;
+    - classification label propagation through column lineage;
+    - the otel-api-sync concurrency cap;
+    - contract-mapping;
+    - the qual probe work.
+  - No owner packet for 0.13.0 has reached Lane 1, so which of these are inert for this chart is
+    not measured here.
+- **The brokered-read seal turns on.** `tests/test_every_brokered_read_carries_a_principal.py` held
+  its arms behind xfail markers conditioned on `dag_tools.audit.tag`, the tagged warehouse resource
+  and the gateway identity module being absent. 0.13.0 ships all three.
+  - A marker like that switches itself off when the pin moves and never reports an XPASS, so the
+    markers are removed. The arms now run unconditionally: five pass.
+  - The observe-posture arm (an authorize naming nobody hands the broker `subject=None`) stays a
+    strict xfail on the code.
+- **Not moved:** `agent_fleet/finance_agent` (v0.10.0) and `agent_fleet/data_analyst` (the pre-rename
+  SHA) pin dag-tools in their own projects.
+- **The roll:** after it, re-materialise `ev_fixture` and the three refusal assets (the list above).
+
+## 0.4.83 — 2026-11-10 (tagged, never rolled)
+
+Entries merged after the 0.4.82 cut (`98c824aa`), through the cut merge `3a23fce4`. Cut on Chris's
+11-09 word: "cut 0.4.83 tonight, do not roll". The cortex pin is the architect's ("0.4.83 cortex
+pin = db45763"), and the attestation change is ruled 2026-11-09. chart-releaser tagged
+`invincible-agent-0.4.83` at `3a23fce4` on the version bump's merge. The architect, 2026-11-10:
+it "stands where the automation put it (3a23fce4) and never rolls; it lacks the hotfix." Everything
+here ships to the sandbox in 0.4.84.
 
 **What merged, and where each one is:**
 
@@ -32,21 +161,6 @@ change is ruled 2026-11-09.
 | #288 gov: #282's two missed commits | merged at `319b3af4`; policy |
 | #307, #308, #318 | docs and board only; nothing to carry |
 | cortex db45763 | below |
-
-**Before this cut rolls** (not tonight: "do not roll"):
-
-1. Chris syncs Topaz for `obsolescence-deciders` (#314). task-grant-sync exits 5 on a group Topaz
-   does not hold, so the sync comes before the roll.
-2. The values diff against the live release goes in front of whoever approves the roll.
-3. After the roll, re-materialise `ev_fixture` and the three refusal assets.
-
-**Not in this cut:**
-
-- **dag-tools 0.13.0.** It is on dag-tools' `release/0.13.0` branch only: not merged, not tagged and
-  not on PyPI. The pin stays at 0.11.0 until it is published. Its digest is taken at publish time.
-- **iagent-mesh v0.9.17.** It is not tagged, and the fleet stays on v0.9.15.
-- **ADR-0065 D, Lane 1's half** (the `obsolescence_resolution` workflow row and the runner-side
-  trigger) is not built. #314 ships the deciders' rail it will read.
 
 **The dropper may promote under `self`; the task serves who may not** (#324, #325; architect,
 2026-11-09). Separation of duties on a promotion is a declared property,
@@ -73,9 +187,7 @@ validates, promotes and exports it.
   `message` inline.
 - Build Containers run 42743511504. The full tag resolves to the digest, an OCI index for amd64
   and arm64. The short tag and an altered digest give 404.
-- Until this cut rolls, the live card still hides Promote from the dropper.
-
-Entries merged after the 0.4.82 cut. The chart version is not bumped until the cut.
+- Until 0.4.84 rolls, the live card still hides Promote from the dropper.
 
 - **A foreign delegate's attach is refused as `delegate_not_seeder`.** Chris, 2026-11-07 (saf):
   the code is `delegate_not_seeder`, in `detail["error"]`. #289 refused it as
@@ -102,13 +214,6 @@ Entries merged after the 0.4.82 cut. The chart version is not bumped until the c
   gets 404 rather than 403, because a 403 would confirm that the program exists. A profile with a
   built-in source still refuses such a program with a 422 `not_in_model` at export: the built-in
   reads the seed.
-- **engine-fin registers each verb with the verb in its `endpoint_url` path, at the call.**
-  `_registration_calls()` now carries each measure's `fn`, and the lifespan builds
-  `endpoint_url=f"{base}/measure/{_call['fn']}"`. Before, the list carried the finished URL and the
-  call passed `_call["endpoint_url"]`, which hid the verb from safety's
-  `test_THE_VERB_IS_IN_THE_PATH_not_in_the_body` and turned it red. The registered URLs are the
-  same strings as before, so the mesh sees no change.
-- **The roll:** engine-fin's image changes; nothing in its values or pod template does.
 
 ## 0.4.82 — 2026-11-08
 
