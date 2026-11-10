@@ -753,6 +753,15 @@ class MeasureRequest(BaseModel):
     user_email: str = ""
 
 
+# Telemetry census: /health reports spans the leaf lost. telemetry.py sits at /app in the
+# fleet image; guarded so a missing shim never breaks startup (None = nothing emitted).
+try:
+    from telemetry import emit_misses
+except Exception:  # pragma: no cover -- telemetry never load-bearing
+    def emit_misses():  # type: ignore[misc]
+        return None
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     """Liveness plus what this process believes about itself — AND NOTHING MORE.
@@ -779,6 +788,7 @@ def health() -> dict[str, Any]:
         ),
         "data": notional_banner(),
         "reported_periods": sorted({f.period for f in STATE.facts}),
+        "telemetry_misses": emit_misses(),
     }
 
 
