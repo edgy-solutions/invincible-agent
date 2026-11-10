@@ -23,7 +23,7 @@ INGEST_V1_TAG = "ingest-v1"
 # (sections 1, 2, 5). Tagged ADDITIVELY on the routes (existing tags kept); /interview/stream shares
 # the /orchestrate handler but is NOT in this set.
 MCP_TAG = "mcp"
-INGEST_API_VERSION = "1.9.0"
+INGEST_API_VERSION = "1.9.1"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),
@@ -465,6 +465,20 @@ class TaskDeclaration(_Strict):
     reason_required: list[str]
 
 
+class Attestation(_Strict):
+    """Who may promote a document_promotion task, stamped when it is filed (1.9.0). `excluded` is
+    empty under `self`; under `second_party` it lists the authz_ids that may not promote."""
+    mode: Literal["self", "second_party"]
+    excluded: list[str]
+
+
+class TaskPayload(BaseModel):
+    """A task's payload: free-form per kind. A document_promotion task filed from 1.9.0 carries
+    `attestation`; one filed earlier does not, and the server decides it at the act."""
+    model_config = ConfigDict(extra="allow")
+    attestation: Attestation = None
+
+
 class HumanTask(_Strict):
     """One pending task row of the caller's queue, with its kind's declaration."""
     id: Any
@@ -477,7 +491,7 @@ class HumanTask(_Strict):
     summary: str | None
     requested_by: str | None
     subject_ref: str | None
-    payload: Any
+    payload: TaskPayload | None
     created_at: Any
     workflow_service: str | None
     promise_name: str | None

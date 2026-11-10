@@ -168,8 +168,11 @@ Two people matter to a drop:
   payload carries `attestation: {mode, excluded}`, stamped when the task is filed. `mode` is `self`
   (the default: the dropper validates and promotes) or `second_party`. `excluded` lists who may not
   promote it, and is empty under `self`. A client holds Promote when the viewer's `authz_id` is in
-  `excluded`, and decides nothing else. A task keeps the mode it was filed under. A task filed
-  before this field existed is decided by the declaration at the time of the act.
+  `excluded`, and decides nothing else. The server refuses on the same list: under `second_party`
+  the act refuses exactly the ids in the served `excluded`, and never recomputes it from
+  `dropped_by`. A task keeps the block it was filed with. A task filed before this field existed
+  is decided on the block filing would stamp at the time of the act. The block is declared as
+  `Attestation` on `TaskPayload` (1.9.1).
 - **The record names who attested.** A promotion's decision record carries
   `attestation: {mode, attested_by, self_attested}` on its human_review check, and the origin it
   writes carries `origin_attested_by` and `origin_self_attested`.
