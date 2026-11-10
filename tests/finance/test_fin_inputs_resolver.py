@@ -1056,7 +1056,7 @@ _BUILT_IN_PARAMS = {"fin_eac_calculation": {"method": "CPI"}}
 #: collection the contract does not carry (`state.funding`), and its row keeps it on the seed until
 #: the EV contract gains funding lines. Spelled here once, against the row the engine loaded.
 _SEED_SOURCED = {"fin_funding_status": {"kind": "seed", "reason": "contract carries no funding lines yet",
-                                        "ratified_by": "finance"}}
+                                        "ratified_by": "owner"}}
 
 
 def _built_ins():

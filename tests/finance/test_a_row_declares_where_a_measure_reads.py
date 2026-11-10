@@ -30,7 +30,7 @@ STATE_ROW = SAMPLE / "fin_vac.yaml"
 DATASET_ROW = SAMPLE / "fin_flow_acwp.yaml"
 BUILTINS = (measures.OUTPUT_URI, [v["verb"].split(":", 1)[-1] for v in engine.VERBS])
 FUNDING = {"measure_id": "fin_funding_status", "source": "seed",
-           "reason": "contract carries no funding lines yet", "ratified_by": "finance"}
+           "reason": "contract carries no funding lines yet", "ratified_by": "owner"}
 
 
 def _dir(tmp_path, rows, name="ov"):
@@ -140,14 +140,14 @@ def test_a_declared_row_reads_the_asset_by_default(tmp_path):
 
 
 def test_a_declared_row_may_declare_the_seed_with_its_reason(tmp_path):
-    raw = _state_row(source="seed", reason="the asset has no BAC history", ratified_by="finance")
+    raw = _state_row(source="seed", reason="the asset has no BAC history", ratified_by="owner")
     (row,) = _verbs([_dir(tmp_path, [raw])], tmp_path)
     assert (row.source, row.source_reason, row.ratified_by) == (
-        "seed", "the asset has no BAC history", "finance")
+        "seed", "the asset has no BAC history", "owner")
 
 
 def test_a_declared_seed_row_without_a_reason_is_refused(tmp_path):
-    d = _dir(tmp_path, [_state_row(source="seed", ratified_by="finance")])
+    d = _dir(tmp_path, [_state_row(source="seed", ratified_by="owner")])
     with pytest.raises(measure_verbs.MeasureVerbError, match="reason"):
         _verbs([d], tmp_path)
 

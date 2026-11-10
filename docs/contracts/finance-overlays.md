@@ -82,7 +82,7 @@ load, so a row can say where a built-in reads but cannot replace it. The platfor
 measure_id: fin_funding_status
 source: seed
 reason: contract carries no funding lines yet
-ratified_by: finance
+ratified_by: owner
 ```
 
 A deployment whose asset carries funding lines replaces it with an overlay row of the same id

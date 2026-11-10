@@ -22,7 +22,7 @@ Entries merged after the 0.4.83 cut. The chart version is not bumped until the c
   carries the notional banner and `data_source: {kind: seed, reason, ratified_by}`. A built-in is
   named only by a source-only row (`measure_id`, `source`, `reason`, `ratified_by`; any other key
   is refused). The seed layer ships `policy/measure_verbs/fin_funding_status.yaml`: `source: seed`,
-  `reason: contract carries no funding lines yet`, ratified by finance, until the EV contract
+  `reason: contract carries no funding lines yet`, `ratified_by: owner`, until the EV contract
   gains funding lines. So `fin_funding_status` keeps answering from the seed under the flag; an
   overlay row saying `source: asset` puts it on the asset, where it is a 422 `not_in_model`, never
   zero rows. A dataset-kind row reads its own asset and is refused if it carries `source`.

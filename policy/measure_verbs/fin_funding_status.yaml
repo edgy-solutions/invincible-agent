@@ -5,4 +5,4 @@
 measure_id: fin_funding_status
 source: seed
 reason: contract carries no funding lines yet
-ratified_by: finance
+ratified_by: owner
