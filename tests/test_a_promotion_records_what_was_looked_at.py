@@ -71,7 +71,7 @@ class _Graph:
     def apply_row_edits(self, ingest_id, row_edits, *, domain, record_id):
         return {"deleted": 0, "corrected": 0, "added": 0, "not_applied": []}
 
-    def attest_origin(self, ingest_id, *, owner_domain, record_id):
+    def attest_origin(self, ingest_id, *, owner_domain, record_id, **_kw):
         return {"ok": True}
 
 
@@ -163,7 +163,9 @@ def test_c2_no_coverage_leaves_the_inputs_exactly_as_before(world):
     assert r.status_code == 200, r.text
     assert _inputs(world) == {
         "extraction_ref": PAYLOAD["extraction_ref"], "content_kind": "pcn",
-        "reviewed_by": "human:bob", "audience": "document_promotion:SUSTAINMENT", "comment": ""}
+        "reviewed_by": "human:bob", "audience": "document_promotion:SUSTAINMENT", "comment": "",
+        # the only new key (2026-11-09): who attested; a coverage-free promotion adds nothing else
+        "attestation": {"mode": "self", "attested_by": "bob", "self_attested": False}}
     assert world.part_reads == []
 
 

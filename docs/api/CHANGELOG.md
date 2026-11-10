@@ -2,6 +2,15 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.9.0 — 2026-11-10
+
+Behaviour, additive for a reader. The shape hash does not move (the task payload is free-form), so the lock row repeats 1.8.1's.
+
+- **The dropper may promote under `self`** (ruled 2026-11-09). `dropper_cannot_attest_origin` used to be refused on every promotion by the dropper. It is now refused only when the task's `attestation.mode` is `second_party`. The default is `self`.
+- **New on a promotion task's payload** (`GET /me/human_tasks` and the live stream alike): `attestation: {mode, excluded}`, stamped when the task is filed. `excluded` lists the `authz_id`s that may not promote, and is empty under `self`. A client holds Promote when the viewer is in `excluded`. Tasks filed before 1.9.0 carry no `attestation`; for them the server decides at the act.
+- **New 503 `attestation_undeclarable`** on the act and on the filing of a promotion task: the declared mode is neither `self` nor `second_party`. Nothing is written.
+- **The decision record** of a promotion carries `attestation: {mode, attested_by, self_attested}` on its human_review check. The origin it writes carries `origin_attested_by` and `origin_self_attested`.
+
 ## 1.8.1 — 2026-11-07
 
 Declaration only, no wire change: the structural 403s are their own member (ruled 2026-11-07, G5).

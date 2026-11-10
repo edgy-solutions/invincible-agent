@@ -408,7 +408,8 @@ class Neo4jIngestGraph:
         value = row["rung"] if row is not None else None
         return value if isinstance(value, str) and value else None
 
-    def attest_origin(self, ingest_id: str, *, owner_domain: str, record_id: str) -> str:
+    def attest_origin(self, ingest_id: str, *, owner_domain: str, record_id: str,
+                      attested_by: str = "", self_attested: Optional[bool] = None) -> str:
         """Record a steward's attestation of the document's origin. Returns "written",
         "kept_record" or "kept_steward".
 
@@ -425,10 +426,15 @@ class Neo4jIngestGraph:
 
         evidence = f"{STEWARD_ATTESTATION}:{record_id}"
         Origin(owner_domain=owner_domain, resolved_by="steward", evidence=(evidence,))
+        node_payload = {"origin_owner_domain": owner_domain, "origin_resolved_by": "steward",
+                        "origin_evidence": evidence}
+        if attested_by:
+            node_payload["origin_attested_by"] = attested_by
+        if self_attested is not None:
+            node_payload["origin_self_attested"] = self_attested
         result = self._writer.write_node(
             self._initiator, label=INGEST_FACT_FAMILY["node_label"], id=ingest_id,
-            payload={"origin_owner_domain": owner_domain, "origin_resolved_by": "steward",
-                     "origin_evidence": evidence})
+            payload=node_payload)
         if result.outcome != "written":
             raise RuntimeError(
                 f"origin attestation for {ingest_id}: {result.outcome}: {result.detail}")
