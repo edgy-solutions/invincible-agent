@@ -62,6 +62,16 @@ automation tags on merge." Every entry below goes under this heading until the c
   - **Not in this pin: `attestation` on the content-kind row.** v0.9.17 was tagged without it, so the
     field rides v0.9.18, and so do the `attestation: self` rows on `pcn` and `pdn`: an overlay row that
     declares the field does not load on an SDK without it.
+- **engine-fin's dag-tools pin moves from v0.10.0 to v0.13.0** (`agent_fleet/finance_agent/pyproject.toml`
+  and its lock; gov; the architect, 11-10: "engine-fin's dag-tools pin from v0.10.0 to v0.13.0, so fin can
+  read the ticket through"). v0.13.0 is the release the root already takes from PyPI (`edgy-dag-tools==0.13.0`).
+  At that tag the broker stamps each ticket with its id, issued-at and as-of (`ticket_identity`), and the
+  client adds `get_dataframe_with_ticket` beside `get_dataframe`. Those are steps 1 and 2 of fin's 11-07
+  plan. Step 3, rendering the as-of and ticket id on fin's provenance line and dropping its strict xfail,
+  is fin's own PR on this pin. The lock change is edgy-dag-tools alone (`d8a23d3e` → `bed53b9c`). Between
+  the tags, dag-tools' base dependencies are unchanged; the one addition is `s3fs` on the `broker` extra,
+  which engine-fin does not install. The root pyproject's note on the two pins names the new tag.
+  **The roll:** engine-fin's image changes; nothing in the values or pod templates does.
 
 ## 0.4.84 — 2026-11-10
 
