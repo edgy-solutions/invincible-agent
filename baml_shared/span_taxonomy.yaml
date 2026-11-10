@@ -1,0 +1,22 @@
+# The declared taxonomy of span names (lane/perf brief). A span name used in code
+# (step_span / open_request_span call sites) must be declared here; tests/perf scans
+# the source and fails on an undeclared name. Later PRs add engine hops, LLM and
+# store spans.
+#   kind:    request | stage | hop | llm | store
+#   service: the process that emits it
+spans:
+  bff.orchestrate:
+    kind: request
+    service: cortex-bff
+  supervisor.create_task_plan:
+    kind: stage
+    service: dagster-supervisor
+  supervisor.execute_subtask:
+    kind: stage
+    service: dagster-supervisor
+  supervisor.synthesize_stateful:
+    kind: stage
+    service: dagster-supervisor
+  supervisor.generate_ui_payload:
+    kind: stage
+    service: dagster-supervisor

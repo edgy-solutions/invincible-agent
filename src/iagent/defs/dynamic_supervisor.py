@@ -17,6 +17,7 @@ import logging
 from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Dict, Any, NamedTuple, Optional
+from iagent.trace_spans import current_traceparent, step_spanned
 
 logger = logging.getLogger("iagent.supervisor")
 
@@ -169,10 +170,13 @@ class SupervisorQueryConfig(Config):
     # unifies the conversation's spans under one trace, X-Session-Id groups the sitting.
     # Empty for older serialized runs / direct callers.
     trace_id: str = ""
+    # W3C traceparent of the BFF's bff.orchestrate span (lane/perf): each step's span parents on it.
+    traceparent: str = ""
     session_id: str = ""
 
 
 @op(out=DynamicOut(Dict[str, Any]))
+@step_spanned("supervisor.create_task_plan")
 def create_task_plan(context, config: SupervisorQueryConfig):
     """
     Calls Engine O (Ontology Reasoner) to decompose a complex query into a
@@ -1578,6 +1582,10 @@ def _telemetry_headers(config, caller_token: str = "") -> Dict[str, str]:
 
     if getattr(config, "trace_id", ""):
         headers["X-Trace-Id"] = config.trace_id
+    # W3C parent for the engine's own spans; alongside X-Trace-Id, never replacing it.
+    _tp = current_traceparent()
+    if _tp:
+        headers["traceparent"] = _tp
     if getattr(config, "session_id", ""):
         headers["X-Session-Id"] = config.session_id
     return headers
@@ -2747,6 +2755,7 @@ def _log_no_verb_decision(
 
 
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
+@step_spanned("supervisor.execute_subtask")
 def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
     Execute a single decomposed sub-task by routing it through the
@@ -3814,6 +3823,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
 
 
 @op(ins={"results": In(List[Dict[str, Any]])}, out=Out(Dict[str, Any]))
+@step_spanned("supervisor.synthesize_stateful")
 def synthesize_stateful(context, config: SupervisorQueryConfig, results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Fans-in the results from all parallel sub-tasks and forwards them to
@@ -3854,6 +3864,7 @@ def synthesize_stateful(context, config: SupervisorQueryConfig, results: List[Di
 
 
 @op(ins={"results": In(List[Dict[str, Any]])}, out=Out(Any))
+@step_spanned("supervisor.generate_ui_payload")
 def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
     """
     Takes the aggregated results array from the Domain Agents and calls
