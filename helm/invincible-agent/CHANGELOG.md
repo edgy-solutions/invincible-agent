@@ -2,7 +2,21 @@
 
 ## 0.4.85 — not yet cut
 
-Entries merged after the 0.4.84 cut. The chart version is not bumped until the cut.
+Entries merged after the 0.4.84 tag (`f9fa4d7b`). The architect, 2026-11-10: "Merge train, all under
+'## 0.4.85 — not yet cut'", and "Hold the 0.4.85 cut PR until I say. Hold the PR, not the tag; the
+automation tags on merge." Every entry below goes under this heading until the cut; none goes under
+0.4.84, which is tagged and rolled.
+
+- **The chart-version test reads git output as UTF-8** (`tests/test_chart_version_tracks_chart_content.py`;
+  fin's finding). Its two text-mode `git` calls now pass `encoding="utf-8"`. Without it, Python decodes
+  `git show` of this file with the locale's code page; on a Windows cp1252 box the em-dashes in these
+  headings come back as mojibake or raise, and the seal reads the wrong text. The test is the only
+  change; nothing in the chart, the values or the pod templates moves.
+- **The root lock takes langfuse >= 4.7.0** (`pyproject.toml`, `uv.lock`; the architect, 2026-11-10).
+  langfuse moves 4.0.6 → 4.15.6. SDKs below 4.7.0 lag the v2 observations read by about 15 minutes.
+  The `<5` cap is Lane 1's: unbounded, the lock resolves 5.2.0 and moves opentelemetry with it. The
+  lock change is langfuse alone. Engine images that build from the root lock pick it up on the next
+  build; nothing in the chart moves.
 
 - **A dataset row can be drawn as `MULTI_SERIES`: several series over periods, read from the
   row's own asset.** Its `inputs.dataset` names `scope`, `period`, an optional `status` column,
