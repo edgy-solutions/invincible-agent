@@ -22,6 +22,7 @@ Run:  uv run pytest tests/security/test_level_readers_rail.py -q
 from __future__ import annotations
 
 import copy
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -53,14 +54,21 @@ def _real_group() -> str:
     return sorted(g for g in _GROUPS if g in held)[0]
 
 
+def _urn(label):
+    """A valid, distinct term identity per label (UUID v7 shape), derived, never typed."""
+    h = hashlib.sha256(label.encode()).hexdigest()
+    return f"urn:uuid:{h[:8]}-{h[8:12]}-7{h[13:16]}-8{h[17:20]}-{h[20:32]}"
+
+
 def _hier(*values, **over):
-    row = {"name": "dim-h", "type": "hierarchical", "vocabulary": list(values), "owner": "owner", "ratified_by": "owner"}
+    row = {"name": "dim-h", "identity": _urn("dim-h"), "type": "hierarchical", "vocabulary": list(values),
+           "identities": {v: _urn(f"dim-h.{v}") for v in values}, "owner": "owner", "ratified_by": "owner"}
     row.update(over)
     return row
 
 
 def _reg(*rows):
-    return {"dimensions": list(rows)}
+    return {"generator": "scripts/mint_term_identity.py", "dimensions": list(rows)}
 
 
 def _lr(level="level-a", **over):

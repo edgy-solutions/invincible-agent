@@ -6,6 +6,8 @@
 # (doc-tools #86's domainless split).
 kind: pdf
 domain: null
+arrives_as: [pdf]
+label: PDF (unclassified)
 passes:
   - identity.document_identity
 outputs:

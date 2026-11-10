@@ -9,8 +9,8 @@ read side already scopes by it (`artifact_reads`); the attach does not.
 
 Four arms, one at a time, against the REAL door and runner (the #283 harness, only the
 ingress and the status table are doubles):
-  1. a foreign delegate is refused, in the route family's own envelope and status (strict xfail:
-     the code admits it today; packet to invincible-agent/lane/01);
+  1. a foreign delegate is refused, in the route family's own envelope and status, with the
+     ruled code `delegate_not_seeder`;
   2. the seeding delegate is admitted (control);
   3. a person (not a delegate) keeps what the #283 ruling: attaches to the open case (control);
   4. the refusal is classified at its own site (the envelope arm reads the code of the sibling
@@ -75,10 +75,6 @@ def _refusal_siblings(delegates):
 FOREIGN_DELEGATE_CODE = "delegate_not_seeder"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "#283's attach asks the episode by key alone, so a foreign delegate attaches to a case it did "
-    "not seed (200, attached: true). Lane 1 fixes the attach caller and refuses with "
-    "`delegate_not_seeder` (packet, ruled); not fixed here."))
 def test_a_foreign_delegate_cannot_attach_to_a_case_it_did_not_seed(world, delegates):
     _open_a_case_seeded_by(world, DELEGATE_A)
     assert world.cluster.case("E-1")["seeded_by"] == DELEGATE_A

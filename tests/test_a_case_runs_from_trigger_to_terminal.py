@@ -56,9 +56,21 @@ class _Promise:
     def __init__(self, ctx, name):
         self.ctx, self.name = ctx, name
 
+    def _resolved(self):
+        for name, payload in self.ctx.resolved:
+            if name == self.name:
+                return payload
+        return None
+
+    async def peek(self):
+        """The first payload resolved under this name on this ctx, else None (the SDK's peek)."""
+        return self._resolved()
+
     def value(self):
         async def _v():
             answer = self.ctx.cluster.answers.get((self.ctx._key, self.name))
+            if answer is None:
+                answer = self._resolved()
             if answer is None:
                 raise AssertionError(
                     f"{self.ctx._key} awaited {self.name!r}, which this arm did not script")

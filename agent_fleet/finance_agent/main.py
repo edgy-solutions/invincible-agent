@@ -33,6 +33,7 @@ import logging
 import os
 from contextlib import asynccontextmanager, contextmanager
 import re
+import threading
 from datetime import date, datetime, timezone
 from typing import Any, Iterable, Optional
 
@@ -172,6 +173,11 @@ def _dist_dir(root: pathlib.Path) -> pathlib.Path:
 #: filesystem under /app is writable.
 _CDRL_FALLBACK_DIR = pathlib.Path("/app/agent_workspace/fin_cdrl")
 _CDRL_DIR_ENV = "FIN_CDRL_ARTIFACT_DIR"
+
+#: What `/cdrl_export` wrote, by file name: `{filename: {"profile", "program_id"}}`, beside the files
+#: in `_cdrl_out_dir()`. The leading dot keeps it out of the set `cdrl.artifact_filename` can name.
+_CDRL_ORIGINS = ".fin-cdrl-origins.json"
+_CDRL_ORIGINS_LOCK = threading.Lock()
 
 
 def _cdrl_out_dir() -> pathlib.Path:
@@ -458,11 +464,12 @@ def _declared_slots(row: "measure_verbs.MeasureVerbRow") -> list[dict[str, Any]]
     return [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
 
 
-def _registration_calls(base: str) -> list[dict[str, Any]]:
+def _registration_calls() -> list[dict[str, Any]]:
     """The keyword arguments of every `register_engine_to_mesh` call this engine makes for its
     verbs (built-in then declared), minus the `mint`. One list, read by the lifespan and by the
     seal that pins what is registered -- the loop that registered and the test that checked it
-    were two copies of one fact."""
+    were two copies of one fact. Each carries the measure's `fn` rather than a URL: the lifespan
+    builds `endpoint_url` from it, so the verb is in the path where the registration is made."""
     periods = [p for p in FISCAL_PERIODS if any(f.period == p for f in STATE.facts)]
     plan = [
         (v, v["input_uri"], "engine_fin_finance") for v in VERBS
@@ -479,7 +486,7 @@ def _registration_calls(base: str) -> list[dict[str, Any]]:
             output_uri=measures.OUTPUT_URI[v["fn"]],
             verb_synonyms=v["synonyms"],
             verb_anti_synonyms=v.get("anti_synonyms"),
-            endpoint_url=f"{base}/measure/{v['fn']}",
+            fn=v["fn"],
             slots=with_live_vocabularies(slots_for(v["fn"]), periods=periods),
             domains=DOMAINS,
         )
@@ -494,7 +501,7 @@ def _registration_calls(base: str) -> list[dict[str, Any]]:
             output_uri=measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
             verb_synonyms=list(r.synonyms),
             verb_anti_synonyms=list(r.anti_synonyms) or None,
-            endpoint_url=f"{base}/measure/{r.measure_id}",
+            fn=r.measure_id,
             # THE ROW'S CELLS, not the engine's: `policy.cells` is the field that excludes. A
             # built-in keeps DOMAINS; a declared verb registers under exactly what its row says
             # (a cell outside this engine's own is not refused: the field exists to exclude).
@@ -599,7 +606,7 @@ async def lifespan(app: FastAPI):
     # (tool_urn, verb_iri). The precedent for doing it correctly is Engine A's `findSchema`,
     # which carries BOTH idp:Column and idp:Dataset under `engine_a_find_schema_column` and
     # `engine_a_find_schema`. This follows that idiom rather than inventing one.
-    for _call in _registration_calls(base):
+    for _call in _registration_calls():
         try:
             register_engine_to_mesh(
                 mint=_mint,
@@ -612,7 +619,7 @@ async def lifespan(app: FastAPI):
                 output_uri=_call["output_uri"],
                 verb_synonyms=_call["verb_synonyms"],
                 verb_anti_synonyms=_call["verb_anti_synonyms"],
-                endpoint_url=_call["endpoint_url"],
+                endpoint_url=f"{base}/measure/{_call['fn']}",
                 slots=_call["slots"],
                 domains=_call["domains"],
             )
@@ -1407,6 +1414,8 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
             out_dir=out_dir, run_source=lambda fn, params: _cdrl_source(fn, params, caller=caller),
             program_source=program_source,
         )
+        if body.program_id not in {p.program_id for p in STATE.programs}:
+            _record_cdrl_origin(out_dir, path.name, profile.name, body.program_id)
     except OSError as e:
         # THE ONLY 503: the artifact directory cannot be created or written.
         raise HTTPException(
@@ -1448,6 +1457,42 @@ def _cdrl_artifact_origin(filename: str) -> Optional[tuple[Any, str]]:
     return None
 
 
+def _record_cdrl_origin(out_dir: pathlib.Path, filename: str, profile: str, program_id: str) -> None:
+    """Record that `filename` was written for a program the seed does not hold. The closed set
+    `_cdrl_artifact_origin` derives cannot name it; this record is how the fetch can."""
+    record = out_dir / _CDRL_ORIGINS
+    with _CDRL_ORIGINS_LOCK:
+        origins = _read_cdrl_origins(out_dir)
+        origins[filename] = {"profile": profile, "program_id": program_id}
+        tmp = record.with_name(record.name + ".tmp")
+        tmp.write_text(json.dumps(origins, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, record)
+
+
+def _read_cdrl_origins(out_dir: pathlib.Path) -> dict[str, Any]:
+    try:
+        origins = json.loads((out_dir / _CDRL_ORIGINS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return origins if isinstance(origins, dict) else {}
+
+
+def _recorded_cdrl_origin(filename: str) -> Optional[tuple[Any, str]]:
+    """`(profile, program_id)` for a CDRL `/cdrl_export` recorded writing, or None. The record names
+    a file; it does not widen the set: the entry holds only if its profile is composed and
+    `cdrl.artifact_filename` gives back exactly this name for it."""
+    entry = _read_cdrl_origins(_cdrl_out_dir()).get(filename)
+    if not isinstance(entry, dict):
+        return None
+    profile = PROFILES.get(entry.get("profile")) if isinstance(entry.get("profile"), str) else None
+    program_id = entry.get("program_id")
+    if profile is None or not isinstance(program_id, str) or not program_id:
+        return None
+    if filename != cdrl.artifact_filename(profile.name, program_id, profile.format):
+        return None
+    return profile, program_id
+
+
 @app.get("/artifact/{filename}")
 def get_artifact(filename: str) -> FileResponse:
     """Serve a produced package file — CLOSED SET, then ENTITLEMENT, mirroring
@@ -1456,6 +1501,10 @@ def get_artifact(filename: str) -> FileResponse:
     """
     scope = export.scope_of_artifact(filename)
     cdrl_origin = _cdrl_artifact_origin(filename) if scope is None else None
+    # A program only the asset holds is outside the derived set; `/cdrl_export` recorded its file.
+    recorded_only = scope is None and cdrl_origin is None
+    if recorded_only:
+        cdrl_origin = _recorded_cdrl_origin(filename)
     cdrl_program = cdrl_origin[1] if cdrl_origin else None
     if scope is None and cdrl_program is None:
         # A NAME NOT IN THE CLOSED SET IS A 404, BEFORE ANY ENTITLEMENT CHECK. Answering an
@@ -1468,6 +1517,15 @@ def get_artifact(filename: str) -> FileResponse:
         # AND the cells of every declared measure the profile sources: the file holds those figures,
         # and a caller outside a cell must not read them out of another caller's export.
         caller = _verb_caller("")
+        if recorded_only:
+            # The seed's program ids are deployment data; an asset-only one is not. A 403 here would
+            # tell a non-member the program exists and was exported, so it answers as never written.
+            try:
+                visible = _can_view(cdrl_program, caller)
+            except httpx.HTTPError as e:
+                raise HTTPException(503, f"program membership check failed: {e}") from e
+            if not visible:
+                raise HTTPException(status_code=404, detail="no such artifact")
         _require_visible(cdrl_program, caller)
         for fn in cdrl_origin[0].sources:
             _require_cell(fn, caller)

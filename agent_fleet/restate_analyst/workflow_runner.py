@@ -104,7 +104,13 @@ SEEDED_BY_STAMP_OUTCOME = "released"
 #: `CaseEpisode.attach`'s answer when a delegate's occurrence meets an open case it did not seed
 #: (Chris, 2026-11-06, for #283: "a delegate cannot attach to a case it didn't seed"). The door
 #: answers it as a 403 of the same code.
-NOT_THE_SEEDER = "not_the_seeding_delegate"
+NOT_THE_SEEDER = "delegate_not_seeder"
+
+#: The case's promise that holds the id of the FIRST human task one of its instances registered
+#: (Chris, 2026-11-07, saf: `task_id` is taken from the runner that mints the task). The id is
+#: minted where the instance registers it, so the instance tells the case (`task_opened`) and the
+#: door asks the case (`opened_task`) instead of deriving `{case}~n:step`, a copied format.
+OPENED_TASK = "opened_task"
 
 
 def _stamp_seeded_by(case_id: str, seeded_by: str) -> dict:
@@ -254,7 +260,36 @@ def _child_key(case_id: str, n: int) -> str:
 async def run(ctx: WorkflowContext, request: dict) -> dict:
     if "child_of" in request:
         return await _run_instance(ctx, request)
-    return await _run_case(ctx, request)
+    try:
+        out = await _run_case(ctx, request)
+    except restate.TerminalError:
+        # A waiter on `opened_task` must never hang on a case that failed before any task.
+        await _close_opened_task(ctx)
+        raise
+    await _close_opened_task(ctx)
+    return out
+
+
+async def _close_opened_task(ctx: WorkflowContext) -> None:
+    """The case is over: if no instance opened a task, say so (`task_id` None) so a waiter returns."""
+    await _hold_opened_task(ctx, {"task_id": None})
+
+
+async def _hold_opened_task(ctx, value: dict) -> dict:
+    """Resolve OPENED_TASK with `value` unless it already holds one; answer what it holds.
+
+    peek-then-resolve is not atomic: two instances of one case (or an instance and the case's own
+    close) can both see it empty. Restate refuses the second resolve with a TerminalError, which
+    here means only "someone else won", so the loser reads the winner rather than failing."""
+    promise = ctx.promise(OPENED_TASK, type_hint=dict)
+    held = await promise.peek()
+    if held is not None:
+        return held
+    try:
+        await promise.resolve(value)
+        return value
+    except restate.TerminalError:
+        return await promise.peek() or value
 
 
 # ── THE CASE ────────────────────────────────────────────────────────────────────────────────
@@ -322,7 +357,7 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
     case: dict = {"case_id": case_id, "trigger": name, "state": None, "terminal": None,
                   "episode": episode, "episode_id": episode_id,
                   "episode_id_source": episode_id_source, "instances": [], "transitions": [],
-                  "seeded_by": seeded_by, "predecessor": predecessor}
+                  "seeded_by": seeded_by, "predecessor": predecessor, "intake": trig.intake}
     await _record(ctx, case, frm=None, outcome="received", to="received", by="system",
                   at_name="at_received")
     # THE ORIGINAL EVENT IS REVISION 1 (SDK ``ArtifactRevision``). ``input_revisions`` is the
@@ -569,6 +604,24 @@ async def _run_instance(ctx: WorkflowContext, request: dict) -> dict:
 async def instance_spec(ctx: WorkflowSharedContext, request: dict) -> Optional[dict]:
     """What the case opened as instance ``n`` -- read by the instance, written only by ``run``."""
     return await ctx.get(f"instance:{int(request['n'])}")
+
+
+@workflow_runner.handler()
+async def task_opened(ctx: WorkflowSharedContext, request: dict) -> dict:
+    """An instance of this case registered a human task: record its id as the case's opened task.
+
+    The id is minted where the instance registers it; this is how the case learns it without
+    anyone deriving `{case}~n:step`. The FIRST task wins; later calls change nothing."""
+    held = await _hold_opened_task(ctx, {"task_id": str(request["task_id"])})
+    return {"task_id": held["task_id"]}
+
+
+@workflow_runner.handler()
+async def opened_task(ctx: WorkflowSharedContext, request: Any = None) -> dict:
+    """The id of the first task this case opened, as the instance minted it; ``{"task_id": None}``
+    when the case ended without opening one. Waits for either -- the door asks the case, it never
+    derives the id."""
+    return await ctx.promise(OPENED_TASK, type_hint=dict).value()
 
 
 @workflow_runner.handler()

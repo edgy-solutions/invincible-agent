@@ -506,7 +506,8 @@ async def test_arm2_ACCEPTED_on_awaiting_origin_files_the_promotion_and_promotio
     got = _assert_visible(g, NOTICE, BOB, ["SUSTAINMENT"], prog)
     assert got["sources"][0]["origin"]["resolved_by"] == "record", got["sources"][0]
     assert prog.calls == [("prog-x", BOB)], prog.calls
-    # The dropper cannot attest the very same filed payload.
+    # The dropper cannot attest the very same filed payload (under `second_party`, ruled 2026-11-09).
+    task["payload"]["attestation"] = {"mode": "second_party", "excluded": [ALICE]}
     with pytest.raises(promotion.PromotionRefused) as ei:
         promotion.act(
             task["payload"], decision="promoted", acted_by=ALICE, audience=task["audience"],
@@ -619,7 +620,8 @@ def test_arm4_a_STEWARD_promoting_a_no_origin_drop_opens_it_to_the_domain():
 
 # ── 5. the dropper cannot attest ──────────────────────────────────────────────────────────────
 
-def test_arm5_the_DROPPER_cannot_attest_and_nothing_opens():
+def test_arm5_the_DROPPER_cannot_attest_and_nothing_opens(monkeypatch):
+    monkeypatch.setattr(promotion, "_declared_attestation", lambda ck: "second_party")
     g = _world()
     ledger = _Ledger()
     with pytest.raises(promotion.PromotionRefused) as ei:
