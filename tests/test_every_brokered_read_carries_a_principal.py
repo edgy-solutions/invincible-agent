@@ -10,11 +10,12 @@ PINNED SOURCES (derived, not typed here):
     (`dag_tools.domain_broker.main.ResolveRequest.subject`), the identity the credential is
     minted for. The returned ticket carries no principal field of its own.
 
-THE CODE LIVES IN dag-tools, not here. The version this repo pins (edgy-dag-tools 0.11.0) predates
-the tag module and the tagged warehouse resource, so every arm below is a STRICT xfail while that is
-true, and the body is run against a dag-tools checkout (PYTHONPATH) to prove it. When the pin moves
-to a release that carries them the xfail goes XPASS and the strict marker FAILS the run: remove the
-marker then, which turns the seal on. Nothing in dag-tools is edited from here. Fixtures are
+THE CODE LIVES IN dag-tools, not here. The version this repo pins (edgy-dag-tools 0.13.0) carries
+the tag module, the tagged warehouse resource and the gateway identity module, so every arm runs
+unconditionally against the installed package. Until 0.13.0 the arms sat behind xfail markers whose
+CONDITION was "the module is absent": a marker like that switches itself off when the pin moves and
+never reports an XPASS, so the seal turned on silently. They are gone; a pin that loses a module
+now fails here on the import. Nothing in dag-tools is edited from here. Fixtures are
 synthetic: no real database, schema, table, program or level names (ADR-0064's standing rule).
 
 Arms:
@@ -40,14 +41,6 @@ def _present(dotted: str) -> bool:
     except (ImportError, ValueError):
         return False
 
-
-_HAVE_TAG = _present("dag_tools.audit.tag") and _present("dag_tools.resources.warehouse")
-_HAVE_GATEWAY = _present("dag_tools.central_gateway.identity")
-
-_PIN = ("the pinned edgy-dag-tools predates dag_tools.audit.tag / the tagged warehouse resource / "
-        "the gateway identity module; the body is proven against a dag-tools checkout")
-needs_tag = pytest.mark.xfail(condition=not _HAVE_TAG, strict=True, reason=_PIN)
-needs_gateway = pytest.mark.xfail(condition=not _HAVE_GATEWAY, strict=True, reason=_PIN)
 
 PIPE = "synthetic-pipeline"
 PERSON = "person-1@example.test"
@@ -77,14 +70,12 @@ def _principal_on_the_wire(plan):
     return attribution.principal, kind, value
 
 
-@needs_tag
 def test_a_pipeline_read_carries_the_pipeline_principal_in_the_query_tag():
     from dag_tools.audit.tag import PIPELINE, pipeline_principal
     principal, kind, value = _principal_on_the_wire(_resource(pipeline_name=PIPE).plan("SELECT 1"))
     assert (principal, kind, value) == (pipeline_principal(PIPE), PIPELINE, PIPE)
 
 
-@needs_tag
 def test_an_on_behalf_of_read_carries_the_verified_caller_in_the_query_tag():
     from dag_tools.audit.tag import ON_BEHALF_OF, on_behalf_of_principal
     bound = _resource(pipeline_name=PIPE).for_user(PERSON)
@@ -92,7 +83,6 @@ def test_an_on_behalf_of_read_carries_the_verified_caller_in_the_query_tag():
     assert (principal, kind, value) == (on_behalf_of_principal(PERSON), ON_BEHALF_OF, PERSON)
 
 
-@needs_tag
 def test_a_resource_with_no_principal_refuses_rather_than_sends_an_unattributed_read():
     from dag_tools.audit.warehouse import UntaggedQuery
     with pytest.raises(UntaggedQuery):
@@ -163,7 +153,6 @@ def _authorize(client, caller_email, **headers):
                        headers={"Authorization": f"Bearer {_token(caller_email)}", **headers})
 
 
-@needs_gateway
 def test_an_authorize_naming_a_person_hands_the_broker_that_person(monkeypatch):
     sent, client = _gateway_world(monkeypatch)
     r = _authorize(client, "svc-reader@example.test", on_behalf_of=PERSON)
@@ -182,8 +171,6 @@ def test_an_authorize_naming_nobody_still_hands_the_broker_a_principal(monkeypat
 
 
 # --------------------------------------------------------------------------- the two agree
-@needs_tag
-@needs_gateway
 def test_the_tags_principal_value_is_the_tickets_subject_for_the_same_read(monkeypatch):
     sent, client = _gateway_world(monkeypatch)
     assert _authorize(client, "svc-reader@example.test", on_behalf_of=PERSON).status_code == 200
