@@ -83,6 +83,27 @@ automation tags on merge." Every entry below goes under this heading until the c
   strict xfail, and its ticket pattern now refuses `pending`. The roll: engine-fin's image
   changes; nothing in the values or pod templates does.
 
+- **fin's live leg: the time-phased rows ship, and the sandbox carries refusal probes** (approved
+  2026-11-10 as one PR). `fin_ev_cumulative` and `fin_eac_trend` move from the test fixtures to
+  `policy/overlays/sample/measure_verbs/`, menus included. Four probe rows go in a new sandbox-only
+  overlay, `policy/overlays/sandbox/measure_verbs/`, each reading one of dag-tools 0.13.0's
+  planted-refusal assets (`ev_refusal_fixture`, `ev_refusal_missing_column`,
+  `ev_refusal_wrong_type`); they carry no menu. Their rail is all `granted_by: seed`,
+  `ratified_by: owner`: alice reads the three assets, the eleven `NP-PLANT-*` programs are
+  members-only for alice, and erin joins `NP-PLANT-NONE` as the asset gate's refusal control. The
+  offline seal `tests/finance/test_the_refusal_probes_refuse_as_derived.py` runs every planted case
+  through the real route; the live leg `tests/sandbox_e2e/test_the_refusal_fixture_refuses_live.py`
+  skips, naming what is missing, until the roll. Two gaps are recorded, not fixed: `wrong_type`
+  answers 200 (dataset readers cast level and scope columns to String), and the three uniqueness
+  cases answer 200 (no dataset reader checks row uniqueness, so a duplicated row is summed twice).
+- **The roll (live leg):** engine-fin's image changes (the new overlay directories ride the
+  `policy/overlays/` COPY). `values-sandbox.yaml` changes: engine-fin's `MEASURE_VERB_OVERLAY_DIRS`
+  gains `/app/policy/overlays/sandbox/measure_verbs`. Before the live leg can pass: Lane 1
+  materialises the `mesh_demo_refusal` group and the catalog sync gives the three assets directory
+  objects (until then grant_sync refuses the file, exit 3, as it did for ev_fixture); Chris syncs the
+  three grants and eleven programs to Topaz. The asset URNs are by analogy with ev_fixture and are
+  unverified until the live leg's FIRST leg passes.
+
 ## 0.4.84 — 2026-11-10
 
 Entries merged after the 0.4.83 tag (`3a23fce4`), through `27d59a39`. The architect, 2026-11-10:
