@@ -2,12 +2,30 @@
 
 ## 0.4.85 — not yet cut
 
-**The walkers join `obsolescence-deciders`** (gov; the architect, 2026-11-10: "the walkers mirror alice, so erin and chris join obsolescence-deciders in the same PR that fixes it").
+Entries merged after the 0.4.84 tag (`f9fa4d7b`). The architect, 2026-11-10: "Merge train, all under
+'## 0.4.85 — not yet cut'", and "Hold the 0.4.85 cut PR until I say. Hold the PR, not the tag; the
+automation tags on merge." Every entry below goes under this heading until the cut; none goes under
+0.4.84, which is tagged and rolled.
 
-- **What moves:** `policy/users.yaml` gives erin and chris the group alice has held since #314. `groups.yaml`'s member note names the three members. `test_oidc_broker_chart`'s walker seal counts 12 mirrored groups instead of 11, citing the ruling.
-- **Why:** #314 granted the group to alice only. The group has no persona.domain cell and is not granted by a capability row, so the seal does not treat it as capability-only. The walker arms were therefore red on master and on 0.4.84, which was cut without this fix.
-- **Before this version rolls:** Chris runs topaz_sync by hand so that Topaz holds erin's and chris's new membership. The realm import carries no groups, so nothing else needs syncing. The `obsolescence-deciders` sync ahead of 0.4.84's roll is the same group. If that sync has not run by the time this merges, one sync covers both.
-- **Effect:** in the sandbox, erin and chris may choose an `obsolescence_resolution.<option>` at the decide step. They are fixture grants, not a claim about who chooses a resolution in production.
+- **The chart-version test reads git output as UTF-8** (`tests/test_chart_version_tracks_chart_content.py`;
+  fin's finding). Its two text-mode `git` calls now pass `encoding="utf-8"`. Without it, Python decodes
+  `git show` of this file with the locale's code page; on a Windows cp1252 box the em-dashes in these
+  headings come back as mojibake or raise, and the seal reads the wrong text. The test is the only
+  change; nothing in the chart, the values or the pod templates moves.
+- **The root lock takes langfuse >= 4.7.0** (`pyproject.toml`, `uv.lock`; the architect, 2026-11-10).
+  langfuse moves 4.0.6 → 4.15.6. SDKs below 4.7.0 lag the v2 observations read by about 15 minutes.
+  The `<5` cap is Lane 1's: unbounded, the lock resolves 5.2.0 and moves opentelemetry with it. The
+  lock change is langfuse alone. Engine images that build from the root lock pick it up on the next
+  build; nothing in the chart moves.
+- **The walkers join `obsolescence-deciders`** (`policy/users.yaml`, `policy/groups.yaml`,
+  `tests/test_oidc_broker_chart.py`; gov). The architect ruled on 2026-11-10: "the walkers mirror alice, so
+  erin and chris join obsolescence-deciders in the same PR that fixes it". #314 gave the group to alice
+  only. The group has no persona.domain cell and no capability row grants it, so the walker seal counts it
+  as part of the persona set the walkers mirror. Its arms were therefore red on master and on 0.4.84. The
+  seal now counts 12 mirrored groups, citing the ruling. These are fixture grants, not a claim about who
+  chooses a resolution in production. **Before this version rolls,** Chris runs topaz_sync by hand for
+  erin's and chris's membership (the architect, 11-10). The realm import carries no groups, so nothing
+  else needs syncing.
 
 ## 0.4.84 — 2026-11-10
 

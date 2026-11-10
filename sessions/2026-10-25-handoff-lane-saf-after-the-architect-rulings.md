@@ -256,3 +256,32 @@ STANDING ITEM: when Lane 1 fills task_id from the runner's answer (packet 2026-1
 ## Round 35 - re-landing #301 on master
 
 #295 merged into master at 2026-11-08T00:44Z. #301 then merged at 03:40Z into its stacked base (`lane/saf-failurerecordset-is-a-document-and-the-haz-1003-task-id-form`), merge commit 3c440a83, not into master; 96db1a4e (the Engine S fix) and a224425c (the route seal and round 34) are not on master. Recovery by forward commits only: origin/master merged into this branch (clean, no conflicts), new PR with base master; the dead base branch is untouched and nothing on master changed. Merged-tip exit codes: tests/safety/ 1 (533 passed, 4 skipped, 12 xfailed, 1 failed: fin's `test_THE_VERB_IS_IN_THE_PATH_not_in_the_body`, red on the base too); gov ratchet 0 (24 passed); route seal 0 (4 passed). The round 34 standing item (flip arm (b) when Lane 1 fills task_id) is unchanged.
+
+## Round 36 - the ticket carries its id, issue time and as-of (draft, built against 62581a65)
+
+RULINGS, verbatim.
+11-08: "#311 merges when green; Lane 1 confirms 96db1a4e is an ancestor of master before calling it landed and deletes the dead base branch. fin owns the endpoint_url red."
+v0.13.0: "ticket seals verify against v0.13.0 (PR #33, cut tonight); nothing else changes."
+Latest: "ticket seals built against dag-tools 62581a65, to verify at v0.13.0."
+
+(96db1a4e is an ancestor of origin/master as of this round; #311 landed.)
+
+The job: tests/test_every_brokered_read_carries_a_principal.py (#287's seal) gains the ticket-identity arms against dag-tools 62581a65 (#31's merge on dag-tools master). Names read from `dag_tools/domain_broker/ticket_identity.py` (`TicketIdentity.fields()`): `ticket_id`, `issued_at`, `as_of` (plus `as_of_source`), stamped at the broker's `resolve_asset` seam and relayed by the gateway, whose TICKET_ISSUED line names the ticket id against the subject it minted for. All three match the ruling. New arms: each field on the relayed ticket (parametrized), distinct ids per read and as_of is the data's version not the clock, an absent as_of is None never the issue time, and the principal the ticket is minted for (the TICKET_ISSUED subject = the broker's subject) is the query tag's principal. The existing arms are kept, and the strict xfail for an authorize naming nobody still xfails at 62581a65 (not fixed there). Arms are strict xfail on the new module's presence (`needs_identity`); the pin stays edgy-dag-tools==0.11.0 and was not moved.
+
+Measured against a throwaway checkout of 62581a65: 11 passed, 1 xfailed (the nobody arm). Against the pin: 12 xfailed. Mutants (text mode, utf-8, asserted applied, checkout verified clean after): drop ticket_id reds 3 arms; drop issued_at reds 3; drop as_of reds 3 (the version is advertised as `snapshot_id` so a producer's own `as_of` key cannot mask the drop; the first draft of the fixture did mask it and the mutant survived until changed); the log's subject disagreeing reds the new agree arm; the gateway handing the broker another subject reds 4 arms.
+
+PENDING VERIFICATION (a later order, not this job): when `git ls-remote --tags origin` in dag-tools shows refs/tags/v0.13.0, run the three gate checks (tag exists; 62581a65 is an ancestor; tagged pyproject reads 0.13.0), re-derive the three names at the tag, re-run the arms and mutants there. If all match, mark the PR ready and send the packet (first line: for Chris; addressed to invincible-agent/seat/architect) saying the seal is ready for the pin move to 0.13.0. No packet before that.
+
+## Round 37 - the ticket seal verified at v0.13.0
+
+Gate: the v0.13.0 tag (a lightweight tag) is bed53b9c4ff005e91f60ce3db7b41d5033121d65 and peels to the same commit; 62581a65 is an ancestor of it; the pyproject at the tag reads version 0.13.0. `ticket_identity.py` at the tag is byte-identical to 62581a65's; the names are `ticket_id`, `issued_at`, `as_of`. The gateway and broker main modules have no diff between 62581a65 and the tag. Throwaway checkout of the tag: 11 passed, 1 xfailed (the nobody-authorize arm), the same as the 62581a65 run. All five mutants (drop each field; the log subject disagreeing; the broker handed another subject) turn their arms red exactly as before (3, 3, 3, 1, 4 failures); the checkout was clean afterwards and has been removed. #330 marked ready; packet to the architect seat for Chris placed untracked in the master sessions/. The pin was not moved. Move PR must remove the `needs_*` module-presence markers (they XPASS on the move).
+
+## Round 38 - a conflicted PR gets no CI; #330 merged forward over the pin move
+
+Finding (Job 20, the coordinator's): #330 showed no check runs because it was CONFLICTING/DIRTY. A conflicted PR has no merge ref, so no `pull_request` workflow fires; closing and reopening it does not help. The cause was a merge conflict with master, not the event. Check `mergeStateStatus` before suspecting the CI trigger.
+
+Job 21: master's 9405874f already moved the pin to `edgy-dag-tools==0.13.0` (lock, values, changelog) and removed `needs_tag`/`needs_gateway` from the seal file. Merged origin/master into lane/saf-the-ticket-carries-its-id-issue-time-and-as-of with a merge commit (no rebase, no force). One conflict, the seal file: kept master's removals, dropped my `needs_identity` marker and the nine `@needs_*` decorators on my arms, kept the nobody-authorize strict xfail. `uv sync --extra agent-fleet` then `edgy-dag-tools` imports at 0.13.0.
+
+Exits on the merged tip: seal file 0 (11 passed, 1 xfailed, no XPASS); refusal ratchet 0 (24 passed); tests/safety 0 (535 passed, 4 skipped, 11 xfailed). Mutants on a throwaway copy of the installed 0.13.0 package on PYTHONPATH (ia-saf's venv untouched; copy cmp-identical after): drop ticket_id, issued_at, as_of each exit 1 (3 failed); TICKET_ISSUED naming another subject exit 1 (1 failed); broker payload subject changed exit 1 (4 failed).
+
+The architect packet carries an UPDATE top line: nothing asked of Chris but merging #330.
