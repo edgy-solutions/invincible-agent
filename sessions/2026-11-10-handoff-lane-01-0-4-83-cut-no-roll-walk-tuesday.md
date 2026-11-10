@@ -7,6 +7,42 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-10 ~21:45Z: TRAIN HALF IN; THE WRITER FIX IS #344; CUT PR HELD.**
+- **The architect's order:** "0.4.85 is cut and rolled by Friday 11-13".
+  - The cut PR is released when the full train is in, or at Thursday 11-12 23:00Z (17:00 CT, Lane 1's reading), whichever comes first.
+  - After the roll, `telemetry_misses` must read 0 on the six engines and cortex-bff. Any non-zero value is reported.
+  - Train rule: a red or a new conflict stops that PR; the rest continue.
+- **Merged since 21:20Z, by head sha, ratchet 24 on each:**
+  - #336 `622bcb7f` (^2 `a616770f`)
+  - #329 `431d57bc` (^2 `54c161c0`)
+  - #337 `bc5e87c2` (^2 `0501c923`; retargeted, then closed and reopened)
+  - #319 `82f70fd0` (^2 `831d8d06`)
+- **Still to come:**
+
+  | PR | state | waiting on |
+  | --- | --- | --- |
+  | #331 | `0ecd9cab`, CONFLICT in `finance_agent/measure_verbs.py` (with #316) | fin's re-merge (packet sent) |
+  | #339 | `78ad62ed`, CLEAN | 74's 0.4.85 CHANGELOG bullet (packet sent; the architect agreed) |
+  | #340 | `32fa21a5`, CONFLICT in the root and restate_analyst `pyproject.toml` | perf's re-merge (packet sent) |
+  | gov's engine-fin pin move | not open | — |
+  | fin's live-leg PR | not open | — |
+  | **#344** (Lane 1's writer fix) | `b1485cf2`, test merge CLEAN, its bullet lands inside 0.4.85 | CI, then ratchet, then merge |
+- **The ruling on the nine ActionRecord errors** (verbatim in the transcript):
+  - **ca, SDK:** `work_order` gains `option` and `readiness`; `provenance` gains `case_definition`, `case_id` and `emitted_by`. All are optional strings. `forbid` stays, and the contract version is bumped.
+    - v0.9.18 is already tagged (`2f47e9ee`), so this goes in **v0.9.19**. ca has the packet, and the architect has been told.
+  - **Lane 1, writer:** `graph_uri` is filled from the node (still required), and `manual_nodes_consulted` is flat. A seal checks against the pinned schema. 9418f245's stored record is not rewritten.
+    - That is **#344**: the walk returns `node_uris` and `citations` keeps its shape.
+    - The seal allows the 5 ruled fields only while the pin's `model_fields` lacks them.
+    - `test_s6_the_model_refuses_a_stage_it_cannot_honour` is red on master too (`82f70fd0`), so it predates #344.
+- **OpenDDIL packet: HELD.** Re-issue it once #344 and ca's v0.9.19 are both merged, which also needs a pin move to v0.9.19.
+  - The sample is the seal's writer-produced record, sent with the schema and the contract version.
+  - Say that live confirmation follows the 0.4.85 roll.
+- **D1:** the architect asked Chris to say "D1 moves to Wednesday" to Lane 1 and 74. **Not yet said.**
+- **Roll gates:**
+  - 74 holds the lock from 11-11 16:00Z until its written hand-back.
+  - Chris's Topaz sync is needed (#336 adds walkers to obsolescence-deciders).
+  - The values diff goes to Chris first.
+
 **11-10 ~21:20Z: THE 0.4.85 TRAIN. The cut PR is HELD (architect: "Hold the PR, not the tag; the automation tags on merge").**
 - **Merged, all under `## 0.4.85 — not yet cut`:** #330 (`a91eb7dc`, ^2 `74c0b498`), #335 (`00099a7d`; the heading and the utf-8 fix), #338 (`d665658d`; langfuse `>=4.7.0,<5` = 4.15.6), #334 (`6f5bb97d`, ^2 `5d1dc05f`), #316 (`7f1a782b`, ^2 `41d88ea2`).
 - **Train order from here:** #329 → #337 → #339, then fin's #319 → #331, and gov's #336.
