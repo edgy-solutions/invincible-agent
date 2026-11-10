@@ -1,0 +1,6 @@
+# GENERATED from policy/classification/dimensions.yaml by scripts/generate_vocabulary_skos.py. Do not edit.
+# Regenerate after changing the source; --check fails while this file is stale.
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+
+# No dimension is declared.

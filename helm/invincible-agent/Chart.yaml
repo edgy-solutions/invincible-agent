@@ -14,5 +14,5 @@ type: application
 # A merge that brings helm/** changes in counts as a chart change, but not as a Chart.yaml edit
 # (git log drops a merge that is TREESAME to one parent). Bump after the merge, not before it.
 # 0.4.81 = 73d18c23..2ebb91d0 (#280, #289), cut 2026-11-07.
-version: 0.4.82
+version: 0.4.83
 appVersion: "2026.07.02"

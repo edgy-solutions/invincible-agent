@@ -46,10 +46,10 @@ global:
   # rendered image that still carries only a tag. The map is keyed by repository, so a component
   # `image.tag` override on a row below is ignored; change the row instead.
   imageDigests:
-    # 0.11.0 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
-    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:f71a5b092486354f0d144c467953a6c1c749e1b133c44e133458cf71d6d8cf2c"
-    # 0.11.0 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
-    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:ebc44a04433678e5f366cbbb94c9c130e9d0df28338414db012e7d00e535250f"
+    # 0.13.0 (read 2026-11-10 by Docker-Content-Digest; index incl. linux/arm64; = :sha-bed53b9)
+    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:9c9a99ee50d9ba8b128cb04e789280856169c2c6084074664bda84911e70d31a"
+    # 0.13.0 (read 2026-11-10 by Docker-Content-Digest; index incl. linux/arm64; = :sha-bed53b9)
+    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:d385757d13f6a4eeeb8540400c98b8f973f4803226caf0af4a9c6120fe2d33dc"
     # Kept over 1555b341 (source e5612fa: the CP1252 repair AND the V_CHARACTERISTICS fold, not reviewed),
     # architect 11-05; board 01M6P5ZAJ382FBHEQDA23941EA carries both forward on a reviewed build.
     # reviewed 09-23 (`master` build of 1aa2cbe) (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -120,7 +120,15 @@ global:
     # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
     # 93d76e8..01fa313 changes src/archetypes only besides sessions: no Dockerfile, package.json
     # or workflow change, and no import.meta.env read added.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:2b625433582820a489303dc7dfebc8e1526e0af7ba55a4a768d32637a9c13adb"
+    # RE-PINNED FOR 0.4.83 (architect via Chris, 2026-11-09: "0.4.83 cortex pin = db45763"):
+    # cortex-ui db45763a98f24b7d59e6bef51b6a817861de2956 -> b320303c, the digest its Build
+    # Containers run 42743511504 published. It adds to 01fa313: the dropper hold reads the served
+    # payload.attestation.excluded (no local rule), and a structural 403 shows the server's text.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
+    # 01fa313..db45763 changes src/ and sessions/ and build.yml's PRODUCER_REF only: no Dockerfile
+    # or package.json change, and no import.meta.env read added.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:b320303cd5b31f0766de8f00fab7b95090dd9ef8c5d4e7607cb08b8d22a64f52"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)

@@ -254,10 +254,10 @@ def test_an_export_naming_a_series_row_is_refused_with_the_existing_code(series_
 
 
 def test_the_verbs_register_like_any_declared_row(series_rows):
-    calls = {c["verb"]: c for c in engine._registration_calls("http://engine.test")}
+    calls = {c["verb"]: c for c in engine._registration_calls()}
     for fn in (CUM, EAC):
         c = calls["mesh:" + series_rows[fn].verb]
-        assert c["endpoint_url"].endswith(f"/measure/{fn}") and c["domains"] == ["PROGRAM_FINANCE"]
+        assert c["fn"] == fn and c["domains"] == ["PROGRAM_FINANCE"]
         assert [s["name"] for s in c["slots"]] == ["program_id"]
 
 

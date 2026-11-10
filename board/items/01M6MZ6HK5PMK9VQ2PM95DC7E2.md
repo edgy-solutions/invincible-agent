@@ -8,7 +8,7 @@ priority: now
 blocked_on: []
 pr: [invincible-agent#267]
 ruling_ref: Chris 11-05 board item, pin acryl-datahub in the lock; architect via Chris 11-05: it cuts as 0.4.80
-updated: 2026-11-05
+updated: 2026-11-08
 ---
 
 **0.4.80 content** (0.4.79 was already released, so this cuts as 0.4.80). The control-plane image installs acryl-datahub outside the lock.
@@ -25,3 +25,5 @@ The extra install is redundant at best. At worst it moves the package and its tr
 3. The engines that list bare `"acryl-datahub"` (`data_analyst`, `neo4j_expert`, `weaviate_expert`, `presentation_agent`, `mesh_registrar`, `restate_analyst`) are each confirmed to resolve it from their own `uv.lock`. The confirmation reads their images, not their pyproject files.
 
 **Not checked:** which acryl-datahub version the live control-plane image carries, or what the root lock names. Reading `uv.lock` here was denied this session, so the PR reads the installed dist-info.
+
+Sweep 2026-11-08: #267 merged (done-when 1 and 2). Stays in review: done-when 3, reading the six engines' images, is not done. #267's body says so.

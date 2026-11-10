@@ -8,6 +8,8 @@
 # know, so without this file a registered xml drop would be refused.
 kind: xml
 domain: null
+arrives_as: [xml]
+label: XML (unclassified)
 passes:
   - xml.xml_document_identity
 outputs:

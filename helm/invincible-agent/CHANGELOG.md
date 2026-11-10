@@ -1,9 +1,16 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.83 — not yet cut
+## 0.4.84 — not yet cut
 
-Entries merged after the 0.4.82 cut. The chart version is not bumped until the cut.
+Entries merged after the 0.4.83 cut. The chart version is not bumped until the cut.
 
+- **A measure row may declare its menu placement in a `menu:` block,** and the two sample flow rows
+  (`fin_flow_acwp`, `fin_flow_eac_variance`) do: subject `fin:DeclaredMeasureSeries`, archetype
+  `mesh:FlowDecomposition`, `persona_fit` `[PROGRAM_FINANCE_ANALYST]`, `domain_fit`
+  `[PROGRAM_FINANCE]` (architect, 2026-11-07: the menu row is a registry row, not a cortex
+  constant). The loader holds exactly those four keys. It refuses a `subject` other than the
+  declared class, an `archetype` other than the class of `render.shape`, and a `domain_fit`
+  outside `policy.cells`. Nothing serves the block yet; the BFF serving it is the next step.
 - **A dataset row can be drawn as `MULTI_SERIES`: several series over periods, read from the
   row's own asset.** Its `inputs.dataset` names `scope`, `period`, an optional `status` column,
   `per_period` (columns summed over the program's rows at each period) and `per_program` (columns
@@ -19,8 +26,147 @@ Entries merged after the 0.4.82 cut. The chart version is not bumped until the c
   fixtures** (`tests/finance/fixtures/measure_verbs/`), not samples: the live asset has neither
   column until dag-tools 0.12.0 materializes, and a shipped row would answer 502 `missing_column`.
   They move to `policy/overlays/sample/` with that pin.
-- **The roll:** engine-fin's image changes; nothing in its values or pod template does. No verb
-  registers until the rows ship as samples.
+- **The roll:** engine-fin's image and the sample overlay change; nothing in the values or pod
+  templates does. The two EV rows register no verb until they ship as samples.
+
+## 0.4.83 — 2026-11-10
+
+Entries merged after the 0.4.82 cut (`98c824aa`). Cut on Chris's 11-09 word: "cut 0.4.83 tonight,
+do not roll". The cortex pin is the architect's ("0.4.83 cortex pin = db45763"), and the attestation
+change is ruled 2026-11-09. The tag is held: "I tag 0.4.83 at the new head tomorrow after the walk"
+(Chris, 11-09). PRs merged before the tag ride this version, and their entries go under this heading.
+
+**What merged, and where each one is:**
+
+| item | where |
+| --- | --- |
+| #324 attestation is declared, not constant (ingest-v1 1.9.0) | merged at `de1873c2`; through the images; below |
+| #325 the act refuses on the served `excluded`; `Attestation` declared (ingest-v1 1.9.1) | merged at `4f2dac35`; through the images; below |
+| #309, #311, #313 `delegate_not_seeder`; the draft card's `task_id` comes from the runner | through the images; below |
+| #321 the case serves its `intake` label | merged at `17007300`; through the images; below |
+| #320 fin serves the CDRL a program only the asset holds | merged at `236d0311`; through the images; below |
+| #314 gov: lifecycle vocabulary, SKOS export, the obsolescence option deciders | merged at `3ebfd706`; policy; **names the new Topaz group `obsolescence-deciders`** |
+| #317 ADR-0065 C, the obsolescence slice of the product vocabulary | merged at `74a0ccca`; ontology |
+| #315 engine-o: where is this part used (ADR-0065 §4, item E) | merged at `1691a290`; through the images |
+| #306 the engine reads the workflow DSL from the SDK | merged at `f7e7d1da`; through the images |
+| #288 gov: #282's two missed commits | merged at `319b3af4`; policy |
+| #307, #308, #318 | docs and board only; nothing to carry |
+| cortex db45763 | below |
+| #310 engine-fin registers the verb in its `endpoint_url` path | merged at `57f16df2`, after the cut commit; through the images; below |
+| #322 the 503 seals find their sites by what they call | merged at `5fa0f3e4`, after the cut commit; through the images |
+| #323 gov: `arrives_as` and `label` on the nine kinds that have a row | merged at `8095d651`, after the cut commit; policy overlay |
+| dag-tools 0.13.0 | this PR; below |
+
+**Before this cut rolls** (not tonight: "do not roll"):
+
+1. Chris syncs Topaz for `obsolescence-deciders` (#314). task-grant-sync exits 5 on a group Topaz
+   does not hold, so the sync comes before the roll.
+2. The values diff against the live release goes in front of whoever approves the roll.
+3. After the roll, re-materialise `ev_fixture` and the three refusal assets.
+
+**Not in this cut:**
+
+- **iagent-mesh v0.9.17.** It was tagged at 03:49Z on 11-10. The fleet pin is gov's rail, and it
+  rides this version only if gov's PR merges before the tag. Until then the fleet stays on v0.9.15.
+- **ADR-0065 D, Lane 1's half** (the `obsolescence_resolution` workflow row and the runner-side
+  trigger) is not built. #314 ships the deciders' rail it will read.
+
+**The dropper may promote under `self`; the task serves who may not** (#324, #325; architect,
+2026-11-09). Separation of duties on a promotion is a declared property,
+`attestation: self | second_party`, default `self`. At work the person who drops a notice
+validates, promotes and exports it.
+
+- **Filing** stamps `payload.attestation = {mode, excluded}` on a `document_promotion` task.
+  `excluded` is empty under `self`; under `second_party` it holds the dropper's `authz_id` and
+  `on_behalf_of`.
+- **The act** refuses 403 `dropper_cannot_attest_origin` only under `second_party`, and only for the
+  ids in the served `excluded`. It never recomputes them from `dropped_by`. A declaration that is
+  neither mode, or a malformed block, is 503 `attestation_undeclarable`, and nothing is written.
+- **The record** names who attested: `attestation {mode, attested_by, self_attested}` on the
+  human_review check, plus `origin_attested_by` and `origin_self_attested` on the origin write.
+- **The declaration seam** `promotion._declared_attestation` returns nothing until gov names the
+  row, so every task is `self` on this cut.
+- **ingest-v1 1.9.1** declares `HumanTask.payload` as `TaskPayload` with
+  `attestation: Attestation`.
+
+**cortex-ui frontend db45763 (`sha256:b320303c…`)**
+
+- It adds to 01fa313: the dropper hold reads `payload.attestation.excluded` and derives nothing from
+  `dropped_by`. A malformed block holds Promote (fail closed). A structural 403 shows the server's
+  `message` inline.
+- Build Containers run 42743511504. The full tag resolves to the digest, an OCI index for amd64
+  and arm64. The short tag and an altered digest give 404.
+- Until this cut rolls, the live card still hides Promote from the dropper.
+
+**dag-tools 0.13.0 (tag at `bed53b9`)** (the architect, via Chris: "dag-tools pin for 0.4.83 is
+0.13.0")
+
+- **What moves:**
+  - the root `pyproject.toml` pin, `edgy-dag-tools==0.13.0`; the lock moves that one package only;
+  - `central-gateway` → `sha256:9c9a99ee…`;
+  - `user-deployment` → `sha256:d385757d…`;
+  - the brokered-read seal (below).
+- **The digests were read 11-10 by Docker-Content-Digest:**
+  - `:0.13.0`, `:0.13` and `:sha-bed53b9` resolve to the same index for both images, with
+    linux/amd64 and linux/arm64. This is the first release since dag-tools #16 in which the tag and
+    the commit build are one artifact.
+  - A tag that does not exist gives 404.
+- **What 0.13.0 adds over 0.11.0:**
+  - #31: a broker ticket names which read it is and over what version of the data.
+  - #32: the `ev_fixture` demo rows a governed read is supposed to refuse, one per contract rule.
+  - From 0.12.0, which this repo never pinned:
+    - the `ev_fixture` status period and reported estimate;
+    - the query tag (`dag_tools.audit.tag`, the tagged warehouse resource that refuses to send a
+      read with no principal) and the read audit;
+    - classification label propagation through column lineage;
+    - the otel-api-sync concurrency cap;
+    - contract-mapping;
+    - the qual probe work.
+  - No owner packet for 0.13.0 has reached Lane 1, so which of these are inert for this chart is
+    not measured here.
+- **The brokered-read seal turns on.** `tests/test_every_brokered_read_carries_a_principal.py` held
+  its arms behind xfail markers conditioned on `dag_tools.audit.tag`, the tagged warehouse resource
+  and the gateway identity module being absent. 0.13.0 ships all three.
+  - A marker like that switches itself off when the pin moves and never reports an XPASS, so the
+    markers are removed. The arms now run unconditionally: five pass.
+  - The observe-posture arm (an authorize naming nobody hands the broker `subject=None`) stays a
+    strict xfail on the code.
+- **Not moved:** `agent_fleet/finance_agent` (v0.10.0) and `agent_fleet/data_analyst` (the pre-rename
+  SHA) pin dag-tools in their own projects.
+- **The roll:** after it, re-materialise `ev_fixture` and the three refusal assets (the list above).
+
+- **A foreign delegate's attach is refused as `delegate_not_seeder`.** Chris, 2026-11-07 (saf):
+  the code is `delegate_not_seeder`, in `detail["error"]`. #289 refused it as
+  `not_the_seeding_delegate`; the behaviour is unchanged (403, nothing written), only the code
+  is renamed, at its one home (`workflow_runner.NOT_THE_SEEDER`) and the door's 403. saf's seal
+  `tests/test_a_delegate_attaches_only_to_a_case_it_seeded.py` loses its strict xfail.
+- The case answers the task it opened (`WorkflowRunner/<case>/opened_task`): the instance tells its
+  case the id it minted (`task_opened`, the first task wins), the gateway asks the case for it and
+  fills the draft card's `task_id` from the answer (absent when unanswered, never null), and saf's
+  strict xfail is removed. Chris, 2026-11-07 (saf).
+- The case serves its `intake` label: the label of its `received` row, as the trigger declares it
+  (`intake:`). The runner stamps it on the case at open, and the case read serves it. The key is
+  absent when the trigger declares none, or for a case opened before the stamp. The architect,
+  2026-11-08: "served by the runner from the workflow declaration ... No word in code on either
+  side." Cortex reads it.
+
+- **fin serves the CDRL a program only the asset holds.** `/cdrl_export` exported such a program
+  (a profile sourcing only declared measures computes over the asset), and the BFF's fetch of the
+  file it had just written was a 404: `/artifact`'s closed set is the composed profiles crossed
+  with the seed's programs. The engine now records what it wrote for a program outside the seed
+  (`.fin-cdrl-origins.json`, beside the files) and the fetch reads that record only when the
+  derived set misses, re-deriving the name through `cdrl.artifact_filename` (a planted entry
+  serves nothing). Visibility, cells and grants are checked as before, except that a non-member
+  gets 404 rather than 403, because a 403 would confirm that the program exists. A profile with a
+  built-in source still refuses such a program with a 422 `not_in_model` at export: the built-in
+  reads the seed.
+- **engine-fin registers each verb with the verb in its `endpoint_url` path, at the call.**
+  `_registration_calls()` now carries each measure's `fn`, and the lifespan builds
+  `endpoint_url=f"{base}/measure/{_call['fn']}"`. Before, the list carried the finished URL and the
+  call passed `_call["endpoint_url"]`, which hid the verb from safety's
+  `test_THE_VERB_IS_IN_THE_PATH_not_in_the_body` and turned it red. The registered URLs are the
+  same strings as before, so the mesh sees no change.
+- **The roll:** engine-fin's image changes; nothing in its values or pod template does.
 
 ## 0.4.82 — 2026-11-08
 

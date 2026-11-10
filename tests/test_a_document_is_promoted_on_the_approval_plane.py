@@ -97,7 +97,7 @@ class Graph:
             raise RuntimeError("graph writer down")
         self.nodes[iid].update(fact)
 
-    def attest_origin(self, iid, *, owner_domain, record_id):
+    def attest_origin(self, iid, *, owner_domain, record_id, **_kw):
         self.log.append(("origin", iid, owner_domain, record_id))
         if self.fail == "origin":
             raise RuntimeError("graph writer down")
