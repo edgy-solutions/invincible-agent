@@ -46,6 +46,35 @@ What this changes:
 
 The Phase 1a report carries a pointer to this section.
 
+## Positive control, 2026-11-10: mesh emission works; the silence was the missing X-Trace-Id
+
+I asked "how do I add a new engine" once through cortex-bff, sending `X-Trace-Id: perf-pc-42e6e6e8eb0e`
+the way cortex-ui does (`cortex-ui/src/api/client.ts:92`).
+
+- **The run:** 20:25:28Z → 20:27:05Z, 96.3 s, HTTP 200.
+- **What landed:** `/api/public/v2/observations?traceId=6d9edcb87aa8968015e9e73b8ccc2f37` (sha256 of the
+  seed, first 16 bytes) holds one span, `engine-o /plan`, from 20:26:00.994Z to 20:26:17.794Z (16.8 s).
+  It is the only observation project-wide since 20:20Z. engine-o's log has the matching `POST /plan` 200.
+
+So a 4.14.2 engine exports with the fixed key, in real time.
+
+**Why the 45-day silence.** Two causes, and neither is a broken exporter:
+
+- **The engines' old key** was refused until the 01:04Z restart.
+- **The callers sent no `X-Trace-Id`.** The engine-o and engine-w spans come from a middleware that fires only
+  when the header is present (`ontology_service/main.py:1116`, `weaviate_expert/main.py:381`). The supervisor
+  forwards the header only when the run config carries a trace id (`dynamic_supervisor.py:1583`). My e2e
+  client (`tests/sandbox_e2e/mesh_client.py:81`) sends none. An answer asked from cortex-ui would have carried
+  one.
+
+**What the control trace shows about coverage.** The `/explain` hop and the BFF and supervisor are still
+uncovered, so the one span accounts for 16.8 s of a 96.3 s answer.
+
+**The span's parent id (`b9608351…`) is not in the trace.** The SDK invents a random remote parent whenever a
+`trace_context` carries a `trace_id` and no `parent_span_id` (`langfuse/_client/client.py`
+`_create_remote_parent_span`). So every span opened by `observed_trace` on a joined trace is a non-root with a
+dangling parent. A waterfall reader must treat "parent not in trace" as a root.
+
 ## 1. Who calls the library today
 
 Every mesh caller goes through the shim (`baml_shared/telemetry.py`) with one mapping,
