@@ -62,6 +62,17 @@ automation tags on merge." Every entry below goes under this heading until the c
   - **Not in this pin: `attestation` on the content-kind row.** v0.9.17 was tagged without it, so the
     field rides v0.9.18, and so do the `attestation: self` rows on `pcn` and `pdn`: an overlay row that
     declares the field does not load on an SDK without it.
+- **The maintenance action record the runner writes at `released` now meets the SDK's `ActionRecord` on the
+  writer side (architect ruling, 2026-11-10).** Every `work_order.task_refs[].graph_uri` carries the graph URI
+  of the cited data-module node (fault-isolation, remove and install procedure, planning-interval), read off
+  the declared `s1000d_fault_walk` by two new selects (and the planning module's node on its existing one), returned under `node_uris`, so `citations` keeps
+  the shape the cross-repo contract pins; it is never null and never invented, and a walk that finds no node
+  refuses the render. `provenance.manual_nodes_consulted` is a flat list of strings (the two remove/install
+  modules rendered as `.0` and `.1`, as `task_refs` already did). The stored `9418f245` record is not
+  rewritten. `work_order.option`, `work_order.readiness`, `provenance.case_definition`, `provenance.case_id`
+  and `provenance.emitted_by` are unchanged and wait on SDK v0.9.19; the new seal
+  `tests/test_the_written_action_record_meets_the_pinned_schema.py` tolerates `extra_forbidden` on exactly
+  those fields only while the pinned model does not declare them.
 
 - **fin's `data_provenance` says its ticket is pending** (#319). Ruled 2026-11-08: ADR-0065:133
   (URN, as-of and ticket id) stands and is marked unmet. The broker's ticket has carried
