@@ -63,6 +63,15 @@ automation tags on merge." Every entry below goes under this heading until the c
     field rides v0.9.18, and so do the `attestation: self` rows on `pcn` and `pdn`: an overlay row that
     declares the field does not load on an SDK without it.
 
+- **fin's `data_provenance` says its ticket is pending** (#319). Ruled 2026-11-08: ADR-0065:133
+  (URN, as-of and ticket id) stands and is marked unmet. The broker's ticket has carried
+  `ticket_id`, `issued_at` and `as_of` since dag-tools 0.13.0 (#31; saf's seal in #330), but
+  engine-fin pins its own dag-tools (v0.10.0) and its client discards the ticket. So an asset
+  answer now reads `<banner> (ticket: pending) Source: <urn>` and claims no as-of. The URN stays
+  last, so the live variance leg's suffix check is unchanged. The as-of/ticket-id seal stays a
+  strict xfail, and its ticket pattern now refuses `pending`. The roll: engine-fin's image
+  changes; nothing in the values or pod templates does.
+
 ## 0.4.84 — 2026-11-10
 
 Entries merged after the 0.4.83 tag (`3a23fce4`), through `27d59a39`. The architect, 2026-11-10:
