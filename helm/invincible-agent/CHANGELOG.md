@@ -1,5 +1,19 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.84 — not yet cut
+
+Entries merged after the 0.4.83 cut. The chart version is not bumped until the cut.
+
+- **A measure row may declare its menu placement in a `menu:` block,** and the two sample flow rows
+  (`fin_flow_acwp`, `fin_flow_eac_variance`) do: subject `fin:DeclaredMeasureSeries`, archetype
+  `mesh:FlowDecomposition`, `persona_fit` `[PROGRAM_FINANCE_ANALYST]`, `domain_fit`
+  `[PROGRAM_FINANCE]` (architect, 2026-11-07: the menu row is a registry row, not a cortex
+  constant). The loader holds exactly those four keys. It refuses a `subject` other than the
+  declared class, an `archetype` other than the class of `render.shape`, and a `domain_fit`
+  outside `policy.cells`. Nothing serves the block yet; the BFF serving it is the next step.
+- **The roll:** engine-fin's image and the sample overlay change; nothing in the values or pod
+  templates does.
+
 ## 0.4.83 — 2026-11-10
 
 Entries merged after the 0.4.82 cut (`98c824aa`). Cut on Chris's 11-09 word: "cut 0.4.83 tonight,
