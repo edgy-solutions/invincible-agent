@@ -1,6 +1,6 @@
 to: invincible-agent/lane/01
 from: invincible-agent/lane/01
-date: 2026-11-10 (03:50Z; Monday 11-09 21:50 CT)
+date: 2026-11-10 (04:05Z; Monday 11-09 22:05 CT)
 supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 # 0.4.83 is cut and not rolled; the walk is Tuesday 09:00 CT
@@ -18,12 +18,52 @@ lock free; cut 0.4.83 tonight, do not roll; readiness re-read 07:00 on 0.4.82".
 
 **The cut, PR #326 (`lane/01-cut-0-4-83`, `wt\01\cut0483`, head `f614ad04`).** It holds Chart 0.4.83, cortex
 `db45763` (`sha256:b320303c…`, measured with controls) and the dated CHANGELOG. **Merged at `3a23fce4`** (second
-parent `f614ad04`, on master; CI 20 green and 3 skipped, join ratchet 24). **Chris tags `invincible-agent-0.4.83`
-at `3a23fce4`**; nothing is published until then. Not in it:
-- dag-tools 0.13.0, which is only on dag-tools' `release/0.13.0` branch: not merged, not tagged, not on PyPI. It
-  can join before the tag by a follow-up PR.
-- iagent-mesh v0.9.17, which is untagged.
-- D's Lane 1 half.
+parent `f614ad04`, on master; CI 20 green and 3 skipped, join ratchet 24).
+
+**THE TAG IS HELD (Chris, 11-09 ~22:00 CT):** "hold the 0.4.83 tag ... I tag 0.4.83 at the new head tomorrow after
+the walk." Every PR merged before the tag rides 0.4.83, with its CHANGELOG entry under the dated 0.4.83 heading.
+
+The architect's overnight order, via Chris (11-09→10). After the walk, in this order:
+1. tag 0.4.83
+2. Topaz sync
+3. values diff
+4. roll
+5. re-materialise
+6. doc-tools roll
+7. tr's `propose` run
+8. wb 0.1.9
+9. 74's rehearsal
+
+Lane 1's part:
+- Fold #310, #322 and #323, and fin's #312, #316 and #319 **as fin resolves each** (fin resolves; Lane 1 does
+  not push to fin's branches).
+- Pin PRs as tags appear: dag-tools 0.13.0 (this lane) and iagent-mesh v0.9.17 (gov's).
+- LANGFUSE_HOST moves from the Secret to the ConfigMap.
+- `attestation` is read from the content-kind row once ca ships the field.
+- D's `obsolescence_resolution` row.
+- Item: `notice.mfr_source` derivation (gov's ask to 7f is Lane 1's).
+- Review perf's tracing PR when it opens.
+- 07:00 CT readiness re-read on 0.4.82: six items, no synthetic event.
+
+**PR #328 (`lane/01-dag-tools-0-13-0`, `wt\01\dag0130`, head `9405874f`): dag-tools 0.13.0.**
+- dag-tools 0.13.0 is published:
+  - tag `bed53b9`, on PyPI;
+  - `central-gateway` `9c9a99ee…`, `user-deployment` `d385757d…`;
+  - `:0.13.0`, `:0.13` and `:sha-bed53b9` resolve to one index each; a missing tag gives 404.
+- No four-sites packet for 0.13.0 reached any inbox. The four sites used: the root pin, the two digests and the
+  brokered-read seal, whose version-gated xfails were removed (5 pass).
+- finance_agent and data_analyst are not moved.
+- The CHANGELOG adds #310, #322 and #323 to the 0.4.83 table.
+- CI and the join ratchet were running at 04:05Z. Merge on green.
+
+**Two reds measured (neither is #328's):**
+- `test_chart_version_tracks_chart_content`: red on master since #310 (`57f16df2`). Every fold into a held
+  version reds it, and CI runs no pytest. It clears when the final pre-tag commit touches Chart.yaml. **Asked
+  Chris how.**
+- `test_oidc_broker_chart` walkers [erin|chris]: #314 gave alice `obsolescence-deciders`, a cell group, and not
+  the walkers. A packet to gov is placed in master `sessions/`.
+
+**mesh v0.9.17 was tagged at 03:49Z.** Gov's pin PR was not open at 04:05Z.
 
 **Before 0.4.83 rolls (after the walk):**
 1. Chris's Topaz sync for `obsolescence-deciders` (#314).
@@ -45,7 +85,9 @@ at `3a23fce4`**; nothing is published until then. Not in it:
 
 ## Next, in order
 
-1. After Chris tags: check image-digests `images` against `expected` on the release run. A tag is never moved.
+1. Merge #328 on green. Fold fin's PRs as fin resolves each, and gov's v0.9.17 pin PR. Then, before the tag,
+   a final CHANGELOG tidy, plus the Chart.yaml answer.
+   After Chris tags: check image-digests `images` against `expected` on the release run. A tag is never moved.
 2. **fin's #312 → #316 → #319** as each is resolved.
 3. **ADR-0065 D**, Lane 1's half: the `obsolescence_resolution` workflow row and the runner-side trigger, on the
    0.9.16 models. The fleet pin to 0.9.16/0.9.17 is gov's rail; master is on v0.9.15.
