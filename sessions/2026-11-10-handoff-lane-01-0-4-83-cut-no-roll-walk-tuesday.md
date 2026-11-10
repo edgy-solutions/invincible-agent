@@ -7,6 +7,19 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-10 ~21:20Z: THE 0.4.85 TRAIN. The cut PR is HELD (architect: "Hold the PR, not the tag; the automation tags on merge").**
+- **Merged, all under `## 0.4.85 — not yet cut`:** #330 (`a91eb7dc`, ^2 `74c0b498`), #335 (`00099a7d`; the heading and the utf-8 fix), #338 (`d665658d`; langfuse `>=4.7.0,<5` = 4.15.6), #334 (`6f5bb97d`, ^2 `5d1dc05f`), #316 (`7f1a782b`, ^2 `41d88ea2`).
+- **Train order from here:** #329 → #337 → #339, then fin's #319 → #331, and gov's #336.
+  - #329 (`dcde090c`) and #336 (`9779ce26`) CONFLICT on the CHANGELOG 0.4.85 heading. They are gov's to re-merge; there is a packet to gov.
+  - #337 (74, `e958ee78`) is stacked on #329 and gets no CI. After #329 merges: retarget it to master, close and reopen it, merge on green.
+  - #339 (74, `78ad62ed`, the where-used BOM for PCN26-182) has no CHANGELOG entry; ask 74 for one under 0.4.85 at its turn.
+  - fin walks #319 next, then #331 (packet sent).
+  - Merge each by its head sha with `train-one2.sh`, after `join-ratchet.sh`. Test-merge first with `$S/testmerge.sh N` to see where the CHANGELOG hunk lands.
+- **OpenDDIL action-record packet: HELD** ("until I rule and the two agree"). It has a banner. The record fails ActionRecord with 9 errors; those were pasted to the architect.
+- **74's roll lock:** the handover packet is placed, giving 74 the lock from 11-11 16:00Z. The lock read free at 21:01Z. Lane 1 does not roll, fire or walk until 74's written hand-back. That includes 0.4.85.
+- **Re-materialise done:** ev_fixture `c31c24a9` (13 columns, adding status_period and eac_reported) and the three refusal assets. fin has been told.
+- **Not started:** LANGFUSE_HOST from the Secret to the ConfigMap; the notice.mfr_source attestation for 7f; ADR-0065 D (waits on #329).
+
 **11-10 ~19:45Z: 0.4.84 IS ROLLED (revision 230) AND 1010'S EPISODE IS FREE.**
 - Chris: "Topaz synced at f9fa4d7b. Diff approved. Roll 0.4.84, then release on 9062f943's episode".
 - The roll ran from `wt\01\rel484`, the tag tree. All pods are ready, and engine-a is on `ec4735ed…`. The roll lock is released.
