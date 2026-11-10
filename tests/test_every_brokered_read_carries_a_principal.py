@@ -25,6 +25,12 @@ Arms:
            nobody hands the broker an identity too: today it hands None (strict xfail on the
            code, with a packet);
   agree    the principal's value in the tag is the ticket's subject for the same read.
+  identity the ticket the broker mints and the gateway relays carries `ticket_id`, `issued_at` and
+           `as_of` (dag-tools #31, in 0.13.0: `dag_tools.domain_broker.ticket_identity`, stamped at
+           `resolve_asset`; the names are `TicketIdentity.fields()`'s, read from that code). The
+           gateway's TICKET_ISSUED line names the ticket id against the principal it minted for,
+           and that principal is the tag's. `as_of` is the data's version and `issued_at` the
+           time we looked: never the same field, and an absent as_of is None, never the clock.
 """
 from __future__ import annotations
 
@@ -92,8 +98,11 @@ def test_a_resource_with_no_principal_refuses_rather_than_sends_an_unattributed_
 
 
 # --------------------------------------------------------------------------- the ticket carrier
-def _gateway_world(monkeypatch):
-    """The real `/authorize` route, observe posture (the default), fake Redis/Topaz/broker."""
+def _gateway_world(monkeypatch, broker_reply=None):
+    """The real `/authorize` route, observe posture (the default), fake Redis/Topaz/broker.
+
+    `broker_reply(json) -> awaitable ticket` stands in for the broker's resolve door; the default
+    is a fixed synthetic body."""
     import sys
     import types
     if not _present("redis"):  # the [broker] extra: the route never opens it (no lifespan here)
@@ -131,6 +140,8 @@ def _gateway_world(monkeypatch):
             if "/authz/is" in url:
                 return _Resp(200, {"decisions": [{"is": True}]})
             sent.broker.append(json)
+            if broker_reply is not None:
+                return _Resp(200, await broker_reply(json))
             return _Resp(200, {"source_type": "synthetic", "physical_uri": "synthetic://x"})
 
     monkeypatch.setattr(gateway, "redis_client", _Redis())
@@ -178,3 +189,77 @@ def test_the_tags_principal_value_is_the_tickets_subject_for_the_same_read(monke
     _, _kind, value = _principal_on_the_wire(
         _resource(pipeline_name=PIPE).for_user(subject).plan("SELECT 1"))
     assert value == subject == PERSON
+
+
+# --------------------------------------------------------------------------- the ticket's identity
+_ADVERTISED_VERSION = "synthetic-version-7"
+# Advertised under `snapshot_id`, not `as_of`: the stamp must be what puts `as_of` on the ticket,
+# else a producer's own `as_of` key would make the field look stamped when it is not.
+
+
+def _real_broker(monkeypatch, **coords):
+    """The broker's real `resolve_asset` (the one seam every ticket leaves through), with only the
+    coordinate resolution replaced by a synthetic ticket. Returns the `broker_reply` for the world."""
+    from dag_tools.domain_broker import main as broker
+
+    async def _synthetic(request):
+        return {"source_type": "synthetic", "physical_uri": "synthetic://x", **coords}
+
+    monkeypatch.setattr(broker, "_resolve_ticket", _synthetic)
+
+    async def reply(body):
+        return await broker.resolve_asset(broker.ResolveRequest(**body))
+
+    return reply
+
+
+def _issued_line(caplog) -> dict:
+    """The gateway's TICKET_ISSUED line, parsed to its key=value pairs."""
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("TICKET_ISSUED")]
+    assert len(lines) == 1, f"expected one TICKET_ISSUED line, got {lines}"
+    return dict(p.split("=", 1) for p in lines[0].split()[1:])
+
+
+@pytest.mark.parametrize("field", ["ticket_id", "issued_at", "as_of"])
+def test_a_brokered_ticket_the_gateway_relays_carries_the_identity_field(monkeypatch, field):
+    sent, client = _gateway_world(monkeypatch, _real_broker(monkeypatch, snapshot_id=_ADVERTISED_VERSION))
+    r = _authorize(client, "svc-reader@example.test", on_behalf_of=PERSON)
+    assert r.status_code == 200, r.text
+    ticket = r.json()
+    assert field in ticket, f"the relayed ticket has no `{field}`: {sorted(ticket)}"
+    assert ticket[field], f"`{field}` is empty"
+
+
+def test_the_identity_fields_say_which_read_when_and_over_what_version(monkeypatch):
+    from datetime import datetime
+    sent, client = _gateway_world(monkeypatch, _real_broker(monkeypatch, snapshot_id=_ADVERTISED_VERSION))
+    first = _authorize(client, "svc-reader@example.test", on_behalf_of=PERSON).json()
+    second = _authorize(client, "svc-reader@example.test", on_behalf_of=PERSON).json()
+    assert first["ticket_id"] != second["ticket_id"], "two reads share a ticket id"
+    assert datetime.fromisoformat(first["issued_at"]).utcoffset() is not None
+    assert first["as_of"] == _ADVERTISED_VERSION  # carried as the source wrote it
+    assert first["as_of"] != first["issued_at"]  # the data's version is not the clock
+
+
+def test_an_absent_as_of_is_none_never_the_issue_time(monkeypatch):
+    sent, client = _gateway_world(monkeypatch, _real_broker(monkeypatch))
+    ticket = _authorize(client, "svc-reader@example.test", on_behalf_of=PERSON).json()
+    assert "as_of" in ticket and ticket["as_of"] is None, ticket.get("as_of")
+    assert ticket["issued_at"], "the issue time is still stamped"
+
+
+def test_the_principal_the_ticket_is_minted_for_is_the_tags_principal_for_the_same_read(
+        monkeypatch, caplog):
+    """The ticket carries no principal field; the principal it is minted for is the `subject` the
+    gateway handed the broker, and the gateway's TICKET_ISSUED line names that subject against this
+    ticket's id. That, the broker's subject and the query tag's principal value are one person."""
+    import logging
+    sent, client = _gateway_world(monkeypatch, _real_broker(monkeypatch, snapshot_id=_ADVERTISED_VERSION))
+    with caplog.at_level(logging.INFO):
+        r = _authorize(client, "svc-reader@example.test", on_behalf_of=PERSON)
+    assert r.status_code == 200, r.text
+    issued = _issued_line(caplog)
+    assert issued["ticket_id"] == r.json()["ticket_id"], "the line names another ticket"
+    _, _kind, tag_value = _principal_on_the_wire(
+        _resource(pipeline_name=PIPE).for_user(sent.broker[0]["subject"]).plan("SELECT 1"))
+    assert issued["subject"] == sent.broker[0]["subject"] == tag_value == PERSON

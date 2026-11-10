@@ -163,7 +163,7 @@ groups:
   # DECIDE-RAIL GROUP ONLY (2026-11-07 dispatch). Grants NO persona.domain cell; named in
   # policy/option_deciders.yaml `grant_to_groups` for every `obsolescence_resolution.<option>`. A member
   # may CHOOSE that option at the workflow's decide step; who APPROVES is task_grants' audience.
-  # Sandbox member = alice.
+  # Sandbox members = alice, and the walkers erin and chris (2026-11-10 ruling: the walkers mirror alice).
   obsolescence-deciders: {}
 
   # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-11 ruling). Grants NO persona.domain cell; named in

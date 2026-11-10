@@ -1,16 +1,77 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.84 — not yet cut
+## 0.4.85 — not yet cut
 
-Entries merged after the 0.4.83 cut. The chart version is not bumped until the cut.
+Entries merged after the 0.4.84 tag (`f9fa4d7b`). The architect, 2026-11-10: "Merge train, all under
+'## 0.4.85 — not yet cut'", and "Hold the 0.4.85 cut PR until I say. Hold the PR, not the tag; the
+automation tags on merge." Every entry below goes under this heading until the cut; none goes under
+0.4.84, which is tagged and rolled.
 
-- **A measure row may declare its menu placement in a `menu:` block,** and the two sample flow rows
-  (`fin_flow_acwp`, `fin_flow_eac_variance`) do: subject `fin:DeclaredMeasureSeries`, archetype
-  `mesh:FlowDecomposition`, `persona_fit` `[PROGRAM_FINANCE_ANALYST]`, `domain_fit`
-  `[PROGRAM_FINANCE]` (architect, 2026-11-07: the menu row is a registry row, not a cortex
-  constant). The loader holds exactly those four keys. It refuses a `subject` other than the
-  declared class, an `archetype` other than the class of `render.shape`, and a `domain_fit`
-  outside `policy.cells`. Nothing serves the block yet; the BFF serving it is the next step.
+- **The chart-version test reads git output as UTF-8** (`tests/test_chart_version_tracks_chart_content.py`;
+  fin's finding). Its two text-mode `git` calls now pass `encoding="utf-8"`. Without it, Python decodes
+  `git show` of this file with the locale's code page; on a Windows cp1252 box the em-dashes in these
+  headings come back as mojibake or raise, and the seal reads the wrong text. The test is the only
+  change; nothing in the chart, the values or the pod templates moves.
+- **The root lock takes langfuse >= 4.7.0** (`pyproject.toml`, `uv.lock`; the architect, 2026-11-10).
+  langfuse moves 4.0.6 → 4.15.6. SDKs below 4.7.0 lag the v2 observations read by about 15 minutes.
+  The `<5` cap is Lane 1's: unbounded, the lock resolves 5.2.0 and moves opentelemetry with it. The
+  lock change is langfuse alone. Engine images that build from the root lock pick it up on the next
+  build; nothing in the chart moves.
+- **The walkers join `obsolescence-deciders`** (`policy/users.yaml`, `policy/groups.yaml`,
+  `tests/test_oidc_broker_chart.py`; gov). The architect ruled on 2026-11-10: "the walkers mirror alice, so
+  erin and chris join obsolescence-deciders in the same PR that fixes it". #314 gave the group to alice
+  only. The group has no persona.domain cell and no capability row grants it, so the walker seal counts it
+  as part of the persona set the walkers mirror. Its arms were therefore red on master and on 0.4.84. The
+  seal now counts 12 mirrored groups, citing the ruling. These are fixture grants, not a claim about who
+  chooses a resolution in production. **Before this version rolls,** Chris runs topaz_sync by hand for
+  erin's and chris's membership (the architect, 11-10). The realm import carries no groups, so nothing
+  else needs syncing.
+
+- **A dataset row can be drawn as `MULTI_SERIES`: several series over periods, read from the
+  row's own asset.** Its `inputs.dataset` names `scope`, `period`, an optional `status` column,
+  `per_period` (columns summed over the program's rows at each period) and `per_program` (columns
+  holding one value across the program). The module declares `READS` and `SERIES`, and the loader
+  holds the row to both. `render.series` and `render.target` are validated on the SDK's
+  `MeasureSeries` and `MeasureSeriesReference` (iagent-mesh v0.9.15, which the fleet already
+  pins); a target may name a series (`target: {series: bac}`). The envelope serves
+  `status_period` from the data. The kind is still `dataset`, so the grant check, the CDRL
+  refusal and the package refusal cover these rows unchanged. A column or status that varies
+  within the program is a 502 with the new rule `varies_within_scope`.
+- **Two rows, `fin_ev_cumulative` and `fin_eac_trend`, are coded to the EV contract,** whose
+  `status_period` and `eac_reported` now say `produced_since: "0.12.0"`. They ship as **test
+  fixtures** (`tests/finance/fixtures/measure_verbs/`), not samples: the live asset has neither
+  column until dag-tools 0.12.0 materializes, and a shipped row would answer 502 `missing_column`.
+  They move to `policy/overlays/sample/` with that pin.
+- **The roll:** engine-fin's image changes; nothing in the values or pod templates does. The
+  two EV rows register no verb until they ship as samples.
+- **The fleet moves to iagent-mesh v0.9.17** (17 pyprojects, 17 locks, `domainBroker.meshSdkVersion`;
+  gov; the architect, 11-08: "the v0.9.16 fleet pin is gov's (same as 0.9.15; one PR)"; 11-10: "v0.9.17
+  fleet pin PR when the tag exists").
+  - **What moves:** the root pyproject changes two lines. Every lock names the tag's commit (`8d1ee304`),
+    and none still names v0.9.15's. Sixteen locks change 3 lines and the root lock 4, the same shape as
+    the v0.9.15 move; the root lock keeps the langfuse floor above. `meshSdkVersion`'s closed-network
+    comment and `option_deciders.yaml`'s measured note name the pin.
+  - **Why:** ADR-0065 D (Lane 1's `obsolescence_resolution` row) puts `options` on its decide step. v0.9.15's
+    step model forbids unknown fields and has no `options`. v0.9.16 added `HumanAwaitStep.options` and
+    `lifecycle_status`, and v0.9.17 reshapes `ImpactRow` to the ruled nine fields (ADR-0065 §4). The fleet
+    skips v0.9.16, whose three-field `ImpactRow` is superseded.
+  - **What the SDK changes:** only additions; between the two tags nothing under `iagent_mesh/` is deleted,
+    and its dependencies are unchanged. engine-o's `where_used.py` keeps its local `ImpactRow`; moving it
+    onto the SDK's is lane 74's.
+  - **Closed network:** the package calls itself 0.9.17, so `meshSdkSource: index` serves this pin.
+  - **Not in this pin: `attestation` on the content-kind row.** v0.9.17 was tagged without it, so the
+    field rides v0.9.18, and so do the `attestation: self` rows on `pcn` and `pdn`: an overlay row that
+    declares the field does not load on an SDK without it.
+
+- **fin's `data_provenance` says its ticket is pending** (#319). Ruled 2026-11-08: ADR-0065:133
+  (URN, as-of and ticket id) stands and is marked unmet. The broker's ticket has carried
+  `ticket_id`, `issued_at` and `as_of` since dag-tools 0.13.0 (#31; saf's seal in #330), but
+  engine-fin pins its own dag-tools (v0.10.0) and its client discards the ticket. So an asset
+  answer now reads `<banner> (ticket: pending) Source: <urn>` and claims no as-of. The URN stays
+  last, so the live variance leg's suffix check is unchanged. The as-of/ticket-id seal stays a
+  strict xfail, and its ticket pattern now refuses `pending`. The roll: engine-fin's image
+  changes; nothing in the values or pod templates does.
+
 - **engine-fin: with `FIN_DATASET_URN` set, the built-in measures read the asset as the caller**
   (ruled 2026-11-08 (fin): that is what the flag means). They now carry the asset's provenance and
   `data_source`, and a CDRL that sources one no longer refuses a program only the asset holds
@@ -38,83 +99,103 @@ Entries merged after the 0.4.83 cut. The chart version is not bumped until the c
   A declared or dataset-kind panel is a 503 from the builder, naming the
   panel, with nothing written, because the page's embedded `measures.py` cannot recompute it. A
   dataset-kind panel was a 409 with the flag unset too and is now that 503.
-- **The roll:** engine-fin's image and the sample overlay change; nothing in the values or pod
-  templates does. With the built-ins: the image carries the seed layer's new
-  `policy/measure_verbs/fin_funding_status.yaml` (Dockerfile.agent copies `policy/measure_verbs/`).
-  The sandbox has `FIN_DATASET_URN` set, so at the roll its built-ins, packages and CDRLs read the
-  asset as the caller, except funding, which stays on the seed by its row.
+- **The roll (built-ins, #331):** engine-fin's image carries the seed layer's new
+  `policy/measure_verbs/fin_funding_status.yaml` (Dockerfile.agent copies `policy/measure_verbs/`);
+  nothing in the values or pod templates changes. The sandbox has `FIN_DATASET_URN` set, so at the
+  roll its built-ins, packages and CDRLs read the asset as the caller, except funding, which stays
+  on the seed by its row.
 
-## 0.4.83 — 2026-11-10
+## 0.4.84 — 2026-11-10
 
-Entries merged after the 0.4.82 cut (`98c824aa`). Cut on Chris's 11-09 word: "cut 0.4.83 tonight,
-do not roll". The cortex pin is the architect's ("0.4.83 cortex pin = db45763"), and the attestation
-change is ruled 2026-11-09. The tag is held: "I tag 0.4.83 at the new head tomorrow after the walk"
-(Chris, 11-09). PRs merged before the tag ride this version, and their entries go under this heading.
+Entries merged after the 0.4.83 tag (`3a23fce4`), through `27d59a39`. The architect, 2026-11-10:
+"0.4.83 stands where the automation put it (3a23fce4) and never rolls; it lacks the hotfix.
+Everything after it ships as 0.4.84." This is the version the sandbox rolls next.
 
 **What merged, and where each one is:**
 
 | item | where |
 | --- | --- |
-| #324 attestation is declared, not constant (ingest-v1 1.9.0) | merged at `de1873c2`; through the images; below |
-| #325 the act refuses on the served `excluded`; `Attestation` declared (ingest-v1 1.9.1) | merged at `4f2dac35`; through the images; below |
-| #309, #311, #313 `delegate_not_seeder`; the draft card's `task_id` comes from the runner | through the images; below |
-| #321 the case serves its `intake` label | merged at `17007300`; through the images; below |
-| #320 fin serves the CDRL a program only the asset holds | merged at `236d0311`; through the images; below |
-| #314 gov: lifecycle vocabulary, SKOS export, the obsolescence option deciders | merged at `3ebfd706`; policy; **names the new Topaz group `obsolescence-deciders`** |
-| #317 ADR-0065 C, the obsolescence slice of the product vocabulary | merged at `74a0ccca`; ontology |
-| #315 engine-o: where is this part used (ADR-0065 §4, item E) | merged at `1691a290`; through the images |
-| #306 the engine reads the workflow DSL from the SDK | merged at `f7e7d1da`; through the images |
-| #288 gov: #282's two missed commits | merged at `319b3af4`; policy |
-| #307, #308, #318 | docs and board only; nothing to carry |
-| cortex db45763 | below |
-| #310 engine-fin registers the verb in its `endpoint_url` path | merged at `57f16df2`, after the cut commit; through the images; below |
-| #322 the 503 seals find their sites by what they call | merged at `5fa0f3e4`, after the cut commit; through the images |
-| #323 gov: `arrives_as` and `label` on the nine kinds that have a row | merged at `8095d651`, after the cut commit; policy overlay |
-| dag-tools 0.13.0 | this PR; below |
+| #310 engine-fin registers the verb in its `endpoint_url` path | merged at `57f16df2`; through the images; below |
+| #322 the 503 seals find their sites by what they call | merged at `5fa0f3e4`; through the images |
+| #323 gov: `arrives_as` and `label` on the nine kinds that have a row | merged at `8095d651`; policy overlay |
+| #328 dag-tools 0.13.0 | merged at `af87f0c0`; root pin, two digests; below |
+| #312 fin: a measure row declares its menu placement | merged at `7a9b19e4`; through the images; below |
+| #332 the walk hotfix: a case at its terminal frees its episode | merged at `27d59a39`; through the images; below |
 
-**Before this cut rolls** (not tonight: "do not roll"):
+0.4.84 also carries everything in 0.4.83, which never rolled. The sandbox goes from 0.4.82 to this
+version.
 
-1. Chris syncs Topaz for `obsolescence-deciders` (#314). task-grant-sync exits 5 on a group Topaz
-   does not hold, so the sync comes before the roll.
+**Before this version rolls:**
+
+1. Chris syncs Topaz for `obsolescence-deciders` (#314, in 0.4.83). task-grant-sync exits 5 on a
+   group Topaz does not hold, so the sync comes before the roll.
 2. The values diff against the live release goes in front of whoever approves the roll.
-3. After the roll, re-materialise `ev_fixture` and the three refusal assets.
+3. After the roll, `release` is sent on `9062f943`'s episode (the hotfix entry below), and the
+   episode is read free.
+4. After the roll, re-materialise `ev_fixture` and the three refusal assets.
 
-**Not in this cut:**
+**Not in this version:**
 
-- **iagent-mesh v0.9.17.** It was tagged at 03:49Z on 11-10. The fleet pin is gov's rail, and it
-  rides this version only if gov's PR merges before the tag. Until then the fleet stays on v0.9.15.
+- **gov's walker fix** (erin and chris join `obsolescence-deciders`, mirroring alice). No PR had
+  merged at the cut. Until it does, `test_oidc_broker_chart`'s walker arms stay red, and erin and
+  chris are not obsolescence deciders on this version.
+- **iagent-mesh v0.9.17** (gov's pin PR #329, not merged at the cut). The fleet stays on v0.9.15.
+- **fin's #316, #319 and #331**, not merged at the cut.
+- **perf's tracing PR #327** (Chris, 11-10: perf is re-basing on provenance-telemetry).
 - **ADR-0065 D, Lane 1's half** (the `obsolescence_resolution` workflow row and the runner-side
   trigger) is not built. #314 ships the deciders' rail it will read.
 
-**The dropper may promote under `self`; the task serves who may not** (#324, #325; architect,
-2026-11-09). Separation of duties on a promotion is a declared property,
-`attestation: self | second_party`, default `self`. At work the person who drops a notice
-validates, promotes and exports it.
+**A case at its terminal frees its episode; a disposing emit ends its definition** (#332, the walk
+hotfix; architect, 2026-11-10: "'open' means the case has not reached a terminal stage
+(released/closed/rejected), never that a workflow is alive").
 
-- **Filing** stamps `payload.attestation = {mode, excluded}` on a `document_promotion` task.
-  `excluded` is empty under `self`; under `second_party` it holds the dropper's `authz_id` and
-  `on_behalf_of`.
-- **The act** refuses 403 `dropper_cannot_attest_origin` only under `second_party`, and only for the
-  ids in the served `excluded`. It never recomputes them from `dropped_by`. A declaration that is
-  neither mode, or a malformed block, is 503 `attestation_undeclarable`, and nothing is written.
-- **The record** names who attested: `attestation {mode, attested_by, self_attested}` on the
-  human_review check, plus `origin_attested_by` and `origin_self_attested` on the origin write.
-- **The declaration seam** `promotion._declared_attestation` returns nothing until gov names the
-  row, so every task is `self` on this cut.
-- **ingest-v1 1.9.1** declares `HumanTask.payload` as `TaskPayload` with
-  `attestation: Attestation`.
+- **What failed:** at 16:33Z on the walk, OpenDDIL's occurrence `62b9e840` attached to case
+  `9062f943`, which was released on 10-29. That case's last instance started on the pre-0.4.72
+  `maint_release`, which emitted `released` and then waited on a `tier_ack` nobody sends. Its
+  workflow never returned, so its episode never released, and the door answered with October's
+  case.
+- **Open is now the stage, not the run.** `_run_case` sends `CaseEpisode.release` as soon as a
+  chaining table names a terminal, before the action-record writes, the stamp and the summary.
+  It is no longer sent after the loop. A failure after the terminal sends it again, and `release`
+  from a case that no longer holds the episode is a no-op. The terminals are the tables'
+  `terminals:`, so no case word enters code.
+- **A disposing emit ends its definition.** In `_run_definition`, an `emit` with `disposes` returns
+  the instance's outcome at once. Steps after it never run. No shipped definition has a step after
+  a disposing emit (census of the 14 under `policy/`), so nothing current changes.
+- **The seal:** `tests/test_an_occurrence_attaches_to_its_open_episode.py` gains two arms:
+  - A decided case whose definition still has an await after its disposing emit closes, and a new
+    occurrence opens a new case naming it as `predecessor`. Without the break, it never closes.
+  - A case whose run is still writing after its terminal frees its episode. With the release
+    after the loop, the new occurrence attaches.
+  - The control is the existing open-case arm: a case parked before its decision still holds.
+- **Already-stuck cases are not repaired by this code.** `9062f943`'s run and its instance `~5`
+  stay suspended, and the episode stays held, until a live action frees them. Ruled (architect,
+  2026-11-10): after the roll, `release` is sent on its episode. The case was released in October;
+  that is its true history, and it becomes the next case's predecessor. It is never cancelled into
+  "failed". Instance `~5` is never resumed on this code: its journal holds the old trailing step.
+  `62b9e840` stays recorded as attached to `9062f943`; the re-walk uses a new occurrence.
+- **The roll:** the restate_analyst engine's image changes; nothing in its values or pod template does.
 
-**cortex-ui frontend db45763 (`sha256:b320303c…`)**
+- **A measure row may declare its menu placement in a `menu:` block** (#312), and the two sample
+  flow rows (`fin_flow_acwp`, `fin_flow_eac_variance`) do: subject `fin:DeclaredMeasureSeries`,
+  archetype `mesh:FlowDecomposition`, `persona_fit` `[PROGRAM_FINANCE_ANALYST]`, `domain_fit`
+  `[PROGRAM_FINANCE]` (architect, 2026-11-07: the menu row is a registry row, not a cortex
+  constant). The loader holds exactly those four keys. It refuses a `subject` other than the
+  declared class, an `archetype` other than the class of `render.shape`, and a `domain_fit`
+  outside `policy.cells`. Nothing serves the block yet; the BFF serving it is the next step.
+- **The roll:** engine-fin's image and the sample overlay change; nothing in the values or pod
+  templates does.
 
-- It adds to 01fa313: the dropper hold reads `payload.attestation.excluded` and derives nothing from
-  `dropped_by`. A malformed block holds Promote (fail closed). A structural 403 shows the server's
-  `message` inline.
-- Build Containers run 42743511504. The full tag resolves to the digest, an OCI index for amd64
-  and arm64. The short tag and an altered digest give 404.
-- Until this cut rolls, the live card still hides Promote from the dropper.
+- **engine-fin registers each verb with the verb in its `endpoint_url` path, at the call** (#310).
+  `_registration_calls()` now carries each measure's `fn`, and the lifespan builds
+  `endpoint_url=f"{base}/measure/{_call['fn']}"`. Before, the list carried the finished URL and the
+  call passed `_call["endpoint_url"]`, which hid the verb from safety's
+  `test_THE_VERB_IS_IN_THE_PATH_not_in_the_body` and turned it red. The registered URLs are the
+  same strings as before, so the mesh sees no change.
+- **The roll:** engine-fin's image changes; nothing in its values or pod template does.
 
-**dag-tools 0.13.0 (tag at `bed53b9`)** (the architect, via Chris: "dag-tools pin for 0.4.83 is
-0.13.0")
+**dag-tools 0.13.0 (tag at `bed53b9`)** (#328; the architect, via Chris: "dag-tools pin for 0.4.83
+is 0.13.0". It merged after the 0.4.83 tag, so it ships here.)
 
 - **What moves:**
   - the root `pyproject.toml` pin, `edgy-dag-tools==0.13.0`; the lock moves that one package only;
@@ -150,6 +231,59 @@ validates, promotes and exports it.
   SHA) pin dag-tools in their own projects.
 - **The roll:** after it, re-materialise `ev_fixture` and the three refusal assets (the list above).
 
+## 0.4.83 — 2026-11-10 (tagged, never rolled)
+
+Entries merged after the 0.4.82 cut (`98c824aa`), through the cut merge `3a23fce4`. Cut on Chris's
+11-09 word: "cut 0.4.83 tonight, do not roll". The cortex pin is the architect's ("0.4.83 cortex
+pin = db45763"), and the attestation change is ruled 2026-11-09. chart-releaser tagged
+`invincible-agent-0.4.83` at `3a23fce4` on the version bump's merge. The architect, 2026-11-10:
+it "stands where the automation put it (3a23fce4) and never rolls; it lacks the hotfix." Everything
+here ships to the sandbox in 0.4.84.
+
+**What merged, and where each one is:**
+
+| item | where |
+| --- | --- |
+| #324 attestation is declared, not constant (ingest-v1 1.9.0) | merged at `de1873c2`; through the images; below |
+| #325 the act refuses on the served `excluded`; `Attestation` declared (ingest-v1 1.9.1) | merged at `4f2dac35`; through the images; below |
+| #309, #311, #313 `delegate_not_seeder`; the draft card's `task_id` comes from the runner | through the images; below |
+| #321 the case serves its `intake` label | merged at `17007300`; through the images; below |
+| #320 fin serves the CDRL a program only the asset holds | merged at `236d0311`; through the images; below |
+| #314 gov: lifecycle vocabulary, SKOS export, the obsolescence option deciders | merged at `3ebfd706`; policy; **names the new Topaz group `obsolescence-deciders`** |
+| #317 ADR-0065 C, the obsolescence slice of the product vocabulary | merged at `74a0ccca`; ontology |
+| #315 engine-o: where is this part used (ADR-0065 §4, item E) | merged at `1691a290`; through the images |
+| #306 the engine reads the workflow DSL from the SDK | merged at `f7e7d1da`; through the images |
+| #288 gov: #282's two missed commits | merged at `319b3af4`; policy |
+| #307, #308, #318 | docs and board only; nothing to carry |
+| cortex db45763 | below |
+
+**The dropper may promote under `self`; the task serves who may not** (#324, #325; architect,
+2026-11-09). Separation of duties on a promotion is a declared property,
+`attestation: self | second_party`, default `self`. At work the person who drops a notice
+validates, promotes and exports it.
+
+- **Filing** stamps `payload.attestation = {mode, excluded}` on a `document_promotion` task.
+  `excluded` is empty under `self`; under `second_party` it holds the dropper's `authz_id` and
+  `on_behalf_of`.
+- **The act** refuses 403 `dropper_cannot_attest_origin` only under `second_party`, and only for the
+  ids in the served `excluded`. It never recomputes them from `dropped_by`. A declaration that is
+  neither mode, or a malformed block, is 503 `attestation_undeclarable`, and nothing is written.
+- **The record** names who attested: `attestation {mode, attested_by, self_attested}` on the
+  human_review check, plus `origin_attested_by` and `origin_self_attested` on the origin write.
+- **The declaration seam** `promotion._declared_attestation` returns nothing until gov names the
+  row, so every task is `self` on this cut.
+- **ingest-v1 1.9.1** declares `HumanTask.payload` as `TaskPayload` with
+  `attestation: Attestation`.
+
+**cortex-ui frontend db45763 (`sha256:b320303c…`)**
+
+- It adds to 01fa313: the dropper hold reads `payload.attestation.excluded` and derives nothing from
+  `dropped_by`. A malformed block holds Promote (fail closed). A structural 403 shows the server's
+  `message` inline.
+- Build Containers run 42743511504. The full tag resolves to the digest, an OCI index for amd64
+  and arm64. The short tag and an altered digest give 404.
+- Until 0.4.84 rolls, the live card still hides Promote from the dropper.
+
 - **A foreign delegate's attach is refused as `delegate_not_seeder`.** Chris, 2026-11-07 (saf):
   the code is `delegate_not_seeder`, in `detail["error"]`. #289 refused it as
   `not_the_seeding_delegate`; the behaviour is unchanged (403, nothing written), only the code
@@ -175,13 +309,6 @@ validates, promotes and exports it.
   gets 404 rather than 403, because a 403 would confirm that the program exists. A profile with a
   built-in source still refuses such a program with a 422 `not_in_model` at export: the built-in
   reads the seed.
-- **engine-fin registers each verb with the verb in its `endpoint_url` path, at the call.**
-  `_registration_calls()` now carries each measure's `fn`, and the lifespan builds
-  `endpoint_url=f"{base}/measure/{_call['fn']}"`. Before, the list carried the finished URL and the
-  call passed `_call["endpoint_url"]`, which hid the verb from safety's
-  `test_THE_VERB_IS_IN_THE_PATH_not_in_the_body` and turned it red. The registered URLs are the
-  same strings as before, so the mesh sees no change.
-- **The roll:** engine-fin's image changes; nothing in its values or pod template does.
 
 ## 0.4.82 — 2026-11-08
 

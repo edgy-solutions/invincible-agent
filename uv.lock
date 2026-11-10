@@ -1441,11 +1441,11 @@ requires-dist = [
     { name = "httpx" },
     { name = "httpx", marker = "extra == 'agent-fleet'" },
     { name = "hypercorn", marker = "extra == 'agent-fleet'" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.15" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.17" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "langchain-community", marker = "extra == 'agent-fleet'" },
     { name = "langchain-weaviate", marker = "extra == 'agent-fleet'" },
-    { name = "langfuse", marker = "extra == 'agent-fleet'" },
+    { name = "langfuse", marker = "extra == 'agent-fleet'", specifier = ">=4.7.0,<5" },
     { name = "langgraph", marker = "extra == 'agent-fleet'" },
     { name = "langgraph-checkpoint-postgres", marker = "extra == 'agent-fleet'" },
     { name = "litellm", marker = "extra == 'agent-fleet'" },
@@ -1484,7 +1484,7 @@ provides-extras = ["agent-fleet"]
 dev = [
     { name = "dagster-dg-cli" },
     { name = "dagster-webserver" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.15" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.17" },
     { name = "lxml", specifier = ">=6.1.1" },
     { name = "provenance-telemetry", specifier = "==0.1.0" },
     { name = "pytest" },
@@ -1495,8 +1495,8 @@ dev = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.15"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.15#5a526b67452b15c066305fe7be4871b29cb04a97" }
+version = "0.9.17"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.17#8d1ee304e115b9b229e8966a2814c5a82b626eeb" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
@@ -1750,7 +1750,7 @@ wheels = [
 
 [[package]]
 name = "langfuse"
-version = "4.0.6"
+version = "4.15.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "backoff" },
@@ -1760,11 +1760,12 @@ dependencies = [
     { name = "opentelemetry-sdk" },
     { name = "packaging" },
     { name = "pydantic" },
+    { name = "typing-extensions" },
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ab/d0/6d79ed5614f86f27f5df199cf10c6facf6874ff6f91b828ae4dad90aa86d/langfuse-4.0.6.tar.gz", hash = "sha256:83a6f8cc8f1431fa2958c91e2673bc4179f993297e9b1acd1dbf001785e6cf83", size = 274094, upload-time = "2026-04-01T20:04:15.153Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4a/19/59253a357d77147e8cd3ad97817519e158af5d3336654656c92c2fc922f1/langfuse-4.15.6.tar.gz", hash = "sha256:af80ed1199e57c2641c9f228066bf9dc324657c06ce6e68660118fa46b237e35", size = 392968, upload-time = "2026-09-24T13:32:47.032Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/50/b4/088048e37b6d7ec1b52c6a11bc33101454285a22eaab8303dcccfd78344d/langfuse-4.0.6-py3-none-any.whl", hash = "sha256:0562b1dcf83247f9d8349f0f755eaed9a7f952fee67e66580970f0738bf3adbf", size = 472841, upload-time = "2026-04-01T20:04:16.451Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/c5/927a01c47c0adf53832c6e5e35951e3d4998072ef955f3bb8e87e6d10517/langfuse-4.15.6-py3-none-any.whl", hash = "sha256:2364d5f17342301a8651ef166abb5bb260aaadd94d1ac72aa30c298b3a395d85", size = 706806, upload-time = "2026-09-24T13:32:48.577Z" },
 ]
 
 [[package]]
