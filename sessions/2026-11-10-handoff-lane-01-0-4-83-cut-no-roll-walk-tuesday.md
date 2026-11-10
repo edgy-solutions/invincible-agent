@@ -16,8 +16,8 @@ worktree `wt\01\episode`, head `2ecb93d4`).
   - `release` is sent when a chaining table names a terminal;
   - a disposing emit `break`s its definition;
   - two seal arms, each killed by its own revert.
-- 16 neighbouring files and the ratchet are green locally. Next: the join ratchet and CI, then merge on green, then
-  report to the architect and Chris.
+- MERGED at `27d59a39` (CI 20 green, join ratchet 24/24). Reported to the architect and Chris; the next step is theirs:
+  the tag ruling, then the live action on 9062f943 after the roll.
 - **Do NOT touch 62b9e840 or 9062f943.** Freeing 9062f943 is a live action for Chris: an episode `release`, or a cancel,
   which fails the case. `~5` must never be resumed on new code, because its journal would mismatch.
 - **`invincible-agent-0.4.83` ALREADY EXISTS on origin at `3a23fce4`.** chart-releaser created it at 03:43Z. Whether the
