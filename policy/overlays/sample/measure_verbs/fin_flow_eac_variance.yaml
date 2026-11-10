@@ -38,6 +38,11 @@ render:
   shape: FLOW_DECOMPOSITION
   value_label: EAC variance
   unit: USD
+menu:
+  subject: "fin:DeclaredMeasureSeries"
+  archetype: "mesh:FlowDecomposition"
+  persona_fit: [PROGRAM_FINANCE_ANALYST]
+  domain_fit: [PROGRAM_FINANCE]
 policy:
   status: sample
   cells: [PROGRAM_FINANCE]

@@ -386,6 +386,7 @@ PENDING: dict[str, str] = {
     f"{GW}::orchestrate::cell_not_entitled | user {{}} is not entitled to perso": "groups",
     f"{GW}::federated_image::not entitled for this domain": "groups",
     "agent_fleet/ontology_service/main.py::notice_parts_route::not_entitled": "groups",
+    "agent_fleet/ontology_service/main.py::where_used_route::not_entitled": "groups",
     f"{SPO}::verify_spo_step::verb {{}} is NOT eligible for subject {{}} under dom": "groups",
     f"{GW}::_admit_on_behalf_of::not_a_delegate": "config",
     f"{GW}::_admit_on_behalf_of::principal_not_declared_for_delegate": "config",

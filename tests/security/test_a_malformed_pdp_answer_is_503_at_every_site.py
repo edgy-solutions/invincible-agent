@@ -141,6 +141,9 @@ class _Walk(ast.NodeVisitor):
         self.modules: dict[str, str] = {}  # a name this file imports a module as -> the module's basename
         self.methods: set[str] = set()
         self.tuples: dict[str, list] = {}  # a module-level `NAME = (ExcA, ExcB)`, for `except NAME:`
+        # A name handed to a call as an argument: (name, qual, line) -> [(callee, its receiver, the
+        # keyword or the position it arrives at)], so a census can follow it into the callee's body.
+        self.handed: dict[tuple, list] = {}
 
     def _here(self):
         return ".".join(self.stack) or "<module>"
@@ -206,7 +209,7 @@ class _Walk(ast.NodeVisitor):
             self.calls.append((name, self._here(), n.lineno, list(self.tries), self.boundary,
                                _receiver(f)))
         if isinstance(f, ast.Attribute):
-            self.visit(f.value)
+            self._visit_receiver(f.value)
         elif not isinstance(f, ast.Name):
             self.visit(f)
         is_ctx_run = _receiver(f) == "ctx" and f.attr == "run"
@@ -218,6 +221,19 @@ class _Walk(ast.NodeVisitor):
         # goes to that function, so it is a value like any other, which somebody has to follow.
         runs = n.args[1:2] if is_ctx_run else n.args[:1] if name in _RUNS_ITS_ARGUMENT else []
         runs = runs + [k.value for k in n.keywords if is_ctx_run and k.arg == "action"]
+        # Who receives the other arguments: the function a threadpool runs, else the callee itself.
+        # Restate's own calls are left to the hand-read rows.
+        callee, skip = (n.args[0], 1) if name in _RUNS_ITS_ARGUMENT and n.args else (f, 0)
+        if (isinstance(callee, (ast.Name, ast.Attribute)) and not is_ctx_run
+                and not (_receiver(f) == "ctx" and f.attr in _INVOKES)):
+            cname = callee.attr if isinstance(callee, ast.Attribute) else callee.id
+            into = [(a, i) for i, a in enumerate(n.args[skip:])] + [(k.value, k.arg) for k in n.keywords
+                                                                    if k.arg]
+            for arg, param in into:
+                if isinstance(arg, (ast.Name, ast.Attribute)):
+                    vname = arg.attr if isinstance(arg, ast.Attribute) else self.aliases.get(arg.id, arg.id)
+                    self.handed.setdefault((vname, self._here(), arg.lineno), []).append(
+                        (self.aliases.get(cname, cname), _receiver(callee), param))
         for part in parts:
             arg = part.value if isinstance(part, ast.keyword) else part
             if arg in runs and isinstance(arg, (ast.Name, ast.Attribute)):
@@ -228,9 +244,14 @@ class _Walk(ast.NodeVisitor):
             self.visit(part)
             self.boundary = keep
 
+    def _visit_receiver(self, value):
+        """`mod.attr` reads the module, not a value of a function that happens to share its name."""
+        if not (isinstance(value, ast.Name) and value.id in self.modules):
+            self.visit(value)
+
     def visit_Attribute(self, n):
         self.values.append((n.attr, self._here(), n.lineno, _receiver(n)))
-        self.visit(n.value)
+        self._visit_receiver(n.value)
 
     def visit_Name(self, n):
         if isinstance(n.ctx, ast.Load):
@@ -258,6 +279,11 @@ class Census:
             w.visit(ast.parse(text))
             self.walks[path] = w
         self.used_tables: set = set()
+        self.by_leaf: dict[str, list] = {}
+        for path, w in self.walks.items():
+            for qual, node in w.fns.items():
+                fn = _Fn(path, qual, node)
+                self.by_leaf.setdefault(fn.leaf, []).append(fn)
 
     def _related(self, caller_path: str, fn: _Fn) -> bool:
         if caller_path == fn.path:
@@ -401,6 +427,12 @@ class Census:
                 if (not self._is(w, name, qual, receiver, fn) or (qual, line) in called
                         or qual == fn.qual):
                     continue
+                derived = self._derived(path, w, name, qual, line)
+                if derived is not None:
+                    reached = True
+                    for target, param in derived:
+                        self._into(target, param, cls, seen, bad)
+                    continue
                 row = self.followed.get((path, name))
                 if row is None:
                     bad.append(f"{path}:{line}: `{name}` is passed as a value and nobody followed it")
@@ -418,6 +450,60 @@ class Census:
                                       ptries, cls, seen, bad, pline)
         if not reached and cls not in ANSWERS:
             bad.append(f"{fn.key}: `{cls}` leaves the last function unanswered (a 500, or a retry)")
+
+    def _derived(self, path: str, w: _Walk, name: str, qual: str, line: int):
+        """Where a value handed to a call goes, read from the call itself: [(the callee's def, the
+        parameter it arrives as)]. None unless every call it is handed to names exactly one def in
+        the tree and a parameter of it, so a form this cannot read falls to a hand-read row or fails."""
+        out = []
+        for cname, creceiver, param in w.handed.get((name, qual, line), ()):
+            defs = [fn for fn in self.by_leaf.get(cname, ())
+                    if self._related(path, fn) and self._is(w, cname, qual, creceiver, fn)]
+            if len(defs) != 1:
+                return None
+            got = self._param(defs[0], param)
+            if got is None:
+                return None
+            out.append((defs[0], got))
+        return out or None
+
+    def _param(self, fn: _Fn, param) -> str | None:
+        a = fn.node.args
+        if isinstance(param, str):
+            return param if param in {x.arg for x in a.args + a.kwonlyargs} else None
+        positional = a.posonlyargs + a.args
+        if fn.qual in self.walks[fn.path].methods:
+            positional = positional[1:]
+        return positional[param].arg if param < len(positional) else None
+
+    def _into(self, target: _Fn, param: str, cls: str, seen: set, bad: list):
+        """Follow a value into the function it was handed to: each call of `param` there is walked
+        like any call, and a `param` handed on again is followed again."""
+        if (target.key, param, cls) in seen:
+            return
+        seen.add((target.key, param, cls))
+        w = self.walks[target.path]
+
+        def inside(q):
+            return q == target.qual or q.startswith(target.qual + ".")
+        called = set()
+        for name, qual, line, tries, boundary, receiver in w.calls:
+            if name != param or receiver is not None or not inside(qual):
+                continue
+            called.add((qual, line))
+            if boundary == _CTX_RUN and cls != "TerminalError":
+                bad.append(f"{target.path}:{line}: `{cls}` leaves ctx.run, which retries it")
+                continue
+            self._through(_Fn(target.path, qual, w.fns.get(qual)), tries, cls, seen, bad, line)
+        for name, qual, line, receiver in w.values:
+            if name != param or receiver is not None or not inside(qual) or (qual, line) in called:
+                continue
+            derived = self._derived(target.path, w, name, qual, line)
+            if derived is None:
+                bad.append(f"{target.path}:{line}: `{param}` is passed as a value and nobody followed it")
+                continue
+            for again, p in derived:
+                self._into(again, p, cls, seen, bad)
 
     def problems(self, root: tuple[_Fn, list, int]) -> list[str]:
         fn, tries, line = root
@@ -461,17 +547,14 @@ CONDITIONAL = {
     "src/iagent/gateway.py::ingest_export_route": "exc.status_code != 403",
 }
 # A name passed as a value, read by hand: (file, name) -> (file that calls it, the name it calls it
-# by[, the one function it does so in]), or None where the value is the terminal step itself.
+# by[, the one function it does so in]), or None where the value is the terminal step itself. A value
+# handed straight to a call is followed from the call (`Census._derived`), so a new caller is walked
+# without a row; these are the handoffs that call cannot show, and a derivable row reds as unused.
 FOLLOWED = {
-    ("src/iagent/gateway.py", "check_can_act"): ("src/iagent/promotion.py", "can_act"),
     ("src/iagent/gateway.py", "_export_recipients_for"): ("src/iagent/gateway.py", "recipients_fn"),
     ("src/iagent/gateway.py", "_fin_export_recipients_for"): ("src/iagent/gateway.py", "recipients_fn"),
     ("agent_fleet/restate_analyst/grouped_review_workflow.py", "check_can_act"):
         ("agent_fleet/restate_analyst/grouped_review_workflow.py", "_gate_helpers", "_check_can_act"),
-    ("agent_fleet/ontology_service/main.py", "visible"):
-        ("agent_fleet/ontology_service/input_declared.py", "visible"),
-    ("agent_fleet/ontology_service/main.py", "_notice_parts_can_view_program"):
-        ("agent_fleet/ontology_service/notice_parts.py", "can_view_program"),
 }
 
 SOURCES = _tracked()
@@ -695,6 +778,142 @@ def route():
     except Exception:
         return None
 """, "swallowed"),
+    "a value handed to a function that calls it, with nobody answering": ("""
+def gate():
+    return check_answer(r)
+
+def read(x, *, can_view):
+    return can_view(x)
+
+def route():
+    return read(1, can_view=gate)
+""", "unanswered"),
+    "a value handed on twice, with nobody answering": ("""
+def gate():
+    return check_answer(r)
+
+def inner(x, *, can_view):
+    return can_view(x)
+
+def outer(x, *, can_view):
+    return inner(x, can_view=can_view)
+
+def route():
+    return outer(1, can_view=gate)
+""", "unanswered"),
+    "a value handed by position into a threadpool whose try swallows it": ("""
+def gate():
+    return check_answer(r)
+
+def read(x, check):
+    return check(x)
+
+async def route():
+    try:
+        return await to_thread(read, 1, gate)
+    except httpx.HTTPError:
+        return None
+""", "swallowed"),
+    "one value handed to two routes, and one does not answer": ("""
+def gate():
+    return check_answer(r)
+
+def parts(x, *, can_view):
+    return can_view(x)
+
+def where(x, *, can_view):
+    return can_view(x)
+
+async def parts_route():
+    try:
+        return await to_thread(parts, 1, can_view=gate)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503) from e
+
+async def where_route():
+    return await to_thread(where, 1, can_view=gate)
+""", "unanswered"),
+    "a handed value whose callee swallows it": ("""
+def gate():
+    return check_answer(r)
+
+def read(x, *, can_view):
+    try:
+        return can_view(x)
+    except Exception:
+        return []
+
+def route():
+    try:
+        return read(1, can_view=gate)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503) from e
+""", "swallowed"),
+    "a value handed to a method by position, with nobody answering": ("""
+def gate():
+    return check_answer(r)
+
+class Reader:
+    def read(self, x, check):
+        return check(x)
+
+def route(obj):
+    return obj.read(1, gate)
+""", "unanswered"),
+    "a value handed to a name two defs could be": ("""
+def gate():
+    return check_answer(r)
+
+class A:
+    def read(self, can_view):
+        return None
+
+class B:
+    def read(self, can_view):
+        return can_view(1)
+
+def route(obj):
+    return obj.read(can_view=gate)
+""", "nobody followed"),
+    "a value handed to ctx.run is not read as a method named run": ("""
+def gate():
+    return check_answer(r)
+
+def helper(can_view):
+    return None
+
+class W:
+    def run(self, name, can_view):
+        return None
+
+async def handler(ctx):
+    return await ctx.run("n", helper, can_view=gate)
+""", "nobody followed"),
+    "a value handed to a Restate call is not read as a method of that name": ("""
+def gate():
+    return check_answer(r)
+
+class W:
+    def service_call(self, h, can_view):
+        return None
+
+async def handler(ctx):
+    return await ctx.service_call(h, can_view=gate)
+""", "nobody followed"),
+    "a handed value used in a form nobody followed": ("""
+def gate():
+    return check_answer(r)
+
+def read(x, *, can_view):
+    f = can_view
+    return f(x)
+
+def route():
+    try:
+        return read(1, can_view=gate)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503) from e
+""", "nobody followed"),
 }
 _CLEAN = {
     "a terminal failure translated inside ctx.run": """
@@ -772,6 +991,22 @@ def gate():
     except httpx.HTTPError as e:
         raise HTTPException(status_code=503) from e
 """,
+    "a value handed on by keyword and by position, answered where it is handed": """
+def gate():
+    return check_answer(r)
+
+def inner(x, check):
+    return check(x)
+
+def outer(x, *, can_view):
+    return inner(x, can_view)
+
+async def route():
+    try:
+        return await to_thread(outer, 1, can_view=gate)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503) from e
+""",
 }
 
 
@@ -781,6 +1016,30 @@ def test_the_detector_sees_each_defect(name):
     c = _synthetic(src)
     found = [p for r in c.roots() for p in c.problems(r)]
     assert any(word in p for p in found), found
+
+
+def test_a_module_named_like_its_function_is_not_a_value_of_it():
+    """`_where.DOMAIN` reads the module. The walk reaches `where` and must not take that for a handoff."""
+    c = Census({"pkg/where.py": "def where(x):\n    return check_answer(x)\n", "pkg/site.py": """
+from pkg import where as _where
+
+async def route():
+    if _where.DOMAIN:
+        return None
+    try:
+        return await to_thread(_where.where, 1)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503) from e
+"""})
+    assert [p for r in c.roots() for p in c.problems(r)] == []
+
+
+def test_a_stale_row_cannot_hide_what_the_call_shows():
+    """The call outranks the table: a row left behind must not send the walk somewhere safe."""
+    src = _DEFECTS["a value handed to a function that calls it, with nobody answering"][0]
+    c = _synthetic(src, followed={("pkg/site.py", "gate"): ("pkg/site.py", "nothing_calls_this")})
+    found = [p for r in c.roots() for p in c.problems(r)]
+    assert any("unanswered" in p for p in found), found
 
 
 @pytest.mark.parametrize("guard, word", [("e.request", None), ("not e.request", "no longer meets")])

@@ -68,7 +68,7 @@ class _Graph:
     def apply_row_edits(self, ingest_id, row_edits, *, domain, record_id):
         return {"deleted": 0, "corrected": 0, "added": 0, "not_applied": []}
 
-    def attest_origin(self, ingest_id, *, owner_domain, record_id):
+    def attest_origin(self, ingest_id, *, owner_domain, record_id, **_kw):
         return {"ok": True}
 
 

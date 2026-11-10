@@ -307,7 +307,7 @@ def test_a_package_naming_it_without_the_grant_is_a_403(post, gate):
 
 
 def test_the_verb_registers_like_a_state_row(flow_rows):
-    calls = [c for c in engine._registration_calls("http://engine.test") if c["endpoint_url"].endswith(FN)]
+    calls = [c for c in engine._registration_calls() if c["fn"] == FN]
     assert len(calls) == 1
     (c,) = calls
     assert c["verb"] == "mesh:" + flow_rows[FN].verb and c["output_uri"].endswith("DeclaredMeasureSeries")

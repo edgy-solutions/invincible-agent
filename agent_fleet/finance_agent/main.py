@@ -497,11 +497,12 @@ def _declared_slots(row: "measure_verbs.MeasureVerbRow") -> list[dict[str, Any]]
     return [s for s in slots_for("fin_performance_indices") if s["name"] in row.params]
 
 
-def _registration_calls(base: str) -> list[dict[str, Any]]:
+def _registration_calls() -> list[dict[str, Any]]:
     """The keyword arguments of every `register_engine_to_mesh` call this engine makes for its
     verbs (built-in then declared), minus the `mint`. One list, read by the lifespan and by the
     seal that pins what is registered -- the loop that registered and the test that checked it
-    were two copies of one fact."""
+    were two copies of one fact. Each carries the measure's `fn` rather than a URL: the lifespan
+    builds `endpoint_url` from it, so the verb is in the path where the registration is made."""
     periods = [p for p in FISCAL_PERIODS if any(f.period == p for f in STATE.facts)]
     plan = [
         (v, v["input_uri"], "engine_fin_finance") for v in VERBS
@@ -518,7 +519,7 @@ def _registration_calls(base: str) -> list[dict[str, Any]]:
             output_uri=measures.OUTPUT_URI[v["fn"]],
             verb_synonyms=v["synonyms"],
             verb_anti_synonyms=v.get("anti_synonyms"),
-            endpoint_url=f"{base}/measure/{v['fn']}",
+            fn=v["fn"],
             slots=with_live_vocabularies(slots_for(v["fn"]), periods=periods),
             domains=DOMAINS,
         )
@@ -533,7 +534,7 @@ def _registration_calls(base: str) -> list[dict[str, Any]]:
             output_uri=measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
             verb_synonyms=list(r.synonyms),
             verb_anti_synonyms=list(r.anti_synonyms) or None,
-            endpoint_url=f"{base}/measure/{r.measure_id}",
+            fn=r.measure_id,
             # THE ROW'S CELLS, not the engine's: `policy.cells` is the field that excludes. A
             # built-in keeps DOMAINS; a declared verb registers under exactly what its row says
             # (a cell outside this engine's own is not refused: the field exists to exclude).
@@ -638,7 +639,7 @@ async def lifespan(app: FastAPI):
     # (tool_urn, verb_iri). The precedent for doing it correctly is Engine A's `findSchema`,
     # which carries BOTH idp:Column and idp:Dataset under `engine_a_find_schema_column` and
     # `engine_a_find_schema`. This follows that idiom rather than inventing one.
-    for _call in _registration_calls(base):
+    for _call in _registration_calls():
         try:
             register_engine_to_mesh(
                 mint=_mint,
@@ -651,7 +652,7 @@ async def lifespan(app: FastAPI):
                 output_uri=_call["output_uri"],
                 verb_synonyms=_call["verb_synonyms"],
                 verb_anti_synonyms=_call["verb_anti_synonyms"],
-                endpoint_url=_call["endpoint_url"],
+                endpoint_url=f"{base}/measure/{_call['fn']}",
                 slots=_call["slots"],
                 domains=_call["domains"],
             )

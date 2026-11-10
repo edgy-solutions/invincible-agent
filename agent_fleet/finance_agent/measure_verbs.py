@@ -115,7 +115,8 @@ _ID_RE = re.compile(r"^fin_[a-z0-9_]+$")
 # author writes. Docs: `docs/contracts/finance-overlays.md` section 2; the seal compares the two.
 _TOP_KEYS = frozenset({
     "measure_id", "verb", "name", "description", "synonyms", "anti_synonyms",
-    "inputs", "computation", "outputs", "render", "policy", "source", "reason", "ratified_by",
+    "inputs", "computation", "outputs", "render", "policy", "menu",
+    "source", "reason", "ratified_by",
 })
 #: `source` values. Under `FIN_DATASET_URN`, `asset` is the default and `seed` the declared exception.
 SOURCE_ASSET, SOURCE_SEED = "asset", "seed"
@@ -140,7 +141,45 @@ _MOVED_OUTPUT_KEYS = {
 #: names no class: the measure is told apart by its id on the wire (`measure`, `method.measure_id`),
 #: so a deployment adds a measure and no ontology.
 DECLARED_OUTPUT_CLASS = "DeclaredMeasureSeries"
+#: The keys of the optional `menu:` block: where the row's card sits on the menu (the ruling of
+#: 2026-11-07: "the measure's overlay row declares its menu placement, the BFF serves it, cortex
+#: reads it"). The BFF serves this field set and no other. `subject` and `archetype` restate what
+#: the row already implies, so each is checked against it rather than trusted.
+_MENU_KEYS = frozenset({"subject", "archetype", "persona_fit", "domain_fit"})
 _PACKAGED = "agent_fleet.finance_agent."
+
+
+def archetype_class(shape: str) -> str:
+    """The mesh class a render shape draws as: `FLOW_DECOMPOSITION` -> `mesh:FlowDecomposition`."""
+    return "mesh:" + "".join(w.capitalize() for w in shape.split("_"))
+
+
+def _menu(raw: Any, shape: str, cells: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("menu must be a mapping")
+    if set(raw) != _MENU_KEYS:
+        raise ValueError(f"menu carries {sorted(raw)}; it holds exactly {sorted(_MENU_KEYS)}")
+    subject = "fin:" + DECLARED_OUTPUT_CLASS
+    if raw["subject"] != subject:
+        raise ValueError(
+            f"menu.subject {raw['subject']!r} is not {subject!r}, the class every declared "
+            f"measure registers as; the menu places what the row produces")
+    if raw["archetype"] != archetype_class(shape):
+        raise ValueError(
+            f"menu.archetype {raw['archetype']!r} is not {archetype_class(shape)!r}, the class "
+            f"of render.shape {shape!r}; the menu places the card the row draws")
+    fit = {}
+    for key in ("persona_fit", "domain_fit"):
+        vals = raw[key]
+        if not (isinstance(vals, list) and vals and all(isinstance(v, str) and v for v in vals)):
+            raise ValueError(f"menu.{key} must be a non-empty list of names")
+        fit[key] = list(vals)
+    outside = sorted(set(fit["domain_fit"]) - set(cells))
+    if outside:
+        raise ValueError(
+            f"menu.domain_fit names {outside}, outside policy.cells {list(cells)}; a caller in "
+            f"that domain is refused the measure, so the menu would rank a card it cannot open")
+    return {"subject": subject, "archetype": raw["archetype"], **fit}
 
 
 class MeasureVerbError(DeclarationError):
@@ -193,6 +232,7 @@ class MeasureVerbRow:
     value_op: str = "column"              # "column" (the one column) or "minus" (first less second)
     per_path: str = "sum"                 # "sum" (rows add) or "once" (a path's amount counted once)
     other_threshold: Optional[Decimal] = None
+    menu: Optional[dict[str, Any]] = None     # the `menu:` block, checked; None when undeclared
     # Where a state row reads under `FIN_DATASET_URN`; `source_reason`/`ratified_by` only for seed.
     source: str = SOURCE_ASSET
     source_reason: str = ""
@@ -433,6 +473,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
     cells = tuple(pol["cells"])
     if not cells:
         raise ValueError("policy.cells is empty")
+    menu = _menu(raw["menu"], str(rnd["shape"]), cells) if "menu" in raw else None
     undefined = out.get("undefined")
     if undefined is not None and not (isinstance(undefined, dict) and undefined.get("reason")):
         raise ValueError("outputs.undefined must be a mapping with a 'reason'")
@@ -500,7 +541,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         kind=kind, dataset_urn=dataset.get("urn", ""), banner=dataset.get("banner", ""),
         levels=dataset.get("levels", ()), value_columns=dataset.get("value_columns", ()),
         value_op=dataset.get("value_op", "column"), per_path=dataset.get("per_path", "sum"),
-        other_threshold=dataset.get("other_threshold"),
+        other_threshold=dataset.get("other_threshold"), menu=menu,
         source=source, source_reason=source_reason, ratified_by=ratified_by,
     )
 
