@@ -117,7 +117,10 @@ agentFleet:
     # SANDBOX ONLY, not the chart's default configmap: the sample TCPI row and its board are
     # invented to prove the contract. engine-fin reads the first, cortex-bff the second; the
     # shared agentFleet configmap carries both and each service reads only its own.
-    MEASURE_VERB_OVERLAY_DIRS: "/app/policy/overlays/sample/measure_verbs"
+    # The second directory holds the refusal probes: rows over dag-tools' planted-refusal assets,
+    # which exist only so the live leg can see each reader rule refuse. Nothing else names it.
+    # The separator is the pod's os.pathsep (":").
+    MEASURE_VERB_OVERLAY_DIRS: "/app/policy/overlays/sample/measure_verbs:/app/policy/overlays/sandbox/measure_verbs"
     CANVAS_OVERLAY_DIRS: "/app/policy/overlays/sample/canvases"
     # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
     # and its template are invented. engine-fin reads it.

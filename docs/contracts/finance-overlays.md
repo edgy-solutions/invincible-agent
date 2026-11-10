@@ -111,8 +111,8 @@ differences under `inputs` and `render`:
 
 **A dataset row drawn as series.** A dataset row whose `render.shape` is `MULTI_SERIES` reads its
 asset the same way (as the caller, its own URN, `program_id` only, `window` refused) but answers
-with one row per period instead of an edge table. The fixtures
-`tests/finance/fixtures/measure_verbs/fin_ev_cumulative.yaml` and `fin_eac_trend.yaml` are the
+with one row per period instead of an edge table. The samples
+`policy/overlays/sample/measure_verbs/fin_ev_cumulative.yaml` and `fin_eac_trend.yaml` are the
 worked examples. The differences from a flow row:
 
 - `inputs.dataset` holds `urn`, `banner`, `scope` (the column the read filters to `program_id`),

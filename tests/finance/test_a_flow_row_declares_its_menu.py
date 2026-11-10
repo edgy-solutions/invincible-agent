@@ -30,6 +30,8 @@ REPO = base.REPO
 SHIPPED = {p.stem: yaml.safe_load(p.read_text(encoding="utf-8")) for p in base.SAMPLE.glob("*.yaml")}
 DATASET_ROWS = sorted(k for k, raw in SHIPPED.items() if "dataset" in raw["inputs"])
 STATE_ROWS = sorted(k for k, raw in SHIPPED.items() if "state" in raw["inputs"])
+# The mutations below are written against a flow row; a dataset row drawn as series sorts first.
+FLOW_ROWS = sorted(k for k in DATASET_ROWS if SHIPPED[k]["render"]["shape"] == "FLOW_DECOMPOSITION")
 
 
 def _write(tmp_path, stem, mutate):
@@ -42,7 +44,7 @@ def _write(tmp_path, stem, mutate):
 
 
 def _refused(tmp_path, mutate, *fragments, stem=None):
-    d = _write(tmp_path, stem or DATASET_ROWS[0], mutate)
+    d = _write(tmp_path, stem or FLOW_ROWS[0], mutate)
     with pytest.raises(measure_verbs.MeasureVerbError) as ei:
         base._load([d], tmp=tmp_path)
     msg = str(ei.value)
@@ -98,8 +100,8 @@ def test_b_the_fit_names_are_a_declared_persona_and_domain(stem):
 # -- c: a wrong block is refused --------------------------------------------------------------------
 
 def test_c_the_control_the_unmutated_flow_row_loads(tmp_path):
-    d = _write(tmp_path, DATASET_ROWS[0], lambda r: None)
-    assert base._load([d], tmp=tmp_path)[0].menu == SHIPPED[DATASET_ROWS[0]]["menu"]
+    d = _write(tmp_path, FLOW_ROWS[0], lambda r: None)
+    assert base._load([d], tmp=tmp_path)[0].menu == SHIPPED[FLOW_ROWS[0]]["menu"]
 
 
 def test_c_the_control_a_state_row_takes_its_own_shapes_class(tmp_path):
