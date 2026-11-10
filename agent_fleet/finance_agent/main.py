@@ -942,6 +942,8 @@ def _declared_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, An
                                             if s["name"] in missing]),
         })
     if row.kind == measure_verbs.KIND_DATASET:
+        if row.archetype == "MULTI_SERIES":
+            return _dataset_series_envelope(row, params)
         return _dataset_envelope(row, params)
     urn = asset_inputs.dataset_urn()
     try:
@@ -1057,6 +1059,42 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
         "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
                    "module_sha256": row.module_sha256},
         **({"verdict": _v} if (_v := measure_verbs.dataset_verdict(row, rows)) is not None else {}),
+        "rows": rows,
+    }
+    return envelope
+
+
+def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any]) -> dict[str, Any]:
+    """The envelope of a dataset row drawn as MULTI_SERIES: a governed read of the ROW'S URN as
+    the caller, the module run once over the program's periods, one row per period. Same keys as
+    `_declared_envelope`, plus `status_period` when the row names a status column: the period the
+    ASSET says the program is reported through, served from data and never from the row."""
+    urn, program_id = row.dataset_urn, params["program_id"]
+    try:
+        with _asset_read_errors(urn):
+            read = asset_inputs.read_dataset_series(
+                mesh_ticketed_read, urn, scope=row.scope_column, period=row.period_column,
+                status=row.status_column, per_period=tuple(row.per_period.values()),
+                per_program=tuple(row.per_program.values()), program_id=program_id)
+    except NotInModel as exc:
+        raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
+    rows = measure_verbs.run_dataset_series(read, row)
+    fn = row.measure_id
+    envelope = {
+        "measure": fn,
+        "output_uri": measures.FIN + measure_verbs.DECLARED_OUTPUT_CLASS,
+        "artifact_id": _artifact_id(fn, params, rows),
+        "value_label": row.render.get("value_label", row.name),
+        "series": [dict(s) for s in row.series],
+        "render": copy.deepcopy(row.render),
+        **({"reference": dict(row.reference)} if row.reference else {}),
+        **({"status_period": read.status} if row.status_column else {}),
+        "data_provenance": asset_inputs.dataset_provenance(row.banner, urn),
+        "data_source": {"kind": "asset", "urn": urn},
+        "method": {"measure_id": row.measure_id, "name": row.name, "version": row.version,
+                   "module_sha256": row.module_sha256},
+        **({"verdict": _v} if (_v := measure_verbs.dataset_series_verdict(row, rows, read.status))
+           is not None else {}),
         "rows": rows,
     }
     return envelope

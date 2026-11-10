@@ -2,13 +2,57 @@
 
 ## 0.4.85 — not yet cut
 
-**The fleet moves to iagent-mesh v0.9.17** (gov; the architect, 11-08: "the v0.9.16 fleet pin is gov's (same as 0.9.15; one PR)"; 11-10: "v0.9.17 fleet pin PR when the tag exists"). 0.4.84 was cut without it, so it ships here.
+Entries merged after the 0.4.84 tag (`f9fa4d7b`). The architect, 2026-11-10: "Merge train, all under
+'## 0.4.85 — not yet cut'", and "Hold the 0.4.85 cut PR until I say. Hold the PR, not the tag; the
+automation tags on merge." Every entry below goes under this heading until the cut; none goes under
+0.4.84, which is tagged and rolled.
 
-- **What moves:** 17 pyprojects (the root has two lines), `domainBroker.meshSdkVersion` and its closed-network comment, and the 17 locks that pin the SDK. Every lock names the tag's commit (`8d1ee304`) and none still names v0.9.15's. Sixteen locks change 3 lines and the root 4, the same shape as the v0.9.15 move. `option_deciders.yaml`'s measured note names the pin.
-- **Why:** ADR-0065 D (Lane 1's `obsolescence_resolution` row) puts `options` on its decide step. v0.9.15's step model forbids unknown fields and has no `options`. v0.9.16 added `HumanAwaitStep.options` and the `lifecycle_status` module. v0.9.17 reshapes `ImpactRow` to the ruled nine fields (ADR-0065 §4). The fleet skips v0.9.16, whose three-field `ImpactRow` is superseded.
-- **What the SDK changes:** only additions. Between the two tags nothing under `iagent_mesh/` is deleted. It adds `lifecycle_status`, step `options`, optional `level`/`max_level` on the asset contract, and `ImpactRow`. Its dependencies are unchanged. engine-o's `where_used.py` keeps its local `ImpactRow`; moving it onto the SDK's is lane 74's. The import-gated arm of `tests/security/test_lifecycle_status_registry.py` now runs.
-- **Closed network:** v0.9.17's package calls itself 0.9.17, so `meshSdkSource: index` serves this pin.
-- **Not in this pin: `attestation` on the content-kind row.** v0.9.17 was tagged without it (ruled 11-10: "0.9.17 if #3 is still open, else 0.9.18"; #3 had merged). The field rides v0.9.18. `attestation: self` on `pcn` and `pdn` ride that pin, because an overlay row that declares the field does not load on an SDK without it.
+- **The chart-version test reads git output as UTF-8** (`tests/test_chart_version_tracks_chart_content.py`;
+  fin's finding). Its two text-mode `git` calls now pass `encoding="utf-8"`. Without it, Python decodes
+  `git show` of this file with the locale's code page; on a Windows cp1252 box the em-dashes in these
+  headings come back as mojibake or raise, and the seal reads the wrong text. The test is the only
+  change; nothing in the chart, the values or the pod templates moves.
+- **The root lock takes langfuse >= 4.7.0** (`pyproject.toml`, `uv.lock`; the architect, 2026-11-10).
+  langfuse moves 4.0.6 → 4.15.6. SDKs below 4.7.0 lag the v2 observations read by about 15 minutes.
+  The `<5` cap is Lane 1's: unbounded, the lock resolves 5.2.0 and moves opentelemetry with it. The
+  lock change is langfuse alone. Engine images that build from the root lock pick it up on the next
+  build; nothing in the chart moves.
+
+- **A dataset row can be drawn as `MULTI_SERIES`: several series over periods, read from the
+  row's own asset.** Its `inputs.dataset` names `scope`, `period`, an optional `status` column,
+  `per_period` (columns summed over the program's rows at each period) and `per_program` (columns
+  holding one value across the program). The module declares `READS` and `SERIES`, and the loader
+  holds the row to both. `render.series` and `render.target` are validated on the SDK's
+  `MeasureSeries` and `MeasureSeriesReference` (iagent-mesh v0.9.15, which the fleet already
+  pins); a target may name a series (`target: {series: bac}`). The envelope serves
+  `status_period` from the data. The kind is still `dataset`, so the grant check, the CDRL
+  refusal and the package refusal cover these rows unchanged. A column or status that varies
+  within the program is a 502 with the new rule `varies_within_scope`.
+- **Two rows, `fin_ev_cumulative` and `fin_eac_trend`, are coded to the EV contract,** whose
+  `status_period` and `eac_reported` now say `produced_since: "0.12.0"`. They ship as **test
+  fixtures** (`tests/finance/fixtures/measure_verbs/`), not samples: the live asset has neither
+  column until dag-tools 0.12.0 materializes, and a shipped row would answer 502 `missing_column`.
+  They move to `policy/overlays/sample/` with that pin.
+- **The roll:** engine-fin's image changes; nothing in the values or pod templates does. The
+  two EV rows register no verb until they ship as samples.
+- **The fleet moves to iagent-mesh v0.9.17** (17 pyprojects, 17 locks, `domainBroker.meshSdkVersion`;
+  gov; the architect, 11-08: "the v0.9.16 fleet pin is gov's (same as 0.9.15; one PR)"; 11-10: "v0.9.17
+  fleet pin PR when the tag exists").
+  - **What moves:** the root pyproject changes two lines. Every lock names the tag's commit (`8d1ee304`),
+    and none still names v0.9.15's. Sixteen locks change 3 lines and the root lock 4, the same shape as
+    the v0.9.15 move; the root lock keeps the langfuse floor above. `meshSdkVersion`'s closed-network
+    comment and `option_deciders.yaml`'s measured note name the pin.
+  - **Why:** ADR-0065 D (Lane 1's `obsolescence_resolution` row) puts `options` on its decide step. v0.9.15's
+    step model forbids unknown fields and has no `options`. v0.9.16 added `HumanAwaitStep.options` and
+    `lifecycle_status`, and v0.9.17 reshapes `ImpactRow` to the ruled nine fields (ADR-0065 §4). The fleet
+    skips v0.9.16, whose three-field `ImpactRow` is superseded.
+  - **What the SDK changes:** only additions; between the two tags nothing under `iagent_mesh/` is deleted,
+    and its dependencies are unchanged. engine-o's `where_used.py` keeps its local `ImpactRow`; moving it
+    onto the SDK's is lane 74's.
+  - **Closed network:** the package calls itself 0.9.17, so `meshSdkSource: index` serves this pin.
+  - **Not in this pin: `attestation` on the content-kind row.** v0.9.17 was tagged without it, so the
+    field rides v0.9.18, and so do the `attestation: self` rows on `pcn` and `pdn`: an overlay row that
+    declares the field does not load on an SDK without it.
 
 ## 0.4.84 — 2026-11-10
 
