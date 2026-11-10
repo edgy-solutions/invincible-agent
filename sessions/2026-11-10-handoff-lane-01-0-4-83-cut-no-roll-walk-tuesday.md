@@ -7,6 +7,30 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-10 ~18:20Z: 0.4.84 IS CUT AND TAGGED; the next step is Chris's Topaz sync and roll.**
+
+The architect's sequence: cut 0.4.84 → Chris's Topaz sync (obsolescence-deciders) → values diff → roll → `release` on
+9062f943 → read that its episode is free → tell Chris.
+- **Done:**
+  - #333 merged at `f9fa4d7b`, and `invincible-agent-0.4.84` is tagged there. 0.4.83 stands at `3a23fce4` and never rolls.
+  - image-digests: 19 images = 19 expected.
+  - Values diff (scratch `valdiff-484-masked.txt`): 22 digests change, plus the same six secret-file keys as 0.4.82.
+- **After Chris's roll AND his go:**
+  1. Send `CaseEpisode/ep-292a06284244b860fca1eb512c6f1dd6/release {"case_id": "9062f943-9b93-574c-bdf0-6497175c9e1f"}`.
+  2. Read that episode: `open` is absent, and `last_closed` = 9062f943.
+  3. Tell Chris.
+  - NEVER cancel 9062f943. NEVER touch 62b9e840; the re-walk uses a new occurrence.
+- **~5, from the code read:** a kill of ~5 alone wakes the parent → except → "failed". A kill of the parent starts the
+  30-day purge of the case record. So the proposal is to leave both suspended, as a NAMED LANDMINE: "never cancel,
+  kill or signal `WorkflowRunner/9062f943` or `~5`". Confirm it in the report after the release.
+- The report is scratch `cut84-and-9062-report.md`.
+- **HELD on Chris's "hot fix 1st"** (that order arrived after the tag, so it ships as 0.4.85):
+  - merge #316 (then fin walks #319);
+  - #330 by sha `74c0b498`;
+  - #329 with 74's ImpactRow fix stacked on it (not pushed yet);
+  - `encoding="utf-8"` on the chart-version test's subprocess call.
+  - The join ratchet is 24/24 on #316 and on #330.
+
 **11-10 ~17:45Z: THE WALK FAILED AT THE DOOR, and the hotfix is PR #332** (`lane/01-a-released-case-frees-its-episode`,
 worktree `wt\01\episode`, head `2ecb93d4`).
 - 16:33Z: OpenDDIL's occurrence 62b9e840 ATTACHED, by our derived episode key, to case 9062f943. That case was released
