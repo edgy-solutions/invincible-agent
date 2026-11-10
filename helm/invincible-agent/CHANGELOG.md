@@ -44,6 +44,24 @@ automation tags on merge." Every entry below goes under this heading until the c
   They move to `policy/overlays/sample/` with that pin.
 - **The roll:** engine-fin's image changes; nothing in the values or pod templates does. The
   two EV rows register no verb until they ship as samples.
+- **The fleet moves to iagent-mesh v0.9.17** (17 pyprojects, 17 locks, `domainBroker.meshSdkVersion`;
+  gov; the architect, 11-08: "the v0.9.16 fleet pin is gov's (same as 0.9.15; one PR)"; 11-10: "v0.9.17
+  fleet pin PR when the tag exists").
+  - **What moves:** the root pyproject changes two lines. Every lock names the tag's commit (`8d1ee304`),
+    and none still names v0.9.15's. Sixteen locks change 3 lines and the root lock 4, the same shape as
+    the v0.9.15 move; the root lock keeps the langfuse floor above. `meshSdkVersion`'s closed-network
+    comment and `option_deciders.yaml`'s measured note name the pin.
+  - **Why:** ADR-0065 D (Lane 1's `obsolescence_resolution` row) puts `options` on its decide step. v0.9.15's
+    step model forbids unknown fields and has no `options`. v0.9.16 added `HumanAwaitStep.options` and
+    `lifecycle_status`, and v0.9.17 reshapes `ImpactRow` to the ruled nine fields (ADR-0065 §4). The fleet
+    skips v0.9.16, whose three-field `ImpactRow` is superseded.
+  - **What the SDK changes:** only additions; between the two tags nothing under `iagent_mesh/` is deleted,
+    and its dependencies are unchanged. engine-o's `where_used.py` keeps its local `ImpactRow`; moving it
+    onto the SDK's is lane 74's.
+  - **Closed network:** the package calls itself 0.9.17, so `meshSdkSource: index` serves this pin.
+  - **Not in this pin: `attestation` on the content-kind row.** v0.9.17 was tagged without it, so the
+    field rides v0.9.18, and so do the `attestation: self` rows on `pcn` and `pdn`: an overlay row that
+    declares the field does not load on an SDK without it.
 
 ## 0.4.84 — 2026-11-10
 
