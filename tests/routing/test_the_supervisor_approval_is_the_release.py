@@ -87,7 +87,8 @@ steps:
         workflow_instance_id: "{case.instance_id}"
         manual_nodes_consulted:
           - "{outputs.maint_fault_propose.walk.citations.fault_isolation.dmc}"
-          - "{outputs.maint_fault_propose.walk.citations.remove_install.dmc}"
+          - "{outputs.maint_fault_propose.walk.citations.remove_install.dmc.0}"
+          - "{outputs.maint_fault_propose.walk.citations.remove_install.dmc.1}"
           - "{outputs.maint_fault_propose.walk.citations.ipd.dmc}"
           - "{outputs.maint_fault_propose.walk.citations.planning_interval.dmc}"
 
