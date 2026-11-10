@@ -6,9 +6,10 @@ supersedes: 2026-11-10-handoff-lane-gov-329-pins-v0-9-17-attestation-waits-on-0-
 
 ## Next step
 
-1. Read CI on both PRs. Merging is not gov's.
-   - **#336** (walker fix): head `9779ce26`, worktree `C:\Users\cnogr\git\wt\gov\walker-deciders`, branch `lane/gov-walker-deciders`.
-   - **#329** (v0.9.17 pin): head `dcde090c`, worktree `C:\Users\cnogr\git\wt\gov\pin-mesh-v0-9-17`.
+1. Both PRs are approved (the architect, 11-10: "#336 and #329 are good. Topaz sync for the two walkers happens before 0.4.85 rolls (Chris)."). Merging is not gov's. Once each merges, remove its worktree.
+   - **#336** (walker fix): head `a616770f`, worktree `C:\Users\cnogr\git\wt\gov\walker-deciders`, branch `lane/gov-walker-deciders`. CI: 20 passed, 3 skipped. That count includes one cortex-bff job that failed on a ghcr push error and passed on re-run.
+   - **#329** (v0.9.17 pin): head `54c161c0`, worktree `C:\Users\cnogr\git\wt\gov\pin-mesh-v0-9-17`. CI: 21 passed, 3 skipped.
+   - Master opened its own 0.4.85 list (#335, #338). Both PRs merged master in and are now one bullet each at the end of that list. They append at the same place, so whichever merges second has a one-hunk changelog conflict. #329's root lock merged textually; `uv lock --check` passes, and it still differs from master by 4+4 lines.
 2. Check for v0.9.18 and whether it carries the field:
    `git -C C:/Users/cnogr/git/iagent-mesh-sdk ls-remote --tags origin 'v0.9.1*'`, then
    `git -C C:/Users/cnogr/git/iagent-mesh-sdk grep -n attestation <tag> -- iagent_mesh/ingest.py`.
