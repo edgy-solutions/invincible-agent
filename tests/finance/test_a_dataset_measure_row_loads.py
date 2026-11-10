@@ -97,7 +97,9 @@ REFUSED = {
     "threshold_nan": (set_("inputs.other_threshold", "NaN"), "other_threshold"),
     "window_refused": (set_("inputs.params", {"program_id": {"required": True}, "window": {}}), "window"),
     "state_beside_dataset": (set_("inputs.state", {"bac": "program.bac"}), "state"),
-    "shape_is_the_state_shape": (set_("render.shape", "MULTI_SERIES"), "does not match"),
+    # MULTI_SERIES is a dataset shape too (the series form, test_a_dataset_series_row_draws_from_the_asset.py);
+    # a FLOW's dataset block drawn as one is refused, not read as a series.
+    "flow_form_drawn_as_series": (set_("render.shape", "MULTI_SERIES"), "drawn as MULTI_SERIES"),
     "dataset_key_unknown": (set_("inputs.dataset.formula", "acwp * 2"), "formula"),
     "inputs_key_unknown": (set_("inputs.query", "select 1"), "query"),
 }

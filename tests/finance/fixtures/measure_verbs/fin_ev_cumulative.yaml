@@ -1,0 +1,48 @@
+# TEST FIXTURE -- not a sample. The dataset-backed series rows read `status_period`, which the EV
+# fixture produces from dag-tools 0.12.0 (contracts/ev_fixture.yaml). Until that pin lands, a shipped
+# row would answer 502 missing_column against the live asset, so the rows are proved here, over a
+# frame of the 0.12.0 shape, and move to policy/overlays/sample/ with the pin.
+measure_id: fin_ev_cumulative
+verb: finEarnedValueCumulative
+name: Cumulative earned value
+description: >-
+  Planned value, earned value and actual cost summed from the first period the asset holds, with
+  the budget at completion beside them.
+synonyms:
+  - cumulative earned value
+  - s-curve
+anti_synonyms:
+  - estimate at completion
+inputs:
+  params: {program_id: {required: true}}
+  dataset:
+    urn: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
+    banner: "SYNTHETIC earned-value fixture, not a real program."
+    scope: program_id
+    period: period
+    status: status_period
+    per_period: {bcws: bcws, bcwp: bcwp, acwp: acwp}
+    per_program: {bac: program_bac}
+computation:
+  module: agent_fleet.finance_agent.measure_modules.ev_series
+  function: cumulative
+  version: "1.0.0"
+  derived_from:
+    authority: Test fixture, no external method
+    clause: A running sum of period amounts
+    citation: name-only
+    transcription: PV, EV and AC at t are BCWS, BCWP and ACWP summed over periods 1..t
+render:
+  shape: MULTI_SERIES
+  value_label: Cumulative cost
+  series:
+    - {key: pv, label: Planned value, unit: USD, cumulative: true}
+    - {key: ev, label: Earned value, unit: USD, cumulative: true}
+    - {key: ac, label: Actual cost, unit: USD, cumulative: true}
+    - {key: bac, label: Budget at completion, unit: USD}
+  target: {series: bac, label: BAC}
+policy:
+  status: sample
+  cells: [PROGRAM_FINANCE]
+  granted_by: seed
+  reason: a test fixture proving the dataset-backed series on the 0.12.0 EV fixture shape

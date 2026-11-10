@@ -24,7 +24,7 @@ import os
 import time
 from contextvars import ContextVar
 from decimal import Decimal
-from typing import Any, Callable, Optional
+from typing import Any, Callable, NamedTuple, Optional
 
 from fastapi import HTTPException, Request
 
@@ -372,6 +372,91 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
                     ", ".join(value_columns) + " vary within one terminal path")
         paths = list(seen.items())
     return paths
+
+
+class SeriesRead(NamedTuple):
+    """What `read_dataset_series` returns, and `measure_verbs.run_dataset_series` takes."""
+    periods: list[tuple[str, dict[str, Decimal]]]   # in period order: (period, {column: sum})
+    constants: dict[str, Decimal]                   # {column: the program's one value}
+    status: Optional[str]                           # the status column's one value, or None
+
+
+def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, period: str,
+                        status: str, per_period: tuple[str, ...], per_program: tuple[str, ...],
+                        program_id: str) -> SeriesRead:
+    """`read_rows` for a dataset row drawn as MULTI_SERIES: the rows of ONE program of the ROW'S
+    columns, reduced the two ways the row may ask and no other.
+
+    Every named column must be present, and the `per_period` and `per_program` ones numeric
+    (checked on the schema, before a row is collected). The filter keeps the rows whose `scope`
+    column is `program_id`; only the named columns are selected, and the row cap applies before
+    collect. Every outcome maps as `read_rows` maps it, and an empty frame raises `NotInModel`.
+
+    A `per_period` column is summed over the program's rows at each period (exactly, as Decimal);
+    a `per_program` column, and the `status` column when the row names one, must hold one value
+    across the program's rows (else `varies_within_scope`). A period, or the status, outside the
+    fiscal calendar is `period_outside_calendar`. A message names the rule and the column, never a
+    row's value."""
+    import polars as pl
+
+    t0 = time.perf_counter()
+    try:
+        lf = read(urn)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _raise_for_read_failure(exc)
+    t1 = time.perf_counter()
+    try:
+        schema = lf.collect_schema()
+    except Exception as exc:
+        log.warning("asset scan failed: %s", type(exc).__name__)
+        raise AssetUnavailable("the asset could not be scanned") from None
+    text = [scope, period, *((status,) if status else ())]
+    numeric = [*per_period, *per_program]
+    missing = [c for c in (*text, *numeric) if c not in schema]
+    if missing:
+        raise ContractViolation("missing_column", "missing column(s): " + ", ".join(missing))
+    bad = [c for c in numeric if not schema[c].is_numeric()]
+    if bad:
+        raise ContractViolation("wrong_type", "column(s) of the wrong type: " + ", ".join(bad))
+    cap = max_rows()
+    q = lf.filter(pl.col(scope).cast(pl.String) == program_id)
+    try:
+        df = (q.select([*(pl.col(c).cast(pl.String) for c in text), *(pl.col(c) for c in numeric)])
+              .head(cap + 1).collect())
+    except Exception as exc:
+        log.warning("asset scan failed: %s", type(exc).__name__)
+        raise AssetUnavailable("the asset could not be scanned") from None
+    t2 = time.perf_counter()
+    log.info("asset read ticket_ms=%d scan_ms=%d sql_ms=0 rows=%d bytes=%d urn=%s",
+             round((t1 - t0) * 1000), round((t2 - t1) * 1000), df.height, df.estimated_size(), urn)
+    if df.height > cap:
+        raise AssetTooLarge(cap)
+    for c in (*text, *numeric):
+        if df[c].null_count():
+            raise ContractViolation("null_value", f"null value(s) in column {c}")
+    for c in numeric:
+        if df[c].dtype.is_float() and not df[c].is_finite().all():
+            raise ContractViolation("non_finite", f"non-finite number(s) in column {c}")
+    if df.height == 0:
+        raise NotInModel(f"the asset holds no rows for program {program_id!r}")
+    for c in (*per_program, *((status,) if status else ())):
+        if df[c].n_unique() > 1:
+            raise ContractViolation("varies_within_scope", f"{c} differs between the program's rows")
+    calendar = list(FISCAL_PERIODS)
+    if not df[period].is_in(calendar).all() or (status and df[status][0] not in calendar):
+        raise ContractViolation("period_outside_calendar", "a period outside the fiscal calendar")
+    sums: dict[str, dict[str, Decimal]] = {}
+    for r in df.select([period, *per_period]).iter_rows():
+        at = sums.setdefault(r[0], {c: Decimal(0) for c in per_period})
+        for c, x in zip(per_period, r[1:]):
+            at[c] += Decimal(str(x))
+    first = df.row(0, named=True)
+    return SeriesRead(
+        periods=sorted(sums.items(), key=lambda kv: calendar.index(kv[0])),
+        constants={c: Decimal(str(first[c])) for c in per_program},
+        status=first[status] if status else None)
 
 
 def require_grant(read: Callable[[str], Any], urn: str) -> None:

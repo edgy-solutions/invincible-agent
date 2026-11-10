@@ -27,6 +27,24 @@ automation tags on merge." Every entry below goes under this heading until the c
   erin's and chris's membership (the architect, 11-10). The realm import carries no groups, so nothing
   else needs syncing.
 
+- **A dataset row can be drawn as `MULTI_SERIES`: several series over periods, read from the
+  row's own asset.** Its `inputs.dataset` names `scope`, `period`, an optional `status` column,
+  `per_period` (columns summed over the program's rows at each period) and `per_program` (columns
+  holding one value across the program). The module declares `READS` and `SERIES`, and the loader
+  holds the row to both. `render.series` and `render.target` are validated on the SDK's
+  `MeasureSeries` and `MeasureSeriesReference` (iagent-mesh v0.9.15, which the fleet already
+  pins); a target may name a series (`target: {series: bac}`). The envelope serves
+  `status_period` from the data. The kind is still `dataset`, so the grant check, the CDRL
+  refusal and the package refusal cover these rows unchanged. A column or status that varies
+  within the program is a 502 with the new rule `varies_within_scope`.
+- **Two rows, `fin_ev_cumulative` and `fin_eac_trend`, are coded to the EV contract,** whose
+  `status_period` and `eac_reported` now say `produced_since: "0.12.0"`. They ship as **test
+  fixtures** (`tests/finance/fixtures/measure_verbs/`), not samples: the live asset has neither
+  column until dag-tools 0.12.0 materializes, and a shipped row would answer 502 `missing_column`.
+  They move to `policy/overlays/sample/` with that pin.
+- **The roll:** engine-fin's image changes; nothing in the values or pod templates does. The
+  two EV rows register no verb until they ship as samples.
+
 ## 0.4.84 — 2026-11-10
 
 Entries merged after the 0.4.83 tag (`3a23fce4`), through `27d59a39`. The architect, 2026-11-10:
