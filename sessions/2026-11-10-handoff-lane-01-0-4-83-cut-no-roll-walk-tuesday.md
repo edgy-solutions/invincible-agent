@@ -42,7 +42,8 @@ Lane 1's part:
 - `attestation` is read from the content-kind row once ca ships the field.
 - D's `obsolescence_resolution` row.
 - Item: `notice.mfr_source` derivation (gov's ask to 7f is Lane 1's).
-- Review perf's tracing PR when it opens.
+- Review perf's tracing PR #327 (`lane/perf`). **#327 does NOT ride 0.4.83** (Chris, 11-10: perf is re-basing on
+  provenance-telemetry). Do not merge or fold it before the tag.
 - 07:00 CT readiness re-read on 0.4.82: six items, no synthetic event.
 
 **PR #328 (`lane/01-dag-tools-0-13-0`, `wt\01\dag0130`, head `9405874f`): dag-tools 0.13.0.**
