@@ -47,6 +47,10 @@ The architect's line: "gov: no `viewer_may_attest`. The row field is `attestatio
 
 gov chose the content-kind registration as the row. The packet to Lane 1 and ca is in the master tree's `sessions/`, dated 11-10, `...attestation-rides-the-content-kind-row.md`. ca adds `attestation: Optional[Literal["self", "second_party"]] = None` to `ContentKindRegistration`, Lane 1 wires `_declared_attestation` in `src/iagent/promotion.py`, and gov fills `attestation: self` on `pcn` and `pdn` once the pin carries the field. Nothing to do until ca names a tag.
 
+**Accepted by the architect (11-10):** the field rides 0.9.17 if ca's SDK PR #3 is still open, else 0.9.18. #3 was open on 11-10 at `5f32cf71`, with no `attestation` in `iagent_mesh/ingest.py` yet. Lane 1's two record fields are allowed: they are a record, not a declaration.
+
+**So the pin PR carries the rows.** With `extra="forbid"`, a row that declares `attestation` will not load on an SDK without the field. `attestation: self` on `pcn` and `pdn` therefore goes in the **same commit** as the pin bump, never before it. Before writing the rows, check that the tag has the field: `git -C C:/Users/cnogr/git/iagent-mesh-sdk grep -n attestation <tag> -- iagent_mesh/ingest.py`.
+
 ## Item 3: v0.9.17 pin PR, not started
 
 ca had not tagged it at 2026-11-09 (newest is v0.9.16). Lane 1's pin procedure and the `chris:rule who moves the iagent-mesh pin` board row for v0.9.16 are the precedent to read first.
