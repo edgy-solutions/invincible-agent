@@ -125,8 +125,10 @@ class IngestGraph(Protocol):
 
     def write_fact(self, ingest_id: str, fact: dict) -> None: ...
 
-    def attest_origin(self, ingest_id: str, *, owner_domain: str, record_id: str) -> str:
-        """Record the steward's origin attestation; "written" | "kept_record" | "kept_steward"."""
+    def attest_origin(self, ingest_id: str, *, owner_domain: str, record_id: str,
+                      attested_by: str = "", self_attested: Optional[bool] = None) -> str:
+        """Record the steward's origin attestation; "written" | "kept_record" | "kept_steward".
+        `attested_by` / `self_attested` name who attested and whether they also dropped it."""
 
     def delete_carrying(self, ingest_id: str) -> int: ...
 
@@ -321,7 +323,8 @@ def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, aud
                  row_edits: Optional[list] = None,
                  reconciliation: Optional[dict] = None,
                  leaf: Optional[dict] = None,
-                 review_coverage: Optional[dict] = None) -> dict:
+                 review_coverage: Optional[dict] = None,
+                 attestation: Optional[dict] = None) -> dict:
     """The decision record. A steward's corrections (`row_edits`, each stamped
     `obtained_via=steward-corrected`) ride on the human_review check's inputs; the record is the
     grant. With none, the inputs are exactly what they always were (no new key).
@@ -343,6 +346,8 @@ def build_record(subject: PromotionSubject, *, decision: str, acted_by: str, aud
         inputs["review_coverage"] = review_coverage
     if isinstance(reconciliation, dict):
         inputs["reconciliation"] = reconciliation
+    if attestation is not None:
+        inputs["attestation"] = attestation
     # The leaf's source rides on the check when the act knows it (spec 203b): `leaf_source` always,
     # `corrected_by` only for a corrected leaf. With no `leaf` the inputs are exactly as before.
     if isinstance(leaf, dict) and leaf.get("leaf_source") is not None:
@@ -406,6 +411,41 @@ def domain_of(audience: str) -> str:
             f"audience {audience!r} is not `{KIND}:<domain>`; a promotion attests the origin "
             f"domain of its audience and has none to attest. Nothing was written", status=422)
     return domain
+
+
+ATTESTATION_SELF = "self"
+ATTESTATION_SECOND_PARTY = "second_party"
+ATTESTATION_MODES = (ATTESTATION_SELF, ATTESTATION_SECOND_PARTY)
+ATTESTATION_DEFAULT = ATTESTATION_SELF
+
+
+def _declared_attestation(content_kind: str) -> Optional[str]:
+    """The row that carries `attestation` for a `document_promotion` is gov's to name (packet
+    2026-11-10); until it is, nothing is declared and the ruled default applies. This is the ONLY
+    function that will change when the row is named."""
+    return None
+
+
+def attestation_for(content_kind: str) -> str:
+    """`self` or `second_party` for this content kind. Nothing declared -> the ruled default.
+    A malformed declaration fails closed: it is never guessed to be `self`."""
+    declared = _declared_attestation(content_kind)
+    if declared is None:
+        return ATTESTATION_DEFAULT
+    if isinstance(declared, str) and declared in ATTESTATION_MODES:
+        return declared
+    raise PromotionRefused(
+        "attestation_undeclarable",
+        f"the declared attestation for content_kind {content_kind!r} read as {declared!r}, "
+        f"which is not one of {list(ATTESTATION_MODES)}. Nothing was written", status=503)
+
+
+def attestation_block(content_kind: str, payload: Any) -> dict:
+    """What the task serves: the mode and, under `second_party`, who may not attest."""
+    m = attestation_for(content_kind)
+    return {"mode": m,
+            "excluded": sorted(_excluded_attesters(payload)) if m == ATTESTATION_SECOND_PARTY
+            else []}
 
 
 def _excluded_attesters(payload: Any) -> set:
@@ -490,7 +530,8 @@ def correction_record(subject: PromotionSubject, *, record_id: str, domain: str,
 def _apply(decision: str, subject: PromotionSubject, stores: PromotionStores, *,
            acted_by: str, acted_at: int, record_id: str, domain: str = "",
            row_edits: Optional[list] = None,
-           reconcile_mpns: Optional[list] = None) -> dict:
+           reconcile_mpns: Optional[list] = None,
+           attested_by: str = "", self_attested: Optional[bool] = None) -> dict:
     """The effect. Every step is keyed, so running it again after a partial failure converges."""
     step = "graph"
     try:
@@ -519,7 +560,8 @@ def _apply(decision: str, subject: PromotionSubject, stores: PromotionStores, *,
             stores.graph.write_fact(subject.ingest_id, dict(fact))
             step = "origin"
             origin = stores.graph.attest_origin(
-                subject.ingest_id, owner_domain=domain, record_id=record_id)
+                subject.ingest_id, owner_domain=domain, record_id=record_id,
+                attested_by=attested_by, self_attested=self_attested)
             out = {"fact": fact, "origin": origin}
             if applied is not None:
                 out["row_edits_applied"] = applied
@@ -665,11 +707,25 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
         # nobody; count how many of those are still being acted on.
         logger.warning("promotion with no dropped_by excludes nobody (legacy task): ingest_id=%s",
                        subject.ingest_id)
-    if decision == PROMOTED and acted_by in _excluded_attesters(payload):
-        raise PromotionRefused(
-            "dropper_cannot_attest_origin",
-            "the person who dropped the document (or whom it was dropped for) cannot attest its "
-            "origin by promoting it. Nothing was written", status=403)
+    mode = None
+    self_attested = False
+    if decision == PROMOTED:
+        block = payload.get("attestation") if isinstance(payload, dict) else None
+        if block is None:
+            mode = attestation_for(subject.content_kind)
+        elif isinstance(block, dict) and block.get("mode") in ATTESTATION_MODES:
+            mode = block["mode"]
+        else:
+            raise PromotionRefused(
+                "attestation_undeclarable",
+                f"the task's attestation block read as {block!r}, which does not carry a mode "
+                f"in {list(ATTESTATION_MODES)}. Nothing was written", status=503)
+        self_attested = acted_by in _excluded_attesters(payload)
+        if mode == ATTESTATION_SECOND_PARTY and self_attested:
+            raise PromotionRefused(
+                "dropper_cannot_attest_origin",
+                "the person who dropped the document (or whom it was dropped for) cannot attest "
+                "its origin by promoting it. Nothing was written", status=403)
     missing = _missing(stores, decision)
     if missing:
         raise PromotionRefused(
@@ -722,7 +778,10 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
     record = build_record(subject, decision=decision, acted_by=acted_by, audience=audience,
                           comment=comment, governing=governing, era=era, row_edits=row_edits,
                           reconciliation=reconciliation, leaf=leaf,
-                          review_coverage=review_coverage)
+                          review_coverage=review_coverage,
+                          attestation=({"mode": mode, "attested_by": acted_by,
+                                        "self_attested": self_attested}
+                                       if decision == PROMOTED else None))
     try:
         written = stores.ledger.append(record, acted_by=acted_by, acted_at=now_ms)
     except Exception as exc:  # noqa: BLE001 — a ledger that raises has not said ok
@@ -770,5 +829,7 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
                       record_id=record["record_id"], domain=domain,
                       row_edits=row_edits,
                       reconcile_mpns=([e["mpn"] for e in reconciliation["removed"]]
-                                      if reconciliation is not None else None)))
+                                      if reconciliation is not None else None),
+                      attested_by=(acted_by if decision == PROMOTED else ""),
+                      self_attested=(self_attested if decision == PROMOTED else None)))
     return out

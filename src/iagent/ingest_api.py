@@ -23,7 +23,7 @@ INGEST_V1_TAG = "ingest-v1"
 # (sections 1, 2, 5). Tagged ADDITIVELY on the routes (existing tags kept); /interview/stream shares
 # the /orchestrate handler but is NOT in this set.
 MCP_TAG = "mcp"
-INGEST_API_VERSION = "1.8.1"
+INGEST_API_VERSION = "1.9.0"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),

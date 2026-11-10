@@ -161,9 +161,18 @@ Two people matter to a drop:
 | `POST /ingest/{id}/leaf` (pick or correct the leaf) | yes | yes | 403 `not_entitled` |
 | `POST /ingest/{id}/empty` (preview) | yes | yes, see note | 403 `not_entitled` |
 | `POST /ingest/{id}/retry` | own drop at `failed` or `awaiting_origin` only | as a person | 403 `retry_is_pin_driven` |
-| `POST /human_tasks/{task_id}/act`, promote | **no**: 403 `dropper_cannot_attest_origin` | yes | 404 `task_not_found` |
+| `POST /human_tasks/{task_id}/act`, promote | per the task's `attestation.mode`: `self` yes; `second_party` **no**, 403 `dropper_cannot_attest_origin` | yes | 404 `task_not_found` |
 | `POST /human_tasks/{task_id}/act`, reject | not blocked | yes | 404 `task_not_found` |
 
+- **Whether the dropper may promote is declared, not fixed** (ruled 2026-11-09). A promotion task's
+  payload carries `attestation: {mode, excluded}`, stamped when the task is filed. `mode` is `self`
+  (the default: the dropper validates and promotes) or `second_party`. `excluded` lists who may not
+  promote it, and is empty under `self`. A client holds Promote when the viewer's `authz_id` is in
+  `excluded`, and decides nothing else. A task keeps the mode it was filed under. A task filed
+  before this field existed is decided by the declaration at the time of the act.
+- **The record names who attested.** A promotion's decision record carries
+  `attestation: {mode, attested_by, self_attested}` on its human_review check, and the origin it
+  writes carries `origin_attested_by` and `origin_self_attested`.
 - **Everything else is read-only to both.** A dropper cannot change a drop's content kind, its
   bytes, or its stage, except through the routes above.
 - **Note on `/empty`.** The steward branch of the access check looks for the open *promotion*
@@ -561,7 +570,8 @@ naming the holder, and its occurrence is recorded on the holder's episode as wel
 | 422 | `reject_code_unknown` | act | reject `comment` lacks a valid code; `codes` lists them | fix the request |
 | 422 | `row_edits_not_for_kind`, `header_edits_not_for_kind`, `page_not_for_kind` | act | field not valid for this task kind (`enabled: false` when corrections are switched off) | – |
 | 422 | `row_edits_refused`, `header_edits_refused` | act | a correction does not apply to this extraction | fix the edit |
-| 403 | `dropper_cannot_attest_origin` | act | the dropper cannot promote their own drop | a steward promotes |
+| 403 | `dropper_cannot_attest_origin` | act | under `attestation.mode` `second_party`, the dropper cannot promote their own drop | a steward promotes |
+| 503 | `attestation_undeclarable` | act, and the filing of a promotion task | the declared attestation is not `self` or `second_party` | report it; nothing was written |
 | 409 | `promotion_already_decided`, `row_edits_differ_from_the_record` | act | decided differently before | read the status |
 | 409 | `ingest_node_absent`, `promotion_reviewed_set_unknown` | act | the drop's record is incomplete | report it |
 | 422 | `promotion_payload_invalid`, `no_requester` | act | the task's record is malformed | report it |

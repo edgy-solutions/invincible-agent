@@ -15406,6 +15406,13 @@ async def _file_or_find_document_promotion_task(
         "notice_date": summ["notice_date"] if summ else None,
         "part_count": summ["part_count"] if summ else None,
         "attempt": attempt}
+    # The task carries the attestation rule it is filed under; the server serves the answer, the
+    # card does not decide (ruled 2026-11-09).
+    try:
+        payload["attestation"] = promotion.attestation_block(payload["content_kind"], payload)
+    except promotion.PromotionRefused as exc:
+        raise HTTPException(status_code=exc.status,
+                            detail={"error": exc.error, "message": str(exc)})
     # A kind whose shape row's item_kind is served from the payload (`section`) carries the card's
     # shape and the section universe it will be verified against. Any other kind's payload is
     # untouched. Keyed on the shape row's item_kind, never on a kind's name.
