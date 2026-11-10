@@ -108,7 +108,8 @@ agent-fleet = [
     "httptools",
     "hypercorn",
     "python-dotenv",
-    "langfuse",
+    # >=4.7.0,<5: older SDKs lag the v2 observations read by ~15 min (perf, 2026-11; architect 11-10: "langfuse >= 4.7.0 in the root lock").
+    "langfuse>=4.7.0,<5",
     # PINNED EQUAL to agent_fleet/cost_agent/pyproject.toml: the package page carries the .duckdb
     # file's sha256, and a test venv on another duckdb version verifies a container the engine
     # never writes. Before this line the importorskip("duckdb") sites skipped in every lane venv.
