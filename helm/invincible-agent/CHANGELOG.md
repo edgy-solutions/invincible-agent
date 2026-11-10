@@ -65,6 +65,8 @@ validates, promotes and exports it.
   and arm64. The short tag and an altered digest give 404.
 - Until this cut rolls, the live card still hides Promote from the dropper.
 
+Entries merged after the 0.4.82 cut. The chart version is not bumped until the cut.
+
 - **A foreign delegate's attach is refused as `delegate_not_seeder`.** Chris, 2026-11-07 (saf):
   the code is `delegate_not_seeder`, in `detail["error"]`. #289 refused it as
   `not_the_seeding_delegate`; the behaviour is unchanged (403, nothing written), only the code
@@ -90,6 +92,13 @@ validates, promotes and exports it.
   gets 404 rather than 403, because a 403 would confirm that the program exists. A profile with a
   built-in source still refuses such a program with a 422 `not_in_model` at export: the built-in
   reads the seed.
+- **engine-fin registers each verb with the verb in its `endpoint_url` path, at the call.**
+  `_registration_calls()` now carries each measure's `fn`, and the lifespan builds
+  `endpoint_url=f"{base}/measure/{_call['fn']}"`. Before, the list carried the finished URL and the
+  call passed `_call["endpoint_url"]`, which hid the verb from safety's
+  `test_THE_VERB_IS_IN_THE_PATH_not_in_the_body` and turned it red. The registered URLs are the
+  same strings as before, so the mesh sees no change.
+- **The roll:** engine-fin's image changes; nothing in its values or pod template does.
 
 ## 0.4.82 — 2026-11-08
 
