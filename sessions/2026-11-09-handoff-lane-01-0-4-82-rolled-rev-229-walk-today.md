@@ -26,6 +26,23 @@ way, and Lane 1 holds no key. lane/perf has the packet in the master tree's `ses
 bytes against an expected 42 (trailing newline is the first suspect). The old key's fingerprint is unchanged from
 10-26 to rev 229, so no roll carried a different key. Any later roll must use the master tree's overlay copy.
 
+**Langfuse, second restart (11-10 01:04Z to 01:06Z).** Chris removed the newline. The live public key now reads 42
+bytes, with all 22 keys present. Lane 1 restarted the same 20 Deployments under the lock, after an empty in-flight
+list whose control returned 2 rows. All rolled out, and the lock is released. perf has a second packet: ask "how do I
+add a new engine" once and report "trace landed" or "401 persists". The architect's word: "if perf reports 401,
+restart again after Chris fixes the key length; D and the 0.4.83 cut are go after the walk."
+
+**Unknown: did the 20:00Z walk happen, and has 74 handed back?** No walk report and no written hand-back were found
+in master `sessions/`, `ia-74/sessions` or `wt/74`. The question is with Chris. Do not roll, fire or walk until one of
+those answers.
+
+**Attestation (ruled 11-09, 0.4.83): PR #324, head `dc0fdc40`, branch `lane/01-attestation-row`, `wt\01\attest`.**
+The dropper may promote under `self`; the 403 fires only under `second_party`. The task payload carries
+`attestation {mode, excluded}`. Ingest API 1.9.0. The seam `_declared_attestation` returns None until gov names the
+row (packet in master `sessions/`, 11-10). Cortex has a packet in `cortex-ui/sessions/`. The architect owes a word on
+the one choice in the PR body: a task keeps the mode it was filed under. Next: read CI, then
+`join-ratchet.sh 324`, then `train-one2.sh 324`.
+
 ## Next, in order
 
 1. **fin's #312 → #316 → #319** as each is resolved: `join-ratchet.sh N`, then `train-one2.sh N`. All three still
