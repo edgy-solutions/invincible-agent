@@ -80,6 +80,11 @@ Host access is not granted, and that decision is held for Phase 2.
 
 ## Measured 2026-11-09: no answer trace is reaching Langfuse
 
+> **Corrected 2026-11-09** in `2026-11-09-report-perf-census-redone-on-provenance-telemetry.md`. The v1
+> `/api/public/traces` list read here is lossy. `/api/public/v2/observations` shows 12 traces, all from doc-tools,
+> and the newest is 2026-10-28T00:43Z, not 10-24. This census also missed the provenance-telemetry leaf's
+> callers.
+
 The lane now reads with its own dedicated key (Chris's ruling: exec in engine-a was the stopgap and
 is retired). That key authenticates against project `iagent`.
 
