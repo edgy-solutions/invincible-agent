@@ -2897,6 +2897,11 @@ async def _run_definition(
             # it disposes nothing.
             if step.disposes is not None:
                 results[-1]["disposition"] = step.disposes
+                # A DISPOSING EMIT ENDS THE DEFINITION (ruled 2026-11-10): the decision is made
+                # and sent, so the instance returns its outcome now. A step after it would keep
+                # a decided case's workflow alive -- October's maint_release emitted `released`
+                # and then waited on a `tier_ack` nobody sends, which held its episode open.
+                break
 
     # ── THE TERMINAL OUTCOME, AND WHY IT IS NOT `status` ──────────────────────────────────────
     #

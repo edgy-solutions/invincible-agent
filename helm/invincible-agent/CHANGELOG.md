@@ -41,6 +41,7 @@ change is ruled 2026-11-09. The tag is held: "I tag 0.4.83 at the new head tomor
 | #322 the 503 seals find their sites by what they call | merged at `5fa0f3e4`, after the cut commit; through the images |
 | #323 gov: `arrives_as` and `label` on the nine kinds that have a row | merged at `8095d651`, after the cut commit; policy overlay |
 | dag-tools 0.13.0 | this PR; below |
+| the walk hotfix: a case at its terminal frees its episode | after the cut commit; through the images; below |
 
 **Before this cut rolls** (not tonight: "do not roll"):
 
@@ -152,6 +153,36 @@ validates, promotes and exports it.
   `test_THE_VERB_IS_IN_THE_PATH_not_in_the_body` and turned it red. The registered URLs are the
   same strings as before, so the mesh sees no change.
 - **The roll:** engine-fin's image changes; nothing in its values or pod template does.
+
+**A case at its terminal frees its episode; a disposing emit ends its definition** (the walk hotfix;
+architect, 2026-11-10: "'open' means the case has not reached a terminal stage
+(released/closed/rejected), never that a workflow is alive").
+
+- **What failed:** at 16:33Z on the walk, OpenDDIL's occurrence `62b9e840` attached to case
+  `9062f943`, which was released on 10-29. That case's last instance started on the pre-0.4.72
+  `maint_release`, which emitted `released` and then waited on a `tier_ack` nobody sends. Its
+  workflow never returned, so its episode never released, and the door answered with October's
+  case.
+- **Open is now the stage, not the run.** `_run_case` sends `CaseEpisode.release` as soon as a
+  chaining table names a terminal, before the action-record writes, the stamp and the summary.
+  It is no longer sent after the loop. A failure after the terminal sends it again, and `release`
+  from a case that no longer holds the episode is a no-op. The terminals are the tables'
+  `terminals:`, so no case word enters code.
+- **A disposing emit ends its definition.** In `_run_definition`, an `emit` with `disposes` returns
+  the instance's outcome at once. Steps after it never run. No shipped definition has a step after
+  a disposing emit (census of the 14 under `policy/`), so nothing current changes.
+- **The seal:** `tests/test_an_occurrence_attaches_to_its_open_episode.py` gains two arms:
+  - A decided case whose definition still has an await after its disposing emit closes, and a new
+    occurrence opens a new case naming it as `predecessor`. Without the break, it never closes.
+  - A case whose run is still writing after its terminal frees its episode. With the release
+    after the loop, the new occurrence attaches.
+  - The control is the existing open-case arm: a case parked before its decision still holds.
+- **Already-stuck cases are not repaired by this code.** `9062f943`'s run and its instance `~5`
+  stay suspended, and the episode stays held, until a live action frees them. That action is
+  Chris's: send `CaseEpisode/<episode>/release {case_id}`, or cancel the two invocations. A
+  cancel fails the case. Instance `~5` must not be resumed on this code: its journal holds the
+  old trailing step.
+- **The roll:** the restate_analyst engine's image changes; nothing in its values or pod template does.
 
 ## 0.4.82 — 2026-11-08
 
