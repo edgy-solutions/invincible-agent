@@ -1,5 +1,18 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.85 — not yet cut
+
+Entries merged after the 0.4.84 tag (`f9fa4d7b`). The architect, 2026-11-10: "Merge train, all under
+'## 0.4.85 — not yet cut'", and "Hold the 0.4.85 cut PR until I say. Hold the PR, not the tag; the
+automation tags on merge." Every entry below goes under this heading until the cut; none goes under
+0.4.84, which is tagged and rolled.
+
+- **The chart-version test reads git output as UTF-8** (`tests/test_chart_version_tracks_chart_content.py`;
+  fin's finding). Its two text-mode `git` calls now pass `encoding="utf-8"`. Without it, Python decodes
+  `git show` of this file with the locale's code page; on a Windows cp1252 box the em-dashes in these
+  headings come back as mojibake or raise, and the seal reads the wrong text. The test is the only
+  change; nothing in the chart, the values or the pod templates moves.
+
 ## 0.4.84 — 2026-11-10
 
 Entries merged after the 0.4.83 tag (`3a23fce4`), through `27d59a39`. The architect, 2026-11-10:
