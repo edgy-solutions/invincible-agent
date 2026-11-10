@@ -55,14 +55,21 @@ Lane 1's part:
   brokered-read seal, whose version-gated xfails were removed (5 pass).
 - finance_agent and data_analyst are not moved.
 - The CHANGELOG adds #310, #322 and #323 to the 0.4.83 table.
-- CI and the join ratchet were running at 04:05Z. Merge on green.
+- Join ratchet 24 passed (join `8fc3641e`). **Merges on green** (architect via Chris, 11-10).
 
-**Two reds measured (neither is #328's):**
-- `test_chart_version_tracks_chart_content`: red on master since #310 (`57f16df2`). Every fold into a held
-  version reds it, and CI runs no pytest. It clears when the final pre-tag commit touches Chart.yaml. **Asked
-  Chris how.**
-- `test_oidc_broker_chart` walkers [erin|chris]: #314 gave alice `obsolescence-deciders`, a cell group, and not
-  the walkers. A packet to gov is placed in master `sessions/`.
+**Two KNOWN reds (neither is #328's). Ruled 11-10 ~04:07Z, the architect via Chris:**
+- `test_chart_version_tracks_chart_content` has been red on master since #310 (`57f16df2`); every fold into the held
+  version reds it, and CI runs no pytest.
+  - **Ruled:** "A final commit just before the tag touches Chart.yaml with a comment naming the head it releases,
+    so the version sits on the content it ships. No bump to 0.4.84, no seal change. Until then the red is known
+    and named in the handoff."
+  - That final commit is Lane 1's last PR before Chris tags.
+- `test_oidc_broker_chart` walkers [erin|chris]: #314 gave alice `obsolescence-deciders`, a cell group, and not the
+  walkers.
+  - **Ruled:** "the walkers mirror alice, so erin and chris join obsolescence-deciders in the same PR that fixes it.
+    gov's to do; it rides 0.4.83."
+  - The packet to gov, with the ruling appended, is in master `sessions/`.
+  - users.yaml changes, so it needs Chris's topaz_sync before the roll.
 
 **mesh v0.9.17 was tagged at 03:49Z.** Gov's pin PR was not open at 04:05Z.
 
