@@ -1,5 +1,14 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.85 — not yet cut
+
+**The walkers join `obsolescence-deciders`** (gov; the architect, 2026-11-10: "the walkers mirror alice, so erin and chris join obsolescence-deciders in the same PR that fixes it").
+
+- **What moves:** `policy/users.yaml` gives erin and chris the group alice has held since #314. `groups.yaml`'s member note names the three members. `test_oidc_broker_chart`'s walker seal counts 12 mirrored groups instead of 11, citing the ruling.
+- **Why:** #314 granted the group to alice only. The group has no persona.domain cell and is not granted by a capability row, so the seal does not treat it as capability-only. The walker arms were therefore red on master and on 0.4.84, which was cut without this fix.
+- **Before this version rolls:** Chris runs topaz_sync by hand so that Topaz holds erin's and chris's new membership. The realm import carries no groups, so nothing else needs syncing. The `obsolescence-deciders` sync ahead of 0.4.84's roll is the same group. If that sync has not run by the time this merges, one sync covers both.
+- **Effect:** in the sandbox, erin and chris may choose an `obsolescence_resolution.<option>` at the decide step. They are fixture grants, not a claim about who chooses a resolution in production.
+
 ## 0.4.84 — 2026-11-10
 
 Entries merged after the 0.4.83 tag (`3a23fce4`), through `27d59a39`. The architect, 2026-11-10:
