@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 
+import httpx
 import pytest
 import yaml
 from fastapi.testclient import TestClient
@@ -103,7 +104,7 @@ class _Program:
     def __call__(self, program, caller_id):
         self.calls.append((program, caller_id))
         if self.raises:
-            raise RuntimeError("topaz down")
+            raise httpx.ConnectError("topaz down")  # what the real check raises (program_membership)
         return self.answer
 
 
