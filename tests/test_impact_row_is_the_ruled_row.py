@@ -92,3 +92,22 @@ def test_TRIPWIRE_THE_SDKS_ROW_CANNOT_CARRY_A_SERVED_ROW_AND_ONLY_ITS_PROVENANCE
             assert not outside, f"the SDK row refuses a served row outside its provenance: {outside}"
         else:
             pytest.fail("the SDK's ImpactRow now carries a served row: re-export it")
+
+
+#: v0.9.17's `DataProvenance`, as read from the tag: (field, annotation, required).
+_V0917_PROVENANCE = [("dataset_urn", "str", True), ("as_of", "str", True), ("ticket_id", "str", True)]
+
+
+def test_TRIPWIRE_THE_SDKS_PROVENANCE_IS_STILL_THE_ONE_THAT_CANNOT_SAY_ABSENT():
+    """Ruled 11-10: ca's v0.9.18 lets `ImpactRow`'s provenance say a value is absent (the rule fin's
+    `(ticket: pending)` follows), then 74 re-exports. That shape need not accept today's served
+    row, so the tripwire above could stay green on the very tag. This one fails on ANY change to
+    v0.9.17's `DataProvenance`: read the new shape, map the served provenance onto it, re-export."""
+    sdk = _sdk_impact_row()
+    if sdk is None:
+        pytest.skip("the SDK has no ImpactRow")
+    dp = sdk.model_fields["data_provenance"].annotation
+    got = [(n, getattr(f.annotation, "__name__", str(f.annotation)), f.is_required())
+           for n, f in getattr(dp, "model_fields", {}).items()]
+    assert got == _V0917_PROVENANCE, (
+        f"the SDK's DataProvenance changed ({got}); if it can say absent, re-export the SDK's ImpactRow")
