@@ -275,3 +275,13 @@ PENDING VERIFICATION (a later order, not this job): when `git ls-remote --tags o
 ## Round 37 - the ticket seal verified at v0.13.0
 
 Gate: the v0.13.0 tag (a lightweight tag) is bed53b9c4ff005e91f60ce3db7b41d5033121d65 and peels to the same commit; 62581a65 is an ancestor of it; the pyproject at the tag reads version 0.13.0. `ticket_identity.py` at the tag is byte-identical to 62581a65's; the names are `ticket_id`, `issued_at`, `as_of`. The gateway and broker main modules have no diff between 62581a65 and the tag. Throwaway checkout of the tag: 11 passed, 1 xfailed (the nobody-authorize arm), the same as the 62581a65 run. All five mutants (drop each field; the log subject disagreeing; the broker handed another subject) turn their arms red exactly as before (3, 3, 3, 1, 4 failures); the checkout was clean afterwards and has been removed. #330 marked ready; packet to the architect seat for Chris placed untracked in the master sessions/. The pin was not moved. Move PR must remove the `needs_*` module-presence markers (they XPASS on the move).
+
+## Round 38 - a conflicted PR gets no CI; #330 merged forward over the pin move
+
+Finding (Job 20, the coordinator's): #330 showed no check runs because it was CONFLICTING/DIRTY. A conflicted PR has no merge ref, so no `pull_request` workflow fires; closing and reopening it does not help. The cause was a merge conflict with master, not the event. Check `mergeStateStatus` before suspecting the CI trigger.
+
+Job 21: master's 9405874f already moved the pin to `edgy-dag-tools==0.13.0` (lock, values, changelog) and removed `needs_tag`/`needs_gateway` from the seal file. Merged origin/master into lane/saf-the-ticket-carries-its-id-issue-time-and-as-of with a merge commit (no rebase, no force). One conflict, the seal file: kept master's removals, dropped my `needs_identity` marker and the nine `@needs_*` decorators on my arms, kept the nobody-authorize strict xfail. `uv sync --extra agent-fleet` then `edgy-dag-tools` imports at 0.13.0.
+
+Exits on the merged tip: seal file 0 (11 passed, 1 xfailed, no XPASS); refusal ratchet 0 (24 passed); tests/safety 0 (535 passed, 4 skipped, 11 xfailed). Mutants on a throwaway copy of the installed 0.13.0 package on PYTHONPATH (ia-saf's venv untouched; copy cmp-identical after): drop ticket_id, issued_at, as_of each exit 1 (3 failed); TICKET_ISSUED naming another subject exit 1 (1 failed); broker payload subject changed exit 1 (4 failed).
+
+The architect packet carries an UPDATE top line: nothing asked of Chris but merging #330.
