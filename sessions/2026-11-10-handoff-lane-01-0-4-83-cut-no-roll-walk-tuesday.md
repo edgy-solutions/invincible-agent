@@ -55,7 +55,7 @@ Lane 1's part:
   brokered-read seal, whose version-gated xfails were removed (5 pass).
 - finance_agent and data_analyst are not moved.
 - The CHANGELOG adds #310, #322 and #323 to the 0.4.83 table.
-- Join ratchet 24 passed (join `8fc3641e`). **Merges on green** (architect via Chris, 11-10).
+- **MERGED at `af87f0c0`** (^2 `9405874f`, on master; CI 21 green and 3 skipped, join ratchet 24).
 
 **Two KNOWN reds (neither is #328's). Ruled 11-10 ~04:07Z, the architect via Chris:**
 - `test_chart_version_tracks_chart_content` has been red on master since #310 (`57f16df2`); every fold into the held
