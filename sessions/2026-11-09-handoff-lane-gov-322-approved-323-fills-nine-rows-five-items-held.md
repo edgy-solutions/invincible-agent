@@ -41,6 +41,12 @@ If they are ruled in, the rows come from 7f's 10-30 table in doc-tools `sessions
 | step-ap242 | null | [step] | | STEP AP242 model | cad.step_ap242_identity | mesh:StepAp242Artifact |
 | cad | null | | | CAD artifact | cad.cad_document_identity | mesh:CADArtifact |
 
+## Item 4: attestation (11-10)
+
+The architect's line: "gov: no `viewer_may_attest`. The row field is `attestation: self | second_party` as ruled; the served shape is what cortex reads. Nothing else is declared."
+
+gov chose the content-kind registration as the row. The packet to Lane 1 and ca is in the master tree's `sessions/`, dated 11-10, `...attestation-rides-the-content-kind-row.md`. ca adds `attestation: Optional[Literal["self", "second_party"]] = None` to `ContentKindRegistration`, Lane 1 wires `_declared_attestation` in `src/iagent/promotion.py`, and gov fills `attestation: self` on `pcn` and `pdn` once the pin carries the field. Nothing to do until ca names a tag.
+
 ## Item 3: v0.9.17 pin PR, not started
 
 ca had not tagged it at 2026-11-09 (newest is v0.9.16). Lane 1's pin procedure and the `chris:rule who moves the iagent-mesh pin` board row for v0.9.16 are the precedent to read first.
