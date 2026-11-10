@@ -73,6 +73,10 @@ Lane 1's part:
 
 **mesh v0.9.17 was tagged at 03:49Z.** Gov's pin PR was not open at 04:05Z.
 
+**Fin's chain:** #312 **MERGED at `7a9b19e4`** (^2 `24057dea`; CI 21 green and 3 skipped, ratchet 24). Fin's resolve
+opened `## 0.4.84 — not yet cut` for its entry. **The pre-tag CHANGELOG + Chart.yaml commit moves that entry under 0.4.83
+and deletes the 0.4.84 heading.** #316 and then #319 wait on fin's resolve. Packet placed: entries go under 0.4.83.
+
 **Before 0.4.83 rolls (after the walk):**
 1. Chris's Topaz sync for `obsolescence-deciders` (#314).
 2. The values diff, shown to the approver.
