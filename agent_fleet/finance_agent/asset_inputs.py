@@ -112,9 +112,10 @@ def max_rows() -> int:
 
 
 #: ADR-0065:133 rules that `data_provenance` carries the dataset URN, an as-of and a ticket id. It
-#: is unmet: the broker's ticket carries neither an id nor an as-of, and the client discards the
-#: ticket. Until it does, the string says the ticket is pending rather than inventing one (ruled
-#: 2026-11-08). The URN stays last: the live leg reads `Source: <urn>` as the suffix.
+#: is unmet. The broker's ticket carries `ticket_id`, `issued_at` and `as_of` from dag-tools 0.13.0
+#: (#31), but this engine pins dag-tools v0.10.0 and its client discards the ticket. Until fin
+#: threads the ticket through, the string says the ticket is pending rather than inventing one
+#: (ruled 2026-11-08). The URN stays last: the live leg reads `Source: <urn>` as the suffix.
 TICKET_PENDING = "(ticket: pending)"
 
 

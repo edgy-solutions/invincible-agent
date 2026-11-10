@@ -12,11 +12,12 @@ Two halves, measured separately because they belong to different lanes:
     The control removes it from the tuple and watches it drop.
   - THE CONTENT (fin's). An asset answer's string is the operator's banner, "(ticket: pending)"
     and " Source: <urn>" (asset_inputs.provenance / dataset_provenance). It names the dataset URN.
-    ADR-0065:133's as-of and ticket id are UNMET, ruled 2026-11-08: the broker's ticket carries
-    neither, so the string says the ticket is pending and claims no as-of (green). The full rule
+    ADR-0065:133's as-of and ticket id are UNMET, ruled 2026-11-08. The broker's ticket carries
+    both from dag-tools 0.13.0 (#31), but engine-fin pins v0.10.0 and its client discards the
+    ticket, so the string says the ticket is pending and claims no as-of (green). The full rule
     stays a strict xfail. Its ticket pattern now refuses "pending", which a bare `ticket` word
-    would accept; when the ticket carries both, the xfail turns XPASS and fails, and the marker
-    is deleted in that PR.
+    would accept; when fin threads the ticket through, the xfail turns XPASS and fails, and the
+    marker is deleted in that PR.
 
 Run: uv run --no-sync python -I -m pytest -c pyproject.toml --rootdir=. -p no:cacheprovider tests/finance/test_provenance_arrives_whole.py
 """
@@ -108,9 +109,10 @@ def test_THE_TICKET_ID_PATTERN_TELLS_PENDING_FROM_AN_ID():
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "ADR-0065:133 unmet (ruled 2026-11-08): the broker's ticket carries no id and no as-of, and "
-    "the client discards it, so the string says '(ticket: pending)'. Clears when dag-tools mints "
-    "both and fin threads them through (owner: invincible-agent/lane/fin)"))
+    "ADR-0065:133 unmet (ruled 2026-11-08): the broker's ticket carries an id and an as-of from "
+    "dag-tools 0.13.0, but engine-fin pins v0.10.0 and its client discards the ticket, so the "
+    "string says '(ticket: pending)'. Clears when fin threads them through "
+    "(owner: invincible-agent/lane/fin)"))
 def test_AN_ASSET_ANSWER_CARRIES_ITS_AS_OF_AND_TICKET_ID(monkeypatch):
     for name, s in _asset_strings(monkeypatch).items():
         assert AS_OF.search(s), f"{name} names no as-of: {s!r}"
