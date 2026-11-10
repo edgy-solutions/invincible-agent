@@ -7,6 +7,22 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-10 ~17:45Z: THE WALK FAILED AT THE DOOR, and the hotfix is PR #332** (`lane/01-a-released-case-frees-its-episode`,
+worktree `wt\01\episode`, head `2ecb93d4`).
+- 16:33Z: OpenDDIL's occurrence 62b9e840 ATTACHED, by our derived episode key, to case 9062f943. That case was released
+  on 10-29, but its run and instance `~5` were still suspended on the pre-0.4.72 `tier_ack` step.
+- The read is reported (scratch: `walk-failure-62b9e840-read.md`).
+- The fix:
+  - `release` is sent when a chaining table names a terminal;
+  - a disposing emit `break`s its definition;
+  - two seal arms, each killed by its own revert.
+- 16 neighbouring files and the ratchet are green locally. Next: the join ratchet and CI, then merge on green, then
+  report to the architect and Chris.
+- **Do NOT touch 62b9e840 or 9062f943.** Freeing 9062f943 is a live action for Chris: an episode `release`, or a cancel,
+  which fails the case. `~5` must never be resumed on new code, because its journal would mismatch.
+- **`invincible-agent-0.4.83` ALREADY EXISTS on origin at `3a23fce4`.** chart-releaser created it at 03:43Z. Whether the
+  later content rides 0.4.84 needs Chris's ruling. The hotfix entry sits under 0.4.83, as ordered.
+
 **Chris's 21:16 CT block (11-09), verbatim as relayed:** "walk slipped to Tuesday 09:00 CT; rehearsal didn't happen;
 lock free; cut 0.4.83 tonight, do not roll; readiness re-read 07:00 on 0.4.82".
 
