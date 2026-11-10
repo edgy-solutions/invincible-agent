@@ -1,5 +1,15 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.84 — not yet cut
+
+**The fleet moves to iagent-mesh v0.9.17** (gov; the architect, 11-08: "the v0.9.16 fleet pin is gov's (same as 0.9.15; one PR)"; 11-10: "v0.9.17 fleet pin PR when the tag exists").
+
+- **What moves:** 17 pyprojects (the root has two lines), `domainBroker.meshSdkVersion` and its closed-network comment, and the 17 locks that pin the SDK. Every lock names the tag's commit (`8d1ee304`) and none still names v0.9.15's. Sixteen locks change 3 lines and the root 4, the same shape as the v0.9.15 move. `option_deciders.yaml`'s measured note names the pin.
+- **Why:** ADR-0065 D (Lane 1's `obsolescence_resolution` row) puts `options` on its decide step. v0.9.15's step model forbids unknown fields and has no `options`. v0.9.16 added `HumanAwaitStep.options` and the `lifecycle_status` module. v0.9.17 reshapes `ImpactRow` to the ruled nine fields (ADR-0065 §4). The fleet skips v0.9.16, whose three-field `ImpactRow` is superseded.
+- **What the SDK changes:** only additions. Between the two tags nothing under `iagent_mesh/` is deleted. It adds `lifecycle_status`, step `options`, optional `level`/`max_level` on the asset contract, and `ImpactRow`. Its dependencies are unchanged. engine-o's `where_used.py` keeps its local `ImpactRow`; moving it onto the SDK's is lane 74's. The import-gated arm of `tests/security/test_lifecycle_status_registry.py` now runs.
+- **Closed network:** v0.9.17's package calls itself 0.9.17, so `meshSdkSource: index` serves this pin.
+- **Not in this pin: `attestation` on the content-kind row.** v0.9.17 was tagged without it (ruled 11-10: "0.9.17 if #3 is still open, else 0.9.18"; #3 had merged). The field rides v0.9.18. `attestation: self` on `pcn` and `pdn` ride that pin, because an overlay row that declares the field does not load on an SDK without it.
+
 ## 0.4.83 — 2026-11-10
 
 Entries merged after the 0.4.82 cut (`98c824aa`). Cut on Chris's 11-09 word: "cut 0.4.83 tonight,
