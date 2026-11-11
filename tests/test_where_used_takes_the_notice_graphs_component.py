@@ -1,32 +1,34 @@
 """The hop from a notice's part to where-used: the Component the notice graph carries, read as a Part.
 
-TWO HALVES, AND THEY ANSWER DIFFERENTLY (measured 2026-11-10).
+TWO HALVES.
 
 1. THE READ RESOLVES IT. Given the IRI the notice graph mints for the part (`component_iri`, the
    form `(:Component)-[:SUBJECT_TO]->` uses) as `resolved_instance_id`, `/where_used` resolves it
    to the fixture's Part through a DECLARED alias row (scheme `graph_component`), not a branch in
-   the read, and serves alice both end items and bob only the end item on their program. Deleting the alias row
-   turns this half red with `unknown_part`.
+   the read. alice gets both end items; bob gets only the end item on their program. Deleting the
+   alias row turns this half red with `unknown_part`.
 
-2. THE ROUTER WOULD NOT SEND IT. `/find_compatible_verbs` walks the instance's class up
-   `rdfs:subClassOf*` to a verb's input. `pcn:Component` has no declared path to `ps:Part`, the
-   where-used input, so a question grounded on the notice's Component is never offered this verb.
-   The missing piece is a DECLARATION, either an ontology row (`subClassOf`) or a second
-   registration of the verb on `pcn:Component` (the `whatFailedOnThisPart` form). Choosing one is
-   the architect's. The tripwire below fails when a subClassOf path lands. Then replace it with a
-   positive assertion.
+2. THE ROUTER IS OFFERED IT BY A SECOND REGISTRATION. `/find_compatible_verbs` walks the
+   instance's class up `rdfs:subClassOf*` to a verb's input, and `pcn:Component` has no declared
+   path to `ps:Part`. Measured 2026-11-10: a question grounded on the notice's Component was never
+   offered this verb. RULED 2026-11-10: register the verb a second time on `pcn:Component` (the
+   `whatFailedOnThisPart` form), and do NOT put Component under `ps:Part`, which over-claims.
+   Whether Component sits under `ps:ManufacturerPart` is a separate ontology item. The seals below
+   hold both halves of the ruling.
 
 Run: uv run pytest tests/test_where_used_takes_the_notice_graphs_component.py -q
 """
 from __future__ import annotations
 
+import ast
+import re
 from pathlib import Path
 
 import pytest
 import rdflib
 import yaml
 from fastapi.testclient import TestClient
-from rdflib.namespace import RDFS
+from rdflib.namespace import OWL, RDF, RDFS
 
 from agent_fleet.ontology_service import main as eo
 from agent_fleet.ontology_service import notice_parts as np_
@@ -112,14 +114,47 @@ def _declared_ontology() -> rdflib.Graph:
     return g
 
 
-def test_TRIPWIRE_NO_DECLARED_PATH_TAKES_THE_NOTICE_COMPONENT_TO_THE_WHERE_USED_INPUT():
-    """Today the router's subClassOf walk cannot reach the where-used input from the notice's
-    Component. When this fails, a declaration landed: replace this with an assertion that the
-    path exists, and measure the live route."""
-    component = rdflib.URIRef(np_.INPUT_URI.rsplit("#", 1)[0] + "#Component")
-    part = rdflib.URIRef(w.INPUT_URI)
+#: The class the notice graph types its parts as: the notice verb's own namespace, read from it.
+_NOTICE_COMPONENT = np_.INPUT_URI.rsplit("#", 1)[0] + "#Component"
+
+
+def test_RULED_COMPONENT_IS_NOT_PUT_UNDER_PART():
+    """RULED 2026-11-10: `pcn:Component rdfs:subClassOf ps:Part` over-claims. The second
+    registration is the route in, never an ontology row."""
+    component, part = rdflib.URIRef(_NOTICE_COMPONENT), rdflib.URIRef(w.INPUT_URI)
     g = _declared_ontology()
     assert (component, None, None) in g, "the notice's Component class is not declared where read"
     assert (part, None, None) in g, "the where-used input class is not declared where read"
-    ancestors = set(g.transitive_objects(component, RDFS.subClassOf))
-    assert part not in ancestors, "a subClassOf path now takes Component to Part: assert it instead"
+    assert part not in set(g.transitive_objects(component, RDFS.subClassOf)), (
+        "a subClassOf path takes Component to Part; ruled 2026-11-10 that it over-claims")
+
+
+def test_THE_VERB_IS_REGISTERED_ON_PART_AND_ON_THE_NOTICE_GRAPHS_COMPONENT():
+    names = [n for n, _ in w.REGISTRATIONS]
+    inputs = [i for _, i in w.REGISTRATIONS]
+    assert len(set(names)) == len(names), "one verb under one name twice deletes the first edge"
+    assert inputs == [w.INPUT_URI, _NOTICE_COMPONENT]
+    assert w.COMPONENT_INPUT_URI == _NOTICE_COMPONENT
+    assert (rdflib.URIRef(_NOTICE_COMPONENT), RDF.type, OWL.Class) in _declared_ontology()
+
+
+def _the_registration_under_the_loop() -> tuple[ast.For, ast.Call]:
+    tree = ast.parse(Path(eo.__file__).read_text(encoding="utf-8"))
+    for loop in ast.walk(tree):
+        if isinstance(loop, ast.For) and ast.unparse(loop.iter) == "_where_used.REGISTRATIONS":
+            for node in ast.walk(loop):
+                if isinstance(node, ast.Call) and ast.unparse(node.func).endswith("register_engine_to_mesh"):
+                    return loop, node
+    raise AssertionError("no register_engine_to_mesh call under a loop over _where_used.REGISTRATIONS")
+
+
+def test_THE_LIFESPAN_REGISTERS_EVERY_ROW_UNDER_ITS_OWN_NAME_AND_INPUT():
+    """Each row's name and input reach the call, and every other field is shared, so the verb keeps
+    one description across its subjects (tests/routing/test_multi_subject_verb_descriptions.py)."""
+    loop, call = _the_registration_under_the_loop()
+    name_var, input_var = (t.id for t in loop.target.elts)
+    kw = {k.arg: ast.unparse(k.value) for k in call.keywords}
+    assert (kw["name"], kw["input_uri"]) == (name_var, input_var)
+    loop_vars = {name_var, input_var}
+    shared = {k: v for k, v in kw.items() if k not in ("name", "input_uri")}
+    assert not [k for k, v in shared.items() if loop_vars & set(re.findall(r"\w+", v))], shared
