@@ -819,3 +819,40 @@ of existingSecret / existingConfigMap; caPem was removed. Called from keycloak.y
   value: {{ printf "%s/%s" $mount $row.dir | quote }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+  The BFF's accepted issuers / audiences as ONE comma-joined string: `cortexBff.auth.<key>`, each
+  entry through tpl, trimmed. Empty list -> "" (an empty value refuses every token). Called with
+  (dict "root" $ "key" "acceptedIssuers"). The BFF (frontend.yaml) and the engines
+  (engineTokenEnv) both read it, so there is no second copy of the list.
+*/}}
+{{- define "invincible-agent.acceptedList" -}}
+{{- $root := .root -}}
+{{- $auth := ($root.Values.cortexBff.auth | default dict) -}}
+{{- $out := list -}}
+{{- range (index $auth .key | default list) }}{{- $out = append $out (tpl (toString .) $root | trim) }}{{- end -}}
+{{- join "," $out -}}
+{{- end -}}
+
+{{/*
+  The token-check env every engine pod serves (read by the SDK's transport_auth, v0.9.20+). THE ONLY
+  PLACE the MESH_JWT_* / REQUIRE_TRANSPORT_AUTH names are written. Rendered LAST in each engine
+  container's env, so it beats the configmap's envFrom (agentFleet.env) and any per-engine env entry
+  above it (last duplicate wins). JWKS = the effective KEYCLOAK_REALM_URL (agentFleet.env wins, as in
+  configmap.yaml) + /protocol/openid-connect/certs. Called with the root context.
+*/}}
+{{- define "invincible-agent.engineTokenEnv" -}}
+{{- $realm := include "invincible-agent.keycloakRealmUrl" . -}}
+{{- $fleet := (.Values.agentFleet.env | default dict) -}}
+{{- if hasKey $fleet "KEYCLOAK_REALM_URL" }}{{- $realm = toString (index $fleet "KEYCLOAK_REALM_URL") }}{{- end -}}
+- name: MESH_JWT_ACCEPTED_ISSUERS
+  value: {{ include "invincible-agent.acceptedList" (dict "root" . "key" "acceptedIssuers") | quote }}
+- name: MESH_JWT_ACCEPTED_AUDIENCES
+  value: {{ include "invincible-agent.acceptedList" (dict "root" . "key" "acceptedAudiences") | quote }}
+- name: MESH_JWT_JWKS_URL
+  value: {{ printf "%s/protocol/openid-connect/certs" ($realm | trimSuffix "/") | quote }}
+{{- if (.Values.agentFleet.transportAuth | default dict).require }}
+- name: REQUIRE_TRANSPORT_AUTH
+  value: "true"
+{{- end }}
+{{- end -}}
