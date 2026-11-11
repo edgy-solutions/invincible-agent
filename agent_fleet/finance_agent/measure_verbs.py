@@ -14,7 +14,7 @@ half would be a verb that exists for some deployments and not others, with no sy
 * a top-level key the engine does not read (`_TOP_KEYS`): a `formula` written there would be
   ignored, and its author would believe it took effect;
 * a quantity outside `STATE_VOCABULARY` (extending it is a code change, reviewed as one);
-* a built-in's `measure_id` or verb name;
+* a built-in's `measure_id` or verb name, EXCEPT in a source-only row (below);
 * a module that does I/O: its source is parsed and every import must be in `PURE_IMPORTS`;
 * a module whose `VERSION` is not the row's, or whose keyword-only parameters are not exactly the
   row's `inputs.state` keys (a function wired to a quantity the row does not name is a figure
@@ -22,6 +22,16 @@ half would be a verb that exists for some deployments and not others, with no sy
 * any `policy.visibility` key. A row cannot loosen program visibility: the route runs the program
   check (`_require_visible`) BEFORE the executor, for every declared verb, and nothing in a row
   reaches it.
+
+── WHERE A MEASURE READS UNDER THE FLAG: `source` ──────────────────────────────────────────
+Ruled 2026-11-09: the source is declared per row, not per flag. With `FIN_DATASET_URN` set a
+measure computes over the asset (`source: asset`, the default when a row says nothing); a row
+declaring `source: seed` keeps answering from the notional seed, and must say why (`reason`) and
+who ratified that (`ratified_by`). A row naming a BUILT-IN may exist only to say this: its keys are
+exactly `_SOURCE_KEYS`, it loads as a `SourceRow`, and anything else on it is refused. A
+dataset-kind row reads its own asset and carries no `source`. The seed layer ships
+`fin_funding_status: seed` (the contract carries no funding lines yet); an overlay row of the same
+id replaces it whole, so a deployment whose asset gains them re-sources it with one row.
 
 ── THE CUMULATIVE BASIS ─────────────────────────────────────────────────────────────────────
 `cumulative.*` means what the built-in `cum_*` columns mean: summed from the FIRST PERIOD OF THE
@@ -107,7 +117,13 @@ _ID_RE = re.compile(r"^fin_[a-z0-9_]+$")
 _TOP_KEYS = frozenset({
     "measure_id", "verb", "name", "description", "synonyms", "anti_synonyms",
     "inputs", "computation", "outputs", "render", "policy", "menu",
+    "source", "reason", "ratified_by",
 })
+#: `source` values. Under `FIN_DATASET_URN`, `asset` is the default and `seed` the declared exception.
+SOURCE_ASSET, SOURCE_SEED = "asset", "seed"
+_SOURCES = frozenset({SOURCE_ASSET, SOURCE_SEED})
+#: Every key a row naming a BUILT-IN may carry: it says where the built-in reads, and nothing else.
+_SOURCE_KEYS = frozenset({"measure_id", "source", "reason", "ratified_by"})
 #: The render shapes this engine's runner fills: one declared series per period. A MECHANISM list,
 #: not a vocabulary: the archetype vocabulary is `capability_admission.KNOWN_ARCHETYPES`, which the
 #: flattened image cannot import, so a test ties this set to it (this set must be a subset).
@@ -177,6 +193,15 @@ class MeasureVerbError(DeclarationError):
 
 
 @dataclass(frozen=True)
+class SourceRow:
+    """A row naming a BUILT-IN measure, saying only where it reads under `FIN_DATASET_URN`."""
+    measure_id: str
+    source: str
+    source_reason: str = ""
+    ratified_by: str = ""
+
+
+@dataclass(frozen=True)
 class MeasureVerbRow:
     measure_id: str
     verb: str
@@ -220,6 +245,10 @@ class MeasureVerbRow:
     per_period: dict[str, str] = field(default_factory=dict)    # keyword -> column, summed per period
     per_program: dict[str, str] = field(default_factory=dict)   # keyword -> column, one value per program
     menu: Optional[dict[str, Any]] = None     # the `menu:` block, checked; None when undeclared
+    # Where a state row reads under `FIN_DATASET_URN`; `source_reason`/`ratified_by` only for seed.
+    source: str = SOURCE_ASSET
+    source_reason: str = ""
+    ratified_by: str = ""
 
     @property
     def series_key(self) -> str:
@@ -316,6 +345,24 @@ def _check_dataset(inputs: dict) -> dict:
             f"inputs.other_threshold {raw_t!r} must be a Decimal string with 0 <= t < 1") from None
     return {"urn": urn, "banner": banner, "levels": tuple(levels), "value_columns": columns,
             "value_op": op, "per_path": per_path, "other_threshold": threshold}
+
+
+def _source(raw: dict) -> tuple[str, str, str]:
+    """`(source, reason, ratified_by)` of a row; `seed` must say why and who ratified it."""
+    source = raw.get("source", SOURCE_ASSET)
+    if source not in _SOURCES:
+        raise ValueError(f"source {source!r} is not one of {sorted(_SOURCES)}")
+    if source == SOURCE_SEED:
+        for key in ("reason", "ratified_by"):
+            if not isinstance(raw.get(key), str) or not raw[key].strip():
+                raise ValueError(f"source: seed needs `{key}`: a row that keeps a measure on the "
+                                 f"notional seed under the flag says why and who ratified that")
+        return source, raw["reason"].strip(), raw["ratified_by"].strip()
+    stray = sorted(k for k in ("reason", "ratified_by") if k in raw)
+    if stray:
+        raise ValueError(f"row carries {stray} with source {source!r}; they say why a measure "
+                         f"reads the seed, and only a `source: seed` row does")
+    return source, "", ""
 
 
 def _check_urn_banner(ds: dict) -> tuple[str, str]:
@@ -424,9 +471,18 @@ def _check_series(rnd: dict, *, single: bool) -> tuple[tuple[dict[str, Any], ...
     return series, dict(target)
 
 
-def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureVerbRow:
+def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureVerbRow | SourceRow:
     # Raises ValueError: `compose_rows` re-raises it as MeasureVerbError WITH THE FILE NAMED.
     fns, verbs = _names(builtins)
+    if raw.get("measure_id") in fns:
+        extra = sorted(set(raw) - _SOURCE_KEYS)
+        if extra:
+            raise ValueError(
+                f"measure_id {raw['measure_id']!r} is a built-in finance verb; a row naming it may "
+                f"carry only {sorted(_SOURCE_KEYS)} (where it reads), never {extra}: a row cannot "
+                f"replace code")
+        _need(raw, "source")
+        return SourceRow(raw["measure_id"], *_source(raw))
     moved = sorted(k for k in _MOVED_OUTPUT_KEYS if isinstance(raw.get("outputs"), dict)
                    and k in raw["outputs"])
     if moved:
@@ -458,8 +514,6 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
     mid, verb = raw["measure_id"], raw["verb"]
     if not _ID_RE.match(str(mid)):
         raise ValueError(f"measure_id {mid!r} does not match {_ID_RE.pattern}")
-    if mid in fns:
-        raise ValueError(f"measure_id {mid!r} is a built-in finance verb; a row cannot replace code")
     if verb in verbs:
         raise ValueError(f"verb {verb!r} is a built-in finance verb's name")
 
@@ -598,6 +652,10 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
             f"{comp['function']} takes keyword-only {sorted(sig.parameters)}, the row's "
             f"inputs.state names {sorted(state)}; they must be the same set")
 
+    if kind == KIND_DATASET and "source" in raw:
+        raise ValueError("a dataset row reads its own `inputs.dataset.urn` and carries no `source`; "
+                         "`source` says where a state row reads under FIN_DATASET_URN")
+    source, source_reason, ratified_by = _source(raw)
     derived = comp["derived_from"]
     return MeasureVerbRow(
         measure_id=mid, verb=verb, name=str(raw["name"]),
@@ -622,6 +680,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         status_column=dataset.get("status_column", ""), per_period=dataset.get("per_period", {}),
         per_program=dataset.get("per_program", {}),
         menu=menu,
+        source=source, source_reason=source_reason, ratified_by=ratified_by,
     )
 
 
@@ -633,11 +692,26 @@ def load_measure_verbs(
 ) -> list[MeasureVerbRow]:
     """Every declared measure verb, composed and validated, sorted by `measure_id`.
 
-    NO ROWS IS A VALID ANSWER, unlike `load_method_rows`: the platform seeds none, and a
-    deployment with no overlay declares none. `builtins` is `(fns, local verb names)` of the
+    NO ROWS IS A VALID ANSWER, unlike `load_method_rows`: the platform seeds no measure (its one
+    seed row is a built-in's `SourceRow`, which `load_measure_sources` returns), and a deployment
+    with no overlay declares none. `builtins` is `(fns, local verb names)` of the
     engine's own verbs; the engine passes its own, a caller that does not gets them from
     `main.VERBS`.
     """
+    return [r for r in _compose(policy_dir, overlay_dirs, builtins) if isinstance(r, MeasureVerbRow)]
+
+
+def load_measure_sources(
+    policy_dir: Path | str | None = None,
+    overlay_dirs: list[Path] | None = None,
+    *,
+    builtins: tuple[Iterable[str], Iterable[str]] | None = None,
+) -> list[SourceRow]:
+    """The source-only rows naming built-ins, from the same composition as `load_measure_verbs`."""
+    return [r for r in _compose(policy_dir, overlay_dirs, builtins) if isinstance(r, SourceRow)]
+
+
+def _compose(policy_dir, overlay_dirs, builtins) -> list[MeasureVerbRow | SourceRow]:
     if builtins is None:
         try:
             from agent_fleet.finance_agent import main as _main

@@ -83,6 +83,39 @@ automation tags on merge." Every entry below goes under this heading until the c
   strict xfail, and its ticket pattern now refuses `pending`. The roll: engine-fin's image
   changes; nothing in the values or pod templates does.
 
+- **engine-fin: with `FIN_DATASET_URN` set, the built-in measures read the asset as the caller**
+  (ruled 2026-11-08 (fin): that is what the flag means). They now carry the asset's provenance and
+  `data_source`, and a CDRL that sources one no longer refuses a program only the asset holds
+  with a 422. A CA's `bac`, `wbs_id` and `obs_id`, and a work package's `bac` and `technique`,
+  are absent rather than placeholders. With it unset nothing changes.
+- **A measure's row declares where it reads under the flag: `source: asset | seed`** (ruled
+  2026-11-09 (fin): per row, not per flag, because the funding 422 regressed the shipped canvas).
+  The default is `asset`. `source: seed` needs a `reason` and a `ratified_by`, and its answer
+  carries the notional banner and `data_source: {kind: seed, reason, ratified_by}`. A built-in is
+  named only by a source-only row (`measure_id`, `source`, `reason`, `ratified_by`; any other key
+  is refused). The seed layer ships `policy/measure_verbs/fin_funding_status.yaml`: `source: seed`,
+  `reason: contract carries no funding lines yet`, `ratified_by: owner`, until the EV contract
+  gains funding lines. So `fin_funding_status` keeps answering from the seed under the flag; an
+  overlay row saying `source: asset` puts it on the asset, where it is a 422 `not_in_model`, never
+  zero rows. A dataset-kind row reads its own asset and is refused if it carries `source`.
+- **engine-fin: under `FIN_DATASET_URN`, `/package_export` runs as the caller over the asset,
+  grant-checked like a CDRL**, in place of the 409 `asset_export_unsupported`. A caller without the
+  grant is a 403 `access_denied` before anything is measured or written. `state_sha256` hashes the
+  asset state the panels computed from, and the manifest and page name the asset. `recipient_readers`
+  still governs who may receive the file, and its fetch asks no asset grant. **`program_finance`
+  builds under the flag:** its funding panel is seed-sourced by its row, so the package computes
+  over one state, the asset's facts with the seed's copy of the program's funding lines; the
+  manifest's `program_source.seeded` and the page's provenance name the seeded panel with its
+  reason, and a seed-sourced panel asks no asset grant.
+  A declared or dataset-kind panel is a 503 from the builder, naming the
+  panel, with nothing written, because the page's embedded `measures.py` cannot recompute it. A
+  dataset-kind panel was a 409 with the flag unset too and is now that 503.
+- **The roll (built-ins, #331):** engine-fin's image carries the seed layer's new
+  `policy/measure_verbs/fin_funding_status.yaml` (Dockerfile.agent copies `policy/measure_verbs/`);
+  nothing in the values or pod templates changes. The sandbox has `FIN_DATASET_URN` set, so at the
+  roll its built-ins, packages and CDRLs read the asset as the caller, except funding, which stays
+  on the seed by its row.
+
 ## 0.4.84 — 2026-11-10
 
 Entries merged after the 0.4.83 tag (`3a23fce4`), through `27d59a39`. The architect, 2026-11-10:
