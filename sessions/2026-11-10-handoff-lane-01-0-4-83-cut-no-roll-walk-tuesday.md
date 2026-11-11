@@ -7,6 +7,54 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-11 ~04:30Z: THE TRAIN IS IN, AND SO IS #355. Master is `c4a572b9`.** The newest architect message
+(through Chris) governs. It has five rulings:
+1. A conflict confined to the CHANGELOG's 0.4.85 section is Lane 1's to resolve at merge time: keep every
+   entry in merge order and say so in the merge commit. Any other conflict goes back to its owner.
+2. The gate exemption for `drift (main)`, by exact name, is accepted.
+3. #352 is accepted on green. The NetworkPolicy callers are values rows (caller, target), never names in
+   templates. The list goes with the Thursday 12:00Z branch decision.
+4. ca's two fixes are right. ca merges and tags v0.9.20 itself; Chris pushes the tag only if the
+   classifier blocks it.
+5. ADR-0069 is accepted. The export ruling: saf builds the server side and cortex the UI, neither on
+   0.4.85. It proposes `policy/exports/*.yaml` with an overlay, `accepts`, `grain`, `version`, one route,
+   and a recorded export.
+
+- **Merged tonight:**
+
+  | PR | merge sha |
+  | --- | --- |
+  | #343 | `8987d487` |
+  | #351 | `a74b927a` |
+  | #342 | `c46c38e0` |
+  | #352 | `ea439e88` |
+  | #341 | `0496d895` |
+  | #353 (v0.9.19 pin) | `2f978413` |
+  | #355 (LANGFUSE_TRACING_ENVIRONMENT + perf's #340 bullet) | `c4a572b9` |
+
+  The CHANGELOG conflicts were resolved locally (merge the PR head into `lane/01-train-merge` in
+  `wt\01\train`, then `git push origin HEAD:master`). The message files are `$S/merge-35{1,3}.txt` and
+  `merge-342.txt`.
+- **Placed, master tree `sessions/`:**
+  - `...-to-architect-from-lane-01-train-and-355-in-saf-owns-export-gap-report-placed.md`: the train,
+    #355, item 5 (saf), and the engine-caller census with the values-row shape.
+  - `...-report-from-lane-01-inbound-decision-delivery-gap-report.md`: item 6. It proposes one
+    `output_template` row, one mapping module, delivery set per sink, and a grain that names the source
+    record.
+  - `...-to-openddil-from-lane-01-action-record-sample-written-by-the-runner-contract-v2.md`, with the
+    `...-action-record-schema-v2.json` beside it. The record was written by the runner at v0.9.19. All
+    five ruled fields are declared, so no allowance is used. Live confirmation follows the 0.4.85 roll.
+  - ca's packet (`iagent-mesh-sdk/sessions/2026-11-11-packet-to-ca-...v0-9-20-review...`) is corrected:
+    ca merges and tags v0.9.20 itself.
+- **Next:**
+  1. **v0.9.20:** watch ca's merge and tag, then the pin move and the per-engine seals.
+  2. **Thursday 12:00Z:** report the branch, plus the full caller list as rows. The list comes from the
+     census: Restate → a/e/w/data-analyst `/restate`; restate-init → `/health`; dagster-user-code → o/a/d/f/e/
+     data-analyst; engine-to-engine dispatch; every engine → mesh-registrar. Two things are still open:
+     whether the CNI enforces policy on probes, and which callers the doc-tools releases bring.
+  3. **16:00Z:** hand the roll-lock to 74.
+  4. **The cut PR**, by Thursday 23:00Z.
+
 **11-11 ~03:45Z: THE TRAIN. Master is `a02cfda3`.** Reported to the architect in
 `sessions/2026-11-11-packet-to-architect-from-lane-01-the-train-four-in-three-stopped.md` (master tree, placed).
 - **Merged**, each with its seals green on master:
