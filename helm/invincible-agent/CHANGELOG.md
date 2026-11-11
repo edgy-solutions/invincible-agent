@@ -353,6 +353,22 @@ spans move from `default` to `sandbox`: a Langfuse view or query filtered on `de
   Seal: `tests/security/test_the_gateway_is_served_the_bff_token_lists_chart.py` (12 tests) runs dag-tools'
   own `accepted_issuers`, `accepted_audiences` and `announce` over the rendered env; dropping the include
   turns 11 red, and the posture back to `observe` turns 1 red.
+- **The fleet's SDK pin moves from v0.9.19 to v0.9.20** (gov; the architect, 11-11: "When ca tags v0.9.20:
+  its pin move, on the train if it lands before Thursday 12:00Z; Lane 1 needs it for the engines' refusal
+  branch"). v0.9.20 changes `iagent_mesh/transport_auth.py` alone: `verify_bearer` is RS256-only, checks
+  `iss` and `aud` against `MESH_JWT_ACCEPTED_ISSUERS` / `MESH_JWT_ACCEPTED_AUDIENCES` (an empty or unset
+  list refuses every token), and resolves the key from `MESH_JWT_JWKS_URL` when it is set, one cached client
+  per URL. Its dependency moves from `pyjwt` to `pyjwt[crypto]>=2.9.0,!=2.10.0`. The 17 pyprojects and
+  their locks move (`ef7a6f35` → `1aa64239`); in each lock only iagent-mesh changes, plus its `pyjwt`
+  dependency gaining the `crypto` extra. No package version moves: every lock already holds pyjwt 2.12.1
+  or later and cryptography. `meshSdkVersion` and the `option_deciders.yaml` measured note name v0.9.20.
+  **The roll:** every engine image changes. The chart already serves the three variables to all 16 engine
+  Deployments and mesh-registrar (the "Every engine is served the BFF's token lists" entry above), and
+  `agentFleet.transportAuth.require` stays `false` (OBSERVE). In OBSERVE the dependency never raises, but
+  a token that fails the new checks resolves to a caller with no `authz_id`, and a person-scoped read
+  fails closed on that. So a list that does not match the BFF's tokens shows up as refusals on
+  person-scoped verbs even in OBSERVE. **Post-roll check:** a BFF-issued call to a person-scoped verb
+  answers as the person, as before the roll.
 
 ## 0.4.84 — 2026-11-10
 
