@@ -528,8 +528,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.18"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.18#2f47e9eec77741da142a29e1ff4156ca69226e22" }
+version = "0.9.19"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.19#ef7a6f358c981adf7eedf7cb773f98250ecb7177" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
@@ -664,7 +664,7 @@ requires-dist = [
     { name = "acryl-datahub" },
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.18" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.19" },
     { name = "neo4j" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "python-dotenv" },
