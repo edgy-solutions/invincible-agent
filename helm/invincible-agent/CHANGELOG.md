@@ -248,6 +248,14 @@ cortexBff:
   the tags, dag-tools' base dependencies are unchanged; the one addition is `s3fs` on the `broker` extra,
   which engine-fin does not install. The root pyproject's note on the two pins names the new tag.
   **The roll:** engine-fin's image changes; nothing in the values or pod templates does.
+- **Every engine is served the BFF's token lists (chart half).** All 16 engine Deployments and
+  mesh-registrar get `MESH_JWT_ACCEPTED_ISSUERS` and `MESH_JWT_ACCEPTED_AUDIENCES` (the same lists as
+  `cortexBff.auth`, one copy in values; empty stays empty and refuses everything) and `MESH_JWT_JWKS_URL`
+  (the effective `KEYCLOAK_REALM_URL` + `/protocol/openid-connect/certs`), rendered last in the container env
+  so `agentFleet.env` cannot widen them. New key `agentFleet.transportAuth.require`, default `false`
+  (OBSERVE): true adds `REQUIRE_TRANSPORT_AUTH=true`. The SDK reads these variables from v0.9.20; until
+  an engine image carries it they are inert. Probe paths need no change: `/health` and
+  mesh-registrar's `/v1/healthz` are already exempt.
 
 ## 0.4.84 — 2026-11-10
 
