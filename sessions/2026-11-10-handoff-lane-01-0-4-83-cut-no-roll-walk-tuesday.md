@@ -7,6 +7,22 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-11 ~01:40Z: THE ARCHITECT'S TWO GAPS, ANSWERED.** The architect accepted #346 and #340 (including the out-of-order merge), and Lane 1 writes #340's bullet at the deadline.
+1. **#331 is MERGED** and waits on nothing. Merge `cf92efc6`, ^2 `3c6a68f0` (the head). CI 22 success / 3 skipped; ratchet 24; is-ancestor of origin/master.
+2. **The three refusal datasets are BUILT,** before the lock passes to 74 at 11-11 16:00Z. Lane 1 materialised them on 11-10 between 20:31 and 20:36Z, and all three are SUCCESS:
+
+   | asset | run | columns |
+   | --- | --- | --- |
+   | `ev_refusal_fixture` | `81a0e28c` | 13 |
+   | `ev_refusal_missing_column` | `c66cfeba` | 12 |
+   | `ev_refusal_wrong_type` | `b038250b` | 13 |
+
+   Nothing remains to build. What remains is to confirm fin's URNs from the catalog after Chris's sync.
+- **Three OpenDDIL items in progress, from the architect** (none is on the 0.4.85 train):
+  1. The Tasks and Needs-you BFF routes: their shapes and how each picks the viewer. This goes with the next OpenDDIL sample packet. Per-viewer scoping of the task list folds into the approvals[].task PR.
+  2. A report, not a build, on whether task-opened and task-closed events exist, and what the door needs to emit them: an occurrence id, idempotent delivery, and a cursor for catch-up.
+  3. The edge-tier ADR draft, as **ADR-0068**. ADR-0066 is reserved for "contracts are data", per ADR-0065:18. It goes to the architect, then to OpenDDIL for review, before it is ratified. It names no customer, place or outside framework.
+
 **11-11 ~01:20Z: #331, #346 AND #340 MERGED; THE REST WAIT ON THEIR OWNERS.**
 - **The architect's order, 11-11:** "#331, #345, #339 then #341, #340, #342, #343, saf's wiring, gov's v0.9.19 pin". The two master reds are Lane 1's.
 - **Merged:**
