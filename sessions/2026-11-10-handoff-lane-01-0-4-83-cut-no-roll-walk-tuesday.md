@@ -28,9 +28,11 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 **11-11 ~21:00Z: #354 MERGED at `6c98cb14`.** Its three attestation seals passed on the join (4, 19, 51) and the
 ratchet passed (24).
-- **#356 by `6a4175a2`:** my re-approval is placed and fin's approval is in; **gov's is still out**. Once it arrives,
-  re-run the three review-export tests and `test_the_export_profile_server_is_sealed.py` on the join, then merge. When
-  #356 merges, one PR carries the paired cortex digest plus `reviewExport` in sandbox `VITE_FEATURES`.
+- **#356 is MERGED at `8c3eb9af`** (by `6a4175a2`; all three approvals in, gov's included).
+  - Join evidence: six test files, 259 passed and 3 xfailed; ratchet 24 (join `6a57c37f`); CI 21 pass and 3 skipped.
+  - NEXT: one PR carrying the paired cortex digest plus `reviewExport` in sandbox `VITE_FEATURES`. It waits on cortex's
+    aligned image, which must also offer the review-card export for `review`-state notices (packet placed in cortex-ui).
+  - Chris's Topaz sync must cover `can_export:part-list` and `can_export:part-list-reviewed` before the roll.
 - **The work-upgrade packet to Chris is placed** (master tree
   `sessions/2026-11-11-packet-to-chris-from-lane-01-work-upgrade-to-0-4-85-in-order-with-checks.md`).
   The architect, urgent: work needs 0.4.85 early next week for the review-page export.
