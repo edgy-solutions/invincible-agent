@@ -3,17 +3,20 @@
 WHAT IT PROVES ON THE RUNNING CLUSTER, through `POST /finance/measure/{fn}`:
   FIRST    the control program answers 200 from the row-level asset, so the URN the probes name is
            the one the catalog minted (the form is by analogy with ev_fixture and unverified until
-           this passes). When it fails nothing after it runs: every other leg would fail the same way.
+           this passes). When it fails every leg after it fails as not run: each would fail the same way.
   CASES    every (planted case, probe) in the offline seal's EXPECTED answers as it does offline,
            either a 502 naming the reader's rule or a 200 from the probe's own asset
   DENIED   a subject with the control program and the cell and no asset grant gets 403
            `access_denied` naming the asset, and no figure
 
-EXPECTED is imported from tests/finance/test_the_refusal_probes_refuse_as_derived.py, so there is
-one table. Four planted cases answer 200 there (UNREFUSED), and they answer 200 here too.
+EXPECTED and its cells are imported from tests/finance/test_the_refusal_probes_refuse_as_derived.py,
+so there is one table. Four planted cases are OWED a dataset-contract refusal (ruled 2026-11-10).
+Each of their legs is a strict xfail asserting the refusal, never a pass: a 200 is the expected
+failure, anything else but the refusal is a hard red, and the refusal itself XPASSes red until the
+PR that declares it names its rule in the seal.
 
 SKIPPED UNTIL THE ROLL, AND A SKIP IS NOT A PASS. `missing_preconditions` names everything still
-missing, so the skip retires itself. Run with `-rs`. It needs: the rail (grants and membership)
+missing, so the skip retires itself. Run with `-rsxX`. It needs: the rail (grants and membership)
 in this tree, tokens for both personas, the probes' directory in the pod's overlay env, and the
 port-forward. Materialising the three assets is not checked first: FIRST fails without it.
 
@@ -21,7 +24,7 @@ Requires, all set by the operator and none committed (the variance leg's, reused
     kubectl -n <ns> port-forward svc/iagent-cortex-bff 18090:8090       (or set BFF_URL)
     python -I scripts/mint_persona_token.py <persona> --out <dir>       (once per persona)
     FIN_VARIANCE_TOKEN_DIR=<dir>  FIN_VARIANCE_KUBECTL="kubectl -n <ns>"
-Run: .venv/Scripts/python -m pytest tests/sandbox_e2e/test_the_refusal_fixture_refuses_live.py -rs
+Run: .venv/Scripts/python -m pytest tests/sandbox_e2e/test_the_refusal_fixture_refuses_live.py -rsxX
 Its own proof, with no cluster: tests/finance/test_the_refusal_live_test_can_go_red.py
 """
 from __future__ import annotations
@@ -47,16 +50,18 @@ from tests.sandbox_e2e.test_variance_set_reads_the_ev_fixture import (  # noqa: 
 
 DEFAULT_CONFIG = HERE / "refusal_probes_live.yaml"
 DEFAULT_POLICY = REPO / "policy"
+#: A problem no xfail may absorb: the leg answered neither as today nor with the owed refusal.
+HARD = "HARD "
 
 
 def load_case(path: Path = DEFAULT_CONFIG) -> dict:
     return _yaml(str(path))
 
 
-def table():
-    """(EXPECTED, scope_of, SERIES): the offline seal's, imported, never restated."""
-    from tests.finance import test_the_refusal_probes_refuse_as_derived as seal
-    return seal.EXPECTED, seal.scope_of, seal.SERIES
+def seal():
+    """The offline seal: EXPECTED, OWED, cells(), scope_of and SERIES are its, imported, never restated."""
+    from tests.finance import test_the_refusal_probes_refuse_as_derived as s
+    return s
 
 
 def probe_urns(case: dict) -> dict[str, str]:
@@ -82,18 +87,18 @@ def missing_preconditions(case: dict, env: Mapping[str, str], policy_dir: Path =
                           pod_env: Optional[Callable[[str, str, str], Optional[str]]] = None,
                           reachable: Optional[Callable[[str], bool]] = None) -> list[str]:
     """Everything still missing, all of it and named. Empty means the legs may run."""
-    expected, scope_of, _ = table()
+    s = seal()
     missing: list[str] = []
     for urn in case["assets"]:
         drift = rail_preflight({**case, "asset": urn}, str(policy_dir))
         if drift:
             missing.append(f"the rail for {urn}: {drift}")
     members = (_yaml(str(Path(policy_dir) / "program_members.yaml")) or {}).get("programs") or {}
-    for rule in expected:
-        if case["allowed_subject"] not in (members.get(scope_of(rule)) or {}).get("grant_to", []):
-            missing.append(f"the rail: allowed_subject is not a member of {scope_of(rule)}")
-    if case["denied_subject"] not in (members.get(scope_of("none")) or {}).get("grant_to", []):
-        missing.append(f"the rail: denied_subject is not a member of {scope_of('none')}, so it stops "
+    for rule in s.EXPECTED:
+        if case["allowed_subject"] not in (members.get(s.scope_of(rule)) or {}).get("grant_to", []):
+            missing.append(f"the rail: allowed_subject is not a member of {s.scope_of(rule)}")
+    if case["denied_subject"] not in (members.get(s.scope_of("none")) or {}).get("grant_to", []):
+        missing.append(f"the rail: denied_subject is not a member of {s.scope_of('none')}, so it stops "
                        "at the program gate and never reaches the asset gate")
 
     token_dir = (env.get(TOKEN_DIR_ENV) or "").strip()
@@ -132,7 +137,17 @@ def _name(body: Any) -> str:
 
 
 def answer_problems(status: int, body: Any, urn: str, reader_rule: Optional[str], banner: str) -> list[str]:
-    """A 200 from the probe's own asset when `reader_rule` is None, else a 502 naming exactly it."""
+    """A 200 from the probe's own asset when `reader_rule` is None, a 502 naming exactly it when it is
+    a rule, and for OWED a contract refusal naming any rule: a 200 there is the owed gap, anything
+    else is HARD."""
+    if reader_rule is seal().OWED:
+        detail = body.get("detail") if isinstance(body, dict) else None
+        if status == 502 and isinstance(detail, dict) and detail.get("error") == "asset_contract_violation" \
+                and detail.get("rule"):
+            return []
+        if status == 200:
+            return ["answered 200: the contract refusal is owed"]
+        return [f"{HARD}expected 200 or the owed refusal, got {status} {_name(body)}".rstrip()]
     if reader_rule is not None:
         if status != 502 or _name(body) != reader_rule:
             return [f"expected 502 {reader_rule}, got {status} {_name(body)}".rstrip()]
@@ -166,38 +181,50 @@ def denied_problems(status: int, body: Any, urn: str, subject: str) -> list[str]
     return out
 
 
-def run_legs(case: dict, urns: dict[str, str], post: Callable[[str, str, dict], tuple[int, Any]]) -> list[str]:
-    """FIRST, then every case, then DENIED. `post(role, fn, params)` is the only way out."""
-    expected, scope_of, series = table()
-    control = {"program_id": scope_of("none")}
-    status, body = post("allowed", series, control)
-    first = answer_problems(status, body, urns[series], None, case["banner_must_say"])
-    if first:
-        return [f"FIRST {series} {scope_of('none')}: {p}; if the asset is materialised, suspect its "
-                f"URN form ({urns[series]}), which is unverified" for p in first]
-    problems: list[str] = []
-    for rule, by_probe in expected.items():
-        for fn, reader_rule in by_probe.items():
-            status, body = post("allowed", fn, {"program_id": scope_of(rule)})
-            problems += [f"{rule} via {fn}: {p}"
-                         for p in answer_problems(status, body, urns[fn], reader_rule, case["banner_must_say"])]
-    status, body = post("denied", series, control)
-    problems += [f"DENIED: {p}" for p in denied_problems(status, body, urns[series], case["denied_subject"])]
-    return problems
+# ── the legs. `post(role, fn, params)` is the only way out ─────────────────────
+
+def first_problems(case: dict, urns: dict[str, str], post: Callable[[str, str, dict], tuple[int, Any]]) -> list[str]:
+    s = seal()
+    status, body = post("allowed", s.SERIES, {"program_id": s.scope_of("none")})
+    return [f"FIRST {s.SERIES} {s.scope_of('none')}: {p}; if the asset is materialised, suspect its "
+            f"URN form ({urns[s.SERIES]}), which is unverified"
+            for p in answer_problems(status, body, urns[s.SERIES], None, case["banner_must_say"])]
 
 
-# ── the live test ─────────────────────────────────────────────────────────────
+def not_run_after(first: list[str]) -> Optional[str]:
+    """Why a leg after FIRST is not run, or None when FIRST passed."""
+    return f"NOT RUN: FIRST failed ({'; '.join(first)})" if first else None
 
-def test_every_planted_case_refuses_live_as_it_does_offline():
-    case = load_case()
-    missing = missing_preconditions(case, os.environ)
+
+def case_problems(case: dict, urns: dict[str, str], post: Callable[[str, str, dict], tuple[int, Any]],
+                  rule: str, fn: str, reader_rule: Optional[str]) -> list[str]:
+    status, body = post("allowed", fn, {"program_id": seal().scope_of(rule)})
+    return [f"{rule} via {fn}: {p}"
+            for p in answer_problems(status, body, urns[fn], reader_rule, case["banner_must_say"])]
+
+
+def denied_leg_problems(case: dict, urns: dict[str, str],
+                        post: Callable[[str, str, dict], tuple[int, Any]]) -> list[str]:
+    s = seal()
+    status, body = post("denied", s.SERIES, {"program_id": s.scope_of("none")})
+    return [f"DENIED: {p}" for p in denied_problems(status, body, urns[s.SERIES], case["denied_subject"])]
+
+
+# ── the live tests ────────────────────────────────────────────────────────────
+
+CASE = load_case()
+
+
+@pytest.fixture(scope="module")
+def live():
+    missing = missing_preconditions(CASE, os.environ)
     if missing:
         pytest.skip("NOT RUN, NOT A PASS. Waiting on: " + "; ".join(missing))
 
     import httpx
     bff = (os.environ.get("BFF_URL") or DEFAULT_BFF).rstrip("/")
     token_dir = Path(os.environ[TOKEN_DIR_ENV])
-    tokens = {role: (token_dir / f"token-{case[f'{role}_persona']}.txt").read_text(encoding="utf-8").strip()
+    tokens = {role: (token_dir / f"token-{CASE[f'{role}_persona']}.txt").read_text(encoding="utf-8").strip()
               for role in ("allowed", "denied")}
 
     def post(role: str, fn: str, params: dict) -> tuple[int, Any]:
@@ -208,5 +235,31 @@ def test_every_planted_case_refuses_live_as_it_does_offline():
         except ValueError:
             return r.status_code, r.text
 
-    problems = run_legs(case, probe_urns(case), post)
+    return probe_urns(CASE), post
+
+
+@pytest.fixture(scope="module")
+def first(live):
+    return first_problems(CASE, *live)
+
+
+def test_first_the_control_answers_from_the_probes_asset(first):
+    assert not first, "\n".join(first)
+
+
+@pytest.mark.parametrize("rule,fn,reader_rule", seal().cells())
+def test_each_planted_case_answers_live_as_offline(live, first, rule, fn, reader_rule):
+    if not_run_after(first):
+        pytest.fail(not_run_after(first))
+    problems = case_problems(CASE, *live, rule, fn, reader_rule)
+    hard = [p for p in problems if HARD in p]
+    if hard:
+        pytest.fail("\n".join(hard))
+    assert not problems, "\n".join(problems)
+
+
+def test_the_denied_caller_is_refused_at_the_asset_gate(live, first):
+    if not_run_after(first):
+        pytest.fail(not_run_after(first))
+    problems = denied_leg_problems(CASE, *live)
     assert not problems, "\n".join(problems)

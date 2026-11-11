@@ -9,11 +9,16 @@ planted column to inference. The module cannot be imported here (it needs pandas
 venv does not carry), so its constants and its case manifest are read from its source. A case
 dag-tools adds that `EXPECTED` does not name is a red.
 
-Four planted cases answer 200 on every probe. They are recorded in `UNREFUSED`, not fixed here:
+Four planted cases answer 200 on every probe today. Each is owed a refusal declared in the dataset
+contract (ruled 2026-11-10), so each (case, probe) holds `OWED` and is a strict xfail asserting the
+refusal, never a pass. The PR that declares a refusal names its rule here and the xfail goes:
 * `wrong_type`: a dataset reader casts its level and scope columns to String, so `control_account`
   arriving as Float64 is read. Only the built-ins' schema check over `FIN_DATASET_URN` refuses it.
-* `duplicate_work_package_period`, `program_name_not_unique`, `work_package_in_two_accounts`: no
-  dataset reader checks row uniqueness, so a duplicated row is summed twice.
+* `duplicate_work_package_period`: one work package appears twice at one period, and no reader
+  checks a key, so the row is summed twice.
+* `program_name_not_unique`, `work_package_in_two_accounts`: one program carries two names, and one
+  work package sits under two control accounts. Neither repeats a row; no reader reads the column
+  that varies.
 
 Run: .venv/Scripts/python -I -m pytest -c pyproject.toml --rootdir=. -p no:cacheprovider tests/finance/test_the_refusal_probes_refuse_as_derived.py
 """
@@ -42,7 +47,10 @@ CSV = DEMO / "demo_data" / "ev_refusal_fixture.csv"
 SERIES, PATH = "fin_probe_refusal_series", "fin_probe_refusal_path"
 MISSING, WRONG = "fin_probe_missing_column", "fin_probe_wrong_type"
 
-#: dag-tools rule -> {probe: the reader rule its 502 names, or None for a 200}. `none` is the
+#: The refusal a gap case is owed and does not get yet. Its rule is named by the PR that declares it.
+OWED = "owed"
+
+#: dag-tools rule -> {probe: the reader rule its 502 names, None for a 200, or OWED}. `none` is the
 #: control scope. Derived offline over the reader (asset_inputs), then held here at the route.
 EXPECTED = {
     "none": {SERIES: None, PATH: None},
@@ -51,19 +59,36 @@ EXPECTED = {
     "period_outside_calendar": {SERIES: "period_outside_calendar", PATH: None},
     "program_bac_not_unique": {SERIES: "varies_within_scope", PATH: None},
     "varies_within_path": {SERIES: None, PATH: "varies_within_path"},
-    "program_name_not_unique": {SERIES: None, PATH: None},
-    "work_package_in_two_accounts": {SERIES: None, PATH: None},
-    "duplicate_work_package_period": {SERIES: None, PATH: None},
+    "program_name_not_unique": {SERIES: OWED, PATH: OWED},
+    "work_package_in_two_accounts": {SERIES: OWED, PATH: OWED},
+    "duplicate_work_package_period": {SERIES: OWED, PATH: OWED},
     "missing_column": {MISSING: "missing_column"},
-    "wrong_type": {WRONG: None},
+    "wrong_type": {WRONG: OWED},
 }
-#: Planted cases no probe refuses, and why. Reported, not fixed in this change.
+#: Planted cases no probe refuses today, and why. Each is owed a dataset-contract refusal.
 UNREFUSED = {
     "wrong_type": "dataset readers cast level and scope columns to String",
-    "program_name_not_unique": "no dataset reader checks row uniqueness",
-    "work_package_in_two_accounts": "no dataset reader checks row uniqueness",
-    "duplicate_work_package_period": "no dataset reader checks row uniqueness; the row is summed twice",
+    "duplicate_work_package_period": "no reader checks a key, so the duplicated row is summed twice",
+    "program_name_not_unique": "no reader reads program_name, so its second value is never seen",
+    "work_package_in_two_accounts": "no reader reads control_account, so its second value is never seen",
 }
+
+
+def cells():
+    """Every (case, probe) as a pytest param; an OWED one is a strict xfail on the refusal assertion
+    only, so any other failure (a crash, an unexpected status) stays red."""
+    return [pytest.param(rule, fn, reader_rule, id=f"{rule}-{fn}", marks=[pytest.mark.xfail(
+                strict=True, raises=AssertionError, reason=f"owed a contract refusal: {UNREFUSED.get(rule, 'UNRECORDED')}")]
+                if reader_rule is OWED else [])
+            for rule, by_probe in EXPECTED.items() for fn, reader_rule in by_probe.items()]
+
+
+def owed_answered(status, body):
+    """Fails hard (not an AssertionError) unless an OWED cell answers 200 as today or the refusal."""
+    if status not in (200, 502):
+        pytest.fail(f"an owed case answered {status}: {body}")
+    return status == 502 and body["detail"].get("error") == "asset_contract_violation" \
+        and bool(body["detail"].get("rule"))
 #: Cases a scoped read cannot address: dag-tools plants them with no scope.
 UNADDRESSED = {"other_program_rows"}
 
@@ -211,10 +236,14 @@ def test_every_probe_reads_a_planted_asset_and_every_case_is_reached(probes):
                                  if _asset_of(r.dataset_urn) == asset_of_case[rule]}, rule
 
 
-def test_the_unrefused_cases_are_exactly_the_recorded_gaps():
-    unrefused = {rule for rule, by_probe in EXPECTED.items()
-                 if rule != "none" and all(v is None for v in by_probe.values())}
-    assert unrefused == set(UNREFUSED), unrefused
+def test_the_owed_cases_are_exactly_the_recorded_gaps():
+    owed = {rule for rule, by_probe in EXPECTED.items() if OWED in by_probe.values()}
+    assert owed == set(UNREFUSED), owed
+    assert all(set(EXPECTED[rule].values()) == {OWED} for rule in UNREFUSED)
+    # No planted case other than the control may answer 200 on every probe and go unrecorded.
+    silent = {rule for rule, by_probe in EXPECTED.items()
+              if rule != "none" and all(v is None for v in by_probe.values())}
+    assert silent == set(), silent
 
 
 def test_the_probes_are_policed_like_any_row_and_reach_no_menu(probes):
@@ -225,11 +254,12 @@ def test_the_probes_are_policed_like_any_row_and_reach_no_menu(probes):
 
 # ── every planted case through the real route ─────────────────────────────────────────────────
 
-@pytest.mark.parametrize("rule,fn,reader_rule", [
-    (rule, fn, reader_rule) for rule, by_probe in EXPECTED.items() for fn, reader_rule in by_probe.items()])
+@pytest.mark.parametrize("rule,fn,reader_rule", cells())
 def test_each_planted_case_answers_as_derived(post, rule, fn, reader_rule):
     status, body = post(fn, scope_of(rule))
-    if reader_rule is None:
+    if reader_rule is OWED:
+        assert owed_answered(status, body), (rule, fn, "answered 200: the refusal is owed")
+    elif reader_rule is None:
         assert status == 200, (rule, fn, body)
     else:
         assert status == 502 and body["detail"]["rule"] == reader_rule, (rule, fn, body)

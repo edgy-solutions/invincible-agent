@@ -93,9 +93,13 @@ automation tags on merge." Every entry below goes under this heading until the c
   members-only for alice, and erin joins `NP-PLANT-NONE` as the asset gate's refusal control. The
   offline seal `tests/finance/test_the_refusal_probes_refuse_as_derived.py` runs every planted case
   through the real route; the live leg `tests/sandbox_e2e/test_the_refusal_fixture_refuses_live.py`
-  skips, naming what is missing, until the roll. Two gaps are recorded, not fixed: `wrong_type`
-  answers 200 (dataset readers cast level and scope columns to String), and the three uniqueness
-  cases answer 200 (no dataset reader checks row uniqueness, so a duplicated row is summed twice).
+  skips, naming what is missing, until the roll. Four planted cases answer 200 today and are owed a
+  refusal declared in the dataset contract (ruled 2026-11-10, a follow-up PR); until it lands each
+  of their legs is a strict xfail asserting the refusal, offline and live, never a pass.
+  `wrong_type`: dataset readers cast level and scope columns to String.
+  `duplicate_work_package_period`: no reader checks a key, so the duplicated row is summed twice.
+  `program_name_not_unique` and `work_package_in_two_accounts` repeat no row; no reader reads the
+  column that varies.
 - **The roll (live leg):** engine-fin's image changes (the new overlay directories ride the
   `policy/overlays/` COPY). `values-sandbox.yaml` changes: engine-fin's `MEASURE_VERB_OVERLAY_DIRS`
   gains `/app/policy/overlays/sandbox/measure_verbs`. Before the live leg can pass: Lane 1
