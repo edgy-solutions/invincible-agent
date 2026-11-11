@@ -36,8 +36,10 @@ except IndexError:
     pass  # Running in CNB container — baml_client is already in /workspace/
 
 try:
-    from telemetry import safe_observe
+    from telemetry import safe_observe, emit_misses
 except ImportError:
+    def emit_misses():  # None = no telemetry leaf here, so nothing emitted, nothing missed
+        return None
     def safe_observe(**kwargs):
         def decorator(func):
             return func
@@ -174,6 +176,7 @@ async def health() -> dict:
         "status": "ok",
         "engine": "swarms_scraper",
         "agents": [scraper_agent.agent_name],
+        "telemetry_misses": emit_misses(),
     }
 
 

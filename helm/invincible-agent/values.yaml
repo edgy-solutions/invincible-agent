@@ -983,7 +983,7 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.9.15"
+  meshSdkVersion: "v0.9.18"
   # CLOSED NETWORK (no route to github.com / pypi.org): point the install at a mirror.
   # The SDK is fetched from <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz, so the mirror holds the
   # GitHub tag tarball under that same file name (e.g. an Artifactory generic repo holding
@@ -993,7 +993,7 @@ domainBroker:
   #   meshSdkSource: index  -> "iagent-mesh==<meshSdkVersion without the v>" from pip.indexUrl,
   #                            for an internal PyPI that holds the SDK (upload the sdist or a
   #                            wheel built from the tag; the package's version equals the tag's:
-  #                            v0.9.15 builds as 0.9.15, so `index` serves this pin).
+  #                            v0.9.18 builds as 0.9.18, so `index` serves this pin).
   meshSdkSource: "url"
   meshSdkBaseUrl: "https://github.com/edgy-solutions/iagent-mesh-sdk/archive/refs/tags"
   pip:
@@ -1858,6 +1858,17 @@ cortexBff:
     secretName: ""      # Secret containing the combined PEM bundle.
     secretKey: "ca.pem" # Key within the Secret.
     mountPath: "/etc/ssl/work-ca-bundle.pem"
+  # Token acceptance (src/iagent/auth.py verified_claims; architect's security order 2026-11-11).
+  # A token is admitted only if its `iss` is one of acceptedIssuers AND its `aud` names one of
+  # acceptedAudiences. EITHER LIST EMPTY REFUSES EVERY TOKEN: a deployment that sets neither admits nobody.
+  # Entries go through `tpl`, so an entry may quote another value instead of retyping it.
+  #   realmAudience: the audience this chart's realm stamps into the access token of cortex-ui and of every
+  #   keycloak.serviceClients / extraServiceClients entry (an `audience-bff` oidc-audience-mapper). Empty:
+  #   no mapper is rendered. When set it must be one of acceptedAudiences (the render fails otherwise).
+  auth:
+    acceptedIssuers: []
+    acceptedAudiences: []
+    realmAudience: ""
   ingress:
     enabled: false
     className: ""

@@ -1441,7 +1441,7 @@ requires-dist = [
     { name = "httpx" },
     { name = "httpx", marker = "extra == 'agent-fleet'" },
     { name = "hypercorn", marker = "extra == 'agent-fleet'" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.15" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.18" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "langchain-community", marker = "extra == 'agent-fleet'" },
     { name = "langchain-weaviate", marker = "extra == 'agent-fleet'" },
@@ -1484,9 +1484,9 @@ provides-extras = ["agent-fleet"]
 dev = [
     { name = "dagster-dg-cli" },
     { name = "dagster-webserver" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.15" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.18" },
     { name = "lxml", specifier = ">=6.1.1" },
-    { name = "provenance-telemetry", specifier = "==0.1.0" },
+    { name = "provenance-telemetry", specifier = "==0.2.0" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-random-order" },
@@ -1495,8 +1495,8 @@ dev = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.15"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.15#5a526b67452b15c066305fe7be4871b29cb04a97" }
+version = "0.9.18"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.18#2f47e9eec77741da142a29e1ff4156ca69226e22" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
@@ -2583,7 +2583,7 @@ wheels = [
 
 [[package]]
 name = "provenance-telemetry"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langfuse" },
@@ -2591,9 +2591,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d6/71/f91ee1493d8411c701bf8b0798d81edc2547dbf76bc6ecaf72bf97e8702f/provenance_telemetry-0.1.0.tar.gz", hash = "sha256:d846275f8c8207ae630ec2435682f1518efb22f63097da48dabdd5b105e9d65a", size = 20810, upload-time = "2026-08-08T02:16:12.821Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/53/6d42ca22addb0af4b872779362cb7245f2c56af8675f61dbcf9e68cac9a4/provenance_telemetry-0.2.0.tar.gz", hash = "sha256:5f63d93320c172390d128f4d7e76d683f7623a36944a470c8e5141110e336973", size = 28335, upload-time = "2026-11-10T20:54:05.542Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/e5/b9d42746927b9d55c64309312ff7d53ac080661c8f971250ccd381d6f108/provenance_telemetry-0.1.0-py3-none-any.whl", hash = "sha256:65ab02ab5085e8867b6c5a33a4a62a54698439087da64743415f68b1c9f48e2e", size = 13839, upload-time = "2026-08-08T02:16:11.556Z" },
+    { url = "https://files.pythonhosted.org/packages/70/e2/44f307cfebabb346b7fcfb725d0468389a35ace66741ef8b6a2f4cabae4a/provenance_telemetry-0.2.0-py3-none-any.whl", hash = "sha256:241af616d8b21409f4b088bd2c7c8183774ceccb51d10313f4f6cc18cc71477c", size = 19889, upload-time = "2026-11-10T20:54:04.41Z" },
 ]
 
 [[package]]

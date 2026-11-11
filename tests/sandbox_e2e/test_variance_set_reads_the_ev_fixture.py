@@ -134,9 +134,11 @@ def missing_preconditions(case: dict, env: Mapping[str, str], policy_dir: Path =
 
 def expected_rows(case: dict, fn: str, window: Optional[list[str]]) -> list[dict]:
     """The seed's rows for the measure, as the wire would carry them. Computed here, not restated."""
-    from agent_fleet.finance_agent import measure_verbs, seed
+    from agent_fleet.finance_agent import measure_verbs, measures, seed
 
-    rows = measure_verbs.load_measure_verbs(overlay_dirs=[REPO / case["overlay_dir"]], builtins=((), ()))
+    # The built-in ids, not none: the seed layer's source-only row names one (`fin_funding_status`).
+    rows = measure_verbs.load_measure_verbs(overlay_dirs=[REPO / case["overlay_dir"]],
+                                            builtins=(measures.OUTPUT_URI, ()))
     row = next(r for r in rows if r.measure_id == fn)
     got = measure_verbs.run_declared(seed.build_seed(), row, program_id=case["program_id"], window=window)
     return json.loads(json.dumps(got, default=str))

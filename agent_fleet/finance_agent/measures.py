@@ -684,7 +684,8 @@ def fin_variance_analysis(
             "period_count": len(periods),
         }
         if extra:
-            rec.update(extra)
+            # None is a field the state's source does not carry: absent, as the drivers drop it.
+            rec.update({k: v for k, v in extra.items() if v is not None})
 
         children = _children_of(level, entity_id)
         # THE POLICY IS THE MODULE'S; the traversal stays here because it needs state.
@@ -1312,6 +1313,10 @@ def fin_funding_status(
     the third number cannot be dropped without changing what the grid can say.
     """
     _require_program(state, program_id)
+    if "funding" in state.uncarried:
+        # An empty grid would render as "no funding lines", a statement about lines the source
+        # never described.
+        raise NotInModel(f"the dataset carries no funding lines for program {program_id!r}")
     periods = set(periods_in(window))
 
     # THIS VERB GATHERS AND FILTERS; THE MODULE COMPUTES (ADR-0053 §1, extracted 2026-09-15

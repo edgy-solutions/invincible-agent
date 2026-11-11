@@ -195,18 +195,37 @@ def resolve_token_identity(
     return sub, authz_id, payload.get("email")
 
 
+# The accepted issuers and audiences are SERVED values (cortexBff.auth.* in the chart), comma-separated,
+# read per call. An empty list refuses every token: no list means nothing was accepted, never "any".
+ACCEPTED_ISSUERS_ENV = "BFF_JWT_ACCEPTED_ISSUERS"
+ACCEPTED_AUDIENCES_ENV = "BFF_JWT_ACCEPTED_AUDIENCES"
+
+
+def _accepted(env_name: str) -> List[str]:
+    return [v.strip() for v in (os.getenv(env_name) or "").split(",") if v.strip()]
+
+
 def verified_claims(token: str) -> dict:
     """Verify the token against Keycloak's JWKS and return its payload.
 
-    The RS256 signature is checked against the public key. Audience check is relaxed
-    (verify_aud=False) to ensure compatibility across client types. Raises jwt errors unchanged.
+    The RS256 signature, `exp`, `iss` and `aud` are all checked: `iss` must be one of the served
+    accepted issuers and `aud` must name one of the served accepted audiences. Either list empty
+    refuses the token before it is decoded. Raises jwt errors unchanged.
     """
+    issuers = _accepted(ACCEPTED_ISSUERS_ENV)
+    audiences = _accepted(ACCEPTED_AUDIENCES_ENV)
+    if not issuers:
+        raise jwt.InvalidIssuerError(f"no accepted issuer is configured ({ACCEPTED_ISSUERS_ENV} is empty)")
+    if not audiences:
+        raise jwt.InvalidAudienceError(f"no accepted audience is configured ({ACCEPTED_AUDIENCES_ENV} is empty)")
     signing_key = jwks_client.get_signing_key_from_jwt(token)
     return jwt.decode(
         token,
         signing_key.key,
         algorithms=["RS256"],
-        options={"verify_aud": False}
+        issuer=issuers,
+        audience=audiences,
+        options={"require": ["exp", "iss", "aud"]},
     )
 
 

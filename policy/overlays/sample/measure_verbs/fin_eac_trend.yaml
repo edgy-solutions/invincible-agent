@@ -1,0 +1,49 @@
+# SAMPLE -- see fin_ev_cumulative.yaml beside it. `eac_reported` is produced from dag-tools 0.12.0
+# (contracts/ev_fixture.yaml); the fleet pins 0.13.0.
+measure_id: fin_eac_trend
+verb: finEacTrend
+name: EAC trend
+description: >-
+  The estimate at completion the program reported at each period, with the budget at completion
+  beside it. The reported figure, not a computed forecast.
+synonyms:
+  - eac trend
+  - estimate at completion over time
+anti_synonyms:
+  - cumulative earned value
+inputs:
+  params: {program_id: {required: true}}
+  dataset:
+    urn: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
+    banner: "SYNTHETIC earned-value fixture, not a real program."
+    scope: program_id
+    period: period
+    status: status_period
+    per_period: {eac: eac_reported}
+    per_program: {bac: program_bac}
+computation:
+  module: agent_fleet.finance_agent.measure_modules.ev_series
+  function: eac_trend
+  version: "1.0.0"
+  derived_from:
+    authority: Test fixture, no external method
+    clause: A reported stock passed through
+    citation: name-only
+    transcription: EAC at t is the reported EAC summed over the program's work packages at t
+render:
+  shape: MULTI_SERIES
+  value_label: Estimate at completion
+  series:
+    - {key: eac, label: Estimate at completion, unit: USD}
+    - {key: bac, label: Budget at completion, unit: USD}
+  target: {series: bac, label: BAC}
+menu:
+  subject: "fin:DeclaredMeasureSeries"
+  archetype: "mesh:MultiSeries"
+  persona_fit: [PROGRAM_FINANCE_ANALYST]
+  domain_fit: [PROGRAM_FINANCE]
+policy:
+  status: sample
+  cells: [PROGRAM_FINANCE]
+  granted_by: seed
+  reason: a sample row proving the dataset-backed series on the synthetic EV fixture

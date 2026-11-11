@@ -104,7 +104,7 @@ try:
     # known future adopter of exactly this shape.
     from telemetry import (  # type: ignore[no-redef]
         observed_trace, MAPPING, build_trace_values,
-        mint_boundary_ids, boundary_parent, emit_boundary,
+        mint_boundary_ids, boundary_parent, emit_boundary, emit_misses,
     )
 except Exception:  # pragma: no cover — telemetry never load-bearing
     from contextlib import contextmanager as _cm
@@ -118,6 +118,9 @@ except Exception:  # pragma: no cover — telemetry never load-bearing
 
     MAPPING = None
 
+    def emit_misses():  # type: ignore[misc]  # None = no leaf, nothing emitted, nothing missed
+        return None
+
     # Fail-soft fallbacks with the SAME shapes the real primitives return, so the handler's
     # control flow is identical whether telemetry is present or absent. `mint_boundary_ids` must
     # still yield a dict (it is journaled), and `boundary_parent` must still yield a timing dict.
@@ -125,7 +128,7 @@ except Exception:  # pragma: no cover — telemetry never load-bearing
         return {"trace_id": None, "span_id": None}
 
     @_cm
-    def boundary_parent(_ids):  # type: ignore[misc]
+    def boundary_parent(_ids, *, mapping=None, values=None):  # type: ignore[misc]
         yield {"started_at": None, "ended_at": None}
 
     def emit_boundary(*_a, **_k):  # type: ignore[misc]
@@ -259,7 +262,7 @@ except ImportError:
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "telemetry_misses": emit_misses()}
 
 
 def _is_access_denied(exc: Exception) -> bool:
@@ -828,7 +831,7 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
         authz_id=request.get("user_id") or request.get("authz_id"),
         domain=request.get("domain"),
     )
-    with boundary_parent(_boundary_ids) as _boundary_timing:
+    with boundary_parent(_boundary_ids, mapping=MAPPING, values=_boundary_values) as _boundary_timing:
         _work = await ctx.run("run-agent", run_agent)
     await ctx.run(
         "emit-analyst-boundary",

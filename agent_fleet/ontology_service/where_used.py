@@ -86,8 +86,10 @@ NO_SOURCE = "no source"
 
 
 class ImpactRow(BaseModel):
-    """ADR-0065 ruling 4's row. LOCAL until the SDK's `ImpactRow` is reshaped to it (ca's), then
-    re-exported from the SDK the way `workflow_definition.py` re-exports the DSL."""
+    """ADR-0065 ruling 4's row. LOCAL until the SDK's `ImpactRow` can carry a served row, then
+    re-exported from the SDK the way `workflow_definition.py` re-exports the DSL. v0.9.17 has the
+    ruled nine fields, but its `data_provenance` is one triple of required strings: it cannot say
+    "no catalogue entry" or "no broker read", and it holds one input where a row is built from two."""
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     end_item: str
