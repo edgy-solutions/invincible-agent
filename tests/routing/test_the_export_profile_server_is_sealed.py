@@ -13,6 +13,10 @@ each with a control that differs from the case only in the thing being decided.
      one is refused); the record carries the notice ids, the profile id and the version USED, and
      the destination when given; a profile the caller may not use is refused at the route.
   5. SAMPLE: the generic `part-list` profile (per_part, one column) lives in the sample overlay.
+  7. STATES (architect, Job 25): `exportable_states` is the profile's list of notice states, named
+     as the status route serves them; a notice in a state the profile does not list is refused
+     naming that state, one in a listed state is admitted; the shipped profiles stay [promoted];
+     the record carries each notice's state; the sample gains `part-list-reviewed`.
 
 Doubles are the review-export test file's own. Notice and kind names below are synthetic.
 
@@ -30,6 +34,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from src.iagent import export_profiles as ep  # noqa: E402
 from src.iagent import gateway  # noqa: E402
 from src.iagent import human_tasks as ht  # noqa: E402
+from src.iagent import ingest_status as ist  # noqa: E402
 from tests.routing.test_a_review_export_resolves_every_column_or_refuses import (  # noqa: E402
     DOM_B, REV_C, ROOT, STRANGER, Ledger, _as, _install, _iid, _world,
 )
@@ -234,7 +239,8 @@ def test_3_the_listing_carries_the_new_fields_and_a_group_name_decides_nothing(m
           profiles={"t": _yaml("t", version=7, extra="accepts: [k-one]\n", grain="per_notice")})
     got = _list().json()
     assert got == [{"name": "t", "format": "json", "granularity": "notice", "label": "T",
-                    "grain": "per_notice", "version": 7, "accepts": ["k-one"], "dedupe": []}]
+                    "grain": "per_notice", "version": 7, "accepts": ["k-one"],
+                    "exportable_states": list(ep.DEFAULT_EXPORTABLE_STATES), "dedupe": []}]
     src = (ROOT / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
     body = src.split("async def ingest_export_profiles_route")[1].split("@app.")[0]
     assert "alert-processors" not in body and "_may_export_profile" in body
@@ -294,7 +300,7 @@ def test_3_the_preflight_lists_every_unexportable_notice_with_its_reason_and_bui
     d = r.json()["detail"]
     assert d["error"] == "export_notices_unexportable"
     assert {(u["notice_id"], u["reason"]) for u in d["unexportable"]} == {
-        (_iid(3), "kind_not_accepted"), (_iid(4), "not_promoted"),
+        (_iid(3), "kind_not_accepted"), (_iid(4), "state_not_exportable"),
         (_iid(5), "not_available"), (_iid(99), "not_available")}   # out-of-scope = unknown: no oracle
     assert built["render"] == 0 and built["records"] == []          # NO FILE BUILT, nothing recorded
 
@@ -331,8 +337,9 @@ def test_4_the_record_carries_actor_ids_profile_version_and_destination(monkeypa
     ids = [_iid(1), _iid(2)]
     r = _post({"notice_ids": ids, "profile": "t", "destination": "outbound-a"})
     assert r.status_code == 200, r.text
-    assert built["records"] == [{"actor": STRANGER, "notice_ids": ids, "profile": "t", "version": 7,
-                                 "destination": "outbound-a"}]
+    assert built["records"] == [{"actor": STRANGER, "notice_ids": ids,
+                                 "notice_states": {i: ist.PROMOTED for i in ids},
+                                 "profile": "t", "version": 7, "destination": "outbound-a"}]
     assert r.headers["X-Export-Profile"] == "t" and r.headers["X-Export-Profile-Version"] == "7"
     assert r.json()["destination"] == "outbound-a"
 
@@ -493,6 +500,181 @@ def test_6_the_record_LINE_that_arrives_carries_notice_ids_and_no_ingest_key(
     lines = [m for m in caplog.messages if m.startswith("ingest_export ")]
     assert len(lines) == 1, caplog.messages
     rec = _json.loads(lines[0].split(" ", 1)[1])
-    assert rec == {"actor": STRANGER, "notice_ids": [_iid(1), _iid(2)], "profile": "t",
-                   "version": 7, "destination": "d"}
+    assert rec == {"actor": STRANGER, "notice_ids": [_iid(1), _iid(2)],
+                   "notice_states": {_iid(1): ist.PROMOTED, _iid(2): ist.PROMOTED},
+                   "profile": "t", "version": 7, "destination": "d"}
     assert not (_keys(rec) & _BANNED)
+
+
+# 7. exportable_states (architect, Job 25) ----------------------------------------------------
+# The vocabulary is SERVED, not typed here: `ingest_status.ALL_STATUSES` is what the status route's
+# `stage` carries, and every state name below is read from that module's own constants.
+
+REVIEW = ist.REVIEW
+SEED = ROOT / "policy" / "exports"
+
+
+def _states_line(*names):
+    return "exportable_states: [" + ", ".join(names) + "]\n"
+
+
+def _open_review_world(monkeypatch, tmp_path, *, extra, statuses, domain=None):
+    """Notices 1..n at `statuses`. A notice that is not promoted has NO decision record, and its
+    domain is the one its open `document_promotion:<domain>` task names (what the review page's
+    steward acts on)."""
+    worlds = [_world(i + 1, REV_C, status=st) for i, st in enumerate(statuses)]
+    _door(monkeypatch, tmp_path, grants={BATCH, "can_export:t"}, worlds=worlds,
+          profiles={"t": _yaml("t", version=7, extra=extra)})
+    for i, st in enumerate(statuses):
+        if st != ist.PROMOTED:
+            Ledger.records[_iid(i + 1)] = None
+    audience = f"document_promotion:{domain or 'maintenance'}"
+    monkeypatch.setattr(ht, "get_task_open_state", lambda t: {"audience": audience, "open": True})
+
+
+def _unexportable(r):
+    return r.json()["detail"]["unexportable"]
+
+
+def test_7_a_notice_below_the_profiles_states_is_refused_naming_its_state(
+        monkeypatch, tmp_path, built):
+    _open_review_world(monkeypatch, tmp_path, extra="", statuses=[ist.PROMOTED, REVIEW])
+    r = _post({"notice_ids": [_iid(1), _iid(2)], "profile": "t"})
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]["error"] == "export_notices_unexportable"
+    assert _unexportable(r) == [
+        {"notice_id": _iid(2), "reason": "state_not_exportable", "state": REVIEW}]
+    assert built["render"] == 0 and built["records"] == []
+    c = _post({"notice_ids": [_iid(2)], "profile": "t", "check_only": True})
+    assert c.status_code == 200 and c.json()["unexportable"] == [
+        {"notice_id": _iid(2), "reason": "state_not_exportable", "state": REVIEW}]
+
+
+def test_7_control_the_same_notice_at_a_listed_state_is_admitted(monkeypatch, tmp_path, built):
+    # differs from the case above ONLY in the profile's list: the notice is the same `review` one
+    _open_review_world(monkeypatch, tmp_path, extra=_states_line(REVIEW, ist.PROMOTED),
+                       statuses=[ist.PROMOTED, REVIEW])
+    r = _post({"notice_ids": [_iid(1), _iid(2)], "profile": "t"})
+    assert r.status_code == 200, r.text
+    assert built["render"] == 1 and len(built["records"]) == 1
+
+
+def test_7_a_state_the_profile_does_not_list_is_refused_though_another_is_listed(
+        monkeypatch, tmp_path, built):
+    # the profile lists review; a notice at `received` (the only difference) is refused by name
+    _open_review_world(monkeypatch, tmp_path, extra=_states_line(REVIEW),
+                       statuses=[REVIEW, ist.RECEIVED])
+    r = _post({"notice_ids": [_iid(1), _iid(2)], "profile": "t"})
+    assert r.status_code == 422
+    assert _unexportable(r) == [
+        {"notice_id": _iid(2), "reason": "state_not_exportable", "state": ist.RECEIVED}]
+    ok = _post({"notice_ids": [_iid(1)], "profile": "t"})
+    assert ok.status_code == 200, ok.text
+
+
+def test_7_the_wire_key_of_a_state_refusal_is_still_notice_id(monkeypatch, tmp_path, built):
+    _open_review_world(monkeypatch, tmp_path, extra="", statuses=[REVIEW])
+    r = _post({"notice_ids": [_iid(1)], "profile": "t"})
+    assert _keys(r.json()) & {"notice_id", "state"} == {"notice_id", "state"}
+    assert not (_keys(r.json()) & _BANNED)
+
+
+def test_7_an_unpromoted_notice_is_scoped_to_the_domain_its_open_task_names(
+        monkeypatch, tmp_path, built):
+    states = _states_line(REVIEW)
+    _open_review_world(monkeypatch, tmp_path, extra=states, statuses=[REVIEW])
+    assert _post({"notice_ids": [_iid(1)], "profile": "t", "check_only": True}
+                 ).json()["unexportable"] == []                     # control: the caller's domain
+    _open_review_world(monkeypatch, tmp_path, extra=states, statuses=[REVIEW], domain=DOM_B)
+    got = _post({"notice_ids": [_iid(1)], "profile": "t", "check_only": True}).json()
+    assert got["unexportable"] == [{"notice_id": _iid(1), "reason": "not_available"}]
+    _open_review_world(monkeypatch, tmp_path, extra=states, statuses=[REVIEW])
+    monkeypatch.setattr(ht, "get_task_open_state", lambda t: {"audience": "x", "open": False})
+    got = _post({"notice_ids": [_iid(1)], "profile": "t", "check_only": True}).json()
+    assert got["unexportable"] == [{"notice_id": _iid(1), "reason": "not_available"}]
+
+
+def test_7_a_review_task_store_fault_is_503_not_a_reason(monkeypatch, tmp_path, built):
+    _open_review_world(monkeypatch, tmp_path, extra=_states_line(REVIEW), statuses=[REVIEW])
+
+    def boom(t):
+        raise RuntimeError("task store down")
+
+    monkeypatch.setattr(ht, "get_task_open_state", boom)
+    r = _post({"notice_ids": [_iid(1)], "profile": "t"})
+    assert r.status_code == 503 and r.json()["detail"]["error"] == "review_task_unreachable"
+
+
+def test_7_the_record_carries_each_notices_state_on_the_line_that_arrives(
+        monkeypatch, tmp_path, caplog):
+    import json as _json
+    import logging
+
+    _open_review_world(monkeypatch, tmp_path, extra=_states_line(REVIEW, ist.PROMOTED),
+                       statuses=[ist.PROMOTED, REVIEW])
+    with caplog.at_level(logging.INFO, logger="iagent.audit.ingest_export"):
+        r = _post({"notice_ids": [_iid(1), _iid(2)], "profile": "t"})
+    assert r.status_code == 200, r.text
+    lines = [m for m in caplog.messages if m.startswith("ingest_export ")]
+    assert len(lines) == 1
+    rec = _json.loads(lines[0].split(" ", 1)[1])
+    assert rec["notice_states"] == {_iid(1): ist.PROMOTED, _iid(2): REVIEW}
+
+
+def test_7_the_state_list_is_validated_against_the_served_set_by_name():
+    ok = ep.validate("t", yaml.safe_load(_yaml("t", extra=_states_line(REVIEW, ist.PROMOTED))))
+    assert ok.exportable_states == (REVIEW, ist.PROMOTED)
+    assert set(ok.exportable_states) <= set(ist.ALL_STATUSES)
+    for bad, why in (("exportable_states: [reviewed]\n", "exportable_states_unserved"),
+                     ("exportable_states: []\n", "exportable_states_invalid"),
+                     ("exportable_states: promoted\n", "exportable_states_invalid"),
+                     ("exportable_states: [review, review]\n", "exportable_states_invalid"),
+                     ("exportable_states: [1]\n", "exportable_states_invalid")):
+        with pytest.raises(ep.ProfileInvalid) as e:
+            ep.validate("t", yaml.safe_load(_yaml("t", extra=bad)))
+        assert e.value.reason == why, bad
+
+
+def test_7_a_profile_with_no_states_takes_the_default_read_from_the_code():
+    p = ep.validate("t", yaml.safe_load(_yaml("t")))
+    assert p.exportable_states == ep.DEFAULT_EXPORTABLE_STATES == (ist.PROMOTED,)
+
+
+def test_7_the_shipped_profiles_are_unchanged_they_admit_promoted_only(monkeypatch):
+    monkeypatch.setenv(ep._DIR_ENV, str(SEED))
+    ep.clear_cache()
+    shipped = ep.load_profiles()
+    assert set(shipped) == {"default-csv", "default-json"}, "a profile was added to the seed"
+    for name, prof in shipped.items():
+        raw = yaml.safe_load((SEED / f"{name}.yaml").read_text(encoding="utf-8"))
+        assert raw["exportable_states"] == list(ep.DEFAULT_EXPORTABLE_STATES), name   # declared
+        assert prof.exportable_states == ep.DEFAULT_EXPORTABLE_STATES, name
+
+
+def test_7_a_shipped_profile_refuses_a_review_notice_and_admits_the_promoted_one(
+        monkeypatch, tmp_path, built):
+    text = (SEED / "default-json.yaml").read_text(encoding="utf-8")
+    worlds = [_world(1, REV_C, status=ist.PROMOTED), _world(2, REV_C, status=REVIEW)]
+    _door(monkeypatch, tmp_path, grants={BATCH, "can_export:default-json"}, worlds=worlds,
+          profiles={"default-json": text})
+    Ledger.records[_iid(2)] = None
+    monkeypatch.setattr(ht, "get_task_open_state",
+                        lambda t: {"audience": "document_promotion:maintenance", "open": True})
+    r = _post({"notice_ids": [_iid(2)], "profile": "default-json"})
+    assert r.status_code == 422
+    assert _unexportable(r) == [
+        {"notice_id": _iid(2), "reason": "state_not_exportable", "state": REVIEW}]
+    ok = _post({"notice_ids": [_iid(1)], "profile": "default-json"})       # control: promoted
+    assert ok.status_code == 200, ok.text
+
+
+def test_7_the_sample_overlay_gains_part_list_reviewed_naming_a_served_state(monkeypatch):
+    assert "part-list-reviewed" not in _compose(monkeypatch, SEED)           # control: seed alone
+    composed = _compose(monkeypatch, SEED, SAMPLE_DIR)
+    got = composed["part-list-reviewed"]
+    assert isinstance(got, ep.Profile) and got.label == "Part list (reviewed)"
+    assert got.exportable_states == (REVIEW, ist.PROMOTED)
+    assert set(got.exportable_states) <= set(ist.ALL_STATUSES)
+    assert composed["part-list"].exportable_states == ep.DEFAULT_EXPORTABLE_STATES  # unchanged
+    rows = yaml.safe_load((ROOT / "policy" / "capability_grants.yaml").read_text(encoding="utf-8"))
+    assert "can_export:part-list-reviewed" in str(rows)

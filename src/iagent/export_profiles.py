@@ -26,6 +26,7 @@ from typing import Any, Optional
 
 import yaml
 
+from . import ingest_status
 from .ingest_api import Extraction, ExtractionRow, Notice
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,10 @@ ROW_SHARED = frozenset(set(ExtractionRow.model_fields) - ROW_UNSHARED - {ROW_DIS
 #: src/ or agent_fleet/ lists them; sealed by an inline review.json double in the seal test.
 ROW_FIELDS = ("affected_mpn", "replacement_mpn", "ltb_date")
 
+#: What a profile with no `exportable_states` exports: promoted notices only. Read, never
+#: restated, by the seals. The shipped profiles also declare it.
+DEFAULT_EXPORTABLE_STATES = (ingest_status.PROMOTED,)
+
 FORMATS = ("csv", "json")
 GRANULARITIES = ("notice_part", "notice")
 TRANSFORMS = ("trim", "upper", "lower")
@@ -55,7 +60,7 @@ NO_PARTS = "no_parts"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _ISO_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")  # fullmatch; never date.fromisoformat alone
 _TOP_KEYS = frozenset({"column_map_version", "name", "label", "format", "granularity", "grain",
-                       "columns", "accepts", "dedupe", "version"})
+                       "columns", "accepts", "dedupe", "version", "exportable_states"})
 #: `grain` (the server vocabulary) and `granularity` (7f's column-map vocabulary) say one thing; a
 #: row names one, or both when they agree. A closed mechanism vocabulary, not a case.
 GRAINS = ("per_notice", "per_part")
@@ -112,6 +117,9 @@ class Profile:
     accepts: Optional[tuple] = None
     #: Output column names whose joint value makes a row a duplicate of an earlier one.
     dedupe: tuple = ()
+    #: The notice states (the `stage` the status route serves, `ingest_status.ALL_STATUSES`) this
+    #: profile exports; a notice in any other state is refused naming its state.
+    exportable_states: tuple = DEFAULT_EXPORTABLE_STATES
 
     @property
     def grain(self) -> str:
@@ -241,6 +249,19 @@ def validate(stem: str, raw: Any) -> Profile:
                 or not all(isinstance(k, str) and _KIND_RE.match(k) for k in a)):
             raise ProfileInvalid("accepts_invalid", "a non-empty list of distinct kind names")
         accepts = tuple(a)
+    states = DEFAULT_EXPORTABLE_STATES
+    if "exportable_states" in raw:
+        st = raw["exportable_states"]
+        if (not isinstance(st, list) or not st or len(set(map(str, st))) != len(st)
+                or not all(isinstance(x, str) for x in st)):
+            raise ProfileInvalid("exportable_states_invalid",
+                                 "a non-empty list of distinct notice state names")
+        served = set(ingest_status.ALL_STATUSES)
+        unknown = [x for x in st if x not in served]
+        if unknown:
+            raise ProfileInvalid("exportable_states_unserved",
+                                 f"{unknown} are not notice states the status route serves")
+        states = tuple(st)
     cols_raw = raw["columns"]
     if not isinstance(cols_raw, list) or not cols_raw:
         raise ProfileInvalid("columns_empty", "")
@@ -275,7 +296,8 @@ def validate(stem: str, raw: Any) -> Profile:
             raise ProfileInvalid("dedupe_invalid", "a non-empty list of distinct output columns")
         dedupe = tuple(d)
     return Profile(name=name, label=raw["label"].strip(), format=raw["format"], granularity=gran,
-                   columns=cols, version=ver, accepts=accepts, dedupe=dedupe)
+                   columns=cols, version=ver, accepts=accepts, dedupe=dedupe,
+                   exportable_states=states)
 
 
 # --------------------------------------------------------------------------------------

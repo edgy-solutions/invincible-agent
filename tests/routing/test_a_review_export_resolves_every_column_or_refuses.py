@@ -753,7 +753,7 @@ def test_i_each_path_reaches_its_own_handler(monkeypatch, tmp_path, caplog):
     # only the profiles handler answers a bare list of {name, format, granularity, label}
     assert r.status_code == 200 and r.json() == [
         {"name": "t", "format": "json", "granularity": "notice_part", "label": "T",
-         "grain": "per_part", "version": 1, "accepts": None, "dedupe": []}]
+         "grain": "per_part", "version": 1, "accepts": None, "exportable_states": ["promoted"], "dedupe": []}]
     assert any("broken" in m for m in caplog.messages)         # the invalid one is logged, not served
     # only the batch handler answers with `notices`
     r = _get("/ingest/export?profile=t&from=2026-10-01&to=2026-10-02")

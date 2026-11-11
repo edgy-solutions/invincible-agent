@@ -1,0 +1,17 @@
+# SAMPLE -- the generic part list, exportable from the review page BEFORE promotion: the same
+# one column, one row per part, but it takes a notice in `review` (a steward has its extraction
+# open, nothing promoted yet) as well as a promoted one. `exportable_states` names notice states
+# AS SERVED (the `stage` GET /ingest/{id}/status returns; the loader refuses a name that is not
+# one). Such an export carries the extraction's UNCORRECTED values, and its record stores each
+# notice's state at export. Names no domain and no kind.
+column_map_version: 1
+name: part-list-reviewed
+label: "Part list (reviewed)"
+format: csv
+grain: per_part
+version: 1
+exportable_states: [review, promoted]
+dedupe: ["Part"]
+columns:
+  - output: "Part"
+    source: {field: mpn}

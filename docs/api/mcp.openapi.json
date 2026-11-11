@@ -339,6 +339,33 @@
         "title": "AddedRow",
         "type": "object"
       },
+      "Attestation": {
+        "additionalProperties": false,
+        "description": "Who may promote a document_promotion task, stamped when it is filed (1.9.0). `excluded` is\nempty under `self`; under `second_party` it lists the authz_ids that may not promote.",
+        "properties": {
+          "excluded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded",
+            "type": "array"
+          },
+          "mode": {
+            "enum": [
+              "self",
+              "second_party"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "excluded"
+        ],
+        "title": "Attestation",
+        "type": "object"
+      },
       "AuthorizationUnavailableBody": {
         "additionalProperties": false,
         "description": "The 503 body when the authorization directory cannot say whether a kind is gated.",
@@ -1326,12 +1353,49 @@
         "additionalProperties": false,
         "description": "One row of GET /ingest/export/profiles (a valid `policy/exports/<name>.yaml`).",
         "properties": {
+          "accepts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepts"
+          },
+          "dedupe": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Dedupe",
+            "type": "array"
+          },
+          "exportable_states": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Exportable States",
+            "type": "array"
+          },
           "format": {
             "enum": [
               "csv",
               "json"
             ],
             "title": "Format",
+            "type": "string"
+          },
+          "grain": {
+            "enum": [
+              "per_notice",
+              "per_part"
+            ],
+            "title": "Grain",
             "type": "string"
           },
           "granularity": {
@@ -1349,13 +1413,20 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
           }
         },
         "required": [
           "name",
           "format",
           "granularity",
-          "label"
+          "label",
+          "grain",
+          "version",
+          "exportable_states"
         ],
         "title": "ExportProfile",
         "type": "object"
@@ -1473,7 +1544,14 @@
             "title": "Kind"
           },
           "payload": {
-            "title": "Payload"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "promise_name": {
             "anyOf": [
@@ -2498,6 +2576,17 @@
         "title": "TaskDeclaration",
         "type": "object"
       },
+      "TaskPayload": {
+        "additionalProperties": true,
+        "description": "A task's payload: free-form per kind. A document_promotion task filed from 1.9.0 carries\n`attestation`; one filed earlier does not, and the server decides it at the act.",
+        "properties": {
+          "attestation": {
+            "$ref": "#/components/schemas/Attestation"
+          }
+        },
+        "title": "TaskPayload",
+        "type": "object"
+      },
       "UnauthenticatedBody": {
         "additionalProperties": false,
         "description": "The 401 body `auth.get_current_user` sends: no identity, so no policy to name.",
@@ -3427,7 +3516,7 @@
     },
     "/ingest/export/profiles": {
       "get": {
-        "description": "GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:\n`[{name, format, granularity, label}]`. An invalid profile is logged at ERROR and left out.\nAny authenticated caller (a name and a label are not notice content).",
+        "description": "GET /ingest/export/profiles -- the valid review-export profiles THE CALLER MAY USE, sorted\nby name: `[{name, format, granularity, label, grain, version, accepts, exportable_states,\ndedupe}]`. \"May use\"\nis the `can_export:<profile>` capability row (deny by default; Topaz down is 503, never an\nempty list), asked per profile; a profile the caller may not use is not listed. An invalid\nprofile is logged at ERROR and left out. Any authenticated caller; a service caller sees none.",
         "operationId": "ingest_export_profiles_route_ingest_export_profiles_get",
         "responses": {
           "200": {

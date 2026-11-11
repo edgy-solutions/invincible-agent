@@ -274,6 +274,9 @@ class ExportProfile(_Strict):
     """The profile row's own version; an export records the one it used."""
     accepts: list[str] | None = None
     """Content kinds the profile takes; null = any kind."""
+    exportable_states: list[str]
+    """The notice states (`stage` as GET /ingest/{id}/status serves it) the profile exports. A
+    notice in any other state is refused naming its state. Shipped profiles list `promoted` only."""
     dedupe: list[str] = []
     """Output columns whose joint value makes a row a duplicate (the first is kept); [] = none."""
 
