@@ -8031,19 +8031,6 @@ async def _audit_orchestrate_wrap(gen, *, who: str, via: str, session_id: str):
         )
 
 
-async def _end_request_span_wrap(stream, span):
-    """Pass `stream` through; end the request span when it ends (done, error or disconnect)."""
-    try:
-        async for chunk in stream:
-            yield chunk
-    finally:
-        from iagent.trace_spans import aclose_request_span
-        try:
-            await aclose_request_span(span)
-        except Exception:  # noqa: BLE001 - telemetry never changes how the stream ends
-            pass
-
-
 async def _keepalive_wrap(stream, interval_s: float = 10.0):
     """Wrap an SSE generator so it emits `: keepalive\\n\\n` comments
     during quiet stretches.
@@ -8796,7 +8783,6 @@ async def _launch_supervisor_job(
     pre_resolved: dict | None = None,
     trace_id: str = "",
     session_id: str = "",
-    traceparent: str = "",  # W3C parent for the supervisor's step spans (lane/perf)
 ) -> str | None:
     """Launch the supervisor_query_job on Dagster.
 
@@ -8874,7 +8860,6 @@ async def _launch_supervisor_job(
         # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
         # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
         "trace_id": trace_id,
-        "traceparent": traceparent,
         "session_id": session_id,
     }
 
@@ -9204,7 +9189,6 @@ async def generate_dagster_stream(
     entitled_domains: list[str] | None = None,
     entitlement_source: str = "fallback",
     caller_token: str = "",
-    traceparent: str = "",
 ) -> AsyncGenerator[str, None]:
     """THE OUTER BOUNDARY. Every turn that reaches here produces an artifact.
 
@@ -9244,7 +9228,6 @@ async def generate_dagster_stream(
         async for _ev in _generate_dagster_stream_inner(
             request,
             trace_id=trace_id,
-            traceparent=traceparent,
             user_id=user_id,
             user_email=user_email,
             user_persona=user_persona,
@@ -9327,7 +9310,6 @@ def _boundary_failure_bundle(
 async def _generate_dagster_stream_inner(
     request: InterviewRequest,
     trace_id: str = "",   # cortex-ui X-Trace-Id (ADR-0038); seeds the analyst trace via the supervisor
-    traceparent: str = "",  # bff.orchestrate span as W3C traceparent (lane/perf)
     user_id: str = "default_testing_user",
     # ADR-0025 hop 2: caller's entitlement key (email); threaded to Engine D
     # so query_metadata asks Topaz can_view. Parallels entitled_domains.
@@ -10116,7 +10098,6 @@ async def _generate_dagster_stream_inner(
         spoken_answer=request.spoken_answer,
         pre_resolved=_pre_resolved,
         trace_id=trace_id,        # cortex-ui X-Trace-Id -> runConfig -> execute_subtask -> /analyze
-        traceparent=traceparent,  # BFF root span -> runConfig -> supervisor step spans
         session_id=session_id,    # the conversation thread -> Langfuse session grouping
     )
     if not run_id:
@@ -11912,26 +11893,14 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                 **slot_refusal(_sp_template, _sp_unbound),
             )
 
-    # Root span of the answer's Langfuse trace (lane/perf), opened here (after every early
-    # refusal) so it is only opened when a stream will run and close. Deliberately NOT minting
-    # an id when X-Trace-Id is absent: neo4j_expert tags `join:pending-proxy` on an empty
-    # trace_id, so empty is a signal downstream. Fail-soft; a no-op without Langfuse keys.
-    from iagent.trace_spans import open_request_span as _open_request_span
-    _req_span = _open_request_span(
-        name="bff.orchestrate",
-        trace_seed=_trace_id,
-        session_id=request.session_id or "",
-        user_id=current_user.authz_id or "",
-    )
     return StreamingResponse(
-        _end_request_span_wrap(_keepalive_wrap(
+        _keepalive_wrap(
             # INSIDE the keepalive: `_keepalive_wrap` turns a producer exception into an error
             # event, so only here can the audit line say `outcome=error`.
             _audit_orchestrate_wrap(
                 generate_dagster_stream(
                     request,
                     trace_id=_trace_id,
-                    traceparent=_req_span.traceparent,
                     user_id=current_user.id,
                     # ADR-0025 hop 2 + identity consolidation (2026-07-09): the
                     # caller's AUTHORIZATION IDENTITY (authz_id — the
@@ -11970,7 +11939,7 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                 session_id=request.session_id,
             ),
             interval_s=10.0,
-        ), _req_span),
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -12174,6 +12143,13 @@ async def compile_bpmn(
 # Removed BFF Mock Routes (no longer used)
 
 
+try:
+    from provenance_telemetry import emit_misses
+except ImportError:  # pragma: no cover -- the root package pins the leaf; None = nothing emitted
+    def emit_misses():  # type: ignore[misc]
+        return None
+
+
 @app.get("/health")
 async def health():
     """READINESS REFUSES WHEN A SERVICE URL WAS NEVER DECLARED. RULED 2026-09-11.
@@ -12201,6 +12177,7 @@ async def health():
     return {
         "status": "ok",
         "service": "cortex-orchestrator-proxy",
+        "telemetry_misses": emit_misses(),
     }
 
 

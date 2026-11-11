@@ -77,12 +77,19 @@ def test_every_name_the_contract_uses_is_a_declared_column(contract):
 
 
 def test_the_dataset_overlays_name_this_contracts_urn_and_banner(contract):
-    rows = [yaml.safe_load(p.read_text(encoding="utf-8")) for p in sorted(DATASET_OVERLAYS.rglob("*.yaml"))]
+    files = sorted(DATASET_OVERLAYS.rglob("*.yaml"))
+    rows = [yaml.safe_load(p.read_text(encoding="utf-8")) for p in files]
     datasets = [r["inputs"]["dataset"] for r in rows if isinstance(r, dict) and "dataset" in r.get("inputs", {})]
     assert datasets, "positive control: some sample row reads a dataset"
+    assert any("per_period" in ds for ds in datasets), "positive control: a series row is held"
     for ds in datasets:
         assert (ds["urn"], ds["banner"]) == (contract["dataset"]["urn"], contract["dataset"]["banner"])
         cols = _columns(contract)
+        if "per_period" in ds:          # drawn as series: tests/finance/test_a_dataset_series_row_*
+            named = [ds["scope"], ds["period"], *ds["per_period"].values(), *ds.get("per_program", {}).values(),
+                     *([ds["status"]] if "status" in ds else [])]
+            assert set(named) <= set(cols), ds
+            continue
         value = ds["value"]
         named = value["minus"] if isinstance(value, dict) else [value]
         assert set(ds["levels"]) | set(named) <= set(cols), ds

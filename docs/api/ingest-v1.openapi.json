@@ -370,6 +370,33 @@
         "title": "ArtifactRef",
         "type": "object"
       },
+      "Attestation": {
+        "additionalProperties": false,
+        "description": "Who may promote a document_promotion task, stamped when it is filed (1.9.0). `excluded` is\nempty under `self`; under `second_party` it lists the authz_ids that may not promote.",
+        "properties": {
+          "excluded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded",
+            "type": "array"
+          },
+          "mode": {
+            "enum": [
+              "self",
+              "second_party"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "excluded"
+        ],
+        "title": "Attestation",
+        "type": "object"
+      },
       "AuthorizationUnavailableBody": {
         "additionalProperties": false,
         "description": "The 503 body when the authorization directory cannot say whether a kind is gated.",
@@ -1422,7 +1449,14 @@
             "title": "Kind"
           },
           "payload": {
-            "title": "Payload"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "promise_name": {
             "anyOf": [
@@ -3286,6 +3320,17 @@
         "title": "TaskDeclaration",
         "type": "object"
       },
+      "TaskPayload": {
+        "additionalProperties": true,
+        "description": "A task's payload: free-form per kind. A document_promotion task filed from 1.9.0 carries\n`attestation`; one filed earlier does not, and the server decides it at the act.",
+        "properties": {
+          "attestation": {
+            "$ref": "#/components/schemas/Attestation"
+          }
+        },
+        "title": "TaskPayload",
+        "type": "object"
+      },
       "TitleCandidate": {
         "additionalProperties": false,
         "description": "One leaf the title read considered: `{leaf, score, evidence_ref}`. `evidence_ref` is the title\ncrop the read used (the struct `EvidenceRef`, required; not the legacy string).",
@@ -3521,7 +3566,7 @@
   },
   "info": {
     "title": "Cortex ingest API",
-    "version": "1.9.0"
+    "version": "1.9.1"
   },
   "openapi": "3.1.0",
   "paths": {

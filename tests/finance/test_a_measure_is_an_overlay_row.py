@@ -189,7 +189,8 @@ def test_3_no_overlay_declares_nothing(tmp_path, monkeypatch):
     assert _load([], tmp=tmp_path) == []
 
 
-SHIPPED = ["fin_flow_acwp", "fin_flow_eac_variance", "fin_tcpi", "fin_vac_cpi"]
+SHIPPED = ["fin_eac_trend", "fin_ev_cumulative", "fin_flow_acwp", "fin_flow_eac_variance", "fin_tcpi",
+           "fin_vac_cpi"]
 
 
 def test_3_the_sample_overlay_declares_exactly_the_shipped_rows(monkeypatch):
@@ -219,14 +220,14 @@ def declared(monkeypatch):
 
 def test_4_registers_beside_the_builtins(declared, monkeypatch):
     row = declared["fin_tcpi"]
-    calls = engine._registration_calls("http://engine")
+    calls = engine._registration_calls()
     by_verb = {c["verb"]: c for c in calls}
     monkeypatch.setattr(engine, "DECLARED", {})
-    n_builtin = len(engine._registration_calls("http://engine"))
+    n_builtin = len(engine._registration_calls())
     monkeypatch.setattr(engine, "DECLARED", declared)
     assert len(calls) == n_builtin + len(SHIPPED)   # one registration per shipped sample row
     c = by_verb["mesh:finToCompletePerformanceIndex"]
-    assert c["endpoint_url"] == "http://engine/measure/fin_tcpi"
+    assert c["fn"] == "fin_tcpi"
     assert c["output_uri"] == measures.FIN + "DeclaredMeasureSeries"
     assert list(c["verb_synonyms"]) == list(row.synonyms)
     assert row.synonyms, "the sample row carries no synonyms"
@@ -238,7 +239,7 @@ def test_4_registers_beside_the_builtins(declared, monkeypatch):
 
 def test_4_nothing_declared_registers_only_the_builtins(monkeypatch):
     monkeypatch.setattr(engine, "DECLARED", {})
-    verbs = {c["verb"] for c in engine._registration_calls("http://engine")}
+    verbs = {c["verb"] for c in engine._registration_calls()}
     assert verbs == {v["verb"] for v in engine.VERBS}
     assert "mesh:finToCompletePerformanceIndex" not in verbs
 

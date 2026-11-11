@@ -50,7 +50,7 @@ try:
     from telemetry import (safe_observe, safe_update_observation,
                            set_trace_standard, observed_trace, build_trace_values, MAPPING,
                            litellm_metadata,
-                           mint_boundary_ids, boundary_parent, emit_boundary)
+                           mint_boundary_ids, boundary_parent, emit_boundary, emit_misses)
 except ImportError:
     def safe_observe(**kwargs):
         def decorator(func):
@@ -71,10 +71,12 @@ except ImportError:
     def mint_boundary_ids(_seed=None):
         return {"trace_id": None, "span_id": None}
     @_cm
-    def boundary_parent(_ids):
+    def boundary_parent(_ids, *, mapping=None, values=None):
         yield {"started_at": None, "ended_at": None}
     def emit_boundary(*_a, **_k):
         pass
+    def emit_misses():  # None = no telemetry leaf here, so nothing emitted, nothing missed
+        return None
     MAPPING = None
 
 from fastapi import FastAPI, Request
@@ -1456,7 +1458,7 @@ to decide the next call. Use only what the tools return — never invent data.
                 subject_class=(semantic_ctx.get("resolved_uri") or None),
                 resolved_via=("supervisor" if semantic_ctx.get("from_supervisor") else "engine_o"),
             )
-            with boundary_parent(_boundary_ids) as _boundary_timing:
+            with boundary_parent(_boundary_ids, mapping=MAPPING, values=_boundary_values) as _boundary_timing:
                 raw_agent_response, execution_trace, conf = await ctx.run("run-smolagent", run_smolagent)
             await ctx.run(
                 "emit-analyst-boundary",
@@ -2897,6 +2899,11 @@ async def _run_definition(
             # it disposes nothing.
             if step.disposes is not None:
                 results[-1]["disposition"] = step.disposes
+                # A DISPOSING EMIT ENDS THE DEFINITION (ruled 2026-11-10): the decision is made
+                # and sent, so the instance returns its outcome now. A step after it would keep
+                # a decided case's workflow alive -- October's maint_release emitted `released`
+                # and then waited on a `tier_ack` nobody sends, which held its episode open.
+                break
 
     # ── THE TERMINAL OUTCOME, AND WHY IT IS NOT `status` ──────────────────────────────────────
     #
@@ -4553,7 +4560,7 @@ async def approve_task(
 @app.get("/health")
 async def health() -> dict:
     """Simple liveness probe."""
-    return {"status": "ok", "engine": "restate_analyst"}
+    return {"status": "ok", "engine": "restate_analyst", "telemetry_misses": emit_misses()}
 
 
 # ---------------------------------------------------------------------------

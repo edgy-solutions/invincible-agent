@@ -712,16 +712,20 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
     if decision == PROMOTED:
         block = payload.get("attestation") if isinstance(payload, dict) else None
         if block is None:
-            mode = attestation_for(subject.content_kind)
-        elif isinstance(block, dict) and block.get("mode") in ATTESTATION_MODES:
-            mode = block["mode"]
-        else:
+            # Filed before 1.9.0: decide on the block filing would stamp today.
+            block = attestation_block(subject.content_kind, payload)
+        excluded = block.get("excluded") if isinstance(block, dict) else None
+        if not (isinstance(block, dict) and block.get("mode") in ATTESTATION_MODES
+                and isinstance(excluded, list) and all(isinstance(x, str) for x in excluded)):
             raise PromotionRefused(
                 "attestation_undeclarable",
                 f"the task's attestation block read as {block!r}, which does not carry a mode "
-                f"in {list(ATTESTATION_MODES)}. Nothing was written", status=503)
+                f"in {list(ATTESTATION_MODES)} and a list of excluded ids. Nothing was written",
+                status=503)
+        mode = block["mode"]
+        # The record says whether the dropper attested; the refusal reads only the served list.
         self_attested = acted_by in _excluded_attesters(payload)
-        if mode == ATTESTATION_SECOND_PARTY and self_attested:
+        if mode == ATTESTATION_SECOND_PARTY and acted_by in excluded:
             raise PromotionRefused(
                 "dropper_cannot_attest_origin",
                 "the person who dropped the document (or whom it was dropped for) cannot attest "

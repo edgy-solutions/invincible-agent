@@ -929,7 +929,7 @@ wheels = [
 
 [[package]]
 name = "edgy-dag-tools"
-version = "0.11.0"
+version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "clickhouse-connect" },
@@ -946,9 +946,9 @@ dependencies = [
     { name = "requests" },
     { name = "sqlalchemy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6a/10/6050842bb77c91256011cbdb41fedda133238b6c8f3f922b31cc1d60c454/edgy_dag_tools-0.11.0.tar.gz", hash = "sha256:9c1a09e3a9d6d4eb60a05bbfe3c854a342db0c55e9f9a12d2d3f69667ba3801a", size = 1231136, upload-time = "2026-11-05T02:04:23.35Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/61/42/efc9fdeada6bd8e1b8a28d55e04f7e60d21a554f9cb94c2e3ee69a185437/edgy_dag_tools-0.13.0.tar.gz", hash = "sha256:90b36a590201eea55a45b2a9f194edad3da30eee0f19c742008c4aced49cd61f", size = 1622837, upload-time = "2026-11-10T03:52:46.078Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/29/7a/26970561586ec68077a01f7fdfc9fcca8268e6274160d75fe4ad7b065158/edgy_dag_tools-0.11.0-py3-none-any.whl", hash = "sha256:73e647fce848df939b619f00f3e4e928ee015b3690295e85a3eb9a66add1cbe2", size = 437904, upload-time = "2026-11-05T02:04:21.001Z" },
+    { url = "https://files.pythonhosted.org/packages/09/80/34c2a1db9e8dd137f632b799a539428822d5cb904d3b37836031a4db593f/edgy_dag_tools-0.13.0-py3-none-any.whl", hash = "sha256:dfd6541ce440f158d90215c317134694102a59678e23bc81995aa17ade5e2ba7", size = 623459, upload-time = "2026-11-10T03:52:44.214Z" },
 ]
 
 [[package]]
@@ -1433,7 +1433,7 @@ requires-dist = [
     { name = "dagster", specifier = ">=1.12.20" },
     { name = "dagster-postgres" },
     { name = "duckdb", marker = "extra == 'agent-fleet'", specifier = "==1.5.2" },
-    { name = "edgy-dag-tools", specifier = "==0.11.0" },
+    { name = "edgy-dag-tools", specifier = "==0.13.0" },
     { name = "fastapi" },
     { name = "fastapi", marker = "extra == 'agent-fleet'" },
     { name = "h2", marker = "extra == 'agent-fleet'" },
@@ -1441,11 +1441,11 @@ requires-dist = [
     { name = "httpx" },
     { name = "httpx", marker = "extra == 'agent-fleet'" },
     { name = "hypercorn", marker = "extra == 'agent-fleet'" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.15" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.18" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "langchain-community", marker = "extra == 'agent-fleet'" },
     { name = "langchain-weaviate", marker = "extra == 'agent-fleet'" },
-    { name = "langfuse", marker = "extra == 'agent-fleet'" },
+    { name = "langfuse", marker = "extra == 'agent-fleet'", specifier = ">=4.7.0,<5" },
     { name = "langgraph", marker = "extra == 'agent-fleet'" },
     { name = "langgraph-checkpoint-postgres", marker = "extra == 'agent-fleet'" },
     { name = "litellm", marker = "extra == 'agent-fleet'" },
@@ -1484,9 +1484,9 @@ provides-extras = ["agent-fleet"]
 dev = [
     { name = "dagster-dg-cli" },
     { name = "dagster-webserver" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.15" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.18" },
     { name = "lxml", specifier = ">=6.1.1" },
-    { name = "provenance-telemetry", specifier = "==0.1.0" },
+    { name = "provenance-telemetry", specifier = "==0.2.0" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-random-order" },
@@ -1495,8 +1495,8 @@ dev = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.15"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.15#5a526b67452b15c066305fe7be4871b29cb04a97" }
+version = "0.9.18"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.18#2f47e9eec77741da142a29e1ff4156ca69226e22" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
@@ -1750,7 +1750,7 @@ wheels = [
 
 [[package]]
 name = "langfuse"
-version = "4.0.6"
+version = "4.15.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "backoff" },
@@ -1760,11 +1760,12 @@ dependencies = [
     { name = "opentelemetry-sdk" },
     { name = "packaging" },
     { name = "pydantic" },
+    { name = "typing-extensions" },
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ab/d0/6d79ed5614f86f27f5df199cf10c6facf6874ff6f91b828ae4dad90aa86d/langfuse-4.0.6.tar.gz", hash = "sha256:83a6f8cc8f1431fa2958c91e2673bc4179f993297e9b1acd1dbf001785e6cf83", size = 274094, upload-time = "2026-04-01T20:04:15.153Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4a/19/59253a357d77147e8cd3ad97817519e158af5d3336654656c92c2fc922f1/langfuse-4.15.6.tar.gz", hash = "sha256:af80ed1199e57c2641c9f228066bf9dc324657c06ce6e68660118fa46b237e35", size = 392968, upload-time = "2026-09-24T13:32:47.032Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/50/b4/088048e37b6d7ec1b52c6a11bc33101454285a22eaab8303dcccfd78344d/langfuse-4.0.6-py3-none-any.whl", hash = "sha256:0562b1dcf83247f9d8349f0f755eaed9a7f952fee67e66580970f0738bf3adbf", size = 472841, upload-time = "2026-04-01T20:04:16.451Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/c5/927a01c47c0adf53832c6e5e35951e3d4998072ef955f3bb8e87e6d10517/langfuse-4.15.6-py3-none-any.whl", hash = "sha256:2364d5f17342301a8651ef166abb5bb260aaadd94d1ac72aa30c298b3a395d85", size = 706806, upload-time = "2026-09-24T13:32:48.577Z" },
 ]
 
 [[package]]
@@ -2582,7 +2583,7 @@ wheels = [
 
 [[package]]
 name = "provenance-telemetry"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langfuse" },
@@ -2590,9 +2591,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d6/71/f91ee1493d8411c701bf8b0798d81edc2547dbf76bc6ecaf72bf97e8702f/provenance_telemetry-0.1.0.tar.gz", hash = "sha256:d846275f8c8207ae630ec2435682f1518efb22f63097da48dabdd5b105e9d65a", size = 20810, upload-time = "2026-08-08T02:16:12.821Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/53/6d42ca22addb0af4b872779362cb7245f2c56af8675f61dbcf9e68cac9a4/provenance_telemetry-0.2.0.tar.gz", hash = "sha256:5f63d93320c172390d128f4d7e76d683f7623a36944a470c8e5141110e336973", size = 28335, upload-time = "2026-11-10T20:54:05.542Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/e5/b9d42746927b9d55c64309312ff7d53ac080661c8f971250ccd381d6f108/provenance_telemetry-0.1.0-py3-none-any.whl", hash = "sha256:65ab02ab5085e8867b6c5a33a4a62a54698439087da64743415f68b1c9f48e2e", size = 13839, upload-time = "2026-08-08T02:16:11.556Z" },
+    { url = "https://files.pythonhosted.org/packages/70/e2/44f307cfebabb346b7fcfb725d0468389a35ace66741ef8b6a2f4cabae4a/provenance_telemetry-0.2.0-py3-none-any.whl", hash = "sha256:241af616d8b21409f4b088bd2c7c8183774ceccb51d10313f4f6cc18cc71477c", size = 19889, upload-time = "2026-11-10T20:54:04.41Z" },
 ]
 
 [[package]]

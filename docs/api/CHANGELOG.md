@@ -2,6 +2,13 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.9.1 — 2026-11-10
+
+Declaration, additive (architect, 2026-11-09). The shape hash moves.
+
+- **`HumanTask.payload` is declared as `TaskPayload`** (or null). Before, it was untyped. `TaskPayload` is an open object: every kind's keys still validate. It declares one key, `attestation`, an `Attestation` `{mode: "self" | "second_party", excluded: string[]}`. The key is absent on tasks of other kinds and on promotion tasks filed before 1.9.0. Every payload the server stores is an object, so every body that validated against 1.9.0 still validates.
+- **The act reads the served `excluded`.** Under `second_party`, the act refuses with 403 `dropper_cannot_attest_origin` exactly the ids in the task's `attestation.excluded`. It no longer recomputes that set from `dropped_by`, so the card and the server decide on the same list. A block whose `excluded` is not a list of strings is 503 `attestation_undeclarable`. A task with no block is decided on the block filing would stamp at the time of the act.
+
 ## 1.9.0 — 2026-11-10
 
 Behaviour, additive for a reader. The shape hash does not move (the task payload is free-form), so the lock row repeats 1.8.1's.

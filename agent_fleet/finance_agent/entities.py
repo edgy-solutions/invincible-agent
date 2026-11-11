@@ -18,7 +18,7 @@ of dollars" is precisely the question that must not be answered by convention.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import ClassVar, Literal, Optional
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Periods
@@ -147,9 +147,9 @@ class ControlAccount:
     ca_id: str           # e.g. "3.1.2"
     name: str
     program_id: str
-    wbs_id: str
-    obs_id: str
-    bac: float
+    wbs_id: Optional[str]   # None: the state's source does not carry it (an asset state)
+    obs_id: Optional[str]
+    bac: Optional[float]
 
 
 @dataclass(frozen=True)
@@ -158,8 +158,8 @@ class WorkPackage:
     wp_id: str
     name: str
     ca_id: str
-    bac: float
-    technique: EVTechnique
+    bac: Optional[float]                # None: the state's source does not carry it
+    technique: Optional[EVTechnique]
 
 
 @dataclass(frozen=True)
@@ -211,6 +211,11 @@ class FinanceState:
     work_packages: list[WorkPackage] = field(default_factory=list)
     facts: list[PeriodFact] = field(default_factory=list)
     funding: list[FundingLine] = field(default_factory=list)
+    #: The collections above that this state's source does not carry. An empty list there is not
+    #: "none": a verb that reads one refuses with `NotInModel` rather than answer from it. A class
+    #: attribute, not a field, so `state_codec` (one table per field) never sees it; the seed
+    #: carries everything and `asset_inputs.AssetState` overrides it.
+    uncarried: ClassVar[frozenset[str]] = frozenset()
 
     # ── lookups, so the measures never re-scan by hand ────────────────────────
 

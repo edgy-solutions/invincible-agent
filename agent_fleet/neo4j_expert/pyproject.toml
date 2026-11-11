@@ -6,7 +6,7 @@ dependencies = [
     # Mesh membership package — transport auth (the app dependency) + the ONE general
     # mint. PINNED TO A TAG: this package governs fleet auth, so a floating ref would let
     # one SDK commit change every engine's security behaviour at rebuild.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.15",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.18",
     "fastapi",
     "hypercorn",
     "pydantic",
@@ -24,7 +24,7 @@ dependencies = [
     "ollama",
     "python-dotenv",
     "langfuse>=3.0.0",
-    "provenance-telemetry==0.1.0",
+    "provenance-telemetry==0.2.0",
     "litellm",
     "packaging",
     "acryl-datahub",

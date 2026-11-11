@@ -20,8 +20,9 @@ DROPPED = {"authz_id": "alice", "on_behalf_of": "carol"}
 
 def _payload(mode=None, **extra):
     p = {**PAYLOAD, "dropped_by": dict(DROPPED), **extra}
-    if mode is not None:
-        p["attestation"] = {"mode": mode, "excluded": []}
+    if mode is not None:  # the block filing stamps
+        p["attestation"] = {"mode": mode, "excluded": (
+            sorted(DROPPED.values()) if mode == "second_party" else [])}
     return p
 
 
@@ -124,3 +125,47 @@ def test_9_the_served_block(monkeypatch):
         "mode": "second_party", "excluded": ["alice", "carol"]}
     blanks = {**payload, "dropped_by": {"authz_id": "alice", "on_behalf_of": ""}}
     assert promotion.attestation_block(CK, blanks)["excluded"] == ["alice"]
+
+
+# The act reads the served `excluded`; it never recomputes it from dropped_by (architect, 11-09).
+# Each arm makes the served list and dropped_by disagree, so recomputing turns it red.
+
+def test_10_a_second_party_block_that_excludes_nobody_lets_the_dropper_promote():
+    ledger, graph = Ledger(), Graph()
+    p = _payload()
+    p["attestation"] = {"mode": "second_party", "excluded": []}
+    _act(_stores(ledger, graph), acted_by="alice", payload=p)
+    # The record still says the dropper attested: that is a fact, not the decision.
+    assert _inputs(ledger)["attestation"] == {
+        "mode": "second_party", "attested_by": "alice", "self_attested": True}
+
+
+def test_11_whoever_the_block_excludes_is_refused_though_they_did_not_drop_it():
+    ledger, graph = Ledger(), Graph()
+    p = _payload()
+    p["attestation"] = {"mode": "second_party", "excluded": ["bob"]}
+    with pytest.raises(promotion.PromotionRefused) as ei:
+        _act(_stores(ledger, graph), acted_by="bob", payload=p)
+    assert ei.value.error == "dropper_cannot_attest_origin" and ei.value.status == 403
+    assert ledger.appends == [] and graph.writes == 0 and graph.attests == []
+
+
+def test_12_under_self_an_excluded_list_refuses_nobody():
+    ledger, graph = Ledger(), Graph()
+    p = _payload()
+    p["attestation"] = {"mode": "self", "excluded": ["alice"]}
+    _act(_stores(ledger, graph), acted_by="alice", payload=p)
+    assert graph.attest_kw == {"attested_by": "alice", "self_attested": True}
+
+
+@pytest.mark.parametrize("excluded", [None, "alice", ["alice", 5], {"alice": 1}])
+def test_13_a_block_whose_excluded_is_not_a_list_of_ids_fails_closed(excluded):
+    ledger, graph = Ledger(), Graph()
+    p = _payload()
+    p["attestation"] = {"mode": "second_party"}
+    if excluded is not None:
+        p["attestation"]["excluded"] = excluded
+    with pytest.raises(promotion.PromotionRefused) as ei:
+        _act(_stores(ledger, graph), acted_by="bob", payload=p)
+    assert ei.value.error == "attestation_undeclarable" and ei.value.status == 503
+    assert ledger.appends == [] and graph.writes == 0 and graph.attests == []

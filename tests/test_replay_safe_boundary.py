@@ -13,7 +13,7 @@ THE FIX'S THREE MOVES, one test each below:
   2. the boundary is an AMBIENT NON-RECORDING parent — it exports nothing itself, so
      re-entering it cannot double anything, while children still nest under it;
   3. the boundary observation is emitted from its OWN `ctx.run`, keyed on the journaled
-     id (the ingestion API upserts on that id, so even a re-emit lands one observation).
+     id (the leaf exports it over OTLP; on Langfuse v4 a re-emit duplicates, so the journal is the guard).
 
 Move 2 is the load-bearing one: it makes the double impossible BY CONSTRUCTION rather
 than dedup-after-the-fact, which is why the central test enters the boundary TWICE and
@@ -27,6 +27,8 @@ Run:  uv run --frozen python -m pytest tests/test_replay_safe_boundary.py -q
 """
 from __future__ import annotations
 
+import datetime
+import json
 import re
 import sys
 from pathlib import Path
@@ -45,7 +47,9 @@ JOURNALED = {"trace_id": "a1b2c3d4" * 4, "span_id": "beef0000beef0004"}
 
 @pytest.fixture
 def enabled(monkeypatch):
-    """The primitives no-op unless Langfuse is configured; pin the enabled path."""
+    """The leaf no-ops unless Langfuse keys are set; pin the enabled path."""
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
     monkeypatch.setattr(telemetry, "LANGFUSE_ENABLED", True)
 
 
@@ -111,70 +115,98 @@ def test_boundary_yields_timing_for_the_emit(enabled):
 
 
 # --- move 3: the boundary observation is keyed on the journaled id -----------
-class _FakeIngestion:
-    def __init__(self):
-        self.batches = []
+# The leaf (provenance-telemetry >= 0.2.0) exports the boundary span over OTLP, so the
+# assertion surface is a Langfuse client wired to an in-memory span exporter -- the same
+# shape the leaf's own tests use. On Langfuse v4 there is NO upsert: a second export of
+# one span id is a duplicate, so "once across a replay" is held by the journaled step,
+# which the _journal() stand-in below reproduces.
+@pytest.fixture
+def exported(monkeypatch):
+    import uuid
+    from langfuse import Langfuse
+    from langfuse._client.resource_manager import LangfuseResourceManager
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-    def batch(self, *, batch):
-        self.batches.append(batch)
+    pub = f"pk-lf-test-{uuid.uuid4().hex}"
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", pub)
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
+    exporter = InMemorySpanExporter()
+
+    def _reset():
+        LangfuseResourceManager._instances.clear()
+
+    _reset()
+    client = Langfuse(public_key=pub, secret_key="sk-lf-test",
+                      base_url="http://localhost:1", span_exporter=exporter)
+
+    def spans():
+        client.flush()
+        return list(exporter.get_finished_spans())
+
+    yield spans
+    _reset()
 
 
-class _FakeClient:
-    def __init__(self):
-        self.api = type("_API", (), {"ingestion": _FakeIngestion()})()
+def _journal():
+    """A stand-in for Restate's ctx.run: runs the body once, replays the memoized value."""
+    memo: dict = {}
+
+    def run(name, fn):
+        if name not in memo:
+            memo[name] = fn()
+        return memo[name]
+    return run
 
 
-def _emit(monkeypatch, mapping=None, values=None):
-    fake = _FakeClient()
-    import langfuse
-    monkeypatch.setattr(langfuse, "get_client", lambda *a, **k: fake, raising=False)
-    telemetry.emit_boundary(
+def _emit(mapping=None, values=None):
+    mapping = mapping if mapping is not None else telemetry.MAPPING
+    return telemetry.emit_boundary(
         mapping, values or {}, ids=JOURNALED, name="analyst",
-        timing={"started_at": telemetry._utcnow(), "ended_at": telemetry._utcnow()},
+        timing={"started_at": datetime.datetime.now(datetime.timezone.utc),
+                "ended_at": datetime.datetime.now(datetime.timezone.utc)},
     )
-    return fake.api.ingestion.batches
 
 
-def test_emitted_boundary_carries_the_journaled_id(enabled, monkeypatch):
-    batches = _emit(monkeypatch)
-    assert len(batches) == 1
-    spans = [e for e in batches[0] if e["type"] == "span-create"]
-    assert len(spans) == 1
-    body = spans[0]["body"]
-    assert body["id"] == JOURNALED["span_id"], "boundary must reuse the journaled id"
-    assert body["traceId"] == JOURNALED["trace_id"]
-    assert body["startTime"] and body["endTime"]
+def test_emitted_boundary_carries_the_journaled_id(enabled, exported):
+    assert _emit() == JOURNALED["span_id"]
+    out = exported()
+    assert len(out) == 1
+    assert format(out[0].context.span_id, "016x") == JOURNALED["span_id"],         "boundary must reuse the journaled id"
+    assert format(out[0].context.trace_id, "032x") == JOURNALED["trace_id"]
+    assert out[0].parent is None
+    assert out[0].start_time and out[0].end_time
 
 
-def test_re_emitting_reuses_the_same_observation_id(enabled, monkeypatch):
-    """Belt-and-suspenders for move 3: the ingestion API upserts on observation id
-    (probed live — the same id twice lands ONE observation), so a re-emit is
-    idempotent. That only holds while the id is the JOURNALED one, never a fresh one.
-    """
-    first = _emit(monkeypatch)[0]
-    second = _emit(monkeypatch)[0]
-    ids = [e["body"]["id"] for b in (first, second) for e in b if e["type"] == "span-create"]
-    assert ids == [JOURNALED["span_id"]] * 2, ids
+def test_boundary_is_emitted_once_across_a_replay(enabled, exported):
+    """The guard formerly held by the ingestion API's upsert: a replay must not export the
+    boundary twice. On v4 nothing dedups, so the journaled step is the whole defence --
+    the second pass through the handler gets the memoized value and never re-emits, while
+    the (non-recording) boundary_parent re-entry exports nothing."""
+    run = _journal()
+    for _ in range(2):  # first execution, then the replay
+        with telemetry.boundary_parent(JOURNALED) as timing:
+            pass
+        run("emit", lambda: _emit())
+    out = exported()
+    assert [format(s.context.span_id, "016x") for s in out] == [JOURNALED["span_id"]]
 
 
-def test_trace_level_fields_ride_the_trace_body(enabled, monkeypatch):
-    """The boundary is non-recording now, so the trace-level attributes
-    `set_trace_standard` used to write onto it need `trace-create` as their carrier —
+def test_trace_level_fields_ride_the_boundary_span(enabled, exported):
+    """The boundary parent is non-recording, so the trace-level attributes
+    `set_trace_standard` used to write onto it need the emitted span as their carrier --
     otherwise the trace silently loses user/session/tags/release."""
+    from langfuse import LangfuseOtelSpanAttributes as A
     mapping = type("_M", (), {
         "slots": {"trace_id": "trace_id", "user_id": "authz_id", "session_id": "session_id"},
         "tags": ["domain"], "metadata": ["engine"], "content_bearing": (),
     })()
     values = {"trace_id": "up", "authz_id": "alice", "session_id": "s1",
               "domain": "MAINTENANCE", "engine": "restate_analyst"}
-    batch = _emit(monkeypatch, mapping, values)[0]
-    trace_ev = [e for e in batch if e["type"] == "trace-create"]
-    assert len(trace_ev) == 1
-    body = trace_ev[0]["body"]
-    assert body["id"] == JOURNALED["trace_id"]
-    assert body["userId"] == "alice" and body["sessionId"] == "s1"
-    assert body["tags"] == ["MAINTENANCE"]
-    assert body["metadata"] == {"engine": "restate_analyst"}
+    _emit(mapping, values)
+    attrs = dict(exported()[0].attributes)
+    assert attrs[A.TRACE_USER_ID] == "alice" and attrs[A.TRACE_SESSION_ID] == "s1"
+    assert list(attrs[A.TRACE_TAGS]) == ["MAINTENANCE"]
+    assert json.loads(attrs[A.TRACE_METADATA]) == {"engine": "restate_analyst"}
 
 
 # --- the wiring, asserted on the source (importing the engines pulls Restate) --
@@ -193,7 +225,7 @@ def test_engine_uses_the_replay_safe_boundary(engine):
     # whitespace-tolerant: these calls are wrapped across lines
     assert re.search(rf'ctx\.run\(\s*"mint-{slug}-boundary-ids"', src), engine
     assert re.search(rf'ctx\.run\(\s*"emit-{slug}-boundary"', src), engine
-    assert "with boundary_parent(_boundary_ids)" in src, engine
+    assert "with boundary_parent(_boundary_ids," in src, engine
 
 
 @pytest.mark.parametrize("engine", sorted(_ENGINES))

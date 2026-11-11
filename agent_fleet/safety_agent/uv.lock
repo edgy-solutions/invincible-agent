@@ -541,8 +541,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.15"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.15#5a526b67452b15c066305fe7be4871b29cb04a97" }
+version = "0.9.18"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.18#2f47e9eec77741da142a29e1ff4156ca69226e22" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
@@ -1082,7 +1082,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypercorn" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.15" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.18" },
     { name = "pydantic" },
     { name = "rdflib" },
 ]

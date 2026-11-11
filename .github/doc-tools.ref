@@ -8,8 +8,10 @@
 # overlay mirrors them (architect, 2026-10-24), so a mirrored row is only checkable against a
 # doc-tools that declares it.
 #
-# Currently doc-tools #172's merge at 3f797294 (2026-11-05), which is doc-tools main, NOT a release.
-# The course row mirrors main: #195 (concepts.normalise, ExtractSectionConcepts) is still open, so
-# its passes come back with the bump that follows its merge. Move this onto a release when
-# doc-tools tags one.
-3f7972943034a0afac77ac3819094b91128ef0f4
+# Currently doc-tools #195's merge at 728afaf5 (2026-11-05), the commit the sandbox runs: the
+# `doc-tools` release's image is pinned by digest, and that image's org.opencontainers.image.revision
+# label names 728afaf5 (architect, 2026-11-10: "the doc-tools commit that sandbox actually runs, read
+# from helm ... not to doc-tools main"). It is not a release (v0.2.3-22-g728afaf); the course row
+# mirrors it, ExtractSectionConcepts and concepts.normalise included. Re-read it from the deployed
+# image when doc-tools rolls, and move it onto a release when doc-tools tags one.
+728afaf56c98b6bf99c5c0f9432c44041e04dd6d

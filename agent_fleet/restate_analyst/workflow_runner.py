@@ -449,6 +449,15 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
                 by=by or "system", reason=step.get("comments") or None,
                 at_name=f"at_{n}", instance_id=instance,
                 decided_by=f"{nxt['table']} row {nxt['row']}", **refreshed)
+            if nxt["terminal"] and episode:
+                # OPEN MEANS "NOT AT A TERMINAL STAGE", NEVER "A WORKFLOW IS ALIVE" (ruled
+                # 2026-11-10). The episode is freed the moment a table names a terminal, before the
+                # record, stamp and summary writes, so nothing this case still does after its
+                # terminal can hold the episode. Releasing after the loop made "open" mean "the
+                # run has not returned": October's released case held its episode for 12 days on
+                # an instance that never ended, and the walk's new occurrence attached to it.
+                # Sealed by tests/test_an_occurrence_attaches_to_its_open_episode.py.
+                ctx.object_send(release, key=episode, arg={"case_id": case_id})
             if env.get("outcome") == SEEDED_BY_STAMP_OUTCOME:
                 # THE RECORD IS WRITTEN BEFORE THE STAMP, so the stamp finds it. Read off the
                 # instance's own outbox through `outbox` (a shared handler of this workflow;
@@ -486,7 +495,8 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
                 "a chaining cycle with no human in it", status_code=500)
     except restate.TerminalError as exc:
         # A FAILED CASE IS STILL A RECORD, and it frees its episode: a refusal that held the
-        # episode would make every later event for that fault a silent duplicate.
+        # episode would make every later event for that fault a silent duplicate. A failure after
+        # the terminal sends it twice; `release` by a case that no longer holds is a no-op.
         await _record(ctx, case, frm=case["state"], outcome="failed", to="failed", by="system",
                       reason=str(exc), at_name="at_failed")
         await _summarize(ctx, case, state="failed", final_reason=str(exc))
@@ -494,8 +504,6 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
             ctx.object_send(release, key=episode, arg={"case_id": case_id})
         raise
 
-    if episode:
-        ctx.object_send(release, key=episode, arg={"case_id": case_id})
     return {"case_id": case_id, "status": "CLOSED", "terminal": case["terminal"],
             "transitions": case["transitions"], "approval_chain": chain}
 

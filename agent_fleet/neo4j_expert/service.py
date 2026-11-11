@@ -22,7 +22,7 @@ except IndexError:
 try:
     from telemetry import (safe_observe, safe_update_observation,
                            observed_trace, MAPPING, build_trace_values,
-                           mint_boundary_ids, boundary_parent, emit_boundary)
+                           mint_boundary_ids, boundary_parent, emit_boundary, emit_misses)
 except ImportError:
     def safe_observe(**kwargs):
         def decorator(func):
@@ -39,10 +39,12 @@ except ImportError:
     def mint_boundary_ids(_seed=None):
         return {"trace_id": None, "span_id": None}
     @_cm
-    def boundary_parent(_ids):
+    def boundary_parent(_ids, *, mapping=None, values=None):
         yield {"started_at": None, "ended_at": None}
     def emit_boundary(*_a, **_k):
         pass
+    def emit_misses():  # None = no telemetry leaf here, so nothing emitted, nothing missed
+        return None
     MAPPING = None
 
 from restate import Context, Service, TerminalError
@@ -976,7 +978,7 @@ paths and titles in your final_answer so the downstream formatter can render the
                 domain=request.get("domain"),
                 join_status=("join:pending-proxy" if not request.get("trace_id") else None),
             )
-            with boundary_parent(_boundary_ids) as _boundary_timing:
+            with boundary_parent(_boundary_ids, mapping=MAPPING, values=_boundary_values) as _boundary_timing:
                 raw_agent_response, execution_trace = await ctx.run("run-smolagent", run_smolagent)
             await ctx.run(
                 "emit-engine-e-boundary",
