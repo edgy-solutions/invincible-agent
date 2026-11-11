@@ -260,6 +260,38 @@ spans move from `default` to `sandbox`: a Langfuse view or query filtered on `de
   (OBSERVE): true adds `REQUIRE_TRANSPORT_AUTH=true`. The SDK reads these variables from v0.9.20; until
   an engine image carries it they are inert. Probe paths need no change: `/health` and
   mesh-registrar's `/v1/healthz` are already exempt.
+
+- **Where-used is registered a second time, on the notice graph's Component** (`agent_fleet/ontology_service/where_used.py`,
+  `agent_fleet/ontology_service/main.py`, `tests/test_where_used_takes_the_notice_graphs_component.py`; 74, #341;
+  ruled by Chris, 2026-11-10). The router walks `rdfs:subClassOf*` from an instance's class to a verb's input. No
+  path is declared from `pcn:Component` to `ps:Part`, so a question grounded on a notice's part was never offered
+  where-used. The read already resolves that IRI through #339's alias row. engine-o now registers the verb on
+  both inputs, under two names (one name registered twice deletes the first edge). Every other field is shared,
+  so the verb keeps one description. As ruled, Component is not put under `ps:Part`, because that over-claims; a
+  seal fails if a subClassOf path lands. Whether Component sits under `ps:ManufacturerPart` is board item
+  `01M74258XJ8AWRV68MFA49YW9V`, open and parked. Seals: alice reads E1 12 and E2 6 from the Component's IRI, and
+  bob reads E1 only; deleting the alias rows turns them red with `unknown_part`. **The roll:** engine-o's image
+  changes; nothing in the values or pod templates moves. Engines register only at startup, so the new edge
+  appears only after engine-o restarts. The existing edge is kept, so there is nothing to delete. After the roll,
+  read the new edge, then ask "where is part 5530-182 used" as alice and as bob.
+- **The fleet's SDK pin moves from v0.9.18 to v0.9.19** (gov; the architect, 11-10: "gov: once the tag is
+  pushed, open the v0.9.19 pin move on the 0.4.85 train"). The 17 pyprojects, their locks (`2f47e9ee` →
+  `ef7a6f35`, iagent-mesh alone in each) and `meshSdkVersion` move together. This pin unblocks the OpenDDIL
+  sample packet.
+  - **What v0.9.19 carries:**
+    - `ActionRecord`: `WorkOrder.option`, `WorkOrder.readiness`, `ActionProvenance.case_definition`,
+      `ActionProvenance.case_id` and `ActionProvenance.emitted_by`. All five are optional strings with
+      no enum, and `extra="forbid"` stays.
+    - `ACTION_CONTRACT_VERSION = "2"`.
+    - `DataProvenance.dataset_urn` and `.ticket_id` become optional (absent rather than a placeholder);
+      `as_of` stays required.
+    - Between the tags, the SDK's dependencies are unchanged.
+  - **Not in v0.9.19:** more than one provenance entry per `ImpactRow` (lane 74's other #337 ask). It is
+    still unruled.
+  - **Seals:** `tests/test_the_written_action_record_meets_the_pinned_schema.py` reads its allowance for the
+    five fields from the pinned `model_fields`, so it tightens with no edit.
+  - **Closed network:** the package calls itself 0.9.19, so `meshSdkSource: index` serves this pin.
+  - **The roll:** every engine image changes (the lock), and `meshSdkVersion` changes in values.
 - **Langfuse v4: the replay-safe boundary moves to provenance-telemetry 0.2.0, and every `/health`
   reports `telemetry_misses`** (#340; `pyproject.toml` and the data_analyst, weaviate_expert,
   presentation_agent, neo4j_expert, ontology_service and restate_analyst pyprojects with their
