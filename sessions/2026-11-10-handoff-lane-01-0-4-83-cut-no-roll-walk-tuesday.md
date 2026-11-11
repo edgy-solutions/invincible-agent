@@ -7,6 +7,28 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-11 ~01:20Z: #331, #346 AND #340 MERGED; THE REST WAIT ON THEIR OWNERS.**
+- **The architect's order, 11-11:** "#331, #345, #339 then #341, #340, #342, #343, saf's wiring, gov's v0.9.19 pin". The two master reds are Lane 1's.
+- **Merged:**
+
+  | PR | merge | ^2 | notes |
+  | --- | --- | --- | --- |
+  | #331 | `cf92efc6` | `3c6a68f0` | |
+  | #346 | `82824722` | `769e22e5` | Lane 1's: both reds fixed; test-only |
+  | #340 | `4a1e1b5a` | `c9b6fcee` | no CHANGELOG bullet: perf sends text, or Lane 1 writes it into the cut PR after 11-12 20:00Z |
+- **Waiting:**
+  - #345 (fin): CHANGELOG conflict.
+  - #339 (74): no bullet. #341 is stacked on it; retarget, close and reopen after #339.
+  - #342 and #343 (gov): CHANGELOG conflicts. Gov was told to re-merge now.
+  - saf's wiring: not open.
+  - gov's v0.9.19 pin: ca hasn't tagged v0.9.19.
+- **Refusal datasets:** materialised 11-10 (`81a0e28c`, `c66cfeba`, `b038250b`). After Chris's sync, confirm fin's URNs from the catalog.
+- **approvals[].task is RULED:** the gateway serves it on the train after 0.4.85.
+  - Match by authz_id against the recipient row, or by a capability read from policy. Never a group name in code.
+  - The seal asserts present for the holder and absent for a non-holder reader.
+  - `list_tasks_for_workflows` does not SELECT `recipient_id` today.
+  - Cortex has been told.
+
 **11-10 ~21:45Z: TRAIN HALF IN; THE WRITER FIX IS #344; CUT PR HELD.**
 - **The architect's order:** "0.4.85 is cut and rolled by Friday 11-13".
   - The cut PR is released when the full train is in, or at Thursday 11-12 23:00Z (17:00 CT, Lane 1's reading), whichever comes first.
