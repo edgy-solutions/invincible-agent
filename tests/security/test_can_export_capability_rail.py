@@ -70,9 +70,13 @@ def test_1_the_seed_composition(monkeypatch):
     assert profiles.get(CDRL) == "fin-cdrl", profiles
     stems = {p.stem for p in (ROOT / "policy" / "exports").glob("*.yaml")}
     assert stems, "policy/exports ships no profile"
-    assert {n for n, k in profiles.items() if k == "review-export"} == stems, (profiles, stems)
+    # the review seed, then the sample overlay the registry row names (offline_overlays).
+    sample = {p.stem for p in (ROOT / "policy" / "overlays" / "sample" / "exports").glob("*.yaml")}
+    assert sample, "the sample overlay ships no review profile"
+    assert {n for n, k in profiles.items() if k == "review-export"} == stems | sample, (profiles, stems)
     review = (ROOT / "policy" / "exports").as_posix()
-    assert f"review-export: {review} -> {len(stems)} profile(s)" in notes, notes
+    assert [n for n in notes if n.startswith(f"review-export: {review}")
+            and f"-> {len(stems | sample)} profile(s)" in n], notes
     # policy/exports/answers is its own kind; the review seed's glob is not recursive.
     answers = {p.stem for p in ANSWERS.glob("*.yaml")}
     assert {n for n, k in profiles.items() if k == "answer-export"} == answers, (profiles, answers)
@@ -97,7 +101,7 @@ def test_1_the_source_rows_are_the_sdks_shape_one_per_kind():
 def test_1_the_source_rows_name_the_variables_each_loader_reads():
     """Until the engines read policy/export_profile_sources.yaml (01M6A9QDN1GQ20347W16EM0D3X), the
     rows restate each loader's variables. This goes red when a loader renames one and the row is not
-    re-read. The review loader reads no overlay variable, so its row says null."""
+    re-read. Each row names the overlay variable its loader reads."""
     from agent_fleet.finance_agent import export_profiles as fin
     from agent_fleet.utils import answer_exports as ans
     from iagent import export_profiles as rev
@@ -105,7 +109,7 @@ def test_1_the_source_rows_name_the_variables_each_loader_reads():
     rows = {r["kind"]: r for r in yaml.safe_load(
         (ROOT / "policy" / vp.EXPORT_PROFILE_SOURCES).read_text(encoding="utf-8"))["sources"]}
     got = {k: (r["seed_env"], r["overlay_env"]) for k, r in rows.items()}
-    assert got == {"review-export": (rev._DIR_ENV, None),
+    assert got == {"review-export": (rev._DIR_ENV, rev._OVERLAY_ENV),
                    "answer-export": (ans._SEED_ENV, ans._OVERLAY_ENV),
                    "fin-cdrl": (fin._SEED_ENV, fin._OVERLAY_ENV)}, got
 
@@ -170,7 +174,8 @@ def test_2_the_answer_and_review_env_vars_are_read_as_their_loaders_read_them(tm
     profiles, notes = vp.known_export_profiles()
     assert profiles.get("a-seed") == "answer-export", (profiles, notes)
     assert profiles.get("a-ov") == "answer-export", (profiles, notes)
-    assert {n for n, k in profiles.items() if k == "review-export"} == {"r-moved"}, (profiles, notes)
+    sample = {p.stem for p in (ROOT / "policy" / "overlays" / "sample" / "exports").glob("*.yaml")}
+    assert {n for n, k in profiles.items() if k == "review-export"} == {"r-moved"} | sample, (profiles, notes)
     joined = " ".join(notes)
     assert ANSWERS.as_posix() + " " not in joined, notes
     assert (ROOT / "policy" / "exports").as_posix() + " " not in joined, notes

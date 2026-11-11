@@ -552,6 +552,33 @@
         "title": "ArtifactResponse",
         "type": "object"
       },
+      "Attestation": {
+        "additionalProperties": false,
+        "description": "Who may promote a document_promotion task, stamped when it is filed (1.9.0). `excluded` is\nempty under `self`; under `second_party` it lists the authz_ids that may not promote.",
+        "properties": {
+          "excluded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded",
+            "type": "array"
+          },
+          "mode": {
+            "enum": [
+              "self",
+              "second_party"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "excluded"
+        ],
+        "title": "Attestation",
+        "type": "object"
+      },
       "AuthorizationUnavailableBody": {
         "additionalProperties": false,
         "description": "The 503 body when the authorization directory cannot say whether a kind is gated.",
@@ -2010,6 +2037,45 @@
         "title": "ExportAnswer",
         "type": "object"
       },
+      "ExportNoticesRequest": {
+        "additionalProperties": false,
+        "description": "POST /ingest/export/notices. `extra=\"forbid\"`: an `actor` (or any key not here) is refused\n422; the actor is the authenticated principal, never a field.",
+        "properties": {
+          "check_only": {
+            "default": false,
+            "title": "Check Only",
+            "type": "boolean"
+          },
+          "destination": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Destination"
+          },
+          "notice_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notice Ids",
+            "type": "array"
+          },
+          "profile": {
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "notice_ids",
+          "profile"
+        ],
+        "title": "ExportNoticesRequest",
+        "type": "object"
+      },
       "ExportOfferRequest": {
         "description": "`POST /export/package/recipients`'s body: the same answer items `ExportPackageRequest`\ntakes (`ExportAnswer`), and nothing else -- the offer names no recipient, it lists them.",
         "properties": {
@@ -2088,12 +2154,49 @@
         "additionalProperties": false,
         "description": "One row of GET /ingest/export/profiles (a valid `policy/exports/<name>.yaml`).",
         "properties": {
+          "accepts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepts"
+          },
+          "dedupe": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Dedupe",
+            "type": "array"
+          },
+          "exportable_states": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Exportable States",
+            "type": "array"
+          },
           "format": {
             "enum": [
               "csv",
               "json"
             ],
             "title": "Format",
+            "type": "string"
+          },
+          "grain": {
+            "enum": [
+              "per_notice",
+              "per_part"
+            ],
+            "title": "Grain",
             "type": "string"
           },
           "granularity": {
@@ -2111,13 +2214,20 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
           }
         },
         "required": [
           "name",
           "format",
           "granularity",
-          "label"
+          "label",
+          "grain",
+          "version",
+          "exportable_states"
         ],
         "title": "ExportProfile",
         "type": "object"
@@ -2683,7 +2793,14 @@
             "title": "Kind"
           },
           "payload": {
-            "title": "Payload"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskPayload"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "promise_name": {
             "anyOf": [
@@ -5640,6 +5757,17 @@
         "title": "TaskDeclaration",
         "type": "object"
       },
+      "TaskPayload": {
+        "additionalProperties": true,
+        "description": "A task's payload: free-form per kind. A document_promotion task filed from 1.9.0 carries\n`attestation`; one filed earlier does not, and the server decides it at the act.",
+        "properties": {
+          "attestation": {
+            "$ref": "#/components/schemas/Attestation"
+          }
+        },
+        "title": "TaskPayload",
+        "type": "object"
+      },
       "TitleCandidate": {
         "additionalProperties": false,
         "description": "One leaf the title read considered: `{leaf, score, evidence_ref}`. `evidence_ref` is the title\ncrop the read used (the struct `EvidenceRef`, required; not the legacy string).",
@@ -7803,9 +7931,54 @@
         ]
       }
     },
+    "/ingest/export/notices": {
+      "post": {
+        "description": "POST /ingest/export/notices {notice_ids, profile, destination?, check_only?} -- the named\nnotices rendered through one profile. Gates, in order: a service caller is refused like the\nbatch route; `ingest:exportBatch` (403 `not_entitled_to_export_batch`); the profile resolves\n(422); `can_export:<profile>` (403 `not_entitled_to_export`, the profile is also absent from\nthe listing). Every notice is then PRE-FLIGHTED (`_export_preflight`: caller's cell domains,\nthe profile's `accepts`, the notice's state in the profile's `exportable_states`, uncorrected):\nif ANY is unexportable the answer is 422 `export_notices_unexportable` carrying\n`unexportable: [{notice_id, reason}]` (a `state_not_exportable` item also carries `state`)\nand NO FILE IS\nBUILT; `check_only: true` returns that same list with a 200 (empty when all are exportable)\nand builds nothing either way. Otherwise the file is built and ONE record is written: the\nactor (the authenticated principal, never the body), the notice ids, each notice's state at\nexport (`notice_states`, {notice_id: state}), the profile id and version used, the\ndestination. At most 500 notices.",
+        "operationId": "ingest_export_notices_route_ingest_export_notices_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportNoticesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Ingest Export Notices Route",
+        "tags": [
+          "ingest-export"
+        ]
+      }
+    },
     "/ingest/export/profiles": {
       "get": {
-        "description": "GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:\n`[{name, format, granularity, label}]`. An invalid profile is logged at ERROR and left out.\nAny authenticated caller (a name and a label are not notice content).",
+        "description": "GET /ingest/export/profiles -- the valid review-export profiles THE CALLER MAY USE, sorted\nby name: `[{name, format, granularity, label, grain, version, accepts, exportable_states,\ndedupe}]`. \"May use\"\nis the `can_export:<profile>` capability row (deny by default; Topaz down is 503, never an\nempty list), asked per profile; a profile the caller may not use is not listed. An invalid\nprofile is logged at ERROR and left out. Any authenticated caller; a service caller sees none.",
         "operationId": "ingest_export_profiles_route_ingest_export_profiles_get",
         "responses": {
           "200": {

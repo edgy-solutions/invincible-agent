@@ -394,6 +394,24 @@ capabilities:
       its own policy repository.
     grant_to_groups: [alert-processors]
 
+  can_export:part-list:
+    granted_by: seed
+    reason: >-
+      The generic part-list sample (policy/overlays/sample/exports/part-list.yaml) is exportable,
+      by notice ids, by alert-processors, like the review-export defaults. Deny-by-default: deleting
+      this row leaves the profile exportable by NOBODY. A deployment configures this in its own
+      policy repository.
+    grant_to_groups: [alert-processors]
+
+  can_export:part-list-reviewed:
+    granted_by: seed
+    reason: >-
+      The part-list (reviewed) sample (policy/overlays/sample/exports/part-list-reviewed.yaml)
+      is exportable, by notice ids, in the review state as well as promoted, by alert-processors,
+      like the part-list sample. Deny-by-default: deleting this row leaves the profile exportable
+      by NOBODY. A deployment configures this in its own policy repository.
+    grant_to_groups: [alert-processors]
+
   can_export:plan-answers:
     granted_by: seed
     reason: >-

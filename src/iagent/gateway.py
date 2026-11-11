@@ -14326,15 +14326,20 @@ def _export_decision_record(ingest_id: str):
             "message": f"the decision ledger did not answer: {type(exc).__name__}"})
 
 
-async def _export_notice_extraction(ingest_id: str, row: dict) -> dict:
-    """The extraction body of a PROMOTED, uncorrected notice, for the export; else the refusal.
-    409 `ingest_not_promoted` (body carries `status`); 409 `export_corrections_not_applied`; 503
-    `decision_ledger_unreachable`; then whatever `_extraction_body` refuses."""
+async def _export_notice_extraction(ingest_id: str, row: dict, states=None) -> dict:
+    """The extraction body of a notice in one of `states`, uncorrected, for the export; else the
+    refusal. `states` is a profile's `exportable_states`; None is the profile default
+    (`export_profiles.DEFAULT_EXPORTABLE_STATES`, promoted only), which the single and the batch
+    routes use. 409 `ingest_not_promoted` (body carries `status`); 409
+    `export_corrections_not_applied` (a RECORD rule, not a state: it applies whenever a decision
+    record carries steward edits); 503 `decision_ledger_unreachable`; then whatever
+    `_extraction_body` refuses."""
     from starlette.concurrency import run_in_threadpool
 
-    from . import ingest_status, promotion
+    from . import export_profiles, promotion
 
-    if row.get("status") != ingest_status.PROMOTED:
+    if row.get("status") not in (states if states is not None
+                                 else export_profiles.DEFAULT_EXPORTABLE_STATES):
         raise HTTPException(status_code=409, detail={
             "error": "ingest_not_promoted", "status": row.get("status"),
             "message": "only a promoted notice can be exported"})
@@ -14351,10 +14356,8 @@ async def _export_notice_extraction(ingest_id: str, row: dict) -> dict:
 def _export_render(profile, bodies: list) -> list:
     from . import export_profiles
 
-    out: list = []
     try:
-        for b in bodies:
-            out += export_profiles.render_rows(profile, b)
+        out = export_profiles.render_all(profile, bodies)
     except export_profiles.ExportBlocked as exc:
         raise HTTPException(status_code=422, detail={"error": "export_blocked", **exc.body()})
     return out
@@ -14363,7 +14366,8 @@ def _export_render(profile, bodies: list) -> list:
 def _export_response(profile, rows: list, filename: str, **extra) -> Response:
     from . import export_profiles
 
-    disp = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    disp = {"Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Export-Profile": profile.name, "X-Export-Profile-Version": str(profile.version)}
     if profile.format == "csv":
         return Response(export_profiles.to_csv(profile.outputs, rows),
                         media_type="text/csv; charset=utf-8", headers=disp)
@@ -14376,19 +14380,183 @@ def _export_response(profile, rows: list, filename: str, **extra) -> Response:
 @app.get("/ingest/export/profiles", tags=["ingest-export", MCP_TAG], dependencies=_mcp_door(),
          responses={200: {"model": list[ExportProfile]}, **MCP_REFUSAL_RESPONSES})
 async def ingest_export_profiles_route(current_user: User = Depends(get_current_user)):
-    """GET /ingest/export/profiles -- the valid review-export profiles, sorted by name:
-    `[{name, format, granularity, label}]`. An invalid profile is logged at ERROR and left out.
-    Any authenticated caller (a name and a label are not notice content)."""
+    """GET /ingest/export/profiles -- the valid review-export profiles THE CALLER MAY USE, sorted
+    by name: `[{name, format, granularity, label, grain, version, accepts, exportable_states,
+    dedupe}]`. "May use"
+    is the `can_export:<profile>` capability row (deny by default; Topaz down is 503, never an
+    empty list), asked per profile; a profile the caller may not use is not listed. An invalid
+    profile is logged at ERROR and left out. Any authenticated caller; a service caller sees none."""
     from . import export_profiles
 
+    caller = (current_user.authz_id or "").strip()
     out = []
     for name, p in sorted(export_profiles.load_profiles().items()):
         if isinstance(p, export_profiles.ProfileInvalid):
             logger.error("export profile %s is invalid: %s", name, p)
             continue
+        if _is_service_caller(caller) or not await _may_export_profile(
+                caller, p.name, "export_profiles"):
+            continue
         out.append({"name": p.name, "format": p.format, "granularity": p.granularity,
-                    "label": p.label})
+                    "label": p.label, "grain": p.grain, "version": p.version,
+                    "accepts": list(p.accepts) if p.accepts is not None else None,
+                    "exportable_states": list(p.exportable_states),
+                    "dedupe": list(p.dedupe)})
     return out
+
+
+class ExportNoticesRequest(_BaseModel):
+    """POST /ingest/export/notices. `extra="forbid"`: an `actor` (or any key not here) is refused
+    422; the actor is the authenticated principal, never a field."""
+    model_config = _ConfigDict(extra="forbid")
+    notice_ids: list[str]
+    profile: str
+    destination: Optional[str] = None
+    check_only: bool = False
+
+
+_export_record_log = logging.getLogger("iagent.audit.ingest_export")
+_ensure_the_audit_line_actually_ARRIVES(_export_record_log)
+
+
+def _record_export(record: dict) -> None:
+    """ONE line per export built: the actor, the notice ids, each notice's state at export
+    (`notice_states`), the profile id and the version USED, and the destination (or null). The only writer; a failure to record fails the export."""
+    _export_record_log.info("ingest_export %s", json.dumps(record, sort_keys=True))
+
+
+async def _export_notice_domain(ingest_id: str, row: dict, rec) -> Optional[str]:
+    """The domain a notice belongs to, for the caller's cell-domain scoping. A promoted notice
+    says it in its decision record (`recorded_domain`). A notice not yet promoted has no record:
+    its domain is the one its OPEN `document_promotion:<domain>` task is filed against (the same
+    audience the review page's steward acts on). None when neither says: a notice in no domain."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks, promotion
+
+    domain = promotion.recorded_domain(rec)
+    if domain is not None:
+        return domain
+    try:
+        state = await run_in_threadpool(
+            lambda: human_tasks.get_task_open_state(
+                _promotion_task_id(ingest_id, int(row.get("review_generation") or 0))))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("promotion task read failed for %s: %s", ingest_id, type(exc).__name__)
+        raise HTTPException(status_code=503, detail={
+            "error": "review_task_unreachable",
+            "message": f"the review task store did not answer: {type(exc).__name__}"}) from exc
+    if not (state and state.get("open") and state.get("audience")):
+        return None
+    try:
+        return promotion.domain_of(state["audience"])
+    except promotion.PromotionRefused:
+        return None
+
+
+async def _export_preflight(prof, notice_ids: list, current_user) -> tuple:
+    """`(bodies, unexportable, states)` for the named notices, BEFORE any file is built.
+    `unexportable` is `[{notice_id, reason}]`, every reason read off a row: `not_available` (no
+    such notice, or one outside the caller's entitlement-cell domains: the two are not told
+    apart, so the list does not confirm a notice exists), `kind_not_accepted` (the profile's
+    `accepts` does not name the row's content_kind), `state_not_exportable` (the notice's state,
+    as served, is not in the profile's `exportable_states`; the item also carries `state`),
+    `corrections_not_applied` (a record rule: the decision record carries steward edits),
+    `extraction_unreadable`. `states` is `{notice_id: state}` of every notice read, for the
+    export record. A ledger or store fault is 503, never a reason."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    domains = {c.domain for c in current_user.entitlements.cells}
+    bodies: list = []
+    bad: list = []
+    states: dict = {}
+    for ingest_id in notice_ids:
+        row = await run_in_threadpool(lambda i=ingest_id: ingest_status.get_row(i))
+        if row is None or row.get("kind") == ingest_status.EVENT:
+            bad.append({"notice_id": ingest_id, "reason": "not_available"})
+            continue
+        rec = await run_in_threadpool(lambda i=ingest_id: _export_decision_record(i))
+        if await _export_notice_domain(ingest_id, row, rec) not in domains:
+            bad.append({"notice_id": ingest_id, "reason": "not_available"})
+            continue
+        if prof.accepts is not None and row.get("content_kind") not in prof.accepts:
+            bad.append({"notice_id": ingest_id, "reason": "kind_not_accepted"})
+            continue
+        state = row.get("status")
+        if state not in prof.exportable_states:
+            bad.append({"notice_id": ingest_id, "reason": "state_not_exportable", "state": state})
+            continue
+        try:
+            bodies.append(await _export_notice_extraction(
+                ingest_id, row, states=prof.exportable_states))
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                raise
+            d = exc.detail if isinstance(exc.detail, dict) else {}
+            reason = {"export_corrections_not_applied": "corrections_not_applied"}.get(
+                d.get("error"), "extraction_unreadable")
+            bad.append({"notice_id": ingest_id, "reason": reason})
+            continue
+        states[ingest_id] = state
+    return bodies, bad, states
+
+
+@app.post("/ingest/export/notices", tags=["ingest-export"])
+async def ingest_export_notices_route(req: ExportNoticesRequest,
+                                      current_user: User = Depends(get_current_user)):
+    """POST /ingest/export/notices {notice_ids, profile, destination?, check_only?} -- the named
+    notices rendered through one profile. Gates, in order: a service caller is refused like the
+    batch route; `ingest:exportBatch` (403 `not_entitled_to_export_batch`); the profile resolves
+    (422); `can_export:<profile>` (403 `not_entitled_to_export`, the profile is also absent from
+    the listing). Every notice is then PRE-FLIGHTED (`_export_preflight`: caller's cell domains,
+    the profile's `accepts`, the notice's state in the profile's `exportable_states`, uncorrected):
+    if ANY is unexportable the answer is 422 `export_notices_unexportable` carrying
+    `unexportable: [{notice_id, reason}]` (a `state_not_exportable` item also carries `state`)
+    and NO FILE IS
+    BUILT; `check_only: true` returns that same list with a 200 (empty when all are exportable)
+    and builds nothing either way. Otherwise the file is built and ONE record is written: the
+    actor (the authenticated principal, never the body), the notice ids, each notice's state at
+    export (`notice_states`, {notice_id: state}), the profile id and version used, the
+    destination. At most 500 notices."""
+    from .authz.refusal import policy_refusal
+
+    caller = (current_user.authz_id or "").strip()
+    if _is_service_caller(caller) or not await _may_export_batch(caller, "export_notices"):
+        _audit_ingest_access("export_notices", "-", caller, "deny", "not_entitled")
+        raise policy_refusal(
+            "not_entitled_to_export_batch", policy_id="capability_grants:ingest:exportBatch",
+            missing_binding="can_invoke ingest:exportBatch",
+            message="exporting notices needs the ingest:exportBatch capability")
+    prof = _export_profile_or_422(req.profile)
+    if not await _may_export_profile(caller, prof.name, "export_notices", "-"):
+        _audit_ingest_access("export_notices", "-", caller, "deny", "not_entitled_to_profile")
+        raise policy_refusal(
+            "not_entitled_to_export", policy_id=f"capability_grants:can_export:{prof.name}",
+            missing_binding=f"can_invoke can_export:{prof.name}",
+            message=f"exporting through the {prof.name!r} profile needs the "
+                    f"can_export:{prof.name} capability")
+    ids = list(dict.fromkeys(i.strip() for i in req.notice_ids if isinstance(i, str) and i.strip()))
+    if not ids or len(ids) > _EXPORT_MAX_NOTICES:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_notice_ids_invalid",
+            "message": f"between 1 and {_EXPORT_MAX_NOTICES} distinct notice ids"})
+    bodies, bad, states = await _export_preflight(prof, ids, current_user)
+    if req.check_only:
+        return {"profile": prof.name, "version": prof.version, "notices": len(ids),
+                "unexportable": bad}
+    if bad:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_notices_unexportable", "unexportable": bad,
+            "message": f"{len(bad)} of {len(ids)} notices cannot be exported; no file was built"})
+    rows = _export_render(prof, bodies)
+    _record_export({"actor": caller, "notice_ids": ids, "notice_states": states,
+                    "profile": prof.name, "version": prof.version,
+                    "destination": req.destination})
+    return _export_response(
+        prof, rows, f"ingest-export.{prof.name}.{len(ids)}-notices.{prof.format}",
+        notices=len(ids), destination=req.destination)
 
 
 @app.get("/review-shapes", tags=["ingest-export"],
