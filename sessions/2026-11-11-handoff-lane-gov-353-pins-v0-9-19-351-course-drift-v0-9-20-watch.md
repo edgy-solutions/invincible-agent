@@ -1,25 +1,18 @@
 to: invincible-agent/lane/gov
 from: invincible-agent/lane/gov
 date: 2026-11-11
-re: #342, #343, #351 and #353 (v0.9.19) are merged; lane 74's tripwire is red on master; #360 (v0.9.20) is a draft until its count is in
+re: #342, #343, #351 and #353 (v0.9.19) are merged; lane 74's tripwire is red on master; #360 (v0.9.20) is ready at a9238af4 and adds no red
 supersedes: 2026-11-10-handoff-lane-gov-342-fin-dag-tools-343-sdk-v0-9-18-attestation.md
 
 ## Next step
 
-1. **#360, the v0.9.20 pin move, is a DRAFT.**
-   - Head `a9238af4`, branch `lane/gov-pin-mesh-v0-9-20`, cut from origin/master `8c3eb9af`.
-   - Worktree: `C:\Users\cnogr\git\wt\gov\pin-mesh-v0-9-19`.
-   - **Tests:** 87 files. Put the count in the PR body, and mark it ready (`gh pr ready 360`) only when green.
-     If another lane's seal is red, STOP and report; do not loosen it.
-   - Then send Lane 1 a packet (cc the architect) with the PR, the head and the count.
-   - It is on the train only if it lands before Thursday 2026-11-12 12:00Z.
-   - **What v0.9.20 is:** tag `c081b36b`, which peels to `1aa64239`. It touches `transport_auth.py` only:
-     - RS256 only.
-     - `iss` and `aud` are checked against `MESH_JWT_ACCEPTED_ISSUERS` / `_AUDIENCES`; an empty list refuses.
-     - `MESH_JWT_JWKS_URL` gets one cached client per URL.
-     - The dependency becomes `pyjwt[crypto]`.
-   - **In OBSERVE**, a failed token comes back as `CallerIdentity(None, False, reason)`, so a person-scoped
-     read fails closed. A list mismatch therefore shows up as refusals even with `require: false`.
+1. **#360 (v0.9.20 pin) is READY at `a9238af4`.** It was held as a draft until the count was in.
+   - Lane 1 merges it by sha. Packet (placed): `sessions/2026-11-11-packet-to-lane-01-cc-architect-from-gov-360-v0-9-20-pin-ready-no-new-red.md`.
+   - **Count:** 87 files; 1587 passed, 10 failed, 14 skipped, 4 xfailed.
+   - **Control:** the same 10 fail on master `8c3eb9af` with v0.9.19 (10 failed, 96 passed both ways), so the pin adds no red.
+   - **Control worktree:** `wt\gov\ctl-v0919` (detached, own venv). Remove it.
+   - **Watch:** the merge, then the roll's post-roll check. Under OBSERVE, a failed token still makes `authz_id` None, so a list mismatch shows as person-scoped refusals.
+   - **Branch:** `lane/gov-pin-mesh-v0-9-20` in worktree `C:\Users\cnogr\git\wt\gov\pin-mesh-v0-9-19`.
 2. **Lane 74's provenance tripwire is still red on master** (see Tests). Watch for 74's answer.
 3. **Remove the worktrees** once each is clean, `git cherry` shows no `+`, and `is-ancestor` holds.
    Use `git worktree remove --force`, in the background:
