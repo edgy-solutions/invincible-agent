@@ -215,6 +215,19 @@ cortexBff:
   objects (until then grant_sync refuses the file, exit 3, as it did for ev_fixture); Chris syncs the
   three grants and eleven programs to Topaz. The asset URNs are by analogy with ev_fixture and are
   unverified until the live leg's FIRST leg passes.
+- **The fleet's SDK pin moves from v0.9.17 to v0.9.18; `pcn` and `pdn` declare `attestation: self`** (gov;
+  the architect, 11-10: "The pcn/pdn 'attestation: self' rows ride that PR"). All 17 pyprojects, their locks
+  (`8d1ee304` → `2f47e9ee`, iagent-mesh alone in each) and `meshSdkVersion` move together.
+  - **What v0.9.18 carries:** one field, `ContentKindRegistration.attestation: "self" | "second_party" | None`.
+    `extra="forbid"` is why the two overlay rows ship in the same commit as the pin. Between the tags only
+    `iagent_mesh/ingest.py` changes, and the dependencies do not.
+  - **Not in v0.9.18:** the ActionRecord schema corrections and ImpactRow provenance the dispatch expected.
+    Neither is in the tag nor on any SDK branch; ca's packet says the DataProvenance reshape waits on an
+    architect ruling. They need a later SDK release and their own pin.
+  - **Not yet read:** `promotion._declared_attestation` still returns `None`, so every kind gets the ruled
+    default (`self`) whatever the row says. Wiring it to the row is Lane 1's.
+  - **Closed network:** the package calls itself 0.9.18, so `meshSdkSource: index` serves this pin.
+  - **The roll:** every engine image changes (the lock), and `meshSdkVersion` changes in values.
 
 ## 0.4.84 — 2026-11-10
 
