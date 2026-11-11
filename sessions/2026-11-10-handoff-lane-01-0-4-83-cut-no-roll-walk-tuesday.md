@@ -37,6 +37,19 @@ ratchet passed (24).
   - Key fact: the BFF refuses every token at 0.4.85 unless `cortexBff.auth` lists are set. Work's external IdP needs
     the `audience-bff` mapper by hand first.
   - **At the cut:** re-read every key at the cut sha, add the cortex digest, and re-issue the packet.
+  - **Revision 2 is placed (same file).** It carries the architect's three additions: the `no_principal` check, the
+    review-page check and a rollback section, plus "step 1 can be done now". Three findings came with it, sent to the
+    architect in `2026-11-11-packet-to-architect-from-lane-01-work-packet-rev-2-three-findings-seed-job-and-no-principal.md`:
+    1. Under observe, the gateway logs no `no_principal` line; the check counts `IDENTITY_WOULD outcome=refuse` as an
+       upper bound.
+    2. cortex `31a769b` offers the review-card export only on promoted. I told cortex and will not pin a failing image
+       without the architect's word.
+    3. The seed job validates `can_export:` rows against the IMAGE's profiles only, so:
+       - work must add `can_export:part-list` and `can_export:part-list-reviewed` rows at 0.4.85;
+       - work cannot add a new profile name;
+       - those rows must be reverted on rollback.
+
+       The fix I proposed is the seed job reading the overlay dirs; it is undecided and not on 0.4.85.
 
 **DISPATCH (after the 0.4.85 cut; nothing rides 0.4.85): manufacturing traceability.** The file is the untracked
 `dispatch-mfg-trace.md` in the master tree; it is the architect's, so do not commit it. Lane 1's part, from Friday 11-13:
