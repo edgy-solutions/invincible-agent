@@ -1,29 +1,56 @@
 to: invincible-agent/lane/gov
 from: invincible-agent/lane/gov
 date: 2026-11-11
-re: #342, #343, #351 and #353 (v0.9.19) are merged; lane 74's provenance tripwire is red on master; next is ca's v0.9.20
+re: #342, #343, #351 and #353 (v0.9.19) are merged; lane 74's tripwire is red on master; #360 (v0.9.20) is a draft until its count is in
 supersedes: 2026-11-10-handoff-lane-gov-342-fin-dag-tools-343-sdk-v0-9-18-attestation.md
 
 ## Next step
 
-1. **Watch for v0.9.20** (ca's token-validation release):
-   `git -C C:/Users/cnogr/git/iagent-mesh-sdk ls-remote --tags origin 'v0.9.20*'`.
-   - When it is tagged, run `git diff --stat v0.9.19 v0.9.20` and read what it carries.
-   - Open its pin move the same way as #353, on a branch off `origin/master`: 17 pyprojects, 17 locks (iagent-mesh alone), `meshSdkVersion` and its comment, the `option_deciders.yaml` note, and a changelog bullet.
-   - Run its tests before asking for the merge.
-   - **On the train only if it lands before Thursday 2026-11-12 12:00Z.** Lane 1 needs it for the engines' refusal branch.
-2. **All four PRs merged on 11-11:**
-   - #343 at `8987d487` (03:57Z)
-   - #351 at `a74b927a` (04:01Z)
-   - #342 at `c46c38e0` (04:05Z)
-   - #353 at `2f978413` (04:19Z)
-   Master pins v0.9.19 in 17 pyprojects. Lane 74's tripwire red rides along (see Tests); watch for 74's answer.
-3. **Remove the worktrees** (status clean, `git cherry` shows no `+`, `is-ancestor` holds), with `git worktree remove --force` in the background. `pin-mesh-v0-9-19` is detached at master for the confirming run; reattach it or remove it.
-   - #342: `C:\Users\cnogr\git\wt\gov\fin-dag-tools`
-   - #343: `C:\Users\cnogr\git\wt\gov\pin-mesh-v0-9-18`
-   - #351: `C:\Users\cnogr\git\wt\gov\course-drift`
-   - #353: `C:\Users\cnogr\git\wt\gov\pin-mesh-v0-9-19`
-   - The doc-tools detached worktrees `wt\gov\dt-pin` and `wt\gov\dt-main`: remove them with `git -C C:/Users/cnogr/git/doc-tools worktree remove`.
+1. **#360, the v0.9.20 pin move, is a DRAFT.**
+   - Head `a9238af4`, branch `lane/gov-pin-mesh-v0-9-20`, cut from origin/master `8c3eb9af`.
+   - Worktree: `C:\Users\cnogr\git\wt\gov\pin-mesh-v0-9-19`.
+   - **Tests:** 87 files. Put the count in the PR body, and mark it ready (`gh pr ready 360`) only when green.
+     If another lane's seal is red, STOP and report; do not loosen it.
+   - Then send Lane 1 a packet (cc the architect) with the PR, the head and the count.
+   - It is on the train only if it lands before Thursday 2026-11-12 12:00Z.
+   - **What v0.9.20 is:** tag `c081b36b`, which peels to `1aa64239`. It touches `transport_auth.py` only:
+     - RS256 only.
+     - `iss` and `aud` are checked against `MESH_JWT_ACCEPTED_ISSUERS` / `_AUDIENCES`; an empty list refuses.
+     - `MESH_JWT_JWKS_URL` gets one cached client per URL.
+     - The dependency becomes `pyjwt[crypto]`.
+   - **In OBSERVE**, a failed token comes back as `CallerIdentity(None, False, reason)`, so a person-scoped
+     read fails closed. A list mismatch therefore shows up as refusals even with `require: false`.
+2. **Lane 74's provenance tripwire is still red on master** (see Tests). Watch for 74's answer.
+3. **Remove the worktrees** once each is clean, `git cherry` shows no `+`, and `is-ancestor` holds.
+   Use `git worktree remove --force`, in the background:
+   - `wt\gov\fin-dag-tools`, `pin-mesh-v0-9-18`, `course-drift`;
+   - `pin-mesh-v0-9-19`, after #360 merges;
+   - the doc-tools worktrees `wt\gov\dt-pin` and `dt-main`, via `git -C C:/Users/cnogr/git/doc-tools worktree remove`.
+4. **After #356 merges and after the cut:** gov's ambient-env follow-up PR on
+   `test_can_export_capability_rail.py` (see the #356 section).
+5. **mfg-trace, after the cut:** see the next section.
+
+## The architect's mfg-trace answers (11-11, verbatim)
+
+"gov: 1. The census and capability rows belong to the lane that adds the verbs (the 10-27 ruling). Yours are
+the rulings-register rows and the personal-data check. 2. Withholding is built in fin's shared reader. You
+confirm that the rail's rows and holds: grant express it, and add the sample overlay's personal-data dimension
+row when the reader lands. 3. ADR-0066 is reserved and unwritten (fin drafts it now). ADR-0069 is Lane 1's
+pattern draft, not yet in the repo. 4. Approve or reject your edited test in #356 today. Then the v0.9.20 pin
+move, as a draft until its test count is in."
+
+- **Gov's part:**
+  - the rulings-register rows for the verbs (`docs/rulings/README.md`, R-NNN);
+  - the operator-column personal-data check against the dimensions rail.
+- **Not gov's:** census and capability rows.
+- **When fin's shared reader lands:**
+  - confirm that the `policy/classification/dimensions.yaml` rows and the `holds:<dimension>:<value>` grants
+    express the withholding;
+  - add the sample overlay's personal-data dimension row (a `set` row under `policy/overlays/sample/`).
+- **Today:**
+  - the base ships `dimensions: []`, `boundaries: []` and `dimension_holders: []`;
+  - no code reads the file yet.
+- The three questions drafted earlier are answered by this; they were not sent.
 
 ## The dispatches, verbatim (11-11)
 
@@ -89,7 +116,4 @@ supersedes: 2026-11-10-handoff-lane-gov-342-fin-dag-tools-343-sdk-v0-9-18-attest
     - add a review-overlay arm to test_2 (the variable is ADDED);
     - restore the exact note string.
   - The seal for the fix is the same ambient run going green, with the unfixed file red as its control.
-- **The mfg-trace dispatch** (`dispatch-mfg-trace.md`, master tree root, untracked) starts after the 0.4.85 cut. Gov's part is census and rulings-register rows for the verbs, plus the operator column checked against the dimensions rail.
-  - The rail is validator-only and ships no rows, so nothing yet withholds a column per caller.
-  - ADR-0066 and ADR-0069 are under no ref.
-  - Three questions are drafted for the architect (which census; who builds the withholding; where the two ADRs are). Chris has not yet said whether to send them.
+- **mfg-trace:** answered by the architect; see the section above.
