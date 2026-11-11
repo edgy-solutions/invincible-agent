@@ -17,6 +17,71 @@ automation tags on merge." Every entry below goes under this heading until the c
   The `<5` cap is Lane 1's: unbounded, the lock resolves 5.2.0 and moves opentelemetry with it. The
   lock change is langfuse alone. Engine images that build from the root lock pick it up on the next
   build; nothing in the chart moves.
+- **The walkers join `obsolescence-deciders`** (`policy/users.yaml`, `policy/groups.yaml`,
+  `tests/test_oidc_broker_chart.py`; gov). The architect ruled on 2026-11-10: "the walkers mirror alice, so
+  erin and chris join obsolescence-deciders in the same PR that fixes it". #314 gave the group to alice
+  only. The group has no persona.domain cell and no capability row grants it, so the walker seal counts it
+  as part of the persona set the walkers mirror. Its arms were therefore red on master and on 0.4.84. The
+  seal now counts 12 mirrored groups, citing the ruling. These are fixture grants, not a claim about who
+  chooses a resolution in production. **Before this version rolls,** Chris runs topaz_sync by hand for
+  erin's and chris's membership (the architect, 11-10). The realm import carries no groups, so nothing
+  else needs syncing.
+
+- **A dataset row can be drawn as `MULTI_SERIES`: several series over periods, read from the
+  row's own asset.** Its `inputs.dataset` names `scope`, `period`, an optional `status` column,
+  `per_period` (columns summed over the program's rows at each period) and `per_program` (columns
+  holding one value across the program). The module declares `READS` and `SERIES`, and the loader
+  holds the row to both. `render.series` and `render.target` are validated on the SDK's
+  `MeasureSeries` and `MeasureSeriesReference` (iagent-mesh v0.9.15, which the fleet already
+  pins); a target may name a series (`target: {series: bac}`). The envelope serves
+  `status_period` from the data. The kind is still `dataset`, so the grant check, the CDRL
+  refusal and the package refusal cover these rows unchanged. A column or status that varies
+  within the program is a 502 with the new rule `varies_within_scope`.
+- **Two rows, `fin_ev_cumulative` and `fin_eac_trend`, are coded to the EV contract,** whose
+  `status_period` and `eac_reported` now say `produced_since: "0.12.0"`. They ship as **test
+  fixtures** (`tests/finance/fixtures/measure_verbs/`), not samples: the live asset has neither
+  column until dag-tools 0.12.0 materializes, and a shipped row would answer 502 `missing_column`.
+  They move to `policy/overlays/sample/` with that pin.
+- **The roll:** engine-fin's image changes; nothing in the values or pod templates does. The
+  two EV rows register no verb until they ship as samples.
+- **The fleet moves to iagent-mesh v0.9.17** (17 pyprojects, 17 locks, `domainBroker.meshSdkVersion`;
+  gov; the architect, 11-08: "the v0.9.16 fleet pin is gov's (same as 0.9.15; one PR)"; 11-10: "v0.9.17
+  fleet pin PR when the tag exists").
+  - **What moves:** the root pyproject changes two lines. Every lock names the tag's commit (`8d1ee304`),
+    and none still names v0.9.15's. Sixteen locks change 3 lines and the root lock 4, the same shape as
+    the v0.9.15 move; the root lock keeps the langfuse floor above. `meshSdkVersion`'s closed-network
+    comment and `option_deciders.yaml`'s measured note name the pin.
+  - **Why:** ADR-0065 D (Lane 1's `obsolescence_resolution` row) puts `options` on its decide step. v0.9.15's
+    step model forbids unknown fields and has no `options`. v0.9.16 added `HumanAwaitStep.options` and
+    `lifecycle_status`, and v0.9.17 reshapes `ImpactRow` to the ruled nine fields (ADR-0065 §4). The fleet
+    skips v0.9.16, whose three-field `ImpactRow` is superseded.
+  - **What the SDK changes:** only additions; between the two tags nothing under `iagent_mesh/` is deleted,
+    and its dependencies are unchanged. engine-o's `where_used.py` keeps its local `ImpactRow`; moving it
+    onto the SDK's is lane 74's.
+  - **Closed network:** the package calls itself 0.9.17, so `meshSdkSource: index` serves this pin.
+  - **Not in this pin: `attestation` on the content-kind row.** v0.9.17 was tagged without it, so the
+    field rides v0.9.18, and so do the `attestation: self` rows on `pcn` and `pdn`: an overlay row that
+    declares the field does not load on an SDK without it.
+- **The maintenance action record the runner writes at `released` now meets the SDK's `ActionRecord` on the
+  writer side (architect ruling, 2026-11-10).** Every `work_order.task_refs[].graph_uri` carries the graph URI
+  of the cited data-module node (fault-isolation, remove and install procedure, planning-interval), read off
+  the declared `s1000d_fault_walk` by two new selects (and the planning module's node on its existing one), returned under `node_uris`, so `citations` keeps
+  the shape the cross-repo contract pins; it is never null and never invented, and a walk that finds no node
+  refuses the render. `provenance.manual_nodes_consulted` is a flat list of strings (the two remove/install
+  modules rendered as `.0` and `.1`, as `task_refs` already did). The stored `9418f245` record is not
+  rewritten. `work_order.option`, `work_order.readiness`, `provenance.case_definition`, `provenance.case_id`
+  and `provenance.emitted_by` are unchanged and wait on SDK v0.9.19; the new seal
+  `tests/test_the_written_action_record_meets_the_pinned_schema.py` tolerates `extra_forbidden` on exactly
+  those fields only while the pinned model does not declare them.
+
+- **fin's `data_provenance` says its ticket is pending** (#319). Ruled 2026-11-08: ADR-0065:133
+  (URN, as-of and ticket id) stands and is marked unmet. The broker's ticket has carried
+  `ticket_id`, `issued_at` and `as_of` since dag-tools 0.13.0 (#31; saf's seal in #330), but
+  engine-fin pins its own dag-tools (v0.10.0) and its client discards the ticket. So an asset
+  answer now reads `<banner> (ticket: pending) Source: <urn>` and claims no as-of. The URN stays
+  last, so the live variance leg's suffix check is unchanged. The as-of/ticket-id seal stays a
+  strict xfail, and its ticket pattern now refuses `pending`. The roll: engine-fin's image
+  changes; nothing in the values or pod templates does.
 
 ## 0.4.84 — 2026-11-10
 
