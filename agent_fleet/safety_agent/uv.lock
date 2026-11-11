@@ -541,8 +541,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.19"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.19#ef7a6f358c981adf7eedf7cb773f98250ecb7177" }
+version = "0.9.20"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20#1aa642393dedbc75741377042103a9def069ff6c" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
@@ -550,7 +550,7 @@ dependencies = [
     { name = "nest-asyncio" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pyjwt" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pyyaml" },
 ]
 
@@ -1082,7 +1082,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypercorn" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.19" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20" },
     { name = "pydantic" },
     { name = "rdflib" },
 ]
