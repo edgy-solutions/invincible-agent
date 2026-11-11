@@ -228,6 +228,16 @@ cortexBff:
     default (`self`) whatever the row says. Wiring it to the row is Lane 1's.
   - **Closed network:** the package calls itself 0.9.18, so `meshSdkSource: index` serves this pin.
   - **The roll:** every engine image changes (the lock), and `meshSdkVersion` changes in values.
+- **The `course` overlay row mirrors the doc-tools commit the sandbox runs; `.github/doc-tools.ref` moves
+  to it** (gov; the architect, 11-10: "Bump .github/doc-tools.ref to the doc-tools commit that sandbox
+  actually runs, read from helm ... not to doc-tools main"). The `doc-tools` release pins its image by
+  digest, and that image's `org.opencontainers.image.revision` is `728afaf5`, doc-tools #195's merge. The
+  ref moves `3f797294` → `728afaf5`. In the same commit, `course`'s passes replace
+  `training.baml::ExtractConcepts` with `training.baml::ExtractSectionConcepts` and `concepts.normalise`,
+  matching that commit's registry row.
+  - **Drift:** both legs are green locally, the pinned leg at `728afaf5` and the main leg at `0f0e3db`
+    (17 passed each). As a control, master's row against the pin fails the passes arm.
+  - **The roll:** nothing changes. This is the platform's mirror of what doc-tools already serves.
 
 ## 0.4.84 — 2026-11-10
 
