@@ -180,6 +180,74 @@ cortexBff:
   nothing in the values or pod templates changes. The sandbox has `FIN_DATASET_URN` set, so at the
   roll its built-ins, packages and CDRLs read the asset as the caller, except funding, which stays
   on the seed by its row.
+- **The where-used fixture carries PCN26-182's two parts, so a notice and where-used join on a part**
+  (`policy/overlays/sample/product_structure/where_used.yaml`, `tests/test_where_used_joins_the_notice_parts.py`;
+  74, #339). PCN26-182 is a synthetic notice OpenDDIL built (Chris, 2026-11-10). Its parts, 5530-182 and
+  5530-183, are now two identities in the synthetic BOM, marked synthetic like the rest. Each resolves by
+  the number the notice prints and by the component IRI the notice graph carries. 5530-182 sits under
+  SUB-B: qty per E1 12 (ALPHA), E2 6 (BRAVO), and E3 is never served. 5530-183 is E1 only, at 2. The
+  existing part's rows (26, 12) do not move. **The roll:** the fixture ships in every agent image
+  (`Dockerfile.agent` copies `policy/overlays/`); nothing in the values or pod templates changes. Through
+  0.4.84 the demo's where-used beat asks about the fixture part `0SYN1:PN-1001`; from this version it can
+  ask about 5530-182. Whether a question grounded on the notice's Component reaches the verb is #341's.
+
+- **fin's live leg: the time-phased rows ship, and the sandbox carries refusal probes** (approved
+  2026-11-10 as one PR). `fin_ev_cumulative` and `fin_eac_trend` move from the test fixtures to
+  `policy/overlays/sample/measure_verbs/`, menus included. Four probe rows go in a new sandbox-only
+  overlay, `policy/overlays/sandbox/measure_verbs/`, each reading one of dag-tools 0.13.0's
+  planted-refusal assets (`ev_refusal_fixture`, `ev_refusal_missing_column`,
+  `ev_refusal_wrong_type`); they carry no menu. Their rail is all `granted_by: seed`,
+  `ratified_by: owner`: alice reads the three assets, the eleven `NP-PLANT-*` programs are
+  members-only for alice, and erin joins `NP-PLANT-NONE` as the asset gate's refusal control. The
+  offline seal `tests/finance/test_the_refusal_probes_refuse_as_derived.py` runs every planted case
+  through the real route; the live leg `tests/sandbox_e2e/test_the_refusal_fixture_refuses_live.py`
+  skips, naming what is missing, until the roll. Four planted cases answer 200 today and are owed a
+  refusal declared in the dataset contract (ruled 2026-11-10, a follow-up PR); until it lands each
+  of their legs is a strict xfail asserting the refusal, offline and live, never a pass.
+  `wrong_type`: dataset readers cast level and scope columns to String.
+  `duplicate_work_package_period`: no reader checks a key, so the duplicated row is summed twice.
+  `program_name_not_unique` and `work_package_in_two_accounts` repeat no row; no reader reads the
+  column that varies.
+- **The roll (live leg):** engine-fin's image changes (the new overlay directories ride the
+  `policy/overlays/` COPY). `values-sandbox.yaml` changes: engine-fin's `MEASURE_VERB_OVERLAY_DIRS`
+  gains `/app/policy/overlays/sandbox/measure_verbs`. Before the live leg can pass: Lane 1
+  materialises the `mesh_demo_refusal` group and the catalog sync gives the three assets directory
+  objects (until then grant_sync refuses the file, exit 3, as it did for ev_fixture); Chris syncs the
+  three grants and eleven programs to Topaz. The asset URNs are by analogy with ev_fixture and are
+  unverified until the live leg's FIRST leg passes.
+- **The fleet's SDK pin moves from v0.9.17 to v0.9.18; `pcn` and `pdn` declare `attestation: self`** (gov;
+  the architect, 11-10: "The pcn/pdn 'attestation: self' rows ride that PR"). All 17 pyprojects, their locks
+  (`8d1ee304` → `2f47e9ee`, iagent-mesh alone in each) and `meshSdkVersion` move together.
+  - **What v0.9.18 carries:** one field, `ContentKindRegistration.attestation: "self" | "second_party" | None`.
+    `extra="forbid"` is why the two overlay rows ship in the same commit as the pin. Between the tags only
+    `iagent_mesh/ingest.py` changes, and the dependencies do not.
+  - **Not in v0.9.18:** the ActionRecord schema corrections and ImpactRow provenance the dispatch expected.
+    Neither is in the tag nor on any SDK branch; ca's packet says the DataProvenance reshape waits on an
+    architect ruling. They need a later SDK release and their own pin.
+  - **Not yet read:** `promotion._declared_attestation` still returns `None`, so every kind gets the ruled
+    default (`self`) whatever the row says. Wiring it to the row is Lane 1's.
+  - **Closed network:** the package calls itself 0.9.18, so `meshSdkSource: index` serves this pin.
+  - **The roll:** every engine image changes (the lock), and `meshSdkVersion` changes in values.
+- **The `course` overlay row mirrors the doc-tools commit the sandbox runs; `.github/doc-tools.ref` moves
+  to it** (gov; the architect, 11-10: "Bump .github/doc-tools.ref to the doc-tools commit that sandbox
+  actually runs, read from helm ... not to doc-tools main"). The `doc-tools` release pins its image by
+  digest, and that image's `org.opencontainers.image.revision` is `728afaf5`, doc-tools #195's merge. The
+  ref moves `3f797294` → `728afaf5`. In the same commit, `course`'s passes replace
+  `training.baml::ExtractConcepts` with `training.baml::ExtractSectionConcepts` and `concepts.normalise`,
+  matching that commit's registry row.
+  - **Drift:** both legs are green locally, the pinned leg at `728afaf5` and the main leg at `0f0e3db`
+    (17 passed each). As a control, master's row against the pin fails the passes arm.
+  - **The roll:** nothing changes. This is the platform's mirror of what doc-tools already serves.
+- **engine-fin's dag-tools pin moves from v0.10.0 to v0.13.0** (`agent_fleet/finance_agent/pyproject.toml`
+  and its lock; gov; the architect, 11-10: "engine-fin's dag-tools pin from v0.10.0 to v0.13.0, so fin can
+  read the ticket through"). v0.13.0 is the release the root already takes from PyPI (`edgy-dag-tools==0.13.0`).
+  At that tag the broker stamps each ticket with its id, issued-at and as-of (`ticket_identity`), and the
+  client adds `get_dataframe_with_ticket` beside `get_dataframe`. Those are steps 1 and 2 of fin's 11-07
+  plan. Step 3, rendering the as-of and ticket id on fin's provenance line and dropping its strict xfail,
+  is fin's own PR on this pin. The lock change is edgy-dag-tools alone (`d8a23d3e` → `bed53b9c`). Between
+  the tags, dag-tools' base dependencies are unchanged; the one addition is `s3fs` on the `broker` extra,
+  which engine-fin does not install. The root pyproject's note on the two pins names the new tag.
+  **The roll:** engine-fin's image changes; nothing in the values or pod templates does.
 - **Every engine is served the BFF's token lists (chart half).** All 16 engine Deployments and
   mesh-registrar get `MESH_JWT_ACCEPTED_ISSUERS` and `MESH_JWT_ACCEPTED_AUDIENCES` (the same lists as
   `cortexBff.auth`, one copy in values; empty stays empty and refuses everything) and `MESH_JWT_JWKS_URL`

@@ -197,10 +197,11 @@ def test_EVERY_declared_verb_leads_with_a_figure_and_not_with_a_pointer(monkeypa
     declared = fmain._load_declared()
     assert declared
     # A dataset row answers only a bearer holding the asset grant, so it is served, and its headline
-    # asserted, in its own test (test_variance_decomposition_*: the brief leads with its verdict).
-    # Named here, so a new dataset row is a red until a test serves it.
+    # asserted, in its own test (test_variance_decomposition_* and test_a_dataset_series_row_*:
+    # the brief leads with its verdict). Named here, so a new dataset row is a red until a test serves it.
     dataset = {fn for fn, r in declared.items() if r.kind == measure_verbs.KIND_DATASET}
-    assert dataset == {"fin_flow_acwp", "fin_flow_eac_variance"}, dataset
+    assert dataset == {"fin_flow_acwp", "fin_flow_eac_variance",
+                       "fin_ev_cumulative", "fin_eac_trend"}, dataset
     monkeypatch.setattr(fmain, "DECLARED", declared)
     monkeypatch.setattr(fmain, "can_view_program", lambda program, caller_id, **kw: True)
     with TestClient(app) as c:
