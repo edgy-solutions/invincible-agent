@@ -174,15 +174,10 @@ spec:
             {{- end }}
             # Token acceptance (src/iagent/auth.py verified_claims). Always rendered and after cortexBff.env, so
             # a hand-set env cannot widen it; an empty list refuses every token.
-            {{- $bffAuth := (.Values.cortexBff.auth | default dict) }}
-            {{- $bffIss := list }}
-            {{- range ($bffAuth.acceptedIssuers | default list) }}{{- $bffIss = append $bffIss (tpl (toString .) $ | trim) }}{{- end }}
-            {{- $bffAud := list }}
-            {{- range ($bffAuth.acceptedAudiences | default list) }}{{- $bffAud = append $bffAud (tpl (toString .) $ | trim) }}{{- end }}
             - name: BFF_JWT_ACCEPTED_ISSUERS
-              value: {{ join "," $bffIss | quote }}
+              value: {{ include "invincible-agent.acceptedList" (dict "root" $ "key" "acceptedIssuers") | quote }}
             - name: BFF_JWT_ACCEPTED_AUDIENCES
-              value: {{ join "," $bffAud | quote }}
+              value: {{ include "invincible-agent.acceptedList" (dict "root" $ "key" "acceptedAudiences") | quote }}
             {{- if $ov }}
             # policyOverlay: the delivered dirs. LAST, as in engines.yaml: a container env beats the
             # configmap's envFrom, and the last duplicate beats `cortexBff.env`, so a hand-set path
