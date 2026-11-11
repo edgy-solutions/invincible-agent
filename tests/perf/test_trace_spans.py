@@ -1,13 +1,18 @@
-"""lane/perf: one trace per answer. Fake Langfuse client throughout; no network."""
+"""lane/perf (#327): spans for the BFF, the supervisor and engine-docs /explain on
+provenance-telemetry 0.2.1. In-memory exporter throughout; no network."""
 from __future__ import annotations
 
+import ast
 import asyncio
-import contextlib
+import inspect
+import itertools
 import re
 import sys
 from pathlib import Path
 
 import pytest
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 
 ROOT = Path(__file__).resolve().parents[2]
 for _p in (str(ROOT / "src"), str(ROOT / "baml_shared")):
@@ -16,269 +21,283 @@ for _p in (str(ROOT / "src"), str(ROOT / "baml_shared")):
 
 from iagent import trace_spans as ts  # noqa: E402
 
-TID = "a" * 32
-SID = "b" * 16
-TP = f"00-{TID}-{SID}-01"
+_n = itertools.count()
+PARENT = "00f067aa0ba902b7"
 
 
-class FakeSpan:
-    def __init__(self, calls, kwargs):
-        from opentelemetry import trace as t
-        self.kwargs = kwargs
-        self.trace_id = (kwargs.get("trace_context") or {}).get("trace_id", "c" * 32)
-        self.id = "d" * 16
-        self.ended = False
-        self.updates = []
-        self._otel_span = t.NonRecordingSpan(t.SpanContext(
-            int(self.trace_id, 16), int(self.id, 16), False))
-        self._calls = calls
-
-    def update(self, **kw):
-        self.updates.append(kw)
-
-    def end(self):
-        self.ended = True
-        self._calls.append("end")
-
-
-class FakeClient:
-    def __init__(self, raise_on=()):
-        self.calls = []
-        self.spans = []
-        self.raise_on = set(raise_on)
-
-    def _maybe(self, what):
-        if what in self.raise_on:
-            raise RuntimeError(f"fake {what} failure")
-
-    def create_trace_id(self, *, seed=None):
-        self._maybe("create_trace_id")
-        return "e" * 32
-
-    def start_observation(self, **kw):
-        self._maybe("start")
-        self.calls.append(("start_observation", kw))
-        sp = FakeSpan(self.calls, kw)
-        self.spans.append(sp)
-        return sp
-
-    @contextlib.contextmanager
-    def start_as_current_observation(self, **kw):
-        self._maybe("start")
-        self.calls.append(("start_current", kw))
-        sp = FakeSpan(self.calls, kw)
-        self.spans.append(sp)
-        try:
-            yield sp
-        finally:
-            self.calls.append("exit")
-
-    def flush(self):
-        self.calls.append("flush")
-        self._maybe("flush")
+@pytest.fixture(autouse=True)
+def _isolate_sdk_singletons():
+    from langfuse._client.resource_manager import LangfuseResourceManager
+    LangfuseResourceManager.reset()
+    yield
+    LangfuseResourceManager.reset()
 
 
 @pytest.fixture
-def enabled(monkeypatch):
-    import langfuse
-    client = FakeClient()
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
-    monkeypatch.setattr(langfuse, "get_client", lambda *a, **k: client)
-    attrs = []
+def mem(monkeypatch):
+    from langfuse import Langfuse
+    exp = InMemorySpanExporter()
+    pk = f"pk-test-327-{next(_n)}"
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", pk)
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+    monkeypatch.delenv("DEPLOY_ENV", raising=False)
+    client = Langfuse(public_key=pk, secret_key="sk-test", base_url="http://localhost:1",
+                      span_exporter=exp)
+    yield client, exp
 
-    @contextlib.contextmanager
-    def fake_propagate(**kw):
-        attrs.append(kw)
-        yield
 
-    monkeypatch.setattr(langfuse, "propagate_attributes", fake_propagate)
-    client.attrs = attrs
-    return client
+def spans_of(client, exp):
+    client.flush()
+    return exp.get_finished_spans()
+
+
+def one(spans, name):
+    found = [s for s in spans if s.name == name]
+    assert len(found) == 1, [s.name for s in spans]
+    return found[0]
+
+
+class Cfg:
+    def __init__(self, trace_id="", parent_span_id="", session_id=""):
+        self.trace_id = trace_id
+        self.parent_span_id = parent_span_id
+        self.session_id = session_id
 
 
 @pytest.fixture
-def disabled(monkeypatch):
-    import langfuse
-    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
-    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
-
-    def boom(*a, **k):
-        raise AssertionError("langfuse touched while disabled")
-
-    monkeypatch.setattr(langfuse, "get_client", boom)
+def flushes(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ts, "flush", lambda *a, **k: calls.append(1))
+    return calls
 
 
-# 1. traceparent round trip -------------------------------------------------
+# 1. request_trace_id ------------------------------------------------------------------
 
-def test_traceparent_round_trip():
-    assert ts.traceparent_for(TID, SID) == TP
-    assert ts.parse_traceparent(TP) == {"trace_id": TID, "parent_span_id": SID}
-
-
-@pytest.mark.parametrize("bad", [
-    "", "garbage", f"01-{TID}-{SID}-01", f"00-{'0' * 32}-{SID}-01",
-    f"00-{TID}-{'0' * 16}-01", f"00-{TID[:-1]}-{SID}-01", f"00-{TID}-{SID[:-1]}-01",
-    f"00-{'G' * 32}-{SID}-01", f"00-{TID.upper()}-{SID}-01", f"00-{TID}-{SID}", None,
-])
-def test_parse_rejects_malformed(bad):
-    assert ts.parse_traceparent(bad) is None
+def test_request_trace_id_keeps_a_header_and_mints_otherwise():
+    assert ts.request_trace_id("abc-123") == "abc-123"
+    seen = set()
+    for v in (None, "", "  "):
+        minted = ts.request_trace_id(v)
+        assert re.fullmatch(r"[0-9a-f]{32}", minted), minted
+        seen.add(minted)
+    assert len(seen) == 3
+    assert ts.request_trace_id(None) != ts.request_trace_id(None)
 
 
-@pytest.mark.parametrize("a,b", [("", SID), (TID, ""), ("0" * 32, SID), (TID, "0" * 16),
-                                 ("xyz", SID), (None, SID)])
-def test_traceparent_for_rejects(a, b):
-    assert ts.traceparent_for(a, b) == ""
+# 2. mint seal -------------------------------------------------------------------------
+
+def test_orchestrate_mints_through_request_trace_id():
+    from iagent import gateway
+    src = inspect.getsource(gateway.orchestrate)
+    assert "request_trace_id(" in src
+    assert 'headers.get("X-Trace-Id", "")' not in src
 
 
-# 2. disabled -----------------------------------------------------------------
+# 3/4. the BFF span through the keepalive ------------------------------------------------
 
-def test_step_span_disabled_is_a_noop(disabled):
-    ran = []
-    with ts.step_span("supervisor.execute_subtask", trace_seed="s", traceparent=TP):
-        ran.append(1)
-    assert ran == [1]
-    assert ts.current_traceparent() == ""
-
-
-# 3. enabled ------------------------------------------------------------------
-
-def test_step_span_uses_traceparent_parent_and_flushes_once(enabled):
-    with ts.step_span("supervisor.execute_subtask", trace_seed="seed", traceparent=TP):
-        pass
-    kind, kw = enabled.calls[0]
-    assert kind == "start_current" and kw["name"] == "supervisor.execute_subtask"
-    assert kw["trace_context"] == {"trace_id": TID, "parent_span_id": SID}
-    assert enabled.calls.count("flush") == 1
-    assert enabled.calls.index("exit") < enabled.calls.index("flush")
+def _make_inner(seen):
+    async def inner():
+        seen.append(ts.current_span_id())
+        for i in range(3):
+            await asyncio.sleep(0)
+            yield i
+    return inner
 
 
-def test_step_span_falls_back_to_seed_on_malformed_traceparent(enabled):
-    with ts.step_span("supervisor.execute_subtask", trace_seed="seed", traceparent="nonsense"):
-        pass
-    assert enabled.calls[0][1]["trace_context"] == {"trace_id": "e" * 32}
-
-
-def test_step_span_no_seed_no_parent(enabled):
-    with ts.step_span("supervisor.execute_subtask"):
-        pass
-    assert enabled.calls[0][1]["trace_context"] is None
-
-
-def test_body_exception_propagates_unchanged_and_flushes(enabled):
-    err = ValueError("boom")
-    with pytest.raises(ValueError) as ei:
-        with ts.step_span("supervisor.execute_subtask", traceparent=TP):
-            raise err
-    assert ei.value is err
-    assert enabled.calls.count("flush") == 1
-    assert enabled.spans[0].updates and enabled.spans[0].updates[0]["level"] == "ERROR"
-
-
-@pytest.mark.parametrize("raise_on", [("start",), ("flush",), ("create_trace_id",)])
-def test_a_raising_client_never_raises_into_the_body(enabled, raise_on):
-    enabled.raise_on = set(raise_on)
-    ran = []
-    with ts.step_span("supervisor.execute_subtask", trace_seed="seed"):
-        ran.append(1)
-    assert ran == [1]
-
-
-# 4. request span -------------------------------------------------------------
-
-def test_request_span_enabled(enabled):
-    h = ts.open_request_span(name="bff.orchestrate", trace_seed="seed",
-                             session_id="sess-1", user_id="alice")
-    assert re.fullmatch(r"00-[0-9a-f]{32}-[0-9a-f]{16}-01", h.traceparent)
-    assert ts.parse_traceparent(h.traceparent)["trace_id"] == "e" * 32
-    kind, kw = enabled.calls[0]
-    assert kind == "start_observation" and kw["name"] == "bff.orchestrate"
-    assert "input" not in kw and "output" not in kw
-    assert enabled.attrs == [{"trace_name": "answer", "tags": ["cortex-bff"],
-                              "session_id": "sess-1", "user_id": "alice"}]
-    ts.close_request_span(h)
-    assert enabled.spans[0].ended and enabled.calls.count("flush") == 1
-    ts.close_request_span(h)  # idempotent
-    assert enabled.calls.count("flush") == 1
-
-
-def test_request_span_async_close_schedules_flush_without_awaiting(enabled):
-    h = ts.open_request_span(name="bff.orchestrate", trace_seed="", session_id="", user_id="")
-    scheduled = []
+def test_bff_span_spans_the_stream_through_keepalive(mem):
+    from iagent import gateway
+    client, exp = mem
+    seen: list = []
+    from telemetry import emit_misses
+    before = emit_misses()
 
     async def run():
-        loop = asyncio.get_running_loop()
-        real = loop.run_in_executor
+        return [e async for e in gateway._traced_stream(
+            gateway._keepalive_wrap(_make_inner(seen)()),
+            trace_id="t-1", session_id="s", authz_id="u")]
 
-        def spy(executor, fn, *args):
-            scheduled.append((executor, fn))
-            return real(executor, fn, *args)
+    events = asyncio.run(run())
+    spans = spans_of(client, exp)
+    span = one(spans, "bff.orchestrate")
+    assert events == [0, 1, 2]
+    assert span.parent is None
+    assert span.context.trace_id == int(client.create_trace_id(seed="t-1"), 16)
+    assert seen == [format(span.context.span_id, "016x")]
+    assert emit_misses() == before
 
-        loop.run_in_executor = spy
-        await ts.aclose_request_span(h)
-        # span ended synchronously, before any flush had a chance to be awaited
-        assert enabled.spans[0].ended
+
+def test_bff_span_survives_a_disconnect(mem):
+    from iagent import gateway
+    from telemetry import emit_misses
+    client, exp = mem
+    before = emit_misses()
+    seen: list = []
+
+    async def run():
+        gen = gateway._traced_stream(
+            gateway._keepalive_wrap(_make_inner(seen)()),
+            trace_id="t-1", session_id="s", authz_id="u")
+        first = await gen.__anext__()
+        await gen.aclose()
+        return first
 
     asyncio.run(run())
-    assert scheduled == [(None, enabled.flush)]
-    assert enabled.calls.count("flush") == 1  # ran in the executor (drained by asyncio.run)
+    assert one(spans_of(client, exp), "bff.orchestrate") is not None
+    assert emit_misses() == before
 
 
-def test_request_span_nothing_content_bearing(enabled):
-    q = "what is the secret question text"
-    ts.open_request_span(name="bff.orchestrate", trace_seed="t", session_id="s", user_id="u")
-    assert q not in repr(enabled.calls) and q not in repr(enabled.attrs)
+# 5-8. step_spanned ---------------------------------------------------------------------
+
+def _headers(cfg):
+    from iagent.defs import dynamic_supervisor as ds
+    return ds._telemetry_headers(cfg, caller_token="tok")  # a caller token: no mint, no network
 
 
-def test_request_span_disabled(disabled):
-    h = ts.open_request_span(name="bff.orchestrate", trace_seed="t", session_id="s", user_id="u")
-    assert h.traceparent == ""
-    ts.close_request_span(h)
-    asyncio.run(ts.aclose_request_span(h))
+def test_step_spanned_positive(mem, flushes):
+    client, exp = mem
+
+    @ts.step_spanned("supervisor.x")
+    def op(context, config):
+        return _headers(config)
+
+    headers = op(None, Cfg("t-2", PARENT, "s"))
+    span = one(spans_of(client, exp), "supervisor.x")
+    assert span.parent.span_id == int(PARENT, 16)
+    assert span.context.trace_id == int(client.create_trace_id(seed="t-2"), 16)
+    assert headers["X-Trace-Id"] == "t-2"
+    assert headers["X-Parent-Span-Id"] == format(span.context.span_id, "016x")
+    assert len(flushes) == 1
 
 
-def test_request_span_failing_client_is_soft(enabled):
-    enabled.raise_on = {"start"}
-    h = ts.open_request_span(name="bff.orchestrate", trace_seed="t", session_id="s", user_id="u")
-    assert h.traceparent == ""
-    ts.close_request_span(h)
+def test_step_spanned_without_a_trace_id_is_a_straight_call(mem, flushes):
+    client, exp = mem
+
+    @ts.step_spanned("supervisor.x")
+    def op(context, config):
+        return ("ran", _headers(config))
+
+    out, headers = op(None, config=Cfg(""))
+    assert out == "ran"
+    assert "X-Parent-Span-Id" not in headers
+    assert spans_of(client, exp) == ()
+    assert flushes == []
 
 
-# 5. taxonomy coverage --------------------------------------------------------
+def test_step_spanned_generator_runs_inside_the_span(mem, flushes):
+    client, exp = mem
+    seen = []
 
-# The string literal right after the call paren, with or without a `name=` kwarg. No leading
-# \b: the gateway imports open_request_span under a underscore alias.
-_CALL = re.compile(
-    r"(?:step_span|step_spanned|open_request_span)\(\s*(?:name\s*=\s*)?[\"']([\w.]+)[\"']", re.S)
+    @ts.step_spanned("supervisor.g")
+    def gen(context, config):
+        for i in range(3):
+            seen.append(ts.current_span_id())
+            yield i
+
+    assert list(gen(None, Cfg("t-4", PARENT))) == [0, 1, 2]
+    span = one(spans_of(client, exp), "supervisor.g")
+    assert seen == [format(span.context.span_id, "016x")] * 3
+    assert len(flushes) == 1
 
 
-def _used_names() -> set[str]:
-    names: set[str] = set()
-    for base in (ROOT / "src", ROOT / "agent_fleet"):
-        for f in base.rglob("*.py"):
-            if ".venv" in f.parts or "__pycache__" in f.parts or f.name == "trace_spans.py":
-                continue
-            try:
-                text = f.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            if "step_span" not in text and "open_request_span(" not in text:
-                continue
-            names.update(_CALL.findall(text))
-    return names
+def test_step_spanned_exception_propagates_marked_error(mem, flushes):
+    client, exp = mem
+
+    @ts.step_spanned("supervisor.boom")
+    def op(context, config):
+        raise ValueError("boom")
+
+    with pytest.raises(ValueError, match="boom"):
+        op(None, Cfg("t-5", PARENT))
+    span = one(spans_of(client, exp), "supervisor.boom")
+    assert span.status.status_code == StatusCode.ERROR
+    assert len(flushes) == 1
+
+
+# 9. the four real ops ------------------------------------------------------------------
+
+OPS = ("create_task_plan", "execute_subtask", "synthesize_stateful", "generate_ui_payload")
+
+
+def test_the_four_real_ops_are_spanned_and_keep_their_shape():
+    from iagent.defs import dynamic_supervisor as ds
+    for name in OPS:
+        fn = getattr(ds, name).compute_fn.decorated_fn
+        assert fn.__name__ == name and hasattr(fn, "__wrapped__")
+        assert inspect.unwrap(fn) is not fn
+        assert inspect.signature(fn) == inspect.signature(fn.__wrapped__)
+    names = {n.name for n in ds.supervisor_query_job.graph.node_defs}
+    assert set(OPS) <= names
+    plan = ds.create_task_plan.compute_fn.decorated_fn
+    assert inspect.isgeneratorfunction(plan) and inspect.isgeneratorfunction(plan.__wrapped__)
+    assert not inspect.isgeneratorfunction(ds.execute_subtask.compute_fn.decorated_fn)
+    assert ds.SupervisorQueryConfig(user_query="q", thread_id="t").parent_span_id == ""
+
+
+# 10. engine-docs /explain --------------------------------------------------------------
+
+def test_engine_docs_explain_span(mem, monkeypatch):
+    from fastapi.testclient import TestClient
+    import agent_fleet.docs_agent.main as m
+    # the binding must hold the SAME shim object this test reads through
+    monkeypatch.setattr(m, "observed_trace", ts.observed_trace)
+    monkeypatch.setattr(m, "MAPPING", ts.MAPPING)
+    monkeypatch.setattr(m, "build_trace_values", ts.build_trace_values)
+    client, exp = mem
+    http = TestClient(m.app)
+    body = {"fn": "explain", "params": {"subject": "x"}}
+
+    http.post("/explain", json=body,
+              headers={"X-Trace-Id": "t-3", "X-Parent-Span-Id": PARENT})
+    span = one(spans_of(client, exp), "engine-docs.explain")
+    assert span.parent.span_id == int(PARENT, 16)
+    assert span.context.trace_id == int(client.create_trace_id(seed="t-3"), 16)
+
+    exp.clear()
+    http.post("/explain", json=body)
+    assert spans_of(client, exp) == ()
+    http.get("/health", headers={"X-Trace-Id": "t-3"})
+    assert spans_of(client, exp) == ()
+
+
+# 11. taxonomy census -------------------------------------------------------------------
+
+def _span_names_in(source: str) -> set:
+    found = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        fname = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
+        if fname == "observed_trace":
+            for kw in node.keywords:
+                if kw.arg == "name" and isinstance(kw.value, ast.Constant):
+                    found.add(kw.value.value)
+        elif fname == "step_spanned" and node.args and isinstance(node.args[0], ast.Constant):
+            found.add(node.args[0].value)
+    return found
+
+
+SOURCES = ("src/iagent/gateway.py", "src/iagent/defs/dynamic_supervisor.py",
+           "agent_fleet/docs_agent/main.py")
 
 
 def test_every_emitted_span_name_is_declared():
     from span_taxonomy import SPAN_NAMES, declared
     assert SPAN_NAMES, "taxonomy failed to load"
-    used = _used_names()
-    expected = {"bff.orchestrate", "supervisor.create_task_plan", "supervisor.execute_subtask",
-                "supervisor.synthesize_stateful", "supervisor.generate_ui_payload"}
-    # positive control: a scan that finds nothing must fail, not pass
-    assert expected <= used, f"scan missed {expected - used}"
+    used = set()
+    for rel in SOURCES:
+        used |= _span_names_in((ROOT / rel).read_text(encoding="utf-8"))
+    assert len(used) >= 6, used
     assert [n for n in used if not declared(n)] == []
     for spec in SPAN_NAMES.values():
         assert spec["kind"] in {"request", "stage", "hop", "llm", "store"} and spec["service"]
+
+
+def test_the_scanner_finds_an_undeclared_name():
+    from span_taxonomy import declared
+    found = _span_names_in('observed_trace(M, v, name="undeclared.x")\n@step_spanned("undeclared.y")\ndef f(): pass\n')
+    assert found == {"undeclared.x", "undeclared.y"}
+    assert not any(declared(n) for n in found)
 
 
 def test_taxonomy_loader_is_fail_soft(monkeypatch, tmp_path):
@@ -287,57 +306,25 @@ def test_taxonomy_loader_is_fail_soft(monkeypatch, tmp_path):
     assert span_taxonomy._load() == {}
 
 
-# 6. supervisor ops -----------------------------------------------------------
+# 12. pin census ------------------------------------------------------------------------
 
-def test_supervisor_ops_and_job_unchanged():
-    from iagent.defs import dynamic_supervisor as ds
-    for name in ("create_task_plan", "execute_subtask", "synthesize_stateful",
-                 "generate_ui_payload"):
-        assert getattr(ds, name).name == name
-    names = {n.name for n in ds.supervisor_query_job.graph.node_defs}
-    assert {"create_task_plan", "execute_subtask", "synthesize_stateful",
-            "generate_ui_payload"} <= names
-    assert ds.SupervisorQueryConfig(user_query="q", thread_id="t", traceparent=TP).traceparent == TP
-    assert ds.SupervisorQueryConfig(user_query="q", thread_id="t").traceparent == ""
+_PIN = re.compile(r'"provenance-telemetry([^"]*)"')
 
 
-def test_step_spanned_preserves_generator_and_signature():
-    import inspect
-    from iagent.defs import dynamic_supervisor as ds
-    # @op is outermost, so the wrapped function is reachable through the op definition.
-    for name in ("create_task_plan", "execute_subtask", "synthesize_stateful",
-                 "generate_ui_payload"):
-        fn = getattr(ds, name).compute_fn.decorated_fn
-        assert fn.__name__ == name and hasattr(fn, "__wrapped__")
-        assert inspect.signature(fn) == inspect.signature(fn.__wrapped__)
-    plan = ds.create_task_plan.compute_fn.decorated_fn
-    assert inspect.isgeneratorfunction(plan)
-    assert inspect.isgeneratorfunction(plan.__wrapped__)
-    assert not inspect.isgeneratorfunction(ds.execute_subtask.compute_fn.decorated_fn)
+def _pins(text: str) -> list:
+    return _PIN.findall(text)
 
 
-def test_step_spanned_reads_config_by_keyword_and_position(enabled):
-    class Cfg:
-        trace_id = "t1"
-        traceparent = TP
-
-    @ts.step_spanned("supervisor.execute_subtask")
-    def op(context, config, x):
-        return x
-
-    assert op(None, Cfg(), 5) == 5
-    assert op(None, config=Cfg(), x=6) == 6
-    assert op(None, object(), 7) == 7  # config without the fields: empty ids, no error
-    assert enabled.calls[0][1]["trace_context"] == {"trace_id": TID, "parent_span_id": SID}
-    assert enabled.calls[3][1]["trace_context"] == {"trace_id": TID, "parent_span_id": SID}
-    assert enabled.calls.count("flush") == 3
+def test_every_pyproject_pins_provenance_telemetry_0_2_1():
+    files = [ROOT / "pyproject.toml", *sorted((ROOT / "agent_fleet").glob("*/pyproject.toml"))]
+    pinned = {}
+    for f in files:
+        pins = _pins(f.read_text(encoding="utf-8"))
+        if pins:
+            pinned[f] = pins
+    assert len(pinned) >= 8, sorted(str(p) for p in pinned)
+    assert {f: p for f, p in pinned.items() if p != ["==0.2.1"]} == {}
 
 
-def test_step_spanned_generator_runs_inside_the_span(enabled):
-    @ts.step_spanned("supervisor.create_task_plan")
-    def gen(context, config):
-        yield 1
-        yield 2
-
-    assert list(gen(None, object())) == [1, 2]
-    assert enabled.calls[0][0] == "start_current" and enabled.calls.count("flush") == 1
+def test_the_pin_scanner_sees_a_stale_pin():
+    assert _pins('dependencies = ["provenance-telemetry==0.2.0"]') == ["==0.2.0"]

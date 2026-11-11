@@ -59,6 +59,7 @@ from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, oauth2_scheme, User
 from . import identity_exchange
+from .trace_spans import observed_trace, MAPPING, build_trace_values, current_span_id, request_trace_id
 from iagent_mesh import Refusal as _Refusal
 from iagent_mesh.review_coverage import ReviewShapeRow
 from iagent_mesh.provenance import EvidenceRef  # the SDK model; the one EvidenceRef (ruling 2026-10-31)
@@ -8031,6 +8032,14 @@ async def _audit_orchestrate_wrap(gen, *, who: str, via: str, session_id: str):
         )
 
 
+async def _traced_stream(stream, *, trace_id, session_id, authz_id):
+    with observed_trace(MAPPING, build_trace_values(
+            trace_id=trace_id, authz_id=authz_id, session_id=session_id or None,
+            engine="cortex-bff", verb="/interview/stream"), name="bff.orchestrate"):
+        async for event in stream:
+            yield event
+
+
 async def _keepalive_wrap(stream, interval_s: float = 10.0):
     """Wrap an SSE generator so it emits `: keepalive\\n\\n` comments
     during quiet stretches.
@@ -8861,6 +8870,8 @@ async def _launch_supervisor_job(
         # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
         "trace_id": trace_id,
         "session_id": session_id,
+        # The bff.orchestrate span's id, ambient in the producer task.
+        "parent_span_id": current_span_id(),
     }
 
     run_config = {
@@ -11681,7 +11692,9 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
     # Telemetry (ADR-0038): cortex-ui mints X-Trace-Id per request; thread it so the whole
     # conversation (BFF -> supervisor -> Engine A) lands ONE Langfuse trace. Session grouping
     # uses request.session_id (the conversation thread) downstream.
-    _trace_id = http_request.headers.get("X-Trace-Id", "")
+    # The BFF mints one when the caller sends none, so no client can silence tracing
+    # (architect ruling 4, 2026-11-10).
+    _trace_id = request_trace_id(http_request.headers.get("X-Trace-Id"))
     entitled_cells = [
         {"persona": c.persona, "domain": c.domain} for c in ent.cells
     ]
@@ -11893,8 +11906,12 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                 **slot_refusal(_sp_template, _sp_unbound),
             )
 
+    # The span opens and closes in the one task that iterates the response body, and wraps
+    # OUTSIDE the keepalive: the keepalive creates its producer task on first iteration, so
+    # that task copies the ambient span.
     return StreamingResponse(
-        _keepalive_wrap(
+        _traced_stream(
+          _keepalive_wrap(
             # INSIDE the keepalive: `_keepalive_wrap` turns a producer exception into an error
             # event, so only here can the audit line say `outcome=error`.
             _audit_orchestrate_wrap(
@@ -11939,12 +11956,17 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                 session_id=request.session_id,
             ),
             interval_s=10.0,
+          ),
+          trace_id=_trace_id,
+          session_id=request.session_id,
+          authz_id=current_user.authz_id,
         ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "X-Trace-Id": _trace_id,
         },
     )
 

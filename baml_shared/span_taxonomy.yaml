@@ -1,5 +1,5 @@
 # The declared taxonomy of span names (lane/perf brief). A span name used in code
-# (step_span / open_request_span call sites) must be declared here; tests/perf scans
+# (observed_trace name= and step_spanned call sites) must be declared here; tests/perf scans
 # the source and fails on an undeclared name. Later PRs add engine hops, LLM and
 # store spans.
 #   kind:    request | stage | hop | llm | store
@@ -20,3 +20,6 @@ spans:
   supervisor.generate_ui_payload:
     kind: stage
     service: dagster-supervisor
+  engine-docs.explain:
+    kind: request
+    service: engine-docs
