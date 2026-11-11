@@ -52,6 +52,13 @@ ratchet passed (24).
        - those rows must be reverted on rollback.
 
        The fix I proposed is the seed job reading the overlay dirs; it is undecided and not on 0.4.85.
+  - **RULED (architect, 11-11 ~22:00Z): saf's seed-job fix goes ON the 0.4.85 train.** At 22:12Z no saf PR or
+    branch exists yet; watch for it. On merge, re-run its seals and the can_export rail on the join, plus the ratchet.
+  - **Re-issue the work packet at the cut, reading every key from saf's merged fix:**
+    - no grant rows for sample profiles (remove step 4b's two rows);
+    - work grants its own profile under its own name (remove the "shipped name" rule);
+    - the rollback reverts that one grant row BEFORE `helm rollback`;
+    - the `no_principal` check stays the observe-mode `IDENTITY_WOULD outcome=refuse` count.
 
 **DISPATCH (after the 0.4.85 cut; nothing rides 0.4.85): manufacturing traceability.** The file is the untracked
 `dispatch-mfg-trace.md` in the master tree; it is the architect's, so do not commit it. Lane 1's part, from Friday 11-13:
