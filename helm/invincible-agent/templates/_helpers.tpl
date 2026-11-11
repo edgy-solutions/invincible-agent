@@ -835,6 +835,31 @@ of existingSecret / existingConfigMap; caPem was removed. Called from keycloak.y
 {{- end -}}
 
 {{/*
+  The central gateway's accepted issuers / audiences (dag-tools v0.14.0+), the BFF's lists via
+  acceptedList, so the gateway admits exactly the tokens the BFF admits. The gateway reads each list
+  as the PLURAL name then the SINGULAR one, de-duplicated, so a hand-set name would widen it: the
+  plurals and GATEWAY_JWT_AUDIENCE may not be set in centralGateway.env or agentFleet.env, and a
+  singular GATEWAY_JWT_ISSUER must already be one of the BFF's issuers (acceptedIssuers quotes it in
+  the sandbox). Rendered LAST in the gateway container's env. Called with the root context.
+*/}}
+{{- define "invincible-agent.gatewayTokenEnv" -}}
+{{- $issuers := include "invincible-agent.acceptedList" (dict "root" . "key" "acceptedIssuers") -}}
+{{- range $src := list "centralGateway.env" "agentFleet.env" }}
+{{- $env := ternary ($.Values.centralGateway.env | default dict) ($.Values.agentFleet.env | default dict) (eq $src "centralGateway.env") }}
+{{- range $name := list "GATEWAY_JWT_ISSUERS" "GATEWAY_JWT_AUDIENCES" "GATEWAY_JWT_AUDIENCE" }}
+{{- if hasKey $env $name }}{{- fail (printf "%s.%s is rendered from cortexBff.auth; a hand-set value would widen the gateway's list" $src $name) }}{{- end }}
+{{- end }}
+{{- if and $issuers (hasKey $env "GATEWAY_JWT_ISSUER") (not (has (toString (index $env "GATEWAY_JWT_ISSUER")) (splitList "," $issuers))) }}
+{{- fail (printf "%s.GATEWAY_JWT_ISSUER must be one of cortexBff.auth.acceptedIssuers, or the gateway accepts an issuer the BFF refuses" $src) }}
+{{- end }}
+{{- end -}}
+- name: GATEWAY_JWT_ISSUERS
+  value: {{ $issuers | quote }}
+- name: GATEWAY_JWT_AUDIENCES
+  value: {{ include "invincible-agent.acceptedList" (dict "root" . "key" "acceptedAudiences") | quote }}
+{{- end -}}
+
+{{/*
   The token-check env every engine pod serves (read by the SDK's transport_auth, v0.9.20+). THE ONLY
   PLACE the MESH_JWT_* / REQUIRE_TRANSPORT_AUTH names are written. Rendered LAST in each engine
   container's env, so it beats the configmap's envFrom (agentFleet.env) and any per-engine env entry

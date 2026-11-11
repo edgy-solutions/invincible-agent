@@ -20,7 +20,7 @@ dependencies = [
     # LazyFrame it returns. Both are imported lazily, so the default notional path never loads them.
     # dag-tools is PINNED TO A TAG for the reason iagent-mesh is.
     "polars>=1.20",
-    "edgy-dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@v0.13.0",
+    "edgy-dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@v0.14.0",
 ]
 
 # DELIBERATELY THIN, and copied from Engine P's list rather than from a fuller engine's.

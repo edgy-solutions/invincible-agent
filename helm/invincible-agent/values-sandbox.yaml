@@ -689,15 +689,20 @@ centralGateway:
   # in its hypercorn invocation). Chart default of 8000 caused
   # readiness/liveness probes to hit a closed port — pod stuck 0/1 Running.
   port: 8090
-  # PINNED BY DIGEST in values.yaml `global.imageDigests` (dag-tools v0.11.0); no image override here.
+  # PINNED BY DIGEST in values.yaml `global.imageDigests` (dag-tools v0.14.0); no image override here.
   env:
     # The gateway's verified identity (dag-tools PR #6). The issuer is what a realm token carries,
     # so it is the public realm URL. JWKS is fetched inside the cluster, like every other realm read.
+    # From v0.14.0 the gateway accepts LISTS: GATEWAY_JWT_ISSUERS and GATEWAY_JWT_AUDIENCES are
+    # rendered by the chart from cortexBff.auth (templates/engines.yaml), so they cannot be set here.
+    # The singular issuer below stays: cortexBff.auth.acceptedIssuers quotes it, and the gateway reads
+    # it as one more entry of the same list, so the union equals the BFF's list.
     #
     # THE POSTURE IS WRITTEN OUT, not left to the default, because the parser reads any value it does
-    # not recognise as enforce. The architect's ruling keeps this roll in observe. The internal doors
-    # (dag-tools PR #8) read their own INTERNAL_DOOR_POSTURE, unset here, which also means observe.
-    GATEWAY_IDENTITY_POSTURE: "observe"
+    # not recognise as enforce. The sandbox enforces from 0.4.85 (architect, 11-11), with the lists
+    # served in the same roll; post-roll the startup line reads enforce_ready=yes. The internal doors
+    # (dag-tools PR #8) read their own INTERNAL_DOOR_POSTURE, unset here, which means observe.
+    GATEWAY_IDENTITY_POSTURE: "enforce"
     GATEWAY_JWKS_URL: "http://iagent-keycloak:8080/realms/invincible-agent/protocol/openid-connect/certs"
     GATEWAY_JWT_ISSUER: "https://keycloak.edgy-solutions.com/realms/invincible-agent"
 
