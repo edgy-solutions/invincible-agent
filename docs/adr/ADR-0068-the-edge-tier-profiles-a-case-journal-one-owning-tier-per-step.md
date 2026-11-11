@@ -7,6 +7,11 @@ architect, then to the reviewing party, before ratification. Not on the 0.4.85 t
 reviewing party, which added the four requirements recorded as §6–§9 (architect, via Chris, 2026-11-11). The
 architect accepted the shape on 2026-11-11 and ruled entry and occurrence identity (§3: a minted UUIDv7, with a
 uuid5 only as the dedupe lookup key). It is open as a draft PR so it can be read, and it stays Proposed.
+**Amended 2026-11-11** at the architect's review, with four amendments:
+  - §2: the snapshot's maximum age, and the re-check on reconnect;
+  - §2: the door checks issuer and audience;
+  - §3: an entry with no labels, and one whose labels are empty;
+  - §4: who writes `case_closed`.
 **Related:**
   - ADR-0067 (one identity per thing): an occurrence is its episode plus
     `detected_at_ns`. The journal's entries (§3) carry that occurrence id where one exists.
@@ -39,7 +44,9 @@ tiers from both deciding it.
   - the capabilities it runs;
   - the stores it holds;
   - the peers it replicates with;
-  - the manual set it carries copies of (§9).
+  - the manual set it carries copies of (§9);
+  - `snapshot_max_age` and `on_snapshot_stale` (§2). Both are required. A profile that lacks either is refused
+    when it loads, because no default is chosen in code.
 - **No code names a tier.** The audience template `{trigger.owning_tier}` already takes the tier as data; this
   record makes the rest of the tier data too.
 - **A definition that gives a step to a tier whose profile lacks a capability the step declares is refused
@@ -48,7 +55,14 @@ tiers from both deciding it.
 ### §2 The minimal edge profile
 
 An edge tier that owns a step must run, offline:
-- the door, verifying tokens against an identity key it holds locally;
+- **the door**, verifying tokens against an identity key it holds locally. Verifying a token includes its
+  issuer and its audience:
+  - each is checked against a list read from the tier's served values, never a literal in code;
+  - **an empty list refuses every token.**
+
+  cortex-bff does this from 0.4.85 (#349, merged at `3c85f53d`; `src/iagent/auth.py` `verified_claims`,
+  served from `cortexBff.auth.acceptedIssuers` and `acceptedAudiences`). An edge door does the same from its
+  own profile's served values;
 - the case runner, for the steps it owns;
 - the case journal (§3);
 - a task list served per viewer (§6);
@@ -56,6 +70,24 @@ An edge tier that owns a step must run, offline:
   snapshot carries a version and a digest, and every journal entry names the snapshot version it was decided
   under;
 - versioned manual copies (§9).
+
+**When the snapshot is too old.** Each tier profile declares two rows:
+- `snapshot_max_age`: the maximum age of its policy snapshot;
+- `on_snapshot_stale`: what happens once that age is exceeded. The value is `keep_acting` or
+  `refuse_new_acts`.
+  - Under `keep_acting`, the tier goes on deciding on the snapshot it holds.
+  - Under `refuse_new_acts`, it writes no new `acted` entry until a fresher snapshot arrives. It records each
+    refusal.
+
+Both rows are required, and no default is chosen in code (§1). Age is read on the tier's own clock (see "What
+this does not establish").
+
+**Either way, every entry names its `policy_version`.** When the edge reconnects, the central tier re-checks
+every act written under a version older than the current policy:
+- An act the current policy would now refuse is recorded as a **`policy_finding` entry**. It names the
+  act's `entry_id`, the version it was decided under, the current version, and the rule that now refuses it.
+- **A finding never rewrites the entry it is about.** The act stands in the journal as it was decided. The
+  finding is a new entry beside it, which a reader or a later step can act on.
 
 Retrieval and synthesis capabilities are optional, per profile. A step that needs one cannot be owned by a tier
 whose profile lacks it (§1, last bullet).
@@ -77,7 +109,7 @@ whose profile lacks it (§1, last bullet).
   - `tier` and `tier_seq`: the writing tier and that tier's own gap-free sequence;
   - `actor` (an authz_id) and `on_behalf_of`;
   - `kind`: for example `case_opened`, `step_started`, `task_opened`, `task_closed`, `acted`, `routing_fault`,
-    `ownership_handed`, `case_closed`;
+    `ownership_handed`, `case_closed`, `policy_finding` (§2);
   - `labels`;
   - `policy_version` (§2);
   - a digest of the payload.
@@ -89,7 +121,13 @@ whose profile lacks it (§1, last bullet).
 - **Projections are derived from the journal.** That includes the task list and the case view, so two tiers that
   hold the same entries serve the same projection.
 - **Each tier boundary decides releasability as R-088 does.** It decides on the entry's labels and fails closed.
-  An entry that arrives without labels is refused and recorded, never given a default.
+  - **An entry with no `labels` field is refused**, and the refusal is recorded. It is never given a default.
+  - **An entry whose labels are empty is judged by that boundary's declaration**, dimension by dimension. A
+    boundary can declare `required` (an empty or absent value is withheld there) or `empty_means`
+    (`admits_everyone` or `admits_no_one`). Both are set per boundary in
+    `policy/classification/dimensions.yaml`. Where a boundary declares neither, the dimension type's own
+    meaning holds, as ADR-0064 tabulates it.
+  - In every case the meaning is read from policy at that boundary. It is never a default chosen in code.
 
 ### §4 One owning tier per step
 
@@ -98,6 +136,9 @@ whose profile lacks it (§1, last bullet).
 - **Only the owning tier writes a step's `acted` and `task_closed` entries.** An entry for that step from any
   other tier is applied as a record of a refused write, never as the step's outcome. With one writer per step,
   two outcomes for one step cannot both be accepted.
+- **`case_closed` is written only by the tier that owns the step that reaches the terminal stage.** A
+  `case_closed` from any other tier is applied as a record of a refused write, as above. The case stays open,
+  so closing a case has one writer as well.
 - **Ownership moves only by an `ownership_handed` entry that the current owner writes.** Connectivity never moves
   it: a central tier that cannot reach the edge does not take the step back.
 
@@ -160,7 +201,9 @@ This list takes effect only after ratification, and each item ships in its own P
    deployed release. It builds §6 on today's tables before the journal exists, because §6 does not depend on
    the journal. It also adds a per-viewer **Needs-you read**: what waits on this viewer, by kind, label-scoped
    as the task list is. The UI reads its count from that route instead of composing it.
-2. **`policy/tiers.yaml`** with its validation (§1) and the load-time refusal (§1, last bullet).
+2. **`policy/tiers.yaml`** with its validation (§1), including the two snapshot rows (§2), and the load-time
+   refusal (§1, last bullet). The reconnect re-check writes `policy_finding` entries (§2) once the journal
+   exists.
 3. **The journal** (§3), with `task_opened` and `task_closed` as its first entry kinds, written in the same
    transaction as the projection write. It exposes a cursor read behind the door.
 4. Delegation rows with expiry (§5), and the delegated-act fields (§7).
@@ -174,6 +217,9 @@ Each delta is today's state, measured on `4a1e1b5a`.
 - **Tiers.** A tier exists only as a value substituted into an audience template (`{trigger.owning_tier}`), and
   as tier groups in `policy/groups.yaml`. One of those groups has been unused by any definition since 2026-10-28.
   There is no profile, no capability check per tier, and no policy snapshot.
+- **The door.** Through 0.4.84, cortex-bff checked a token's signature and expiry and nothing else: it ran
+  `verify_aud: False`, with no issuer. #349 (merged at `3c85f53d`, on 0.4.85) adds both checks, from served
+  lists. The engines' SDK check (`transport_auth`) still checks neither; that fix is SDK v0.9.20.
 - **The journal.**
   - Case state is the runner's per-episode keyed state: the open case, its head revision, and occurrences
     de-duplicated by `event_id`. There is also an append-only list of instance outcomes. Neither has an entry
@@ -213,9 +259,29 @@ Each item below is asserted when the corresponding piece is built, not before.
   - Every `entry_id` is a version-7 UUID; none is a uuid5.
   - Two tiers given the same entries in different orders serve equal projections.
   - A cursor read after a gap returns every missed entry.
-  - An entry without labels is refused at the boundary.
-- **§4.** An `acted` entry for a step from a tier that does not own it is recorded as a refused write, and the
-  step's outcome is unchanged.
+  - An entry with no `labels` field is refused at the boundary and recorded. Control: the same entry with its
+    labels is applied.
+  - An entry whose labels are empty is judged by the boundary's declaration:
+    - `admits_no_one` withholds it;
+    - `admits_everyone` releases it;
+    - `required` withholds it as `dimension_missing`;
+    - a boundary that declares nothing applies the type's meaning.
+
+    A source check finds no default for an empty set in the boundary's code.
+- **§2, the door.** A token with the wrong issuer is refused, and so is one with the wrong audience. An empty
+  served list refuses every token. Control: the correct token is admitted.
+- **§2, the snapshot.**
+  - A profile without `snapshot_max_age` or `on_snapshot_stale` is refused when it loads.
+  - Past the age, under `refuse_new_acts`, an act is refused and recorded. Control: the same act within the
+    age is admitted.
+  - Past the age, under `keep_acting`, the act is admitted and names its `policy_version`.
+  - After reconnect, an act the current policy refuses gets exactly one `policy_finding`, and the act's entry
+    is byte-identical before and after. Control: an act the current policy still admits gets no finding.
+- **§4.**
+  - An `acted` entry for a step from a tier that does not own it is recorded as a refused write, and the step's
+    outcome is unchanged.
+  - A `case_closed` from a tier that does not own the terminal step is recorded as a refused write, and the
+    case stays open. Control: the owner's `case_closed` closes it.
 - **§5, §7.**
   - An expired delegation grants nothing.
   - A delegated `acted` entry carries the delegator, the delegate, the expiry and the row's identity, and
@@ -232,6 +298,10 @@ Each item below is asserted when the corresponding piece is built, not before.
   entry records that reading. Bounding the skew is not decided here.
 - **Which capabilities a given deployment's edge runs, and any deployment's tier map.** Both are rows, written by
   whoever deploys.
-- **Merge rules beyond one writer per step.** §4 removes the need for them for step outcomes. Case-level fields
-  written by more than one tier are not covered, and none is proposed.
+- **Which tier writes `case_opened`.** This is the one case-level write left with more than one possible writer.
+  §4 gives step outcomes and `case_closed` one writer each, and the current owner writes `ownership_handed`.
+  `routing_fault` and `policy_finding` record decisions and set no case state, and every projection is
+  derived (§3). Nothing here says which tier opens a case. So two tiers that each receive an occurrence for
+  the same episode during a partition could each write a `case_opened`. This record does not decide that, and
+  proposes no merge rule for it.
 - **Ratification.** This draft decides nothing until the architect ratifies it after review.
