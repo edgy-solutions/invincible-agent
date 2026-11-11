@@ -451,6 +451,12 @@ dagster:
 # that will be injected into ALL agent containers automatically.
 # ==========================================================================
 agentFleet:
+  # The transport-auth posture of every engine. false = OBSERVE: nothing is refused. true renders
+  # REQUIRE_TRANSPORT_AUTH=true on every engine pod, and an engine refuses a caller whose token fails its
+  # checks. Refusing by token needs the SDK's v0.9.20 in the image; the architect's 11-11 criteria decide
+  # when an environment turns it on. Leave it false here.
+  transportAuth:
+    require: false
   env:
     # 🔗 Agent Runtime Essentials
     #
