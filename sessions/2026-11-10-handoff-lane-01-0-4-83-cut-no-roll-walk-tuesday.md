@@ -26,6 +26,24 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
   another audience is refused. Also send OpenDDIL the live ActionRecord comparison.
 - **Roll-lock:** free at 13:58Z. 74 takes it at 16:00Z.
 
+**DISPATCH (after the 0.4.85 cut; nothing rides 0.4.85): manufacturing traceability.** The file is the untracked
+`dispatch-mfg-trace.md` in the master tree; it is the architect's, so do not commit it. Lane 1's part, from Friday 11-13:
+- Write the ADR at the next free number, as Proposed, for a program reader first. 0068 is the edge tier draft and 0069
+  is the accepted output template, so 0070 is likely next; verify on master first.
+- **Genealogy disclosure:** a unit the viewer cannot see is withheld. Whether the viewer is told the tree is incomplete
+  is my proposal, and the architect rules it.
+- The registered contracts in `contracts/` are a superset of dag-tools' template (add, never drop or rename),
+  validated by `validate_policy`.
+- Name the new engine lane and the engine.
+- Capability, census and gating-manifest rows for each phase-1 verb.
+- Map the verbs to `product_structure` (Part, `component_of`, as_built); one Part node per part number.
+- **ORDER, ruled 11-11 (architect via Chris):** the contract reader is fin's #357. #357 merges after the cut and fin
+  lifts the reader into the shared module. Then dag-tools tags PR B. Then fin's PR adds the three types (`timestamp`,
+  `date`, `array<string>`) to that module and moves the CI pin to dag-tools' template in the same PR. **Lane 1 does
+  nothing on the reader or the pin.**
+- **Open, to ask the architect:** that ruling does not say who owns the reader's multi-document form, which the
+  dispatch puts in Lane 1's section.
+
 **11-11 ~04:30Z: THE TRAIN IS IN, AND SO IS #355. Master is `c4a572b9`.** The newest architect message
 (through Chris) governs. It has five rulings:
 1. A conflict confined to the CHANGELOG's 0.4.85 section is Lane 1's to resolve at merge time: keep every
