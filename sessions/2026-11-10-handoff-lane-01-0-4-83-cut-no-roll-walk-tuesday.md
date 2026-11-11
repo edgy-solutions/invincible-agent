@@ -7,6 +7,24 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-11 ~02:00Z: OPENDDIL'S THREE ITEMS ARE DONE, AND THEIR FOUR REQUIREMENTS ARE RECORDED.**
+- **Item 3, ADR-0068 (Proposed):** `docs/adr/ADR-0068-the-edge-tier-profiles-a-case-journal-one-owning-tier-per-step.md`.
+  - It is on branch `lane/01-adr-0068-edge-tier` at `a6efbabe`, pushed, in worktree `wt\01\adr68`. **NO PR**: it goes to the architect, then OpenDDIL, before ratification. Open a PR only on the architect's word.
+  - §1–§5 are the ordered positions. §6–§9 are OpenDDIL's four requirements:
+    - the task list scopes on labels, and a task the viewer cannot see is withheld and recorded as a routing fault, never redacted;
+    - a delegated act records delegator, delegate and expiry, and replicates marked as delegated;
+    - the stream stays dark until the per-viewer seal is deployed, and the release and instance are read from helm;
+    - edge manuals carry revision, digest and age.
+- **Item 1 report:** master `sessions/2026-11-11-report-lane-01-the-bff-routes-behind-the-task-list-and-needs-you.md`. **Attach it to the next OpenDDIL sample packet** (which waits on v0.9.19 and the pin).
+- **Item 2 report:** master `sessions/2026-11-11-report-lane-01-task-opened-and-task-closed-are-not-events-today.md`. Report only; build them as ADR-0068 journal entry kinds.
+- **Packet to the architect:** master `sessions/2026-11-11-packet-to-architect-from-lane-01-adr-0068-drafted-two-openddil-reports-placed.md`.
+- **The approvals[].task / task-list PR (after 0.4.85) now carries requirements 1 and 2:**
+  - Select `recipient_id`, and match by authz_id or by a capability from policy.
+  - Apply the label dimensions. Withhold and record a routing fault, never redact.
+  - Apply the same rule to `approvals[].task` AND to `_load_viewable_case`'s task-holder arm (`holds_task_on_case`, `human_tasks.py:745`, which has no label check today).
+  - Seal: the holder sees it; a non-holder does not; the addressed holder without the label sees nothing and the fault is recorded; the control is the same holder with the label.
+  - After its roll, tell OpenDDIL the release and the instance, READ FROM HELM. Their stream stays dark until then.
+
 **11-11 ~01:40Z: THE ARCHITECT'S TWO GAPS, ANSWERED.** The architect accepted #346 and #340 (including the out-of-order merge), and Lane 1 writes #340's bullet at the deadline.
 1. **#331 is MERGED** and waits on nothing. Merge `cf92efc6`, ^2 `3c6a68f0` (the head). CI 22 success / 3 skipped; ratchet 24; is-ancestor of origin/master.
 2. **The three refusal datasets are BUILT,** before the lock passes to 74 at 11-11 16:00Z. Lane 1 materialised them on 11-10 between 20:31 and 20:36Z, and all three are SUCCESS:
