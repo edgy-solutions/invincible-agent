@@ -53,7 +53,7 @@ dependencies = [
     # which policy/sync/validate_policy.py reads for the gateway door's delegatable routes
     # (01M6KF8279KZ843KG5MMM0R3YH).
     # NOTE: agent_fleet/data_analyst pins the pre-rename SHA 61cbfa92, and agent_fleet/finance_agent
-    # pins v0.10.0, each in its own project. See the two-dists-one-module hazard if both land in one env.
+    # pins tag v0.13.0 (the release the root takes from PyPI), each in its own project. See the two-dists-one-module hazard if both land in one env.
     "edgy-dag-tools==0.13.0",
     # PROMOTED from the dev group 2026-08-07. The projector and the sandbox domain broker are
     # mesh services that ship in the iagent image and now take the SDK's inbound transport-auth

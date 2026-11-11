@@ -238,6 +238,16 @@ cortexBff:
   - **Drift:** both legs are green locally, the pinned leg at `728afaf5` and the main leg at `0f0e3db`
     (17 passed each). As a control, master's row against the pin fails the passes arm.
   - **The roll:** nothing changes. This is the platform's mirror of what doc-tools already serves.
+- **engine-fin's dag-tools pin moves from v0.10.0 to v0.13.0** (`agent_fleet/finance_agent/pyproject.toml`
+  and its lock; gov; the architect, 11-10: "engine-fin's dag-tools pin from v0.10.0 to v0.13.0, so fin can
+  read the ticket through"). v0.13.0 is the release the root already takes from PyPI (`edgy-dag-tools==0.13.0`).
+  At that tag the broker stamps each ticket with its id, issued-at and as-of (`ticket_identity`), and the
+  client adds `get_dataframe_with_ticket` beside `get_dataframe`. Those are steps 1 and 2 of fin's 11-07
+  plan. Step 3, rendering the as-of and ticket id on fin's provenance line and dropping its strict xfail,
+  is fin's own PR on this pin. The lock change is edgy-dag-tools alone (`d8a23d3e` → `bed53b9c`). Between
+  the tags, dag-tools' base dependencies are unchanged; the one addition is `s3fs` on the `broker` extra,
+  which engine-fin does not install. The root pyproject's note on the two pins names the new tag.
+  **The roll:** engine-fin's image changes; nothing in the values or pod templates does.
 
 ## 0.4.84 — 2026-11-10
 
