@@ -353,6 +353,22 @@ spans move from `default` to `sandbox`: a Langfuse view or query filtered on `de
   Seal: `tests/security/test_the_gateway_is_served_the_bff_token_lists_chart.py` (12 tests) runs dag-tools'
   own `accepted_issuers`, `accepted_audiences` and `announce` over the rendered env; dropping the include
   turns 11 red, and the posture back to `observe` turns 1 red.
+- **cortex-ui moves from db45763 to a255a8e, and the sandbox turns `reviewExport` on** (`values.yaml`
+  `global.imageDigests`, `values-sandbox.yaml` `cortexUi.env.VITE_FEATURES`). The image is
+  `sha256:cb902ea0…`, an index with linux/arm64, built against `8c3eb9af` (the merge of #356). It is the
+  review-export pairing:
+  - "Export as…" on the review card offers only the granted profiles whose `exportable_states` hold the
+    notice's stage, so a `review` notice gets `part-list-reviewed` only.
+  - The lasso bar shows `check_only`'s `state_not_exportable` rows and downloads only the notices that
+    cleared.
+  - Select-by-range stays hidden until 0.4.86.
+
+  The flag is read at container start, so no rebuild is needed.
+
+  **Post-roll check:** a viewer holding `ingest:exportBatch` and the `part-list-reviewed` grant sees "Export as…"
+  on a `review` notice, offering `part-list-reviewed` alone. That needs the BFF to load the sample export overlay,
+  which saf's seed-job fix sets in sandbox. Without it, a `review` notice is offered nothing and a `promoted`
+  one is offered `default-csv` and `default-json`.
 
 ## 0.4.84 — 2026-11-10
 
