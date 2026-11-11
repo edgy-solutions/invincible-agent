@@ -1,18 +1,23 @@
 to: invincible-agent/lane/gov
 from: invincible-agent/lane/gov
 date: 2026-11-11
-re: #342, #343, #351 and #353 (v0.9.19) are merged; lane 74's tripwire is red on master; #360 (v0.9.20) is ready at a9238af4 and adds no red
+re: #342, #343, #351 and #353 (v0.9.19) are merged; lane 74's tripwire is red on master; #360 (v0.9.20) is held for 0.4.86 as a draft at b2e536bc, adds no red
 supersedes: 2026-11-10-handoff-lane-gov-342-fin-dag-tools-343-sdk-v0-9-18-attestation.md
 
 ## Next step
 
-1. **#360 (v0.9.20 pin) is READY at `a9238af4`.** It was held as a draft until the count was in.
-   - Lane 1 merges it by sha. Packet (placed): `sessions/2026-11-11-packet-to-lane-01-cc-architect-from-gov-360-v0-9-20-pin-ready-no-new-red.md`.
-   - **Count:** 87 files; 1587 passed, 10 failed, 14 skipped, 4 xfailed.
-   - **Control:** the same 10 fail on master `8c3eb9af` with v0.9.19 (10 failed, 96 passed both ways), so the pin adds no red.
-   - **Control worktree:** `wt\gov\ctl-v0919` (detached, own venv). Remove it.
-   - **Watch:** the merge, then the roll's post-roll check. Under OBSERVE, a failed token still makes `authz_id` None, so a list mismatch shows as person-scoped refusals.
-   - **Branch:** `lane/gov-pin-mesh-v0-9-20` in worktree `C:\Users\cnogr\git\wt\gov\pin-mesh-v0-9-19`.
+1. **#360 (v0.9.20 pin) is HELD for 0.4.86, as a DRAFT at `b2e536bc`.** The architect, 11-11: "gov: the v0.9.20 pin moves to 0.4.86".
+   - **What moved:** `b2e536bc` takes the CHANGELOG bullet out of 0.4.85 and puts it in a new `0.4.86 — not yet cut` section.
+   - **Packets (placed):** `sessions/2026-11-11-packet-to-lane-01-cc-architect-from-gov-360-moves-to-0-4-86-do-not-merge-before-the-cut.md` supersedes the earlier "ready" packet.
+   - **After the 0.4.85 cut** (Thursday 11-12, 23:00Z):
+     1. Merge origin/master into the branch, keeping the dated 0.4.85 heading with 0.4.86 above it.
+     2. Rerun what the merge touches.
+     3. Run `gh pr ready 360`.
+     4. Packet Lane 1 the sha.
+   - **Count** (taken at `a9238af4`; since then only the CHANGELOG has changed): 87 files; 1587 passed, 10 failed, 14 skipped, 4 xfailed. The same 10 fail on master `8c3eb9af` at v0.9.19, so the pin adds no red.
+   - **Control worktree:** `wt\gov\ctl-v0919`, detached with its own venv. Remove it.
+   - **Roll watch:** under OBSERVE, a failed token still makes `authz_id` None, so a list mismatch shows up as person-scoped refusals. After the roll, check that a call through the BFF still answers as the person.
+   - **Branch and worktree:** `lane/gov-pin-mesh-v0-9-20` in `C:\Users\cnogr\git\wt\gov\pin-mesh-v0-9-19`.
 2. **Lane 74's provenance tripwire is still red on master** (see Tests). Watch for 74's answer.
 3. **Remove the worktrees** once each is clean, `git cherry` shows no `+`, and `is-ancestor` holds.
    Use `git worktree remove --force`, in the background:
