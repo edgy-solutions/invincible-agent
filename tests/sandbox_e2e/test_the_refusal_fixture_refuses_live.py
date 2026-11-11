@@ -65,8 +65,9 @@ def seal():
 
 
 def probe_urns(case: dict) -> dict[str, str]:
+    """The probe rows as the engine composes them: the seed, its built-ins, and the probes' overlay."""
     from agent_fleet.finance_agent import measure_verbs
-    rows = measure_verbs.load_measure_verbs(overlay_dirs=[REPO / case["overlay_dir"]], builtins=((), ()))
+    rows = measure_verbs.load_measure_verbs(overlay_dirs=[REPO / case["overlay_dir"]])
     return {r.measure_id: r.dataset_urn for r in rows}
 
 
