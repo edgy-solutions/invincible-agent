@@ -13,8 +13,18 @@ supersedes: 2026-11-10-handoff-lane-gov-336-walkers-join-deciders-329-rebased-to
    shows no `+`, and `is-ancestor` holds. Run `git worktree remove --force` in the background.
    - #342: `C:\Users\cnogr\git\wt\gov\fin-dag-tools`, branch `lane/gov-fin-dag-tools-v0-13-0`, head `57ff2030`
    - #343: `C:\Users\cnogr\git\wt\gov\pin-mesh-v0-9-18`, branch `lane/gov-pin-mesh-v0-9-18`, head `d2f82f97`
-3. When a later SDK tag carries the ActionRecord corrections or the ImpactRow/DataProvenance reshape, that
-   is a new pin PR. Neither is in v0.9.18 (see below).
+3. **The architect, 11-10:** "gov: #343 merges as it is (v0.9.18). When ca tags v0.9.19, you open the
+   pin move to it; that PR unblocks the OpenDDIL packet. #342 is good."
+   - Check for the tag: `git -C C:/Users/cnogr/git/iagent-mesh-sdk ls-remote --tags origin 'v0.9.19'`.
+     It was not tagged at 11-10 ~22:00Z.
+   - When it is tagged, run `git diff --stat v0.9.18 v0.9.19` and read what it carries. Then open the pin
+     move the same way as #343: 17 pyprojects, 17 locks, `meshSdkVersion` and its comment, the
+     `option_deciders.yaml` note, and a changelog bullet. Cite the OpenDDIL packet it unblocks:
+     `sessions/2026-11-10-packet-to-openddil-from-lane-01-*` in the master tree.
+4. **#343's `drift (main)` is red, but it is the advisory leg** (`continue-on-error`). doc-tools main has
+   merged #195, so the `course` row's passes now add `ExtractSectionConcepts` and `concepts.normalise`.
+   The pinned leg is green. Per `.github/doc-tools.ref`, the fix is to mirror course's passes and bump the
+   ref in one commit. Not dispatched to gov; reported to the architect.
 
 ## The dispatch, verbatim (11-10)
 
