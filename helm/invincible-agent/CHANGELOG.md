@@ -45,6 +45,10 @@ cortexBff:
 - **On the upgrade.** A token minted before the mapper existed gets 401. Users sign in again, and
   client-credentials callers mint a fresh token.
 
+**`agentFleet.env.LANGFUSE_TRACING_ENVIRONMENT`**, set to the same value as `DEPLOY_ENV`, or the spans the
+Langfuse SDK builds land in Langfuse's `default` environment. In the sandbox it is now set, so new sandbox
+spans move from `default` to `sandbox`: a Langfuse view or query filtered on `default` stops showing them.
+
 - **SECURITY: cortex-bff checks a token's audience and issuer** (`src/iagent/auth.py`,
   `templates/frontend.yaml`, `templates/keycloak-configmap.yaml`, `templates/realm-reconcile-job.yaml`,
   `values.yaml`, `values-sandbox.yaml`; the architect, 2026-11-11, on OpenDDIL's report). Through 0.4.84,
@@ -248,6 +252,39 @@ cortexBff:
   the tags, dag-tools' base dependencies are unchanged; the one addition is `s3fs` on the `broker` extra,
   which engine-fin does not install. The root pyproject's note on the two pins names the new tag.
   **The roll:** engine-fin's image changes; nothing in the values or pod templates does.
+- **Langfuse v4: the replay-safe boundary moves to provenance-telemetry 0.2.0, and every `/health`
+  reports `telemetry_misses`** (#340; `pyproject.toml` and the data_analyst, weaviate_expert,
+  presentation_agent, neo4j_expert, ontology_service and restate_analyst pyprojects with their
+  `uv.lock`s, `baml_shared/telemetry.py`, the three boundary callers, every health route,
+  `.githooks/lanes`, ADR-0038; perf, the architect, 2026-11-10). Langfuse Cloud stops accepting legacy
+  ingestion trace and span events on 2026-11-16. Through 0.4.84, the shim's `emit_boundary` used that
+  path (restate_analyst, data_analyst, neo4j_expert). The root and those six engines now pin
+  `provenance-telemetry==0.2.0` (PyPI; tag `v0.2.0` = `d73347d3`). The shim re-exports the leaf's
+  boundary primitives, which export over OTLP. The callers pass `mapping=`/`values=`, so a boundary's
+  children carry the trace attributes v4 filters on. Each lock moves that one package and nothing else.
+  On v4 a re-exported span id is a duplicate, not an upsert. One boundary span per execution therefore
+  rests on the replay journal (ADR-0038, *Amendment 2026-11-10*). `telemetry_misses` is on every serving
+  health body (17 services and mesh_registrar's `/v1/healthz`). It is an int where the leaf is installed
+  and `null` where it is not. graph_host's and ontology_service's early 503s stay without it (ruled).
+  **Roll consequence:** the pins take effect only on a roll. After the roll, `telemetry_misses` reads
+  `0` on the six leaf engines and cortex-bff and `null` on the rest. A non-zero value means Langfuse is
+  refusing the exports (a stale key, for example), so read it before calling the roll done. Nothing in
+  the chart moves. Seals: `tests/perf/test_health_reports_telemetry_misses.py` (a census of every health
+  route, floor 17, with a positive control) and `tests/test_replay_safe_boundary.py` (rewritten to an
+  in-memory OTLP exporter; "re-emit upserts" became "emitted once across a replay").
+- **The sandbox sets `LANGFUSE_TRACING_ENVIRONMENT: "sandbox"`** (`values-sandbox.yaml`, beside
+  `DEPLOY_ENV` in `agentFleet.env`; the architect, 2026-11-10: "set per deployment in helm values
+  (sandbox: "sandbox")"). On provenance-telemetry 0.2.0 the boundary span takes its environment from
+  `DEPLOY_ENV`, and the spans the Langfuse SDK builds under it take theirs from
+  `LANGFUSE_TRACING_ENVIRONMENT`. That was unset, so a boundary and its children landed in different
+  environments (`sandbox` and `default`). From 0.2.1 the boundary reads the SDK's setting too, so the key
+  must land no later than the 0.2.1 pin. The key reaches every pod that emits spans through the release's
+  ConfigMap: in the sandbox render, cortex-bff, every engine, central-gateway, mesh-registrar, the
+  projector and the Dagster pods mount it, and no container `env` overrides it. The live `iagent-secrets` carries no key of that name, so the ConfigMap's
+  value is the one a pod sees. **Roll consequence:** new sandbox spans move from Langfuse environment
+  `default` to `sandbox`; a view or query filtered on `default` stops showing them. Spans already written
+  keep `default`. A pod reads the key at start. Nothing checksums the ConfigMap, so the change takes
+  effect because 0.4.85's chart version restarts every pod. No image changes.
 
 ## 0.4.84 — 2026-11-10
 
