@@ -90,8 +90,8 @@ ratchet passed (24).
       2 or more.
     - Fix after the cut work: count the call form, not the literal.
 - **`dispatch-mfg-trace.md` → committed as `sessions/2026-11-11-dispatch-mfg-trace.md`** (byte-identical; this
-  reverses "do not commit it"). The commit is on `lane/01-dispatch-mfg-trace` as PR #359 (worktree `wt\01\mfgdisp`),
-  waiting on CI; then merge by head. The root copy is left in place.
+  reverses "do not commit it"). **#359 MERGED at `7e8987bf`** (second parent `a3d3a30f`, on master; CI 20 pass and
+  3 skipped). The worktree `wt\01\mfgdisp` can go. The root copy is left in place.
 
 **DISPATCH (after the 0.4.85 cut; nothing rides 0.4.85): manufacturing traceability.** Cite
 `sessions/2026-11-11-dispatch-mfg-trace.md` (#359). Lane 1's part, from Friday 11-13:
