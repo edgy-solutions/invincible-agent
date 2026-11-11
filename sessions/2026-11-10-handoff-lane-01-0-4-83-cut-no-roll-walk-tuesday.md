@@ -60,12 +60,46 @@ ratchet passed (24).
     - the rollback reverts that one grant row BEFORE `helm rollback`;
     - the `no_principal` check stays the observe-mode `IDENTITY_WOULD outcome=refuse` count.
 
-**DISPATCH (after the 0.4.85 cut; nothing rides 0.4.85): manufacturing traceability.** The file is the untracked
-`dispatch-mfg-trace.md` in the master tree; it is the architect's, so do not commit it. Lane 1's part, from Friday 11-13:
+**11-11 ~23:00Z: the architect's 7-item message (via Chris).** Items 3 (#354, #356, my approvals) were already done.
+- **RULED: `INTERNAL_DOOR_POSTURE` stays observe on 0.4.85.** It goes to enforce on the next train once
+  `principal_gauge` reads zero unnamed and zero divergent for 24h after the roll.
+- **RULED: post-roll, dagster-user-code must be Ready** before the roll counts as done.
+- **RULED: #327 (perf) rides the train after 0.4.85.** X-Parent-Span-Id is accepted.
+- **Realm client listing: DONE from the chart.** Packet placed (master tree):
+  `sessions/2026-11-11-packet-to-chris-cc-architect-from-lane-01-realm-clients-and-the-cortex-bff-audience.md`.
+  - All 19 chart-declared clients carry `cortex-bff`, except `training-workbench` (audience-self only). wb never calls
+    the BFF, so that is not a gap.
+  - The reconcile job repairs and verifies the mapper on every upgrade.
+  - Chris checks the realm for hand-made clients (I may not read Keycloak admin). WAIT for his answer and record it
+    before the roll.
+- **Master reds on `8c3eb9af`, each with its owner** (`tests/docs` + the dispatch-headers file: 7 failed, 134 passed,
+  51 skipped):
+  - **74's tripwire:** 74 fixes it today.
+  - **6 in `tests/docs`: owner gov; 74 approves the test edit.**
+    - The tests are 3 in `test_explain_withholds_a_page_the_asker_cannot_invoke.py` and 3 in
+      `test_the_docs_gate_reads_the_grants_the_sync_writes.py` (`runbook-adding-a-canvas-template`, `-a-graph`,
+      `-an-engine`).
+    - Cause: gov's `54522645` (11-03, "a Topaz that cannot be reached… is a 503") made
+      `agent_fleet/docs_agent/entitlement.py` read `r.status_code`. 74's `_R` doubles have only `raise_for_status` and
+      `json`, so every check fails closed with `'_R' object has no attribute 'status_code'`.
+    - The fix is the doubles speaking `status_code = 200`.
+  - **1 in `tests/test_specialist_dispatch_trace_headers.py::test_engine_a_leg_uses_the_same_source`: owner Lane 1
+    (me).**
+    - My run-bound vault `00dcf15e` (11-03) changed the call to `_telemetry_headers(config, _plan_token)` /
+      `_telemetry_headers(config, caller_token=…)`. The test counts the literal `_telemetry_headers(config)` and needs
+      2 or more.
+    - Fix after the cut work: count the call form, not the literal.
+- **`dispatch-mfg-trace.md` → committed as `sessions/2026-11-11-dispatch-mfg-trace.md`** (byte-identical; this
+  reverses "do not commit it"). The commit is on `lane/01-dispatch-mfg-trace` as PR #359 (worktree `wt\01\mfgdisp`),
+  waiting on CI; then merge by head. The root copy is left in place.
+
+**DISPATCH (after the 0.4.85 cut; nothing rides 0.4.85): manufacturing traceability.** Cite
+`sessions/2026-11-11-dispatch-mfg-trace.md` (#359). Lane 1's part, from Friday 11-13:
 - Write the ADR at the next free number, as Proposed, for a program reader first. 0068 is the edge tier draft and 0069
   is the accepted output template, so 0070 is likely next; verify on master first.
-- **Genealogy disclosure:** a unit the viewer cannot see is withheld. Whether the viewer is told the tree is incomplete
-  is my proposal, and the architect rules it.
+- **Cortex's five questions are inputs to the ADR:** transport, envelope, served declarations, entry row, disclosure.
+- **Genealogy disclosure is RULED (11-11):** a node whose children include units the viewer cannot see carries
+  `children_withheld: true`, with no identity and no count.
 - The registered contracts in `contracts/` are a superset of dag-tools' template (add, never drop or rename),
   validated by `validate_policy`.
 - Name the new engine lane and the engine.
@@ -75,8 +109,7 @@ ratchet passed (24).
   lifts the reader into the shared module. Then dag-tools tags PR B. Then fin's PR adds the three types (`timestamp`,
   `date`, `array<string>`) to that module and moves the CI pin to dag-tools' template in the same PR. **Lane 1 does
   nothing on the reader or the pin.**
-- **Open, to ask the architect:** that ruling does not say who owns the reader's multi-document form, which the
-  dispatch puts in Lane 1's section.
+- **RULED 11-11: the multi-document reader is fin's**, together with the types. Lane 1 does nothing on it.
 
 **11-11 ~04:30Z: THE TRAIN IS IN, AND SO IS #355. Master is `c4a572b9`.** The newest architect message
 (through Chris) governs. It has five rulings:
