@@ -7,6 +7,16 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-11 ~02:30Z: THE ARCHITECT'S FOUR ADR-0068 RULINGS ARE APPLIED.**
+- **ADR-0068 is DRAFT PR #347,** head `6be220db`. **Do not merge.** It stays Proposed until the architect and OpenDDIL review it.
+- **Identity:**
+  - `entry_id` and the task occurrence ids are UUIDv7s, minted once by the writing tier. A replay hands back the minted id.
+  - A uuid5 over (case, step, transition) is `dedupe_key` only, a lookup key and never an identity.
+  - §3 and the item 2 report are both amended.
+- **The per-viewer PR is the FIRST on the train after 0.4.85.** It now also carries a **per-viewer Needs-you read** (what waits on this viewer, by kind, label-scoped). The item 1 report names it in its section 5. The UI stops composing the count.
+- **The leak is on the board in #348** (item `01M745DH4FN8MN600EQWA58FT6`, worktree `wt\01\leak`). It is board-only, with no CHANGELOG entry. **Merge it on green by head sha** (`fe0d0a47`), using `waitci-348.log`.
+- **Packet to the architect:** `sessions/2026-11-11-packet-to-architect-from-lane-01-adr-0068-is-draft-pr-347-identity-amended-board-leak-348.md`.
+
 **11-11 ~02:00Z: OPENDDIL'S THREE ITEMS ARE DONE, AND THEIR FOUR REQUIREMENTS ARE RECORDED.**
 - **Item 3, ADR-0068 (Proposed):** `docs/adr/ADR-0068-the-edge-tier-profiles-a-case-journal-one-owning-tier-per-step.md`.
   - It is on branch `lane/01-adr-0068-edge-tier` at `a6efbabe`, pushed, in worktree `wt\01\adr68`. **NO PR**: it goes to the architect, then OpenDDIL, before ratification. Open a PR only on the architect's word.
