@@ -7,6 +7,26 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-11 ~02:30Z: SECURITY FIRST TONIGHT (the architect via Chris). OpenDDIL's report is CONFIRMED: the BFF
+checked neither audience nor issuer.** The audit with every site's file:line is
+`sessions/2026-11-11-report-lane-01-token-validation-audit-audience-and-issuer.md` (master tree, placed).
+- **#348 is MERGED** (`2d131cdb`, second parent = head `fe0d0a47`).
+- **The fix is in worktree `C:\Users\cnogr\git\wt\01\tokaud`**, branch `lane/01-bff-token-audience-issuer`
+  from `2d131cdb`, NOT YET COMMITTED. `auth.py` decodes with `issuer=`/`audience=` from the served env
+  `BFF_JWT_ACCEPTED_ISSUERS`/`_AUDIENCES`; an empty list refuses. Audience `cortex-bff` (mapper
+  `audience-bff`), sandbox issuers = public + in-cluster `KEYCLOAK_REALM_URL`. CHANGELOG entry written.
+- Seals green, run one at a time: `test_gateway_jwt_verification.py` 19, the new
+  `tests/mcp_seals/test_the_delegate_path_checks_audience_and_issuer.py` 13, plus the five edited door/auth
+  files. On the shipped decode (mutant) every refusal arm is red and every control green.
+- The chart side (values, frontend.yaml env, the realm mapper in configmap + reconcile, the render seal
+  `test_the_bff_accepts_only_served_issuers_and_audiences_chart.py`) was given to an implementer; check its
+  work and run the render seal before committing.
+- **Next:** verify the chart, commit with the trailer, push, PR to master, merge on the train ahead of #345.
+  After the 0.4.85 roll, tell OpenDDIL the release and the instance, read from helm.
+- Packets placed (uncommitted): OpenDDIL (confirmed; fix on 0.4.85; forward no person token until the roll;
+  re-mint after it), the architect, the gateway's owner (no audience; one issuer would refuse in-cluster
+  mints), and ca's inbox (SDK `transport_auth.py`).
+
 **11-11 ~02:30Z: THE ARCHITECT'S FOUR ADR-0068 RULINGS ARE APPLIED.**
 - **ADR-0068 is DRAFT PR #347,** head `6be220db`. **Do not merge.** It stays Proposed until the architect and OpenDDIL review it.
 - **Identity:**
