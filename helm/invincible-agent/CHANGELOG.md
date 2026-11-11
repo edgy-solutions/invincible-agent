@@ -7,6 +7,33 @@ Entries merged after the 0.4.84 tag (`f9fa4d7b`). The architect, 2026-11-10: "Me
 automation tags on merge." Every entry below goes under this heading until the cut; none goes under
 0.4.84, which is tagged and rolled.
 
+- **SECURITY: cortex-bff checks a token's audience and issuer** (`src/iagent/auth.py`,
+  `templates/frontend.yaml`, `templates/keycloak-configmap.yaml`, `templates/realm-reconcile-job.yaml`,
+  `values.yaml`, `values-sandbox.yaml`; the architect, 2026-11-11, on OpenDDIL's report). Through 0.4.84,
+  `verified_claims` decoded with `options={"verify_aud": False}` and no `issuer=`: any RS256 token the
+  realm signed, for any client, was admitted at every BFF route, the ingest door and the MCP door
+  included. Now `iss` must be one of `cortexBff.auth.acceptedIssuers` and `aud` must name one of
+  `cortexBff.auth.acceptedAudiences`, served to the pod as `BFF_JWT_ACCEPTED_ISSUERS` /
+  `BFF_JWT_ACCEPTED_AUDIENCES`; `exp`, `iss` and `aud` are required. **An empty list refuses every
+  token**; the base values ship both lists empty, so an environment that sets neither admits nobody.
+  The sandbox accepts the public realm URL and the in-cluster one (`KEYCLOAK_REALM_URL`, which service
+  mints carry), and the audience `cortex-bff`, stamped by a new `audience-bff` realm mapper on
+  cortex-ui and on every service client (delegates included); the reconcile job creates and repairs it.
+  **Roll consequence:** a token minted before the mapper exists carries no `cortex-bff` audience and is
+  refused with 401; sign in again, and a client-credentials caller mints a fresh token. **Every other
+  deployment** must set `cortexBff.auth` (both lists, and `realmAudience` if this chart's realm import or
+  reconcile owns its clients) before it takes 0.4.85, or its BFF admits nobody; that is the intended
+  failure, not a regression. The existing realm seals that compare a client with a base sha
+  (`tests/test_openddil_delegate_client.py`, `tests/test_cortex_ui_redirects_chart.py`,
+  `tests/test_oidc_broker_chart.py`) now check that the one added mapper is exactly `audience-bff` and
+  compare the rest unchanged; the reconcile's two per-client audience regions carry begin/end markers for
+  that. Two executed arms in `test_oidc_broker_chart.py` prove the repair adds the mapper when absent and
+  leaves one emitting the audience alone, whatever its name. Seals:
+  `tests/security/test_gateway_jwt_verification.py` (wrong audience, wrong issuer, either missing, an
+  empty served list: each refused, each against the admitted control),
+  `tests/mcp_seals/test_the_delegate_path_checks_audience_and_issuer.py` (every delegate in the sandbox
+  values, on both `on_behalf_of` routes), and
+  `tests/security/test_the_bff_accepts_only_served_issuers_and_audiences_chart.py` (the render).
 - **The chart-version test reads git output as UTF-8** (`tests/test_chart_version_tracks_chart_content.py`;
   fin's finding). Its two text-mode `git` calls now pass `encoding="utf-8"`. Without it, Python decodes
   `git show` of this file with the locale's code page; on a Windows cp1252 box the em-dashes in these

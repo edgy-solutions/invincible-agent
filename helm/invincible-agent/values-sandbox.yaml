@@ -796,6 +796,18 @@ cortexBff:
     # without this key reads the seed. A path that does not exist composes NOTHING, silently --
     # tests/security/test_the_sandbox_names_its_grantor.py holds it to a directory with rows.
     GRANTOR_OVERLAY_DIRS: "/app/policy/overlays/sample/grantors"
+  # Token acceptance (architect, 2026-11-11). Keycloak runs without a fixed hostname, so `iss` is the URL a
+  # token was minted at: the public realm URL for the browser and outside callers (the gateway's
+  # GATEWAY_JWT_ISSUER), and the in-cluster realm URL for every in-cluster mint
+  # (iagent_mesh.service_identity.mint_token reads agentFleet.env's KEYCLOAK_REALM_URL; doc-tools quotes
+  # the same URL). Both entries quote those values rather than retyping them.
+  auth:
+    acceptedIssuers:
+      - '{{ .Values.centralGateway.env.GATEWAY_JWT_ISSUER }}'
+      - '{{ .Values.agentFleet.env.KEYCLOAK_REALM_URL }}'
+    acceptedAudiences:
+      - cortex-bff
+    realmAudience: cortex-bff
   ingress:
     enabled: true
     className: traefik
