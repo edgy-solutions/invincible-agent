@@ -259,10 +259,23 @@ def test_the_window_param_is_refused_for_this_kind(post):
 
 
 @pytest.mark.parametrize("fn", [CUM, EAC])
-def test_an_export_naming_a_series_row_is_refused_with_the_existing_code(series_rows, fn):
-    with pytest.raises(engine.HTTPException) as e:
-        engine._refuse_asset_exports([fn])
-    assert e.value.status_code == 409 and e.value.detail["error"] == "asset_export_unsupported"
+def test_a_package_naming_a_series_row_asks_its_grant_and_the_builder_refuses_it_by_name(
+        post, gate, series_rows, monkeypatch, tmp_path, fn):
+    """As for a flow row: the page's embedded `measures.py` cannot recompute the row, so the builder
+    refuses it by name with nothing written, after the row's own asset grant was asked."""
+    monkeypatch.setattr(engine, "_repo_root", lambda: Path(__file__).resolve().parents[2])
+    dist = tmp_path / "dist"
+    monkeypatch.setattr(engine, "_dist_dir", lambda root: dist)
+    monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
+    body = {"user_email": ALLOWED, "recipient_scope": f"program_office.{PROGRAM}",
+            "canvas": {"template_id": "program_finance", "template_hash": "h",
+                       "panels": [{"panel": 0, "verb": "mesh:" + series_rows[fn].verb,
+                                   "params": {"program_id": PROGRAM}}]}}
+    r = post.client.post("/package_export", json=body,
+                         headers={"Authorization": f"Bearer {token(ALLOWED)}"})
+    assert r.status_code == 503, r.text
+    assert fn in r.json()["detail"] and "embedded measures.py" in r.json()["detail"]
+    assert (ALLOWED, series_rows[fn].dataset_urn) in gate.asked and not dist.exists()
 
 
 def test_the_verbs_register_like_any_declared_row(series_rows):

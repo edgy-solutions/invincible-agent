@@ -27,6 +27,7 @@ import base64
 import dataclasses
 import enum
 import hashlib
+import html as html_lib
 import json
 import pathlib
 import sys
@@ -281,7 +282,7 @@ _TEMPLATE = """<!doctype html>
 </style></head><body>
 <header>
  <h1>Program finance validation package - {recipient}</h1>
- <div class="meta">algorithm {sha} &middot; template {template_id} &middot; as of {as_of}</div>
+ <div class="meta">algorithm {sha} &middot; template {template_id} &middot; as of {as_of}</div>{source_note}
 </header>
 <main>
  <div id="status" class="checking">Verifying against the producing engine...</div>
@@ -415,7 +416,8 @@ function render(pkg, results) {{
 
 def build_html(recipient_scope: str, program_id: str, runtime_dir: pathlib.Path,
                state_dict: dict[str, Any], panels: list[dict[str, Any]], *,
-               template_id: str, as_of: str, sha: str) -> str:
+               template_id: str, as_of: str, sha: str,
+               data_provenance: Optional[str] = None) -> str:
     """Build the page. `panels` carries the SERVED rows (`_measure_envelope`'s output),
     never recomputed here — recomputation is `page.verify`'s job, inside the browser."""
     embedded, loader_js = embedded_runtime(runtime_dir)
@@ -423,6 +425,8 @@ def build_html(recipient_scope: str, program_id: str, runtime_dir: pathlib.Path,
     return _TEMPLATE.format(
         recipient=recipient_scope, program_id=program_id, sha=sha,
         template_id=template_id, as_of=as_of,
+        source_note=(f'\n <div class="meta">{html_lib.escape(data_provenance)}</div>'
+                     if data_provenance else ""),
         embedded_json=json.dumps(embedded),
         package_json=package_json,
         sources_json=json.dumps(_embedded_sources()),
@@ -433,7 +437,9 @@ def build_html(recipient_scope: str, program_id: str, runtime_dir: pathlib.Path,
 def build(*, recipient_scope: str, program_id: str, state: FinanceState,
          template_id: str, template_hash: str, panels: list[dict[str, Any]],
          runtime_dir: pathlib.Path, sha: str, html_path: pathlib.Path,
-         duckdb_path: pathlib.Path, as_of: str | None = None) -> dict[str, Any]:
+         duckdb_path: pathlib.Path, as_of: str | None = None,
+         program_source: dict[str, Any] | None = None,
+         data_provenance: str | None = None) -> dict[str, Any]:
     """Produce one recipient's package. Three named refusals, each before anything after it
     is built — see the module docstring. `as_of` is resolved ONCE (UTC today when absent) and
     reaches both the manifest and the page."""
@@ -470,11 +476,13 @@ def build(*, recipient_scope: str, program_id: str, state: FinanceState,
         narrowed, recipient_scope=recipient_scope, program_id=program_id,
         algorithm_sha=sha, template_id=template_id, template_hash=template_hash,
         panels=panels, duckdb_sha256=duckdb_sha256, as_of=as_of,
+        program_source=program_source, data_provenance=data_provenance,
     )
 
     html = build_html(
         recipient_scope, program_id, runtime_dir, state_dict, panels,
         template_id=template_id, as_of=manifest["as_of"], sha=sha,
+        data_provenance=data_provenance,
     )
 
     # (3) THE PRODUCED PAGE'S JAVASCRIPT MUST PARSE.
