@@ -337,13 +337,16 @@ async def lifespan(app: FastAPI):
 # Telemetry (ADR-0038): join Engine W's work to the caller's trace. telemetry.py is at /app
 # in the fleet image; guarded so the engine runs identically when the shim/leaf is absent.
 try:
-    from telemetry import observed_trace, MAPPING, build_trace_values
+    from telemetry import observed_trace, MAPPING, build_trace_values, emit_misses
 except Exception:  # pragma: no cover — telemetry never load-bearing
     from contextlib import contextmanager as _cm
 
     @_cm
     def observed_trace(*_a, **_k):
         yield
+
+    def emit_misses():  # None = no telemetry leaf here, so nothing emitted, nothing missed
+        return None
 
     def build_trace_values(**_k):
         return {}
@@ -427,4 +430,4 @@ async def query_knowledge_proxy(request: Request) -> JSONResponse:
 @app.get("/health")
 def health_check():
     """Liveness probe endoint for Kubernetes."""
-    return {"status": "ok", "engine": "W"}
+    return {"status": "ok", "engine": "W", "telemetry_misses": emit_misses()}

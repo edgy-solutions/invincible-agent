@@ -1,7 +1,7 @@
 # ADR-0038 — Telemetry as provenance projection: the Langfuse observability standard (extends ADR-0010)
 
 **Status:** **Partially implemented — stage 2 in progress.** Standard defined and the leaf exists. *Measured 2026-09-23, not read:* the **shape-schema validator** and the **mesh-repo truth-check** are **live**; Langfuse **scores** and **stages 3–5** (doc-tools artifact-keyed tracing, prompt-hash linkage, v3/OTEL) are **spec-only** — declared here and in the leaf's types, with no call site. "Proposed" was wrong in both directions: it undersold two shipped mechanisms and oversold three unbuilt ones. See *Status as measured* under Rollout for what was exercised and the one seal that has no test.
-**Date:** 2026-08-03
+**Date:** 2026-08-03 · **Amended:** 2026-11-10 (replay-safe boundary on Langfuse v4 — see *Amendment 2026-11-10* below Rollout)
 **Deciders:** Platform team
 **Related:**
   - [ADR-0010](ADR-0010-distributed-tracing-strategy.md) — this **extends** it. 0010 established `X-Trace-Id` propagation at the HTTP boundary; this defines the full metadata *standard* carried on top.
@@ -114,6 +114,36 @@ are not claimed above.
 3. **doc-tools tracing, artifact-keyed.** Sensor mints the trace id from ETag+Key; sensor→`start_review` forwards `X-Trace-Id`; BAML spans nest under it. **Seal:** drop a PDF → one trace bucket→queue; re-extraction = new trace, retry attaches.
 4. **Prompt-hash linkage.** `prompt@<hash>` for file prompts + `langfuse_prompt` link for GUI prompts, into span metadata. **Seal:** a trace names the prompt version that produced an extraction.
 5. **v3 / OTEL migration.** **Seal:** before/after trace-shape comparison — no silent span drops.
+
+## Amendment 2026-11-10 — the replay-safe boundary's guarantee moves to the journal
+
+**Scope.** The Restate-replay-safe entry boundary (`mint_boundary_ids` / `boundary_parent` /
+`emit_boundary`, used by restate_analyst, data_analyst and neo4j_expert). Its guarantee is that
+one execution of a handler shows **one** boundary span, however many times Restate replays it.
+
+**What the vendor changed.** Langfuse Cloud is v4-only from 2026-11-16. The boundary was emitted
+through the legacy ingestion API, where a probe on 2026-08-05 measured that the same observation
+id ingested twice **collapses to one** (upsert). That API stops accepting trace and span events on
+11-16. On the v4 OTLP path a second export of the same span id is a **duplicate**: there is no
+upsert behind it.
+
+**Ruling.** "Emitted once per execution" is now guaranteed by **the replay journal**, not by the
+backend. `emit_boundary` runs exactly once, inside its own journaled `ctx.run` step, so a replay
+returns the step's recorded result instead of re-exporting. The ambient boundary parent is
+non-recording and exports nothing, so re-entering it on a replay cannot double either. The residual
+window is "export succeeded, the step's journal entry did not commit": at most one duplicate on
+that replay.
+
+**Where it lives.** The three primitives moved into the leaf, `provenance-telemetry` 0.2.0, which
+exports the boundary span over OTLP; `baml_shared/telemetry.py` re-exports them. This reverses the
+shim's earlier placement note ("promote into the leaf only if a non-mesh consumer acquires a
+replaying execution model"): the transport change made a second copy of the export path a second
+scheme beside the leaf's, which this ADR's package boundary forbids.
+
+**Seal.** `tests/test_replay_safe_boundary.py` is rewritten to the leaf's OTLP contract. Its
+former "a re-emit upserts" case is now "emitted once across a replay", run against an in-memory
+exporter with a `ctx.run` stand-in. The test guards the property the system relies on, which is
+the journal, rather than a vendor behaviour that no longer exists.
 
 ## Consequences
 
