@@ -1,0 +1,50 @@
+# SANDBOX ONLY -- a refusal probe, not a sample and not a measure. It names one of dag-tools'
+# planted-refusal assets (dag-tools 0.13.0, group mesh_demo_refusal), whose rows are built to be
+# REFUSED, so the live leg (tests/sandbox_e2e/test_the_refusal_fixture_refuses_live.py) can show
+# each rule the dataset-row readers enforce, refused on the live path. Only values-sandbox.yaml
+# names this directory. The outcome of every planted case through this row is derived from the
+# reader and sealed in tests/finance/test_the_refusal_probes_refuse_as_derived.py.
+measure_id: fin_probe_refusal_series
+verb: finProbeRefusalSeries
+name: "Refusal probe: series over the row-level fixture"
+description: >-
+  The cumulative series row's reader over dag-tools' row-level refusal fixture. One program per planted case plus the clean control NP-PLANT-NONE. It answers nothing anyone should read.
+anti_synonyms:
+  - cumulative earned value
+  - s-curve
+  - estimate at completion
+  - eac variance
+  - actual cost
+inputs:
+  params: {program_id: {required: true}}
+  dataset:
+    urn: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_refusal_fixture,PROD)"
+    banner: "SYNTHETIC rows planted to be refused, not a real program."
+    scope: program_id
+    period: period
+    status: status_period
+    per_period: {bcws: bcws, bcwp: bcwp, acwp: acwp}
+    per_program: {bac: program_bac}
+computation:
+  module: agent_fleet.finance_agent.measure_modules.ev_series
+  function: cumulative
+  version: "1.0.0"
+  derived_from:
+    authority: Test fixture, no external method
+    clause: A running sum of period amounts
+    citation: name-only
+    transcription: PV, EV and AC at t are BCWS, BCWP and ACWP summed over periods 1..t
+render:
+  shape: MULTI_SERIES
+  value_label: Refusal probe
+  series:
+    - {key: pv, label: Planned value, unit: USD, cumulative: true}
+    - {key: ev, label: Earned value, unit: USD, cumulative: true}
+    - {key: ac, label: Actual cost, unit: USD, cumulative: true}
+    - {key: bac, label: Budget at completion, unit: USD}
+  target: {series: bac, label: BAC}
+policy:
+  status: sample
+  cells: [PROGRAM_FINANCE]
+  granted_by: seed
+  reason: a sandbox probe reaching the series reader's rules on the planted row-level cases
