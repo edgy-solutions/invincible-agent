@@ -1,0 +1,24 @@
+# The case `test_the_refusal_fixture_refuses_live.py` runs. Every principal, asset, persona and
+# directory the test names lives HERE and nowhere in its Python (config names the case, ruled
+# 10-30). The planted programs and what each answers come from dag-tools' manifest and the offline
+# seal's EXPECTED (tests/finance/test_the_refusal_probes_refuse_as_derived.py), never restated.
+#
+# The allowed subject holds every planted program and a grant on every asset. The denied subject
+# holds the control program and the cell, and no asset grant. A subject outside the program is
+# refused 403 `program_not_visible` before any read and proves nothing about the asset gate.
+assets:
+  - "urn:li:dataset:(urn:li:dataPlatform:s3,ev_refusal_fixture,PROD)"
+  - "urn:li:dataset:(urn:li:dataPlatform:s3,ev_refusal_missing_column,PROD)"
+  - "urn:li:dataset:(urn:li:dataPlatform:s3,ev_refusal_wrong_type,PROD)"
+banner_must_say: synthetic
+overlay_dir: policy/overlays/sandbox/measure_verbs
+overlay_env: MEASURE_VERB_OVERLAY_DIRS
+overlay_in_pod: /app/policy/overlays/sandbox/measure_verbs
+active_persona: PROGRAM_FINANCE_ANALYST
+active_domains: [PROGRAM_FINANCE]
+persona_group: finance-analysts
+allowed_subject: alice@example.com
+allowed_persona: alice
+denied_subject: erin@example.com
+denied_persona: erin
+deployment: iagent-engine-fin

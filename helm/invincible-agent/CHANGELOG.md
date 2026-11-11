@@ -7,6 +7,44 @@ Entries merged after the 0.4.84 tag (`f9fa4d7b`). The architect, 2026-11-10: "Me
 automation tags on merge." Every entry below goes under this heading until the cut; none goes under
 0.4.84, which is tagged and rolled.
 
+### Upgrade notes: set these before an environment takes 0.4.85
+
+**`cortexBff.auth`**, or the BFF admits nobody. Its two lists are empty in `values.yaml`, and an empty
+list refuses every token. This is intended.
+
+```yaml
+cortexBff:
+  auth:
+    acceptedIssuers:      # every URL a token for this environment can be minted at
+      - <the realm URL the browser signs in at>
+      - <the realm URL services mint at, if it differs>
+    acceptedAudiences: [cortex-bff]
+    realmAudience: cortex-bff   # only if this chart's realm import or reconcile owns the clients; else ""
+```
+
+- **Issuers.** `iss` is the URL a token was minted at. With Keycloak on no fixed hostname, a browser token
+  and an in-cluster service token differ, so list both. Entries go through `tpl`; the sandbox quotes
+  `centralGateway.env.GATEWAY_JWT_ISSUER` and `agentFleet.env.KEYCLOAK_REALM_URL`.
+- **What the pod gets.** `BFF_JWT_ACCEPTED_ISSUERS` and `BFF_JWT_ACCEPTED_AUDIENCES`, comma-joined and
+  rendered after `cortexBff.env`, so a hand-set entry cannot widen them. The render fails if `realmAudience`
+  is set and is not one of `acceptedAudiences`.
+- **The realm mapper.** Every client that calls the BFF needs the audience in its access token: cortex-ui and
+  every service client, delegates included. If this chart owns the realm's clients, `realmAudience` adds the
+  mapper and the reconcile repairs it. Otherwise add this mapper by hand:
+
+  ```json
+  {"name": "audience-bff", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+   "config": {"included.custom.audience": "cortex-bff", "access.token.claim": "true",
+              "id.token.claim": "false"}}
+  ```
+
+  The reconcile recognises a mapper by what it emits, not by its name. Leave the mapper off clients that
+  must not call the BFF.
+- **Check before upgrading.** Mint a fresh token for one browser user and one service client, and read only
+  their `iss` and `aud` claims.
+- **On the upgrade.** A token minted before the mapper existed gets 401. Users sign in again, and
+  client-credentials callers mint a fresh token.
+
 - **SECURITY: cortex-bff checks a token's audience and issuer** (`src/iagent/auth.py`,
   `templates/frontend.yaml`, `templates/keycloak-configmap.yaml`, `templates/realm-reconcile-job.yaml`,
   `values.yaml`, `values-sandbox.yaml`; the architect, 2026-11-11, on OpenDDIL's report). Through 0.4.84,
@@ -142,6 +180,41 @@ automation tags on merge." Every entry below goes under this heading until the c
   nothing in the values or pod templates changes. The sandbox has `FIN_DATASET_URN` set, so at the
   roll its built-ins, packages and CDRLs read the asset as the caller, except funding, which stays
   on the seed by its row.
+- **The where-used fixture carries PCN26-182's two parts, so a notice and where-used join on a part**
+  (`policy/overlays/sample/product_structure/where_used.yaml`, `tests/test_where_used_joins_the_notice_parts.py`;
+  74, #339). PCN26-182 is a synthetic notice OpenDDIL built (Chris, 2026-11-10). Its parts, 5530-182 and
+  5530-183, are now two identities in the synthetic BOM, marked synthetic like the rest. Each resolves by
+  the number the notice prints and by the component IRI the notice graph carries. 5530-182 sits under
+  SUB-B: qty per E1 12 (ALPHA), E2 6 (BRAVO), and E3 is never served. 5530-183 is E1 only, at 2. The
+  existing part's rows (26, 12) do not move. **The roll:** the fixture ships in every agent image
+  (`Dockerfile.agent` copies `policy/overlays/`); nothing in the values or pod templates changes. Through
+  0.4.84 the demo's where-used beat asks about the fixture part `0SYN1:PN-1001`; from this version it can
+  ask about 5530-182. Whether a question grounded on the notice's Component reaches the verb is #341's.
+
+- **fin's live leg: the time-phased rows ship, and the sandbox carries refusal probes** (approved
+  2026-11-10 as one PR). `fin_ev_cumulative` and `fin_eac_trend` move from the test fixtures to
+  `policy/overlays/sample/measure_verbs/`, menus included. Four probe rows go in a new sandbox-only
+  overlay, `policy/overlays/sandbox/measure_verbs/`, each reading one of dag-tools 0.13.0's
+  planted-refusal assets (`ev_refusal_fixture`, `ev_refusal_missing_column`,
+  `ev_refusal_wrong_type`); they carry no menu. Their rail is all `granted_by: seed`,
+  `ratified_by: owner`: alice reads the three assets, the eleven `NP-PLANT-*` programs are
+  members-only for alice, and erin joins `NP-PLANT-NONE` as the asset gate's refusal control. The
+  offline seal `tests/finance/test_the_refusal_probes_refuse_as_derived.py` runs every planted case
+  through the real route; the live leg `tests/sandbox_e2e/test_the_refusal_fixture_refuses_live.py`
+  skips, naming what is missing, until the roll. Four planted cases answer 200 today and are owed a
+  refusal declared in the dataset contract (ruled 2026-11-10, a follow-up PR); until it lands each
+  of their legs is a strict xfail asserting the refusal, offline and live, never a pass.
+  `wrong_type`: dataset readers cast level and scope columns to String.
+  `duplicate_work_package_period`: no reader checks a key, so the duplicated row is summed twice.
+  `program_name_not_unique` and `work_package_in_two_accounts` repeat no row; no reader reads the
+  column that varies.
+- **The roll (live leg):** engine-fin's image changes (the new overlay directories ride the
+  `policy/overlays/` COPY). `values-sandbox.yaml` changes: engine-fin's `MEASURE_VERB_OVERLAY_DIRS`
+  gains `/app/policy/overlays/sandbox/measure_verbs`. Before the live leg can pass: Lane 1
+  materialises the `mesh_demo_refusal` group and the catalog sync gives the three assets directory
+  objects (until then grant_sync refuses the file, exit 3, as it did for ev_fixture); Chris syncs the
+  three grants and eleven programs to Topaz. The asset URNs are by analogy with ev_fixture and are
+  unverified until the live leg's FIRST leg passes.
 - **The `course` overlay row mirrors the doc-tools commit the sandbox runs; `.github/doc-tools.ref` moves
   to it** (gov; the architect, 11-10: "Bump .github/doc-tools.ref to the doc-tools commit that sandbox
   actually runs, read from helm ... not to doc-tools main"). The `doc-tools` release pins its image by

@@ -1,7 +1,7 @@
-# TEST FIXTURE -- not a sample. The dataset-backed series rows read `status_period`, which the EV
-# fixture produces from dag-tools 0.12.0 (contracts/ev_fixture.yaml). Until that pin lands, a shipped
-# row would answer 502 missing_column against the live asset, so the rows are proved here, over a
-# frame of the 0.12.0 shape, and move to policy/overlays/sample/ with the pin.
+# SAMPLE -- invented in this repo to prove the dataset-kind series row on the synthetic EV fixture.
+# A deployment replaces it with its own. It reads `status_period`, which the fixture produces from
+# dag-tools 0.12.0 (contracts/ev_fixture.yaml); the fleet pins 0.13.0. It was a test fixture until
+# that pin landed (#316); the offline proof is tests/finance/test_a_dataset_series_row_draws_from_the_asset.py.
 measure_id: fin_ev_cumulative
 verb: finEarnedValueCumulative
 name: Cumulative earned value
@@ -41,8 +41,13 @@ render:
     - {key: ac, label: Actual cost, unit: USD, cumulative: true}
     - {key: bac, label: Budget at completion, unit: USD}
   target: {series: bac, label: BAC}
+menu:
+  subject: "fin:DeclaredMeasureSeries"
+  archetype: "mesh:MultiSeries"
+  persona_fit: [PROGRAM_FINANCE_ANALYST]
+  domain_fit: [PROGRAM_FINANCE]
 policy:
   status: sample
   cells: [PROGRAM_FINANCE]
   granted_by: seed
-  reason: a test fixture proving the dataset-backed series on the 0.12.0 EV fixture shape
+  reason: a sample row proving the dataset-backed series on the synthetic EV fixture
