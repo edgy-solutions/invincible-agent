@@ -7,6 +7,44 @@ Entries merged after the 0.4.84 tag (`f9fa4d7b`). The architect, 2026-11-10: "Me
 automation tags on merge." Every entry below goes under this heading until the cut; none goes under
 0.4.84, which is tagged and rolled.
 
+### Upgrade notes: set these before an environment takes 0.4.85
+
+**`cortexBff.auth`**, or the BFF admits nobody. Its two lists are empty in `values.yaml`, and an empty
+list refuses every token. This is intended.
+
+```yaml
+cortexBff:
+  auth:
+    acceptedIssuers:      # every URL a token for this environment can be minted at
+      - <the realm URL the browser signs in at>
+      - <the realm URL services mint at, if it differs>
+    acceptedAudiences: [cortex-bff]
+    realmAudience: cortex-bff   # only if this chart's realm import or reconcile owns the clients; else ""
+```
+
+- **Issuers.** `iss` is the URL a token was minted at. With Keycloak on no fixed hostname, a browser token
+  and an in-cluster service token differ, so list both. Entries go through `tpl`; the sandbox quotes
+  `centralGateway.env.GATEWAY_JWT_ISSUER` and `agentFleet.env.KEYCLOAK_REALM_URL`.
+- **What the pod gets.** `BFF_JWT_ACCEPTED_ISSUERS` and `BFF_JWT_ACCEPTED_AUDIENCES`, comma-joined and
+  rendered after `cortexBff.env`, so a hand-set entry cannot widen them. The render fails if `realmAudience`
+  is set and is not one of `acceptedAudiences`.
+- **The realm mapper.** Every client that calls the BFF needs the audience in its access token: cortex-ui and
+  every service client, delegates included. If this chart owns the realm's clients, `realmAudience` adds the
+  mapper and the reconcile repairs it. Otherwise add this mapper by hand:
+
+  ```json
+  {"name": "audience-bff", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+   "config": {"included.custom.audience": "cortex-bff", "access.token.claim": "true",
+              "id.token.claim": "false"}}
+  ```
+
+  The reconcile recognises a mapper by what it emits, not by its name. Leave the mapper off clients that
+  must not call the BFF.
+- **Check before upgrading.** Mint a fresh token for one browser user and one service client, and read only
+  their `iss` and `aud` claims.
+- **On the upgrade.** A token minted before the mapper existed gets 401. Users sign in again, and
+  client-credentials callers mint a fresh token.
+
 - **SECURITY: cortex-bff checks a token's audience and issuer** (`src/iagent/auth.py`,
   `templates/frontend.yaml`, `templates/keycloak-configmap.yaml`, `templates/realm-reconcile-job.yaml`,
   `values.yaml`, `values-sandbox.yaml`; the architect, 2026-11-11, on OpenDDIL's report). Through 0.4.84,
