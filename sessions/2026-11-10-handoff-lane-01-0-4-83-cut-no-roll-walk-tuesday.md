@@ -7,6 +7,28 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-11 ~03:45Z: THE TRAIN. Master is `a02cfda3`.** Reported to the architect in
+`sessions/2026-11-11-packet-to-architect-from-lane-01-the-train-four-in-three-stopped.md` (master tree, placed).
+- **Merged**, each with its seals green on master:
+  - #349 `3c85f53d`
+  - #350 `03c0b1c1`
+  - #345 `e9d00785` (^2 `7ce3495f`; 9 seal files)
+  - #339 `a02cfda3` (^2 `3d9f1d13`)
+  - #340 was already merged at `4a1e1b5a` (perf). Its bullet is owed: perf's text, or Lane 1 writes it after
+    11-12 20:00Z, naming perf.
+- **Stopped:**
+  - **#341 (74):** a `board/BOARD.md` conflict. Packet `...-to-74-...-341-conflicts-on-the-board-...`.
+  - **#342 (gov):** a CHANGELOG conflict.
+  - **#343 (gov):** `drift (main)` is red.
+  - gov's packet: `...-to-gov-...-re-merge-342-and-343-at-a02cfda3-...`.
+- **#351 (gov, course drift, doc-tools 728afaf5):** all green, including `drift (main)`. It is not on the
+  architect's list, and is likely #343's fix. **Merge only on the architect's or gov's word.**
+- **saf's wiring:** no PR yet.
+- **v0.9.19 is TAGGED** (it peels to `ef7a6f35`). gov opens the pin move. After it merges, the ActionRecord
+  seal tightens, and then the OpenDDIL sample packet goes out.
+- **ca accepted the v0.9.20 names** (`MESH_JWT_ACCEPTED_ISSUERS`/`_AUDIENCES`/`MESH_JWT_JWKS_URL`): static
+  path kept with the same checks, HS256 dropped from both. Packet `...-to-lane-01-from-ca-v0-9-20-names-accepted-jwks-added.md`.
+
 **11-11 ~03:40Z: SECURITY — the BFF fix is MERGED; the engines are next.** The audit, with every site's file
 and line, is `sessions/2026-11-11-report-lane-01-token-validation-audit-audience-and-issuer.md` (master tree,
 placed).
