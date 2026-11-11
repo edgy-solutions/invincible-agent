@@ -142,6 +142,16 @@ automation tags on merge." Every entry below goes under this heading until the c
   nothing in the values or pod templates changes. The sandbox has `FIN_DATASET_URN` set, so at the
   roll its built-ins, packages and CDRLs read the asset as the caller, except funding, which stays
   on the seed by its row.
+- **The where-used fixture carries PCN26-182's two parts, so a notice and where-used join on a part**
+  (`policy/overlays/sample/product_structure/where_used.yaml`, `tests/test_where_used_joins_the_notice_parts.py`;
+  74, #339). PCN26-182 is a synthetic notice OpenDDIL built (Chris, 2026-11-10). Its parts, 5530-182 and
+  5530-183, are now two identities in the synthetic BOM, marked synthetic like the rest. Each resolves by
+  the number the notice prints and by the component IRI the notice graph carries. 5530-182 sits under
+  SUB-B: qty per E1 12 (ALPHA), E2 6 (BRAVO), and E3 is never served. 5530-183 is E1 only, at 2. The
+  existing part's rows (26, 12) do not move. **The roll:** the fixture ships in every agent image
+  (`Dockerfile.agent` copies `policy/overlays/`); nothing in the values or pod templates changes. Through
+  0.4.84 the demo's where-used beat asks about the fixture part `0SYN1:PN-1001`; from this version it can
+  ask about 5530-182. Whether a question grounded on the notice's Component reaches the verb is #341's.
 
 ## 0.4.84 — 2026-11-10
 
