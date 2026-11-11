@@ -229,6 +229,20 @@ cortexBff:
   - **Closed network:** the package calls itself 0.9.18, so `meshSdkSource: index` serves this pin.
   - **The roll:** every engine image changes (the lock), and `meshSdkVersion` changes in values.
 
+- **Where-used is registered a second time, on the notice graph's Component** (`agent_fleet/ontology_service/where_used.py`,
+  `agent_fleet/ontology_service/main.py`, `tests/test_where_used_takes_the_notice_graphs_component.py`; 74, #341;
+  ruled by Chris, 2026-11-10). The router walks `rdfs:subClassOf*` from an instance's class to a verb's input. No
+  path is declared from `pcn:Component` to `ps:Part`, so a question grounded on a notice's part was never offered
+  where-used. The read already resolves that IRI through #339's alias row. engine-o now registers the verb on
+  both inputs, under two names (one name registered twice deletes the first edge). Every other field is shared,
+  so the verb keeps one description. As ruled, Component is not put under `ps:Part`, because that over-claims; a
+  seal fails if a subClassOf path lands. Whether Component sits under `ps:ManufacturerPart` is board item
+  `01M74258XJ8AWRV68MFA49YW9V`, open and parked. Seals: alice reads E1 12 and E2 6 from the Component's IRI, and
+  bob reads E1 only; deleting the alias rows turns them red with `unknown_part`. **The roll:** engine-o's image
+  changes; nothing in the values or pod templates moves. Engines register only at startup, so the new edge
+  appears only after engine-o restarts. The existing edge is kept, so there is nothing to delete. After the roll,
+  read the new edge, then ask "where is part 5530-182 used" as alice and as bob.
+
 ## 0.4.84 — 2026-11-10
 
 Entries merged after the 0.4.83 tag (`3a23fce4`), through `27d59a39`. The architect, 2026-11-10:
