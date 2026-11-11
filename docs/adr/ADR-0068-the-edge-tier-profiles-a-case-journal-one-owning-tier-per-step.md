@@ -4,7 +4,9 @@
 architect, then to the reviewing party, before ratification. Not on the 0.4.85 train. Nothing below is built.
 **Date:** 2026-11-11
 **Deciders:** architect (to ratify). Drafted by lane/01. Positions §1–§5 were accepted in principle by the
-reviewing party, which added the four requirements recorded as §6–§9 (architect, via Chris, 2026-11-11).
+reviewing party, which added the four requirements recorded as §6–§9 (architect, via Chris, 2026-11-11). The
+architect accepted the shape on 2026-11-11 and ruled entry and occurrence identity (§3: a minted UUIDv7, with a
+uuid5 only as the dedupe lookup key). It is open as a draft PR so it can be read, and it stays Proposed.
 **Related:**
   - ADR-0067 (one identity per thing): an occurrence is its episode plus
     `detected_at_ns`. The journal's entries (§3) carry that occurrence id where one exists.
@@ -63,10 +65,15 @@ whose profile lacks it (§1, last bullet).
 - Every case has a journal. An entry is never rewritten or deleted; a correction is a new entry that names the
   entry it corrects.
 - An entry carries:
-  - `entry_id`: a uuid5 over (case id, writing tier, tier sequence). It is deterministic, so a replay produces
-    the same id;
+  - `entry_id`: **a UUIDv7, minted once by the writing tier** (ADR-0067 §1: an identity is a v7 minted by the
+    authority that owns the thing). A replay keeps the same id because the journal hands back the entry already
+    minted. The id is never recomputed;
   - `case_id`;
-  - `occurrence_id` (ADR-0067), where the entry is caused by one;
+  - `occurrence_id` (ADR-0067), where the entry is caused by one. A `task_opened` or `task_closed` entry is its
+    own occurrence, and its `occurrence_id` is that entry's minted v7;
+  - `dedupe_key`, where a writer may retry: a uuid5 over (case, step, transition). It is a **lookup key only,
+    never an identity**. Before minting, the writer looks the key up; if an entry holds it, that entry's minted
+    id is handed back and nothing new is written;
   - `tier` and `tier_seq`: the writing tier and that tier's own gap-free sequence;
   - `actor` (an authz_id) and `on_behalf_of`;
   - `kind`: for example `case_opened`, `step_started`, `task_opened`, `task_closed`, `acted`, `routing_fault`,
@@ -75,7 +82,8 @@ whose profile lacks it (§1, last bullet).
   - `policy_version` (§2);
   - a digest of the payload.
 - **Replication is by entry.** A tier sends each peer the entries that peer has not acknowledged. The receiver
-  applies them by `entry_id`, so a second delivery is a no-op.
+  applies them by `entry_id`, so a second delivery is a no-op. A receiver never mints for an entry it receives;
+  the id travels with the entry.
 - **Catch-up is a cursor read:** `(tier, tier_seq)` for each peer. A reader that reconnects asks for entries
   after its cursor and gets every one it missed, in order, per tier.
 - **Projections are derived from the journal.** That includes the task list and the case view, so two tiers that
@@ -147,8 +155,11 @@ consulting policy.
 
 This list takes effect only after ratification, and each item ships in its own PR.
 
-1. **The per-viewer task list, label scoping included.** This is the approvals[].task PR on the train after
-   0.4.85. It builds §6 on today's tables before the journal exists, because §6 does not depend on the journal.
+1. **The per-viewer task list, label scoping included.** This is the approvals[].task PR, **the first PR on the
+   train after 0.4.85**. Until it ships, a task holder is admitted to a case without the label check on every
+   deployed release. It builds §6 on today's tables before the journal exists, because §6 does not depend on
+   the journal. It also adds a per-viewer **Needs-you read**: what waits on this viewer, by kind, label-scoped
+   as the task list is. The UI reads its count from that route instead of composing it.
 2. **`policy/tiers.yaml`** with its validation (§1) and the load-time refusal (§1, last bullet).
 3. **The journal** (§3), with `task_opened` and `task_closed` as its first entry kinds, written in the same
    transaction as the projection write. It exposes a cursor read behind the door.
@@ -198,6 +209,8 @@ Each item below is asserted when the corresponding piece is built, not before.
   case read's `approvals[].task`.
 - **§3.**
   - Applying one entry twice yields one entry.
+  - A retried write with the same `dedupe_key` hands back the first entry's minted id and writes nothing.
+  - Every `entry_id` is a version-7 UUID; none is a uuid5.
   - Two tiers given the same entries in different orders serve equal projections.
   - A cursor read after a gap returns every missed entry.
   - An entry without labels is refused at the boundary.
