@@ -128,7 +128,17 @@ global:
     # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
     # 01fa313..db45763 changes src/ and sessions/ and build.yml's PRODUCER_REF only: no Dockerfile
     # or package.json change, and no import.meta.env read added.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:b320303cd5b31f0766de8f00fab7b95090dd9ef8c5d4e7607cb08b8d22a64f52"
+    # RE-PINNED FOR 0.4.85 (architect via Chris, 2026-11-11: "cortex's aligned image plus the pairing
+    # PR (reviewExport on in sandbox)"): cortex-ui a255a8eb7d273804a0a131f3c8aec2209373b54d ->
+    # cb902ea0, the digest its CI run 43112504700 published (PRODUCER_REF 8c3eb9af, the merge of #356).
+    # It adds to db45763: "Export as…" on the review card offers a profile when the notice's served
+    # stage is in that profile's exportable_states (a `review` notice: part-list-reviewed only), and
+    # the lasso bar lists check_only's state_not_exportable rows. Select-by-range stays hidden.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
+    # db45763..a255a8e changes src/ and sessions/ and build.yml's PRODUCER_REF only: no Dockerfile
+    # or package.json change, and no import.meta.env read added.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:cb902ea0b5876a8d3ebf97147bb931fe43775781bc32bce9955deef96f6e3b12"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)

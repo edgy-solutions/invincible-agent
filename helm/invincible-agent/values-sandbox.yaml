@@ -760,7 +760,9 @@ cortexUi:
     # boot from /config.js like the URLs above; rendered by frontend.yaml's generic env loop.
     # 0.4.72 (architect, 2026-10-30): `promotionRuns` goes on in the same roll that first stores
     # `review_coverage` on the promotion record (ingest-v1 1.4.0) -- never ahead of it.
-    VITE_FEATURES: "canvasExport,ingest,promotionRuns"
+    # 0.4.85 (architect via Chris, 2026-11-11): `reviewExport` goes on in the same roll as cortex
+    # a255a8e and saf's #356 export routes -- never ahead of the image that reads exportable_states.
+    VITE_FEATURES: "canvasExport,ingest,promotionRuns,reviewExport"
     # 2026-10-10, rev 186b: cortex #6 sends `frontend_version` on /interview/stream only when this
     # is "true" (docker-entrypoint.sh at 865c080 filters it to "true"/""). Its platform half, IA
     # #27, rolled in 186 and reads a request with or without it, so this is the switch, not a
