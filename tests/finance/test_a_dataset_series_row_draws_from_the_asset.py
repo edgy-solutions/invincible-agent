@@ -1,9 +1,9 @@
 """A dataset row drawn as MULTI_SERIES, proved over the EV fixture's 0.12.0 shape, through the REAL
 engine route.
 
-The two rows (tests/finance/fixtures/measure_verbs/) read `status_period` and `eac_reported`, which
-the fixture produces from dag-tools 0.12.0 (contracts/ev_fixture.yaml). They are fixtures, not
-samples, until that pin lands. The frame here is the seed's frame (`frame_of`, the 0.11.0 shape)
+The two rows (policy/overlays/sample/measure_verbs/) read `status_period` and `eac_reported`, which
+the fixture produces from dag-tools 0.12.0 (contracts/ev_fixture.yaml). They were test fixtures
+until the fleet pinned 0.13.0, and ship as samples since. The frame here is the seed's frame (`frame_of`, the 0.11.0 shape)
 with those two columns added as the 0.12.0 fixture carries them. The expected series are computed
 HERE, with polars, from the same frame, and not through the module. Nothing says a cluster behaves
 this way.
@@ -33,7 +33,7 @@ from tests.finance.test_fin_inputs_resolver import (  # noqa: E402,F401
 from tests.finance.test_variance_decomposition_over_the_ev_fixture import Gate  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
-ROWS = Path(__file__).resolve().parent / "fixtures" / "measure_verbs"
+ROWS = Path(__file__).resolve().parents[2] / "policy" / "overlays" / "sample" / "measure_verbs"
 CONTRACT = REPO / "contracts" / "ev_fixture.yaml"
 CUM, EAC = "fin_ev_cumulative", "fin_eac_trend"
 ROW_URN = "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
@@ -177,6 +177,18 @@ def test_the_status_period_is_served_from_the_data_not_the_row(post, gate):
     assert env["status_period"] == "FY26-04" and env["verdict"].endswith("reported through FY26-04")
 
 
+@pytest.mark.parametrize("fn", [CUM, EAC])
+def test_the_brief_leads_with_the_rows_verdict_not_a_pointer(post, fn):
+    # The census in test_every_verb_says_what_it_found cannot serve a dataset row (it needs a bearer
+    # holding the asset grant), so the headline the brief reads is asserted here, where it is served.
+    from agent_fleet.graph_host.graphs.fin_program_brief import _headline
+    status, env = post(fn=fn)
+    assert status == 200, env
+    headline = _headline(env)
+    assert headline == env["verdict"] and headline.strip()
+    assert headline != "reported (see artifact)"
+
+
 def test_the_row_urn_is_read_and_the_environments_is_never_consulted(post, gate, monkeypatch):
     monkeypatch.setenv("FIN_DATASET_URN", "urn:li:dataset:(urn:li:dataPlatform:s3,other,PROD)")
     status, env = post(fn=EAC)
@@ -247,10 +259,23 @@ def test_the_window_param_is_refused_for_this_kind(post):
 
 
 @pytest.mark.parametrize("fn", [CUM, EAC])
-def test_an_export_naming_a_series_row_is_refused_with_the_existing_code(series_rows, fn):
-    with pytest.raises(engine.HTTPException) as e:
-        engine._refuse_asset_exports([fn])
-    assert e.value.status_code == 409 and e.value.detail["error"] == "asset_export_unsupported"
+def test_a_package_naming_a_series_row_asks_its_grant_and_the_builder_refuses_it_by_name(
+        post, gate, series_rows, monkeypatch, tmp_path, fn):
+    """As for a flow row: the page's embedded `measures.py` cannot recompute the row, so the builder
+    refuses it by name with nothing written, after the row's own asset grant was asked."""
+    monkeypatch.setattr(engine, "_repo_root", lambda: Path(__file__).resolve().parents[2])
+    dist = tmp_path / "dist"
+    monkeypatch.setattr(engine, "_dist_dir", lambda root: dist)
+    monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
+    body = {"user_email": ALLOWED, "recipient_scope": f"program_office.{PROGRAM}",
+            "canvas": {"template_id": "program_finance", "template_hash": "h",
+                       "panels": [{"panel": 0, "verb": "mesh:" + series_rows[fn].verb,
+                                   "params": {"program_id": PROGRAM}}]}}
+    r = post.client.post("/package_export", json=body,
+                         headers={"Authorization": f"Bearer {token(ALLOWED)}"})
+    assert r.status_code == 503, r.text
+    assert fn in r.json()["detail"] and "embedded measures.py" in r.json()["detail"]
+    assert (ALLOWED, series_rows[fn].dataset_urn) in gate.asked and not dist.exists()
 
 
 def test_the_verbs_register_like_any_declared_row(series_rows):

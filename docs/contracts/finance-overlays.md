@@ -57,7 +57,7 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 
 | key | what it holds |
 |---|---|
-| `measure_id` | The row's key. Must be `fin_` then lower-case letters, digits or `_`. Cannot be a built-in measure's id. |
+| `measure_id` | The row's key. Must be `fin_` then lower-case letters, digits or `_`. Cannot be a built-in measure's id, except in a source-only row (below). |
 | `verb` | The name the question is routed by. Cannot be a built-in verb's name. |
 | `name` | The title shown above the figure. |
 | `description` | Optional. Plain words telling the router when this measure is the right one, and when it is not (name the neighbours). |
@@ -69,6 +69,24 @@ Top-level keys. Required unless marked optional. A key not in this table is refu
 | `render` | How the result is drawn: the shape, the one series (and its unit), the value label, and a target line. |
 | `policy` | Who may see it, who approved it, and why. |
 | `menu` | Optional. Where the card sits on the menu: what it places, the card it draws as, and who it fits. |
+| `source` | Optional. Where the measure reads when `FIN_DATASET_URN` is set (section 5a): `asset` (the default) or `seed`, the notional model. A dataset row reads its own asset and is refused if it carries one. |
+| `reason` | Required with `source: seed`, refused otherwise. Why the measure stays on the seed under the flag. |
+| `ratified_by` | Required with `source: seed`, refused otherwise. Who ratified that. |
+
+**A source-only row for a built-in measure.** A row whose `measure_id` is a built-in's may carry
+`measure_id`, `source`, `reason` and `ratified_by`, and nothing else; any other key is refused at
+load, so a row can say where a built-in reads but cannot replace it. The platform seeds one, in
+`policy/measure_verbs/fin_funding_status.yaml`:
+
+```yaml
+measure_id: fin_funding_status
+source: seed
+reason: contract carries no funding lines yet
+ratified_by: owner
+```
+
+A deployment whose asset carries funding lines replaces it with an overlay row of the same id
+saying `source: asset`.
 
 **A second kind of row: a dataset row.** A row whose `inputs` holds `dataset` instead of `state` is
 drawn one of two ways. Drawn as `FLOW_DECOMPOSITION`, it reads named columns of one asset and answers once,
@@ -111,8 +129,8 @@ differences under `inputs` and `render`:
 
 **A dataset row drawn as series.** A dataset row whose `render.shape` is `MULTI_SERIES` reads its
 asset the same way (as the caller, its own URN, `program_id` only, `window` refused) but answers
-with one row per period instead of an edge table. The fixtures
-`tests/finance/fixtures/measure_verbs/fin_ev_cumulative.yaml` and `fin_eac_trend.yaml` are the
+with one row per period instead of an edge table. The samples
+`policy/overlays/sample/measure_verbs/fin_ev_cumulative.yaml` and `fin_eac_trend.yaml` are the
 worked examples. The differences from a flow row:
 
 - `inputs.dataset` holds `urn`, `banner`, `scope` (the column the read filters to `program_id`),
@@ -616,10 +634,19 @@ Answers carry `data_source: {kind: "asset", urn}` and the banner in place of the
 A CDRL sourcing a declared measure reads it the same way, as the caller who asks for the CDRL. A
 caller without the grant gets 403 `access_denied` before anything is written. Each source in the
 envelope carries its `data_provenance` and `data_source`. Fetching the file checks the fetcher's
-grant too. A package export naming a declared measure returns 409 `asset_export_unsupported` while
-the URN is set; built-in measures still export. A dataset-kind measure (section 2) always reads its
-own asset, so a package naming one is refused the same way whether or not the URN is set, and a
-CDRL sourcing one reads it.
+grant too. A package export runs the same way, as the caller, with the grant on each asset checked
+before anything is measured, and its manifest and page name the asset. `recipient_readers` governs
+who may fetch the package, not who reads the asset, so fetching one asks no asset grant. A package's
+page recomputes every panel with its embedded `measures.py`, so a package naming a declared or
+dataset-kind measure (section 2) is a 503 from the builder, naming the panel, with nothing written.
+A CDRL sourcing one reads it.
+
+**A row can keep a measure on the seed.** The flag moves every measure to the asset except one whose
+row says `source: seed` (section 2). That measure answers from the notional model as it did before,
+with the notional text and `data_source: {kind: "seed", reason, ratified_by}`, and no grant is asked
+for it. Funding is seeded this way, because the contract above carries no funding lines. An export
+mixing the two reads the asset for its program and the seed only for what the asset does not carry.
+A package page names each seed-sourced panel, with its reason, beside the asset.
 
 ## 6. Not covered yet
 

@@ -62,6 +62,8 @@ _DOCUMENTED: dict[str, str] = {
     "helm/invincible-agent/templates/networkpolicy-engines.yaml": "drop the engineB row in $engines; delete WITH the engineB row in engines.yaml, since an egress policy for a pod the chart no longer renders selects nothing",
     "helm/invincible-agent/values-sandbox.yaml": "only the note explaining why the override is gone; delete with the block",
     "helm/invincible-agent/values.yaml": "THE BLOCK ITSELF — the last thing to go, and only after everything above",
+    "scripts/values-every-workload.yaml": "drop the engineB block WITH the block in values.yaml; the image seal's every-workload arm requires every pod-adding flag in the chart to be on here, so it cannot go first",
+    "tests/fixtures/values-release-fixture.yaml": "drop the langgraph-support digest row WITH the build-containers.yml matrix row; test_every_image_is_pinned_by_digest checks this fixture's rows against services_from_matrix()",
     "src/iagent/defs/agent_routers.py": "the removal list and its coupling note; delete last, with this test",
     "src/iagent/defs/dynamic_supervisor.py": "LANGGRAPH_SUPPORT_SVC_URL and synthesize_stateful — the remaining caller",
     "tests/test_agent_router_triggers_send_a_body.py": "docstring names Engine B as one of the three original defects; history, trim when convenient",

@@ -402,6 +402,15 @@ def _to_op(r: OpRequest):
 # Routes
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Telemetry census: /health reports spans the leaf lost. telemetry.py sits at /app in the
+# fleet image; guarded so a missing shim never breaks startup (None = nothing emitted).
+try:
+    from telemetry import emit_misses
+except Exception:  # pragma: no cover -- telemetry never load-bearing
+    def emit_misses():  # type: ignore[misc]
+        return None
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
@@ -409,6 +418,7 @@ def health() -> dict[str, Any]:
         "verbs": len(VERBS),
         "baseline_version": STORE.version_of("baseline"),
         "scenarios": len(STORE.scenarios()),
+        "telemetry_misses": emit_misses(),
     }
 
 

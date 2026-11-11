@@ -1858,6 +1858,17 @@ cortexBff:
     secretName: ""      # Secret containing the combined PEM bundle.
     secretKey: "ca.pem" # Key within the Secret.
     mountPath: "/etc/ssl/work-ca-bundle.pem"
+  # Token acceptance (src/iagent/auth.py verified_claims; architect's security order 2026-11-11).
+  # A token is admitted only if its `iss` is one of acceptedIssuers AND its `aud` names one of
+  # acceptedAudiences. EITHER LIST EMPTY REFUSES EVERY TOKEN: a deployment that sets neither admits nobody.
+  # Entries go through `tpl`, so an entry may quote another value instead of retyping it.
+  #   realmAudience: the audience this chart's realm stamps into the access token of cortex-ui and of every
+  #   keycloak.serviceClients / extraServiceClients entry (an `audience-bff` oidc-audience-mapper). Empty:
+  #   no mapper is rendered. When set it must be one of acceptedAudiences (the render fails otherwise).
+  auth:
+    acceptedIssuers: []
+    acceptedAudiences: []
+    realmAudience: ""
   ingress:
     enabled: false
     className: ""

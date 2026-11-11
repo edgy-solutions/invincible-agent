@@ -19,6 +19,7 @@ the money or the identifier that broke it.
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import time
@@ -52,9 +53,25 @@ STRING_COLUMNS: tuple[str, ...] = (
 NUMERIC_COLUMNS: tuple[str, ...] = ("program_bac", "bcws", "bcwp", "acwp")
 COLUMNS: tuple[str, ...] = STRING_COLUMNS + NUMERIC_COLUMNS
 
-#: Entity fields `run_declared` never reads. They hold these so the dataclasses are whole;
-#: `check_consistency` does not run on an asset state.
-_PLACEHOLDER_TECHNIQUE = "LEVEL_OF_EFFORT"
+#: The `FinanceState` collections the contract's columns fill. Every other one is `uncarried`, and
+#: so is every entity field no column names (account and package BAC, WBS, OBS, technique): those
+#: are None, never a placeholder, because the built-ins read this state too (ruled 2026-11-08) and
+#: show those fields. `check_consistency` does not run on an asset state.
+CARRIED: tuple[str, ...] = ("programs", "control_accounts", "work_packages", "facts")
+
+
+class AssetState(FinanceState):
+    """A `FinanceState` the contract's columns filled. The collections they do not fill are `uncarried`."""
+    uncarried = frozenset(f.name for f in dataclasses.fields(FinanceState) if f.name not in CARRIED)
+
+
+def with_uncarried_from(state: AssetState, seed: FinanceState) -> FinanceState:
+    """`state`'s carried collections with every `uncarried` one taken from `seed` (one program's
+    narrowed seed): the one state a mixed export computes over, where a `source: seed` measure
+    (ruled 2026-11-09) reads what the contract does not carry. A plain `FinanceState`, so nothing
+    in it is uncarried any more; the carried collections are the asset's, never the seed's."""
+    return FinanceState(**{f.name: getattr(seed if f.name in state.uncarried else state, f.name)
+                           for f in dataclasses.fields(FinanceState)})
 
 # ── the logger ──────────────────────────────────────────────────────────────────────────
 # engine-fin configures no logging, so a bare `logging.getLogger(...).info(...)` is dropped at
@@ -111,14 +128,22 @@ def max_rows() -> int:
     return int(raw) if raw else DEFAULT_MAX_ROWS
 
 
+#: ADR-0065:133 rules that `data_provenance` carries the dataset URN, an as-of and a ticket id. It
+#: is unmet. The broker's ticket carries `ticket_id`, `issued_at` and `as_of` from dag-tools 0.13.0
+#: (#31), but this engine pins dag-tools v0.10.0 and its client discards the ticket. Until fin
+#: threads the ticket through, the string says the ticket is pending rather than inventing one
+#: (ruled 2026-11-08). The URN stays last: the live leg reads `Source: <urn>` as the suffix.
+TICKET_PENDING = "(ticket: pending)"
+
+
 def provenance(urn: str) -> str:
-    """The `data_provenance` an asset answer carries: the operator's banner and the URN."""
-    return f"{dataset_banner()} Source: {urn}"
+    """The `data_provenance` an asset answer carries: the operator's banner, the pending ticket and the URN."""
+    return f"{dataset_banner()} {TICKET_PENDING} Source: {urn}"
 
 
 def dataset_provenance(banner: str, urn: str) -> str:
     """`provenance` for a dataset-kind row, whose banner is the row's own, not the environment's."""
-    return f"{banner} Source: {urn}"
+    return f"{banner} {TICKET_PENDING} Source: {urn}"
 
 
 def _load_client() -> tuple[Any, type, type]:
@@ -231,7 +256,7 @@ def state_from_rows(df: Any, program_id: str) -> FinanceState:
                                 "a period outside the fiscal calendar")
 
     first = df.row(0, named=True)
-    state = FinanceState()
+    state = AssetState()
     state.programs.append(Program(program_id=program_id, name=first["program_name"],
                                   bac=first["program_bac"]))
     accounts: dict[str, str] = {}   # work_package -> control_account, first appearance order
@@ -246,10 +271,10 @@ def state_from_rows(df: Any, program_id: str) -> FinanceState:
         if ca not in seen:
             seen.add(ca)
             state.control_accounts.append(ControlAccount(
-                ca_id=ca, name=ca, program_id=program_id, wbs_id="", obs_id="", bac=0.0))
+                ca_id=ca, name=ca, program_id=program_id, wbs_id=None, obs_id=None, bac=None))
     for wp, ca in accounts.items():
         state.work_packages.append(WorkPackage(
-            wp_id=wp, name=wp, ca_id=ca, bac=0.0, technique=_PLACEHOLDER_TECHNIQUE))
+            wp_id=wp, name=wp, ca_id=ca, bac=None, technique=None))
     return state
 
 

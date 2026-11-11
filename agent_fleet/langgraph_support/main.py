@@ -47,8 +47,10 @@ except IndexError:
     pass  # Running in CNB container — baml_client is already in /workspace/
 
 try:
-    from telemetry import get_langgraph_callbacks
+    from telemetry import get_langgraph_callbacks, emit_misses
 except ImportError:
+    def emit_misses():  # None = no telemetry leaf here, so nothing emitted, nothing missed
+        return None
     def get_langgraph_callbacks():
         return []
 
@@ -288,6 +290,7 @@ async def health() -> dict:
         "status": "ok",
         "engine": "langgraph_support",
         "graph_compiled": _compiled_graph is not None,
+        "telemetry_misses": emit_misses(),
     }
 
 

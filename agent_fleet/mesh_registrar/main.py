@@ -688,6 +688,15 @@ def _emit_to_datahub(manifest: RegistrationManifest, tool_urn: str) -> dict:
 # Endpoints
 # ---------------------------------------------------------------------------
 
+# Telemetry census: /health reports spans the leaf lost. telemetry.py sits at /app in the
+# fleet image; guarded so a missing shim never breaks startup (None = nothing emitted).
+try:
+    from telemetry import emit_misses
+except Exception:  # pragma: no cover -- telemetry never load-bearing
+    def emit_misses():  # type: ignore[misc]
+        return None
+
+
 @app.get("/health")
 def health(response: Response) -> dict:
     """Readiness probe: DB-reachability check."""
@@ -714,6 +723,7 @@ def health(response: Response) -> dict:
         "neo4j_reachable": db_ok,
         "neo4j_error": db_error,
         "version": REGISTRAR_VERSION,
+        "telemetry_misses": emit_misses(),
         # WHICH MANIFEST SPECIES THIS BUILD ACCEPTS — a CHECKABLE FACT, so a
         # caller never has to infer capability from a rejection, and a
         # deploy-ordering fallback has an observable retirement condition
@@ -1247,7 +1257,7 @@ def _run_saga(
 # repo has already paid for that once, with a 422 that accused the caller.
 @app.get("/v1/healthz")
 def healthz() -> dict:
-    return {"status": "ok", "version": REGISTRAR_VERSION}
+    return {"status": "ok", "version": REGISTRAR_VERSION, "telemetry_misses": emit_misses()}
 
 
 # ---------------------------------------------------------------------------

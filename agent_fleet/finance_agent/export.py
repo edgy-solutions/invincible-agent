@@ -154,6 +154,8 @@ def build_manifest(
     panels: list[dict[str, Any]],
     duckdb_sha256: Optional[str] = None,
     as_of: Optional[str] = None,
+    program_source: Optional[dict[str, Any]] = None,
+    data_provenance: Optional[str] = None,
 ) -> dict[str, Any]:
     """Capture one disclosure's identity, inputs and panels from the PRODUCING engine.
 
@@ -166,7 +168,8 @@ def build_manifest(
     `state_sha256` hashes the state the panels were actually computed from — the one this
     disclosure's `.duckdb` and embedded rows both carry (narrowed to `program_id`), so a
     recipient can confirm the manifest describes the data they received rather than the
-    engine's whole notional model.
+    engine's whole notional model. `program_source` and `data_provenance`, set when that state
+    was read from a governed asset, say so; on the seed neither key is present.
     """
     try:
         import state_codec as _state_codec
@@ -196,6 +199,8 @@ def build_manifest(
         "duckdb_sha256": duckdb_sha256,
         "modules": module_hashes(),
         "as_of": as_of or date.today().isoformat(),
+        **({"program_source": dict(program_source), "data_provenance": data_provenance}
+           if program_source else {}),
     }
 
 

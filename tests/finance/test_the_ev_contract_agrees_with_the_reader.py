@@ -21,7 +21,6 @@ from agent_fleet.finance_agent import asset_inputs, entities
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / "contracts" / "ev_fixture.yaml"
 DATASET_OVERLAYS = ROOT / "policy" / "overlays" / "sample" / "measure_verbs"
-SERIES_FIXTURES = ROOT / "tests" / "finance" / "fixtures" / "measure_verbs"
 SANDBOX_VALUES = ROOT / "helm" / "invincible-agent" / "values-sandbox.yaml"
 LIVE_CASE = ROOT / "tests" / "sandbox_e2e" / "variance_set_live.yaml"
 RAISED = re.compile(r"""ContractViolation\(\s*["']([a-z_]+)["']""")
@@ -78,8 +77,7 @@ def test_every_name_the_contract_uses_is_a_declared_column(contract):
 
 
 def test_the_dataset_overlays_name_this_contracts_urn_and_banner(contract):
-    # the series rows are test fixtures until the dag-tools 0.12.0 pin, and are held here all the same
-    files = [*sorted(DATASET_OVERLAYS.rglob("*.yaml")), *sorted(SERIES_FIXTURES.glob("*.yaml"))]
+    files = sorted(DATASET_OVERLAYS.rglob("*.yaml"))
     rows = [yaml.safe_load(p.read_text(encoding="utf-8")) for p in files]
     datasets = [r["inputs"]["dataset"] for r in rows if isinstance(r, dict) and "dataset" in r.get("inputs", {})]
     assert datasets, "positive control: some sample row reads a dataset"
