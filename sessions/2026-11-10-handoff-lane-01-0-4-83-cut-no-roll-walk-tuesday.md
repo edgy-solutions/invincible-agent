@@ -7,6 +7,25 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
+**11-11 ~14:30Z: #358 IS IN; master is `a766d62b`.** It moves dag-tools to v0.14.0 and puts the sandbox gateway on
+`GATEWAY_IDENTITY_POSTURE: enforce`, with the BFF's lists rendered by `gatewayTokenEnv`. The architect's newest order
+(through Chris) governs:
+- **saf's #356, the cortex image and `reviewExport`** go on 0.4.85 only if saf is green by Thu 11-12 12:00Z.
+  - #356 is green at `ca8b4706`. I approved saf's three test edits by packet. Merge only after fin and gov
+    approve their edited tests, then re-run the three tests and saf's seal on the join.
+  - The `can_export:part-list` row needs Chris's Topaz sync.
+  - Then cortex publishes the aligned image. One PR pins its digest and adds `reviewExport` to
+    `cortexUi.env.VITE_FEATURES` in values-sandbox.
+- **gov's v0.9.20 pin** (ca tagged it at `1aa6423`): merge once its tests are in. It is not open yet. If it is
+  merged by the cut, the engines branch is refusal. Report that at Thu 12:00Z with the caller rows.
+- **Before the roll:**
+  - Run the realm audience listing. Every gateway caller must carry `cortex-bff`; name any that does not, and
+    Chris makes the Keycloak write.
+  - `INTERNAL_DOOR_POSTURE` stays observe; the question is with the architect.
+- **After the roll:** the gateway's announce line reads `posture=enforce … enforce_ready=yes`, and a token for
+  another audience is refused. Also send OpenDDIL the live ActionRecord comparison.
+- **Roll-lock:** free at 13:58Z. 74 takes it at 16:00Z.
+
 **11-11 ~04:30Z: THE TRAIN IS IN, AND SO IS #355. Master is `c4a572b9`.** The newest architect message
 (through Chris) governs. It has five rulings:
 1. A conflict confined to the CHANGELOG's 0.4.85 section is Lane 1's to resolve at merge time: keep every
