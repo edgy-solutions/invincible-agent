@@ -228,6 +228,24 @@ cortexBff:
     default (`self`) whatever the row says. Wiring it to the row is Lane 1's.
   - **Closed network:** the package calls itself 0.9.18, so `meshSdkSource: index` serves this pin.
   - **The roll:** every engine image changes (the lock), and `meshSdkVersion` changes in values.
+- **The fleet's SDK pin moves from v0.9.18 to v0.9.19** (gov; the architect, 11-10: "gov: once the tag is
+  pushed, open the v0.9.19 pin move on the 0.4.85 train"). The 17 pyprojects, their locks (`2f47e9ee` →
+  `ef7a6f35`, iagent-mesh alone in each) and `meshSdkVersion` move together. This pin unblocks the OpenDDIL
+  sample packet.
+  - **What v0.9.19 carries:**
+    - `ActionRecord`: `WorkOrder.option`, `WorkOrder.readiness`, `ActionProvenance.case_definition`,
+      `ActionProvenance.case_id` and `ActionProvenance.emitted_by`. All five are optional strings with
+      no enum, and `extra="forbid"` stays.
+    - `ACTION_CONTRACT_VERSION = "2"`.
+    - `DataProvenance.dataset_urn` and `.ticket_id` become optional (absent rather than a placeholder);
+      `as_of` stays required.
+    - Between the tags, the SDK's dependencies are unchanged.
+  - **Not in v0.9.19:** more than one provenance entry per `ImpactRow` (lane 74's other #337 ask). It is
+    still unruled.
+  - **Seals:** `tests/test_the_written_action_record_meets_the_pinned_schema.py` reads its allowance for the
+    five fields from the pinned `model_fields`, so it tightens with no edit.
+  - **Closed network:** the package calls itself 0.9.19, so `meshSdkSource: index` serves this pin.
+  - **The roll:** every engine image changes (the lock), and `meshSdkVersion` changes in values.
 
 ## 0.4.84 — 2026-11-10
 
