@@ -54,7 +54,16 @@ NO_PARTS = "no_parts"
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _ISO_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")  # fullmatch; never date.fromisoformat alone
-_TOP_KEYS = frozenset({"column_map_version", "name", "label", "format", "granularity", "columns"})
+_TOP_KEYS = frozenset({"column_map_version", "name", "label", "format", "granularity", "grain",
+                       "columns", "accepts", "dedupe", "version"})
+#: `grain` (the server vocabulary) and `granularity` (7f's column-map vocabulary) say one thing; a
+#: row names one, or both when they agree. A closed mechanism vocabulary, not a case.
+GRAINS = ("per_notice", "per_part")
+_GRAIN_OF = {"notice": "per_notice", "notice_part": "per_part"}
+_GRANULARITY_OF = {v: k for k, v in _GRAIN_OF.items()}
+#: A content-kind NAME is checked by shape only; whether it is registered is the kind registry's
+#: to say (`content_kinds.by_kind`), never an enum here.
+_KIND_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 _COL_KEYS = frozenset({"output", "source", "format", "on_unresolvable", "landing", "transforms"})
 _SRC_KEYS = frozenset({"field", "row_field", "absent_row"})
 _ON_UNRESOLVABLE = ("land", "blank", "block")
@@ -98,6 +107,15 @@ class Profile:
     format: str
     granularity: str
     columns: tuple = field(default_factory=tuple)
+    version: int = 0
+    #: Content kinds this profile takes; None = any kind.
+    accepts: Optional[tuple] = None
+    #: Output column names whose joint value makes a row a duplicate of an earlier one.
+    dedupe: tuple = ()
+
+    @property
+    def grain(self) -> str:
+        return _GRAIN_OF[self.granularity]
 
     @property
     def outputs(self) -> list:
@@ -188,7 +206,7 @@ def validate(stem: str, raw: Any) -> Profile:
     extra = set(raw) - _TOP_KEYS
     if extra:
         raise ProfileInvalid("unknown_key", f"header key(s) {sorted(extra)}")
-    for k in sorted(_TOP_KEYS):
+    for k in ("column_map_version", "name", "label", "format", "columns", "version"):
         if k not in raw:
             raise ProfileInvalid("missing_key", k)
     if raw["column_map_version"] != COLUMN_MAP_VERSION or isinstance(raw["column_map_version"], bool):
@@ -202,9 +220,27 @@ def validate(stem: str, raw: Any) -> Profile:
         raise ProfileInvalid("label_blank", "")
     if raw["format"] not in FORMATS:
         raise ProfileInvalid("format_invalid", repr(raw["format"]))
-    gran = raw["granularity"]
+    if "granularity" not in raw and "grain" not in raw:
+        raise ProfileInvalid("missing_key", "grain")
+    gran = raw.get("granularity")
+    if "grain" in raw:
+        if raw["grain"] not in GRAINS:
+            raise ProfileInvalid("grain_invalid", repr(raw["grain"]))
+        if gran is not None and _GRAIN_OF.get(gran) != raw["grain"]:
+            raise ProfileInvalid("grain_granularity_disagree", f"{gran!r} vs {raw['grain']!r}")
+        gran = _GRANULARITY_OF[raw["grain"]]
     if gran not in GRANULARITIES:
         raise ProfileInvalid("granularity_invalid", repr(gran))
+    ver = raw["version"]
+    if isinstance(ver, bool) or not isinstance(ver, int) or ver < 1:
+        raise ProfileInvalid("version_invalid", repr(ver))
+    accepts = None
+    if "accepts" in raw:
+        a = raw["accepts"]
+        if (not isinstance(a, list) or not a or len(set(map(str, a))) != len(a)
+                or not all(isinstance(k, str) and _KIND_RE.match(k) for k in a)):
+            raise ProfileInvalid("accepts_invalid", "a non-empty list of distinct kind names")
+        accepts = tuple(a)
     cols_raw = raw["columns"]
     if not isinstance(cols_raw, list) or not cols_raw:
         raise ProfileInvalid("columns_empty", "")
@@ -231,8 +267,15 @@ def validate(stem: str, raw: Any) -> Profile:
         if c.derived and c.output != NO_PARTS and c.output not in landings:
             raise ProfileInvalid("derived_column_unbound",
                                  f"{c.output!r} is neither no_parts nor any column's landing")
+    dedupe: tuple = ()
+    if "dedupe" in raw:
+        d = raw["dedupe"]
+        if (not isinstance(d, list) or not d or len(set(map(str, d))) != len(d)
+                or not all(isinstance(c, str) and c in by_out for c in d)):
+            raise ProfileInvalid("dedupe_invalid", "a non-empty list of distinct output columns")
+        dedupe = tuple(d)
     return Profile(name=name, label=raw["label"].strip(), format=raw["format"], granularity=gran,
-                   columns=cols)
+                   columns=cols, version=ver, accepts=accepts, dedupe=dedupe)
 
 
 # --------------------------------------------------------------------------------------
@@ -240,6 +283,11 @@ def validate(stem: str, raw: Any) -> Profile:
 # --------------------------------------------------------------------------------------
 
 _DIR_ENV = "INGEST_EXPORT_PROFILE_DIR"
+#: Overlay directories, os.pathsep-separated, applied in order after the seed (ADR-0036; the same
+#: rules as the answer-export and finance loaders): add a profile, replace one by name (a FULL
+#: replacement, never a field merge), or delete one with a tombstone (`name:` + `deleted: true`).
+#: A tombstone for a name nothing before it ships is that name's ProfileInvalid.
+_OVERLAY_ENV = "INGEST_EXPORT_PROFILE_OVERLAY_DIRS"
 _CACHE: dict = {}
 
 
@@ -258,25 +306,57 @@ def _profile_dir() -> Path:
     return Path("/app/policy/exports")
 
 
-def load_profiles() -> dict:
-    """`{name: Profile | ProfileInvalid}` for every `*.yaml` in the policy dir, cached per
-    directory. A broken file never breaks the others (its key is the file stem)."""
-    d = _profile_dir()
-    key = str(d)
-    if key in _CACHE:
-        return _CACHE[key]
+def _overlay_dirs() -> list:
+    return [Path(p) for p in os.getenv(_OVERLAY_ENV, "").split(os.pathsep) if p]
+
+
+def _read_dir(d: Path) -> dict:
+    """`{stem: raw | ProfileInvalid}` for one directory's `*.yaml`."""
     out: dict = {}
     if d.is_dir():
         for p in sorted(d.glob("*.yaml")):
             try:
-                raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+                out[p.stem] = yaml.safe_load(p.read_text(encoding="utf-8"))
             except (yaml.YAMLError, OSError, UnicodeDecodeError) as exc:
                 out[p.stem] = ProfileInvalid("yaml_unreadable", type(exc).__name__)
-                continue
-            try:
-                out[p.stem] = validate(p.stem, raw)
-            except ProfileInvalid as exc:
-                out[p.stem] = exc
+    return out
+
+
+def _is_tombstone(raw: Any) -> bool:
+    return isinstance(raw, dict) and raw.get("deleted") is True
+
+
+def load_profiles() -> dict:
+    """`{name: Profile | ProfileInvalid}`: the seed composed with the overlay directories, cached
+    per (seed, overlays). A broken file never breaks the others (its key is the file stem).
+    THE ONE COMPOSED SET: the listing and every route read this function, none loads its own."""
+    d, ov = _profile_dir(), _overlay_dirs()
+    key = (str(d), tuple(map(str, ov)))
+    if key in _CACHE:
+        return _CACHE[key]
+    raws: dict = {}
+    for k, v in _read_dir(d).items():
+        raws[k] = ProfileInvalid("tombstone_outside_overlay", "a seed row cannot delete") \
+            if _is_tombstone(v) else v
+    for od in ov:
+        for k, v in _read_dir(od).items():
+            if _is_tombstone(v):
+                if k in raws:
+                    del raws[k]
+                else:
+                    raws[k] = ProfileInvalid(
+                        "tombstone_unshipped", f"deletes {k!r}, which nothing before it ships")
+            else:
+                raws[k] = v
+    out: dict = {}
+    for stem, raw in raws.items():
+        if isinstance(raw, ProfileInvalid):
+            out[stem] = raw
+            continue
+        try:
+            out[stem] = validate(stem, raw)
+        except ProfileInvalid as exc:
+            out[stem] = exc
     _CACHE[key] = out
     return out
 
@@ -370,6 +450,24 @@ def render_rows(profile: Profile, extraction: dict) -> list:
     return out
 
 
+def render_all(profile: Profile, extractions: list) -> list:
+    """Every notice's rows through `render_rows`, then the profile's `dedupe` (the first row with
+    a given value of the dedupe columns is kept, in order). Pure."""
+    out: list = []
+    for e in extractions:
+        out += render_rows(profile, e)
+    if not profile.dedupe:
+        return out
+    seen: set = set()
+    kept: list = []
+    for r in out:
+        k = tuple(json.dumps(r.get(c), sort_keys=True, default=str) for c in profile.dedupe)
+        if k not in seen:
+            seen.add(k)
+            kept.append(r)
+    return kept
+
+
 def _csv_cell(v: Any) -> str:
     if v is None:
         return ""
@@ -391,5 +489,6 @@ def to_csv(columns: list, rows: list) -> str:
 
 def to_json(profile: Profile, rows: list, **extra: Any) -> dict:
     return {"profile": profile.name, "column_map_version": COLUMN_MAP_VERSION,
-            "granularity": profile.granularity, "columns": profile.outputs, "rows": rows,
+            "granularity": profile.granularity, "grain": profile.grain, "version": profile.version,
+            "columns": profile.outputs, "rows": rows,
             **extra}

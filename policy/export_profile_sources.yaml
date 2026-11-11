@@ -9,7 +9,7 @@
 #   seed_default   the seed directory when seed_env is unset, relative to the repository root (/app
 #                  in an image).
 #   overlay_env    the variable listing overlay directories, os.pathsep-separated, applied in order
-#                  after the seed. null when the kind's loader reads no overlay variable.
+#                  after the seed. null when the kind's loader reads no overlay variable (none today).
 #   offline_overlays
 #                  overlay directories the chart's own values set on the engine (values-sandbox.yaml),
 #                  relative to the repository root. Only validate_policy reads this field: it runs
@@ -25,7 +25,8 @@ sources:
   - kind: review-export
     seed_env: INGEST_EXPORT_PROFILE_DIR
     seed_default: policy/exports
-    overlay_env: null
+    overlay_env: INGEST_EXPORT_PROFILE_OVERLAY_DIRS
+    offline_overlays: [policy/overlays/sample/exports]
   - kind: answer-export
     seed_env: EXPORT_PROFILE_POLICY_DIR
     seed_default: policy/exports/answers

@@ -8,6 +8,7 @@ name: default-json
 label: "Default JSON, one row per notice part, with provenance"
 format: json
 granularity: notice_part
+version: 1
 columns:
   - output: "Ingest"
     source: {field: ingest_id}

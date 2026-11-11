@@ -8,6 +8,7 @@ name: default-csv
 label: "Default CSV, one row per notice part"
 format: csv
 granularity: notice_part
+version: 1
 columns:
   - output: "Ingest"
     source: {field: ingest_id}

@@ -268,6 +268,14 @@ class ExportProfile(_Strict):
     format: Literal["csv", "json"]
     granularity: Literal["notice_part", "notice"]
     label: str
+    grain: Literal["per_notice", "per_part"]
+    """The server vocabulary for `granularity`: per_notice (one row per notice) or per_part."""
+    version: int
+    """The profile row's own version; an export records the one it used."""
+    accepts: list[str] | None = None
+    """Content kinds the profile takes; null = any kind."""
+    dedupe: list[str] = []
+    """Output columns whose joint value makes a row a duplicate (the first is kept); [] = none."""
 
 
 class RetryReopened(_Strict):
