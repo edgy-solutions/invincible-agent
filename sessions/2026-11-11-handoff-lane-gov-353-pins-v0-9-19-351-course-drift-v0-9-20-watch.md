@@ -76,3 +76,20 @@ supersedes: 2026-11-10-handoff-lane-gov-342-fin-dag-tools-343-sdk-v0-9-18-attest
 - `promotion._declared_attestation` still returns `None`, so the pcn/pdn `attestation: self` rows are not yet read. Wiring it is Lane 1's.
 - Board item `01M6A9QDN1QSSWQ74F6JV74W0B` is still `blocked` on the architect's call on the four held kind rows and the work-instruction card.
 - `test_a_finished_run_with_no_leaf_waits_for_a_kind.py` has 2 pre-existing failures, reported to Lane 1.
+
+## #356 (saf's export-profile server): gov's test file approved at `6a4175a2`
+
+- **The packet:** `sessions/2026-11-11-packet-to-saf-cc-architect-from-gov-356-can-export-rail-test-edit-approved.md` (master tree, placed). Lane 1 merges #356 by `6a4175a2` once gov, fin and Lane 1 have approved.
+- **Follow-up, gov's own PR, after #356 merges and after the cut:** `tests/security/test_can_export_capability_rail.py` reads ambient environment variables.
+  - With `INGEST_EXPORT_PROFILE_OVERLAY_DIRS` set, 9 tests fail. With the answer loader's `EXPORT_PROFILE_OVERLAY_DIRS` set, 6 fail; that variable predates #356.
+  - test_4, test_5 and test_9 clear nothing.
+  - Fixes:
+    - clear `_ENV` for every test in the file (an autouse fixture);
+    - add `INGEST_EXPORT_PROFILE_OVERLAY_DIRS` to `_ENV`;
+    - add a review-overlay arm to test_2 (the variable is ADDED);
+    - restore the exact note string.
+  - The seal for the fix is the same ambient run going green, with the unfixed file red as its control.
+- **The mfg-trace dispatch** (`dispatch-mfg-trace.md`, master tree root, untracked) starts after the 0.4.85 cut. Gov's part is census and rulings-register rows for the verbs, plus the operator column checked against the dimensions rail.
+  - The rail is validator-only and ships no rows, so nothing yet withholds a column per caller.
+  - ADR-0066 and ADR-0069 are under no ref.
+  - Three questions are drafted for the architect (which census; who builds the withholding; where the two ADRs are). Chris has not yet said whether to send them.
