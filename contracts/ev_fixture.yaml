@@ -36,6 +36,9 @@ scope: program_id
 # DETERMINED BY (ruled 2026-11-10): inside a read, each value of `by` carries one value of each
 # `determines` column. One that carries two refuses `not_determined_by`, naming both columns, never
 # a value. A series row's `per_program` and `status` columns must be determined by its scope.
+# `status_period` is determined by `program_id` (ruled 2026-11-11). `bac` and `eac` are NOT a
+# dependency of `work_package` (ruled 2026-11-11): eac changes every period and bac can be
+# rebaselined, and `grain` already holds one row per work package and period.
 dependencies:
   - {by: program_id, determines: [program_name, program_bac, status_period]}
   - {by: work_package, determines: [control_account]}
