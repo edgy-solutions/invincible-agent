@@ -7,28 +7,43 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
 
 ## NOW
 
-**11-11 ~02:30Z: SECURITY FIRST TONIGHT (the architect via Chris). OpenDDIL's report is CONFIRMED: the BFF
-checked neither audience nor issuer.** The audit with every site's file:line is
-`sessions/2026-11-11-report-lane-01-token-validation-audit-audience-and-issuer.md` (master tree, placed).
-- **#348 is MERGED** (`2d131cdb`, second parent = head `fe0d0a47`).
-- **The fix is in worktree `C:\Users\cnogr\git\wt\01\tokaud`**, branch `lane/01-bff-token-audience-issuer`
-  from `2d131cdb`, NOT YET COMMITTED. `auth.py` decodes with `issuer=`/`audience=` from the served env
-  `BFF_JWT_ACCEPTED_ISSUERS`/`_AUDIENCES`; an empty list refuses. Audience `cortex-bff` (mapper
-  `audience-bff`), sandbox issuers = public + in-cluster `KEYCLOAK_REALM_URL`. CHANGELOG entry written.
-- Seals green, run one at a time: `test_gateway_jwt_verification.py` 19, the new
-  `tests/mcp_seals/test_the_delegate_path_checks_audience_and_issuer.py` 13, plus the five edited door/auth
-  files. On the shipped decode (mutant) every refusal arm is red and every control green.
-- The chart side (values, frontend.yaml env, the realm mapper in configmap + reconcile, the render seal
-  `test_the_bff_accepts_only_served_issuers_and_audiences_chart.py`) was given to an implementer; check its
-  work and run the render seal before committing.
-- **Next:** verify the chart, commit with the trailer, push, PR to master, merge on the train ahead of #345.
-  After the 0.4.85 roll, tell OpenDDIL the release and the instance, read from helm.
-- Packets placed (uncommitted): OpenDDIL (confirmed; fix on 0.4.85; forward no person token until the roll;
-  re-mint after it), the architect, the gateway's owner (no audience; one issuer would refuse in-cluster
-  mints), and ca's inbox (SDK `transport_auth.py`).
+**11-11 ~03:40Z: SECURITY — the BFF fix is MERGED; the engines are next.** The audit, with every site's file
+and line, is `sessions/2026-11-11-report-lane-01-token-validation-audit-audience-and-issuer.md` (master tree,
+placed).
+- **#349 is MERGED** at `3c85f53d` (second parent = head `fe33b273`, on master). The three seals pass on the
+  merge commit: `test_gateway_jwt_verification` 19, `mcp_seals/test_the_delegate_path_checks_audience_and_issuer`
+  13, `test_the_bff_accepts_only_served_issuers_and_audiences_chart` 6.
+- **#350 is MERGED** at `03c0b1c1`: the CHANGELOG upgrade notes for `cortexBff.auth` (keys and mapper JSON),
+  the architect's order 2.
+- **The architect's three orders (11-11):**
+  1. **Engines:** RS256 only, the BFF's issuers and audience, HS256 refused, seals per engine.
+     - **The SDK half is ca's v0.9.20** (ruled; v0.9.19 is tagged).
+     - **The chart half is with an implementer** in `wt\01\tokaud`, branch `lane/01-engine-token-checks`:
+       MESH_JWT_ACCEPTED_ISSUERS/_AUDIENCES from `cortexBff.auth`, MESH_JWT_JWKS_URL, and the switch
+       `agentFleet.transportAuth.require` (default false), plus a render seal.
+     - **Review it**, then commit, then PR on the train.
+     - **The executed per-engine seals** (HS256, wrong aud, correct) merge WITH the v0.9.20 pin move, never red
+       on master.
+     - **Decision point Thu 11-12 12:00Z (the architect):** REQUIRE on in sandbox only if v0.9.20 is tagged and
+       pinned.
+     - Engine NetworkPolicy is EGRESS-only, so it is no substitute (told the architect).
+  2. **Chris's packet:** placed, `sessions/2026-11-11-packet-to-chris-from-lane-01-set-cortexbff-auth-before-work-takes-0-4-85.md`.
+  3. **After the roll:** list every service client whose token carries `cortex-bff`, read from the realm, and
+     confirm OpenDDIL's walk with a fresh token. Then tell OpenDDIL the release and the instance, read from helm.
+- **Packets placed** (uncommitted):
+  - the architect: `...-engine-token-checks-thursday-is-at-risk.md`, plus the earlier "confirmed" one;
+  - OpenDDIL: confirmed, and the ADR-0068 review link;
+  - ca: the v0.9.20 interface, in the SDK repo's `sessions/`;
+  - the gateway's owner.
 
 **11-11 ~02:30Z: THE ARCHITECT'S FOUR ADR-0068 RULINGS ARE APPLIED.**
-- **ADR-0068 is DRAFT PR #347,** head `6be220db`. **Do not merge.** It stays Proposed until the architect and OpenDDIL review it.
+- **ADR-0068 is DRAFT PR #347,** head `e2ae0272`, which carries the architect's four review amendments (11-11 ~03:30Z):
+  - §2: snapshot max age, plus `on_snapshot_stale`, plus the reconnect re-check as `policy_finding`;
+  - §2: the door checks iss and aud;
+  - §3: no labels field is refused; empty labels are judged by `required`/`empty_means`;
+  - §4: `case_closed` belongs to the owner of the terminal step; the open gap is now `case_opened`.
+
+  OpenDDIL has the link. **Do not merge.** It stays Proposed until the architect and OpenDDIL review it.
 - **Identity:**
   - `entry_id` and the task occurrence ids are UUIDv7s, minted once by the writing tier. A replay hands back the minted id.
   - A uuid5 over (case, step, transition) is `dedupe_key` only, a lookup key and never an identity.
