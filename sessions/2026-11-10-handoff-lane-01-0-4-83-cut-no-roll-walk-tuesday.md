@@ -26,6 +26,18 @@ supersedes: 2026-11-09-handoff-lane-01-0-4-82-rolled-rev-229-walk-today.md
   another audience is refused. Also send OpenDDIL the live ActionRecord comparison.
 - **Roll-lock:** free at 13:58Z. 74 takes it at 16:00Z.
 
+**11-11 ~21:00Z: #354 MERGED at `6c98cb14`.** Its three attestation seals passed on the join (4, 19, 51) and the
+ratchet passed (24).
+- **#356 by `6a4175a2`:** my re-approval is placed and fin's approval is in; **gov's is still out**. Once it arrives,
+  re-run the three review-export tests and `test_the_export_profile_server_is_sealed.py` on the join, then merge. When
+  #356 merges, one PR carries the paired cortex digest plus `reviewExport` in sandbox `VITE_FEATURES`.
+- **The work-upgrade packet to Chris is placed** (master tree
+  `sessions/2026-11-11-packet-to-chris-from-lane-01-work-upgrade-to-0-4-85-in-order-with-checks.md`).
+  The architect, urgent: work needs 0.4.85 early next week for the review-page export.
+  - Key fact: the BFF refuses every token at 0.4.85 unless `cortexBff.auth` lists are set. Work's external IdP needs
+    the `audience-bff` mapper by hand first.
+  - **At the cut:** re-read every key at the cut sha, add the cortex digest, and re-issue the packet.
+
 **DISPATCH (after the 0.4.85 cut; nothing rides 0.4.85): manufacturing traceability.** The file is the untracked
 `dispatch-mfg-trace.md` in the master tree; it is the architect's, so do not commit it. Lane 1's part, from Friday 11-13:
 - Write the ADR at the next free number, as Proposed, for a program reader first. 0068 is the edge tier draft and 0069
