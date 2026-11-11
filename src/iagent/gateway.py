@@ -14420,7 +14420,7 @@ def _record_export(record: dict) -> None:
 
 async def _export_preflight(prof, notice_ids: list, current_user) -> tuple:
     """`(bodies, unexportable)` for the named notices, BEFORE any file is built. `unexportable` is
-    `[{ingest_id, reason}]`, every reason read off a row: `not_available` (no such notice, or one
+    `[{notice_id, reason}]`, every reason read off a row: `not_available` (no such notice, or one
     outside the caller's entitlement-cell domains: the two are not told apart, so the list does
     not confirm a notice exists), `kind_not_accepted` (the profile's `accepts` does not name the
     row's content_kind), `not_promoted`, `corrections_not_applied`, `extraction_unreadable`. A
@@ -14435,14 +14435,14 @@ async def _export_preflight(prof, notice_ids: list, current_user) -> tuple:
     for ingest_id in notice_ids:
         row = await run_in_threadpool(lambda i=ingest_id: ingest_status.get_row(i))
         if row is None or row.get("kind") == ingest_status.EVENT:
-            bad.append({"ingest_id": ingest_id, "reason": "not_available"})
+            bad.append({"notice_id": ingest_id, "reason": "not_available"})
             continue
         rec = await run_in_threadpool(lambda i=ingest_id: _export_decision_record(i))
         if promotion.recorded_domain(rec) not in domains:
-            bad.append({"ingest_id": ingest_id, "reason": "not_available"})
+            bad.append({"notice_id": ingest_id, "reason": "not_available"})
             continue
         if prof.accepts is not None and row.get("content_kind") not in prof.accepts:
-            bad.append({"ingest_id": ingest_id, "reason": "kind_not_accepted"})
+            bad.append({"notice_id": ingest_id, "reason": "kind_not_accepted"})
             continue
         try:
             bodies.append(await _export_notice_extraction(ingest_id, row))
@@ -14453,7 +14453,7 @@ async def _export_preflight(prof, notice_ids: list, current_user) -> tuple:
             reason = {"ingest_not_promoted": "not_promoted",
                       "export_corrections_not_applied": "corrections_not_applied"}.get(
                           d.get("error"), "extraction_unreadable")
-            bad.append({"ingest_id": ingest_id, "reason": reason})
+            bad.append({"notice_id": ingest_id, "reason": reason})
     return bodies, bad
 
 
@@ -14466,7 +14466,7 @@ async def ingest_export_notices_route(req: ExportNoticesRequest,
     (422); `can_export:<profile>` (403 `not_entitled_to_export`, the profile is also absent from
     the listing). Every notice is then PRE-FLIGHTED (`_export_preflight`: caller's cell domains,
     the profile's `accepts`, promoted, uncorrected): if ANY is unexportable the answer is 422
-    `export_notices_unexportable` carrying `unexportable: [{ingest_id, reason}]` and NO FILE IS
+    `export_notices_unexportable` carrying `unexportable: [{notice_id, reason}]` and NO FILE IS
     BUILT; `check_only: true` returns that same list with a 200 (empty when all are exportable)
     and builds nothing either way. Otherwise the file is built and ONE record is written: the
     actor (the authenticated principal, never the body), the notice ids, the profile id and

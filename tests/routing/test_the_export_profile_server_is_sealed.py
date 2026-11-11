@@ -293,7 +293,7 @@ def test_3_the_preflight_lists_every_unexportable_notice_with_its_reason_and_bui
     assert r.status_code == 422, r.text
     d = r.json()["detail"]
     assert d["error"] == "export_notices_unexportable"
-    assert {(u["ingest_id"], u["reason"]) for u in d["unexportable"]} == {
+    assert {(u["notice_id"], u["reason"]) for u in d["unexportable"]} == {
         (_iid(3), "kind_not_accepted"), (_iid(4), "not_promoted"),
         (_iid(5), "not_available"), (_iid(99), "not_available")}   # out-of-scope = unknown: no oracle
     assert built["render"] == 0 and built["records"] == []          # NO FILE BUILT, nothing recorded
@@ -304,7 +304,7 @@ def test_3_check_only_lists_the_same_and_builds_nothing_even_when_all_are_fine(
     _mixed_world(monkeypatch, tmp_path)
     r = _post({"notice_ids": [_iid(1), _iid(3)], "profile": "t", "check_only": True})
     assert r.status_code == 200 and r.json()["unexportable"] == [
-        {"ingest_id": _iid(3), "reason": "kind_not_accepted"}]
+        {"notice_id": _iid(3), "reason": "kind_not_accepted"}]
     assert (r.json()["profile"], r.json()["version"]) == ("t", 7)
     r = _post({"notice_ids": [_iid(1), _iid(2)], "profile": "t", "check_only": True})
     assert r.status_code == 200 and r.json()["unexportable"] == []
@@ -409,3 +409,90 @@ def test_5_the_sample_has_a_can_export_row_and_the_registry_row_composes_it():
     row = next(r for r in src["sources"] if r["kind"] == "review-export")
     assert row["overlay_env"] == OVERLAY_ENV
     assert "policy/overlays/sample/exports" in row["offline_overlays"]
+
+
+# 6. the wire says notice_id; the two gates; check_only (architect rulings 2026-11-11) ---------
+
+def _keys(obj, out=None):
+    """Every dict key at any depth."""
+    out = set() if out is None else out
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            out.add(k)
+            _keys(v, out)
+    elif isinstance(obj, list):
+        for v in obj:
+            _keys(v, out)
+    return out
+
+
+_BANNED = {"ingest_id", "ingest_ids"}
+
+
+def test_6_the_seal_for_the_wire_key_can_go_red():
+    assert _keys({"unexportable": [{"ingest_id": "x"}]}) & _BANNED          # the control: it sees one
+    assert not (_keys({"unexportable": [{"notice_id": "x"}]}) & _BANNED)
+
+
+def test_6_no_response_or_record_key_is_ingest_id(monkeypatch, tmp_path, built):
+    _mixed_world(monkeypatch, tmp_path)
+    ids = [_iid(i) for i in (1, 3, 4, 5, 99)]
+    seen = set()
+    seen |= _keys(_post({"notice_ids": ids, "profile": "t"}).json())              # 422 list
+    seen |= _keys(_post({"notice_ids": ids, "profile": "t", "check_only": True}).json())
+    ok = _post({"notice_ids": [_iid(1), _iid(2)], "profile": "t", "destination": "d"})
+    assert ok.status_code == 200
+    seen |= _keys(ok.json()) | set(ok.headers)
+    for rec in built["records"]:
+        seen |= _keys(rec)
+    assert built["records"], "the record was not seen"
+    assert "notice_id" in seen and "notice_ids" in seen
+    assert not (seen & _BANNED), seen & _BANNED
+
+
+def test_6_each_gate_alone_is_refused_and_both_together_admit(monkeypatch, tmp_path, built):
+    for grants, want in (({BATCH}, "not_entitled_to_export"),
+                         ({"can_export:t"}, "not_entitled_to_export_batch")):
+        _door(monkeypatch, tmp_path, grants=grants, worlds=[_world(1, REV_C)])
+        for body in ({"notice_ids": [_iid(1)], "profile": "t"},
+                     {"notice_ids": [_iid(1)], "profile": "t", "check_only": True}):
+            r = _post(body)
+            assert r.status_code == 403 and r.json()["detail"]["error"] == want, (grants, body)
+    assert built["render"] == 0 and built["records"] == []
+    _door(monkeypatch, tmp_path, grants={BATCH, "can_export:t"}, worlds=[_world(1, REV_C)])
+    assert _post({"notice_ids": [_iid(1)], "profile": "t"}).status_code == 200      # control
+
+
+def test_6_check_only_records_nothing_and_the_same_call_without_it_records_once(
+        monkeypatch, tmp_path, built):
+    _mixed_world(monkeypatch, tmp_path, with_bad=False)
+    body = {"notice_ids": [_iid(1), _iid(2)], "profile": "t", "destination": "d"}
+    assert _post({**body, "check_only": True}).status_code == 200
+    assert built["records"] == [] and built["render"] == 0
+    assert _post(body).status_code == 200
+    assert len(built["records"]) == 1 and built["render"] == 1                      # control
+
+
+def test_6_there_is_one_notice_route_and_no_resolve_route():
+    paths = {(m, r.path) for r in gateway.app.routes if hasattr(r, "methods")
+             for m in r.methods if r.path.startswith("/ingest") and "/export" in r.path}
+    assert ("POST", "/ingest/export/notices") in paths
+    assert not [p for p in paths if "resolve" in p[1]], paths
+    assert [p for p in paths if p[0] == "POST"] == [("POST", "/ingest/export/notices")], paths
+
+
+def test_6_the_record_LINE_that_arrives_carries_notice_ids_and_no_ingest_key(
+        monkeypatch, tmp_path, caplog):
+    import json as _json
+    import logging
+
+    _mixed_world(monkeypatch, tmp_path, with_bad=False)
+    with caplog.at_level(logging.INFO, logger="iagent.audit.ingest_export"):
+        r = _post({"notice_ids": [_iid(1), _iid(2)], "profile": "t", "destination": "d"})
+    assert r.status_code == 200
+    lines = [m for m in caplog.messages if m.startswith("ingest_export ")]
+    assert len(lines) == 1, caplog.messages
+    rec = _json.loads(lines[0].split(" ", 1)[1])
+    assert rec == {"actor": STRANGER, "notice_ids": [_iid(1), _iid(2)], "profile": "t",
+                   "version": 7, "destination": "d"}
+    assert not (_keys(rec) & _BANNED)
