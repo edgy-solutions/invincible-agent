@@ -1,5 +1,5 @@
-# TEST FIXTURE -- not a sample; see fin_ev_cumulative.yaml beside it. `eac_reported` is produced
-# from dag-tools 0.12.0 (contracts/ev_fixture.yaml).
+# SAMPLE -- see fin_ev_cumulative.yaml beside it. `eac_reported` is produced from dag-tools 0.12.0
+# (contracts/ev_fixture.yaml); the fleet pins 0.13.0.
 measure_id: fin_eac_trend
 verb: finEacTrend
 name: EAC trend
@@ -37,8 +37,13 @@ render:
     - {key: eac, label: Estimate at completion, unit: USD}
     - {key: bac, label: Budget at completion, unit: USD}
   target: {series: bac, label: BAC}
+menu:
+  subject: "fin:DeclaredMeasureSeries"
+  archetype: "mesh:MultiSeries"
+  persona_fit: [PROGRAM_FINANCE_ANALYST]
+  domain_fit: [PROGRAM_FINANCE]
 policy:
   status: sample
   cells: [PROGRAM_FINANCE]
   granted_by: seed
-  reason: a test fixture proving the dataset-backed series on the 0.12.0 EV fixture shape
+  reason: a sample row proving the dataset-backed series on the synthetic EV fixture

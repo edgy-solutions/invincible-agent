@@ -117,7 +117,10 @@ agentFleet:
     # SANDBOX ONLY, not the chart's default configmap: the sample TCPI row and its board are
     # invented to prove the contract. engine-fin reads the first, cortex-bff the second; the
     # shared agentFleet configmap carries both and each service reads only its own.
-    MEASURE_VERB_OVERLAY_DIRS: "/app/policy/overlays/sample/measure_verbs"
+    # The second directory holds the refusal probes: rows over dag-tools' planted-refusal assets,
+    # which exist only so the live leg can see each reader rule refuse. Nothing else names it.
+    # The separator is the pod's os.pathsep (":").
+    MEASURE_VERB_OVERLAY_DIRS: "/app/policy/overlays/sample/measure_verbs:/app/policy/overlays/sandbox/measure_verbs"
     CANVAS_OVERLAY_DIRS: "/app/policy/overlays/sample/canvases"
     # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
     # and its template are invented. engine-fin reads it.
@@ -358,8 +361,9 @@ engineFinance:
   # 0.4.81 (architect, 2026-11-05), after the live leg on 0.4.80 passed with the flag set by hand.
   # The URN and banner are contracts/ev_fixture.yaml's, and a test holds them equal to it.
   # Set, a declared measure (fin_tcpi, fin_vac_cpi) needs a per-asset grant: a caller without one
-  # gets 403 `access_denied`, never the seed. An export naming one gets 409 `asset_export_unsupported`,
-  # which includes both sample CDRL A001 profiles. Built-in verbs still answer from the seed.
+  # gets 403 `access_denied`, never the seed. Built-in verbs, packages and CDRLs read the asset as the
+  # caller too, except a built-in whose row says `source: seed` (fin_funding_status ships so). A
+  # package naming a declared or dataset-kind panel is the builder's named 503 (ruled 2026-11-08/09).
   env:
     FIN_DATASET_URN: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
     FIN_DATASET_BANNER: "SYNTHETIC earned-value fixture, not a real program."
@@ -795,6 +799,18 @@ cortexBff:
     # without this key reads the seed. A path that does not exist composes NOTHING, silently --
     # tests/security/test_the_sandbox_names_its_grantor.py holds it to a directory with rows.
     GRANTOR_OVERLAY_DIRS: "/app/policy/overlays/sample/grantors"
+  # Token acceptance (architect, 2026-11-11). Keycloak runs without a fixed hostname, so `iss` is the URL a
+  # token was minted at: the public realm URL for the browser and outside callers (the gateway's
+  # GATEWAY_JWT_ISSUER), and the in-cluster realm URL for every in-cluster mint
+  # (iagent_mesh.service_identity.mint_token reads agentFleet.env's KEYCLOAK_REALM_URL; doc-tools quotes
+  # the same URL). Both entries quote those values rather than retyping them.
+  auth:
+    acceptedIssuers:
+      - '{{ .Values.centralGateway.env.GATEWAY_JWT_ISSUER }}'
+      - '{{ .Values.agentFleet.env.KEYCLOAK_REALM_URL }}'
+    acceptedAudiences:
+      - cortex-bff
+    realmAudience: cortex-bff
   ingress:
     enabled: true
     className: traefik

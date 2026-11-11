@@ -147,13 +147,16 @@ async def lifespan(fastapi_app: FastAPI):
 # Telemetry (ADR-0038): join Engine F's work to the caller's trace. telemetry.py is at /app
 # in the fleet image; guarded so the engine runs identically when the shim/leaf is absent.
 try:
-    from telemetry import observed_trace, MAPPING, build_trace_values
+    from telemetry import observed_trace, MAPPING, build_trace_values, emit_misses
 except Exception:  # pragma: no cover — telemetry never load-bearing
     from contextlib import contextmanager as _cm
 
     @_cm
     def observed_trace(*_a, **_k):
         yield
+
+    def emit_misses():  # None = no telemetry leaf here, so nothing emitted, nothing missed
+        return None
 
     def build_trace_values(**_k):
         return {}
@@ -1814,7 +1817,7 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
 
 @app.get("/health")
 def health() -> Dict[str, str]:
-    return {"status": "ok", "engine": "F"}
+    return {"status": "ok", "engine": "F", "telemetry_misses": emit_misses()}
 
 if __name__ == "__main__":
     import os

@@ -12143,6 +12143,13 @@ async def compile_bpmn(
 # Removed BFF Mock Routes (no longer used)
 
 
+try:
+    from provenance_telemetry import emit_misses
+except ImportError:  # pragma: no cover -- the root package pins the leaf; None = nothing emitted
+    def emit_misses():  # type: ignore[misc]
+        return None
+
+
 @app.get("/health")
 async def health():
     """READINESS REFUSES WHEN A SERVICE URL WAS NEVER DECLARED. RULED 2026-09-11.
@@ -12170,6 +12177,7 @@ async def health():
     return {
         "status": "ok",
         "service": "cortex-orchestrator-proxy",
+        "telemetry_misses": emit_misses(),
     }
 
 

@@ -29,6 +29,9 @@ from _mcp_surface_derived import mcp_routes, stub_for
 from src.iagent import auth, gateway
 
 
+ISSUER, AUDIENCE = "https://realm.test/realms/r", "bff.test"
+
+
 @pytest.fixture(scope="module")
 def key():
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -41,10 +44,12 @@ def door(monkeypatch, key):
     monkeypatch.setattr(auth.jwks_client, "get_signing_key_from_jwt",
                         lambda tok: types.SimpleNamespace(key=pub))
     monkeypatch.setattr(auth, "_get_entitlement_cache", lambda: None)
+    monkeypatch.setenv(auth.ACCEPTED_ISSUERS_ENV, ISSUER)
+    monkeypatch.setenv(auth.ACCEPTED_AUDIENCES_ENV, AUDIENCE)
 
 
 def _token(key, **claims) -> str:
-    payload = {"exp": time.time() + 600, "iat": time.time(), **claims}
+    payload = {"exp": time.time() + 600, "iat": time.time(), "iss": ISSUER, "aud": AUDIENCE, **claims}
     return jwt.encode(payload, key, algorithm="RS256")
 
 

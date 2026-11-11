@@ -54,13 +54,16 @@ from baml_client.type_builder import TypeBuilder
 # Telemetry (ADR-0038): join Engine O's work to the caller's trace. telemetry.py sits at /app
 # in the fleet image; guarded so the engine runs identically when the shim/leaf is absent.
 try:
-    from telemetry import observed_trace, MAPPING, build_trace_values  # noqa: E402
+    from telemetry import observed_trace, MAPPING, build_trace_values, emit_misses  # noqa: E402
 except Exception:  # pragma: no cover — telemetry never load-bearing
     from contextlib import contextmanager as _cm
 
     @_cm
     def observed_trace(*_a, **_k):  # type: ignore[misc]
         yield
+
+    def emit_misses():  # None = no telemetry leaf here, so nothing emitted, nothing missed
+        return None
 
     def build_trace_values(**_k):  # type: ignore[misc]
         return {}
@@ -5487,6 +5490,7 @@ async def health():
         "status": "ok",
         "jena_configured": _JENA.configured,
         "neo4j_configured": _NEO4J.configured,
+        "telemetry_misses": emit_misses(),
     }
 
 @app.get("/personas")
