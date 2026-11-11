@@ -49,6 +49,19 @@ cortexBff:
 Langfuse SDK builds land in Langfuse's `default` environment. In the sandbox it is now set, so new sandbox
 spans move from `default` to `sandbox`: a Langfuse view or query filtered on `default` stops showing them.
 
+**The central gateway (dag-tools v0.14.0) accepts only the BFF's issuers and audiences.** The chart renders
+`GATEWAY_JWT_ISSUERS` and `GATEWAY_JWT_AUDIENCES` from `cortexBff.auth.acceptedIssuers` /
+`acceptedAudiences` (the BFF's one copy). **An empty list refuses every token** once the gateway enforces.
+- Do not set `GATEWAY_JWT_ISSUERS`, `GATEWAY_JWT_AUDIENCES` or `GATEWAY_JWT_AUDIENCE` in
+  `centralGateway.env` or `agentFleet.env`: the render fails, because the gateway would add them to its list.
+- A `GATEWAY_JWT_ISSUER` you already set stays valid only if it is one of `cortexBff.auth.acceptedIssuers`;
+  otherwise the render fails.
+- `GATEWAY_IDENTITY_POSTURE` is unchanged by the chart. An environment that moves it to `enforce` should
+  read the gateway's startup line first: `identity: posture=… issuers=N audiences=N enforce_ready=yes`.
+  `enforce_ready=no unset=…` names what is missing. Every service client this chart manages carries the
+  BFF audience (the realm job's `audience-bff` mapper); a client managed elsewhere must carry it too, or
+  the gateway refuses its tokens under `enforce`.
+
 - **SECURITY: cortex-bff checks a token's audience and issuer** (`src/iagent/auth.py`,
   `templates/frontend.yaml`, `templates/keycloak-configmap.yaml`, `templates/realm-reconcile-job.yaml`,
   `values.yaml`, `values-sandbox.yaml`; the architect, 2026-11-11, on OpenDDIL's report). Through 0.4.84,
@@ -325,6 +338,21 @@ spans move from `default` to `sandbox`: a Langfuse view or query filtered on `de
   `default` to `sandbox`; a view or query filtered on `default` stops showing them. Spans already written
   keep `default`. A pod reads the key at start. Nothing checksums the ConfigMap, so the change takes
   effect because 0.4.85's chart version restarts every pod. No image changes.
+- **SECURITY: dag-tools v0.14.0; the sandbox gateway enforces with the BFF's lists** (`pyproject.toml`,
+  `agent_fleet/finance_agent/pyproject.toml`, both locks, `values.yaml` `global.imageDigests`,
+  `templates/_helpers.tpl` `gatewayTokenEnv`, `templates/engines.yaml`, `values-sandbox.yaml`; the
+  architect, 2026-11-11). The pin moves from 0.13.0 to 0.14.0: the library (root, from PyPI; engine-fin,
+  tag `v0.14.0`) and both images by digest (`central-gateway`
+  `sha256:deedd6c9…`, `user-deployment` `sha256:f8cbcad8…`, each an index with linux/arm64, `= :sha-33a0262`).
+  engine-data-analyst's pre-rename SHA pin is unchanged. v0.14.0's gateway checks a token's issuer against
+  a list and its audience against a list, and reads the principal once (an unverified token names nobody).
+  The chart serves it the BFF's lists, last in the container env, and refuses a hand-set name that would
+  widen them. **The sandbox moves `GATEWAY_IDENTITY_POSTURE` from `observe` to `enforce` in the same roll**;
+  the internal doors' `INTERNAL_DOOR_POSTURE` stays unset (observe). **Post-roll check:** the gateway's
+  startup line reads `posture=enforce … enforce_ready=yes`, and a token for another audience is refused.
+  Seal: `tests/security/test_the_gateway_is_served_the_bff_token_lists_chart.py` (12 tests) runs dag-tools'
+  own `accepted_issuers`, `accepted_audiences` and `announce` over the rendered env; dropping the include
+  turns 11 red, and the posture back to `observe` turns 1 red.
 
 ## 0.4.84 — 2026-11-10
 

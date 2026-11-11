@@ -46,10 +46,10 @@ global:
   # rendered image that still carries only a tag. The map is keyed by repository, so a component
   # `image.tag` override on a row below is ignored; change the row instead.
   imageDigests:
-    # 0.13.0 (read 2026-11-10 by Docker-Content-Digest; index incl. linux/arm64; = :sha-bed53b9)
-    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:9c9a99ee50d9ba8b128cb04e789280856169c2c6084074664bda84911e70d31a"
-    # 0.13.0 (read 2026-11-10 by Docker-Content-Digest; index incl. linux/arm64; = :sha-bed53b9)
-    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:d385757d13f6a4eeeb8540400c98b8f973f4803226caf0af4a9c6120fe2d33dc"
+    # 0.14.0 (read 2026-11-11 by Docker-Content-Digest; index incl. linux/arm64; = :sha-33a0262)
+    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:deedd6c91aba8e91c3ae1b03bc9ce2bc9140a07fd920f30eb2e6de57cde787fe"
+    # 0.14.0 (read 2026-11-11 by Docker-Content-Digest; index incl. linux/arm64; = :sha-33a0262)
+    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:f8cbcad8769c42db89a7219ebb843c7b6b657ef1fb3ccfb105088491dccd9a34"
     # Kept over 1555b341 (source e5612fa: the CP1252 repair AND the V_CHARACTERISTICS fold, not reviewed),
     # architect 11-05; board 01M6P5ZAJ382FBHEQDA23941EA carries both forward on a reviewed build.
     # reviewed 09-23 (`master` build of 1aa2cbe) (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -942,7 +942,7 @@ centralGateway:
   replicas: 1
   image:
     repository: "edgy-solutions/dag-tools/central-gateway"
-    tag: "0.11.0"
+    tag: "0.14.0"
   port: 8000
   resources:
     requests:
@@ -1194,7 +1194,7 @@ userDeployments:
     image:
       registry: "ghcr.io"
       repository: "edgy-solutions/dag-tools/user-deployment"
-      tag: "0.11.0"
+      tag: "0.14.0"
     imagePullPolicy: Always
     dagsterModule: "dag_tools.user_deployment.definitions"
     codeLocation:
