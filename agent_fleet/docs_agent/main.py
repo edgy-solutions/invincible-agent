@@ -316,6 +316,15 @@ def _registration_incomplete() -> Optional[List[str]]:
     return (failed + still) or None
 
 
+# Telemetry census: /health reports spans the leaf lost. telemetry.py sits at /app in the
+# fleet image; guarded so a missing shim never breaks startup (None = nothing emitted).
+try:
+    from telemetry import emit_misses
+except Exception:  # pragma: no cover -- telemetry never load-bearing
+    def emit_misses():  # type: ignore[misc]
+        return None
+
+
 @app.get("/health", tags=["ops"])
 def health() -> Dict[str, Any]:
     """Liveness, and it reports the read path's absence rather than hiding it.
@@ -334,6 +343,7 @@ def health() -> Dict[str, Any]:
         "ready": READER is not None and STORE is not None and not incomplete,
         "registration_incomplete": incomplete,
         "degraded_reason": None if READER and STORE else _NO_READER,
+        "telemetry_misses": emit_misses(),
     }
 
 

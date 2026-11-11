@@ -621,6 +621,15 @@ def _enforce_refusal(m: GraphManifest, out: Any) -> Any:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+# Telemetry census: /health reports spans the leaf lost. telemetry.py sits at /app in the
+# fleet image; guarded so a missing shim never breaks startup (None = nothing emitted).
+try:
+    from telemetry import emit_misses
+except Exception:  # pragma: no cover -- telemetry never load-bearing
+    def emit_misses():  # type: ignore[misc]
+        return None
+
+
 @app.get("/health")
 async def health() -> dict:
     """Liveness, and it must not say `ok` while admitting nothing.
@@ -642,6 +651,7 @@ async def health() -> dict:
         # STATE IS REPORTED, NEVER INFERRED FROM THE ROW. A caller reading `checkpointer: true`
         # off a manifest would reasonably assume the state survives a restart. It does not yet.
         "checkpointing": checkpointer_durability(),
+        "telemetry_misses": emit_misses(),
     }
 
 

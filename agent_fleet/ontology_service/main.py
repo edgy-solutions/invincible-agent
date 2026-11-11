@@ -54,13 +54,16 @@ from baml_client.type_builder import TypeBuilder
 # Telemetry (ADR-0038): join Engine O's work to the caller's trace. telemetry.py sits at /app
 # in the fleet image; guarded so the engine runs identically when the shim/leaf is absent.
 try:
-    from telemetry import observed_trace, MAPPING, build_trace_values  # noqa: E402
+    from telemetry import observed_trace, MAPPING, build_trace_values, emit_misses  # noqa: E402
 except Exception:  # pragma: no cover — telemetry never load-bearing
     from contextlib import contextmanager as _cm
 
     @_cm
     def observed_trace(*_a, **_k):  # type: ignore[misc]
         yield
+
+    def emit_misses():  # None = no telemetry leaf here, so nothing emitted, nothing missed
+        return None
 
     def build_trace_values(**_k):  # type: ignore[misc]
         return {}
@@ -999,39 +1002,40 @@ async def lifespan(app: FastAPI):
                 return False
 
         def _register_where_used():
-            mr.register_engine_to_mesh(
-                mint=mr.engine_mint(client_id="iagent-engine-o", secret_env="ENGINE_O_CLIENT_SECRET"),
-                name="engine_o_where_is_this_part_used",
-                description=(
-                    "Answers which end items use one part and which program each is sustained "
-                    "under, one row per end item and program, with the part's quantity per end "
-                    "item rolled up through every level of the product structure. Takes a "
-                    "declared configuration (as_designed, as_built, as_maintained; default "
-                    "as_designed) and every row states the configuration it was answered from. "
-                    "REFUSES, never an empty table: part_required, unknown_part (also the answer "
-                    "when every end item is withheld from the caller), ambiguous_part, "
-                    "unknown_configuration, configuration_not_available (naming the end items "
-                    "with no data for it) and no_usage. Population and stock have no source: "
-                    "they are absent on every row, never 0. READ-ONLY."
-                ),
-                verb=_where_used.VERB,
-                input_uri=_where_used.INPUT_URI,
-                output_uri=_where_used.OUTPUT_URI,
-                verb_synonyms=[
-                    "where is this part used", "where used", "which end items use this part",
-                    "what uses this part", "impact of this part",
-                ],
-                verb_anti_synonyms=["what failed on this part", "propose a disposition"],
-                endpoint_url=_where_used_endpoint,
-                owner_persona="SUSTAINMENT_ENGINEER",
-                domains=[_where_used.DOMAIN],
-                cost_class="fast",
-                requires_human_approval=False,
-                provider="engine_o_sustainment",
-                timeout_s=5.0,
-                slots=_where_used.slots(),
-            )
-            print(f"[ontology-service] registered {_where_used.VERB} -> {_where_used_endpoint}")
+            for name, input_uri in _where_used.REGISTRATIONS:
+                mr.register_engine_to_mesh(
+                    mint=mr.engine_mint(client_id="iagent-engine-o", secret_env="ENGINE_O_CLIENT_SECRET"),
+                    name=name,
+                    description=(
+                        "Answers which end items use one part and which program each is sustained "
+                        "under, one row per end item and program, with the part's quantity per end "
+                        "item rolled up through every level of the product structure. Takes a "
+                        "declared configuration (as_designed, as_built, as_maintained; default "
+                        "as_designed) and every row states the configuration it was answered from. "
+                        "REFUSES, never an empty table: part_required, unknown_part (also the answer "
+                        "when every end item is withheld from the caller), ambiguous_part, "
+                        "unknown_configuration, configuration_not_available (naming the end items "
+                        "with no data for it) and no_usage. Population and stock have no source: "
+                        "they are absent on every row, never 0. READ-ONLY."
+                    ),
+                    verb=_where_used.VERB,
+                    input_uri=input_uri,
+                    output_uri=_where_used.OUTPUT_URI,
+                    verb_synonyms=[
+                        "where is this part used", "where used", "which end items use this part",
+                        "what uses this part", "impact of this part",
+                    ],
+                    verb_anti_synonyms=["what failed on this part", "propose a disposition"],
+                    endpoint_url=_where_used_endpoint,
+                    owner_persona="SUSTAINMENT_ENGINEER",
+                    domains=[_where_used.DOMAIN],
+                    cost_class="fast",
+                    requires_human_approval=False,
+                    provider="engine_o_sustainment",
+                    timeout_s=5.0,
+                    slots=_where_used.slots(),
+                )
+                print(f"[ontology-service] registered {_where_used.VERB} on {input_uri} -> {_where_used_endpoint}")
 
         mr.when_stores_answer(
             "engine_o_where_is_this_part_used:stores",
@@ -5487,6 +5491,7 @@ async def health():
         "status": "ok",
         "jena_configured": _JENA.configured,
         "neo4j_configured": _NEO4J.configured,
+        "telemetry_misses": emit_misses(),
     }
 
 @app.get("/personas")

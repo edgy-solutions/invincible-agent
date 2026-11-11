@@ -640,6 +640,19 @@ _OTHER_MAPPER = ('{"id":"m-other","name":"initiator-kind-svc","protocol":"openid
                  '"config":{"claim.name":"initiator_kind","claim.value":"delegate"}}')
 
 
+def _bff_audience() -> str:
+    values = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
+    return values["cortexBff"]["auth"]["realmAudience"]
+
+
+def _audience_mapper() -> str:
+    """The BFF audience mapper as Keycloak returns it, under an operator's name: the repair keys on
+    what a mapper emits, so the arms above (about authz-id-svc) run against a realm that has it."""
+    return ('{"id":"m-aud","name":"operator-named","protocol":"openid-connect",'
+            '"protocolMapper":"oidc-audience-mapper",'
+            '"config":{"access.token.claim":"true","included.custom.audience":"%s"}}' % _bff_audience())
+
+
 def _run_engine_d(sandbox: str, mappers: str) -> subprocess.CompletedProcess:
     s = _script(sandbox)
     start = s.index('CID="iagent-engine-d"')
@@ -676,7 +689,7 @@ def _writes(r: subprocess.CompletedProcess) -> list[tuple[str, str, dict]]:
 @pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
 @pytest.mark.parametrize("order", ["id-first", "id-last"])
 def test_a_pre_flip_chart_mapper_is_migrated_in_place(sandbox, order):
-    r = _run_engine_d(sandbox, "[%s,%s]" % (_OTHER_MAPPER, _mapper_json(order)))
+    r = _run_engine_d(sandbox, "[%s,%s,%s]" % (_OTHER_MAPPER, _mapper_json(order), _audience_mapper()))
     assert r.returncode == 0, r.stderr
     w = _writes(r)
     assert [x[0] for x in w] == ["PUT"], w
@@ -690,7 +703,7 @@ def test_a_pre_flip_chart_mapper_is_migrated_in_place(sandbox, order):
 
 @pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
 def test_an_operator_mapper_is_never_touched(sandbox):
-    r = _run_engine_d(sandbox, "[%s]" % _mapper_json("id-first", value="svc:somebody-else"))
+    r = _run_engine_d(sandbox, "[%s,%s]" % (_mapper_json("id-first", value="svc:somebody-else"), _audience_mapper()))
     assert r.returncode == 0, r.stderr
     assert _writes(r) == [], r.stderr
     assert "migrated" not in r.stdout
@@ -698,7 +711,7 @@ def test_an_operator_mapper_is_never_touched(sandbox):
 
 @pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
 def test_a_mapper_already_on_the_claim_is_left_alone(sandbox):
-    r = _run_engine_d(sandbox, "[%s]" % _mapper_json("id-first", name="authz_id"))
+    r = _run_engine_d(sandbox, "[%s,%s]" % (_mapper_json("id-first", name="authz_id"), _audience_mapper()))
     assert r.returncode == 0, r.stderr
     assert _writes(r) == [], r.stderr
     assert "present, mapper ok" in r.stdout
@@ -706,12 +719,36 @@ def test_a_mapper_already_on_the_claim_is_left_alone(sandbox):
 
 @pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
 def test_a_missing_mapper_is_still_created(sandbox):
-    r = _run_engine_d(sandbox, "[%s]" % _OTHER_MAPPER)
+    r = _run_engine_d(sandbox, "[%s,%s]" % (_OTHER_MAPPER, _audience_mapper()))
     assert r.returncode == 0, r.stderr
     w = _writes(r)
     assert [x[0] for x in w] == ["POST"], w
     assert w[0][1].endswith("/clients/uuid-1/protocol-mappers/models")
     assert w[0][2]["config"]["claim.name"] == "authz_id" and w[0][2]["config"]["claim.value"] == _ENGINE_D
+
+
+@pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
+def test_a_missing_bff_audience_mapper_is_added_with_the_served_audience(sandbox):
+    """Without it on a service client the BFF refuses that client's tokens after the roll."""
+    r = _run_engine_d(sandbox, "[%s,%s]" % (_mapper_json("id-first", name="authz_id"), _OTHER_MAPPER))
+    assert r.returncode == 0, r.stderr
+    w = _writes(r)
+    assert [x[0] for x in w] == ["POST"], w
+    _, url, body = w[0]
+    assert url.endswith("/clients/uuid-1/protocol-mappers/models"), url
+    assert body["protocolMapper"] == "oidc-audience-mapper"
+    assert body["config"]["included.custom.audience"] == _bff_audience()
+    assert body["config"]["access.token.claim"] == "true"
+
+
+@pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
+def test_control_a_present_bff_audience_mapper_is_left_alone(sandbox):
+    """Control for the arm above: the same realm plus a mapper emitting the audience, under an
+    operator's name. No write: the repair keys on what is emitted, never on the name."""
+    r = _run_engine_d(sandbox, "[%s,%s,%s]" % (_mapper_json("id-first", name="authz_id"), _OTHER_MAPPER,
+                                              _audience_mapper()))
+    assert r.returncode == 0, r.stderr
+    assert _writes(r) == [], r.stderr
 
 
 # ------------------------------------------------------------------ (i) local humans: create, parity, join, groups

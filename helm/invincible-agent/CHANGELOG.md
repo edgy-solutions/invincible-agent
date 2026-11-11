@@ -7,6 +7,75 @@ Entries merged after the 0.4.84 tag (`f9fa4d7b`). The architect, 2026-11-10: "Me
 automation tags on merge." Every entry below goes under this heading until the cut; none goes under
 0.4.84, which is tagged and rolled.
 
+### Upgrade notes: set these before an environment takes 0.4.85
+
+**`cortexBff.auth`**, or the BFF admits nobody. Its two lists are empty in `values.yaml`, and an empty
+list refuses every token. This is intended.
+
+```yaml
+cortexBff:
+  auth:
+    acceptedIssuers:      # every URL a token for this environment can be minted at
+      - <the realm URL the browser signs in at>
+      - <the realm URL services mint at, if it differs>
+    acceptedAudiences: [cortex-bff]
+    realmAudience: cortex-bff   # only if this chart's realm import or reconcile owns the clients; else ""
+```
+
+- **Issuers.** `iss` is the URL a token was minted at. With Keycloak on no fixed hostname, a browser token
+  and an in-cluster service token differ, so list both. Entries go through `tpl`; the sandbox quotes
+  `centralGateway.env.GATEWAY_JWT_ISSUER` and `agentFleet.env.KEYCLOAK_REALM_URL`.
+- **What the pod gets.** `BFF_JWT_ACCEPTED_ISSUERS` and `BFF_JWT_ACCEPTED_AUDIENCES`, comma-joined and
+  rendered after `cortexBff.env`, so a hand-set entry cannot widen them. The render fails if `realmAudience`
+  is set and is not one of `acceptedAudiences`.
+- **The realm mapper.** Every client that calls the BFF needs the audience in its access token: cortex-ui and
+  every service client, delegates included. If this chart owns the realm's clients, `realmAudience` adds the
+  mapper and the reconcile repairs it. Otherwise add this mapper by hand:
+
+  ```json
+  {"name": "audience-bff", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
+   "config": {"included.custom.audience": "cortex-bff", "access.token.claim": "true",
+              "id.token.claim": "false"}}
+  ```
+
+  The reconcile recognises a mapper by what it emits, not by its name. Leave the mapper off clients that
+  must not call the BFF.
+- **Check before upgrading.** Mint a fresh token for one browser user and one service client, and read only
+  their `iss` and `aud` claims.
+- **On the upgrade.** A token minted before the mapper existed gets 401. Users sign in again, and
+  client-credentials callers mint a fresh token.
+
+**`agentFleet.env.LANGFUSE_TRACING_ENVIRONMENT`**, set to the same value as `DEPLOY_ENV`, or the spans the
+Langfuse SDK builds land in Langfuse's `default` environment. In the sandbox it is now set, so new sandbox
+spans move from `default` to `sandbox`: a Langfuse view or query filtered on `default` stops showing them.
+
+- **SECURITY: cortex-bff checks a token's audience and issuer** (`src/iagent/auth.py`,
+  `templates/frontend.yaml`, `templates/keycloak-configmap.yaml`, `templates/realm-reconcile-job.yaml`,
+  `values.yaml`, `values-sandbox.yaml`; the architect, 2026-11-11, on OpenDDIL's report). Through 0.4.84,
+  `verified_claims` decoded with `options={"verify_aud": False}` and no `issuer=`: any RS256 token the
+  realm signed, for any client, was admitted at every BFF route, the ingest door and the MCP door
+  included. Now `iss` must be one of `cortexBff.auth.acceptedIssuers` and `aud` must name one of
+  `cortexBff.auth.acceptedAudiences`, served to the pod as `BFF_JWT_ACCEPTED_ISSUERS` /
+  `BFF_JWT_ACCEPTED_AUDIENCES`; `exp`, `iss` and `aud` are required. **An empty list refuses every
+  token**; the base values ship both lists empty, so an environment that sets neither admits nobody.
+  The sandbox accepts the public realm URL and the in-cluster one (`KEYCLOAK_REALM_URL`, which service
+  mints carry), and the audience `cortex-bff`, stamped by a new `audience-bff` realm mapper on
+  cortex-ui and on every service client (delegates included); the reconcile job creates and repairs it.
+  **Roll consequence:** a token minted before the mapper exists carries no `cortex-bff` audience and is
+  refused with 401; sign in again, and a client-credentials caller mints a fresh token. **Every other
+  deployment** must set `cortexBff.auth` (both lists, and `realmAudience` if this chart's realm import or
+  reconcile owns its clients) before it takes 0.4.85, or its BFF admits nobody; that is the intended
+  failure, not a regression. The existing realm seals that compare a client with a base sha
+  (`tests/test_openddil_delegate_client.py`, `tests/test_cortex_ui_redirects_chart.py`,
+  `tests/test_oidc_broker_chart.py`) now check that the one added mapper is exactly `audience-bff` and
+  compare the rest unchanged; the reconcile's two per-client audience regions carry begin/end markers for
+  that. Two executed arms in `test_oidc_broker_chart.py` prove the repair adds the mapper when absent and
+  leaves one emitting the audience alone, whatever its name. Seals:
+  `tests/security/test_gateway_jwt_verification.py` (wrong audience, wrong issuer, either missing, an
+  empty served list: each refused, each against the admitted control),
+  `tests/mcp_seals/test_the_delegate_path_checks_audience_and_issuer.py` (every delegate in the sandbox
+  values, on both `on_behalf_of` routes), and
+  `tests/security/test_the_bff_accepts_only_served_issuers_and_audiences_chart.py` (the render).
 - **The chart-version test reads git output as UTF-8** (`tests/test_chart_version_tracks_chart_content.py`;
   fin's finding). Its two text-mode `git` calls now pass `encoding="utf-8"`. Without it, Python decodes
   `git show` of this file with the locale's code page; on a Windows cp1252 box the em-dashes in these
@@ -115,6 +184,16 @@ automation tags on merge." Every entry below goes under this heading until the c
   nothing in the values or pod templates changes. The sandbox has `FIN_DATASET_URN` set, so at the
   roll its built-ins, packages and CDRLs read the asset as the caller, except funding, which stays
   on the seed by its row.
+- **The where-used fixture carries PCN26-182's two parts, so a notice and where-used join on a part**
+  (`policy/overlays/sample/product_structure/where_used.yaml`, `tests/test_where_used_joins_the_notice_parts.py`;
+  74, #339). PCN26-182 is a synthetic notice OpenDDIL built (Chris, 2026-11-10). Its parts, 5530-182 and
+  5530-183, are now two identities in the synthetic BOM, marked synthetic like the rest. Each resolves by
+  the number the notice prints and by the component IRI the notice graph carries. 5530-182 sits under
+  SUB-B: qty per E1 12 (ALPHA), E2 6 (BRAVO), and E3 is never served. 5530-183 is E1 only, at 2. The
+  existing part's rows (26, 12) do not move. **The roll:** the fixture ships in every agent image
+  (`Dockerfile.agent` copies `policy/overlays/`); nothing in the values or pod templates changes. Through
+  0.4.84 the demo's where-used beat asks about the fixture part `0SYN1:PN-1001`; from this version it can
+  ask about 5530-182. Whether a question grounded on the notice's Component reaches the verb is #341's.
 
 - **fin's live leg: the time-phased rows ship, and the sandbox carries refusal probes** (approved
   2026-11-10 as one PR). `fin_ev_cumulative` and `fin_eac_trend` move from the test fixtures to
@@ -140,6 +219,112 @@ automation tags on merge." Every entry below goes under this heading until the c
   objects (until then grant_sync refuses the file, exit 3, as it did for ev_fixture); Chris syncs the
   three grants and eleven programs to Topaz. The asset URNs are by analogy with ev_fixture and are
   unverified until the live leg's FIRST leg passes.
+- **The fleet's SDK pin moves from v0.9.17 to v0.9.18; `pcn` and `pdn` declare `attestation: self`** (gov;
+  the architect, 11-10: "The pcn/pdn 'attestation: self' rows ride that PR"). All 17 pyprojects, their locks
+  (`8d1ee304` → `2f47e9ee`, iagent-mesh alone in each) and `meshSdkVersion` move together.
+  - **What v0.9.18 carries:** one field, `ContentKindRegistration.attestation: "self" | "second_party" | None`.
+    `extra="forbid"` is why the two overlay rows ship in the same commit as the pin. Between the tags only
+    `iagent_mesh/ingest.py` changes, and the dependencies do not.
+  - **Not in v0.9.18:** the ActionRecord schema corrections and ImpactRow provenance the dispatch expected.
+    Neither is in the tag nor on any SDK branch; ca's packet says the DataProvenance reshape waits on an
+    architect ruling. They need a later SDK release and their own pin.
+  - **Not yet read:** `promotion._declared_attestation` still returns `None`, so every kind gets the ruled
+    default (`self`) whatever the row says. Wiring it to the row is Lane 1's.
+  - **Closed network:** the package calls itself 0.9.18, so `meshSdkSource: index` serves this pin.
+  - **The roll:** every engine image changes (the lock), and `meshSdkVersion` changes in values.
+- **The `course` overlay row mirrors the doc-tools commit the sandbox runs; `.github/doc-tools.ref` moves
+  to it** (gov; the architect, 11-10: "Bump .github/doc-tools.ref to the doc-tools commit that sandbox
+  actually runs, read from helm ... not to doc-tools main"). The `doc-tools` release pins its image by
+  digest, and that image's `org.opencontainers.image.revision` is `728afaf5`, doc-tools #195's merge. The
+  ref moves `3f797294` → `728afaf5`. In the same commit, `course`'s passes replace
+  `training.baml::ExtractConcepts` with `training.baml::ExtractSectionConcepts` and `concepts.normalise`,
+  matching that commit's registry row.
+  - **Drift:** both legs are green locally, the pinned leg at `728afaf5` and the main leg at `0f0e3db`
+    (17 passed each). As a control, master's row against the pin fails the passes arm.
+  - **The roll:** nothing changes. This is the platform's mirror of what doc-tools already serves.
+- **engine-fin's dag-tools pin moves from v0.10.0 to v0.13.0** (`agent_fleet/finance_agent/pyproject.toml`
+  and its lock; gov; the architect, 11-10: "engine-fin's dag-tools pin from v0.10.0 to v0.13.0, so fin can
+  read the ticket through"). v0.13.0 is the release the root already takes from PyPI (`edgy-dag-tools==0.13.0`).
+  At that tag the broker stamps each ticket with its id, issued-at and as-of (`ticket_identity`), and the
+  client adds `get_dataframe_with_ticket` beside `get_dataframe`. Those are steps 1 and 2 of fin's 11-07
+  plan. Step 3, rendering the as-of and ticket id on fin's provenance line and dropping its strict xfail,
+  is fin's own PR on this pin. The lock change is edgy-dag-tools alone (`d8a23d3e` → `bed53b9c`). Between
+  the tags, dag-tools' base dependencies are unchanged; the one addition is `s3fs` on the `broker` extra,
+  which engine-fin does not install. The root pyproject's note on the two pins names the new tag.
+  **The roll:** engine-fin's image changes; nothing in the values or pod templates does.
+- **Every engine is served the BFF's token lists (chart half).** All 16 engine Deployments and
+  mesh-registrar get `MESH_JWT_ACCEPTED_ISSUERS` and `MESH_JWT_ACCEPTED_AUDIENCES` (the same lists as
+  `cortexBff.auth`, one copy in values; empty stays empty and refuses everything) and `MESH_JWT_JWKS_URL`
+  (the effective `KEYCLOAK_REALM_URL` + `/protocol/openid-connect/certs`), rendered last in the container env
+  so `agentFleet.env` cannot widen them. New key `agentFleet.transportAuth.require`, default `false`
+  (OBSERVE): true adds `REQUIRE_TRANSPORT_AUTH=true`. The SDK reads these variables from v0.9.20; until
+  an engine image carries it they are inert. Probe paths need no change: `/health` and
+  mesh-registrar's `/v1/healthz` are already exempt.
+
+- **Where-used is registered a second time, on the notice graph's Component** (`agent_fleet/ontology_service/where_used.py`,
+  `agent_fleet/ontology_service/main.py`, `tests/test_where_used_takes_the_notice_graphs_component.py`; 74, #341;
+  ruled by Chris, 2026-11-10). The router walks `rdfs:subClassOf*` from an instance's class to a verb's input. No
+  path is declared from `pcn:Component` to `ps:Part`, so a question grounded on a notice's part was never offered
+  where-used. The read already resolves that IRI through #339's alias row. engine-o now registers the verb on
+  both inputs, under two names (one name registered twice deletes the first edge). Every other field is shared,
+  so the verb keeps one description. As ruled, Component is not put under `ps:Part`, because that over-claims; a
+  seal fails if a subClassOf path lands. Whether Component sits under `ps:ManufacturerPart` is board item
+  `01M74258XJ8AWRV68MFA49YW9V`, open and parked. Seals: alice reads E1 12 and E2 6 from the Component's IRI, and
+  bob reads E1 only; deleting the alias rows turns them red with `unknown_part`. **The roll:** engine-o's image
+  changes; nothing in the values or pod templates moves. Engines register only at startup, so the new edge
+  appears only after engine-o restarts. The existing edge is kept, so there is nothing to delete. After the roll,
+  read the new edge, then ask "where is part 5530-182 used" as alice and as bob.
+- **The fleet's SDK pin moves from v0.9.18 to v0.9.19** (gov; the architect, 11-10: "gov: once the tag is
+  pushed, open the v0.9.19 pin move on the 0.4.85 train"). The 17 pyprojects, their locks (`2f47e9ee` →
+  `ef7a6f35`, iagent-mesh alone in each) and `meshSdkVersion` move together. This pin unblocks the OpenDDIL
+  sample packet.
+  - **What v0.9.19 carries:**
+    - `ActionRecord`: `WorkOrder.option`, `WorkOrder.readiness`, `ActionProvenance.case_definition`,
+      `ActionProvenance.case_id` and `ActionProvenance.emitted_by`. All five are optional strings with
+      no enum, and `extra="forbid"` stays.
+    - `ACTION_CONTRACT_VERSION = "2"`.
+    - `DataProvenance.dataset_urn` and `.ticket_id` become optional (absent rather than a placeholder);
+      `as_of` stays required.
+    - Between the tags, the SDK's dependencies are unchanged.
+  - **Not in v0.9.19:** more than one provenance entry per `ImpactRow` (lane 74's other #337 ask). It is
+    still unruled.
+  - **Seals:** `tests/test_the_written_action_record_meets_the_pinned_schema.py` reads its allowance for the
+    five fields from the pinned `model_fields`, so it tightens with no edit.
+  - **Closed network:** the package calls itself 0.9.19, so `meshSdkSource: index` serves this pin.
+  - **The roll:** every engine image changes (the lock), and `meshSdkVersion` changes in values.
+- **Langfuse v4: the replay-safe boundary moves to provenance-telemetry 0.2.0, and every `/health`
+  reports `telemetry_misses`** (#340; `pyproject.toml` and the data_analyst, weaviate_expert,
+  presentation_agent, neo4j_expert, ontology_service and restate_analyst pyprojects with their
+  `uv.lock`s, `baml_shared/telemetry.py`, the three boundary callers, every health route,
+  `.githooks/lanes`, ADR-0038; perf, the architect, 2026-11-10). Langfuse Cloud stops accepting legacy
+  ingestion trace and span events on 2026-11-16. Through 0.4.84, the shim's `emit_boundary` used that
+  path (restate_analyst, data_analyst, neo4j_expert). The root and those six engines now pin
+  `provenance-telemetry==0.2.0` (PyPI; tag `v0.2.0` = `d73347d3`). The shim re-exports the leaf's
+  boundary primitives, which export over OTLP. The callers pass `mapping=`/`values=`, so a boundary's
+  children carry the trace attributes v4 filters on. Each lock moves that one package and nothing else.
+  On v4 a re-exported span id is a duplicate, not an upsert. One boundary span per execution therefore
+  rests on the replay journal (ADR-0038, *Amendment 2026-11-10*). `telemetry_misses` is on every serving
+  health body (17 services and mesh_registrar's `/v1/healthz`). It is an int where the leaf is installed
+  and `null` where it is not. graph_host's and ontology_service's early 503s stay without it (ruled).
+  **Roll consequence:** the pins take effect only on a roll. After the roll, `telemetry_misses` reads
+  `0` on the six leaf engines and cortex-bff and `null` on the rest. A non-zero value means Langfuse is
+  refusing the exports (a stale key, for example), so read it before calling the roll done. Nothing in
+  the chart moves. Seals: `tests/perf/test_health_reports_telemetry_misses.py` (a census of every health
+  route, floor 17, with a positive control) and `tests/test_replay_safe_boundary.py` (rewritten to an
+  in-memory OTLP exporter; "re-emit upserts" became "emitted once across a replay").
+- **The sandbox sets `LANGFUSE_TRACING_ENVIRONMENT: "sandbox"`** (`values-sandbox.yaml`, beside
+  `DEPLOY_ENV` in `agentFleet.env`; the architect, 2026-11-10: "set per deployment in helm values
+  (sandbox: "sandbox")"). On provenance-telemetry 0.2.0 the boundary span takes its environment from
+  `DEPLOY_ENV`, and the spans the Langfuse SDK builds under it take theirs from
+  `LANGFUSE_TRACING_ENVIRONMENT`. That was unset, so a boundary and its children landed in different
+  environments (`sandbox` and `default`). From 0.2.1 the boundary reads the SDK's setting too, so the key
+  must land no later than the 0.2.1 pin. The key reaches every pod that emits spans through the release's
+  ConfigMap: in the sandbox render, cortex-bff, every engine, central-gateway, mesh-registrar, the
+  projector and the Dagster pods mount it, and no container `env` overrides it. The live `iagent-secrets` carries no key of that name, so the ConfigMap's
+  value is the one a pod sees. **Roll consequence:** new sandbox spans move from Langfuse environment
+  `default` to `sandbox`; a view or query filtered on `default` stops showing them. Spans already written
+  keep `default`. A pod reads the key at start. Nothing checksums the ConfigMap, so the change takes
+  effect because 0.4.85's chart version restarts every pod. No image changes.
 
 ## 0.4.84 — 2026-11-10
 

@@ -156,6 +156,7 @@ spec:
               {{- include "invincible-agent.validatePublicClients" $ }}
               {{- include "invincible-agent.validateRetiredUsers" $ }}
               {{- $allServiceClients := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
+              {{- $bffAud := ((.Values.cortexBff.auth | default dict).realmAudience | default "") }}
               {{- range $c := $allServiceClients }}
               {{- $kind := $c.kind | default "service" }}
               {{- $secret := "" }}
@@ -208,7 +209,18 @@ spec:
                         "id.token.claim": "true",
                         "userinfo.token.claim": "true"
                       }
-                    }{{ end }}]
+                    }{{ end }}
+                    {{- if $bffAud }},{
+                      "name": "audience-bff",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-audience-mapper",
+                      "config": {
+                        "included.custom.audience": {{ $bffAud | quote }},
+                        "access.token.claim": "true",
+                        "id.token.claim": "false"
+                      }
+                    }
+                    {{- end }}]
                   }'
                 echo "   created"
               else
@@ -288,6 +300,26 @@ spec:
                 else
                   echo "   present, initiator_kind mapper ok"
                 fi
+                {{- end }}
+                {{- if $bffAud }}
+                # ── begin BFF audience repair. Keyed on what a mapper EMITS, never its name, and an
+                # existing mapper is never rewritten.
+                if [ "$(curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" | grep -cF '"included.custom.audience":"{{ $bffAud }}"' || true)" = "0" ]; then
+                  echo "   audience-bff mapper absent -> adding"
+                  curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                    "$API/clients/$UUID/protocol-mappers/models" -d '{
+                      "name": "audience-bff",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-audience-mapper",
+                      "config": {
+                        "included.custom.audience": {{ $bffAud | quote }},
+                        "access.token.claim": "true",
+                        "id.token.claim": "false"
+                      }
+                    }' \
+                    || { echo "   FAIL $CID: could not add audience-bff mapper"; rc=1; }
+                fi
+                # ── end BFF audience repair
                 {{- end }}
               fi
               {{- end }}
@@ -442,6 +474,30 @@ spec:
               fi
               {{- end }}
               # ── end cortex-ui redirect set
+              {{- if $bffAud }}
+              echo "-- cortex-ui audience mapper"
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -z "$CUI" ]; then
+                echo "   FAIL cortex-ui: client absent, audience-bff not repaired"; rc=1
+              elif [ "$(curl -sf -H "$AUTH" "$API/clients/$CUI/protocol-mappers/models" | grep -cF '"included.custom.audience":"{{ $bffAud }}"' || true)" = "0" ]; then
+                echo "   audience-bff mapper absent -> adding"
+                curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                  "$API/clients/$CUI/protocol-mappers/models" -d '{
+                      "name": "audience-bff",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-audience-mapper",
+                      "config": {
+                        "included.custom.audience": {{ $bffAud | quote }},
+                        "access.token.claim": "true",
+                        "id.token.claim": "false"
+                      }
+                    }' \
+                  || { echo "   FAIL cortex-ui: could not add audience-bff mapper"; rc=1; }
+              else
+                echo "   present"
+              fi
+              {{- end }}
               {{- range $pc := (.Values.keycloak.publicClients | default list) }}
               PCID={{ $pc.clientId | quote }}
               echo "-- public client $PCID"
@@ -768,6 +824,22 @@ spec:
               fi
               {{- end }}
               # ── end cortex-ui redirect readback
+              {{- if $bffAud }}
+              # One config object per line, so the audience and its access-token flag are judged on the
+              # SAME mapper in any key order.
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              CUAUD=""
+              if [ -n "$CUI" ]; then
+                CUAUD=$(curl -sf -H "$AUTH" "$API/clients/$CUI/protocol-mappers/models" | grep -o '"config":{[^}]*}' \
+                        | grep -F '"included.custom.audience":"{{ $bffAud }}"' || true)
+              fi
+              if printf '%s' "$CUAUD" | grep -qF '"access.token.claim":"true"'; then
+                echo "   ok   cortex-ui aud {{ $bffAud }}"
+              else
+                echo "   FAIL cortex-ui: no mapper puts {{ $bffAud }} in the access token's aud (the BFF would refuse every login)"; rc=1
+              fi
+              {{- end }}
               {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}
               {{- if include "invincible-agent.brokerActive" $b }}
               {{- $alias := $b.alias | default $bn }}
@@ -843,6 +915,20 @@ spec:
               else
                 echo "   ok   $CID -> {{ $c.authzId }}"
               fi
+              {{- if $bffAud }}
+              # ── begin BFF audience readback
+              SVAUD=""
+              if [ -n "$UUID" ]; then
+                SVAUD=$(curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" | grep -o '"config":{[^}]*}' \
+                        | grep -F '"included.custom.audience":"{{ $bffAud }}"' || true)
+              fi
+              if printf '%s' "$SVAUD" | grep -qF '"access.token.claim":"true"'; then
+                echo "   ok   $CID aud {{ $bffAud }}"
+              else
+                echo "   FAIL $CID: no mapper puts {{ $bffAud }} in the access token's aud (the BFF would refuse it)"; rc=1
+              fi
+              # ── end BFF audience readback
+              {{- end }}
               {{- end }}
               {{- range $pc := (.Values.keycloak.publicClients | default list) }}
               PCID={{ $pc.clientId | quote }}
