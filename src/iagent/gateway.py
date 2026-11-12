@@ -4135,8 +4135,10 @@ async def export_cdrl(
     """One program's CDRL in the profile's format (xlsx, docx, csv or json). `X-Cells-Sha256` is the hash of every cell the producer
     wrote (the reproducibility claim; the file's own bytes are not claimed reproducible).
 
-    Refusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with
-    `grantable_by` filled); any other engine failure is a 502 naming the engine's status.
+    Refusals: 404 `unknown_profile` (relayed); an engine 403 (`program_not_visible`,
+    `not_entitled_to_export` from the `can_export` rail, `measure_not_in_cell`, `access_denied`)
+    is the engine's envelope with `grantable_by` filled; any other engine failure is a 502 naming
+    the engine's status.
     """
     bearer = _user_bearer(request)
     try:

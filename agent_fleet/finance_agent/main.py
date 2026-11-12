@@ -77,12 +77,14 @@ try:  # same three-shape idiom; `utils` is a sibling top-level module in the fla
     from utils.program_membership import can_view_program
     from utils.entitled_domains import entitled_domains
     from utils.recipient_readers import can_read_recipient
+    from utils.export_capability import can_export
 except ImportError:
     from agent_fleet.utils.subject_coverage import dead_end_classes as _dead_end
     from agent_fleet.utils.subject_coverage import unroutable_classes as _unroutable
     from agent_fleet.utils.program_membership import can_view_program
     from agent_fleet.utils.entitled_domains import entitled_domains
     from agent_fleet.utils.recipient_readers import can_read_recipient
+    from agent_fleet.utils.export_capability import can_export
 
 log = logging.getLogger(__name__)
 
@@ -1469,6 +1471,35 @@ def _cdrl_source(fn: str, params: dict[str, Any], *, caller: str) -> tuple[dict[
     return envelope, {"fn": fn, "name": BY_FN[fn]["verb"].split(":", 1)[-1], "version": "builtin"}
 
 
+def _cdrl_can_export_or_refuse(profile_name: str, caller: str) -> None:
+    """403 `not_entitled_to_export` unless the `can_export` rail grants `caller` this profile; 503
+    `can_export_unavailable` when the rail cannot be asked.
+
+    The rail is engine-cost's (`capability_grants`, `can_export:<profile name>`, relation
+    `can_invoke`; `utils.export_capability`), and so is this envelope: one rail, one refusal.
+    DENY BY DEFAULT: a profile with no row is exportable by nobody, and so is an empty caller or a
+    deployment with no directory configured. A failure of the check itself is a 503, never a deny,
+    so an outage cannot read as "not entitled". The row is policy's (`policy/capability_grants.yaml`).
+    The rail gates PRODUCTION: the download (`/artifact/...`) stays gated on the program and the
+    cells, as engine-cost's stays reader-only.
+    """
+    try:
+        ok = bool(caller) and can_export(profile_name, caller)
+    except Exception as exc:  # noqa: BLE001 -- transport/HTTP failure of the check itself
+        log.warning("can_export check failed: %s", exc)
+        raise HTTPException(status_code=503, detail={"reason": "can_export_unavailable"}) from exc
+    if not ok:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_entitled_to_export",
+            "refusal": {
+                "policy_id": f"capability_grants:can_export:{profile_name}",
+                "missing_binding": f"can_invoke can_export:{profile_name}",
+                "candidates": [],
+            },
+            "message": f"You are not entitled to export {profile_name}.",
+        })
+
+
 @app.post("/cdrl_export")
 def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
     """Build one program's CDRL from a profile and its template.
@@ -1476,7 +1507,10 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
     ORDERED REFUSALS, each before the next is even asked: an unknown profile is 404
     `unknown_profile` (a profile name is not a program secret, as an unknown verb is not); the
     caller cannot view the program is 403 with `package_export`'s envelope (`_require_visible`),
-    BEFORE anything is measured and before a byte is written; a profile sourcing a DECLARED
+    BEFORE anything is measured and before a byte is written; a caller the `can_export` rail does
+    not grant this profile is 403 `not_entitled_to_export`, or 503 `can_export_unavailable` when
+    the rail cannot be asked (`_cdrl_can_export_or_refuse`), also before anything is measured; a
+    profile sourcing a DECLARED
     measure whose cells the caller holds none of is 403 `measure_not_in_cell` for the whole
     request (a deliverable with a column silently missing is worse than a refusal), also before
     anything is measured; a source that computes over a governed asset the caller holds no grant
@@ -1499,6 +1533,7 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
         })
     caller = _verb_caller(body.user_email)
     _require_visible(body.program_id, caller)
+    _cdrl_can_export_or_refuse(profile.name, caller)
     for fn in profile.sources:  # the early check; `_measure_envelope` holds the one no route skips
         _require_cell(fn, caller)
     reads = _asset_reads(profile.sources)

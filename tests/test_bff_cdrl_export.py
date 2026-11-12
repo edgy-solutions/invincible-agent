@@ -123,6 +123,30 @@ def test_8_an_engine_403_is_relayed_with_grantable_by(engine):
     assert "grantable_by" not in ENGINE_403["detail"]["refusal"]
 
 
+def test_8_the_engines_can_export_refusal_is_relayed_403_whole_with_grantable_by(engine, monkeypatch):
+    """The body is the one engine-fin's `_cdrl_can_export_or_refuse` raises, read from it rather than
+    restated: the BFF keeps every key, adds `grantable_by`, and fetches no artifact."""
+    from fastapi import HTTPException as EngineHTTPException
+    from agent_fleet.finance_agent import main as fin
+    monkeypatch.setattr(fin, "can_export", lambda profile_name, caller_id, **kw: False)
+    try:
+        fin._cdrl_can_export_or_refuse("cdrl_a001_ev_summary", "alice@example.com")
+    except EngineHTTPException as exc:
+        assert exc.status_code == 403
+        refused = exc.detail
+    else:
+        raise AssertionError("the engine granted with the rail answering no")
+    calls, answers = engine
+    answers["post"] = _Resp(403, {"detail": refused})
+    status, detail = _export()
+    assert status == 403
+    assert detail["error"] == "not_entitled_to_export"
+    assert {k: v for k, v in detail["refusal"].items() if k != "grantable_by"} == refused["refusal"]
+    assert detail["refusal"]["grantable_by"]
+    assert detail["message"] == refused["message"]
+    assert [c[0] for c in calls] == ["POST"], "a refused export fetched an artifact"
+
+
 def test_8_an_engine_404_unknown_profile_stays_404(engine):
     _, answers = engine
     answers["post"] = _Resp(404, {"detail": {"error": "unknown_profile", "profiles": ["x"]}})
