@@ -1,6 +1,40 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.87 — unreleased
+## 0.4.87 — 2026-11-12
+
+**0.4.87 is 0.4.86 (`cc4104d4`) plus three PRs**, the whole of Chris's pre-approved overnight train
+(2026-11-12). Nothing else merged. The sandbox goes from 0.4.86 (revision 233) to 0.4.87.
+
+| order | PR | what |
+| --- | --- | --- |
+| 1 | #369 | engine-f `/health` answers 200 again, with a seal that calls every health route |
+| 2 | #368 | bob's three sample export grants, through the add-only `capability_grants` overlay |
+| 3 | #370 | cortex `fb3162a` (`sha256:37d6e016`): "Export as…" on every notice card, plus three display fixes |
+
+**Chris's values condition for the roll.** The diff against live revision 233 may hold only:
+- image digests matching this release's `image-digests.json`;
+- the cortex frontend digest;
+- `agentFleet.env.CAPABILITY_GRANT_OVERLAY_DIRS`.
+
+Anything more stops the roll.
+
+**The sync, predicted offline on `b10068fd`** with the sandbox overlay env: `can_export rows: 8 applied, 0
+refused`, and 52 invoker grants.
+- bob holds the three ruled grants plus the seed's own two `mesh:` verbs.
+- Without the sample overlay there are 49 grants, and bob has only the two `mesh:` verbs.
+
+**Post-roll checks (Chris's conditions).** Any failure rolls back to revision 233.
+- realm reconcile OK;
+- task-grant-sync refuses 0, including bob's new rows;
+- every `/health` answers 200, engine-f's on the new image included;
+- the gateway reports `enforce_ready=yes`;
+- `telemetry_misses` reads 0.
+
+**Moved to 0.4.88 (architect, 2026-11-12):** everything else that was queued for 0.4.87.
+- the per-viewer PR, which goes first;
+- the drift order;
+- #327, #357, #360, #362 and #365;
+- saf's export-by-range.
 
 ### engine-f answers `/health` again
 
