@@ -881,3 +881,36 @@ of existingSecret / existingConfigMap; caPem was removed. Called from keycloak.y
   value: "true"
 {{- end }}
 {{- end -}}
+
+{{/*
+The overlay-directory variables the ENGINE PODS see, as shell `export` lines for a sync Job.
+
+WHY: "which export profiles does this deployment know" is a question about the overlay the pods
+load (the same variables the engines' loaders read). The sync Jobs run the image, which sees only
+its base profiles, so capability_grant_sync could not tell a misspelt `can_export:<name>` from an
+overlay profile (architect 2026-11-11). This gives the Job what the pods get, with no profile or
+variable named here: every `*_OVERLAY_DIRS` entry of agentFleet.env (the shared pod config, which
+is where the sandbox points at the sample overlay), then, when policyOverlay is on and the Job reads
+the policy repo (mode git), every dir policyOverlay copies into any pod, at the path the pod's
+variable would hold. policyOverlay is applied last, as it is on a pod: its variable replaces the
+shared one. A dir the repo lacks is skipped (a pod whose required dir is missing refuses to start;
+the Job only needs the names).
+
+Call: {{ include "invincible-agent.podOverlayEnv" (dict "root" $ "mode" $mode) | nindent N }}
+*/}}
+{{- define "invincible-agent.podOverlayEnv" -}}
+{{- $v := .root.Values -}}
+{{- range $k, $val := ($v.agentFleet.env | default dict) }}
+{{- if hasSuffix "_OVERLAY_DIRS" $k }}
+export {{ $k }}={{ $val | toString | quote }}
+{{- end }}
+{{- end }}
+{{- if and $v.policyOverlay.enabled (eq .mode "git") }}
+{{- $repo := printf "/overlay-src/repo%s" (ternary (printf "/%s" ($v.policyOverlay.path | default "")) "" (ne ($v.policyOverlay.path | default "") "")) }}
+{{- range $comp, $rows := $v.policyOverlay.components }}
+{{- range $rows }}
+if [ -d "{{ $repo }}/{{ .dir }}" ]; then export {{ .env }}="{{ $repo }}/{{ .dir }}"; fi
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end -}}
