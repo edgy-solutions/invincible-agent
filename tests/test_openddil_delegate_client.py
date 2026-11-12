@@ -42,6 +42,7 @@ Run: uv run --frozen python -m pytest tests/test_openddil_delegate_client.py -v
 """
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import shutil
@@ -106,14 +107,34 @@ def _configmap_clients(rendered: str) -> dict[str, dict]:
 
 
 def _reconcile_script(rendered: str) -> str:
-    """Return the realm-reconcile Job's shell script (the container's args string)."""
-    docs = yaml.safe_load_all(rendered)
+    """Return the realm-reconcile shell script: the `reconcile.sh` file of its ConfigMap (no longer the
+    container args). A render of the BASE SHA predates the move, so it falls back to the Job's args."""
+    docs = [d for d in yaml.safe_load_all(rendered) if d]
     for doc in docs:
-        if doc and doc.get("kind") == "Job" and doc["metadata"]["name"].endswith("-realm-reconcile"):
-            args = doc["spec"]["template"]["spec"]["containers"][0]["args"]
-            assert len(args) == 1
+        if doc.get("kind") == "ConfigMap" and doc["metadata"]["name"].endswith("-realm-reconcile-script"):
+            return doc["data"]["reconcile.sh"]
+    for doc in docs:
+        if doc.get("kind") == "Job" and doc["metadata"]["name"].endswith("-realm-reconcile"):
+            args = doc["spec"]["template"]["spec"]["containers"][0].get("args")
+            assert args and len(args) == 1, "neither a script ConfigMap nor the old single-argument form"
             return args[0]
-    raise AssertionError("realm-reconcile Job not found in render")
+    raise AssertionError("realm-reconcile script not found in render")
+
+
+def _effective_script(rendered: str) -> str:
+    """The script as it ran before the move: each `-d @"$BODIES/svc-<id>.json"` replaced by that body,
+    inline, from the bodies Secret. Used where a test pins a client's create branch to the base sha."""
+    script = _reconcile_script(rendered)
+    for doc in yaml.safe_load_all(rendered):
+        if doc and doc.get("kind") == "Secret" and doc["metadata"]["name"].endswith("-realm-reconcile-bodies"):
+            for key, body in doc["stringData"].items():
+                if key.startswith("svc-"):
+                    token = f'-d @"$BODIES/{key}"'
+                    assert token in script, f"{key} is in the bodies Secret but the script never sends it"
+                    # the script's own block scalar lost its 14-space template indent; a Secret value keeps it
+                    body = "\n".join(ln[14:] if ln.startswith(" " * 14) else ln for ln in body.split("\n"))
+                    script = script.replace(token, f"-d '{body}'")
+    return script
 
 
 _SEGMENT_SPLIT = re.compile(
@@ -363,8 +384,8 @@ def test_preexisting_clients_reconcile_segments_unchanged(sandbox_render, base_s
     a one-newline difference from WHERE a segment sits, not from what it renders. Comparing the
     content with trailing newlines stripped keeps the assertion about the client's OWN
     templated text rather than its neighbour's position."""
-    old_segs = _client_segments(_reconcile_script(base_sha_render))
-    new_segs = _client_segments(_reconcile_script(sandbox_render))
+    old_segs = _client_segments(_effective_script(base_sha_render))
+    new_segs = _client_segments(_effective_script(sandbox_render))
     for cid in _pre_existing_client_ids():
         claim = _sandbox_claim()
         old = [s.rstrip("\n").replace('"claim.name": "email"', f'"claim.name": "{claim}"') for s in old_segs[cid]]
@@ -375,7 +396,8 @@ def test_preexisting_clients_reconcile_segments_unchanged(sandbox_render, base_s
         # tail included, must still be byte-identical to the base sha.
         old = [_cut_present_mapper_branch(s) for s in old]
         new = [_cut_present_mapper_branch(s) for s in new]
-        assert old == new, f"{cid}'s reconcile script segments changed"
+        assert old == new, f"{cid}'s reconcile script segments changed:\n" + "\n".join(
+            ln for o, n in zip(old, new) for ln in difflib.unified_diff(o.splitlines(), n.splitlines(), lineterm="", n=0))
 
 
 def test_sandbox_extraserviceclients_appends_base_clients(sandbox_render):

@@ -203,6 +203,9 @@ def test_the_producer_still_emits_both_fields_separately() -> None:
 #   consumer — the chart's realm-reconcile job and realm import read exactly those keys.
 _SDK = _REPO.parent / "iagent-mesh-sdk"
 _RECONCILE = _REPO / "helm" / "invincible-agent" / "templates" / "realm-reconcile-job.yaml"
+# the service-client create body moved to a helper shared with the bodies Secret (0.4.86), so the
+# reconcile path is now these two files
+_RECONCILE_HELPERS = _REPO / "helm" / "invincible-agent" / "templates" / "_helpers.tpl"
 _KC_REALM = _REPO / "helm" / "invincible-agent" / "templates" / "keycloak-configmap.yaml"
 
 
@@ -233,7 +236,7 @@ def test_sdk_stanza_keys_are_what_the_reconcile_job_reads() -> None:
     assert set(st) == {"clientId", "authzId", "secretRef"}, (
         f"SDK emits {sorted(st)} — the reconcile path reads clientId/authzId/secretRef"
     )
-    job, realm = _txt(_RECONCILE), _txt(_KC_REALM)
+    job, realm = _txt(_RECONCILE) + _txt(_RECONCILE_HELPERS), _txt(_KC_REALM)
     for key in ("clientId", "authzId", "secretRef"):
         assert f"$c.{key}" in job, f"reconcile job no longer reads {key}"
         assert f"$c.{key}" in realm, f"realm import no longer reads {key}"
