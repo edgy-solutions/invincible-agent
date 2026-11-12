@@ -1,5 +1,16 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.87 — unreleased
+
+- Sandbox sample user bob holds `can_export:part-list`, `can_export:part-list-reviewed` and
+  `ingest:exportBatch`, as a user grant, through the new overlay
+  `policy/overlays/sample/capability_grants.yaml`; the shared seed still names no sample user. The
+  loader rule is add-only (`capability_grant_sync.py` merges the overlay in memory before the sync):
+  an overlay row for a capability the seed lacks, or carrying any field beyond `granted_by`, `reason`,
+  `grant_to`, `grant_to_groups`, or a listed directory without the file, is refused, exit 2, nothing
+  written. Switched on by `agentFleet.env.CAPABILITY_GRANT_OVERLAY_DIRS` in `values-sandbox.yaml` only.
+  Seal: `tests/security/test_bobs_sample_grants_apply_only_with_the_sample_overlay.py`.
+
 ## 0.4.86 — 2026-11-12
 
 **0.4.86 replaces 0.4.85.** It is 0.4.85 (`b2cb6b8c`) plus one fix PR. Master is frozen to everything

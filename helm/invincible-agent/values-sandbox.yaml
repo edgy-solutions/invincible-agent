@@ -134,6 +134,11 @@ agentFleet:
     # the topaz-seed and task-grant-sync Jobs read it from here too, so capability_grant_sync knows the
     # profiles a `can_export:` row may name (a deployment without this line refuses those two rows).
     INGEST_EXPORT_PROFILE_OVERLAY_DIRS: "/app/policy/overlays/sample/exports"
+    # bob's three sample capability grants (can_export:part-list, can_export:part-list-reviewed,
+    # ingest:exportBatch), SANDBOX ONLY. Read only by capability_grant_sync; it reaches the
+    # task-grant-sync and topaz-seed Jobs through the invincible-agent.podOverlayEnv helper, which
+    # exports every *_OVERLAY_DIRS key of agentFleet.env. Add-only: the shared seed names no sample user.
+    CAPABILITY_GRANT_OVERLAY_DIRS: "/app/policy/overlays/sample"
 
     # MinIO / S3 — the SHARED config (iagent-config) the prime-substrate Job reads
     # (it bridges these to S3_ENDPOINT_URL / AWS_* via optional configMapKeyRefs).
