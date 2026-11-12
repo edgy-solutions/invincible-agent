@@ -16,5 +16,6 @@ type: application
 # 0.4.81 = 73d18c23..2ebb91d0 (#280, #289), cut 2026-11-07.
 # 0.4.84 = 3a23fce4..27d59a39 (#310, #322, #323, #328, #312, #332), cut 2026-11-10. 0.4.83 (tag at
 # 3a23fce4) lacks the walk hotfix and never rolls (architect, 2026-11-10).
-version: 0.4.84
+# 0.4.85 = f9fa4d7b..3049ef62 (31 PRs, #330 to #361; the list is in CHANGELOG.md), cut 2026-11-12.
+version: 0.4.85
 appVersion: "2026.07.02"
