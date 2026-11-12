@@ -28,6 +28,28 @@
   written. Switched on by `agentFleet.env.CAPABILITY_GRANT_OVERLAY_DIRS` in `values-sandbox.yaml` only.
   Seal: `tests/security/test_bobs_sample_grants_apply_only_with_the_sample_overlay.py`.
 
+### The cortex UI moves to `fb3162a` (`sha256:37d6e016`)
+
+- `global.imageDigests."ghcr.io/edgy-solutions/cortex-ui/frontend"` changes from `cb902ea0` (cortex `a255a8e`) to
+  `37d6e016` (cortex `fb3162a`, CI run 43158821177, PRODUCER_REF `8c3eb9af` unchanged). No other value changes:
+  `reviewExport` is already on in sandbox.
+- **What it adds:**
+  - one export path;
+  - "Export as…" on every notice card, shown to a viewer who:
+    - holds `ingest:exportBatch`;
+    - may read the notice;
+    - holds a profile whose `exportable_states` include the notice's state.
+
+    No review task is needed, as the architect ruled.
+  - three display fixes: a focused card is alone on the stage; the disposition table splits on the card's width; and
+    "sent today: nothing; Promote is held" while Promote is held.
+- **Cortex's seals:** the ruled notice-card seal is 6/6, with the same user with and without the grant as its control.
+  Their gate was 4915 passed.
+- **Measured before pinning:**
+  - the full tag resolves to this digest, an OCI index with amd64 and arm64;
+  - the abbreviated tag and an altered digest both answer 404;
+  - `a255a8e..fb3162a` touches `src/`, `sessions/` and `e2e/` only.
+
 ## 0.4.86 — 2026-11-12
 
 **0.4.86 replaces 0.4.85.** It is 0.4.85 (`b2cb6b8c`) plus one fix PR. Master is frozen to everything
