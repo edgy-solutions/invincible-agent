@@ -20,5 +20,6 @@ type: application
 # 0.4.85 failed its sandbox roll (realm-reconcile's argument over the kernel's 128 KiB limit) and
 # never rolls again (architect, 2026-11-12).
 # 0.4.86 = b2cb6b8c + the realm-reconcile fix PR alone (master frozen to it), cut 2026-11-12.
-version: 0.4.86
+# 0.4.87 = cc4104d4..b10068fd (3 PRs: #369, #368, #370, Chris's pre-approved train), cut 2026-11-12.
+version: 0.4.87
 appVersion: "2026.07.02"
