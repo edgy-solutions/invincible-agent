@@ -52,7 +52,7 @@ def _post(body):
         return c.post("/ingest/export/notices", json=body)
 
 
-def _range_world(monkeypatch, tmp_path, specs, *, extra="", grants=None, scan=None):
+def _range_world(monkeypatch, tmp_path, specs, *, extra="", grants=None, page=None):
     """One notice per spec (a dict of row overrides, `created_at` among them), numbered from 1.
     `ist.list_by_created` is a double that applies the store's contract over those rows
     (`start <= created_at < end`, oldest first, `limit`); `calls` records what it was asked."""
@@ -63,9 +63,10 @@ def _range_world(monkeypatch, tmp_path, specs, *, extra="", grants=None, scan=No
     rows = [w[0] for w in worlds]
     calls: list = []
 
-    def list_by_created(start_ms, end_ms, limit):
-        calls.append((start_ms, end_ms, limit))
-        hit = sorted((r for r in rows if r["kind"] != ist.EVENT and start_ms <= r["created_at"] < end_ms),
+    def list_by_created(start_ms, end_ms, limit, *, after=None):
+        calls.append((start_ms, end_ms, limit, after))
+        hit = sorted((r for r in rows if r["kind"] != ist.EVENT and start_ms <= r["created_at"] < end_ms
+                      and (after is None or (r["created_at"], r["id"]) > tuple(after))),
                      key=lambda r: (r["created_at"], r["id"]))
         return [{"id": r["id"], "review_generation": 0, "created_at": r["created_at"]}
                 for r in hit[:limit]]
@@ -77,8 +78,8 @@ def _range_world(monkeypatch, tmp_path, specs, *, extra="", grants=None, scan=No
     if any(r["status"] != ist.PROMOTED for r in rows):
         monkeypatch.setattr(ht, "get_task_open_state",
                             lambda t: {"audience": "document_promotion:maintenance", "open": True})
-    if scan is not None:
-        monkeypatch.setattr(gateway, "_EXPORT_RANGE_SCAN", scan)
+    if page is not None:
+        monkeypatch.setattr(gateway, "_EXPORT_RANGE_PAGE", page)
     return calls, asks
 
 
@@ -194,14 +195,78 @@ def test_4_more_than_the_notice_cap_in_scope_is_too_large_even_for_check_only(
     assert _post({"range": RANGE, "profile": "t"}).status_code == 200
 
 
-def test_4_the_scan_cap_counts_other_domains_receipts_too(monkeypatch, tmp_path, built):
-    calls, _ = _range_world(monkeypatch, tmp_path, [{}, {}, {}], scan=2)
-    Ledger.domains = {_iid(2): DOM_B, _iid(3): DOM_B}      # only ONE notice is in the caller's scope
+def _volume_world(monkeypatch, tmp_path, *, own, other, cap, page=3):
+    """`own` notices in the caller's domain and `other` in another one, all in the same range,
+    interleaved by receipt time; the notice cap is `cap`."""
+    n = own + other
+    specs = [{"created_at": MID + i} for i in range(n)]
+    calls, _ = _range_world(monkeypatch, tmp_path, specs, page=page)
+    # every third receipt (from the second) is the caller's, the rest another domain's, until
+    # `own` are placed; the remainder is the other domain's
+    mine = set(range(0, n, max(1, n // max(own, 1))))
+    mine = set(sorted(mine)[:own]) if own else set()
+    Ledger.domains = {_iid(i + 1): DOM_B for i in range(n) if i not in mine}
+    monkeypatch.setattr(gateway, "_EXPORT_MAX_NOTICES", cap)
+    return calls, [_iid(i + 1) for i in sorted(mine)]
+
+
+def _count_digits(text, allowed):
+    """Every number in a reply that is not one of `allowed` (the cap is configuration)."""
+    return [d for d in re.findall(r"\d+", text) if d not in allowed]
+
+
+def test_4a_a_caller_under_the_cap_is_not_refused_for_another_domains_volume(
+        monkeypatch, tmp_path, built):
+    calls, mine = _volume_world(monkeypatch, tmp_path, own=3, other=20, cap=4)
+    r = _post({"range": RANGE, "profile": "t", "check_only": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["notice_ids"] == mine and len(mine) == 3
+    assert len(calls) > 1                                   # more than one page was read: the scan went on
+    assert all(c[2] == gateway._EXPORT_RANGE_PAGE for c in calls)
+
+
+def test_4a_control_the_same_range_with_the_callers_own_over_the_cap_is_refused(
+        monkeypatch, tmp_path, built):
+    _volume_world(monkeypatch, tmp_path, own=5, other=20, cap=4)
     r = _post({"range": RANGE, "profile": "t", "check_only": True})
     assert r.status_code == 422 and r.json()["detail"]["error"] == "export_range_too_large"
-    assert calls[0][2] == 3                                # the store was asked for scan + 1
-    monkeypatch.setattr(gateway, "_EXPORT_RANGE_SCAN", 3)  # control: at the scan cap
-    assert _post({"range": RANGE, "profile": "t", "check_only": True}).status_code == 200
+
+
+def test_4b_the_refusal_states_the_cap_and_carries_no_count_anywhere_in_the_reply(
+        monkeypatch, tmp_path, built, caplog):
+    _volume_world(monkeypatch, tmp_path, own=11, other=13, cap=7)
+    with caplog.at_level("DEBUG"):
+        r = _post({"range": RANGE, "profile": "t"})
+    assert r.status_code == 422 and r.json()["detail"]["error"] == "export_range_too_large"
+    assert "7" in r.text                                    # the cap is configuration: it may be said
+    assert _count_digits(r.text, {"7"}) == []               # nothing else numeric in the WHOLE body
+    assert set(r.json()) == {"detail"} and set(r.json()["detail"]) == {"error", "message"}
+    for rec in caplog.records:                              # nor does the server log it on this path
+        if "export" in rec.name or "range" in rec.getMessage():
+            assert _count_digits(rec.getMessage(), {"7"}) == [], rec.getMessage()
+    assert built["render"] == 0 and built["records"] == []
+
+
+def test_4b_control_the_detector_catches_a_reply_that_does_carry_a_count():
+    carrying = '{"detail": {"error": "export_range_too_large", "message": "11 notices; at most 7"}}'
+    assert _count_digits(carrying, {"7"}) == ["11"]
+    nested = '{"detail": {"error": "export_range_too_large", "message": "x", "notices": 13}}'
+    assert _count_digits(nested, {"7"}) == ["13"]
+
+
+def test_4_the_store_is_read_a_page_at_a_time_by_keyset_and_every_page_is_used(
+        monkeypatch, tmp_path, built):
+    calls, _ = _range_world(monkeypatch, tmp_path, [{"created_at": MID + i} for i in range(5)], page=2)
+    r = _post({"range": RANGE, "profile": "t", "check_only": True})
+    assert r.json()["notice_ids"] == [_iid(i) for i in range(1, 6)]
+    assert [c[3] for c in calls] == [None, (MID + 1, _iid(2)), (MID + 3, _iid(4))]
+
+
+def test_4_the_too_large_branch_formats_no_count_in_source():
+    src = (ROOT / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
+    body = src[src.index("async def _export_range_ids"):src.index("async def _export_preflight")]
+    assert "_EXPORT_RANGE_SCAN" not in body
+    assert not re.search(r"""f["'][^"']*\{\s*len\(""", body)       # no f-string interpolates a length
 
 
 def test_4_an_empty_range_is_200_with_nothing_unexportable_and_a_file_of_no_rows(

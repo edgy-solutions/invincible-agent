@@ -14246,9 +14246,9 @@ _EXPORT_PROFILE_CAPABILITY_PREFIX = "can_export:"
 _EXPORT_MAX_DAYS = 92
 _EXPORT_MAX_NOTICES = 500
 _EXPORT_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
-# POST-by-range: the most receipts read from the store for one range, BEFORE the caller's domains
-# narrow them (a range may hold other domains' notices; they are scanned, never listed).
-_EXPORT_RANGE_SCAN = 5000
+# POST-by-range: receipts read from the store per page. A page is a read size, never a cap: the
+# only cap is `_EXPORT_MAX_NOTICES`, and it counts the CALLER's notices only.
+_EXPORT_RANGE_PAGE = 500
 
 
 def _export_parse_range(from_, to) -> tuple:
@@ -14506,38 +14506,46 @@ async def _export_range_ids(rng: ExportRange, current_user) -> tuple:
     A notice outside the caller's domains is dropped HERE, silently, so a range never enumerates
     another domain's notices (an id list reports one as `not_available`; a range has no id to
     echo). The ids then go through the SAME `_export_preflight` as an id list. 422
-    `export_range_too_large` past `_EXPORT_RANGE_SCAN` receipts or `_EXPORT_MAX_NOTICES` in
-    scope; 503 when the store or the task store does not answer; an empty range is `[]`."""
+    `export_range_too_large` past `_EXPORT_MAX_NOTICES`; 503 when the store or the task store
+    does not answer; an empty range is `[]`.
+
+    The domain scope is applied INSIDE the scan: the store is read a page at a time (keyset), each
+    receipt is scoped to the caller's domains as it arrives, and only the caller's own notices are
+    counted against the cap (the scan stops at the first one past it). So another domain's volume
+    in the range neither refuses the caller nor shows in any reply. The refusal states the cap
+    (configuration) and NEVER a count: nothing the caller receives says how many notices the range
+    holds, in scope or out."""
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status
 
     d0, d1, start_ms, end_ms = _export_parse_range(rng.from_, rng.to)
     domains = {c.domain for c in current_user.entitlements.cells}
-    try:
-        rows = [] if not domains else await run_in_threadpool(
-            lambda: ingest_status.list_by_created(start_ms, end_ms, _EXPORT_RANGE_SCAN + 1))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("ingest range read failed: %s", exc)
-        raise HTTPException(status_code=503, detail={
-            "error": "ingest_store_unreachable",
-            "message": f"the ingest store did not answer: {type(exc).__name__}"})
-    if len(rows) > _EXPORT_RANGE_SCAN:
-        raise HTTPException(status_code=422, detail={
-            "error": "export_range_too_large",
-            "message": f"more than {_EXPORT_RANGE_SCAN} notices were received in the range; "
-                       "narrow the range"})
     ids: list = []
-    for row in rows:
-        ingest_id = row["id"]
-        rec = await run_in_threadpool(lambda i=ingest_id: _export_decision_record(i))
-        if await _export_notice_domain(ingest_id, row, rec) in domains:
-            ids.append(ingest_id)
-    if len(ids) > _EXPORT_MAX_NOTICES:
-        raise HTTPException(status_code=422, detail={
-            "error": "export_range_too_large",
-            "message": f"more than {_EXPORT_MAX_NOTICES} notices were received in the range; "
-                       "narrow the range"})
+    after = None
+    while domains:
+        try:
+            page = await run_in_threadpool(
+                lambda a=after: ingest_status.list_by_created(
+                    start_ms, end_ms, _EXPORT_RANGE_PAGE, after=a))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ingest range read failed: %s", exc)
+            raise HTTPException(status_code=503, detail={
+                "error": "ingest_store_unreachable",
+                "message": f"the ingest store did not answer: {type(exc).__name__}"})
+        for row in page:
+            ingest_id = row["id"]
+            rec = await run_in_threadpool(lambda i=ingest_id: _export_decision_record(i))
+            if await _export_notice_domain(ingest_id, row, rec) in domains:
+                ids.append(ingest_id)
+                if len(ids) > _EXPORT_MAX_NOTICES:
+                    raise HTTPException(status_code=422, detail={
+                        "error": "export_range_too_large",
+                        "message": f"a range may select at most {_EXPORT_MAX_NOTICES} notices; "
+                                   "narrow the range"})
+        if len(page) < _EXPORT_RANGE_PAGE:
+            break
+        after = (page[-1]["created_at"], page[-1]["id"])
     return ids, {"from": d0.isoformat(), "to": d1.isoformat(), "field": "created_at"}
 
 
