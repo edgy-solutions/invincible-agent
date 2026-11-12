@@ -20,10 +20,10 @@ definition of "valid", never a parallel re-implementation):
   - program_members.yaml          → program_member_sync.load_programs
   - capability_grants.yaml        → also: a `grant_to_groups` group exists and has members, and
     a `can_drop:<K>` key names a KNOWN content kind (see known_content_kinds)
-  - capability_grants.yaml        → also: a `can_export:<P>` key names a KNOWN export profile
-    (see known_export_profiles), no profile name is in two kinds, and every known profile -- of
-    each kind policy/export_profile_sources.yaml declares -- has a `can_export:<P>` row
-    (deny-by-default: no row, nobody exports)
+  - capability_grants.yaml        → also: no export profile name is in two kinds (see
+    known_export_profiles). A `can_export:<P>` row naming a profile this deployment does not know
+    is NOT an error here: capability_grant_sync refuses THAT ROW, with a report, and applies the
+    rest (architect 2026-11-11). A profile with no row is not an error either: deny-by-default.
   - capability_grants.yaml        → also: a `can_call:<T>` key names a tag of the served MCP document
     (see known_call_tags); no row is required per tag (deny-by-default: no row, nobody calls)
   - capability_grants.yaml        → also: a `can_review:<S>` key names a registered review subject
@@ -243,7 +243,8 @@ def known_export_profiles(
     Each kind is a row of policy/export_profile_sources.yaml (`rows` stands in for the file, for
     tests), composed by iagent_mesh.compose_export_profiles: the seed (`seed_env` if set, else
     `seed_default` under the repository root), then each dir in `overlay_env` (os.pathsep-separated,
-    empty entries dropped, as the engines split it), then the row's `offline_overlays`. A later
+    empty entries dropped, as the engines split it): the overlay the DEPLOYMENT loads, nothing more
+    (ruled 2026-11-11: the sample profiles are known only where the sample overlay is loaded). A later
     same-`name` row replaces an earlier one, and `deleted: true` removes the name. The SDK REFUSES
     what this gate's old copy skipped: an empty or nameless file, two files of one name in one
     directory, and a tombstone for a name nothing before it ships.
@@ -291,8 +292,8 @@ def known_export_profiles(
         dirs: list[str] = []
         seen: set[Path] = set()
         listed = [p for p in os.getenv(overlay_env, "").split(os.pathsep) if p] if overlay_env else []
-        for d in listed + [(root / d).as_posix() for d in row.get("offline_overlays") or []]:
-            if Path(d).resolve() not in seen:  # a dir both set and offline is composed once
+        for d in listed:
+            if Path(d).resolve() not in seen:  # a dir listed twice is composed once
                 seen.add(Path(d).resolve())
                 dirs.append(d)
         try:
@@ -1556,41 +1557,18 @@ def validate(
                 f"of: " + "; ".join(_sources))
 
     # `can_export:<P>` (DENY-BY-DEFAULT, unlike can_drop): the door asks can_invoke on
-    # `can_export:<P>` and False refuses, so a profile with no row is exportable by NOBODY. There is
-    # no generated default (the sync Job's image cannot reliably see every profile overlay), so the
-    # defaults are met by COMPLETENESS here: every known profile, of every kind, must have a row
-    # (CDRL ruled 2026-10-29, answer-export ruled 2026-10-30). The refusal's advice is DERIVED from
-    # the rows that decide other profiles of the same kind -- never a group held in code.
+    # `can_export:<P>` and False refuses, so a profile with no row is exportable by NOBODY. That is
+    # not an error here or anywhere (architect 2026-11-11). Nor is a row naming a profile this
+    # deployment does not know: the sync Job's image sees only the profiles the deployment loads, so
+    # whether a row's name is known is the SYNC's question, answered per deployment, and it refuses
+    # that one row with a report (capability_grant_sync.split_export_rows). Only a collision of
+    # names across kinds, or a profile set that does not load, is refused here.
     _profiles, _pnotes = known_export_profiles()
     for _n in _pnotes:
         if _n.startswith("COLLISION:"):
             errors.append(f"capability_grants.yaml: export profile {_n}")
         elif _n.startswith("REFUSED:"):
             errors.append(f"export profiles: {_n}")
-    # A refused kind composed no names, so its rows would all read as misspelt: say the refusal once.
-    _refused = any(n.startswith("REFUSED:") for n in _pnotes)
-    _pnotes = [n for n in _pnotes if not n.startswith(("COLLISION:", "REFUSED:"))]
-    _export_keys = {c.key[len("can_export:"):] for c in caps if c.key.startswith("can_export:")}
-    for _p in sorted(set() if _refused else _export_keys - set(_profiles)):
-        errors.append(
-            f"capability_grants.yaml: 'can_export:{_p}' names {_p!r}, which is NOT a known export "
-            f"profile -- a misspelt key gates nothing and the real profile stays unexportable. "
-            f"Known profiles ({len(_profiles)}) were composed from the `name` field of: "
-            + "; ".join(_pnotes))
-    _kind_groups: dict[str, set[str]] = {}
-    for c in caps:
-        _cp = c.key[len("can_export:"):] if c.key.startswith("can_export:") else None
-        if _cp in _profiles:
-            _kind_groups.setdefault(_profiles[_cp], set()).update(c.grant_to_groups)
-    for _p, _k in sorted(_profiles.items()):
-        if _p not in _export_keys:
-            _g = sorted(_kind_groups.get(_k, ()))
-            errors.append(
-                f"capability_grants.yaml: {_k} profile {_p!r} has no 'can_export:{_p}' row, so "
-                f"NOBODY could export it (deny-by-default). Add one; "
-                + (f"the other {_k} rows grant `grant_to_groups: [{', '.join(_g)}]`" if _g else
-                   f"no other {_k} profile has a row to follow, so the row names its own group "
-                   f"(ask the architect)"))
 
     # `can_call:<T>` (2026-10-30 ruling, deny-by-default): the door asks can_invoke on `can_call:<T>`
     # for every tag of the route; a misspelt key gates nothing. No row is required per tag.

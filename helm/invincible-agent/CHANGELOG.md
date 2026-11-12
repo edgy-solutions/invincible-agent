@@ -1,11 +1,82 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.85 — not yet cut
+## 0.4.85 — 2026-11-12
 
-Entries merged after the 0.4.84 tag (`f9fa4d7b`). The architect, 2026-11-10: "Merge train, all under
-'## 0.4.85 — not yet cut'", and "Hold the 0.4.85 cut PR until I say. Hold the PR, not the tag; the
-automation tags on merge." Every entry below goes under this heading until the cut; none goes under
-0.4.84, which is tagged and rolled.
+Entries merged after the 0.4.84 tag (`f9fa4d7b`), through `3049ef62`. The architect, via Chris,
+2026-11-11: "0.4.85 is cut and rolled to sandbox tonight. The train closes at 01:30Z. Whatever has
+merged by then is 0.4.85; everything else is 0.4.86." The sandbox goes from 0.4.84 to this version.
+
+**What merged, and where each one is** (merge order):
+
+| item | where |
+| --- | --- |
+| #330 the ticket's id, issue time and as-of are sealed | merged at `a91eb7dc`; a seal only |
+| #335 0.4.85 opens; the chart-version test reads git output as UTF-8 | merged at `00099a7d`; a test; below |
+| #338 the root lock takes langfuse >= 4.7.0 | merged at `d665658d`; the root lock; below |
+| #334 the attestation split is sealed | merged at `6f5bb97d`; a seal only |
+| #316 fin: a dataset row drawn as `MULTI_SERIES`; the EV rows coded to the contract | merged at `7f1a782b`; through the images; below |
+| #336 gov: the walkers join `obsolescence-deciders` | merged at `622bcb7f`; policy, needs a Topaz sync; below |
+| #329 gov: the fleet onto iagent-mesh v0.9.17 | merged at `431d57bc`; through the images; below |
+| #337 the SDK's `ImpactRow` cannot carry a served row; the tripwire says why | merged at `bc5e87c2`; a comment and a tripwire |
+| #319 fin: `data_provenance` says its ticket is pending | merged at `82f70fd0`; through the images; below |
+| #344 the runner's action record meets the pinned `ActionRecord` | merged at `6860aaa8`; through the images; below |
+| #331 fin: measures read the asset under the flag; `source: asset \| seed` | merged at `cf92efc6`; through the images; below |
+| #346 two master reds | merged at `82824722`; tests only |
+| #340 the fleet onto provenance-telemetry 0.2.0; `telemetry_misses` on every `/health` | merged at `4a1e1b5a`; through the images; below |
+| #348 board: a task holder sees a case without the label check | merged at `2d131cdb`; the board only |
+| #349 SECURITY: cortex-bff checks a token's audience and issuer | merged at `3c85f53d`; images, chart, realm job; upgrade notes and below |
+| #350 the upgrade notes for the BFF's issuers and audiences | merged at `03c0b1c1`; the upgrade notes |
+| #345 fin's live leg: time-phased rows, sandbox refusal probes | merged at `e9d00785`; policy overlays, needs a Topaz sync; below |
+| #339 PCN26-182's two parts in the synthetic BOM | merged at `a02cfda3`; a fixture; below |
+| #343 the SDK pin to v0.9.18; `pcn` and `pdn` declare `attestation: self` | merged at `8987d487`; through the images; below |
+| #351 `course` mirrors the doc-tools commit the sandbox runs | merged at `a74b927a`; the policy overlay; below |
+| #342 engine-fin's dag-tools pin to v0.13.0 | merged at `c46c38e0`; engine-fin's image; below |
+| #352 every engine is served the BFF's token lists, the realm JWKS and one posture switch | merged at `ea439e88`; the chart; below |
+| #341 where-used registered on the notice graph's Component | merged at `0496d895`; through the images; below |
+| #353 the SDK pin to v0.9.19 | merged at `2f978413`; through the images; below |
+| #355 the sandbox tags every span with its environment | merged at `c4a572b9`; `values-sandbox.yaml`; upgrade notes and below |
+| #358 SECURITY: dag-tools v0.14.0; the sandbox gateway enforces | merged at `a766d62b`; two digests, the chart; upgrade notes and below |
+| #354 promotion reads its attestation from the content-kind row | merged at `6c98cb14`; through the images; below |
+| #356 the export profile server | merged at `8c3eb9af`; images, chart, policy, needs a Topaz sync; below |
+| #359 the manufacturing-traceability dispatch, committed for lanes to cite | merged at `7e8987bf`; `sessions/` only |
+| #363 cortex-ui a255a8e; the sandbox turns `reviewExport` on | merged at `3a54cc36`; one digest, `values-sandbox.yaml`; below |
+| #361 an unknown `can_export` row is refused alone; no grant is not an error | merged at `3049ef62`; the sync Jobs, chart, policy; below |
+
+**Before this version rolls:**
+
+1. Chris syncs Topaz from the cut's merge: the walkers' group (#336), fin's live-leg rows (#345), and
+   `can_export:part-list` and `can_export:part-list-reviewed` (#356). Offline, on `3049ef62` with the
+   sandbox's overlay env, `capability_grant_sync` reports `can_export rows: 8 applied, 0 refused`; the
+   same run without the sample overlay refuses exactly those two rows. The live check is the
+   task-grant-sync Job's log line after the roll, which must read 0 refused.
+2. Chris checks the realm for hand-made clients that call cortex-bff (the chart manages cortex-ui,
+   15 service clients and the sandbox's two extra ones, and gives each the `audience-bff` mapper). The
+   gateway enforces in this roll (#358), so a client managed elsewhere without the audience is refused.
+3. The values diff against the live release goes in front of Chris, and the roll waits for his word.
+
+**After the roll:**
+
+- `telemetry_misses` reads 0 on the six engines and on cortex-bff.
+- The gateway's startup line reads `posture=enforce … enforce_ready=yes`, and a token for another
+  audience is refused.
+- `dagster-user-code` is Ready.
+- A real sign-in returns a non-empty `/me/entitlements`. **If sign-in fails, roll back to revision 230
+  and report.**
+- The review-export check in #363's entry below.
+
+**Not in this version** (they lead 0.4.86):
+
+- **Engine refusal.** The engines stay `observe`, and the Thursday decision moves to 0.4.86.
+  `INTERNAL_DOOR_POSTURE` stays observe; it goes to enforce on the train after 24 hours of
+  `principal_gauge` reading zero unnamed and zero divergent.
+- **gov's iagent-mesh v0.9.20 pin** (#360).
+- **perf's tracing PR** (#327).
+- **fin's contract refusals** (#357), and fin's long-path test fix (#362).
+- **Select-by-range** on the review card.
+- **Master's known reds**, with owners. On `8c3eb9af`, `tests/docs` has six reds: gov's `54522645`
+  reads `status_code`, which 74's doubles lack. The fix is gov's, and 74 approves the test edit. The
+  seventh red is `test_specialist_dispatch_trace_headers.py::test_engine_a_leg_uses_the_same_source`,
+  which counts a call form that `00dcf15e` changed; it is Lane 1's. Lane 74 owns its tripwire red.
 
 ### Upgrade notes: set these before an environment takes 0.4.85
 
@@ -353,6 +424,25 @@ spans move from `default` to `sandbox`: a Langfuse view or query filtered on `de
   Seal: `tests/security/test_the_gateway_is_served_the_bff_token_lists_chart.py` (12 tests) runs dag-tools'
   own `accepted_issuers`, `accepted_audiences` and `announce` over the rendered env; dropping the include
   turns 11 red, and the posture back to `observe` turns 1 red.
+- **Promotion reads its attestation from the content-kind row** (`src/iagent/promotion.py`; saf).
+  `_declared_attestation` returns the registered kind's `attestation` (SDK v0.9.18,
+  `ContentKindRegistration.attestation`). A kind that is not registered, or that declares none, keeps
+  `ATTESTATION_DEFAULT`. A value outside `ATTESTATION_MODES` is a 503 `attestation_undeclarable`.
+  Seal: `tests/test_the_attestation_is_read_from_the_kind_row.py`.
+- **The export profile server** (`src/iagent/export_profiles.py`, `src/iagent/gateway.py`,
+  `src/iagent/ingest_api.py`, `values.yaml` policy overlay, `policy/exports/`,
+  `policy/overlays/sample/exports/`, `policy/capability_grants.yaml`; saf):
+  - Profiles load from `INGEST_EXPORT_PROFILE_OVERLAY_DIRS` as well as the image.
+  - A profile declares `accepts`, `grain`, `version` and `exportable_states`.
+  - The listing is filtered by the caller's `can_export:<profile>`.
+  - `POST /ingest/export/notices` exports by notice ids, with `check_only`. Every call writes the audit
+    line `iagent.audit.ingest_export`.
+  - It refuses with `not_entitled_to_export_batch`, `not_entitled_to_export`,
+    `export_profile_unknown` (422), `export_notice_ids_invalid` and `export_notices_unexportable`.
+
+  It also ships two sample profiles, `part-list` and `part-list-reviewed`. Each has a grant row to
+  `alert-processors`, which Topaz needs before the roll. Seal:
+  `tests/routing/test_the_export_profile_server_is_sealed.py`.
 - **cortex-ui moves from db45763 to a255a8e, and the sandbox turns `reviewExport` on** (`values.yaml`
   `global.imageDigests`, `values-sandbox.yaml` `cortexUi.env.VITE_FEATURES`). The image is
   `sha256:cb902ea0…`, an index with linux/arm64, built against `8c3eb9af` (the merge of #356). It is the
@@ -369,6 +459,23 @@ spans move from `default` to `sandbox`: a Langfuse view or query filtered on `de
   on a `review` notice, offering `part-list-reviewed` alone. That needs the BFF to load the sample export overlay,
   which saf's seed-job fix sets in sandbox. Without it, a `review` notice is offered nothing and a `promoted`
   one is offered `default-csv` and `default-json`.
+- **An unknown `can_export` row is refused alone; no grant is not an error** (`policy/sync/capability_grant_sync.py`,
+  `policy/sync/validate_policy.py`, `templates/_helpers.tpl` `podOverlayEnv`, `templates/topaz-seed-cronjob.yaml`,
+  `templates/task-grant-sync-job.yaml`, `values-sandbox.yaml`, `policy/capability_grants.yaml`; saf, the
+  architect 2026-11-11). "Known" means the image's base profiles plus the overlay directories this
+  deployment loads.
+  - `capability_grant_sync` refuses a row naming an unknown profile on its own. It logs
+    `REFUSED ROW capability[can_export:<name>]…` on stderr, applies the rest, prints
+    `can_export rows: N applied, M refused`, and exits 0.
+  - If the known set cannot be composed, it refuses nothing and warns.
+  - `validate_policy` no longer errors on an unknown name or on a profile with no row. It still refuses
+    a name that appears in two kinds.
+  - The topaz-seed CronJob and the task-grant-sync Job get the same overlay env as the pods
+    (`podOverlayEnv`). The sandbox sets `INGEST_EXPORT_PROFILE_OVERLAY_DIRS` to the sample overlay, so
+    the two sample rows apply there.
+
+  A deployment without the sample overlay refuses those two rows by name, and its Job stays green.
+  Seal: `tests/security/test_an_export_grant_names_a_known_profile_or_that_row_is_refused.py`.
 
 ## 0.4.84 — 2026-11-10
 

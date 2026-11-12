@@ -130,6 +130,10 @@ agentFleet:
     # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
     # and its template are invented. engine-fin reads it.
     FIN_EXPORT_PROFILE_OVERLAY_DIRS: "/app/policy/overlays/sample/fin_export_profiles"
+    # The sample REVIEW-export profiles (`part-list`, `part-list-reviewed`), SANDBOX ONLY. cortex-bff reads it;
+    # the topaz-seed and task-grant-sync Jobs read it from here too, so capability_grant_sync knows the
+    # profiles a `can_export:` row may name (a deployment without this line refuses those two rows).
+    INGEST_EXPORT_PROFILE_OVERLAY_DIRS: "/app/policy/overlays/sample/exports"
 
     # MinIO / S3 — the SHARED config (iagent-config) the prime-substrate Job reads
     # (it bridges these to S3_ENDPOINT_URL / AWS_* via optional configMapKeyRefs).

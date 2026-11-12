@@ -10,10 +10,6 @@
 #                  in an image).
 #   overlay_env    the variable listing overlay directories, os.pathsep-separated, applied in order
 #                  after the seed. null when the kind's loader reads no overlay variable (none today).
-#   offline_overlays
-#                  overlay directories the chart's own values set on the engine (values-sandbox.yaml),
-#                  relative to the repository root. Only validate_policy reads this field: it runs
-#                  where the engine's environment is not, and composes these after overlay_env's.
 #
 # validate_policy reads this file (policy/sync/validate_policy.py, known_export_profiles). The three
 # engine loaders still read their own constants (src/iagent/export_profiles.py,
@@ -26,7 +22,6 @@ sources:
     seed_env: INGEST_EXPORT_PROFILE_DIR
     seed_default: policy/exports
     overlay_env: INGEST_EXPORT_PROFILE_OVERLAY_DIRS
-    offline_overlays: [policy/overlays/sample/exports]
   - kind: answer-export
     seed_env: EXPORT_PROFILE_POLICY_DIR
     seed_default: policy/exports/answers
@@ -35,4 +30,6 @@ sources:
     seed_env: FIN_EXPORT_PROFILE_POLICY_DIR
     seed_default: policy/fin_export_profiles
     overlay_env: FIN_EXPORT_PROFILE_OVERLAY_DIRS
-    offline_overlays: [policy/overlays/sample/fin_export_profiles]
+# Known profiles are per deployment: each kind is its seed plus the dirs its overlay_env names on that
+# deployment. A sample overlay is known only where its variable is set (the sandbox values set them);
+# no registry row names one. capability_grant_sync refuses a can_export row naming an unknown profile.

@@ -49,14 +49,15 @@
 # asks can_invoke on `can_export:<P>` and False refuses, so a profile with NO row is exportable by
 # NOBODY; object existence decides nothing, there is no object prune, and deleting a row revokes
 # through the invoker-relation prune. One row gates a single export and a batch alike (ruled
-# 2026-10-29). The defaults are met by COMPLETENESS, not a generated default (the sync Job's image
-# cannot reliably see every profile overlay): validate_policy.py refuses ANY known profile that no
-# `can_export:<P>` row decides, of every kind: review-export (policy/exports), answer-export
-# (policy/exports/answers) and fin CDRL. Its advice is the groups the rows of the same kind already
-# grant; no grantee is held in code (standing rule, 2026-10-30), so the ruled grantees are the ROWS
+# 2026-10-29). NO GRANT IS NOT AN ERROR ANYWHERE (architect 2026-11-11): a profile with no row is
+# absent from listings and refused at the route of every door that asks can_export (review-export,
+# answer-export), and nothing here requires a row per profile. A row naming a profile this deployment does
+# not know ("known" = the image's base profiles plus the overlay directories the deployment loads;
+# the sample profiles are known only where the sample overlay is loaded) is refused ON ITS OWN by
+# capability_grant_sync, with a report naming the row; the other rows apply and the Job stays
+# green. validate_policy.py refuses only a name in two kinds. The ruled grantees are the ROWS
 # below: review-export `[alert-processors]`, fin CDRL `[finance-analysts]`, the program-finance
-# persona's group (ruled 2026-10-29). validate_policy also refuses a `can_export:<P>` key naming no
-# known profile, and a name in two kinds.
+# persona's group (ruled 2026-10-29); no grantee is held in code (standing rule, 2026-10-30).
 #
 # THE `can_call:<tag>` CONVENTION (2026-10-30 ruling: "which tags a persona may call
 # (can_call:<tag>), rows on the rail, deny by default"). A capability keyed `can_call:<T>` decides
