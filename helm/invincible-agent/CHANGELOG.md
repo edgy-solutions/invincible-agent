@@ -1,5 +1,22 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.87 — unreleased
+
+### engine-f answers `/health` again
+
+- **What broke.** On 0.4.86 engine-f's `/health` returned 500, so its new pod never became Ready, and the 0.4.84 pod kept serving.
+  - `agent_fleet/presentation_agent/main.py` declared `-> Dict[str, str]`.
+  - Since `30d36560` the body carries `telemetry_misses`, which is an int.
+  - FastAPI builds the response model from the annotation, so validation failed.
+- **The fix.** `-> Dict[str, Any]`, in line with the other engines.
+- **The seal: `tests/perf/test_health_routes_answer_200.py` calls the route.** The census before it only checked that the key is named.
+  - A: engine-f's real `main`, imported through the shared `stub_modules` harness, answers 200 with an int.
+  - B: every `/health` handler in the tree is rebuilt on a fresh app with its own annotation and `response_model=`, and called.
+    - An annotation the probe cannot evaluate fails the test.
+    - There is a floor of 17 handlers.
+  - The positive control: `Dict[str, str]` gives 500 and `Dict[str, Any]` gives 200.
+  - On the unfixed tree, A and B both fail, naming presentation_agent.
+
 ## 0.4.86 — 2026-11-12
 
 **0.4.86 replaces 0.4.85.** It is 0.4.85 (`b2cb6b8c`) plus one fix PR. Master is frozen to everything
