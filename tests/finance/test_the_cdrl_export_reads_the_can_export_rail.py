@@ -1,4 +1,4 @@
-"""The CDRL export reads the `can_export` rail, deny by default: one rail, not dead rows.
+"""The CDRL export and its listing read the `can_export` rail, deny by default: one rail, not dead rows.
 
 `policy/capability_grants.yaml` carried `can_export:<profile>` rows for fin's CDRL profiles, and
 `/cdrl_export` read none of them: any program member holding the cells could produce any profile.
@@ -18,6 +18,16 @@ Arms:
      the rail is asked, as engine-cost asks its reader rail before `can_export`.
   g  the join: every CDRL profile the sandbox serves has a `can_export` row, so none of them is
      exportable by nobody.
+
+`/cdrl_profiles` lists only what the caller may export (the review export's rule, the BFF's
+`/ingest/export/profiles`), by `_cdrl_may_export`, the predicate the export refuses on:
+  h  the listing is the profiles the rail grants THIS caller, asked per profile as this caller.
+  i  THE CONTROL: the same world with the rail granting nothing lists nothing, and granting every
+     profile lists every profile.
+  j  the offer equals what the export builds: listed if and only if the export is not refused.
+  k  a service caller, or no caller, is listed nothing, and the rail is never asked.
+  l  a rail that cannot be asked is a 503, never an empty list.
+  m  deny by default through the real `can_export`: no directory configured lists nothing.
 
 Run: .venv/Scripts/python -I -m pytest -c pyproject.toml --rootdir=. tests/finance/test_the_cdrl_export_reads_the_can_export_rail.py -q
 """
@@ -255,3 +265,63 @@ def test_g_every_cdrl_profile_the_sandbox_serves_has_a_can_export_row(profiles):
     served = set(profiles)
     assert served, "the sample overlay served no CDRL profile"
     assert served <= granted, f"served with no can_export row, so exportable by nobody: {sorted(served - granted)}"
+
+
+# -- h..m: the listing serves only what the caller may export (the review export's rule) ------------
+
+def _list(c, user=ALICE):
+    return c.get("/cdrl_profiles", params={"user_email": user})
+
+
+def test_h_the_listing_is_the_profiles_the_rail_grants_this_caller(world):
+    c, _, _, _, rail = world
+    r = rail(Rail(grants={(PROFILE, ALICE), (OTHER, BOB)}))
+    resp = _list(c)
+    assert resp.status_code == 200, resp.text
+    assert [p["name"] for p in resp.json()] == [PROFILE]
+    assert sorted(r.calls) == sorted((name, ALICE) for name in engine.PROFILES), "asked per profile, as this caller"
+
+
+def test_i_the_control_a_caller_granted_nothing_is_listed_nothing_and_granted_all_is_listed_all(world):
+    c, _, _, _, rail = world
+    rail(Rail(grants=()))
+    assert _list(c).json() == []
+    rail(Rail(grants={(name, ALICE) for name in engine.PROFILES}))
+    assert [p["name"] for p in _list(c).json()] == sorted(engine.PROFILES)
+
+
+def test_j_the_offer_equals_what_the_export_builds(world):
+    """Per profile: listed if and only if `/cdrl_export` does not refuse it as not entitled."""
+    c, _, _, _, rail = world
+    rail(Rail(grants={(PROFILE, ALICE)}))
+    listed = {p["name"] for p in _list(c).json()}
+    for name in sorted(engine.PROFILES):
+        resp = _post(c, profile=name)
+        refused = resp.status_code == 403 and resp.json()["detail"]["error"] == "not_entitled_to_export"
+        assert (name in listed) == (not refused), (name, resp.status_code, resp.text[:200])
+    assert listed == {PROFILE}
+
+
+@pytest.mark.parametrize("who", ["svc:supervisor", ""], ids=["service", "nobody"])
+def test_k_a_service_caller_or_no_caller_is_listed_nothing_without_asking_the_rail(world, who):
+    c, _, _, _, rail = world
+    r = rail(Rail(grants={(name, who) for name in engine.PROFILES}))
+    resp = _list(c, user=who)
+    assert resp.status_code == 200 and resp.json() == []
+    assert r.calls == []
+
+
+def test_l_a_rail_that_cannot_be_asked_lists_a_503_never_an_empty_list(world):
+    c, _, _, _, rail = world
+    rail(Rail(grants={(PROFILE, ALICE)}, raises=httpx.ConnectError("directory down")))
+    resp = _list(c)
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["detail"] == {"reason": "can_export_unavailable"}
+
+
+def test_m_with_no_directory_configured_the_real_rail_lists_nothing(world, no_default_export_grant, monkeypatch):
+    c, _, _, _, _ = world
+    _real_rail_module()
+    monkeypatch.delenv("TOPAZ_DIRECTORY_URL", raising=False)
+    resp = _list(c)
+    assert resp.status_code == 200 and resp.json() == []

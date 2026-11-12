@@ -1441,10 +1441,23 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
 # export route, never routed to by a phrase.
 
 @app.get("/cdrl_profiles")
-def cdrl_profiles() -> list[dict[str, str]]:
-    """The composed profiles' shared header (`name, format, scope, label`) and NOTHING else: no
-    template path, no hash, no sources. A catalogue of what can be asked for, not of how."""
-    return [p.header() for p in sorted(PROFILES.values(), key=lambda p: p.name)]
+def cdrl_profiles(user_email: str = "") -> list[dict[str, str]]:
+    """The composed profiles THE CALLER MAY EXPORT, by name: each one's shared header (`name,
+    format, scope, label`) and NOTHING else: no template path, no hash, no sources. A catalogue
+    of what can be asked for, not of how.
+
+    "May export" is the review export's listing rule (the BFF's `/ingest/export/profiles`): the
+    `can_export:<profile>` rail asked per profile, through `_cdrl_may_export`, the predicate
+    `/cdrl_export` refuses on, so the list offers exactly what the export would build. A profile
+    the caller is not granted is not listed. A service caller, or no caller at all, sees none,
+    without a lookup. A rail that cannot be asked is a 503, never an empty list. The caller is
+    `_verb_caller`'s, as `/cdrl_export` reads it: the bearer first, then `user_email`.
+    """
+    caller = _verb_caller(user_email).strip()
+    if not caller or caller.startswith("svc:"):
+        return []
+    return [p.header() for p in sorted(PROFILES.values(), key=lambda p: p.name)
+            if _cdrl_may_export(p.name, caller)]
 
 
 class CdrlExportRequest(BaseModel):
@@ -1471,9 +1484,20 @@ def _cdrl_source(fn: str, params: dict[str, Any], *, caller: str) -> tuple[dict[
     return envelope, {"fn": fn, "name": BY_FN[fn]["verb"].split(":", 1)[-1], "version": "builtin"}
 
 
+def _cdrl_may_export(profile_name: str, caller: str) -> bool:
+    """Whether the `can_export` rail grants `caller` this profile; 503 `can_export_unavailable`
+    when the rail cannot be asked. The ONE predicate `/cdrl_profiles` lists by and `/cdrl_export`
+    refuses on."""
+    try:
+        return bool(caller) and bool(can_export(profile_name, caller))
+    except Exception as exc:  # noqa: BLE001 -- transport/HTTP failure of the check itself
+        log.warning("can_export check failed: %s", exc)
+        raise HTTPException(status_code=503, detail={"reason": "can_export_unavailable"}) from exc
+
+
 def _cdrl_can_export_or_refuse(profile_name: str, caller: str) -> None:
     """403 `not_entitled_to_export` unless the `can_export` rail grants `caller` this profile; 503
-    `can_export_unavailable` when the rail cannot be asked.
+    `can_export_unavailable` when the rail cannot be asked (`_cdrl_may_export`).
 
     The rail is engine-cost's (`capability_grants`, `can_export:<profile name>`, relation
     `can_invoke`; `utils.export_capability`), and so is this envelope: one rail, one refusal.
@@ -1483,12 +1507,7 @@ def _cdrl_can_export_or_refuse(profile_name: str, caller: str) -> None:
     The rail gates PRODUCTION: the download (`/artifact/...`) stays gated on the program and the
     cells, as engine-cost's stays reader-only.
     """
-    try:
-        ok = bool(caller) and can_export(profile_name, caller)
-    except Exception as exc:  # noqa: BLE001 -- transport/HTTP failure of the check itself
-        log.warning("can_export check failed: %s", exc)
-        raise HTTPException(status_code=503, detail={"reason": "can_export_unavailable"}) from exc
-    if not ok:
+    if not _cdrl_may_export(profile_name, caller):
         raise HTTPException(status_code=403, detail={
             "error": "not_entitled_to_export",
             "refusal": {

@@ -2822,7 +2822,7 @@
     },
     "/export/cdrl": {
       "get": {
-        "description": "One program's CDRL in the profile's format (xlsx, docx, csv or json). `X-Cells-Sha256` is the hash of every cell the producer\nwrote (the reproducibility claim; the file's own bytes are not claimed reproducible).\n\nRefusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with\n`grantable_by` filled); any other engine failure is a 502 naming the engine's status.",
+        "description": "One program's CDRL in the profile's format (xlsx, docx, csv or json). `X-Cells-Sha256` is the hash of every cell the producer\nwrote (the reproducibility claim; the file's own bytes are not claimed reproducible).\n\nRefusals: 404 `unknown_profile` (relayed); an engine 403 (`program_not_visible`,\n`not_entitled_to_export` from the `can_export` rail, `measure_not_in_cell`, `access_denied`)\nis the engine's envelope with `grantable_by` filled; 503 `can_export_unavailable` when the\nrail cannot be asked; any other engine failure is a 502 naming the engine's status.",
         "operationId": "export_cdrl_export_cdrl_get",
         "parameters": [
           {
@@ -2905,7 +2905,7 @@
     },
     "/export/cdrl/profiles": {
       "get": {
-        "description": "The CDRL picker's option list: the engine's `[{name, format, scope, label}]`, relayed. The\nheader keys only; the engine never sends a template path, a hash or a source.",
+        "description": "The CDRL picker's option list: the engine's `[{name, format, scope, label}]` for the\nprofiles THE CALLER MAY EXPORT (engine-fin asks the `can_export` rail per profile, the review\nexport's rule), relayed. The header keys only; the engine never sends a template path, a hash\nor a source. A rail that cannot be asked is a 503, never an empty list.",
         "operationId": "export_cdrl_profiles_export_cdrl_profiles_get",
         "responses": {
           "200": {

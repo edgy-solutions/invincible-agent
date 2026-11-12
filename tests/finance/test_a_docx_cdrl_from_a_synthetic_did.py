@@ -220,6 +220,6 @@ def test_5_the_bff_picker_lists_what_engine_fin_serves(served, monkeypatch):
 
     monkeypatch.setattr(gw.httpx, "AsyncClient", _Client)
     got = asyncio.run(gw.export_cdrl_profiles(_Req(), _User()))
-    assert got == c.get("/cdrl_profiles").json()
+    assert got == c.get("/cdrl_profiles", params={"user_email": _User.authz_id}).json()
     row = next(p for p in got if p["name"] == NAME)
     assert row["label"] == _raw()["label"] and row["format"] == "docx"
