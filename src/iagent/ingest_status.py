@@ -838,6 +838,21 @@ def list_mine(*, caller_id: str, limit: int,
     return out
 
 
+def list_by_created(start_ms: int, end_ms: int, limit: int) -> list[dict]:
+    """The DOCUMENT rows received in `[start_ms, end_ms)` (`created_at`, receipt time, set once and
+    never moved), oldest first, at most `limit`: `{id, review_generation, created_at}` only, what
+    the export range needs to find each notice's domain. EVENT rows are excluded, as in
+    `list_mine`. Not scoped to a caller: the caller narrows by domain."""
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""SELECT id, review_generation, created_at
+                             FROM ingest_status_projection
+                            WHERE created_at >= %s AND created_at < %s AND kind <> 'event'
+                            ORDER BY created_at, id
+                            LIMIT %s""", (start_ms, end_ms, limit))
+            return [dict(r) for r in cur.fetchall()]
+
+
 def fail_stalled(*, stage: str, older_than_seconds: int, now_ms: Optional[int] = None) -> list[str]:
     """The WATCHDOG (2026-10-12, pipeline failure must reach the row; extended to `extracting`
     2026-10-16): mark every document row that has sat at `stage` for longer than
