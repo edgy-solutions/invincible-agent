@@ -1,6 +1,80 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.85 — 2026-11-12
+## 0.4.86 — 2026-11-12
+
+**0.4.86 replaces 0.4.85.** It is 0.4.85 (`b2cb6b8c`) plus one fix PR. Master is frozen to everything
+else until 0.4.86 rolls (Chris, architect ruling, 2026-11-12). Every entry in the 0.4.85 section below
+ships to the sandbox in this version. The sandbox goes from 0.4.84 (revision 232, the rollback to
+230) to 0.4.86.
+
+### Why 0.4.85 never rolls
+
+- The 0.4.85 roll failed in its `post-upgrade` hook. The `realm-reconcile` Job's script was one
+  inline `sh -c` argument of 153,266 bytes. Linux refuses any single argument over 131,072 bytes
+  (`MAX_ARG_STRLEN`), so the container never started. 0.4.84's argument was 123,363 bytes.
+- The hook ran **after** the new workloads were applied. The BFF then required a token audience that
+  realm reconcile had not yet created.
+- The sandbox was rolled back to revision 230 (now revision 232). 0.4.85 stays tagged and is never
+  rolled.
+- No database migration had to be reversed: 0.4.85's were additive.
+
+### The fix
+
+- **The script is a mounted file.** It ships as ConfigMap `<release>-realm-reconcile-script`
+  (`reconcile.sh`, mounted at `/scripts`, mode 0555). The Job runs `sh /scripts/reconcile.sh` and
+  passes no argument.
+- **Credential-bearing bodies are files too.** The request bodies that carry a credential are in Secret
+  `<release>-realm-reconcile-bodies`, mounted at `/run/realm-reconcile`, mode 0400. These are the
+  service-client creates, the local-user creates and the broker client secret. The script sends them
+  with `curl -d @file`. With the bodies re-inlined, the script is byte-identical to 0.4.85's argument.
+- **Realm reconcile runs before anything changes.**
+  - **On upgrade** the ConfigMap, the Secret (weight 1) and the Job (weight 2) are `pre-upgrade`
+    hooks. The new audience exists before the new BFF requires it, and a failed reconcile stops the
+    roll before any workload changes.
+  - **On a fresh install** Keycloak does not exist yet, so the same objects stay `post-install`.
+  - `invincible-agent.realmReconcileHookPhase` chooses by `.Release.IsInstall`.
+  - All three use `before-hook-creation,hook-succeeded`. helm deletes `hook-succeeded` objects only
+    once the whole phase has succeeded, so the Job's mounts exist while it runs.
+- **The broker client secret comes from the bodies Secret**, not the release's `<release>-secrets`.
+  During `pre-upgrade`, `-secrets` is still the old object and would lack a newly added key.
+- **Two new seals.**
+  - `tests/test_chart_no_oversized_argument.py`: fails when any rendered container `command`/`args`
+    entry or env `value` exceeds 128 KiB. It has a control that renders an over-limit value through a
+    values file.
+  - `tests/test_realm_reconcile_runs_before_workloads.py`: renders the hook phases. On upgrade, realm
+    reconcile is `pre-upgrade`, ahead of every workload. On install it is `post-install`.
+- **Sandbox render.** The largest container argument is 3,363 bytes and the largest env value is 173
+  bytes.
+
+### Values change
+
+**cortex-bff CPU limit `2` in `values-sandbox.yaml`; base stays 500m.**
+- After the rollback, `GET /me/entitlements` never finished within the UI's 15 s timeout. Each call
+  costs about 2.6 s of CPU: `human_tasks.py` builds one `httpx.Client` per Topaz directory call, about
+  37 per request.
+- At 500m the BFF was throttled in 40% of CPU periods. At 2 it is 4%.
+- Chris set the limit by hand on the live Deployment on 2026-11-12. This carries it, so the roll does
+  not reset it.
+
+### Before the roll
+
+- **The values diff** against live revision 232 goes to Chris, with the drift list: the
+  hand-set fields that the roll leaves in place and the one it would revert.
+- **`policy/` is unchanged** since `b2cb6b8c`, so no Topaz sync is needed.
+
+### After the roll
+
+The post-roll checks are the 0.4.85 list below:
+- the realm job succeeded;
+- task-grant-sync refused 0 rows, including the three `can_export:cdrl_*` rows;
+- `telemetry_misses` is 0;
+- the gateway reports `enforce_ready=yes`;
+- `dagster-user-code` is Ready;
+- alice's sign-in returns non-empty entitlements.
+
+**Any sign-in failure rolls back to 230.**
+
+## 0.4.85 — 2026-11-12 (tagged, never rolled; 0.4.86 replaces it)
 
 Entries merged after the 0.4.84 tag (`f9fa4d7b`), through `3049ef62`. The architect, via Chris,
 2026-11-11: "0.4.85 is cut and rolled to sandbox tonight. The train closes at 01:30Z. Whatever has
