@@ -9,7 +9,8 @@ supersedes: 2026-11-10-handoff-lane-gov-342-fin-dag-tools-343-sdk-v0-9-18-attest
 1. **#360 (v0.9.20 pin) is HELD for 0.4.86, as a DRAFT at `b2e536bc`.** The architect, 11-11: "gov: the v0.9.20 pin moves to 0.4.86".
    - **What moved:** `b2e536bc` takes the CHANGELOG bullet out of 0.4.85 and puts it in a new `0.4.86 — not yet cut` section.
    - **Packets (placed):** `sessions/2026-11-11-packet-to-lane-01-cc-architect-from-gov-360-moves-to-0-4-86-do-not-merge-before-the-cut.md` supersedes the earlier "ready" packet.
-   - **After the 0.4.85 cut** (Thursday 11-12, 23:00Z):
+   - **The architect (11-12):** "#360 is good and leads 0.4.86; Lane 1 merges it after the cut." The 0.4.85 train closes at 01:30Z on 11-12.
+   - **After the 0.4.85 cut:**
      1. Merge origin/master into the branch, keeping the dated 0.4.85 heading with 0.4.86 above it.
      2. Rerun what the merge touches.
      3. Run `gh pr ready 360`.
@@ -18,6 +19,17 @@ supersedes: 2026-11-10-handoff-lane-gov-342-fin-dag-tools-343-sdk-v0-9-18-attest
    - **Control worktree:** `wt\gov\ctl-v0919`, detached with its own venv. Remove it.
    - **Roll watch:** under OBSERVE, a failed token still makes `authz_id` None, so a list mismatch shows up as person-scoped refusals. After the roll, check that a call through the BFF still answers as the person.
    - **Branch and worktree:** `lane/gov-pin-mesh-v0-9-20` in `C:\Users\cnogr\git\wt\gov\pin-mesh-v0-9-19`.
+1b. **#361 (saf, Job 26): gov approved both of its test-file edits at `c085220b`, 00:23Z on 11-12.** The architect: "approve or reject saf's #361 now", the last item before the 0.4.85 cut.
+   - **Packet (placed):** `sessions/2026-11-12-packet-to-saf-lane-01-cc-architect-from-gov-361-test-edits-approved-at-c085220b.md`. Also a PR comment.
+   - **Clean run:** 86 passed (both gov files, saf's seal, the ratchet).
+   - **Ambient run:** with `INGEST_EXPORT_PROFILE_OVERLAY_DIRS` set, 2 fail.
+   - **Gov's follow-up PR, after the cut,** also covers the ambient-env items in the #356 section:
+     - an autouse fixture that clears `_ENV`;
+     - add the variable to `_ENV`;
+     - a review-overlay arm in `test_2`;
+     - the exact note string;
+     - in `test_task_grant_startup_sync_renders.py`, bound the window at the end of its document. 6000 characters overruns the Job by 1009, into `t-topaz-manifest-load`; nothing is masked today.
+   - **For the architect:** `can_export:cdrl_*` rows gate nothing. Confirmed: finance_agent never reads `can_export`.
 2. **Lane 74's provenance tripwire is still red on master** (see Tests). Watch for 74's answer.
 3. **Remove the worktrees** once each is clean, `git cherry` shows no `+`, and `is-ancestor` holds.
    Use `git worktree remove --force`, in the background:
