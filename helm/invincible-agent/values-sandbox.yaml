@@ -130,6 +130,15 @@ agentFleet:
     # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
     # and its template are invented. engine-fin reads it.
     FIN_EXPORT_PROFILE_OVERLAY_DIRS: "/app/policy/overlays/sample/fin_export_profiles"
+    # The sample REVIEW-export profiles (`part-list`, `part-list-reviewed`), SANDBOX ONLY. cortex-bff reads it;
+    # the topaz-seed and task-grant-sync Jobs read it from here too, so capability_grant_sync knows the
+    # profiles a `can_export:` row may name (a deployment without this line refuses those two rows).
+    INGEST_EXPORT_PROFILE_OVERLAY_DIRS: "/app/policy/overlays/sample/exports"
+    # bob's three sample capability grants (can_export:part-list, can_export:part-list-reviewed,
+    # ingest:exportBatch), SANDBOX ONLY. Read only by capability_grant_sync; it reaches the
+    # task-grant-sync and topaz-seed Jobs through the invincible-agent.podOverlayEnv helper, which
+    # exports every *_OVERLAY_DIRS key of agentFleet.env. Add-only: the shared seed names no sample user.
+    CAPABILITY_GRANT_OVERLAY_DIRS: "/app/policy/overlays/sample"
 
     # MinIO / S3 — the SHARED config (iagent-config) the prime-substrate Job reads
     # (it bridges these to S3_ENDPOINT_URL / AWS_* via optional configMapKeyRefs).
@@ -787,6 +796,14 @@ cortexBff:
   enabled: true
   image:
     tag: ""
+  # CPU limit 2, not the base 500m. One GET /me/entitlements costs ~2.6 s of CPU: ~37 Topaz directory
+  # calls, each building its own httpx.Client. At 500m the pod was throttled in 40% of periods, and the
+  # UI's 15 s entitlements timeout expired on every attempt (2026-11-12 incident). At 2 it was 4%.
+  # The limit was set by hand on the live pod first; this carries it so a roll does not reset it.
+  # Revisit once human_tasks.py reuses one client per request.
+  resources:
+    limits:
+      cpu: "2"
   # MinIO connection for the /federated_image endpoint (Option A: bff
   # proxies image reads from MinIO so they share the same JWT +
   # entitled_domains gate as the rest of the data path; the browser

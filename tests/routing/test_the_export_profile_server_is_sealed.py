@@ -415,7 +415,10 @@ def test_5_the_sample_has_a_can_export_row_and_the_registry_row_composes_it():
     src = yaml.safe_load((ROOT / "policy" / "export_profile_sources.yaml").read_text(encoding="utf-8"))
     row = next(r for r in src["sources"] if r["kind"] == "review-export")
     assert row["overlay_env"] == OVERLAY_ENV
-    assert "policy/overlays/sample/exports" in row["offline_overlays"]
+    # Known is per deployment (ruled 2026-11-11): the registry names no sample, the sandbox values do.
+    assert "offline_overlays" not in row
+    vals = yaml.safe_load((ROOT / "helm" / "invincible-agent" / "values-sandbox.yaml").read_text(encoding="utf-8"))
+    assert vals["agentFleet"]["env"][OVERLAY_ENV] == "/app/policy/overlays/sample/exports"
 
 
 # 6. the wire says notice_id; the two gates; check_only (architect rulings 2026-11-11) ---------
