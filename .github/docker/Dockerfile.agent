@@ -158,9 +158,10 @@ COPY policy/fin_export_profiles/ /app/policy/fin_export_profiles/
 # review-export profiles (`policy/exports/*.yaml`) ride the same COPY and are not read by this loader.
 COPY policy/exports/ /app/policy/exports/
 # THE EIGHTH, and not under policy/: the dataset contracts, `contracts/<id>.yaml`. engine-fin's
-# dataset measure rows name one (`inputs.dataset.contract`), and `dataset_contracts.py` (flattened
-# to /app/) finds this directory beside it. Without it every dataset row is refused at load and the
-# engine starts with none of them. tests/finance/test_a_dataset_contract_loads.py asserts this line.
+# dataset measure rows name one (`inputs.dataset.contract`), and the shared reader
+# `agent_fleet/utils/dataset_contracts.py` (at /app/utils/ in the image) finds this directory by
+# walking up. Without it every dataset row is refused at load and the engine starts with none of
+# them. tests/finance/test_a_dataset_contract_loads.py asserts this line.
 COPY contracts/ /app/contracts/
 # ── THE COST PACKAGE BUILDER AND ITS PINNED RUNTIME ────────────────────────
 #

@@ -64,13 +64,15 @@ from iagent_mesh import MeasureSeries, MeasureSeriesReference
 from iagent_mesh.declarations import DeclarationError, compose_rows
 
 try:  # flat in the image (/app), packaged in the repo -- see `measures.py`
-    import dataset_contracts as _contracts
     import measures as _measures
     from entities import periods_in
 except ImportError:
-    from agent_fleet.finance_agent import dataset_contracts as _contracts
     from agent_fleet.finance_agent import measures as _measures
     from agent_fleet.finance_agent.entities import periods_in
+try:  # the shared contract reader: /app/utils in the image, agent_fleet/utils in the repo
+    from utils import dataset_contracts as _contracts
+except ImportError:
+    from agent_fleet.utils import dataset_contracts as _contracts
 
 def _default_seed_dir() -> Path:
     """`<repo>/policy/measure_verbs`, found by walking up rather than counting levels: in the
@@ -445,7 +447,10 @@ def _join_contract(ds: dict, series_kind: bool) -> Any:
     Every column the row reads is a contract column: a level, scope, period or status column a
     string one, a value column a numeric one. The column a read filters on is the contract's scope,
     and a series row's `per_program` and `status` columns are declared determined by it, so the
-    read's dependency check is what leaves each one value across the program's rows."""
+    read's dependency check is what leaves each one value across the program's rows.
+
+    Holding the named columns to the contract is the shared reader's (`undeclared`, `not_of`); the
+    roles are engine-fin's."""
     contract = _contracts.load_contract(ds["contract"])
     if series_kind:
         once = [*ds["per_program"].values(), *([ds["status_column"]] if ds["status_column"] else [])]
@@ -456,11 +461,11 @@ def _join_contract(ds: dict, series_kind: bool) -> Any:
         once, scope = [], ds["levels"][0]
         strings, numbers = list(ds["levels"]), list(ds["value_columns"])
     cid = contract.contract_id
-    undeclared = sorted(c for c in (*strings, *numbers) if c not in contract.types)
+    undeclared = _contracts.undeclared(contract, (*strings, *numbers))
     if undeclared:
         raise ValueError(f"inputs.dataset names {undeclared}, which contract {cid!r} does not declare")
-    wrong = sorted({*(c for c in strings if contract.types[c] != "string"),
-                    *(c for c in numbers if contract.types[c] == "string")})
+    wrong = sorted({*_contracts.not_of(contract, strings, {"string"}),
+                    *_contracts.not_of(contract, numbers, _contracts.NUMBER_TYPES)})
     if wrong:
         raise ValueError(f"inputs.dataset reads {wrong} in a role contract {cid!r} types otherwise: a "
                          f"level, scope, period or status column is a string, a value column a number")
