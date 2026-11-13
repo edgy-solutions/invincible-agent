@@ -23,7 +23,7 @@ from agent_fleet.finance_agent import asset_inputs, seed  # noqa: E402
 from agent_fleet.finance_agent import main as engine  # noqa: E402
 from src.iagent.authz.refusal import relay_refusal  # noqa: E402
 from tests.finance.test_fin_inputs_resolver import (  # noqa: E402,F401
-    Grab, MeshUnavailable, NotEntitled, SAMPLE, _clean_env, declared, frame_of, token,
+    Grab, MeshUnavailable, NotEntitled, SAMPLE, _clean_env, declared, frame_of, ticketed, token,
 )
 from tests.sandbox_e2e import test_variance_set_reads_the_ev_fixture as live  # noqa: E402
 
@@ -49,13 +49,13 @@ class Gate:
             def __init__(self, **kw):
                 self.who = kw["originator_email"]
 
-            def get_dataframe(self, urn):
+            def get_dataframe_with_ticket(self, urn):
                 gate.asked.append(self.who)
                 if gate.raises is not None:
                     raise gate.raises
                 if urn != URN or self.who not in gate.granted:
                     raise NotEntitled("refused")
-                return gate.frame
+                return ticketed(gate.frame, urn, len(gate.asked))
         return Client, NotEntitled, MeshUnavailable
 
 
@@ -197,7 +197,7 @@ FN = CASE["measures"][0]
 
 
 def right_answer(want: list[dict]) -> dict:
-    return {"data_source": {"kind": "asset", "urn": URN}, "data_provenance": asset_inputs.dataset_provenance(BANNER, URN),
+    return {"data_source": {"kind": "asset", "urn": URN}, "data_provenance": asset_inputs.dataset_provenance(BANNER, URN, ticketed(None, URN)[1]),
             "method": {"measure_id": FN}, "rows": want}
 
 

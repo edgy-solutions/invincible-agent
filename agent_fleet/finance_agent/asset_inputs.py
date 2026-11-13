@@ -5,7 +5,7 @@ Everything here is inert until `FIN_DATASET_URN` is set. Unset, this module impo
 (polars and the client are imported inside functions), reads nothing, and `main` answers from
 the in-process seed exactly as before.
 
-THE SHAPE. `read_rows` takes the reader (`main.mesh_ticketed_read`), asks it for a LazyFrame,
+THE SHAPE. `read_rows` takes the reader (`main`'s ticketed reader), asks it for a LazyFrame,
 filters it to the one program (and the window, if one was asked for), selects the fixed columns
 and caps the row count, all before a row is collected. `state_from_rows` is PURE over the
 collected frame: it enforces the column contract and builds a real `FinanceState`, so
@@ -25,7 +25,7 @@ import os
 import time
 from contextvars import ContextVar
 from decimal import Decimal
-from typing import Any, Callable, NamedTuple, Optional
+from typing import Any, Callable, Mapping, NamedTuple, Optional
 
 from fastapi import HTTPException, Request
 
@@ -128,22 +128,34 @@ def max_rows() -> int:
     return int(raw) if raw else DEFAULT_MAX_ROWS
 
 
-#: ADR-0065:133 rules that `data_provenance` carries the dataset URN, an as-of and a ticket id. It
-#: is unmet. The broker's ticket carries `ticket_id`, `issued_at` and `as_of` from dag-tools 0.13.0
-#: (#31), but this engine pins dag-tools v0.10.0 and its client discards the ticket. Until fin
-#: threads the ticket through, the string says the ticket is pending rather than inventing one
-#: (ruled 2026-11-08). The URN stays last: the live leg reads `Source: <urn>` as the suffix.
+#: ADR-0065:133 rules that `data_provenance` carries the dataset URN, an as-of and a ticket id.
+#: The broker's ticket carries `ticket_id`, `issued_at` and `as_of` (dag-tools 0.13.0, #31), and
+#: `get_dataframe_with_ticket` hands back its receipt beside the frame. `main.mesh_ticketed_read`
+#: returns that pair, and every asset answer cites the receipt of the read it computed over. A
+#: receipt that names neither (a broker that stamps no as-of and issues no id) still says the
+#: ticket is pending rather than inventing one (ruled 2026-11-08), byte for byte this text. The
+#: URN stays last: the live leg reads `Source: <urn>` as the suffix.
 TICKET_PENDING = "(ticket: pending)"
 
 
-def provenance(urn: str) -> str:
-    """The `data_provenance` an asset answer carries: the operator's banner, the pending ticket and the URN."""
-    return f"{dataset_banner()} {TICKET_PENDING} Source: {urn}"
+def ticket_clause(receipt: Mapping[str, Any]) -> str:
+    """The receipt as the provenance clause: its as-of and its ticket id, each only if the receipt
+    carries it. Nothing is claimed that the receipt does not say: no as-of without one, and an
+    absent id is `pending`. A receipt with neither is exactly `TICKET_PENDING`."""
+    as_of, ticket_id = receipt.get("as_of"), receipt.get("ticket_id")
+    ticket = f"ticket: {ticket_id}" if ticket_id else "ticket: pending"
+    return f"(as of {as_of}, {ticket})" if as_of else f"({ticket})"
 
 
-def dataset_provenance(banner: str, urn: str) -> str:
+def provenance(urn: str, receipt: Mapping[str, Any]) -> str:
+    """The `data_provenance` an asset answer carries: the operator's banner, the ticket of the read
+    the answer computed over (`receipt`, the client's) and the URN."""
+    return f"{dataset_banner()} {ticket_clause(receipt)} Source: {urn}"
+
+
+def dataset_provenance(banner: str, urn: str, receipt: Mapping[str, Any]) -> str:
     """`provenance` for a dataset-kind row, whose banner is the row's own, not the environment's."""
-    return f"{banner} {TICKET_PENDING} Source: {urn}"
+    return f"{banner} {ticket_clause(receipt)} Source: {urn}"
 
 
 def _load_client() -> tuple[Any, type, type]:
@@ -331,7 +343,8 @@ def read_rows(read: Callable[[str], Any], urn: str, program_id: str,
               periods: Optional[list[str]]) -> Any:
     """The program's rows (and the window's, if `periods` is given) as a collected frame.
 
-    `read` is `main.mesh_ticketed_read`: it returns the caller's LazyFrame, or raises
+    `read` is `main`'s ticketed reader: it returns the caller's LazyFrame (keeping the read's
+    receipt for the answer's provenance), or raises
     `HTTPException` for an identity it will not read as (passed through untouched). The filter,
     the column select and the row cap are all applied to the lazy frame, so a row of another
     program, or a column outside the contract, is never collected. One timing line per read."""
@@ -523,8 +536,9 @@ def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, per
 
 def require_grant(read: Callable[[str], Any], urn: str) -> None:
     """Refuse unless the caller may read `urn`: the ticket `read_rows` takes first (the client's
-    `get_dataframe` asks the gateway's `/authorize` before it returns a frame), and nothing
-    scanned. `read` is `main.mesh_ticketed_read`; its `HTTPException` passes through untouched."""
+    `get_dataframe_with_ticket` asks the gateway's `/authorize` before it returns a frame), and
+    nothing scanned. `read` is `main`'s ticketed reader; its `HTTPException` passes through
+    untouched."""
     try:
         read(urn)
     except HTTPException:
