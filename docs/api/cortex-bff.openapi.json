@@ -2058,19 +2058,35 @@
             "title": "Destination"
           },
           "notice_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Notice Ids",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notice Ids"
           },
           "profile": {
             "title": "Profile",
             "type": "string"
+          },
+          "range": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportRange"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
-          "notice_ids",
           "profile"
         ],
         "title": "ExportNoticesRequest",
@@ -2230,6 +2246,26 @@
           "exportable_states"
         ],
         "title": "ExportProfile",
+        "type": "object"
+      },
+      "ExportRange": {
+        "additionalProperties": false,
+        "description": "`range` of POST /ingest/export/notices: YYYY-MM-DD UTC days, both ends inclusive, read\nagainst each notice's RECEIPT time (`created_at`). Values are validated by\n`_export_parse_range` so a malformed day is `export_range_invalid`, not a schema 422.",
+        "properties": {
+          "from": {
+            "title": "From",
+            "type": "string"
+          },
+          "to": {
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "title": "ExportRange",
         "type": "object"
       },
       "Extraction": {
@@ -7933,7 +7969,7 @@
     },
     "/ingest/export/notices": {
       "post": {
-        "description": "POST /ingest/export/notices {notice_ids, profile, destination?, check_only?} -- the named\nnotices rendered through one profile. Gates, in order: a service caller is refused like the\nbatch route; `ingest:exportBatch` (403 `not_entitled_to_export_batch`); the profile resolves\n(422); `can_export:<profile>` (403 `not_entitled_to_export`, the profile is also absent from\nthe listing). Every notice is then PRE-FLIGHTED (`_export_preflight`: caller's cell domains,\nthe profile's `accepts`, the notice's state in the profile's `exportable_states`, uncorrected):\nif ANY is unexportable the answer is 422 `export_notices_unexportable` carrying\n`unexportable: [{notice_id, reason}]` (a `state_not_exportable` item also carries `state`)\nand NO FILE IS\nBUILT; `check_only: true` returns that same list with a 200 (empty when all are exportable)\nand builds nothing either way. Otherwise the file is built and ONE record is written: the\nactor (the authenticated principal, never the body), the notice ids, each notice's state at\nexport (`notice_states`, {notice_id: state}), the profile id and version used, the\ndestination. At most 500 notices.",
+        "description": "POST /ingest/export/notices {notice_ids | range:{from,to}, profile, destination?, check_only?}\n-- the named notices (or those RECEIVED in a UTC-day range, exactly one of the two: else 422\n`export_selection_invalid`; see `_export_range_ids`) rendered through one profile. Gates, in order: a service caller is refused like the\nbatch route; `ingest:exportBatch` (403 `not_entitled_to_export_batch`); the profile resolves\n(422); `can_export:<profile>` (403 `not_entitled_to_export`, the profile is also absent from\nthe listing). Every notice is then PRE-FLIGHTED (`_export_preflight`: caller's cell domains,\nthe profile's `accepts`, the notice's state in the profile's `exportable_states`, uncorrected):\nif ANY is unexportable the answer is 422 `export_notices_unexportable` carrying\n`unexportable: [{notice_id, reason}]` (a `state_not_exportable` item also carries `state`)\nand NO FILE IS\nBUILT; `check_only: true` returns that same list with a 200 (empty when all are exportable)\nand builds nothing either way. Otherwise the file is built and ONE record is written: the\nactor (the authenticated principal, never the body), the notice ids, each notice's state at\nexport (`notice_states`, {notice_id: state}), the profile id and version used, the\ndestination. At most 500 notices.",
         "operationId": "ingest_export_notices_route_ingest_export_notices_post",
         "requestBody": {
           "content": {

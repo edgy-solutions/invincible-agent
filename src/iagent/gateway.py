@@ -14271,6 +14271,40 @@ _EXPORT_PROFILE_CAPABILITY_PREFIX = "can_export:"
 _EXPORT_MAX_DAYS = 92
 _EXPORT_MAX_NOTICES = 500
 _EXPORT_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+# POST-by-range: receipts read from the store per page. A page is a read size, never a cap: the
+# only cap is `_EXPORT_MAX_NOTICES`, and it counts the CALLER's notices only.
+_EXPORT_RANGE_PAGE = 500
+
+
+def _export_parse_range(from_, to) -> tuple:
+    """`(d0, d1, start_ms, end_ms)` for a `from`/`to` pair: YYYY-MM-DD UTC days, BOTH ends
+    inclusive (`end_ms` is the start of the day after `to`), `from <= to`, at most
+    `_EXPORT_MAX_DAYS` days. 422 `export_range_invalid` / `export_range_too_large`. ONE parser for
+    the GET batch route and the POST range selection, so the two cannot disagree on a day."""
+    from datetime import timedelta
+
+    def _day(v):
+        if not isinstance(v, str) or not _EXPORT_DATE_RE.fullmatch(v):
+            return None
+        try:
+            return _date.fromisoformat(v)
+        except ValueError:
+            return None
+
+    d0, d1 = _day(from_), _day(to)
+    if d0 is None or d1 is None or d0 > d1:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_invalid",
+            "message": "from and to are required, YYYY-MM-DD (UTC days), and from <= to"})
+    if (d1 - d0).days + 1 > _EXPORT_MAX_DAYS:
+        raise HTTPException(status_code=422, detail={
+            "error": "export_range_too_large",
+            "message": f"at most {_EXPORT_MAX_DAYS} days (both ends counted); narrow the range"})
+
+    def _ms(d):
+        return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
+
+    return d0, d1, _ms(d0), _ms(d1 + timedelta(days=1))
 
 
 def _export_profile_or_422(name: Optional[str]):
@@ -14430,11 +14464,21 @@ async def ingest_export_profiles_route(current_user: User = Depends(get_current_
     return out
 
 
+class ExportRange(_BaseModel):
+    """`range` of POST /ingest/export/notices: YYYY-MM-DD UTC days, both ends inclusive, read
+    against each notice's RECEIPT time (`created_at`). Values are validated by
+    `_export_parse_range` so a malformed day is `export_range_invalid`, not a schema 422."""
+    model_config = _ConfigDict(extra="forbid", populate_by_name=True)
+    from_: str = Field(alias="from")
+    to: str
+
+
 class ExportNoticesRequest(_BaseModel):
     """POST /ingest/export/notices. `extra="forbid"`: an `actor` (or any key not here) is refused
     422; the actor is the authenticated principal, never a field."""
     model_config = _ConfigDict(extra="forbid")
-    notice_ids: list[str]
+    notice_ids: Optional[list[str]] = None
+    range: Optional[ExportRange] = None
     profile: str
     destination: Optional[str] = None
     check_only: bool = False
@@ -14477,6 +14521,57 @@ async def _export_notice_domain(ingest_id: str, row: dict, rec) -> Optional[str]
         return promotion.domain_of(state["audience"])
     except promotion.PromotionRefused:
         return None
+
+
+async def _export_range_ids(rng: ExportRange, current_user) -> tuple:
+    """`(ids, echo)`: the notices RECEIVED (`ingest_status.created_at`) in the UTC-day range, both
+    ends inclusive, narrowed to the caller's cell domains. The timestamp is receipt, not
+    `updated_at` (moves on every transition) and not the promotion time (`promoted_between`): the
+    profile's `exportable_states` decides eligibility, and a notice in review has no promotion.
+    A notice outside the caller's domains is dropped HERE, silently, so a range never enumerates
+    another domain's notices (an id list reports one as `not_available`; a range has no id to
+    echo). The ids then go through the SAME `_export_preflight` as an id list. 422
+    `export_range_too_large` past `_EXPORT_MAX_NOTICES`; 503 when the store or the task store
+    does not answer; an empty range is `[]`.
+
+    The domain scope is applied INSIDE the scan: the store is read a page at a time (keyset), each
+    receipt is scoped to the caller's domains as it arrives, and only the caller's own notices are
+    counted against the cap (the scan stops at the first one past it). So another domain's volume
+    in the range neither refuses the caller nor shows in any reply. The refusal states the cap
+    (configuration) and NEVER a count: nothing the caller receives says how many notices the range
+    holds, in scope or out."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    d0, d1, start_ms, end_ms = _export_parse_range(rng.from_, rng.to)
+    domains = {c.domain for c in current_user.entitlements.cells}
+    ids: list = []
+    after = None
+    while domains:
+        try:
+            page = await run_in_threadpool(
+                lambda a=after: ingest_status.list_by_created(
+                    start_ms, end_ms, _EXPORT_RANGE_PAGE, after=a))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ingest range read failed: %s", exc)
+            raise HTTPException(status_code=503, detail={
+                "error": "ingest_store_unreachable",
+                "message": f"the ingest store did not answer: {type(exc).__name__}"})
+        for row in page:
+            ingest_id = row["id"]
+            rec = await run_in_threadpool(lambda i=ingest_id: _export_decision_record(i))
+            if await _export_notice_domain(ingest_id, row, rec) in domains:
+                ids.append(ingest_id)
+                if len(ids) > _EXPORT_MAX_NOTICES:
+                    raise HTTPException(status_code=422, detail={
+                        "error": "export_range_too_large",
+                        "message": f"a range may select at most {_EXPORT_MAX_NOTICES} notices; "
+                                   "narrow the range"})
+        if len(page) < _EXPORT_RANGE_PAGE:
+            break
+        after = (page[-1]["created_at"], page[-1]["id"])
+    return ids, {"from": d0.isoformat(), "to": d1.isoformat(), "field": "created_at"}
 
 
 async def _export_preflight(prof, notice_ids: list, current_user) -> tuple:
@@ -14531,8 +14626,9 @@ async def _export_preflight(prof, notice_ids: list, current_user) -> tuple:
 @app.post("/ingest/export/notices", tags=["ingest-export"])
 async def ingest_export_notices_route(req: ExportNoticesRequest,
                                       current_user: User = Depends(get_current_user)):
-    """POST /ingest/export/notices {notice_ids, profile, destination?, check_only?} -- the named
-    notices rendered through one profile. Gates, in order: a service caller is refused like the
+    """POST /ingest/export/notices {notice_ids | range:{from,to}, profile, destination?, check_only?}
+    -- the named notices (or those RECEIVED in a UTC-day range, exactly one of the two: else 422
+    `export_selection_invalid`; see `_export_range_ids`) rendered through one profile. Gates, in order: a service caller is refused like the
     batch route; `ingest:exportBatch` (403 `not_entitled_to_export_batch`); the profile resolves
     (422); `can_export:<profile>` (403 `not_entitled_to_export`, the profile is also absent from
     the listing). Every notice is then PRE-FLIGHTED (`_export_preflight`: caller's cell domains,
@@ -14562,23 +14658,38 @@ async def ingest_export_notices_route(req: ExportNoticesRequest,
             missing_binding=f"can_invoke can_export:{prof.name}",
             message=f"exporting through the {prof.name!r} profile needs the "
                     f"can_export:{prof.name} capability")
-    ids = list(dict.fromkeys(i.strip() for i in req.notice_ids if isinstance(i, str) and i.strip()))
-    if not ids or len(ids) > _EXPORT_MAX_NOTICES:
+    if (req.notice_ids is None) == (req.range is None):
         raise HTTPException(status_code=422, detail={
-            "error": "export_notice_ids_invalid",
-            "message": f"between 1 and {_EXPORT_MAX_NOTICES} distinct notice ids"})
+            "error": "export_selection_invalid",
+            "message": "name the notices by exactly one of notice_ids or range"})
+    rng = None
+    if req.range is not None:
+        ids, rng = await _export_range_ids(req.range, current_user)
+    else:
+        ids = list(dict.fromkeys(
+            i.strip() for i in req.notice_ids if isinstance(i, str) and i.strip()))
+        if not ids or len(ids) > _EXPORT_MAX_NOTICES:
+            raise HTTPException(status_code=422, detail={
+                "error": "export_notice_ids_invalid",
+                "message": f"between 1 and {_EXPORT_MAX_NOTICES} distinct notice ids"})
     bodies, bad, states = await _export_preflight(prof, ids, current_user)
     if req.check_only:
-        return {"profile": prof.name, "version": prof.version, "notices": len(ids),
-                "unexportable": bad}
+        out = {"profile": prof.name, "version": prof.version, "notices": len(ids),
+               "unexportable": bad}
+        if rng is not None:
+            out["range"] = rng
+            out["notice_ids"] = ids
+        return out
     if bad:
         raise HTTPException(status_code=422, detail={
             "error": "export_notices_unexportable", "unexportable": bad,
             "message": f"{len(bad)} of {len(ids)} notices cannot be exported; no file was built"})
     rows = _export_render(prof, bodies)
-    _record_export({"actor": caller, "notice_ids": ids, "notice_states": states,
-                    "profile": prof.name, "version": prof.version,
-                    "destination": req.destination})
+    record = {"actor": caller, "notice_ids": ids, "notice_states": states,
+              "profile": prof.name, "version": prof.version, "destination": req.destination}
+    if rng is not None:
+        record["range"] = rng              # a range was given: the record says so
+    _record_export(record)
     return _export_response(
         prof, rows, f"ingest-export.{prof.name}.{len(ids)}-notices.{prof.format}",
         notices=len(ids), destination=req.destination)
@@ -14620,7 +14731,6 @@ async def ingest_export_batch_route(
     PARTIAL: a notice in the set that cannot be exported (missing, not promoted, corrected,
     extraction refused) is 422 `export_notice_unreadable`; an unresolvable cell the profile blocks
     on is 422 `export_blocked`. An empty range is 200 (header-only CSV, or `rows: []`)."""
-    from datetime import timedelta
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status, promotion_stores
@@ -14643,28 +14753,7 @@ async def ingest_export_batch_route(
             message=f"exporting through the {prof.name!r} profile needs the "
                     f"can_export:{prof.name} capability")
 
-    def _day(v):
-        if not isinstance(v, str) or not _EXPORT_DATE_RE.fullmatch(v):
-            return None
-        try:
-            return _date.fromisoformat(v)
-        except ValueError:
-            return None
-
-    d0, d1 = _day(from_), _day(to)
-    if d0 is None or d1 is None or d0 > d1:
-        raise HTTPException(status_code=422, detail={
-            "error": "export_range_invalid",
-            "message": "from and to are required, YYYY-MM-DD (UTC days), and from <= to"})
-    if (d1 - d0).days + 1 > _EXPORT_MAX_DAYS:
-        raise HTTPException(status_code=422, detail={
-            "error": "export_range_too_large",
-            "message": f"at most {_EXPORT_MAX_DAYS} days (both ends counted); narrow the range"})
-
-    def _ms(d):
-        return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
-
-    start_ms, end_ms = _ms(d0), _ms(d1 + timedelta(days=1))
+    d0, d1, start_ms, end_ms = _export_parse_range(from_, to)
     try:
         domains = {c.domain for c in current_user.entitlements.cells}
         hits = [] if not domains else await run_in_threadpool(
