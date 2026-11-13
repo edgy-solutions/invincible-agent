@@ -37,7 +37,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from agent_fleet.finance_agent import main as engine  # noqa: E402
 from tests.finance.test_fin_inputs_resolver import (  # noqa: E402,F401
-    MeshUnavailable, NotEntitled, _clean_env, token,
+    MeshUnavailable, NotEntitled, _clean_env, ticketed, token,
 )
 
 REPO = Path(__file__).resolve().parents[2]
@@ -195,11 +195,11 @@ def post(probes, monkeypatch):
         def __init__(self, **kw):
             self.who = kw["originator_email"]
 
-        def get_dataframe(self, urn):
+        def get_dataframe_with_ticket(self, urn):
             asked.append((self.who, urn))
             if urn not in frames or (self.who, urn) not in _grants():
                 raise NotEntitled("refused")
-            return frames[urn]
+            return ticketed(frames[urn], urn, len(asked))
 
     monkeypatch.setattr(engine.asset_inputs, "_load_client", lambda: (Client, NotEntitled, MeshUnavailable))
     monkeypatch.setattr(engine, "can_view_program",

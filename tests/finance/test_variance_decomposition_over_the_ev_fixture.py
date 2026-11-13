@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from agent_fleet.finance_agent import asset_inputs, seed  # noqa: E402
 from agent_fleet.finance_agent import main as engine  # noqa: E402
 from tests.finance.test_fin_inputs_resolver import (  # noqa: E402,F401
-    MeshUnavailable, NotEntitled, _clean_env, frame_of, token,
+    AS_OF, MeshUnavailable, NotEntitled, _clean_env, frame_of, ticketed, token,
 )
 
 # The shipped sample row, loaded ALONE: copied into a directory of its own, so the other sample
@@ -51,11 +51,11 @@ class Gate:
             def __init__(self, **kw):
                 self.who = kw["originator_email"]
 
-            def get_dataframe(self, urn):
+            def get_dataframe_with_ticket(self, urn):
                 gate.asked.append((self.who, urn))
                 if urn != ROW_URN or self.who not in gate.granted:
                     raise NotEntitled("refused")
-                return gate.frame
+                return ticketed(gate.frame, urn, len(gate.asked))
         return Client, NotEntitled, MeshUnavailable
 
 
@@ -173,6 +173,8 @@ def test_the_envelope_names_the_shape_the_source_and_the_method(post, gate, flow
     assert env["render"]["shape"] == "FLOW_DECOMPOSITION"
     assert env["data_source"] == {"kind": "asset", "urn": ROW_URN}
     assert env["data_provenance"].startswith("SYNTHETIC") and ROW_URN in env["data_provenance"]
+    assert len(gate.asked) == 1 and env["data_provenance"].endswith(
+        f"(as of {AS_OF}, ticket: tkt-0001) Source: {ROW_URN}"), "the dataset kind cites its read's ticket"
     assert env["measure"] == FN and env["output_uri"].endswith("DeclaredMeasureSeries")
     assert env["artifact_id"].startswith(f"fin:{FN}:")
     assert env["method"]["version"] == "1.3.0" and env["method"]["module_sha256"] == flow_rows[FN].module_sha256
@@ -255,7 +257,7 @@ def test_a_mesh_outage_is_a_503(post, gate, monkeypatch):
             def __init__(self, **kw):
                 pass
 
-            def get_dataframe(self, urn):
+            def get_dataframe_with_ticket(self, urn):
                 raise MeshUnavailable("down")
         return Client, NotEntitled, MeshUnavailable
     monkeypatch.setattr(engine.asset_inputs, "_load_client", down)
