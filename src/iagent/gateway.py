@@ -4106,20 +4106,41 @@ def _engine_failure(label: str, rr, route: str = "") -> HTTPException:
     })
 
 
+def _cdrl_rail_outage(rr) -> Optional[HTTPException]:
+    """engine-fin's 503 `can_export_unavailable` (its `can_export` rail could not be asked) as THIS
+    gateway's 503, the review export's rule: an outage of the rail is a 503, never an empty list
+    and never a deny. Any other engine 503 stays `_engine_failure`'s 502."""
+    if rr.status_code != 503:
+        return None
+    try:
+        body_json = rr.json()
+        detail = body_json.get("detail", body_json) if isinstance(body_json, dict) else body_json
+    except Exception:
+        return None
+    if detail == {"reason": "can_export_unavailable"}:
+        return HTTPException(status_code=503, detail=detail)
+    return None
+
+
 @app.get("/export/cdrl/profiles", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
 async def export_cdrl_profiles(request: Request, current_user: User = Depends(get_current_user)):
-    """The CDRL picker's option list: the engine's `[{name, format, scope, label}]`, relayed. The
-    header keys only; the engine never sends a template path, a hash or a source."""
+    """The CDRL picker's option list: the engine's `[{name, format, scope, label}]` for the
+    profiles THE CALLER MAY EXPORT (engine-fin asks the `can_export` rail per profile, the review
+    export's rule), relayed. The header keys only; the engine never sends a template path, a hash
+    or a source. A rail that cannot be asked is a 503, never an empty list."""
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             rr = await client.get(
                 f"{_ENGINE_FIN_URL}/cdrl_profiles",
+                params={"user_email": current_user.authz_id},
                 headers={"Authorization": f"Bearer {_user_bearer(request)}"},
             )
     except Exception as exc:
         raise HTTPException(status_code=502, detail={
             "error": "fin_engine_unreachable", "message": str(exc),
         })
+    if (outage := _cdrl_rail_outage(rr)) is not None:
+        raise outage
     if rr.status_code >= 400:
         raise _engine_failure("fin", rr, "/cdrl_profiles")
     return _engine_answer(rr, "/cdrl_profiles")
@@ -4135,8 +4156,10 @@ async def export_cdrl(
     """One program's CDRL in the profile's format (xlsx, docx, csv or json). `X-Cells-Sha256` is the hash of every cell the producer
     wrote (the reproducibility claim; the file's own bytes are not claimed reproducible).
 
-    Refusals: 404 `unknown_profile` (relayed); 403 `program_not_visible` (the engine's envelope with
-    `grantable_by` filled); any other engine failure is a 502 naming the engine's status.
+    Refusals: 404 `unknown_profile` (relayed); an engine 403 (`program_not_visible`,
+    `not_entitled_to_export` from the `can_export` rail, `measure_not_in_cell`, `access_denied`)
+    is the engine's envelope with `grantable_by` filled; 503 `can_export_unavailable` when the
+    rail cannot be asked; any other engine failure is a 502 naming the engine's status.
     """
     bearer = _user_bearer(request)
     try:
@@ -4159,6 +4182,8 @@ async def export_cdrl(
             detail = None
         if isinstance(detail, dict) and detail.get("error") == "unknown_profile":
             raise HTTPException(status_code=404, detail=detail)
+    if (outage := _cdrl_rail_outage(rr)) is not None:
+        raise outage
     if rr.status_code >= 400:
         raise _engine_failure("fin", rr, "/cdrl_export")
 

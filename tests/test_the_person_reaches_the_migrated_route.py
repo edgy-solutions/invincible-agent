@@ -146,6 +146,11 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
     # without registration; fin found it red on master 2a042971.
     ("23 · onto the wire to engine-fin /measure/{fn} (the finance measure relay)",
      GATEWAY, "finance_measure", "<dict>", ("current_user.authz_id",)),
+    # Hop 24: the CDRL picker (#365). The BFF names the caller to engine-fin's /cdrl_profiles,
+    # which asks the can_export rail per profile as that caller and lists only what it grants.
+    # It reaches no mint: a hop like 20-21 and 23, not a second chain.
+    ("24 · onto the wire to engine-fin /cdrl_profiles (the CDRL picker)",
+     GATEWAY, "export_cdrl_profiles", "<dict>", ("current_user.authz_id",)),
 ]
 
 #: Hops whose identity parameter has NO default, so omission is a TypeError at the call, which is

@@ -70,7 +70,9 @@ def engine(monkeypatch):
             calls.append(("POST", url, json, headers))
             return answers["post"]
 
-        async def get(self, url, headers=None):
+        async def get(self, url, params=None, headers=None):
+            # Record the URL httpx itself puts on the wire, query included.
+            url = str(gw.httpx.URL(url, params=params))
             calls.append(("GET", url, None, headers))
             return answers["artifact"] if "/artifact/" in url else answers["profiles"]
 
@@ -121,6 +123,69 @@ def test_8_an_engine_403_is_relayed_with_grantable_by(engine):
     assert detail["error"] == "program_not_visible"
     assert "grantable_by" in detail["refusal"]
     assert "grantable_by" not in ENGINE_403["detail"]["refusal"]
+
+
+def test_8_the_engines_can_export_refusal_is_relayed_403_whole_with_grantable_by(engine, monkeypatch):
+    """The body is the one engine-fin's `_cdrl_can_export_or_refuse` raises, read from it rather than
+    restated: the BFF keeps every key, adds `grantable_by`, and fetches no artifact."""
+    from fastapi import HTTPException as EngineHTTPException
+    from agent_fleet.finance_agent import main as fin
+    monkeypatch.setattr(fin, "can_export", lambda profile_name, caller_id, **kw: False)
+    try:
+        fin._cdrl_can_export_or_refuse("cdrl_a001_ev_summary", "alice@example.com")
+    except EngineHTTPException as exc:
+        assert exc.status_code == 403
+        refused = exc.detail
+    else:
+        raise AssertionError("the engine granted with the rail answering no")
+    calls, answers = engine
+    answers["post"] = _Resp(403, {"detail": refused})
+    status, detail = _export()
+    assert status == 403
+    assert detail["error"] == "not_entitled_to_export"
+    assert {k: v for k, v in detail["refusal"].items() if k != "grantable_by"} == refused["refusal"]
+    assert detail["refusal"]["grantable_by"]
+    assert detail["message"] == refused["message"]
+    assert [c[0] for c in calls] == ["POST"], "a refused export fetched an artifact"
+
+
+def test_8_the_listing_asks_the_engine_as_the_caller(engine):
+    """engine-fin lists only what the caller may export, so the BFF must name the caller: the
+    principal's authz id, as `/export/cdrl` sends it in the body."""
+    import iagent.gateway as gw
+    from urllib.parse import parse_qs, urlsplit
+    calls, _ = engine
+    asyncio.run(gw.export_cdrl_profiles(_Req(), _User()))
+    url = urlsplit(calls[0][1])
+    assert url.path.endswith("/cdrl_profiles")
+    assert parse_qs(url.query) == {"user_email": [_User.authz_id]}
+
+
+def _list():
+    import iagent.gateway as gw
+    try:
+        return 200, asyncio.run(gw.export_cdrl_profiles(_Req(), _User()))
+    except HTTPException as exc:
+        return exc.status_code, exc.detail
+
+
+RAIL_DOWN = {"detail": {"reason": "can_export_unavailable"}}
+
+
+@pytest.mark.parametrize("route", ["profiles", "export"])
+def test_8_a_rail_outage_is_a_503_on_both_routes_never_an_empty_list(engine, route):
+    _, answers = engine
+    answers["profiles"] = answers["post"] = _Resp(503, RAIL_DOWN)
+    status, detail = _list() if route == "profiles" else _export()
+    assert (status, detail) == (503, RAIL_DOWN["detail"])
+
+
+@pytest.mark.parametrize("route", ["profiles", "export"])
+def test_8_the_control_any_other_engine_503_stays_a_502(engine, route):
+    _, answers = engine
+    answers["profiles"] = answers["post"] = _Resp(503, {"detail": "this deployment cannot write an artifact"})
+    status, detail = _list() if route == "profiles" else _export()
+    assert status == 502 and detail["engine_status"] == 503
 
 
 def test_8_an_engine_404_unknown_profile_stays_404(engine):
