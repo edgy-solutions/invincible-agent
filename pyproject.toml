@@ -147,7 +147,7 @@ dev = [
     # credentials attached (cf. the doc-tools floating-@rev finding).
     # TODO(0.9.6): re-pin to the v0.9.6 TAG once it is cut — see the matching pin above.
     "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.19",
-    "provenance-telemetry==0.2.0",
+    "provenance-telemetry==0.2.1",
 ]
 
 [build-system]

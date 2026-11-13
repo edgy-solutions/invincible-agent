@@ -20,7 +20,7 @@ dependencies = [
     "packaging",
     "acryl-datahub",
     "langfuse>=3.0.0",   # ADR-0038 v4 telemetry
-    "provenance-telemetry==0.2.0",
+    "provenance-telemetry==0.2.1",
 ]
 
 [build-system]

@@ -42,11 +42,17 @@ dependencies = [
     # `reads.BodyStore` — one method, `read(locator) -> bytes` — and everything above it is
     # driverless by assertion in `tests/docs/`.
     "boto3",
+    # ── THE TELEMETRY LEAF, ADMITTED 2026-11-10 (the architect, #327) ──────────────────────────
+    # The /explain span. provenance-telemetry brings langfuse + OpenTelemetry: an EXPORTER, not a
+    # store driver — it reads no corpus and answers nothing. It enters at the binding (main.py,
+    # through the /app/telemetry.py shim) only; the core may still not import it
+    # (tests/docs/test_explain_refuses_before_it_renders.py::test_the_core_holds_no_driver).
+    "provenance-telemetry==0.2.1",
 ]
 
 # DELIBERATELY THIN, and the omissions are the argument.
 #
-# NO neo4j, NO weaviate, NO SPARQLWrapper, NO langfuse. engine-docs is meant to be the FIRST
+# NO neo4j, NO weaviate, NO SPARQLWrapper. engine-docs is meant to be the FIRST
 # ENGINE BORN WITHOUT A DRIVER: it reads the corpus through engine-o's named operation
 # `POST /page_for_subject` over httpx — one call, no query, no store connection — rather than by
 # reaching Jena itself. A store driver appearing in this list would mean that decision had been
@@ -58,6 +64,10 @@ dependencies = [
 # `page_for_subject` is declared in this engine's own `reads.py` and not at v0.9.1. Left as a
 # correction rather than a clean rewrite, because the wrong version is what makes the tag pin
 # above readable: the pin is for transport auth and the mint, not for an operation it never had.
+#
+# AMENDED 2026-11-10: "NO langfuse" is withdrawn by ruling (the architect, #327: engine-docs
+# /explain gets a span on provenance-telemetry 0.2.1). That is a design change, made visibly
+# here and in the dependency comment above; the driver ban itself stands.
 #
 # NO pyyaml. The frontmatter is read by `scripts/generate_docs_corpus.py` at BUILD time, never by
 # the engine: what the engine receives is triples the prime landed and bytes the prime uploaded.
