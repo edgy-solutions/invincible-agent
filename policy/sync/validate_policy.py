@@ -575,6 +575,10 @@ GOVERNED_ROOTS = ("policy/", "docs/adr/", "tests/fixtures/", "sessions/")
 
 _RP_ROW_FIELDS = ("review", "approvers", "granted_by", "reason", "unowned_review", "unmatched_review")
 
+#: Mirrors `repo_core.CLOSED_REVIEW` (restated for the same reason as GOVERNED_ROOTS; the rail test
+#: asserts the two are equal). A row with this `review` refuses every commit under it.
+_RP_CLOSED = "closed"
+
 #: A `review` ending `:<DOMAIN>` is a per-row audience (section 5: `access_grant:<DOMAIN>`, "taken
 #: from each row the diff changes"). engine-r resolves it per changed row; validate_policy checks
 #: every audience it could resolve to, and the `unmatched_review` a row with no such audience falls
@@ -623,6 +627,15 @@ def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> 
             v = row.get(f)
             if not isinstance(v, str) or not v.strip():
                 e.append(f"{where}: `{f}` is required and must be a non-empty string")
+        if row.get("review") == _RP_CLOSED:
+            # A closed row refuses every commit under it (engine-r check 6, `path_closed`): it names
+            # no audience and no approver count, because nothing under it is ever reviewed.
+            if is_tag:
+                e.append(f"{where}: `review: {_RP_CLOSED}` is legal only on a path row, never on a tag")
+            for k in ("approvers", "unowned_review", "unmatched_review"):
+                if k in row:
+                    e.append(f"{where}: a `review: {_RP_CLOSED}` row carries no `{k}`")
+            return e
         ap = row.get("approvers")
         if "approvers" not in row:
             e.append(f"{where}: `approvers` is required")

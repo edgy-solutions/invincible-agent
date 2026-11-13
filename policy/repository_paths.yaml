@@ -16,6 +16,8 @@
 #     audience is `owning_lane`, legal only on a `sessions/` path row, which then also names
 #     `unowned_review` (the audience used when the file has no owner). Whether the 0-approver
 #     exception applies is decided at runtime by engine-r, never by this file.
+#   * `review: closed` REFUSES EVERY COMMIT UNDER THE ROW (check 6, `path_closed`). A closed row is a
+#     path row only, and carries no `approvers` and no audience: nothing under it is ever reviewed.
 #   * A `review` ENDING `:<DOMAIN>` IS PER CHANGED ROW: engine-r takes the audience from the domain
 #     of each row the diff changes. Such a row also names `unmatched_review`, the audience for a
 #     changed row whose domain has no audience of that prefix (or has no domain at all).
@@ -110,14 +112,12 @@ repository_paths:
           ADR-0062 section 5: fixtures take one approver from repo_review:FIXTURES.
 
       sessions/:
-        review: owning_lane
-        unowned_review: repo_review:SESSIONS
-        approvers: 1
+        review: closed
         granted_by: seed
         reason: >-
-          ADR-0062 section 5: a packet is reviewed by its owning lane, or by repo_review:SESSIONS
-          when it has no owner. The 0-approver exception is decided at runtime by engine-r,
-          never by this file.
+          Ruled 2026-11-12/13: session files (packets, handoffs) are placed, never committed, in
+          any repo. This row stays as a guard: engine-r refuses any commit under sessions/.
+          It replaces ADR-0062 section 5's owning_lane row.
 
     tags:
       invincible-agent-*:

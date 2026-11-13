@@ -462,3 +462,48 @@ def test_validate_carries_a_rail_error_and_is_clean_without_it(tmp_path):
     errs = vp.validate(pol, pol)
     assert any(e.startswith("repository_paths.yaml") and "docs/adr/" in e and ">= 1" in e
                for e in errs), errs
+
+
+# ---- `review: closed` (ruled 2026-11-12/13: session files are placed, never committed) ---------
+
+def _closed(**extra):
+    row = {"review": "closed", "granted_by": "seed", "reason": "placed, never committed"}
+    row.update(extra)
+    return row
+
+
+def test_a_closed_path_row_is_clean():
+    """Control for the closed arms below: the same baseline with sessions/ closed is green."""
+    assert _b(_mut(lambda r, raw: r["paths"].__setitem__("sessions/", _closed()))) == []
+
+
+@pytest.mark.parametrize("extra", [{"approvers": 1}, {"unowned_review": "rv:S"},
+                                   {"unmatched_review": "rv:A"}])
+def test_a_closed_row_carries_no_reviewers(extra):
+    (k,) = extra
+    _red(_mut(lambda r, raw: r["paths"].__setitem__("sessions/", _closed(**extra))),
+         f"paths: sessions/: a `review: closed` row carries no `{k}`")
+
+
+def test_a_closed_tag_is_refused():
+    _red(_mut(lambda r, raw: r["tags"].__setitem__("rel-*", _closed())),
+         "tags: rel-*: `review: closed` is legal only on a path row")
+
+
+def test_a_closed_row_still_needs_its_grantor_and_reason():
+    _red(_mut(lambda r, raw: r["paths"].__setitem__("sessions/", _closed(reason=""))),
+         "paths: sessions/: `reason` is required")
+
+
+def test_the_seed_closes_sessions():
+    """The ruled guard: nothing is committed under sessions/. Read from the seed, not restated."""
+    row = _SEED["repository_paths"][REPO]["paths"]["sessions/"]
+    assert row["review"] == vp._RP_CLOSED
+    assert not {"approvers", "unowned_review", "unmatched_review"} & set(row)
+
+
+def test_the_closed_word_join():
+    pytest.importorskip("pygit2")
+    from agent_fleet.repository_agent import repo_core
+
+    assert vp._RP_CLOSED == repo_core.CLOSED_REVIEW
