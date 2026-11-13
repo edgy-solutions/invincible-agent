@@ -71,6 +71,7 @@ being read: a seed-only read cannot produce that error.
     GRAPH_OVERLAY_DIRS=/app/policy/overlays/sample/graphs
     MEASURE_VERB_OVERLAY_DIRS=/app/policy/overlays/sample/measure_verbs
     CANVAS_OVERLAY_DIRS=/app/policy/overlays/sample/canvases
+    INGEST_EXPORT_PROFILE_OVERLAY_DIRS=/app/policy/overlays/sample/exports
 
 `measure_verbs` and `canvases` are the two kinds a finance MEASURE needs: the row that declares
 the verb (`agent_fleet/finance_agent/measure_verbs.py`, seed `policy/measure_verbs/`, which ships

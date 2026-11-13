@@ -106,6 +106,12 @@ SEEDED_BY_STAMP_OUTCOME = "released"
 #: answers it as a 403 of the same code.
 NOT_THE_SEEDER = "delegate_not_seeder"
 
+#: The case's promise that holds the id of the FIRST human task one of its instances registered
+#: (Chris, 2026-11-07, saf: `task_id` is taken from the runner that mints the task). The id is
+#: minted where the instance registers it, so the instance tells the case (`task_opened`) and the
+#: door asks the case (`opened_task`) instead of deriving `{case}~n:step`, a copied format.
+OPENED_TASK = "opened_task"
+
 
 def _stamp_seeded_by(case_id: str, seeded_by: str) -> dict:
     """POST `{bff}/internal/cases/{case_id}/seeded-by`, as `svc:case-runner` (the same credential
@@ -254,7 +260,36 @@ def _child_key(case_id: str, n: int) -> str:
 async def run(ctx: WorkflowContext, request: dict) -> dict:
     if "child_of" in request:
         return await _run_instance(ctx, request)
-    return await _run_case(ctx, request)
+    try:
+        out = await _run_case(ctx, request)
+    except restate.TerminalError:
+        # A waiter on `opened_task` must never hang on a case that failed before any task.
+        await _close_opened_task(ctx)
+        raise
+    await _close_opened_task(ctx)
+    return out
+
+
+async def _close_opened_task(ctx: WorkflowContext) -> None:
+    """The case is over: if no instance opened a task, say so (`task_id` None) so a waiter returns."""
+    await _hold_opened_task(ctx, {"task_id": None})
+
+
+async def _hold_opened_task(ctx, value: dict) -> dict:
+    """Resolve OPENED_TASK with `value` unless it already holds one; answer what it holds.
+
+    peek-then-resolve is not atomic: two instances of one case (or an instance and the case's own
+    close) can both see it empty. Restate refuses the second resolve with a TerminalError, which
+    here means only "someone else won", so the loser reads the winner rather than failing."""
+    promise = ctx.promise(OPENED_TASK, type_hint=dict)
+    held = await promise.peek()
+    if held is not None:
+        return held
+    try:
+        await promise.resolve(value)
+        return value
+    except restate.TerminalError:
+        return await promise.peek() or value
 
 
 # ── THE CASE ────────────────────────────────────────────────────────────────────────────────
@@ -322,7 +357,7 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
     case: dict = {"case_id": case_id, "trigger": name, "state": None, "terminal": None,
                   "episode": episode, "episode_id": episode_id,
                   "episode_id_source": episode_id_source, "instances": [], "transitions": [],
-                  "seeded_by": seeded_by, "predecessor": predecessor}
+                  "seeded_by": seeded_by, "predecessor": predecessor, "intake": trig.intake}
     await _record(ctx, case, frm=None, outcome="received", to="received", by="system",
                   at_name="at_received")
     # THE ORIGINAL EVENT IS REVISION 1 (SDK ``ArtifactRevision``). ``input_revisions`` is the
@@ -414,6 +449,15 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
                 by=by or "system", reason=step.get("comments") or None,
                 at_name=f"at_{n}", instance_id=instance,
                 decided_by=f"{nxt['table']} row {nxt['row']}", **refreshed)
+            if nxt["terminal"] and episode:
+                # OPEN MEANS "NOT AT A TERMINAL STAGE", NEVER "A WORKFLOW IS ALIVE" (ruled
+                # 2026-11-10). The episode is freed the moment a table names a terminal, before the
+                # record, stamp and summary writes, so nothing this case still does after its
+                # terminal can hold the episode. Releasing after the loop made "open" mean "the
+                # run has not returned": October's released case held its episode for 12 days on
+                # an instance that never ended, and the walk's new occurrence attached to it.
+                # Sealed by tests/test_an_occurrence_attaches_to_its_open_episode.py.
+                ctx.object_send(release, key=episode, arg={"case_id": case_id})
             if env.get("outcome") == SEEDED_BY_STAMP_OUTCOME:
                 # THE RECORD IS WRITTEN BEFORE THE STAMP, so the stamp finds it. Read off the
                 # instance's own outbox through `outbox` (a shared handler of this workflow;
@@ -451,7 +495,8 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
                 "a chaining cycle with no human in it", status_code=500)
     except restate.TerminalError as exc:
         # A FAILED CASE IS STILL A RECORD, and it frees its episode: a refusal that held the
-        # episode would make every later event for that fault a silent duplicate.
+        # episode would make every later event for that fault a silent duplicate. A failure after
+        # the terminal sends it twice; `release` by a case that no longer holds is a no-op.
         await _record(ctx, case, frm=case["state"], outcome="failed", to="failed", by="system",
                       reason=str(exc), at_name="at_failed")
         await _summarize(ctx, case, state="failed", final_reason=str(exc))
@@ -459,8 +504,6 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
             ctx.object_send(release, key=episode, arg={"case_id": case_id})
         raise
 
-    if episode:
-        ctx.object_send(release, key=episode, arg={"case_id": case_id})
     return {"case_id": case_id, "status": "CLOSED", "terminal": case["terminal"],
             "transitions": case["transitions"], "approval_chain": chain}
 
@@ -569,6 +612,24 @@ async def _run_instance(ctx: WorkflowContext, request: dict) -> dict:
 async def instance_spec(ctx: WorkflowSharedContext, request: dict) -> Optional[dict]:
     """What the case opened as instance ``n`` -- read by the instance, written only by ``run``."""
     return await ctx.get(f"instance:{int(request['n'])}")
+
+
+@workflow_runner.handler()
+async def task_opened(ctx: WorkflowSharedContext, request: dict) -> dict:
+    """An instance of this case registered a human task: record its id as the case's opened task.
+
+    The id is minted where the instance registers it; this is how the case learns it without
+    anyone deriving `{case}~n:step`. The FIRST task wins; later calls change nothing."""
+    held = await _hold_opened_task(ctx, {"task_id": str(request["task_id"])})
+    return {"task_id": held["task_id"]}
+
+
+@workflow_runner.handler()
+async def opened_task(ctx: WorkflowSharedContext, request: Any = None) -> dict:
+    """The id of the first task this case opened, as the instance minted it; ``{"task_id": None}``
+    when the case ended without opening one. Waits for either -- the door asks the case, it never
+    derives the id."""
+    return await ctx.promise(OPENED_TASK, type_hint=dict).value()
 
 
 @workflow_runner.handler()

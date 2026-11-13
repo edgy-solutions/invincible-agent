@@ -1,5 +1,5 @@
 # OPTION DECIDERS -- the `can_decide:<workflow_id>.<option>` rail for obsolescence resolution, ADR-0065
-# (provisional, not yet written).
+# (Accepted 2026-11-07).
 #
 #   * SOURCE TEXT, verbatim (architect via Chris, 2026-11-06): "Rails for obsolescence_resolution: roles
 #     (who may approve LTB / redesign) as groups + capability rows; `can_decide:
@@ -26,15 +26,50 @@
 #     identity).
 #   * DENY BY DEFAULT. An explicit `grant_to_groups: []` with a reason says nobody may choose that option in
 #     that workflow.
-#   * NO OPTION AND NO WORKFLOW IS NAMED IN CODE OR IN THIS SEED. A deployment adds its rows.
+#   * NO OPTION AND NO WORKFLOW IS NAMED IN CODE. A deployment adds its rows. The rows below are the
+#     SANDBOX's, from the 2026-11-07 dispatch, verbatim: "option_deciders rows for
+#     obsolescence_resolution.<option> x5 (groups: a sandbox `obsolescence-deciders`, alice;
+#     ratified_by owner)." The five options are ADR-0065 §5's, verbatim: "last-time buy, alternate,
+#     aftermarket, redesign and bridge." They are fixture rows, not a claim about who chooses a
+#     resolution in production.
 #   * A `can_decide:` capability row in capability_grants.yaml is refused: this file is the one home.
 #   * RULING 3, verbatim: "Options live on the decide step of the workflow definition
 #     (`steps[id=...].options`, the SDK's WorkflowDefinition). The three hard-coded option lists retire when
 #     the runner reads the step -- item for 74, after the Socratic bar work."
-#   * MEASURED: the pinned SDK's steps (v0.9.15; `options` lands in v0.9.16, not tagged) have no `options` field yet;
-#     a `human_await` step has `chooses_from`, a context path the runner resolves at registration.
+#   * MEASURED: SDK v0.9.16 through v0.9.19 (the fleet pin) carry `HumanAwaitStep.options`, option ids (no
+#     whitespace, no `:`, no `.`, none twice), refused on a grouped await.
 #
 # No reader applies this file, and its options are not checked for membership, until a workflow
 # definition's decide step carries them. validate_policy.py checks it WHEN PRESENT (option_deciders_errors).
 
-option_deciders: []
+option_deciders:
+  - workflow: obsolescence_resolution
+    option: last_time_buy
+    grant_to_groups: [obsolescence-deciders]
+    granted_by: seed
+    reason: FIXTURE (2026-11-07 dispatch). The sandbox decider may choose a last-time buy at the decide step.
+    ratified_by: owner
+  - workflow: obsolescence_resolution
+    option: alternate
+    grant_to_groups: [obsolescence-deciders]
+    granted_by: seed
+    reason: FIXTURE (2026-11-07 dispatch). The sandbox decider may choose an alternate at the decide step.
+    ratified_by: owner
+  - workflow: obsolescence_resolution
+    option: aftermarket
+    grant_to_groups: [obsolescence-deciders]
+    granted_by: seed
+    reason: FIXTURE (2026-11-07 dispatch). The sandbox decider may choose aftermarket supply at the decide step.
+    ratified_by: owner
+  - workflow: obsolescence_resolution
+    option: redesign
+    grant_to_groups: [obsolescence-deciders]
+    granted_by: seed
+    reason: FIXTURE (2026-11-07 dispatch). The sandbox decider may choose a redesign at the decide step.
+    ratified_by: owner
+  - workflow: obsolescence_resolution
+    option: bridge
+    grant_to_groups: [obsolescence-deciders]
+    granted_by: seed
+    reason: FIXTURE (2026-11-07 dispatch). The sandbox decider may choose a bridge at the decide step.
+    ratified_by: owner

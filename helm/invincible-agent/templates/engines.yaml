@@ -86,7 +86,6 @@ spec:
                 name: {{ $.Release.Name }}-config
             - secretRef:
                 name: {{ $.Release.Name }}-secrets
-          {{- if or $eng.env (eq .component "engine-a") $ov }}
           env:
             {{- range $k, $v := $eng.env }}
             - name: {{ $k }}
@@ -103,7 +102,13 @@ spec:
             # hand-set path cannot disagree with what the init container delivered.
             {{- include "invincible-agent.policyOverlayEnv" (dict "root" $ "component" .component) | nindent 12 }}
             {{- end }}
-          {{- end }}
+            # Token checks (SDK transport_auth, v0.9.20+). LAST: a container env beats the configmap's
+            # envFrom, and the last duplicate beats `env` above, so no hand-set value can widen them.
+            {{- include "invincible-agent.engineTokenEnv" $ | nindent 12 }}
+            {{- if eq .component "central-gateway" }}
+            # The gateway's own token lists (dag-tools v0.14.0+): the BFF's, rendered after everything.
+            {{- include "invincible-agent.gatewayTokenEnv" $ | nindent 12 }}
+            {{- end }}
           {{- if $ov }}
           volumeMounts:
             {{- include "invincible-agent.policyOverlayMounts" (dict "root" $ "component" .component) | nindent 12 }}

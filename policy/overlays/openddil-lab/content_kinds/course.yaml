@@ -7,6 +7,8 @@
 # setup/ontologies/training_extension.ttl.
 kind: course
 domain: training
+arrives_as: [pptx, pdf, docx]
+label: Training course
 # review_shape names the card that renders this kind's reviews (ruled 2026-10-30; platform-owned).
 # The row names the card (`document`: a section list left, the page right); the review's item_kind
 # (`section`) comes from that shape's row in policy/review_shapes/, not from here.
@@ -14,7 +16,8 @@ review_shape: document
 passes:
   - structural.outline
   - core.baml::ExtractOutline
-  - training.baml::ExtractConcepts
+  - training.baml::ExtractSectionConcepts
+  - concepts.normalise
   - render.pages
 outputs:
   - training:Course

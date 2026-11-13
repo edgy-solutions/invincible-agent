@@ -94,7 +94,8 @@ def test_text_off_by_default_and_the_ref_has_no_default():
     assert rows == {
         "engine-fin": [("measure_verbs", "MEASURE_VERB_OVERLAY_DIRS"),
                        ("fin_export_profiles", "FIN_EXPORT_PROFILE_OVERLAY_DIRS")],
-        "cortex-bff": [("canvases", "CANVAS_OVERLAY_DIRS")],
+        "cortex-bff": [("canvases", "CANVAS_OVERLAY_DIRS"),
+                       ("exports", "INGEST_EXPORT_PROFILE_OVERLAY_DIRS")],
     }
 
 
@@ -175,6 +176,7 @@ def test_d_the_env_names_the_delivered_paths():
     assert fin["FIN_EXPORT_PROFILE_OVERLAY_DIRS"] == "/policy-overlay/fin_export_profiles"
     bff = _env(deps["t-cortex-bff"]["containers"][0])
     assert bff["CANVAS_OVERLAY_DIRS"] == "/policy-overlay/canvases"
+    assert bff["INGEST_EXPORT_PROFILE_OVERLAY_DIRS"] == "/policy-overlay/exports"
     assert "CANVAS_OVERLAY_DIRS" not in fin and "MEASURE_VERB_OVERLAY_DIRS" not in bff
 
 

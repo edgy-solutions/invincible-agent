@@ -8,6 +8,7 @@
 # omitted key is a defect and an explicit null is the ruling (doc-tools #86's domainless split).
 kind: doors-export
 domain: null
+label: DOORS export
 passes:
   - identity.identity_from_doors_text
   - doors.requirements_rows

@@ -55,12 +55,41 @@ selects:
         ?fc mil:hasFaultCodeValue ?fault_code ;
             mil:hasFaultCodeText ?text .
       }
+  fault_isolation_node:
+    cardinality: one
+    sparql: |
+      PREFIX mil: <http://edgy-solutions.com/ontology/mil#>
+      PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+      SELECT ?fi WHERE {
+        ?fi a mil:FaultIsolationDataModule ;
+            rdfs:label ?dmc ;
+            mil:hasFaultCode ?fc .
+        ?fc mil:hasFaultCodeValue ?fault_code ;
+            mil:hasFaultCodeText ?text .
+      }
   remove_install:
     cardinality: values
     sparql: |
       PREFIX mil: <http://edgy-solutions.com/ontology/mil#>
       PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
       SELECT ?dmc WHERE {
+        ?fi a mil:FaultIsolationDataModule ;
+            mil:hasFaultCode ?fc ;
+            mil:refersToDataModule ?dm .
+        ?fc mil:hasFaultCodeValue ?fault_code .
+        ?dm a mil:ProcedureDataModule ;
+            rdfs:label ?dmc .
+      } ORDER BY ?dmc
+  # THE NODE URIS the citations' labels are bound off -- a separate select, so `citations` keeps
+  # the shape the cross-repo contract pins. Same body and same ORDER BY ?dmc as `remove_install`,
+  # so index n here is the node of `remove_install.dmc.n` (a `values` select projects only its
+  # first variable, hence `?dm` alone). Cited on the action record's task_refs as `graph_uri`.
+  remove_install_nodes:
+    cardinality: values
+    sparql: |
+      PREFIX mil: <http://edgy-solutions.com/ontology/mil#>
+      PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+      SELECT ?dm WHERE {
         ?fi a mil:FaultIsolationDataModule ;
             mil:hasFaultCode ?fc ;
             mil:refersToDataModule ?dm .
@@ -96,7 +125,7 @@ selects:
     sparql: |
       PREFIX mil: <http://edgy-solutions.com/ontology/mil#>
       PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-      SELECT DISTINCT ?dmc ?interval WHERE {
+      SELECT DISTINCT ?dmc ?interval ?planDm WHERE {
         ?fi a mil:FaultIsolationDataModule ;
             mil:hasFaultCode ?fc ;
             mil:refersToDataModule ?procDm .
@@ -120,3 +149,7 @@ returns:
       icn: "{ipd.icn}"
       hotspot_id: "{ipd.hotspot_id}"
     planning_interval: {dmc: "{planning_interval.dmc}", interval: "{planning_interval.interval}"}
+  node_uris:
+    fault_isolation: "{fault_isolation_node.fi}"
+    remove_install: "{remove_install_nodes}"
+    planning_interval: "{planning_interval.planDm}"

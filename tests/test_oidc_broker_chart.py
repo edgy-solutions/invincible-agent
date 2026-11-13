@@ -97,8 +97,20 @@ def _job(rendered: str) -> dict:
     raise AssertionError("no realm-reconcile Job")
 
 
+def _bodies(rendered: str) -> dict:
+    """The realm-reconcile bodies Secret's stringData: every credential-bearing request body, by file name."""
+    for d in _docs(rendered):
+        if d["kind"] == "Secret" and d["metadata"]["name"].endswith("-realm-reconcile-bodies"):
+            return d["stringData"]
+    raise AssertionError("no realm-reconcile bodies Secret")
+
+
 def _script(rendered: str) -> str:
-    return _job(rendered)["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    """The reconcile script: the ConfigMap file the Job mounts at /scripts (it is no longer the container's args)."""
+    for d in _docs(rendered):
+        if d["kind"] == "ConfigMap" and d["metadata"]["name"].endswith("-realm-reconcile-script"):
+            return d["data"]["reconcile.sh"]
+    raise AssertionError("no realm-reconcile script ConfigMap")
 
 
 #: The committed sandbox flips the broker and its truststore ON (chart 0.4.50). The arms below that
@@ -195,16 +207,22 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     assert {"configmap.yaml", "realm-reconcile-job.yaml"} <= tpls, tpls
     old, new = _in_scope(old, tpls), _in_scope(base, tpls)
 
-    def _split(rendered: str) -> tuple[str, str]:
-        """(everything but the realm-reconcile Job, that Job's script)."""
+    def _split(rendered: str) -> tuple[str, str, str]:
+        """(everything but the realm-reconcile objects, the Job plus the ConfigMap that now holds its
+        script, the bodies Secret that now holds its credential-bearing request bodies)."""
         docs = [d for d in re.split(r"^---$", rendered, flags=re.M) if d.strip()]
         job = [d for d in docs if re.search(r"^kind: Job$", d, re.M) and "-realm-reconcile" in d]
+        script = [d for d in docs if re.search(r"^kind: ConfigMap$", d, re.M) and "-realm-reconcile-script" in d]
+        bodies = [d for d in docs if re.search(r"^kind: Secret$", d, re.M) and "-realm-reconcile-bodies" in d]
         assert len(job) == 1
-        return "---".join(d for d in docs if d is not job[0]), job[0]
+        assert len(script) <= 1 and len(bodies) <= 1
+        moved = job + script + bodies
+        return ("---".join(d for d in docs if not any(d is m for m in moved)),
+                "---".join(job + script), "".join(bodies))
 
     _diff = _line_diff
-    old_rest, old_job = _split(old)
-    new_rest, new_job = _split(new)
+    old_rest, old_job, _ = _split(old)
+    new_rest, new_job, new_bodies = _split(new)
     # positive controls: a scoping bug must not empty the comparison
     for rest in (old_rest, new_rest):
         assert re.search(r"^kind: ConfigMap$", rest, re.M) and re.search(r"^  name: \S+-config$", rest, re.M),             "the -config ConfigMap is missing from the filtered render"
@@ -239,6 +257,24 @@ def test_base_render_differs_from_the_base_sha_only_by_the_explicit_env(base, ba
     # (chart-owned stale mapper migrated, not merely counted). The ONLY lines the base render may
     # lose from the Job are the old create-only check and its comment; nothing else is removed.
     removed = {l[1:].strip() for l in _diff(old_job, new_job) if l.startswith("-")}
+    # 0.4.86: the script moved into a ConfigMap and every credential-bearing request body into the bodies
+    # Secret. A removed line is therefore only (a) one of the Job's own lines that changed on purpose, or
+    # (b) a line that now lives, verbatim, in a body of that Secret. Anything else is a real removal.
+    (bodies_doc,) = [d for d in yaml.safe_load_all(new_bodies) if d]
+    moved_to_bodies = {ln.strip() for body in bodies_doc["stringData"].values() for ln in body.splitlines()}
+    assert moved_to_bodies, "positive control: the bodies Secret holds the moved request bodies"
+    removed = {
+        r for r in removed
+        if r not in moved_to_bodies
+        and not any(r == f"-d '{b}' \\" for b in moved_to_bodies)  # the user-create line, whole body on it
+    }
+    removed -= {
+        'command: ["sh", "-c"]', "args:", "- |",             # the script is no longer the container's argument
+        '"$API/clients" -d \'{', "}'",                        # a secretRef client's inline create body
+        '"helm.sh/hook": post-install,post-upgrade',          # the phase is now per-release (pre-upgrade on upgrade)
+        "# After keycloak is up (restate-init is weight 0); before the syncs that assume identities.",
+        "name: t-secrets",                                    # a broker's secretKeyRef moved to the bodies Secret
+    }
     assert removed <= {
         "# Keycloak `sub` UUID. Does not overwrite an existing mapper: an operator who",
         "# deliberately changed one should not have it silently reverted by an upgrade.",
@@ -269,7 +305,15 @@ def test_the_scope_excludes_a_feature_the_oidc_change_never_touched(base, base_s
     # the filtered renders carry none of the outside difference
     f_old, f_new = _in_scope(old, tpls), _in_scope(base, tpls)
     outside_lines = {l for l in _line_diff(out_old, out_new) if l[1:].strip()}
-    leaked = outside_lines & set(_line_diff(f_old, f_new))
+    # 0.4.86 gave the realm-reconcile Job a ConfigMap and a Secret volume, plus two hook objects. Those
+    # lines are the OIDC templates' own, and generic ones ("volumes:", "configMap:") also appear in the
+    # outside difference, so they are DERIVED from the realm-reconcile documents and named, not ignored:
+    # whatever else is shared with the outside difference is still a leak.
+    rr = {"realm-reconcile-job.yaml"}
+    # (the new ConfigMap and Secret repeat the generic metadata lines of the Job, so the Job's old lines do not subtract)
+    rr_added = {f"+{l}" for l in _in_scope(base, rr).splitlines()}
+    assert any("volumeMounts:" in l for l in rr_added), "positive control: the realm-reconcile mount lines are derived"
+    leaked = (outside_lines & set(_line_diff(f_old, f_new))) - rr_added
     assert not leaked, sorted(leaked)[:5]
 
 
@@ -640,6 +684,19 @@ _OTHER_MAPPER = ('{"id":"m-other","name":"initiator-kind-svc","protocol":"openid
                  '"config":{"claim.name":"initiator_kind","claim.value":"delegate"}}')
 
 
+def _bff_audience() -> str:
+    values = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
+    return values["cortexBff"]["auth"]["realmAudience"]
+
+
+def _audience_mapper() -> str:
+    """The BFF audience mapper as Keycloak returns it, under an operator's name: the repair keys on
+    what a mapper emits, so the arms above (about authz-id-svc) run against a realm that has it."""
+    return ('{"id":"m-aud","name":"operator-named","protocol":"openid-connect",'
+            '"protocolMapper":"oidc-audience-mapper",'
+            '"config":{"access.token.claim":"true","included.custom.audience":"%s"}}' % _bff_audience())
+
+
 def _run_engine_d(sandbox: str, mappers: str) -> subprocess.CompletedProcess:
     s = _script(sandbox)
     start = s.index('CID="iagent-engine-d"')
@@ -676,7 +733,7 @@ def _writes(r: subprocess.CompletedProcess) -> list[tuple[str, str, dict]]:
 @pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
 @pytest.mark.parametrize("order", ["id-first", "id-last"])
 def test_a_pre_flip_chart_mapper_is_migrated_in_place(sandbox, order):
-    r = _run_engine_d(sandbox, "[%s,%s]" % (_OTHER_MAPPER, _mapper_json(order)))
+    r = _run_engine_d(sandbox, "[%s,%s,%s]" % (_OTHER_MAPPER, _mapper_json(order), _audience_mapper()))
     assert r.returncode == 0, r.stderr
     w = _writes(r)
     assert [x[0] for x in w] == ["PUT"], w
@@ -690,7 +747,7 @@ def test_a_pre_flip_chart_mapper_is_migrated_in_place(sandbox, order):
 
 @pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
 def test_an_operator_mapper_is_never_touched(sandbox):
-    r = _run_engine_d(sandbox, "[%s]" % _mapper_json("id-first", value="svc:somebody-else"))
+    r = _run_engine_d(sandbox, "[%s,%s]" % (_mapper_json("id-first", value="svc:somebody-else"), _audience_mapper()))
     assert r.returncode == 0, r.stderr
     assert _writes(r) == [], r.stderr
     assert "migrated" not in r.stdout
@@ -698,7 +755,7 @@ def test_an_operator_mapper_is_never_touched(sandbox):
 
 @pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
 def test_a_mapper_already_on_the_claim_is_left_alone(sandbox):
-    r = _run_engine_d(sandbox, "[%s]" % _mapper_json("id-first", name="authz_id"))
+    r = _run_engine_d(sandbox, "[%s,%s]" % (_mapper_json("id-first", name="authz_id"), _audience_mapper()))
     assert r.returncode == 0, r.stderr
     assert _writes(r) == [], r.stderr
     assert "present, mapper ok" in r.stdout
@@ -706,12 +763,36 @@ def test_a_mapper_already_on_the_claim_is_left_alone(sandbox):
 
 @pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
 def test_a_missing_mapper_is_still_created(sandbox):
-    r = _run_engine_d(sandbox, "[%s]" % _OTHER_MAPPER)
+    r = _run_engine_d(sandbox, "[%s,%s]" % (_OTHER_MAPPER, _audience_mapper()))
     assert r.returncode == 0, r.stderr
     w = _writes(r)
     assert [x[0] for x in w] == ["POST"], w
     assert w[0][1].endswith("/clients/uuid-1/protocol-mappers/models")
     assert w[0][2]["config"]["claim.name"] == "authz_id" and w[0][2]["config"]["claim.value"] == _ENGINE_D
+
+
+@pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
+def test_a_missing_bff_audience_mapper_is_added_with_the_served_audience(sandbox):
+    """Without it on a service client the BFF refuses that client's tokens after the roll."""
+    r = _run_engine_d(sandbox, "[%s,%s]" % (_mapper_json("id-first", name="authz_id"), _OTHER_MAPPER))
+    assert r.returncode == 0, r.stderr
+    w = _writes(r)
+    assert [x[0] for x in w] == ["POST"], w
+    _, url, body = w[0]
+    assert url.endswith("/clients/uuid-1/protocol-mappers/models"), url
+    assert body["protocolMapper"] == "oidc-audience-mapper"
+    assert body["config"]["included.custom.audience"] == _bff_audience()
+    assert body["config"]["access.token.claim"] == "true"
+
+
+@pytest.mark.skipif(_BASH is None, reason="a POSIX bash is not available")
+def test_control_a_present_bff_audience_mapper_is_left_alone(sandbox):
+    """Control for the arm above: the same realm plus a mapper emitting the audience, under an
+    operator's name. No write: the repair keys on what is emitted, never on the name."""
+    r = _run_engine_d(sandbox, "[%s,%s,%s]" % (_mapper_json("id-first", name="authz_id"), _OTHER_MAPPER,
+                                              _audience_mapper()))
+    assert r.returncode == 0, r.stderr
+    assert _writes(r) == [], r.stderr
 
 
 # ------------------------------------------------------------------ (i) local humans: create, parity, join, groups
@@ -744,8 +825,11 @@ def test_reconcile_creates_a_missing_local_human_under_either_claim(sandbox, ema
     for label, rendered in (("authz_id", sandbox), ("email", email_claim)):
         blocks = _create_lines(_script(rendered), who)
         assert len(blocks) == 1, f"{who} has no create-if-absent in the reconcile job under claim {label}"
-        assert f'"username":"{who}"' in blocks[0] and f'"email":"{who}@example.com"' in blocks[0]
-        assert '"enabled":true' in blocks[0] and '"temporary":false' in blocks[0]
+        # the create body carries the demo password, so it is a file in the bodies Secret; the script sends it
+        assert f'-d @"$BODIES/user-{who}.json"' in blocks[0]
+        body = _bodies(rendered)[f"user-{who}.json"]
+        assert f'"username":"{who}"' in body and f'"email":"{who}@example.com"' in body
+        assert '"enabled":true' in body and '"temporary":false' in body
 
 
 def test_every_local_human_is_in_the_import_and_in_a_reconcile_create(sandbox):
@@ -788,7 +872,7 @@ def test_the_walkers_hold_alices_groups_and_default_and_nothing_else(who):
     cap_only = {g for r in rows.values() for g in (r.get("grant_to_groups") or []) if not cells.get(g)}
     assert cap_only & set(alice["groups"]), "positive control: alice holds a capability-only group"
     mirrored = [g for g in alice["groups"] if g not in cap_only]
-    assert len(mirrored) == 11, mirrored                                 # positive control: the set is non-trivial (11: + maint-tier-ack-edge-01, ruling 2026-10-11; + maint-tier-ack-edge-02, 2026-10-27)
+    assert len(mirrored) == 12, mirrored                                 # positive control: the set is non-trivial (11: + maint-tier-ack-edge-01, ruling 2026-10-11; + maint-tier-ack-edge-02, 2026-10-27; 12: + obsolescence-deciders, ruling 2026-11-10 "the walkers mirror alice")
     held = [g for g in walker["groups"] if g not in cap_only]
     assert set(held) == set(mirrored) and len(held) == len(mirrored)
     assert walker["default"] == alice["default"]

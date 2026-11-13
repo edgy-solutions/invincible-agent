@@ -819,3 +819,167 @@ of existingSecret / existingConfigMap; caPem was removed. Called from keycloak.y
   value: {{ printf "%s/%s" $mount $row.dir | quote }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+  The BFF's accepted issuers / audiences as ONE comma-joined string: `cortexBff.auth.<key>`, each
+  entry through tpl, trimmed. Empty list -> "" (an empty value refuses every token). Called with
+  (dict "root" $ "key" "acceptedIssuers"). The BFF (frontend.yaml) and the engines
+  (engineTokenEnv) both read it, so there is no second copy of the list.
+*/}}
+{{- define "invincible-agent.acceptedList" -}}
+{{- $root := .root -}}
+{{- $auth := ($root.Values.cortexBff.auth | default dict) -}}
+{{- $out := list -}}
+{{- range (index $auth .key | default list) }}{{- $out = append $out (tpl (toString .) $root | trim) }}{{- end -}}
+{{- join "," $out -}}
+{{- end -}}
+
+{{/*
+  The central gateway's accepted issuers / audiences (dag-tools v0.14.0+), the BFF's lists via
+  acceptedList, so the gateway admits exactly the tokens the BFF admits. The gateway reads each list
+  as the PLURAL name then the SINGULAR one, de-duplicated, so a hand-set name would widen it: the
+  plurals and GATEWAY_JWT_AUDIENCE may not be set in centralGateway.env or agentFleet.env, and a
+  singular GATEWAY_JWT_ISSUER must already be one of the BFF's issuers (acceptedIssuers quotes it in
+  the sandbox). Rendered LAST in the gateway container's env. Called with the root context.
+*/}}
+{{- define "invincible-agent.gatewayTokenEnv" -}}
+{{- $issuers := include "invincible-agent.acceptedList" (dict "root" . "key" "acceptedIssuers") -}}
+{{- range $src := list "centralGateway.env" "agentFleet.env" }}
+{{- $env := ternary ($.Values.centralGateway.env | default dict) ($.Values.agentFleet.env | default dict) (eq $src "centralGateway.env") }}
+{{- range $name := list "GATEWAY_JWT_ISSUERS" "GATEWAY_JWT_AUDIENCES" "GATEWAY_JWT_AUDIENCE" }}
+{{- if hasKey $env $name }}{{- fail (printf "%s.%s is rendered from cortexBff.auth; a hand-set value would widen the gateway's list" $src $name) }}{{- end }}
+{{- end }}
+{{- if and $issuers (hasKey $env "GATEWAY_JWT_ISSUER") (not (has (toString (index $env "GATEWAY_JWT_ISSUER")) (splitList "," $issuers))) }}
+{{- fail (printf "%s.GATEWAY_JWT_ISSUER must be one of cortexBff.auth.acceptedIssuers, or the gateway accepts an issuer the BFF refuses" $src) }}
+{{- end }}
+{{- end -}}
+- name: GATEWAY_JWT_ISSUERS
+  value: {{ $issuers | quote }}
+- name: GATEWAY_JWT_AUDIENCES
+  value: {{ include "invincible-agent.acceptedList" (dict "root" . "key" "acceptedAudiences") | quote }}
+{{- end -}}
+
+{{/*
+  The token-check env every engine pod serves (read by the SDK's transport_auth, v0.9.20+). THE ONLY
+  PLACE the MESH_JWT_* / REQUIRE_TRANSPORT_AUTH names are written. Rendered LAST in each engine
+  container's env, so it beats the configmap's envFrom (agentFleet.env) and any per-engine env entry
+  above it (last duplicate wins). JWKS = the effective KEYCLOAK_REALM_URL (agentFleet.env wins, as in
+  configmap.yaml) + /protocol/openid-connect/certs. Called with the root context.
+*/}}
+{{- define "invincible-agent.engineTokenEnv" -}}
+{{- $realm := include "invincible-agent.keycloakRealmUrl" . -}}
+{{- $fleet := (.Values.agentFleet.env | default dict) -}}
+{{- if hasKey $fleet "KEYCLOAK_REALM_URL" }}{{- $realm = toString (index $fleet "KEYCLOAK_REALM_URL") }}{{- end -}}
+- name: MESH_JWT_ACCEPTED_ISSUERS
+  value: {{ include "invincible-agent.acceptedList" (dict "root" . "key" "acceptedIssuers") | quote }}
+- name: MESH_JWT_ACCEPTED_AUDIENCES
+  value: {{ include "invincible-agent.acceptedList" (dict "root" . "key" "acceptedAudiences") | quote }}
+- name: MESH_JWT_JWKS_URL
+  value: {{ printf "%s/protocol/openid-connect/certs" ($realm | trimSuffix "/") | quote }}
+{{- if (.Values.agentFleet.transportAuth | default dict).require }}
+- name: REQUIRE_TRANSPORT_AUTH
+  value: "true"
+{{- end }}
+{{- end -}}
+
+{{/*
+The overlay-directory variables the ENGINE PODS see, as shell `export` lines for a sync Job.
+
+WHY: "which export profiles does this deployment know" is a question about the overlay the pods
+load (the same variables the engines' loaders read). The sync Jobs run the image, which sees only
+its base profiles, so capability_grant_sync could not tell a misspelt `can_export:<name>` from an
+overlay profile (architect 2026-11-11). This gives the Job what the pods get, with no profile or
+variable named here: every `*_OVERLAY_DIRS` entry of agentFleet.env (the shared pod config, which
+is where the sandbox points at the sample overlay), then, when policyOverlay is on and the Job reads
+the policy repo (mode git), every dir policyOverlay copies into any pod, at the path the pod's
+variable would hold. policyOverlay is applied last, as it is on a pod: its variable replaces the
+shared one. A dir the repo lacks is skipped (a pod whose required dir is missing refuses to start;
+the Job only needs the names).
+
+Call: {{ include "invincible-agent.podOverlayEnv" (dict "root" $ "mode" $mode) | nindent N }}
+*/}}
+{{- define "invincible-agent.podOverlayEnv" -}}
+{{- $v := .root.Values -}}
+{{- range $k, $val := ($v.agentFleet.env | default dict) }}
+{{- if hasSuffix "_OVERLAY_DIRS" $k }}
+export {{ $k }}={{ $val | toString | quote }}
+{{- end }}
+{{- end }}
+{{- if and $v.policyOverlay.enabled (eq .mode "git") }}
+{{- $repo := printf "/overlay-src/repo%s" (ternary (printf "/%s" ($v.policyOverlay.path | default "")) "" (ne ($v.policyOverlay.path | default "") "")) }}
+{{- range $comp, $rows := $v.policyOverlay.components }}
+{{- range $rows }}
+if [ -d "{{ $repo }}/{{ .dir }}" ]; then export {{ .env }}="{{ $repo }}/{{ .dir }}"; fi
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
+The request body that creates one declared service client (POST /clients). One definition, two
+callers: realm-reconcile-job.yaml puts it INLINE for a client with no secretRef, and in the
+realm-reconcile-bodies Secret (a file the script sends with -d @file) for a client that carries a
+"secret". Call: include "invincible-agent.realmReconcileSvcBody" (dict "c" $c "root" $ "claim" $claim "bffAud" $bffAud)
+*/}}
+{{- define "invincible-agent.realmReconcileSvcBody" -}}
+{{- $c := .c }}{{- $claim := .claim }}{{- $bffAud := .bffAud }}
+{{- $kind := $c.kind | default "service" }}
+{{- $secret := "" }}
+{{- if $c.secretRef }}{{- $secret = get .root.Values.keycloak $c.secretRef }}{{- end -}}
+{
+                    "clientId": {{ $c.clientId | quote }},
+                    "enabled": true,
+                    "publicClient": false,
+                    "serviceAccountsEnabled": true,
+                    "standardFlowEnabled": false,
+                    "directAccessGrantsEnabled": false,
+                    {{- if $c.secretRef }}
+                    "secret": {{ $secret | quote }},
+                    {{- end }}
+                    "protocolMappers": [{
+                      "name": "authz-id-svc",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-hardcoded-claim-mapper",
+                      "config": {
+                        "claim.name": {{ $claim | quote }},
+                        "claim.value": {{ $c.authzId | quote }},
+                        "jsonType.label": "String",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "userinfo.token.claim": "true"
+                      }
+                    }{{ if eq $kind "delegate" }},{
+                      "name": "initiator-kind-svc",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-hardcoded-claim-mapper",
+                      "config": {
+                        "claim.name": "initiator_kind",
+                        "claim.value": "delegate",
+                        "jsonType.label": "String",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "userinfo.token.claim": "true"
+                      }
+                    }{{ end }}
+                    {{- if $bffAud }},{
+                      "name": "audience-bff",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-audience-mapper",
+                      "config": {
+                        "included.custom.audience": {{ $bffAud | quote }},
+                        "access.token.claim": "true",
+                        "id.token.claim": "false"
+                      }
+                    }
+                    {{- end }}]
+                  }
+{{- end }}
+
+{{/*
+The hook phase of the realm reconcile and the two objects it mounts. A fresh install creates Keycloak
+in this very release, so the reconcile must run AFTER it (post-install). An upgrade has a running
+Keycloak already, and the reconcile must land BEFORE any workload changes (pre-upgrade).
+*/}}
+{{- define "invincible-agent.realmReconcileHookPhase" -}}
+{{- if .Release.IsInstall }}post-install{{- else }}pre-upgrade{{- end }}
+{{- end }}

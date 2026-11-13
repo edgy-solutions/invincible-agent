@@ -20,10 +20,10 @@ definition of "valid", never a parallel re-implementation):
   - program_members.yaml          → program_member_sync.load_programs
   - capability_grants.yaml        → also: a `grant_to_groups` group exists and has members, and
     a `can_drop:<K>` key names a KNOWN content kind (see known_content_kinds)
-  - capability_grants.yaml        → also: a `can_export:<P>` key names a KNOWN export profile
-    (see known_export_profiles), no profile name is in two kinds, and every known profile -- of
-    each kind policy/export_profile_sources.yaml declares -- has a `can_export:<P>` row
-    (deny-by-default: no row, nobody exports)
+  - capability_grants.yaml        → also: no export profile name is in two kinds (see
+    known_export_profiles). A `can_export:<P>` row naming a profile this deployment does not know
+    is NOT an error here: capability_grant_sync refuses THAT ROW, with a report, and applies the
+    rest (architect 2026-11-11). A profile with no row is not an error either: deny-by-default.
   - capability_grants.yaml        → also: a `can_call:<T>` key names a tag of the served MCP document
     (see known_call_tags); no row is required per tag (deny-by-default: no row, nobody calls)
   - capability_grants.yaml        → also: a `can_review:<S>` key names a registered review subject
@@ -38,8 +38,13 @@ definition of "valid", never a parallel re-implementation):
     DATA_FILES -- see the note there)
   - classification/dimensions.yaml → classification_dimensions_errors (WHEN PRESENT; not in
     DATA_FILES -- see the note there): a name is a bare name, unique; a type is `hierarchical` or
-    `set`; a vocabulary is a list of bare values; an owner is a seat; at most one hierarchical
-  - level_readers.yaml            → level_readers_errors (WHEN PRESENT; not in DATA_FILES -- see
+    `set`; a vocabulary is a list of bare values; an owner is a seat; at most one hierarchical;
+    every dimension and value has a UUID v7 identity; `required`/`empty_means` per dimension and
+    per declared boundary
+  - registry/lifecycle_status.yaml → lifecycle_status_errors (WHEN PRESENT; not in DATA_FILES):
+    the SDK's `statuses` shape, a generator, and a UUID v7 identity per status; no identity is
+    declared twice across the two vocabulary files (term_identity_collisions)
+  - level_readers.yaml           → level_readers_errors (WHEN PRESENT; not in DATA_FILES -- see
     the note there): a level is a value of the hierarchical dimension, one row per value, a group
     exists and has members
   - dimension_holders.yaml        → dimension_holders_errors (WHEN PRESENT; not in DATA_FILES -- see
@@ -81,6 +86,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -130,9 +136,13 @@ DATA_FILES = (
 # any of them yet (dag-tools step 5), an absent registry registers no dimension, and an absent rail
 # grants no level and holds no value. Validated WHEN PRESENT.
 #
-# option_deciders.yaml (the `can_decide:<workflow_id>.<option>` rail, ADR-0065 (provisional, not yet
-# written)) is likewise NOT in DATA_FILES: no code reads it yet (a workflow definition's decide step will
+# option_deciders.yaml (the `can_decide:<workflow_id>.<option>` rail, ADR-0065, Accepted
+# 2026-11-07) is likewise NOT in DATA_FILES: no code reads it yet (a workflow definition's decide step will
 # carry the options, ADR-0065 ruling 3), and an absent rail grants no option. Validated WHEN PRESENT.
+#
+# registry/lifecycle_status.yaml (ADR-0065 §3) is likewise NOT in DATA_FILES: iagent has no reader yet
+# (the SDK's load_lifecycle_status_vocabulary is the one), and an absent file declares no status.
+# Validated WHEN PRESENT.
 
 
 def known_content_kinds() -> tuple[set[str], list[str]]:
@@ -233,7 +243,8 @@ def known_export_profiles(
     Each kind is a row of policy/export_profile_sources.yaml (`rows` stands in for the file, for
     tests), composed by iagent_mesh.compose_export_profiles: the seed (`seed_env` if set, else
     `seed_default` under the repository root), then each dir in `overlay_env` (os.pathsep-separated,
-    empty entries dropped, as the engines split it), then the row's `offline_overlays`. A later
+    empty entries dropped, as the engines split it): the overlay the DEPLOYMENT loads, nothing more
+    (ruled 2026-11-11: the sample profiles are known only where the sample overlay is loaded). A later
     same-`name` row replaces an earlier one, and `deleted: true` removes the name. The SDK REFUSES
     what this gate's old copy skipped: an empty or nameless file, two files of one name in one
     directory, and a tombstone for a name nothing before it ships.
@@ -281,8 +292,8 @@ def known_export_profiles(
         dirs: list[str] = []
         seen: set[Path] = set()
         listed = [p for p in os.getenv(overlay_env, "").split(os.pathsep) if p] if overlay_env else []
-        for d in listed + [(root / d).as_posix() for d in row.get("offline_overlays") or []]:
-            if Path(d).resolve() not in seen:  # a dir both set and offline is composed once
+        for d in listed:
+            if Path(d).resolve() not in seen:  # a dir listed twice is composed once
                 seen.add(Path(d).resolve())
                 dirs.append(d)
         try:
@@ -814,17 +825,80 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
 #: The row fields of policy/classification/dimensions.yaml, policy/level_readers.yaml and
 #: policy/dimension_holders.yaml (ADR-0064 item B, Proposed, #266; dimensions per the 2026-11-06
 #: ruling). No code reads any of them yet; dag-tools step 5 serves a dataset's level.
-_CD_ROW_FIELDS = ("name", "type", "vocabulary", "owner", "ratified_by")
+_CD_TOP_KEYS = ("generator", "dimensions", "boundaries")
+_CD_ROW_FIELDS = ("name", "identity", "type", "vocabulary", "identities", "required", "empty_means",
+                  "owner", "ratified_by")
+_CB_ROW_FIELDS = ("name", "dimensions", "owner", "ratified_by")
+_CB_DECL_FIELDS = ("dimension", "required", "empty_means")
 _LR_ROW_FIELDS = ("level", "grant_to_groups", "granted_by", "reason", "ratified_by")
 _DH_ROW_FIELDS = ("dimension", "value", "grant_to_groups", "granted_by", "reason", "ratified_by")
 _CD_TYPES = ("hierarchical", "set")
+
+#: What an empty value set means where it is declared (openddil ADR-0055 §1, the boundary amendment).
+#: Undeclared, the type's own meaning holds, which is the in-mesh default.
+_EMPTY_MEANS = ("admits_everyone", "admits_no_one")
+
+#: A term's identity under openddil ADR-0056 §1: a UUID v7, written `urn:uuid:<uuid>` in lower case.
+_TERM_IDENTITY = re.compile(
+    r"urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+
+
+def _term_identity_errors(where: str, identity, what: str) -> list[str]:
+    if isinstance(identity, str) and _TERM_IDENTITY.fullmatch(identity):
+        return []
+    return [f"{where}: {what} must be a UUID v7 written `urn:uuid:<uuid>` in lower case "
+            "(openddil ADR-0056 §1), minted by the file's `generator`"]
+
+
+def _value_identities_errors(where: str, identities, values: list[str]) -> list[str]:
+    """`identities` maps each value to its own identity and names nothing else."""
+    if not isinstance(identities, dict):
+        return [f"{where}: `identities` must map each value to its identity"]
+    out: list[str] = []
+    for v in values:
+        if v not in identities:
+            out.append(f"{where}: value {v!r} has no identity in `identities`")
+        else:
+            out.extend(_term_identity_errors(where, identities[v], f"the identity of {v!r}"))
+    for v in identities:
+        if v not in values:
+            out.append(f"{where}: `identities` names {v!r}, which is not a value")
+    return out
+
+
+def _empty_value_errors(where: str, decl: dict, typ: str | None) -> list[str]:
+    """`required` and `empty_means`, where a dimension row or a boundary declares them (openddil
+    ADR-0055 §1). Both are optional. `required: true` withholds an empty or absent value as
+    `dimension_missing`, so `empty_means` beside it could never apply and is refused, as is
+    `empty_means` on a hierarchical dimension, which always has a level."""
+    out: list[str] = []
+    req = decl.get("required", False)
+    if not isinstance(req, bool):
+        out.append(f"{where}: `required` must be true or false")
+    if "empty_means" in decl:
+        em = decl["empty_means"]
+        if em not in _EMPTY_MEANS:
+            out.append(f"{where}: `empty_means` must be one of: {', '.join(_EMPTY_MEANS)}")
+        elif typ == "hierarchical":
+            out.append(f"{where}: `empty_means` on a hierarchical dimension (it always has a level, "
+                       "so its value is never empty)")
+        elif req is True:
+            out.append(f"{where}: `empty_means` beside `required: true` (an empty value is withheld "
+                       "as `dimension_missing`, so the meaning never applies)")
+    return out
 
 
 def classification_dimensions_errors(
         raw: dict, users: list) -> tuple[list[str], dict[str, tuple[str, list[str]]] | None]:
     """Validate policy/classification/dimensions.yaml. PURE.
 
-    Shape: `dimensions: [{name, type: hierarchical|set, vocabulary: [value, ...], owner, ratified_by}]`.
+    Shape: `generator`, `dimensions: [{name, identity, type: hierarchical|set, vocabulary: [value, ...],
+    identities: {value: identity}, required?, empty_means?, owner, ratified_by}]` and `boundaries:
+    [{name, dimensions: [{dimension, required?, empty_means?}], owner, ratified_by}]` (optional).
+    `generator` names what mints the identities; every identity is a UUID v7 `urn:uuid:` (openddil
+    ADR-0056 §1). `required` and `empty_means` are per dimension (inside the deployment) and per
+    declared boundary (an egress destination), as openddil ADR-0055 §1's amendment has them; a boundary
+    declares at least one of the two for a dimension this file registers, once.
     Returns `(errors, dims)`. `dims` maps each VALID dimension name to `(type, vocabulary)` in file
     order, or is None when the file is refused at the top level. Each error reads
     `classification/dimensions.yaml: <name or row i>: ...`. A name is the `<dimension>` of
@@ -836,10 +910,10 @@ def classification_dimensions_errors(
     no dimension; a second is refused. A row with a bad name, type or vocabulary contributes no
     dimension."""
     pre = "classification/dimensions.yaml"
-    if not isinstance(raw, dict) or set(raw) != {"dimensions"}:
-        extra = sorted(map(str, set(raw) - {"dimensions"})) if isinstance(raw, dict) else []
-        return ([f"{pre}: top level must be a mapping with exactly one key, `dimensions`"
-                 + (f" (unknown key(s): {', '.join(extra)})" if extra else "")], None)
+    if not isinstance(raw, dict) or "dimensions" not in raw or set(raw) - set(_CD_TOP_KEYS):
+        extra = sorted(map(str, set(raw) - set(_CD_TOP_KEYS))) if isinstance(raw, dict) else []
+        return ([f"{pre}: top level must be a mapping with `generator`, `dimensions` and optionally "
+                 "`boundaries`" + (f" (unknown key(s): {', '.join(extra)})" if extra else "")], None)
     rows = raw["dimensions"]
     if not isinstance(rows, list):
         return ([f"{pre}: `dimensions` must be a list of rows "
@@ -847,6 +921,10 @@ def classification_dimensions_errors(
 
     seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
     out: list[str] = []
+    gen = raw.get("generator")
+    if not isinstance(gen, str) or not gen.strip():
+        out.append(f"{pre}: `generator` must name what mints this file's identities "
+                   "(openddil ADR-0056 §1, ruling 5)")
     dims: dict[str, tuple[str, list[str]]] = {}
     names_seen: set[str] = set()
     have_hier = False
@@ -901,13 +979,11 @@ def classification_dimensions_errors(
                 else:
                     vals.append(v)
 
-        for k in ("owner", "ratified_by"):
-            seat = row.get(k)
-            if not isinstance(seat, str) or not seat.strip():
-                out.append(f"{where}: `{k}` must be a non-empty string")
-            elif seat.strip() in seeded:
-                out.append(f"{where}: `{k}` names a seat (e.g. `owner`), not an identity "
-                           "in users.yaml")
+        out.extend(_term_identity_errors(where, row.get("identity"), "`identity`"))
+        if ok:
+            out.extend(_value_identities_errors(where, row.get("identities"), vals))
+        out.extend(_empty_value_errors(where, row, typ))
+        out.extend(_seat_errors(where, row, ("owner", "ratified_by"), seeded))
 
         if ok and typ == "hierarchical":
             if have_hier:
@@ -917,7 +993,157 @@ def classification_dimensions_errors(
             have_hier = True
         if ok:
             dims[name] = (typ, vals)
+    out.extend(_classification_boundaries_errors(raw.get("boundaries", []), names_seen, dims, seeded))
     return out, dims
+
+
+def _seat_errors(where: str, row: dict, keys: tuple[str, ...], seeded: set[str]) -> list[str]:
+    out: list[str] = []
+    for k in keys:
+        seat = row.get(k)
+        if not isinstance(seat, str) or not seat.strip():
+            out.append(f"{where}: `{k}` must be a non-empty string")
+        elif seat.strip() in seeded:
+            out.append(f"{where}: `{k}` names a seat (e.g. `owner`), not an identity in users.yaml")
+    return out
+
+
+def _classification_boundaries_errors(rows, names: set[str], dims: dict, seeded: set[str]) -> list[str]:
+    """The `boundaries` of classification/dimensions.yaml: one row per egress destination the deployment
+    declares, each setting `required` and/or `empty_means` for dimensions this file registers (openddil
+    ADR-0055 §1's amendment). A destination that declares nothing keeps the in-mesh meaning, so a
+    declaration that sets neither is refused as saying nothing."""
+    pre = "classification/dimensions.yaml: boundaries"
+    if not isinstance(rows, list):
+        return [f"{pre}: must be a list of rows (an empty list declares no boundary)"]
+    out: list[str] = []
+    seen: set[str] = set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        name = row.get("name")
+        where = f"{pre}: {name if isinstance(name, str) and name.strip() else f'row {i}'}"
+        for k in row:
+            if k not in _CB_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_CB_ROW_FIELDS)})")
+        if not isinstance(name, str) or not name.strip():
+            out.append(f"{where}: `name` must be a non-empty string")
+        elif any(ch.isspace() for ch in name) or ":" in name:
+            out.append(f"{where}: `name` must have no whitespace and no `:`")
+        elif name in seen:
+            out.append(f"{where}: more than one boundary has this name")
+        else:
+            seen.add(name)
+        out.extend(_seat_errors(where, row, ("owner", "ratified_by"), seeded))
+
+        decls = row.get("dimensions")
+        if not isinstance(decls, list) or not decls:
+            out.append(f"{where}: `dimensions` must be a non-empty list of declarations")
+            continue
+        declared: set[str] = set()
+        for j, decl in enumerate(decls):
+            if not isinstance(decl, dict):
+                out.append(f"{where}: declaration {j}: must be a mapping")
+                continue
+            dim = decl.get("dimension")
+            at = f"{where}: {dim if isinstance(dim, str) and dim.strip() else f'declaration {j}'}"
+            for k in decl:
+                if k not in _CB_DECL_FIELDS:
+                    out.append(f"{at}: unknown key {k!r} (allowed: {', '.join(_CB_DECL_FIELDS)})")
+            if not isinstance(dim, str) or dim not in names:
+                out.append(f"{at}: `dimension` must name a dimension this file registers")
+            elif dim in declared:
+                out.append(f"{at}: declared more than once at this boundary")
+            else:
+                declared.add(dim)
+            if "required" not in decl and "empty_means" not in decl:
+                out.append(f"{at}: declares neither `required` nor `empty_means` (a boundary that "
+                           "declares nothing keeps the in-mesh meaning; leave the dimension out)")
+            typ = dims[dim][0] if isinstance(dim, str) and dim in dims else None
+            out.extend(_empty_value_errors(at, decl, typ))
+    return out
+
+
+def term_identities(files: dict[str, dict]) -> list[tuple[str, str]]:
+    """Every term identity the vocabulary files declare, as `(identity, "<file>: <term>")` in file
+    order. `files` maps a file label (`classification/dimensions.yaml`,
+    `registry/lifecycle_status.yaml`) to its parsed body. Malformed parts are skipped: each file's own
+    validator reports them."""
+    found: list[tuple[str, str]] = []
+
+    def take(label: str, identity, ids) -> None:
+        if isinstance(identity, str):
+            found.append((identity, label))
+        if isinstance(ids, dict):
+            found.extend((i, f"{label}.{v}") for v, i in ids.items() if isinstance(i, str))
+
+    for fname, raw in files.items():
+        if not isinstance(raw, dict):
+            continue
+        if fname == "registry/lifecycle_status.yaml":
+            take(f"{fname}: statuses", raw.get("identity"), raw.get("identities"))
+            continue
+        for row in raw.get("dimensions") or []:
+            if isinstance(row, dict):
+                take(f"{fname}: {row.get('name')}", row.get("identity"), row.get("identities"))
+    return found
+
+
+def term_identity_collisions(files: dict[str, dict]) -> list[str]:
+    """One identity per thing (openddil ADR-0056 §1): no identity is declared for two terms, within a
+    file or across the vocabulary files."""
+    first: dict[str, str] = {}
+    out: list[str] = []
+    for identity, label in term_identities(files):
+        if identity in first:
+            out.append(f"{label}: identity {identity} is already {first[identity]}'s "
+                       "(one identity per thing, openddil ADR-0056 §1)")
+        else:
+            first[identity] = label
+    return out
+
+
+_LS_KEYS = ("generator", "identity", "statuses", "identities", "owner", "ratified_by")
+
+
+def lifecycle_status_errors(raw: dict, users: list) -> list[str]:
+    """Validate policy/registry/lifecycle_status.yaml. PURE.
+
+    The vocabulary of a part's `lifecycle_status.status` (ADR-0065 §3). The SDK's
+    `load_lifecycle_status_vocabulary` reads `statuses`, a non-empty list of non-blank strings, and
+    this validator holds the file to that plus what openddil ADR-0056 §1 adds: `generator` names what
+    mints the identities, `identity` is the vocabulary's own, and `identities` gives each status one.
+    No status is listed twice. `owner` and `ratified_by` are seats. Every error starts
+    `registry/lifecycle_status.yaml: `."""
+    pre = "registry/lifecycle_status.yaml"
+    if not isinstance(raw, dict):
+        return [f"{pre}: top level must be a mapping"]
+    out: list[str] = []
+    for k in raw:
+        if k not in _LS_KEYS:
+            out.append(f"{pre}: unknown key {k!r} (allowed: {', '.join(_LS_KEYS)})")
+    gen = raw.get("generator")
+    if not isinstance(gen, str) or not gen.strip():
+        out.append(f"{pre}: `generator` must name what mints this file's identities "
+                   "(openddil ADR-0056 §1, ruling 5)")
+    out.extend(_term_identity_errors(pre, raw.get("identity"), "`identity`"))
+    statuses = raw.get("statuses")
+    if not isinstance(statuses, list) or not statuses:
+        out.append(f"{pre}: `statuses` must be a non-empty list of statuses")
+        statuses = []
+    vals: list[str] = []
+    for s in statuses:
+        if not isinstance(s, str) or not s.strip():
+            out.append(f"{pre}: `statuses` values must be non-blank strings")
+        elif s in vals:
+            out.append(f"{pre}: status {s!r} is listed more than once")
+        else:
+            vals.append(s)
+    out.extend(_value_identities_errors(pre, raw.get("identities"), vals))
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out.extend(_seat_errors(pre, raw, ("owner", "ratified_by"), seeded))
+    return out
 
 
 def hierarchical_levels(dims) -> list[str] | None:
@@ -1028,7 +1254,7 @@ def level_readers_errors(raw: dict, levels: list[str] | None, groups: dict, user
                            "`grant_to_groups: []` with a reason says nobody reads it)")
     return out
 
-#: The row fields of policy/option_deciders.yaml (ADR-0065 (provisional, not yet written)). One row per
+#: The row fields of policy/option_deciders.yaml (ADR-0065 (Accepted 2026-11-07)). One row per
 #: workflow and option, keyed `<workflow_id>.<option>`. Nothing reads the file yet; the options will come
 #: from the workflow definition's decide step (ruling 3).
 _OD_ROW_FIELDS = ("workflow", "option", "grant_to_groups", "granted_by", "reason", "ratified_by")
@@ -1310,7 +1536,7 @@ def validate(
                 f"capability_grants.yaml: capability {c.key!r}: a dimension value's holders are rows "
                 f"of policy/dimension_holders.yaml, not a capability row")
 
-    # `can_decide:<workflow_id>.<option>` is the option rail's key (ADR-0065, provisional), never a
+    # `can_decide:<workflow_id>.<option>` is the option rail's key (ADR-0065), never a
     # capability row.
     for c in caps:
         if c.key.startswith("can_decide:"):
@@ -1331,41 +1557,18 @@ def validate(
                 f"of: " + "; ".join(_sources))
 
     # `can_export:<P>` (DENY-BY-DEFAULT, unlike can_drop): the door asks can_invoke on
-    # `can_export:<P>` and False refuses, so a profile with no row is exportable by NOBODY. There is
-    # no generated default (the sync Job's image cannot reliably see every profile overlay), so the
-    # defaults are met by COMPLETENESS here: every known profile, of every kind, must have a row
-    # (CDRL ruled 2026-10-29, answer-export ruled 2026-10-30). The refusal's advice is DERIVED from
-    # the rows that decide other profiles of the same kind -- never a group held in code.
+    # `can_export:<P>` and False refuses, so a profile with no row is exportable by NOBODY. That is
+    # not an error here or anywhere (architect 2026-11-11). Nor is a row naming a profile this
+    # deployment does not know: the sync Job's image sees only the profiles the deployment loads, so
+    # whether a row's name is known is the SYNC's question, answered per deployment, and it refuses
+    # that one row with a report (capability_grant_sync.split_export_rows). Only a collision of
+    # names across kinds, or a profile set that does not load, is refused here.
     _profiles, _pnotes = known_export_profiles()
     for _n in _pnotes:
         if _n.startswith("COLLISION:"):
             errors.append(f"capability_grants.yaml: export profile {_n}")
         elif _n.startswith("REFUSED:"):
             errors.append(f"export profiles: {_n}")
-    # A refused kind composed no names, so its rows would all read as misspelt: say the refusal once.
-    _refused = any(n.startswith("REFUSED:") for n in _pnotes)
-    _pnotes = [n for n in _pnotes if not n.startswith(("COLLISION:", "REFUSED:"))]
-    _export_keys = {c.key[len("can_export:"):] for c in caps if c.key.startswith("can_export:")}
-    for _p in sorted(set() if _refused else _export_keys - set(_profiles)):
-        errors.append(
-            f"capability_grants.yaml: 'can_export:{_p}' names {_p!r}, which is NOT a known export "
-            f"profile -- a misspelt key gates nothing and the real profile stays unexportable. "
-            f"Known profiles ({len(_profiles)}) were composed from the `name` field of: "
-            + "; ".join(_pnotes))
-    _kind_groups: dict[str, set[str]] = {}
-    for c in caps:
-        _cp = c.key[len("can_export:"):] if c.key.startswith("can_export:") else None
-        if _cp in _profiles:
-            _kind_groups.setdefault(_profiles[_cp], set()).update(c.grant_to_groups)
-    for _p, _k in sorted(_profiles.items()):
-        if _p not in _export_keys:
-            _g = sorted(_kind_groups.get(_k, ()))
-            errors.append(
-                f"capability_grants.yaml: {_k} profile {_p!r} has no 'can_export:{_p}' row, so "
-                f"NOBODY could export it (deny-by-default). Add one; "
-                + (f"the other {_k} rows grant `grant_to_groups: [{', '.join(_g)}]`" if _g else
-                   f"no other {_k} profile has a row to follow, so the row names its own group "
-                   f"(ask the architect)"))
 
     # `can_call:<T>` (2026-10-30 ruling, deny-by-default): the door asks can_invoke on `can_call:<T>`
     # for every tag of the route; a misspelt key gates nothing. No row is required per tag.
@@ -1434,9 +1637,11 @@ def validate(
     _users_list = users_raw.get("users") or []
     _groups_map = groups_raw.get("groups") or {}
     _cd_dims: dict | None = {}
+    _vocab_files: dict[str, dict] = {}
     _cd_path = policy_dir / "classification" / "dimensions.yaml"
     if _cd_path.is_file():
         cd_raw = _read_yaml(_cd_path, errors)
+        _vocab_files["classification/dimensions.yaml"] = cd_raw
         _cd_errors, _cd_dims = classification_dimensions_errors(cd_raw, _users_list)
         errors.extend(_cd_errors)
         _cd_rows = cd_raw.get("dimensions")
@@ -1458,13 +1663,23 @@ def validate(
         print(f"  dimension_holders.yaml: {len(_dh_rows) if isinstance(_dh_rows, list) else 0} row(s)")
     elif _cd_dims and any(t == "set" for t, _ in _cd_dims.values()):
         errors.extend(dimension_holders_errors({"dimension_holders": []}, _cd_dims, _groups_map, _users_list))
-    # option_deciders.yaml (ADR-0065, provisional): WHEN PRESENT only; no code reads workflow definitions yet.
+    # option_deciders.yaml (ADR-0065): WHEN PRESENT only; no code reads workflow definitions yet.
     _od_path = policy_dir / "option_deciders.yaml"
     if _od_path.is_file():
         od_raw = _read_yaml(_od_path, errors)
         errors.extend(option_deciders_errors(od_raw, _groups_map, _users_list))
         _od_rows = od_raw.get("option_deciders")
         print(f"  option_deciders.yaml: {len(_od_rows) if isinstance(_od_rows, list) else 0} row(s)")
+    # registry/lifecycle_status.yaml (ADR-0065 §3): WHEN PRESENT only. The SDK reads it; iagent has no
+    # reader yet. Its identities and the dimensions' are one population (openddil ADR-0056 §1).
+    _ls_path = policy_dir / "registry" / "lifecycle_status.yaml"
+    if _ls_path.is_file():
+        ls_raw = _read_yaml(_ls_path, errors)
+        _vocab_files["registry/lifecycle_status.yaml"] = ls_raw
+        errors.extend(lifecycle_status_errors(ls_raw, _users_list))
+        _ls_rows = ls_raw.get("statuses")
+        print(f"  registry/lifecycle_status.yaml: {len(_ls_rows) if isinstance(_ls_rows, list) else 0} status(es)")
+    errors.extend(term_identity_collisions(_vocab_files))
 
     # ADMISSION POSTURE (ADR-0034). Validated through the SAME parser the runtime loads with, so
     # there is ONE definition of a well-formed table and this gate cannot drift from the loader.

@@ -29,6 +29,7 @@ import pytest
 
 httpx = pytest.importorskip("httpx")
 fastapi = pytest.importorskip("fastapi")
+yaml = pytest.importorskip("yaml")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import case_projection, gateway, ingest_status as ist  # noqa: E402
@@ -97,6 +98,9 @@ class _Ingress:
         task = asyncio.ensure_future(self._run(key, body))
         self.tasks.append(task)
         await asyncio.wait({task, self.parked}, return_when=asyncio.FIRST_COMPLETED)
+        # A one-way send the run made before it parked is delivered now: Restate does not hold a
+        # send until its sender returns.
+        await self._flush()
         return httpx.Response(202, content=b'{"invocationId":"inv"}',
                               request=httpx.Request("POST", url))
 
@@ -300,6 +304,70 @@ def test_AN_ATTACHED_OCCURRENCE_WHOSE_STATUS_ROW_FAILS_IS_STATUS_UNAVAILABLE(wor
     # the occurrence is on the episode already; a resend re-attaches it once, never twice
     assert [o["event_id"] for o in _occurrences(world, _facts(), "E-1")] == ["E-2"]
     assert len(world.ingress.urls("/run/send")) == 1
+
+
+# ── open means "not at a terminal stage", never "a workflow is alive" (architect, 2026-11-10) ──
+#   The walk's occurrence attached to October's case, released on 10-29 and still held open by
+#   an instance waiting on a step after its release. "A released case's lingering workflow is
+#   terminated at release; a test with a released-but-running case proves a new occurrence opens
+#   a new case with predecessor." The control for both arms is
+#   test_A_REFILE_WHILE_OPEN_ATTACHES_AND_OPENS_NO_CASE: a case parked BEFORE its decision holds.
+
+def _route_lo_to_a_decision_then_an_await(policy):
+    """`lo` routes to a definition shaped like October's: an emit that disposes, then a
+    signal_await nobody answers (unscripted, so it parks)."""
+    (policy / "workflows" / "sends.yaml").write_text(yaml.safe_dump({
+        "id": "sends", "name": "sends", "steps": [
+            {"kind": "emit", "id": "send", "channel": "notice", "disposes": "sent",
+             "template": {"event_id": "{trigger.event_id}"}},
+            {"kind": "signal_await", "id": "ack", "signal": "ack", "audience": "ops:{trigger.tier}",
+             "accepts": ["acked"]}]}), encoding="utf-8")
+    (policy / "decisions" / "sends_chain.yaml").write_text(yaml.safe_dump({
+        "decision": "sends_chain", "after": "sends", "matches": ["outcome"],
+        "domain": {"outcome": ["sent"]}, "terminals": ["closed"],
+        "rows": [{"when": {"outcome": "sent"}, "then": "closed"}]}), encoding="utf-8")
+    (policy / "decisions" / "sel.yaml").write_text(yaml.safe_dump({
+        "decision": "sel", "matches": ["level"], "domain": {"level": ["hi", "lo"]},
+        "rows": [{"when": {"level": "hi"}, "then": "review"},
+                 {"when": {"level": "lo"}, "then": "sends"}]}), encoding="utf-8")
+
+
+def _opens_a_new_case_after(world, first):
+    second = world.post(_facts("E-2"))
+    assert second.status_code == 200, second.text
+    assert second.json()["workflow"] == {"case_id": "E-2", "started": True}, second.json()
+    assert world.cluster.case("E-2")["predecessor"] == first, world.cluster.case("E-2")
+    assert _occurrences(world, _facts(), first) is None
+
+
+def test_A_DECIDED_CASE_WITH_STEPS_LEFT_ENDS_ITS_WORKFLOW_AND_FREES_ITS_EPISODE(world, policy):
+    _route_lo_to_a_decision_then_an_await(policy)
+    _approve(world, "E-2")
+    assert world.post(_facts("E-1", level="lo")).status_code == 200
+    case = world.cluster.case("E-1")
+    assert case["terminal"] == "closed", case
+    assert case_projection.project_workflow_case(case, {}, [])["stage"] == "closed"
+    # the step after the decision never began: no audience, no vocabulary, no park
+    assert not [k for k in world.cluster.ctx("E-1~1").state if k.split(":")[-1] == "ack"]
+    assert world.cluster.ctx("E-1~1").state.get("outbox:notice"), "the decision was sent"
+    _opens_a_new_case_after(world, "E-1")
+
+
+def test_A_CASE_AT_ITS_TERMINAL_FREES_ITS_EPISODE_WHILE_ITS_RUN_IS_STILL_WRITING(world, monkeypatch):
+    real = wr._summarize
+
+    async def _summarize(ctx, case, **kw):
+        if case["case_id"] == "E-1":  # the summary write hangs; the run is alive past its terminal
+            if world.ingress.parked is not None and not world.ingress.parked.done():
+                world.ingress.parked.set_result(None)
+            await asyncio.Event().wait()
+        return await real(ctx, case, **kw)
+    monkeypatch.setattr(wr, "_summarize", _summarize)
+    _approve(world, "E-1", "E-2")
+    assert world.post(_facts("E-1")).status_code == 200
+    assert world.cluster.case("E-1")["terminal"] == "done"
+    assert not world.ingress.tasks[0].done()  # E-1's run has not returned
+    _opens_a_new_case_after(world, "E-1")
 
 
 # ── episode_id is the source system's (architect, 2026-11-07) ────────────────────────────────

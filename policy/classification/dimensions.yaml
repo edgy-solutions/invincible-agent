@@ -17,9 +17,31 @@
 #   customer's shape."
 #
 #   * A ROW has `name` (the `<dimension>` of `holds:<dimension>:<value>`; no whitespace, no `:`;
-#     unique), `type` (`hierarchical` or `set`), `vocabulary` (a non-empty list of values, each with no
-#     whitespace and no `:`, none twice), `owner` and `ratified_by`. Each of the last two is a seat
-#     such as `owner`, never an identity in users.yaml.
+#     unique), `identity`, `type` (`hierarchical` or `set`), `vocabulary` (a non-empty list of values,
+#     each with no whitespace and no `:`, none twice), `identities` (each value's identity),
+#     `required` and `empty_means` (both optional, below), `owner` and `ratified_by`. Each of the last
+#     two is a seat such as `owner`, never an identity in users.yaml.
+#   * ONE IDENTITY PER THING (openddil ADR-0056 §1). A dimension's `identity` and each value's in
+#     `identities` are UUID v7, written `urn:uuid:<uuid>`, minted once by `generator` and never
+#     re-minted. No identity appears twice here or in policy/registry/lifecycle_status.yaml.
+#   * THE GENERATOR IS NAMED HERE (openddil ADR-0056, ruling 5, verbatim): "Each authority has one
+#     generator. The generator is recorded in the vocabulary file itself, at release."
+#   * REQUIRED AND EMPTY_MEANS (openddil ADR-0055 §1, the boundary amendment, drafted 2026-11-07),
+#     verbatim: "A deployment, and each egress destination it declares, may set per dimension:
+#     `required`: an empty or absent value at that boundary is withheld there; `empty_means`: what an
+#     empty set means at that boundary." And: "The declaration is per boundary. Nothing moves the
+#     in-mesh default. A destination that declares nothing keeps the table's meaning."
+#     - On a dimension row they are the deployment's own, inside the mesh. `required: true` withholds
+#       an empty or absent value, loud, as `dimension_missing`.
+#     - `empty_means` is `admits_everyone` or `admits_no_one`. Left out, the type's own meaning holds.
+#       It is refused on a hierarchical dimension (it always has a level) and beside `required: true`
+#       (the meaning could never apply).
+#   * A BOUNDARY ROW (`boundaries`) is one egress destination the deployment declares: `name`,
+#     `dimensions` (a non-empty list of `{dimension, required?, empty_means?}`, each naming a dimension
+#     this file registers, once, and setting at least one of the two), `owner` and `ratified_by`.
+#   * THE SKOS EXPORT is policy/classification/dimensions.skos.ttl, generated from this file by
+#     scripts/generate_vocabulary_skos.py (openddil ADR-0056 §10). `required` and `empty_means` are
+#     policy, not vocabulary, and are not exported.
 #   * OWNER AND RATIFIED_BY ANSWER DIFFERENT QUESTIONS. The architect's ruling on #282 (via Chris,
 #     2026-11-06), verbatim: "No: rows keep `ratified_by: owner` (house rule for every shipped row);
 #     `owner` on a dimension is who decides what its values mean — both fields, different questions."
@@ -33,7 +55,8 @@
 #     (`cleared_for:<level>`); a set dimension's values are held through policy/dimension_holders.yaml
 #     (`holds:<dimension>:<value>`).
 #   * NO DIMENSION OR VALUE IS NAMED IN CODE. A deployment adds a dimension as a row.
-#   * IT SHIPS WITH NO ROWS. No dimension is ruled yet, and the first row is the owner's to ratify.
+#   * IT SHIPS WITH NO ROWS AND NO BOUNDARY. No dimension is ruled yet, and the first row is the
+#     owner's to ratify. A destination is a deployment's to declare.
 #   * ONE FILE, OWNED BY POLICY. Ruling (a), verbatim (Chris, 2026-11-05): "one levels file, owned by
 #     policy (invincible-agent/policy/classification/levels.yaml); dag-tools never ships its own -- it
 #     reads the deployment's copy (ConfigMap from the chart), so code reads what the server serves."
@@ -46,4 +69,6 @@
 # No code reads this file yet (dag-tools step 5). validate_policy.py checks it WHEN PRESENT
 # (classification_dimensions_errors).
 
+generator: scripts/mint_term_identity.py
 dimensions: []
+boundaries: []

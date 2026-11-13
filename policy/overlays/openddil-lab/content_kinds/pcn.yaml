@@ -4,8 +4,13 @@
 # so the two are not independent sources of truth, just two places the same facts are read from.
 kind: pcn
 domain: sustainment
+arrives_as: [pdf]
+label: Process change notice (PCN)
 # review_shape names the card that renders this kind's reviews (ruled 2026-10-30; platform-owned).
 review_shape: notice
+# attestation: the kind's own dropper may attest its review (SDK v0.9.18, the architect 2026-11-10:
+# ADR-0057 and ADR-0062's step-level `excludes:` is their second-party declaration; PCN/PDN review is self).
+attestation: self
 passes:
   - sustainment.baml::ExtractHeader
   - sustainment.baml::ExtractParts

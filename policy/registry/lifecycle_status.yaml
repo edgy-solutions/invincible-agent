@@ -1,0 +1,43 @@
+# LIFECYCLE STATUS -- the vocabulary of a part's `lifecycle_status.status` (ADR-0065 §3).
+#
+#   * ADR-0065 §3, verbatim: "`status` is a value from `policy/registry/lifecycle_status.yaml`. The seed
+#     takes IEC 62402 and EIA-724 wording (`active`, `not-recommended-for-new-design`, `last-time-buy`,
+#     `obsolete`, `unknown`), and a deployment overlay extends it."
+#   * THE WIRE IS A PLAIN STRING, validated against this file, never an OpenAPI enum (ADR-0065 §3; 7f's
+#     2026-11-05 packet, ruled). The SDK's `iagent_mesh.lifecycle_status.load_lifecycle_status_vocabulary`
+#     (v0.9.16) reads `statuses` and nothing else.
+#   * ABSENT IS NOT NULL (ADR-0065 §3, verbatim): "Status absent means not assessed. Status null means
+#     assessed, and none known." Neither is a row here. `unknown` is a status a source reported.
+#   * A DEPLOYMENT EXTENDS THIS FILE by adding statuses, each with a freshly minted identity. A status is
+#     never renamed in place: its identity is the term, so a new word is a new row.
+#   * ONE IDENTITY PER THING (openddil ADR-0056 §1). `identity` is the vocabulary's own; `identities` gives
+#     each status one, a UUID v7 written `urn:uuid:<uuid>`, minted once and never re-minted.
+#   * THE GENERATOR IS NAMED HERE (openddil ADR-0056, ruling 5, verbatim): "Each authority has one
+#     generator. The generator is recorded in the vocabulary file itself, at release." It prints
+#     identities and writes nothing.
+#   * THE SKOS EXPORT is `policy/registry/lifecycle_status.skos.ttl`, generated from this file by
+#     `scripts/generate_vocabulary_skos.py` (openddil ADR-0056 §10). Regenerate it after any change here;
+#     `--check` fails while it is stale.
+#   * `owner` decides what the words mean (the program's logistics owner, ADR-0065 Deciders); `ratified_by`
+#     is the house rule for every shipped row. Both are seats, never an identity in users.yaml.
+#
+# validate_policy.py checks it WHEN PRESENT (lifecycle_status_errors).
+
+generator: scripts/mint_term_identity.py
+identity: urn:uuid:01a1b95f-c38e-732f-b51a-1c7babe50b78
+owner: owner
+ratified_by: owner
+
+statuses:
+  - active
+  - not-recommended-for-new-design
+  - last-time-buy
+  - obsolete
+  - unknown
+
+identities:
+  active: urn:uuid:01a1b95f-c38e-7a76-b62b-7b7d4fedff4a
+  not-recommended-for-new-design: urn:uuid:01a1b95f-c38e-7537-a828-05160421ea16
+  last-time-buy: urn:uuid:01a1b95f-c38e-7c9f-b1f1-c809e513d6c0
+  obsolete: urn:uuid:01a1b95f-c38e-7469-b906-761e93215748
+  unknown: urn:uuid:01a1b95f-c38e-7978-a518-7110a048149a

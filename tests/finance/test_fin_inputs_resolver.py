@@ -31,7 +31,7 @@ for _p in (REPO, REPO / "src", REPO / "scripts"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from agent_fleet.finance_agent import asset_inputs, measure_verbs, seed  # noqa: E402
+from agent_fleet.finance_agent import asset_inputs, measure_verbs, seed, state_codec  # noqa: E402
 from agent_fleet.finance_agent import main as engine  # noqa: E402
 from agent_fleet.finance_agent.entities import FISCAL_PERIODS, NotInModel  # noqa: E402
 
@@ -583,19 +583,14 @@ def spy(monkeypatch):
     return calls
 
 
-def test_a_package_naming_a_declared_measure_is_a_409_before_anything_is_measured(client, seam, spy):
-    r = client.post("/package_export", json=_package_body())
-    assert r.status_code == 409, r.text
-    d = r.json()["detail"]
-    assert d["error"] == "asset_export_unsupported" and d["measures"] == ["fin_tcpi"]
-    assert spy == [] and seam.urns == [] and seam.loads == 0
-
-
-def test_a_built_in_only_package_still_works_and_carries_the_notional_banner(
-        client, seam, spy, monkeypatch):
+@pytest.fixture
+def built(monkeypatch):
+    """Stands in for the builder and records what `package_export` handed it."""
     import build_fin_package as builder
+    calls: list[dict] = []
 
     def fake_build(**kw):
+        calls.append(kw)
         return {"manifest": {"recipient_scope": f"program_office.{PROGRAM}", "as_of": "t",
                              "algorithm_sha": "0" * 40, "template_id": "program_finance",
                              "template_hash": "h", "panels": [{"artifact_id": "a"}]},
@@ -604,10 +599,225 @@ def test_a_built_in_only_package_still_works_and_carries_the_notional_banner(
     monkeypatch.setattr(builder, "build", fake_build)
     monkeypatch.setattr(engine, "_repo_root", lambda: REPO)
     monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
-    r = client.post("/package_export", json=_package_body(builtin_only=True))
+    return calls
+
+
+def package_post(c, body=None, *, tok=token(ALICE)):
+    return c.post("/package_export", headers={"Authorization": f"Bearer {tok}"},
+                  json=body or _package_body(builtin_only=True))
+
+
+def test_under_the_flag_a_package_runs_as_the_caller_over_the_asset(client, seam, spy, built):
+    """Export runs as the caller, grant-checked at the asset like a CDRL. The frame doubles ACWP,
+    so a build handed the seed cannot pass for one handed the asset."""
+    frame = frame_of().with_columns((pl.col("acwp") * 2).alias("acwp"))
+    seam.frame = frame.lazy()
+    r = package_post(client)
+    assert r.status_code == 200, r.text
+    assert set(seam.urns) == {URN} and all(k["originator_email"] == ALICE for k in seam.kwargs)
+    assert spy and all(env["data_source"] == {"kind": "asset", "urn": URN} for _fn, env in spy)
+
+    kw = built[0]
+    assert isinstance(kw["state"], asset_inputs.AssetState), "the build reads what the panels read"
+    expected = asset_inputs.state_from_rows(frame, PROGRAM)
+    assert {f.period: f.acwp for f in kw["state"].facts} == {f.period: f.acwp for f in expected.facts}
+    assert kw["state"].facts != seed.build_seed().facts, "the control: the frame moves the facts"
+    assert kw["program_source"] == {"kind": "asset", "urn": URN}
+    assert kw["data_provenance"] == asset_inputs.provenance(URN)
+
+
+def test_a_package_without_the_grant_is_a_403_before_anything_is_read_measured_or_written(
+        client, seam, spy, built, monkeypatch):
+    asked: list = []
+    real = engine._asset_state
+    monkeypatch.setattr(engine, "_asset_state", lambda *a, **kw: asked.append(a) or real(*a, **kw))
+    seam.raises = NotEntitled("the gate refused")
+    r = package_post(client)
+    assert r.status_code == 403, r.text
+    d = r.json()["detail"]
+    assert d["status"] == "access_denied" and d["denied_assets"] == [URN]
+    assert d["refusal"]["policy_id"] == "asset_grants"
+    assert asked == [] and spy == [] and built == [], "the grant is asked before anything else"
+
+
+def _with_funding_panel():
+    body = _package_body(builtin_only=True)
+    body["canvas"]["panels"].append({"panel": 1, "verb": "mesh:finFundingStatus",
+                                     "params": {"program_id": PROGRAM}})
+    return body
+
+
+def test_a_package_with_a_seed_sourced_funding_panel_builds_over_one_mixed_state(
+        client, seam, spy, built):
+    """RULED 2026-11-09: the source is declared per ROW. Funding's row says `source: seed`, so
+    program_finance's funding panel reads the seed beside asset panels, and the package says which
+    panel is notional and why. The frame doubles ACWP, so the carried facts are the asset's."""
+    frame = frame_of().with_columns((pl.col("acwp") * 2).alias("acwp"))
+    seam.frame = frame.lazy()
+    r = package_post(client, _with_funding_panel())
+    assert r.status_code == 200, r.text
+    reason = engine.SOURCES["fin_funding_status"].source_reason
+    sources = {fn: env["data_source"] for fn, env in spy}
+    assert sources["fin_funding_status"]["kind"] == "seed"
+    assert sources["fin_performance_indices"] == {"kind": "asset", "urn": URN}
+
+    kw = built[0]
+    state = kw["state"]
+    expected = asset_inputs.state_from_rows(frame, PROGRAM)
+    assert {f.period: f.acwp for f in state.facts} == {f.period: f.acwp for f in expected.facts}, (
+        "the carried collections are the asset's")
+    assert state.funding and state.funding == state_codec.narrow(seed.build_seed(), PROGRAM).funding, (
+        "the uncarried collections are the seed's copy of THIS program")
+    assert kw["program_source"] == {"kind": "asset", "urn": URN,
+                                    "seeded": {"fin_funding_status": reason}}
+    assert kw["data_provenance"].startswith(asset_inputs.provenance(URN))
+    assert "fin_funding_status" in kw["data_provenance"] and reason in kw["data_provenance"]
+    assert seed.notional_banner() in kw["data_provenance"]
+
+
+def test_a_package_of_only_seed_sourced_panels_asks_the_asset_nothing(client, seam, built):
+    """A seed-sourced panel reads no asset, so it needs no grant on one: refused here, and the
+    package still builds over the seed with no source."""
+    seam.raises = NotEntitled("the gate refused")
+    body = _with_funding_panel()
+    body["canvas"]["panels"] = [p for p in body["canvas"]["panels"] if p["verb"] == "mesh:finFundingStatus"]
+    r = package_post(client, body)
+    assert r.status_code == 200, r.text
+    assert seam.urns == [] and built[0]["state"] is engine.STATE
+    assert built[0]["program_source"] is None
+
+
+def test_a_package_with_only_asset_panels_names_nothing_seeded(client, seam, built):
+    """The control for the one above: no seed-sourced panel, no `seeded` key, no seed collection."""
+    seam.frame = frame_of().lazy()
+    r = package_post(client)
+    assert r.status_code == 200, r.text
+    assert "seeded" not in built[0]["program_source"]
+    assert isinstance(built[0]["state"], asset_inputs.AssetState)
+
+
+def test_a_package_for_a_program_the_asset_does_not_hold_is_a_422_not_the_seeds_copy(
+        client, seam, built, monkeypatch):
+    # Not `spy`: it records after a measure returns, and a panel over this frame refuses too, so
+    # only counting the calls that START shows the program was refused before any panel ran.
+    started: list = []
+    real = engine._measure_envelope
+    monkeypatch.setattr(engine, "_measure_envelope", lambda *a, **kw: started.append(a) or real(*a, **kw))
+    seam.frame = frame_of().filter(pl.col("program_id") == "NOT-IN-THE-ASSET").lazy()
+    r = package_post(client)
+    assert r.status_code == 422, r.text
+    assert "not_in_model" in r.json()["detail"]
+    assert started == [] and built == []
+
+
+def test_a_declared_panel_is_refused_by_the_builder_by_name_with_nothing_written(
+        client, seam, monkeypatch, tmp_path):
+    """The page recomputes every panel with its embedded `measures.py`, which holds no declared
+    measure, so the builder's own check refuses it before a byte is written."""
+    monkeypatch.setattr(engine, "_repo_root", lambda: REPO)
+    monkeypatch.setattr(engine, "_dist_dir", lambda root: tmp_path)
+    monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
+    seam.frame = frame_of().lazy()
+    r = package_post(client, _package_body())
+    assert r.status_code == 503, r.text
+    assert "fin_tcpi" in r.json()["detail"] and "embedded measures.py" in r.json()["detail"]
+    assert list(tmp_path.iterdir()) == []
+
+
+def _a_written_package(monkeypatch, tmp_path):
+    from agent_fleet.finance_agent import export
+    monkeypatch.setattr(engine, "_repo_root", lambda: REPO)
+    monkeypatch.setattr(engine, "_dist_dir", lambda root: tmp_path)
+    name = export.artifact_filenames(f"program_office.{PROGRAM}")[0]
+    (tmp_path / name).write_bytes(b"<html></html>")
+    return name
+
+
+def test_recipient_readers_govern_the_file_and_the_asset_grant_does_not(client, seam, monkeypatch, tmp_path):
+    """RULED: `recipient_readers` governs who may receive the file, not who reads the asset. A
+    reader with no grant on the asset fetches it; asking for the grant here would be a second gate
+    the ruling refused."""
+    name = _a_written_package(monkeypatch, tmp_path)
+    headers = {"Authorization": f"Bearer {token(ALICE)}"}
+    seam.raises = NotEntitled("no grant on the asset")
+    monkeypatch.setattr(engine, "can_read_recipient", lambda owner, scope, authz_id: True)
+    r = client.get(f"/artifact/{name}", headers=headers)
+    assert r.status_code == 200, r.text
+    assert seam.urns == [], "a package's fetch does not ask the asset"
+
+
+def test_a_grant_on_the_asset_does_not_make_someone_a_recipient(client, seam, monkeypatch, tmp_path):
+    name = _a_written_package(monkeypatch, tmp_path)
+    seam.frame = frame_of().lazy()  # the grant is held; the rail still says no
+    monkeypatch.setattr(engine, "can_read_recipient", lambda owner, scope, authz_id: False)
+    r = client.get(f"/artifact/{name}", headers={"Authorization": f"Bearer {token(ALICE)}"})
+    assert r.status_code == 403, r.text
+    assert "not entitled" in r.json()["detail"]
+
+
+def test_the_real_build_over_the_asset_verifies_and_names_where_its_figures_came_from(
+        client, seam, monkeypatch, tmp_path):
+    """The whole builder: the page's recomputation and the .duckdb's agreement over a state whose
+    uncarried fields are None."""
+    pytest.importorskip("duckdb")
+    if not (REPO / ".pyodide-cache").is_dir():
+        pytest.skip("no .pyodide-cache in this checkout; the real build cannot run")
+    from agent_fleet.finance_agent import export, state_codec
+    manifests: list[dict] = []
+    real_audit = export.audit_line
+    monkeypatch.setattr(export, "audit_line", lambda m, **kw: manifests.append(m) or real_audit(m, **kw))
+    monkeypatch.setattr(engine, "_repo_root", lambda: REPO)
+    monkeypatch.setattr(engine, "_dist_dir", lambda root: tmp_path)
+    monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
+    frame = frame_of()
+    seam.frame = frame.lazy()
+    r = package_post(client)
+    assert r.status_code == 200, r.text
+    manifest = manifests[0]
+    assert manifest["program_source"] == {"kind": "asset", "urn": URN}
+    assert manifest["data_provenance"] == asset_inputs.provenance(URN)
+    narrowed = state_codec.narrow(asset_inputs.state_from_rows(frame, PROGRAM), PROGRAM)
+    assert manifest["state_sha256"] == export.content_hash(state_codec.state_to_dict(narrowed))
+    page = (tmp_path / r.json()["artifact_filename"]).read_text(encoding="utf-8")
+    assert URN in page and BANNER in page
+
+
+def test_the_real_build_of_a_mixed_package_verifies_and_names_the_seeded_panel(
+        client, seam, monkeypatch, tmp_path):
+    """The whole builder over the mixed state: the page recomputes the funding panel from the
+    seed's funding lines and the others from the asset's facts, and every panel reproduces."""
+    pytest.importorskip("duckdb")
+    if not (REPO / ".pyodide-cache").is_dir():
+        pytest.skip("no .pyodide-cache in this checkout; the real build cannot run")
+    from agent_fleet.finance_agent import export
+    manifests: list[dict] = []
+    real_audit = export.audit_line
+    monkeypatch.setattr(export, "audit_line", lambda m, **kw: manifests.append(m) or real_audit(m, **kw))
+    monkeypatch.setattr(engine, "_repo_root", lambda: REPO)
+    monkeypatch.setattr(engine, "_dist_dir", lambda root: tmp_path)
+    monkeypatch.setattr("build_cost_package.algorithm_sha", lambda: "0" * 40)
+    seam.frame = frame_of().lazy()
+    r = package_post(client, _with_funding_panel())
+    assert r.status_code == 200, r.text
+    reason = engine.SOURCES["fin_funding_status"].source_reason
+    assert manifests[0]["program_source"]["seeded"] == {"fin_funding_status": reason}
+    page = (tmp_path / r.json()["artifact_filename"]).read_text(encoding="utf-8")
+    assert URN in page and reason in page
+
+
+def test_flag_off_a_package_says_nothing_about_a_source(off_client, spy, built):
+    r = off_client.post("/package_export", json=_package_body(builtin_only=True))
+    assert r.status_code == 200, r.text
+    assert built[0]["state"] is engine.STATE
+    assert built[0]["program_source"] is None and built[0]["data_provenance"] is None
+
+
+def test_flag_off_a_built_in_only_package_still_works_and_carries_the_notional_banner(
+        off_client, spy, built):
+    r = off_client.post("/package_export", json=_package_body(builtin_only=True))
     assert r.status_code == 200, r.text
     assert spy and all(env["data_provenance"] == seed.notional_banner() for _fn, env in spy)
-    assert seam.urns == [] and seam.loads == 0
+    assert all("data_source" not in env for _fn, env in spy)
 
 
 # ── CDRL: read through the resolver, not refused ────────────────────────────────────────
@@ -624,7 +834,7 @@ def cdrl_profiles(monkeypatch, tmp_path):
     monkeypatch.setattr(engine, "PROFILES", profiles)
     sources = set(profiles[CDRL].sources)
     assert sources & set(engine.DECLARED), "the profile must source a declared measure"
-    assert sources - set(engine.DECLARED), "and a built-in, so the file joins the seed and the asset"
+    assert sources - set(engine.DECLARED), "and a built-in, so both kinds of source read the asset"
     return tmp_path / "cdrl"
 
 
@@ -643,8 +853,9 @@ def test_a_cdrl_reads_the_asset_as_the_caller_and_each_source_says_where_its_fig
     by = {s["fn"]: s for s in env["sources"]}
     assert by["fin_tcpi"]["data_source"] == {"kind": "asset", "urn": URN}
     assert by["fin_tcpi"]["data_provenance"] == asset_inputs.provenance(URN)
-    assert by["fin_performance_indices"]["data_provenance"] == seed.notional_banner()
-    assert "data_source" not in by["fin_performance_indices"]
+    # A BUILT-IN SOURCE READS THE SAME ASSET (ruled 2026-11-08), so the file joins one source.
+    assert by["fin_performance_indices"]["data_source"] == {"kind": "asset", "urn": URN}
+    assert by["fin_performance_indices"]["data_provenance"] == asset_inputs.provenance(URN)
     assert env["program_source"] == {"kind": "asset", "urn": URN}
     assert seam.urns and set(seam.urns) == {URN}
     assert {kw["originator_email"] for kw in seam.kwargs} == {ALICE}
@@ -679,6 +890,108 @@ def test_the_cdrl_file_is_fetched_under_the_fetchers_grant(client, seam, cdrl_pr
     assert r.json()["detail"]["status"] == "access_denied"
 
 
+# ── CDRL: a program only the asset holds ────────────────────────────────────────────────
+# The seed's programs are not the population. A profile sourcing only declared measures computes
+# every figure over the asset, so a program the asset alone holds exports; the file it wrote is
+# fetched by the same engine (the BFF does both at once). A profile with a built-in source reads
+# the seed for it and is a 422 `not_in_model` for such a program, before any file exists.
+
+ASSET_ONLY = "cdrl_tcpi_only_json"
+BOB = "bob@example.com"   # views neither program under `members`
+
+
+@pytest.fixture
+def asset_only_profile(cdrl_profiles, monkeypatch, tmp_path):
+    from agent_fleet.finance_agent import export_profiles
+    d = tmp_path / "asset_only_profiles"
+    d.mkdir()
+    (d / f"{ASSET_ONLY}.yaml").write_text(
+        f"name: {ASSET_ONLY}\nformat: json\nscope: program\nlabel: TCPI only (synthetic)\n"
+        "audience: program_office\n"
+        "cdrl: {item: A001, title: Notional TCPI, data_item: DI-NOTIONAL-0001, frequency: monthly}\n"
+        "cells:\n  /header/program_id: program.id\n"
+        "sources:\n  - fn: fin_tcpi\n"
+        "table:\n  at: /periods\n  key: period\n  columns:\n"
+        "    - {from: period, as: period}\n    - {from: fin_tcpi.tcpi, as: tcpi}\n",
+        encoding="utf-8")
+    loaded = {p.name: p for p in export_profiles.load_export_profiles(overlay_dirs=[d], declared=engine.DECLARED)}
+    monkeypatch.setitem(engine.PROFILES, ASSET_ONLY, loaded[ASSET_ONLY])
+    return cdrl_profiles
+
+
+def _export_other(c, profile=ASSET_ONLY, *, tok=token(ALICE)):
+    return c.post("/cdrl_export", headers={"Authorization": f"Bearer {tok}"},
+                  json={"profile": profile, "program_id": OTHER_PROGRAM, "user_email": ALICE})
+
+
+@pytest.fixture
+def other_only_in_the_asset(seam, tmp_path):
+    assert OTHER_PROGRAM not in {p.program_id for p in engine.STATE.programs}
+    seam.frame = pl.scan_parquet(_two_program_parquet(tmp_path)[0])
+
+
+def test_a_program_only_the_asset_holds_exports_and_its_file_is_fetched(
+        client, asset_only_profile, other_only_in_the_asset):
+    r = _export_other(client)
+    assert r.status_code == 200, r.text
+    name = r.json()["artifact_filename"]
+    got = client.get(f"/artifact/{name}", headers={"Authorization": f"Bearer {token(ALICE)}"})
+    assert got.status_code == 200, got.text
+    assert got.content == (asset_only_profile / name).read_bytes()
+    assert json.loads(got.content)["header"]["program_id"] == OTHER_PROGRAM
+
+
+def test_a_built_in_source_reads_such_a_program_from_the_asset_and_its_file_is_fetched(
+        client, asset_only_profile, other_only_in_the_asset):
+    # THE 422 THIS ONCE PINNED WAS A DEFECT (ruled 2026-11-08): a built-in read the seed, which
+    # does not hold the program. It reads the asset now, so the sample profile exports it too.
+    r = _export_other(client, "cdrl_a001_ev_summary_json")  # the sample's JSON form, to read back
+    assert r.status_code == 200, r.text
+    assert {s["fn"] for s in r.json()["envelope"]["sources"]} - set(engine.DECLARED), "a built-in source"
+    for s in r.json()["envelope"]["sources"]:
+        assert s["data_source"] == {"kind": "asset", "urn": URN}, s["fn"]
+    name = r.json()["artifact_filename"]
+    got = client.get(f"/artifact/{name}", headers={"Authorization": f"Bearer {token(ALICE)}"})
+    assert got.status_code == 200, got.text
+    assert json.loads(got.content)["header"]["program_id"] == OTHER_PROGRAM
+
+
+def test_such_a_file_is_a_404_to_a_non_member_as_if_never_written(
+        client, asset_only_profile, other_only_in_the_asset, monkeypatch):
+    # A seed program's id is deployment data, so its file names nothing a 403 could reveal. A
+    # program only the asset holds is not: a 403 would tell a non-member that it exists and was
+    # exported. So to a non-member the name answers as one never written, byte for byte.
+    name = _export_other(client).json()["artifact_filename"]
+    never = name.replace(OTHER_PROGRAM, "NP-NEVER")
+    bob = {"Authorization": f"Bearer {token(BOB)}"}
+    for n in (name, never):
+        r = client.get(f"/artifact/{n}", headers=bob)
+        assert r.status_code == 404, (n, r.text)
+    assert client.get(f"/artifact/{name}", headers=bob).content == client.get(f"/artifact/{never}", headers=bob).content
+    assert client.get(f"/artifact/{name}", headers={"Authorization": f"Bearer {token(ALICE)}"}).status_code == 200
+
+
+def test_the_record_is_not_trusted_a_planted_entry_serves_nothing(
+        client, asset_only_profile, other_only_in_the_asset):
+    # The record names what was written; it does not widen the set. An entry whose profile is not
+    # composed, or whose name is not what `cdrl.artifact_filename` gives for it, is no entry.
+    name = _export_other(client).json()["artifact_filename"]
+    record = asset_only_profile / engine._CDRL_ORIGINS
+    planted = asset_only_profile / "fin-cdrl-planted-NP-OTHER.json"
+    misnamed = asset_only_profile / "fin-cdrl-x.json"
+    for f in (planted, misnamed):
+        f.write_text("{}", encoding="utf-8")
+    origins = json.loads(record.read_text(encoding="utf-8"))
+    origins[planted.name] = {"profile": "planted", "program_id": OTHER_PROGRAM}
+    origins[misnamed.name] = {"profile": ASSET_ONLY, "program_id": OTHER_PROGRAM}
+    record.write_text(json.dumps(origins), encoding="utf-8")
+    alice = {"Authorization": f"Bearer {token(ALICE)}"}
+    assert client.get(f"/artifact/{planted.name}", headers=alice).status_code == 404
+    assert client.get(f"/artifact/{misnamed.name}", headers=alice).status_code == 404
+    assert client.get(f"/artifact/{engine._CDRL_ORIGINS}", headers=alice).status_code == 404
+    assert client.get(f"/artifact/{name}", headers=alice).status_code == 200    # the control
+
+
 def test_the_cdrl_names_the_program_as_the_asset_does_not_as_the_seed(client, seam, cdrl_profiles):
     frame = frame_of().with_columns(pl.lit("Asset-side program name").alias("program_name"))
     assert seed.build_seed().programs[0].name != "Asset-side program name"
@@ -702,7 +1015,9 @@ def test_flag_off_a_cdrl_reads_nothing_and_every_source_carries_the_notional_ban
 def test_which_sources_read_an_asset(declared, monkeypatch):
     assert engine._asset_reads(["fin_tcpi", "fin_performance_indices"]) == {}
     monkeypatch.setenv("FIN_DATASET_URN", URN)
-    assert engine._asset_reads(["fin_tcpi", "fin_performance_indices"]) == {"fin_tcpi": URN}
+    assert engine._asset_reads(["fin_tcpi", "fin_performance_indices"]) == {
+        "fin_tcpi": URN, "fin_performance_indices": URN}
+    assert engine._asset_reads(["fin_no_such_measure"]) == {}, "a name that is neither reads nothing"
 
 
 # ── provenance ──────────────────────────────────────────────────────────────────────────
@@ -715,13 +1030,126 @@ def test_an_asset_answer_carries_the_banner_and_the_urn_and_not_the_notional_tex
     assert env["data_source"] == {"kind": "asset", "urn": URN}
 
 
-def test_a_built_in_with_the_flag_set_keeps_the_notional_banner_and_reads_nothing(client, seam):
-    r = client.post("/measure/fin_performance_indices", headers={"Authorization": f"Bearer {token(ALICE)}"},
-                    json={"params": {"program_id": PROGRAM}, "user_email": ALICE})
+def test_a_built_in_with_the_flag_set_reads_the_asset_as_the_caller(client, seam):
+    """RULED 2026-11-08: that is what the flag means. The frame doubles ACWP, so the seed's
+    figures and the asset's differ and the artifact id says which the answer was computed over."""
+    from agent_fleet.finance_agent import measures
+    frame = frame_of().with_columns((pl.col("acwp") * 2).alias("acwp"))
+    seam.frame = frame.lazy()
+    fn, params = "fin_performance_indices", {"program_id": PROGRAM}
+    r = measure(client, fn, params=params)
     assert r.status_code == 200, r.text
     env = r.json()
-    assert env["data_provenance"] == seed.notional_banner() and "data_source" not in env
-    assert seam.urns == [] and seam.loads == 0
+    over_asset = measures.fin_performance_indices(asset_inputs.state_from_rows(frame, PROGRAM), **params)
+    over_seed = measures.fin_performance_indices(seed.build_seed(), **params)
+    assert engine._artifact_id(fn, params, over_asset) != engine._artifact_id(fn, params, over_seed), (
+        "the control: the frame must move the figures")
+    assert env["artifact_id"] == engine._artifact_id(fn, params, over_asset)
+    assert env["data_provenance"] == asset_inputs.provenance(URN)
+    assert env["data_source"] == {"kind": "asset", "urn": URN}
+    assert seam.urns == [URN] and {kw["originator_email"] for kw in seam.kwargs} == {ALICE}
+
+
+_BUILT_IN_PARAMS = {"fin_eac_calculation": {"method": "CPI"}}
+
+#: RULED 2026-11-09, the shipped row: `fin_funding_status` is the one built-in that reads a
+#: collection the contract does not carry (`state.funding`), and its row keeps it on the seed until
+#: the EV contract gains funding lines. Spelled here once, against the row the engine loaded.
+_SEED_SOURCED = {"fin_funding_status": {"kind": "seed", "reason": "contract carries no funding lines yet",
+                                        "ratified_by": "owner"}}
+
+
+def _built_ins():
+    from agent_fleet.finance_agent import measures
+    return sorted(measures.OUTPUT_URI)
+
+
+def test_the_shipped_source_rows_are_the_ruled_ones():
+    assert {fn: {"kind": r.source, "reason": r.source_reason, "ratified_by": r.ratified_by}
+            for fn, r in engine.SOURCES.items()} == _SEED_SOURCED
+
+
+@pytest.mark.parametrize("fn", _built_ins())
+def test_every_built_in_under_the_flag_answers_from_where_its_row_says(client, seam, fn):
+    """The asset as the caller, unless the row declares the seed. A seed-sourced answer never asks
+    the asset and carries the notional banner and the row's reason."""
+    seam.frame = frame_of().lazy()
+    r = measure(client, fn, params={"program_id": PROGRAM, **_BUILT_IN_PARAMS.get(fn, {})})
+    assert r.status_code == 200, r.text
+    env = r.json()
+    if fn in _SEED_SOURCED:
+        assert env["data_source"] == _SEED_SOURCED[fn]
+        assert env["data_provenance"] == seed.notional_banner()
+        assert env["rows"], "the seed carries funding lines; a seed answer is never 0 rows"
+        assert seam.urns == []
+    else:
+        assert env["data_provenance"] == asset_inputs.provenance(URN)
+        assert env["data_source"] == {"kind": "asset", "urn": URN}
+        assert seam.urns == [URN]
+
+
+def test_the_seed_sourced_set_names_only_built_ins():
+    assert set(_SEED_SOURCED) <= set(_built_ins())
+
+
+def test_an_overlay_row_saying_asset_puts_funding_back_on_the_asset_and_it_refuses_by_name(
+        client, seam, monkeypatch):
+    """With the row replaced (`source: asset`), funding reads the asset, which carries no funding
+    lines: a 422 naming them, never 0 rows (ruled 2026-11-08)."""
+    monkeypatch.setattr(engine, "SOURCES", {})
+    seam.frame = frame_of().lazy()
+    r = measure(client, "fin_funding_status")
+    assert r.status_code == 422, r.text
+    assert "funding" in r.json()["detail"]["not_in_model"]
+    assert seam.urns == [URN]
+
+
+def test_flag_off_funding_still_answers_from_the_seed(off_client):
+    r = measure(off_client, "fin_funding_status")
+    assert r.status_code == 200, r.text
+    assert r.json()["rows"] and r.json()["data_provenance"] == seed.notional_banner()
+
+
+#: The fields the asset's contract does not carry, by the level that would carry them.
+_UNCARRIED_FIELDS = {"control_account": {"wbs_id", "obs_id", "bac"},
+                     "work_package": {"bac", "technique"}}
+
+
+def _nodes(tree):
+    for n in tree:
+        yield n
+        yield from _nodes(n.get("contributors", []))
+
+
+def test_over_the_asset_no_row_carries_a_field_the_contract_does_not(client, seam):
+    """Absent, not a placeholder: a CA's BAC of 0.0 or a package's technique of LEVEL_OF_EFFORT
+    was a figure the asset never said. The seed carries each field, which is the control."""
+    from agent_fleet.finance_agent import measures
+    seam.frame = frame_of().lazy()
+    tree_params = {"program_id": PROGRAM, "materiality": 0.001}
+    drv_params = {"program_id": PROGRAM, "level": "work_package", "variance_kind": "schedule"}
+    asset = {
+        "tree": list(_nodes(measure(client, "fin_variance_analysis", params=tree_params).json()["rows"])),
+        "drivers": [{**r, "level": "work_package"} for r in
+                    measure(client, "fin_variance_drivers", params=drv_params).json()["rows"]],
+    }
+    s = seed.build_seed()
+    control = {
+        "tree": list(_nodes(measures.fin_variance_analysis(s, **tree_params))),
+        "drivers": [{**r, "level": "work_package"} for r in measures.fin_variance_drivers(s, **drv_params)],
+    }
+    for name, rows in control.items():
+        seen = {lvl for r in rows for lvl in _UNCARRIED_FIELDS if r["level"] == lvl}
+        assert seen, f"the control {name} has no CA or WP row"
+        for r in rows:
+            missing = _UNCARRIED_FIELDS.get(r["level"], set()) - set(r)
+            assert not missing, f"the seed's {name} {r['entity_id']} lacks {sorted(missing)}"
+    for name, rows in asset.items():
+        assert any(r["level"] in _UNCARRIED_FIELDS for r in rows), f"the asset's {name} has no CA or WP row"
+        for r in rows:
+            held = _UNCARRIED_FIELDS.get(r["level"], set()) & set(r)
+            assert not held, f"the asset's {name} {r['entity_id']} carries {sorted(held)}"
+            assert "note" not in r
 
 
 # ── timing ──────────────────────────────────────────────────────────────────────────────

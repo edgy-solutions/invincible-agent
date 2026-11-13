@@ -743,10 +743,19 @@ async def get_dynamic_context():
     return {"schema_map": _DYNAMIC_SCHEMA_CACHE}
 
 
+# Telemetry census: /health reports spans the leaf lost. telemetry.py sits at /app in the
+# fleet image; guarded so a missing shim never breaks startup (None = nothing emitted).
+try:
+    from telemetry import emit_misses
+except Exception:  # pragma: no cover -- telemetry never load-bearing
+    def emit_misses():  # type: ignore[misc]
+        return None
+
+
 @app.get("/health")
 def health() -> dict:
     """Liveness probe."""
-    return {"status": "ok", "service": "datahub_wrapper", "port": 8085}
+    return {"status": "ok", "service": "datahub_wrapper", "port": 8085, "telemetry_misses": emit_misses()}
 
 
 # ── ADR-0028 canvas lineage edges (deterministic, non-agentic, GATED) ─────────

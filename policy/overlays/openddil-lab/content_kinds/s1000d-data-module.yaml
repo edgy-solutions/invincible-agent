@@ -5,6 +5,8 @@
 # facts are read from.
 kind: s1000d-data-module
 domain: maintenance
+arrives_as: [xml]
+label: S1000D data module
 passes:
   - s1000d.S1000dGraphBuilder
 outputs:
