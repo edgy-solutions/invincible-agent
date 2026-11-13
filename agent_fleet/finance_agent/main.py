@@ -1081,7 +1081,7 @@ def _dataset_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[str, Any
         with _asset_read_errors(urn):
             paths = asset_inputs.read_dataset_rows(
                 mesh_ticketed_read, urn, row.levels, row.value_columns, row.value_op,
-                row.per_path, program_id)
+                row.per_path, program_id, row.contract)
             try:
                 rows = measure_verbs.run_dataset(paths, row, program_id=program_id)
             except ValueError as exc:
@@ -1122,7 +1122,8 @@ def _dataset_series_envelope(row: "measure_verbs.MeasureVerbRow", params: dict[s
             read = asset_inputs.read_dataset_series(
                 mesh_ticketed_read, urn, scope=row.scope_column, period=row.period_column,
                 status=row.status_column, per_period=tuple(row.per_period.values()),
-                per_program=tuple(row.per_program.values()), program_id=program_id)
+                per_program=tuple(row.per_program.values()), program_id=program_id,
+                contract=row.contract)
     except NotInModel as exc:
         raise HTTPException(status_code=422, detail={"not_in_model": str(exc)}) from exc
     rows = measure_verbs.run_dataset_series(read, row)

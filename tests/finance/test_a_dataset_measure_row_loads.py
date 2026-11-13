@@ -101,6 +101,18 @@ REFUSED = {
     # a FLOW's dataset block drawn as one is refused, not read as a series.
     "flow_form_drawn_as_series": (set_("render.shape", "MULTI_SERIES"), "drawn as MULTI_SERIES"),
     "dataset_key_unknown": (set_("inputs.dataset.formula", "acwp * 2"), "formula"),
+    # The contract the row is read under, and the row's columns held to it (ruled 2026-11-10).
+    "contract_missing": (set_("inputs.dataset.contract", DELETE), "inputs.dataset.contract is required"),
+    "contract_blank": (set_("inputs.dataset.contract", "  "), "inputs.dataset.contract is required"),
+    "contract_unknown": (set_("inputs.dataset.contract", "no_such_contract"), "has no file"),
+    "contract_a_path": (set_("inputs.dataset.contract", "../ev_fixture"), "not a path"),
+    "level_undeclared": (set_("inputs.dataset.levels", ["program_id", "control_account", "wp"]), "does not declare"),
+    "value_undeclared": (set_("inputs.dataset.value", "pv"), "does not declare"),
+    "level_a_number": (set_("inputs.dataset.levels", ["program_id", "control_account", "bcws"]), "in a role"),
+    "value_a_string": (set_("inputs.dataset.value", "program_name"), "in a role"),
+    "minus_a_string": (set_("inputs.dataset.value", {"minus": ["eac", "status_period"]}), "in a role"),
+    "filter_not_the_scope": (set_("inputs.dataset.levels", ["work_package", "control_account", "program_id"]),
+                             "scopes a read by"),
     "inputs_key_unknown": (set_("inputs.query", "select 1"), "query"),
 }
 
