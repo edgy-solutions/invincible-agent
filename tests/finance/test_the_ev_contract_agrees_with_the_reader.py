@@ -1,7 +1,9 @@
-"""contracts/ev_fixture.yaml says what the governed read refuses on; the reader still holds its own copy.
+"""contracts/ev_fixture.yaml says what the governed read refuses on; one reader still holds its own copy.
 
-Until `asset_inputs` reads the contract instead of its constants, there are two homes for one
-claim, and the contract is the one that goes on passing after the reader changes. So every fact
+A dataset measure row's read loads the contract and enforces it (`dataset_contracts`, ruled
+2026-11-10). The `FIN_DATASET_URN` read (`state_from_rows`) still holds its constants, so until it
+reads the contract too there are two homes for one claim, and the contract is the one that goes on
+passing after the reader changes. So every fact
 the contract states about the reader is read FROM the reader here: its column sets, the rule ids
 it raises (found by the form `ContractViolation("<id>"` in its source, so a new refusal site is a
 red until the contract names it), its period vocabulary and its row cap.
@@ -73,6 +75,8 @@ def test_every_name_the_contract_uses_is_a_declared_column(contract):
     named = {*contract["grain"], contract["scope"], contract["period"]["column"], contract["status_period"]}
     for col in cols.values():
         named |= set(col.get("constant_within", ())) | set(col.get("additive_over", ()))
+    for dep in contract["dependencies"]:
+        named |= {dep["by"], *dep["determines"]}
     assert named <= set(cols), sorted(named - set(cols))
 
 

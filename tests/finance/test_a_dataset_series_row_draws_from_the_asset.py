@@ -220,13 +220,23 @@ def test_the_0_11_0_shape_is_a_502_missing_column_naming_the_new_column(post, ga
     assert "status_period" in body["detail"]["message"]
 
 
+@pytest.mark.parametrize("fn", [CUM, EAC])
+def test_a_required_column_the_row_never_names_is_still_a_502_missing_column(post, gate, fn):
+    # No series row reads program_name; the contract requires it, and the read is held to the contract.
+    gate.frame = gate.frame.drop("program_name")
+    status, body = post(fn=fn)
+    assert status == 502 and body["detail"]["rule"] == "missing_column"
+    assert "program_name" in body["detail"]["message"]
+
+
 def test_a_status_that_varies_within_the_program_is_a_502_naming_the_rule(post, gate):
     gate.frame = gate.frame.with_columns(
         pl.when(pl.col("work_package") == "WP-1101").then(pl.lit("FY26-05"))
         .otherwise(pl.col("status_period")).alias("status_period"))
     status, body = post()
-    assert status == 502 and body["detail"]["rule"] == "varies_within_scope"
-    assert "status_period" in body["detail"]["message"] and "FY26-05" not in str(body)
+    assert status == 502 and body["detail"]["rule"] == "not_determined_by"
+    assert "status_period" in body["detail"]["message"] and "program_id" in body["detail"]["message"]
+    assert "FY26-05" not in str(body)
 
 
 def test_a_per_program_column_that_varies_is_a_502_naming_the_rule(post, gate):
@@ -234,14 +244,14 @@ def test_a_per_program_column_that_varies_is_a_502_naming_the_rule(post, gate):
         pl.when(pl.col("work_package") == "WP-1101").then(pl.col("program_bac") + 1)
         .otherwise(pl.col("program_bac")).alias("program_bac"))
     status, body = post(fn=EAC)
-    assert status == 502 and body["detail"]["rule"] == "varies_within_scope"
-    assert "program_bac" in body["detail"]["message"]
+    assert status == 502 and body["detail"]["rule"] == "not_determined_by"
+    assert "program_bac" in body["detail"]["message"] and "program_id" in body["detail"]["message"]
 
 
 @pytest.mark.parametrize("column,value", [("period", "FY27-01"), ("status_period", "2026-06")])
 def test_a_period_or_status_outside_the_calendar_is_a_502(post, gate, column, value):
     gate.frame = gate.frame.with_columns(pl.lit(value).alias(column)) if column == "status_period" else \
-        gate.frame.with_columns(pl.when(pl.col("work_package") == "WP-1101").then(pl.lit(value))
+        gate.frame.with_columns(pl.when(pl.int_range(pl.len()) == 0).then(pl.lit(value))
                                 .otherwise(pl.col(column)).alias(column))
     status, body = post()
     assert status == 502 and body["detail"]["rule"] == "period_outside_calendar"
@@ -362,6 +372,15 @@ REFUSED = {
     "column_named_twice": (EAC, lambda r: _ds(r).update(status="period"), "named twice"),
     "no_scope": (EAC, lambda r: _ds(r).pop("scope"), "inputs.dataset.scope"),
     "no_series": (EAC, lambda r: r["render"].pop("series"), "render.series"),
+    # The contract the row is read under, and the row's columns held to it (ruled 2026-11-10).
+    "no_contract": (EAC, lambda r: _ds(r).pop("contract"), "inputs.dataset.contract is required"),
+    "unknown_contract": (EAC, lambda r: _ds(r).update(contract="no_such_contract"), "has no file"),
+    "per_period_undeclared": (EAC, lambda r: _ds(r)["per_period"].update(eac="eac_typo"), "does not declare"),
+    "per_period_a_string": (EAC, lambda r: _ds(r)["per_period"].update(eac="program_name"), "in a role"),
+    "period_a_number": (EAC, lambda r: _ds(r).update(period="bcws"), "in a role"),
+    "scope_not_the_contracts": (EAC, lambda r: _ds(r).update(scope="work_package"), "scopes a read by"),
+    "per_program_not_determined": (EAC, lambda r: _ds(r)["per_program"].update(bac="bac"),
+                                   "declares no dependency"),
 }
 
 
@@ -412,8 +431,9 @@ def test_each_row_reads_columns_the_contract_says_reduce_the_way_the_row_reduces
         assert ds["status"] == contract["status_period"]
         for col in ds["per_period"].values():          # summed over a program's rows at one period
             assert "work_package" in cols[col].get("additive_over", ()), (fn, col)
+        by_program = {c for d in contract["dependencies"] if d["by"] == "program_id" for c in d["determines"]}
         for col in [*ds["per_program"].values(), ds["status"]]:   # one value across the program
-            assert "program_id" in cols[col].get("constant_within", ()), (fn, col)
+            assert col in by_program, (fn, col)
         named = [ds["status"], *ds["per_period"].values(), *ds["per_program"].values()]
         since = {cols[c]["produced_since"] for c in named}
         assert max(since, key=lambda v: tuple(map(int, v.split(".")))) == "0.12.0", (fn, since)

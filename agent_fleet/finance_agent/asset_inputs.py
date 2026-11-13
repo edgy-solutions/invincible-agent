@@ -290,6 +290,53 @@ def state_from_rows(df: Any, program_id: str) -> FinanceState:
     return state
 
 
+# ── a dataset row's contract ────────────────────────────────────────────────────────────
+# A dataset row's read is held to the contract the row names (`dataset_contracts.DatasetContract`):
+# the contract declares the columns, their types, the key and the dependencies, and these two
+# functions enforce them. They name no column of any contract (ruled 2026-11-10).
+
+def _is_type(dtype: Any, kind: str) -> bool:
+    import polars as pl
+
+    if kind == "string":
+        return dtype == pl.String
+    return dtype.is_integer() if kind == "integer" else dtype.is_numeric()
+
+
+def check_contract_schema(schema: Any, contract: Any, named: tuple[str, ...]) -> list[str]:
+    """The columns a read selects: every column the contract declares that the asset carries.
+
+    Every required column, and every column the row `named`, must be present (`missing_column`),
+    and every selected column must be of its declared type (`wrong_type`), whether or not the row
+    reads it: the key and the dependencies are checked over columns the row may never name."""
+    missing = [c for c in dict.fromkeys((*contract.required, *named)) if c not in schema]
+    if missing:
+        raise ContractViolation("missing_column", "missing column(s): " + ", ".join(missing))
+    selected = [c for c in contract.types if c in schema]
+    bad = [c for c in selected if not _is_type(schema[c], contract.types[c])]
+    if bad:
+        raise ContractViolation("wrong_type", "column(s) of the wrong type: " + ", ".join(bad))
+    return selected
+
+
+def check_contract_rows(df: Any, contract: Any) -> None:
+    """The key and the dependencies, over one program's collected rows. A message names the
+    columns, never a value."""
+    import polars as pl
+
+    if df.select(list(contract.key)).is_duplicated().any():
+        raise ContractViolation("duplicate_key", f"more than one row for one ({', '.join(contract.key)})")
+    for by, determined in contract.dependencies:
+        present = [c for c in determined if c in df.columns]
+        if not present:
+            continue
+        counts = df.group_by(by).agg(pl.col(c).n_unique() for c in present)
+        for c in present:
+            if (counts[c] > 1).any():
+                raise ContractViolation("not_determined_by",
+                                        f"{c} is not determined by {by}: one {by} carries more than one {c}")
+
+
 # ── the read ────────────────────────────────────────────────────────────────────────────
 
 def read_rows(read: Callable[[str], Any], urn: str, program_id: str,
@@ -336,16 +383,18 @@ def read_rows(read: Callable[[str], Any], urn: str, program_id: str,
 
 def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, ...],
                       value_columns: tuple[str, ...], value_op: str, per_path: str,
-                      program_id: str) -> list[tuple[tuple[str, ...], Any]]:
-    """`read_rows` for a dataset-kind row: the rows of ONE program of the ROW'S columns.
+                      program_id: str, contract: Any) -> list[tuple[tuple[str, ...], Any]]:
+    """`read_rows` for a dataset-kind row: the rows of ONE program, held to the row's `contract`.
 
-    The contract is the row's own columns, not the fixed finance ones. All of `levels` and
-    `value_columns` must be present and every value column numeric (checked on the schema, before a
-    row is collected); the level columns are read as strings, and the filter keeps the rows whose
-    `levels[0]` is `program_id`. Only those columns are selected, and the row cap is applied before
-    collect, so it counts rows read, before any reduction. Every outcome maps as `read_rows` maps it. An empty frame raises `NotInModel`, as `state_from_rows`
-    does for a program the asset does not hold. Nulls and non-finite values are checked on the
-    collected frame; a message names the rule and the column, never a row's value.
+    The schema is checked against the contract before a row is collected (`check_contract_schema`;
+    that the row's `levels` are string contract columns and its `value_columns` numeric ones is held
+    at load). The filter keeps the rows whose `levels[0]` (the contract's scope) is `program_id`;
+    every contract column the asset carries is selected, and the row cap is applied before collect,
+    so it counts rows read, before any reduction. Every outcome maps as `read_rows` maps it. An
+    empty frame raises `NotInModel`, as `state_from_rows` does for a program the asset does not
+    hold. Nulls and non-finite values are checked in the row's columns, then the contract's key and
+    dependencies (`check_contract_rows`); a message names the rule and the column, never a row's
+    value.
 
     RETURNS the `(path below the root, Decimal amount)` list `run_dataset` takes. A row's amount is
     `Decimal(str(x))`, or for `value_op == "minus"` `Decimal(str(a)) - Decimal(str(b))`. Under
@@ -367,17 +416,11 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
     except Exception as exc:
         log.warning("asset scan failed: %s", type(exc).__name__)
         raise AssetUnavailable("the asset could not be scanned") from None
-    missing = [c for c in (*levels, *value_columns) if c not in schema]
-    if missing:
-        raise ContractViolation("missing_column", "missing column(s): " + ", ".join(missing))
-    bad = [c for c in value_columns if not schema[c].is_numeric()]
-    if bad:
-        raise ContractViolation("wrong_type", "column(s) of the wrong type: " + ", ".join(bad))
+    selected = check_contract_schema(schema, contract, (*levels, *value_columns))
     cap = max_rows()
-    as_text = [pl.col(c).cast(pl.String) for c in levels]
-    q = lf.filter(pl.col(levels[0]).cast(pl.String) == program_id)
+    q = lf.filter(pl.col(levels[0]) == program_id)
     try:
-        df = q.select([*as_text, *(pl.col(c) for c in value_columns)]).head(cap + 1).collect()
+        df = q.select(selected).head(cap + 1).collect()
     except Exception as exc:
         log.warning("asset scan failed: %s", type(exc).__name__)
         raise AssetUnavailable("the asset could not be scanned") from None
@@ -394,6 +437,7 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
             raise ContractViolation("non_finite", f"non-finite number(s) in column {c}")
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r}")
+    check_contract_rows(df, contract)
     n = len(levels) - 1
     paths: list[tuple[tuple[str, ...], Any]] = []
     for r in df.select([*levels[1:], *value_columns]).iter_rows():
@@ -421,20 +465,21 @@ class SeriesRead(NamedTuple):
 
 def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, period: str,
                         status: str, per_period: tuple[str, ...], per_program: tuple[str, ...],
-                        program_id: str) -> SeriesRead:
+                        program_id: str, contract: Any) -> SeriesRead:
     """`read_rows` for a dataset row drawn as MULTI_SERIES: the rows of ONE program of the ROW'S
     columns, reduced the two ways the row may ask and no other.
 
-    Every named column must be present, and the `per_period` and `per_program` ones numeric
-    (checked on the schema, before a row is collected). The filter keeps the rows whose `scope`
-    column is `program_id`; only the named columns are selected, and the row cap applies before
-    collect. Every outcome maps as `read_rows` maps it, and an empty frame raises `NotInModel`.
+    The schema is checked against the row's `contract` before a row is collected, as
+    `read_dataset_rows` checks it. The filter keeps the rows whose `scope` column is `program_id`;
+    every contract column the asset carries is selected, and the row cap applies before collect.
+    Every outcome maps as `read_rows` maps it, and an empty frame raises `NotInModel`. Nulls and
+    non-finite values are checked in the row's columns, then the contract's key and dependencies.
 
-    A `per_period` column is summed over the program's rows at each period (exactly, as Decimal);
-    a `per_program` column, and the `status` column when the row names one, must hold one value
-    across the program's rows (else `varies_within_scope`). A period, or the status, outside the
-    fiscal calendar is `period_outside_calendar`. A message names the rule and the column, never a
-    row's value."""
+    A `per_period` column is summed over the program's rows at each period (exactly, as Decimal).
+    A `per_program` column, and the `status` column when the row names one, is declared determined
+    by the scope (held at load), so the dependency check leaves it one value across the program's
+    rows. A period, or the status, outside the fiscal calendar is `period_outside_calendar`. A
+    message names the rule and the column, never a row's value."""
     import polars as pl
 
     t0 = time.perf_counter()
@@ -452,17 +497,11 @@ def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, per
         raise AssetUnavailable("the asset could not be scanned") from None
     text = [scope, period, *((status,) if status else ())]
     numeric = [*per_period, *per_program]
-    missing = [c for c in (*text, *numeric) if c not in schema]
-    if missing:
-        raise ContractViolation("missing_column", "missing column(s): " + ", ".join(missing))
-    bad = [c for c in numeric if not schema[c].is_numeric()]
-    if bad:
-        raise ContractViolation("wrong_type", "column(s) of the wrong type: " + ", ".join(bad))
+    selected = check_contract_schema(schema, contract, (*text, *numeric))
     cap = max_rows()
-    q = lf.filter(pl.col(scope).cast(pl.String) == program_id)
+    q = lf.filter(pl.col(scope) == program_id)
     try:
-        df = (q.select([*(pl.col(c).cast(pl.String) for c in text), *(pl.col(c) for c in numeric)])
-              .head(cap + 1).collect())
+        df = q.select(selected).head(cap + 1).collect()
     except Exception as exc:
         log.warning("asset scan failed: %s", type(exc).__name__)
         raise AssetUnavailable("the asset could not be scanned") from None
@@ -479,9 +518,7 @@ def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, per
             raise ContractViolation("non_finite", f"non-finite number(s) in column {c}")
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r}")
-    for c in (*per_program, *((status,) if status else ())):
-        if df[c].n_unique() > 1:
-            raise ContractViolation("varies_within_scope", f"{c} differs between the program's rows")
+    check_contract_rows(df, contract)
     calendar = list(FISCAL_PERIODS)
     if not df[period].is_in(calendar).all() or (status and df[status][0] not in calendar):
         raise ContractViolation("period_outside_calendar", "a period outside the fiscal calendar")

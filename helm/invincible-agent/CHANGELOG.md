@@ -1,5 +1,40 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.88 — not yet cut
+
+**0.4.88 is 0.4.87 plus the architect's train (via Chris, 2026-11-13), in this order.** The cut
+bumps `Chart.yaml` and dates this heading once every row below is merged. The roll waits for
+Chris's approval of the values diff against live revision 234.
+
+| order | PR | what |
+| --- | --- | --- |
+| 1 | this PR | cortex `6a441d9` (`sha256:c4048781`): the export dialog names the notice; the reviewer sees "Export as…" on Promote |
+| 2 | #365 | fin: the CDRL export reads the `can_export` rail, deny by default |
+| 3 | #357 | fin: a dataset row is read under its contract; the three gaps refuse |
+| 4 | #362 | fin: the overlay test's git fixture no longer fails on a long temp folder |
+| 5 | #364 | saf: select export notices by a receipt-date range (after gov approves) |
+| 6 | #327 | perf: trace one answer on provenance-telemetry 0.2.1 |
+
+**Not on 0.4.88:** #360 (SDK pin) and the engines' refusal-or-NetworkPolicy decision. Both go
+to 0.4.89, one token change per roll.
+
+**After the roll:** dagster-user-code must be Ready (#327).
+
+**Grants for the export path.** The export grants go to the reviewing group. The Promote
+reviewers' group needs `ingest:exportBatch` and the work profile's `can_export`, or the button
+stays hidden.
+
+### Cortex `fb3162a` → `6a441d9` (`sha256:c40487815f41…abf2ab`)
+- The "Export as…" dialog names the notice by its number (e.g. `PCN-2683`), else `drop <12 hex>`,
+  never the sha. Request bodies and `data-unexportable` still carry ingest ids.
+- A reviewer sees "Export as…" on the Promote review of a notice they did not drop, while Promote
+  is held. `GET /ingest/{id}/status` answers only the dropper (anyone else gets 404), so cortex
+  asks `POST /ingest/export/notices` with `check_only` once per profile the viewer holds. That
+  workaround goes when the status read answers every permitted reader (0.4.89, the per-viewer PR).
+- Pin measured: the full tag resolves to this digest (OCI index, amd64 and arm64); the
+  abbreviated tag and the digest with its last hex altered both answer 404. `fb3162a..6a441d9`
+  changes `src/` only. `0d5a59d` is sessions-only and builds no image.
+
 ## 0.4.87 — 2026-11-12
 
 **0.4.87 is 0.4.86 (`cc4104d4`) plus three PRs**, the whole of Chris's pre-approved overnight train
