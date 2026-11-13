@@ -1,11 +1,275 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.85 — not yet cut
+## 0.4.88 — not yet cut
 
-Entries merged after the 0.4.84 tag (`f9fa4d7b`). The architect, 2026-11-10: "Merge train, all under
-'## 0.4.85 — not yet cut'", and "Hold the 0.4.85 cut PR until I say. Hold the PR, not the tag; the
-automation tags on merge." Every entry below goes under this heading until the cut; none goes under
-0.4.84, which is tagged and rolled.
+**0.4.88 is 0.4.87 plus the architect's train (via Chris, 2026-11-13), in this order.** The cut
+bumps `Chart.yaml` and dates this heading once every row below is merged. The roll waits for
+Chris's approval of the values diff against live revision 234.
+
+| order | PR | what |
+| --- | --- | --- |
+| 1 | this PR | cortex `6a441d9` (`sha256:c4048781`): the export dialog names the notice; the reviewer sees "Export as…" on Promote |
+| 2 | #365 | fin: the CDRL export reads the `can_export` rail, deny by default |
+| 3 | #357 | fin: a dataset row is read under its contract; the three gaps refuse |
+| 4 | #362 | fin: the overlay test's git fixture no longer fails on a long temp folder |
+| 5 | #364 | saf: select export notices by a receipt-date range (after gov approves) |
+| 6 | #327 | perf: trace one answer on provenance-telemetry 0.2.1 |
+
+**Not on 0.4.88:** #360 (SDK pin) and the engines' refusal-or-NetworkPolicy decision. Both go
+to 0.4.89, one token change per roll.
+
+**After the roll:** dagster-user-code must be Ready (#327).
+
+**Grants for the export path.** The export grants go to the reviewing group. The Promote
+reviewers' group needs `ingest:exportBatch` and the work profile's `can_export`, or the button
+stays hidden.
+
+### Cortex `fb3162a` → `6a441d9` (`sha256:c40487815f41…abf2ab`)
+- The "Export as…" dialog names the notice by its number (e.g. `PCN-2683`), else `drop <12 hex>`,
+  never the sha. Request bodies and `data-unexportable` still carry ingest ids.
+- A reviewer sees "Export as…" on the Promote review of a notice they did not drop, while Promote
+  is held. `GET /ingest/{id}/status` answers only the dropper (anyone else gets 404), so cortex
+  asks `POST /ingest/export/notices` with `check_only` once per profile the viewer holds. That
+  workaround goes when the status read answers every permitted reader (0.4.89, the per-viewer PR).
+- Pin measured: the full tag resolves to this digest (OCI index, amd64 and arm64); the
+  abbreviated tag and the digest with its last hex altered both answer 404. `fb3162a..6a441d9`
+  changes `src/` only. `0d5a59d` is sessions-only and builds no image.
+
+## 0.4.87 — 2026-11-12
+
+**0.4.87 is 0.4.86 (`cc4104d4`) plus three PRs**, the whole of Chris's pre-approved overnight train
+(2026-11-12). Nothing else merged. The sandbox goes from 0.4.86 (revision 233) to 0.4.87.
+
+| order | PR | what |
+| --- | --- | --- |
+| 1 | #369 | engine-f `/health` answers 200 again, with a seal that calls every health route |
+| 2 | #368 | bob's three sample export grants, through the add-only `capability_grants` overlay |
+| 3 | #370 | cortex `fb3162a` (`sha256:37d6e016`): "Export as…" on every notice card, plus three display fixes |
+
+**Chris's values condition for the roll.** The diff against live revision 233 may hold only:
+- image digests matching this release's `image-digests.json`;
+- the cortex frontend digest;
+- `agentFleet.env.CAPABILITY_GRANT_OVERLAY_DIRS`.
+
+Anything more stops the roll.
+
+**The sync, predicted offline on `b10068fd`** with the sandbox overlay env: `can_export rows: 8 applied, 0
+refused`, and 52 invoker grants.
+- bob holds the three ruled grants plus the seed's own two `mesh:` verbs.
+- Without the sample overlay there are 49 grants, and bob has only the two `mesh:` verbs.
+
+**Post-roll checks (Chris's conditions).** Any failure rolls back to revision 233.
+- realm reconcile OK;
+- task-grant-sync refuses 0, including bob's new rows;
+- every `/health` answers 200, engine-f's on the new image included;
+- the gateway reports `enforce_ready=yes`;
+- `telemetry_misses` reads 0.
+
+**Moved to 0.4.88 (architect, 2026-11-12):** everything else that was queued for 0.4.87.
+- the per-viewer PR, which goes first;
+- the drift order;
+- #327, #357, #360, #362 and #365;
+- saf's export-by-range.
+
+### engine-f answers `/health` again
+
+- **What broke.** On 0.4.86 engine-f's `/health` returned 500, so its new pod never became Ready, and the 0.4.84 pod kept serving.
+  - `agent_fleet/presentation_agent/main.py` declared `-> Dict[str, str]`.
+  - Since `30d36560` the body carries `telemetry_misses`, which is an int.
+  - FastAPI builds the response model from the annotation, so validation failed.
+- **The fix.** `-> Dict[str, Any]`, in line with the other engines.
+- **The seal: `tests/perf/test_health_routes_answer_200.py` calls the route.** The census before it only checked that the key is named.
+  - A: engine-f's real `main`, imported through the shared `stub_modules` harness, answers 200 with an int.
+  - B: every `/health` handler in the tree is rebuilt on a fresh app with its own annotation and `response_model=`, and called.
+    - An annotation the probe cannot evaluate fails the test.
+    - There is a floor of 17 handlers.
+  - The positive control: `Dict[str, str]` gives 500 and `Dict[str, Any]` gives 200.
+  - On the unfixed tree, A and B both fail, naming presentation_agent.
+
+### bob's sample export grants (sandbox only)
+
+- Sandbox sample user bob holds `can_export:part-list`, `can_export:part-list-reviewed` and
+  `ingest:exportBatch`, as a user grant, through the new overlay
+  `policy/overlays/sample/capability_grants.yaml`; the shared seed still names no sample user. The
+  loader rule is add-only (`capability_grant_sync.py` merges the overlay in memory before the sync):
+  an overlay row for a capability the seed lacks, or carrying any field beyond `granted_by`, `reason`,
+  `grant_to`, `grant_to_groups`, or a listed directory without the file, is refused, exit 2, nothing
+  written. Switched on by `agentFleet.env.CAPABILITY_GRANT_OVERLAY_DIRS` in `values-sandbox.yaml` only.
+  Seal: `tests/security/test_bobs_sample_grants_apply_only_with_the_sample_overlay.py`.
+
+### The cortex UI moves to `fb3162a` (`sha256:37d6e016`)
+
+- `global.imageDigests."ghcr.io/edgy-solutions/cortex-ui/frontend"` changes from `cb902ea0` (cortex `a255a8e`) to
+  `37d6e016` (cortex `fb3162a`, CI run 43158821177, PRODUCER_REF `8c3eb9af` unchanged). No other value changes:
+  `reviewExport` is already on in sandbox.
+- **What it adds:**
+  - one export path;
+  - "Export as…" on every notice card, shown to a viewer who:
+    - holds `ingest:exportBatch`;
+    - may read the notice;
+    - holds a profile whose `exportable_states` include the notice's state.
+
+    No review task is needed, as the architect ruled.
+  - three display fixes: a focused card is alone on the stage; the disposition table splits on the card's width; and
+    "sent today: nothing; Promote is held" while Promote is held.
+- **Cortex's seals:** the ruled notice-card seal is 6/6, with the same user with and without the grant as its control.
+  Their gate was 4915 passed.
+- **Measured before pinning:**
+  - the full tag resolves to this digest, an OCI index with amd64 and arm64;
+  - the abbreviated tag and an altered digest both answer 404;
+  - `a255a8e..fb3162a` touches `src/`, `sessions/` and `e2e/` only.
+
+## 0.4.86 — 2026-11-12
+
+**0.4.86 replaces 0.4.85.** It is 0.4.85 (`b2cb6b8c`) plus one fix PR. Master is frozen to everything
+else until 0.4.86 rolls (Chris, architect ruling, 2026-11-12). Every entry in the 0.4.85 section below
+ships to the sandbox in this version. The sandbox goes from 0.4.84 (revision 232, the rollback to
+230) to 0.4.86.
+
+### Why 0.4.85 never rolls
+
+- The 0.4.85 roll failed in its `post-upgrade` hook. The `realm-reconcile` Job's script was one
+  inline `sh -c` argument of 153,266 bytes. Linux refuses any single argument over 131,072 bytes
+  (`MAX_ARG_STRLEN`), so the container never started. 0.4.84's argument was 123,363 bytes.
+- The hook ran **after** the new workloads were applied. The BFF then required a token audience that
+  realm reconcile had not yet created.
+- The sandbox was rolled back to revision 230 (now revision 232). 0.4.85 stays tagged and is never
+  rolled.
+- No database migration had to be reversed: 0.4.85's were additive.
+
+### The fix
+
+- **The script is a mounted file.** It ships as ConfigMap `<release>-realm-reconcile-script`
+  (`reconcile.sh`, mounted at `/scripts`, mode 0555). The Job runs `sh /scripts/reconcile.sh` and
+  passes no argument.
+- **Credential-bearing bodies are files too.** The request bodies that carry a credential are in Secret
+  `<release>-realm-reconcile-bodies`, mounted at `/run/realm-reconcile`, mode 0400. These are the
+  service-client creates, the local-user creates and the broker client secret. The script sends them
+  with `curl -d @file`. With the bodies re-inlined, the script is byte-identical to 0.4.85's argument.
+- **Realm reconcile runs before anything changes.**
+  - **On upgrade** the ConfigMap, the Secret (weight 1) and the Job (weight 2) are `pre-upgrade`
+    hooks. The new audience exists before the new BFF requires it, and a failed reconcile stops the
+    roll before any workload changes.
+  - **On a fresh install** Keycloak does not exist yet, so the same objects stay `post-install`.
+  - `invincible-agent.realmReconcileHookPhase` chooses by `.Release.IsInstall`.
+  - All three use `before-hook-creation,hook-succeeded`. helm deletes `hook-succeeded` objects only
+    once the whole phase has succeeded, so the Job's mounts exist while it runs.
+- **The broker client secret comes from the bodies Secret**, not the release's `<release>-secrets`.
+  During `pre-upgrade`, `-secrets` is still the old object and would lack a newly added key.
+- **Two new seals.**
+  - `tests/test_chart_no_oversized_argument.py`: fails when any rendered container `command`/`args`
+    entry or env `value` exceeds 128 KiB. It has a control that renders an over-limit value through a
+    values file.
+  - `tests/test_realm_reconcile_runs_before_workloads.py`: renders the hook phases. On upgrade, realm
+    reconcile is `pre-upgrade`, ahead of every workload. On install it is `post-install`.
+- **Sandbox render.** The largest container argument is 3,363 bytes and the largest env value is 173
+  bytes.
+
+### Values change
+
+**cortex-bff CPU limit `2` in `values-sandbox.yaml`; base stays 500m.**
+- After the rollback, `GET /me/entitlements` never finished within the UI's 15 s timeout. Each call
+  costs about 2.6 s of CPU: `human_tasks.py` builds one `httpx.Client` per Topaz directory call, about
+  37 per request.
+- At 500m the BFF was throttled in 40% of CPU periods. At 2 it is 4%.
+- Chris set the limit by hand on the live Deployment on 2026-11-12. This carries it, so the roll does
+  not reset it.
+
+### Before the roll
+
+- **The values diff** against live revision 232 goes to Chris, with the drift list: the
+  hand-set fields that the roll leaves in place and the one it would revert.
+- **`policy/` is unchanged** since `b2cb6b8c`, so no Topaz sync is needed.
+
+### After the roll
+
+The post-roll checks are the 0.4.85 list below:
+- the realm job succeeded;
+- task-grant-sync refused 0 rows, including the three `can_export:cdrl_*` rows;
+- `telemetry_misses` is 0;
+- the gateway reports `enforce_ready=yes`;
+- `dagster-user-code` is Ready;
+- alice's sign-in returns non-empty entitlements.
+
+**Any sign-in failure rolls back to 230.**
+
+## 0.4.85 — 2026-11-12 (tagged, never rolled; 0.4.86 replaces it)
+
+Entries merged after the 0.4.84 tag (`f9fa4d7b`), through `3049ef62`. The architect, via Chris,
+2026-11-11: "0.4.85 is cut and rolled to sandbox tonight. The train closes at 01:30Z. Whatever has
+merged by then is 0.4.85; everything else is 0.4.86." The sandbox goes from 0.4.84 to this version.
+
+**What merged, and where each one is** (merge order):
+
+| item | where |
+| --- | --- |
+| #330 the ticket's id, issue time and as-of are sealed | merged at `a91eb7dc`; a seal only |
+| #335 0.4.85 opens; the chart-version test reads git output as UTF-8 | merged at `00099a7d`; a test; below |
+| #338 the root lock takes langfuse >= 4.7.0 | merged at `d665658d`; the root lock; below |
+| #334 the attestation split is sealed | merged at `6f5bb97d`; a seal only |
+| #316 fin: a dataset row drawn as `MULTI_SERIES`; the EV rows coded to the contract | merged at `7f1a782b`; through the images; below |
+| #336 gov: the walkers join `obsolescence-deciders` | merged at `622bcb7f`; policy, needs a Topaz sync; below |
+| #329 gov: the fleet onto iagent-mesh v0.9.17 | merged at `431d57bc`; through the images; below |
+| #337 the SDK's `ImpactRow` cannot carry a served row; the tripwire says why | merged at `bc5e87c2`; a comment and a tripwire |
+| #319 fin: `data_provenance` says its ticket is pending | merged at `82f70fd0`; through the images; below |
+| #344 the runner's action record meets the pinned `ActionRecord` | merged at `6860aaa8`; through the images; below |
+| #331 fin: measures read the asset under the flag; `source: asset \| seed` | merged at `cf92efc6`; through the images; below |
+| #346 two master reds | merged at `82824722`; tests only |
+| #340 the fleet onto provenance-telemetry 0.2.0; `telemetry_misses` on every `/health` | merged at `4a1e1b5a`; through the images; below |
+| #348 board: a task holder sees a case without the label check | merged at `2d131cdb`; the board only |
+| #349 SECURITY: cortex-bff checks a token's audience and issuer | merged at `3c85f53d`; images, chart, realm job; upgrade notes and below |
+| #350 the upgrade notes for the BFF's issuers and audiences | merged at `03c0b1c1`; the upgrade notes |
+| #345 fin's live leg: time-phased rows, sandbox refusal probes | merged at `e9d00785`; policy overlays, needs a Topaz sync; below |
+| #339 PCN26-182's two parts in the synthetic BOM | merged at `a02cfda3`; a fixture; below |
+| #343 the SDK pin to v0.9.18; `pcn` and `pdn` declare `attestation: self` | merged at `8987d487`; through the images; below |
+| #351 `course` mirrors the doc-tools commit the sandbox runs | merged at `a74b927a`; the policy overlay; below |
+| #342 engine-fin's dag-tools pin to v0.13.0 | merged at `c46c38e0`; engine-fin's image; below |
+| #352 every engine is served the BFF's token lists, the realm JWKS and one posture switch | merged at `ea439e88`; the chart; below |
+| #341 where-used registered on the notice graph's Component | merged at `0496d895`; through the images; below |
+| #353 the SDK pin to v0.9.19 | merged at `2f978413`; through the images; below |
+| #355 the sandbox tags every span with its environment | merged at `c4a572b9`; `values-sandbox.yaml`; upgrade notes and below |
+| #358 SECURITY: dag-tools v0.14.0; the sandbox gateway enforces | merged at `a766d62b`; two digests, the chart; upgrade notes and below |
+| #354 promotion reads its attestation from the content-kind row | merged at `6c98cb14`; through the images; below |
+| #356 the export profile server | merged at `8c3eb9af`; images, chart, policy, needs a Topaz sync; below |
+| #359 the manufacturing-traceability dispatch, committed for lanes to cite | merged at `7e8987bf`; `sessions/` only |
+| #363 cortex-ui a255a8e; the sandbox turns `reviewExport` on | merged at `3a54cc36`; one digest, `values-sandbox.yaml`; below |
+| #361 an unknown `can_export` row is refused alone; no grant is not an error | merged at `3049ef62`; the sync Jobs, chart, policy; below |
+
+**Before this version rolls:**
+
+1. Chris syncs Topaz from the cut's merge: the walkers' group (#336), fin's live-leg rows (#345), and
+   `can_export:part-list` and `can_export:part-list-reviewed` (#356). Offline, on `3049ef62` with the
+   sandbox's overlay env, `capability_grant_sync` reports `can_export rows: 8 applied, 0 refused`; the
+   same run without the sample overlay refuses exactly those two rows. The live check is the
+   task-grant-sync Job's log line after the roll, which must read 0 refused.
+2. Chris checks the realm for hand-made clients that call cortex-bff (the chart manages cortex-ui,
+   15 service clients and the sandbox's two extra ones, and gives each the `audience-bff` mapper). The
+   gateway enforces in this roll (#358), so a client managed elsewhere without the audience is refused.
+3. The values diff against the live release goes in front of Chris, and the roll waits for his word.
+
+**After the roll:**
+
+- `telemetry_misses` reads 0 on the six engines and on cortex-bff.
+- The gateway's startup line reads `posture=enforce … enforce_ready=yes`, and a token for another
+  audience is refused.
+- `dagster-user-code` is Ready.
+- A real sign-in returns a non-empty `/me/entitlements`. **If sign-in fails, roll back to revision 230
+  and report.**
+- The review-export check in #363's entry below.
+
+**Not in this version** (they lead 0.4.86):
+
+- **Engine refusal.** The engines stay `observe`, and the Thursday decision moves to 0.4.86.
+  `INTERNAL_DOOR_POSTURE` stays observe; it goes to enforce on the train after 24 hours of
+  `principal_gauge` reading zero unnamed and zero divergent.
+- **gov's iagent-mesh v0.9.20 pin** (#360).
+- **perf's tracing PR** (#327).
+- **fin's contract refusals** (#357), and fin's long-path test fix (#362).
+- **Select-by-range** on the review card.
+- **Master's known reds**, with owners. On `8c3eb9af`, `tests/docs` has six reds: gov's `54522645`
+  reads `status_code`, which 74's doubles lack. The fix is gov's, and 74 approves the test edit. The
+  seventh red is `test_specialist_dispatch_trace_headers.py::test_engine_a_leg_uses_the_same_source`,
+  which counts a call form that `00dcf15e` changed; it is Lane 1's. Lane 74 owns its tripwire red.
 
 ### Upgrade notes: set these before an environment takes 0.4.85
 
@@ -48,6 +312,19 @@ cortexBff:
 **`agentFleet.env.LANGFUSE_TRACING_ENVIRONMENT`**, set to the same value as `DEPLOY_ENV`, or the spans the
 Langfuse SDK builds land in Langfuse's `default` environment. In the sandbox it is now set, so new sandbox
 spans move from `default` to `sandbox`: a Langfuse view or query filtered on `default` stops showing them.
+
+**The central gateway (dag-tools v0.14.0) accepts only the BFF's issuers and audiences.** The chart renders
+`GATEWAY_JWT_ISSUERS` and `GATEWAY_JWT_AUDIENCES` from `cortexBff.auth.acceptedIssuers` /
+`acceptedAudiences` (the BFF's one copy). **An empty list refuses every token** once the gateway enforces.
+- Do not set `GATEWAY_JWT_ISSUERS`, `GATEWAY_JWT_AUDIENCES` or `GATEWAY_JWT_AUDIENCE` in
+  `centralGateway.env` or `agentFleet.env`: the render fails, because the gateway would add them to its list.
+- A `GATEWAY_JWT_ISSUER` you already set stays valid only if it is one of `cortexBff.auth.acceptedIssuers`;
+  otherwise the render fails.
+- `GATEWAY_IDENTITY_POSTURE` is unchanged by the chart. An environment that moves it to `enforce` should
+  read the gateway's startup line first: `identity: posture=… issuers=N audiences=N enforce_ready=yes`.
+  `enforce_ready=no unset=…` names what is missing. Every service client this chart manages carries the
+  BFF audience (the realm job's `audience-bff` mapper); a client managed elsewhere must carry it too, or
+  the gateway refuses its tokens under `enforce`.
 
 - **SECURITY: cortex-bff checks a token's audience and issuer** (`src/iagent/auth.py`,
   `templates/frontend.yaml`, `templates/keycloak-configmap.yaml`, `templates/realm-reconcile-job.yaml`,
@@ -325,6 +602,73 @@ spans move from `default` to `sandbox`: a Langfuse view or query filtered on `de
   `default` to `sandbox`; a view or query filtered on `default` stops showing them. Spans already written
   keep `default`. A pod reads the key at start. Nothing checksums the ConfigMap, so the change takes
   effect because 0.4.85's chart version restarts every pod. No image changes.
+- **SECURITY: dag-tools v0.14.0; the sandbox gateway enforces with the BFF's lists** (`pyproject.toml`,
+  `agent_fleet/finance_agent/pyproject.toml`, both locks, `values.yaml` `global.imageDigests`,
+  `templates/_helpers.tpl` `gatewayTokenEnv`, `templates/engines.yaml`, `values-sandbox.yaml`; the
+  architect, 2026-11-11). The pin moves from 0.13.0 to 0.14.0: the library (root, from PyPI; engine-fin,
+  tag `v0.14.0`) and both images by digest (`central-gateway`
+  `sha256:deedd6c9…`, `user-deployment` `sha256:f8cbcad8…`, each an index with linux/arm64, `= :sha-33a0262`).
+  engine-data-analyst's pre-rename SHA pin is unchanged. v0.14.0's gateway checks a token's issuer against
+  a list and its audience against a list, and reads the principal once (an unverified token names nobody).
+  The chart serves it the BFF's lists, last in the container env, and refuses a hand-set name that would
+  widen them. **The sandbox moves `GATEWAY_IDENTITY_POSTURE` from `observe` to `enforce` in the same roll**;
+  the internal doors' `INTERNAL_DOOR_POSTURE` stays unset (observe). **Post-roll check:** the gateway's
+  startup line reads `posture=enforce … enforce_ready=yes`, and a token for another audience is refused.
+  Seal: `tests/security/test_the_gateway_is_served_the_bff_token_lists_chart.py` (12 tests) runs dag-tools'
+  own `accepted_issuers`, `accepted_audiences` and `announce` over the rendered env; dropping the include
+  turns 11 red, and the posture back to `observe` turns 1 red.
+- **Promotion reads its attestation from the content-kind row** (`src/iagent/promotion.py`; saf).
+  `_declared_attestation` returns the registered kind's `attestation` (SDK v0.9.18,
+  `ContentKindRegistration.attestation`). A kind that is not registered, or that declares none, keeps
+  `ATTESTATION_DEFAULT`. A value outside `ATTESTATION_MODES` is a 503 `attestation_undeclarable`.
+  Seal: `tests/test_the_attestation_is_read_from_the_kind_row.py`.
+- **The export profile server** (`src/iagent/export_profiles.py`, `src/iagent/gateway.py`,
+  `src/iagent/ingest_api.py`, `values.yaml` policy overlay, `policy/exports/`,
+  `policy/overlays/sample/exports/`, `policy/capability_grants.yaml`; saf):
+  - Profiles load from `INGEST_EXPORT_PROFILE_OVERLAY_DIRS` as well as the image.
+  - A profile declares `accepts`, `grain`, `version` and `exportable_states`.
+  - The listing is filtered by the caller's `can_export:<profile>`.
+  - `POST /ingest/export/notices` exports by notice ids, with `check_only`. Every call writes the audit
+    line `iagent.audit.ingest_export`.
+  - It refuses with `not_entitled_to_export_batch`, `not_entitled_to_export`,
+    `export_profile_unknown` (422), `export_notice_ids_invalid` and `export_notices_unexportable`.
+
+  It also ships two sample profiles, `part-list` and `part-list-reviewed`. Each has a grant row to
+  `alert-processors`, which Topaz needs before the roll. Seal:
+  `tests/routing/test_the_export_profile_server_is_sealed.py`.
+- **cortex-ui moves from db45763 to a255a8e, and the sandbox turns `reviewExport` on** (`values.yaml`
+  `global.imageDigests`, `values-sandbox.yaml` `cortexUi.env.VITE_FEATURES`). The image is
+  `sha256:cb902ea0…`, an index with linux/arm64, built against `8c3eb9af` (the merge of #356). It is the
+  review-export pairing:
+  - "Export as…" on the review card offers only the granted profiles whose `exportable_states` hold the
+    notice's stage, so a `review` notice gets `part-list-reviewed` only.
+  - The lasso bar shows `check_only`'s `state_not_exportable` rows and downloads only the notices that
+    cleared.
+  - Select-by-range stays hidden until 0.4.86.
+
+  The flag is read at container start, so no rebuild is needed.
+
+  **Post-roll check:** a viewer holding `ingest:exportBatch` and the `part-list-reviewed` grant sees "Export as…"
+  on a `review` notice, offering `part-list-reviewed` alone. That needs the BFF to load the sample export overlay,
+  which saf's seed-job fix sets in sandbox. Without it, a `review` notice is offered nothing and a `promoted`
+  one is offered `default-csv` and `default-json`.
+- **An unknown `can_export` row is refused alone; no grant is not an error** (`policy/sync/capability_grant_sync.py`,
+  `policy/sync/validate_policy.py`, `templates/_helpers.tpl` `podOverlayEnv`, `templates/topaz-seed-cronjob.yaml`,
+  `templates/task-grant-sync-job.yaml`, `values-sandbox.yaml`, `policy/capability_grants.yaml`; saf, the
+  architect 2026-11-11). "Known" means the image's base profiles plus the overlay directories this
+  deployment loads.
+  - `capability_grant_sync` refuses a row naming an unknown profile on its own. It logs
+    `REFUSED ROW capability[can_export:<name>]…` on stderr, applies the rest, prints
+    `can_export rows: N applied, M refused`, and exits 0.
+  - If the known set cannot be composed, it refuses nothing and warns.
+  - `validate_policy` no longer errors on an unknown name or on a profile with no row. It still refuses
+    a name that appears in two kinds.
+  - The topaz-seed CronJob and the task-grant-sync Job get the same overlay env as the pods
+    (`podOverlayEnv`). The sandbox sets `INGEST_EXPORT_PROFILE_OVERLAY_DIRS` to the sample overlay, so
+    the two sample rows apply there.
+
+  A deployment without the sample overlay refuses those two rows by name, and its Job stays green.
+  Seal: `tests/security/test_an_export_grant_names_a_known_profile_or_that_row_is_refused.py`.
 
 ## 0.4.84 — 2026-11-10
 

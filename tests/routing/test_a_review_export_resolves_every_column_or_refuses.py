@@ -227,7 +227,7 @@ def _use_profiles(monkeypatch, tmp_path, **files: str):
 
 
 def _profile_yaml(name="t", fmt="json", columns="", gran="notice_part"):
-    return (f"column_map_version: 1\nname: {name}\nlabel: T\nformat: {fmt}\n"
+    return (f"column_map_version: 1\nversion: 1\nname: {name}\nlabel: T\nformat: {fmt}\n"
             f"granularity: {gran}\ncolumns:\n{columns}")
 
 
@@ -272,7 +272,7 @@ def test_a_the_served_set_equals_the_committed_openapi_schemas():
 # ── b. validation: one refused profile per rule ─────────────────────────────────────────────────
 
 def _base(**over):
-    d = {"column_map_version": 1, "name": "t", "label": "T", "format": "json",
+    d = {"column_map_version": 1, "version": 1, "name": "t", "label": "T", "format": "json",
          "granularity": "notice_part", "columns": [{"output": "Ingest", "source": {"field": "ingest_id"}}]}
     d.update(over)
     return d
@@ -752,7 +752,8 @@ def test_i_each_path_reaches_its_own_handler(monkeypatch, tmp_path, caplog):
         r = _get("/ingest/export/profiles")
     # only the profiles handler answers a bare list of {name, format, granularity, label}
     assert r.status_code == 200 and r.json() == [
-        {"name": "t", "format": "json", "granularity": "notice_part", "label": "T"}]
+        {"name": "t", "format": "json", "granularity": "notice_part", "label": "T",
+         "grain": "per_part", "version": 1, "accepts": None, "exportable_states": ["promoted"], "dedupe": []}]
     assert any("broken" in m for m in caplog.messages)         # the invalid one is logged, not served
     # only the batch handler answers with `notices`
     r = _get("/ingest/export?profile=t&from=2026-10-01&to=2026-10-02")

@@ -46,10 +46,10 @@ global:
   # rendered image that still carries only a tag. The map is keyed by repository, so a component
   # `image.tag` override on a row below is ignored; change the row instead.
   imageDigests:
-    # 0.13.0 (read 2026-11-10 by Docker-Content-Digest; index incl. linux/arm64; = :sha-bed53b9)
-    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:9c9a99ee50d9ba8b128cb04e789280856169c2c6084074664bda84911e70d31a"
-    # 0.13.0 (read 2026-11-10 by Docker-Content-Digest; index incl. linux/arm64; = :sha-bed53b9)
-    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:d385757d13f6a4eeeb8540400c98b8f973f4803226caf0af4a9c6120fe2d33dc"
+    # 0.14.0 (read 2026-11-11 by Docker-Content-Digest; index incl. linux/arm64; = :sha-33a0262)
+    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:deedd6c91aba8e91c3ae1b03bc9ce2bc9140a07fd920f30eb2e6de57cde787fe"
+    # 0.14.0 (read 2026-11-11 by Docker-Content-Digest; index incl. linux/arm64; = :sha-33a0262)
+    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:f8cbcad8769c42db89a7219ebb843c7b6b657ef1fb3ccfb105088491dccd9a34"
     # Kept over 1555b341 (source e5612fa: the CP1252 repair AND the V_CHARACTERISTICS fold, not reviewed),
     # architect 11-05; board 01M6P5ZAJ382FBHEQDA23941EA carries both forward on a reviewed build.
     # reviewed 09-23 (`master` build of 1aa2cbe) (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -128,7 +128,40 @@ global:
     # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
     # 01fa313..db45763 changes src/ and sessions/ and build.yml's PRODUCER_REF only: no Dockerfile
     # or package.json change, and no import.meta.env read added.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:b320303cd5b31f0766de8f00fab7b95090dd9ef8c5d4e7607cb08b8d22a64f52"
+    # RE-PINNED FOR 0.4.85 (architect via Chris, 2026-11-11: "cortex's aligned image plus the pairing
+    # PR (reviewExport on in sandbox)"): cortex-ui a255a8eb7d273804a0a131f3c8aec2209373b54d ->
+    # cb902ea0, the digest its CI run 43112504700 published (PRODUCER_REF 8c3eb9af, the merge of #356).
+    # It adds to db45763: "Export as…" on the review card offers a profile when the notice's served
+    # stage is in that profile's exportable_states (a `review` notice: part-list-reviewed only), and
+    # the lasso bar lists check_only's state_not_exportable rows. Select-by-range stays hidden.
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
+    # db45763..a255a8e changes src/ and sessions/ and build.yml's PRODUCER_REF only: no Dockerfile
+    # or package.json change, and no import.meta.env read added.
+    # RE-PINNED FOR 0.4.87 (Chris's pre-approval and the architect's merge order, 2026-11-12):
+    # cortex-ui a255a8e -> fb3162a35316a4fd5cdaafe85ec7bb67d2a771ee, digest 37d6e016, from CI run
+    # 43158821177 (PRODUCER_REF 8c3eb9af, unchanged). It adds:
+    # - one export path (d65ef3b);
+    # - "Export as…" on every notice card for a viewer who holds ingest:exportBatch, may read the
+    #   notice, and holds a profile whose exportable_states include its state, with no review task
+    #   needed; the dialog portals to body (4cbe5e8);
+    # - three display fixes (fb3162a).
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
+    # a255a8e..fb3162a changes src/, sessions/ and e2e/ only: no Dockerfile, package.json or
+    # build.yml change, and no import.meta.env read added. No other value changes with it.
+    # RE-PINNED FOR 0.4.88 (architect via Chris, 2026-11-13: "cortex pairing PR (6a441d9, digest
+    # sha256:c4048781…, not 0d5a59d)"): cortex-ui fb3162a -> 6a441d941ece9b09da3dea309c768ed225feece5,
+    # digest c4048781, from CI run 43250577656. It adds:
+    # - the "Export as…" dialog names the notice by its number, else `drop <12 hex>`, never the sha;
+    # - a reviewer sees "Export as…" on the Promote review of a notice they did not drop, while
+    #   Promote is held. When the status read 404s, cortex asks check_only once per profile the
+    #   viewer holds (a workaround that goes once the status read answers every permitted reader).
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
+    # fb3162a..6a441d9 changes src/ (and sessions/) only: no Dockerfile, package.json or build.yml
+    # change, and no import.meta.env read added. 0d5a59d is sessions-only and builds no image.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:c40487815f41132292043077d431cc25d13d1f24df9572e2d6a004f868abf2ab"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -942,7 +975,7 @@ centralGateway:
   replicas: 1
   image:
     repository: "edgy-solutions/dag-tools/central-gateway"
-    tag: "0.11.0"
+    tag: "0.14.0"
   port: 8000
   resources:
     requests:
@@ -1194,7 +1227,7 @@ userDeployments:
     image:
       registry: "ghcr.io"
       repository: "edgy-solutions/dag-tools/user-deployment"
-      tag: "0.11.0"
+      tag: "0.14.0"
     imagePullPolicy: Always
     dagsterModule: "dag_tools.user_deployment.definitions"
     codeLocation:
@@ -2579,6 +2612,7 @@ policyOverlay:
       - {dir: fin_export_profiles, env: FIN_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
     cortex-bff:
       - {dir: canvases, env: CANVAS_OVERLAY_DIRS, optional: true}
+      - {dir: exports, env: INGEST_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
 
 # STARTUP sync for task_grant_sync ONLY (task_audience `actor` relations —
 # policy/sync/task_grant_sync.py), as a post-install/post-upgrade helm hook Job. Narrower than

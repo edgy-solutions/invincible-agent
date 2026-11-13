@@ -246,6 +246,9 @@ spec:
                   export TASK_GRANTS_FILE="$POLICY_DIR/task_grants.yaml"
                   export ONTOLOGY_COMPARTMENTS_FILE="$POLICY_DIR/ontology_compartments.yaml"
                   export CAPABILITY_GRANTS_FILE="$POLICY_DIR/capability_grants.yaml"
+                  # What the engine pods see: their overlay-directory variables, so the capability sync can tell an
+                  # overlay export profile from a misspelt name (a refused can_export row is a report, never a failed Job).
+                  {{- include "invincible-agent.podOverlayEnv" (dict "root" $ "mode" $mode) | nindent 18 }}
                   echo "===== VALIDATE (every data file, BEFORE any apply) ====="
                   # Fail-closed gate: a malformed overlay refuses the WHOLE run
                   # here, instead of applying four syncs and dying on the fifth.

@@ -157,6 +157,11 @@ COPY policy/fin_export_profiles/ /app/policy/fin_export_profiles/
 # (`GET /answers_export/profiles`). The COPY stays because engine-cost needs it. lane/01's
 # review-export profiles (`policy/exports/*.yaml`) ride the same COPY and are not read by this loader.
 COPY policy/exports/ /app/policy/exports/
+# THE EIGHTH, and not under policy/: the dataset contracts, `contracts/<id>.yaml`. engine-fin's
+# dataset measure rows name one (`inputs.dataset.contract`), and `dataset_contracts.py` (flattened
+# to /app/) finds this directory beside it. Without it every dataset row is refused at load and the
+# engine starts with none of them. tests/finance/test_a_dataset_contract_loads.py asserts this line.
+COPY contracts/ /app/contracts/
 # ── THE COST PACKAGE BUILDER AND ITS PINNED RUNTIME ────────────────────────
 #
 # `cost_agent.measures.package_export` builds a self-contained artifact from the

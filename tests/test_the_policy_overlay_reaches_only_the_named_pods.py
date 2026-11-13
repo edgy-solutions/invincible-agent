@@ -94,7 +94,8 @@ def test_text_off_by_default_and_the_ref_has_no_default():
     assert rows == {
         "engine-fin": [("measure_verbs", "MEASURE_VERB_OVERLAY_DIRS"),
                        ("fin_export_profiles", "FIN_EXPORT_PROFILE_OVERLAY_DIRS")],
-        "cortex-bff": [("canvases", "CANVAS_OVERLAY_DIRS")],
+        "cortex-bff": [("canvases", "CANVAS_OVERLAY_DIRS"),
+                       ("exports", "INGEST_EXPORT_PROFILE_OVERLAY_DIRS")],
     }
 
 
@@ -175,6 +176,7 @@ def test_d_the_env_names_the_delivered_paths():
     assert fin["FIN_EXPORT_PROFILE_OVERLAY_DIRS"] == "/policy-overlay/fin_export_profiles"
     bff = _env(deps["t-cortex-bff"]["containers"][0])
     assert bff["CANVAS_OVERLAY_DIRS"] == "/policy-overlay/canvases"
+    assert bff["INGEST_EXPORT_PROFILE_OVERLAY_DIRS"] == "/policy-overlay/exports"
     assert "CANVAS_OVERLAY_DIRS" not in fin and "MEASURE_VERB_OVERLAY_DIRS" not in bff
 
 
@@ -241,11 +243,17 @@ def test_f_the_seeds_credential_and_ca_are_reused():
 # ── THE SCRIPT RUNS ─────────────────────────────────────────────────────────────────────────
 
 _HAVE_SH_GIT = shutil.which("sh") is not None and shutil.which("git") is not None
+# `core.longpaths`: the repos live under the caller's temp folder plus the test's name, so on Windows a
+# long temp folder put git's object paths past 260 characters ("Filename too long" on add, "unpacker
+# error" on push). The env reaches every git the fixture and the script start, but git drops
+# GIT_CONFIG_* for the far side of a local transport, so `origin` also sets it in the bare repo.
+# Elsewhere a no-op.
 _GIT_ENV = {
     **os.environ,
     "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
     "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
-    "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "protocol.file.allow", "GIT_CONFIG_VALUE_0": "always",
+    "GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "protocol.file.allow", "GIT_CONFIG_VALUE_0": "always",
+    "GIT_CONFIG_KEY_1": "core.longpaths", "GIT_CONFIG_VALUE_1": "true",
 }
 
 
@@ -293,6 +301,7 @@ def origin(tmp_path):
     bare, work = tmp_path / "origin.git", tmp_path / "work"
     _g(tmp_path, "init", "-q", "--bare", str(bare))
     _g(bare, "config", "uploadpack.allowReachableSHA1InWant", "true")
+    _g(bare, "config", "core.longpaths", "true")
     _g(tmp_path, "init", "-q", "-b", "main", str(work))
     c1 = _commit(work, {"measure_verbs/a.yaml": "one\n", "fin_export_profiles/p.yaml": "prof\n",
                         "users.yaml": "users: [secret-grants]\n"}, "c1")

@@ -838,6 +838,31 @@ def list_mine(*, caller_id: str, limit: int,
     return out
 
 
+def list_by_created(start_ms: int, end_ms: int, limit: int, *,
+                    after: Optional[tuple[int, str]] = None) -> list[dict]:
+    """The DOCUMENT rows received in `[start_ms, end_ms)` (`created_at`, receipt time, set once and
+    never moved), oldest first, one page of at most `limit`: `{id, review_generation,
+    created_at}` only, what the export range needs to find each notice's domain. `after` is the
+    `(created_at, id)` of the last row already seen (keyset paging, as `list_mine`). EVENT rows are
+    excluded. Not scoped to a caller and not to a domain: a notice's domain lives in its decision
+    record or its open review task, not in this table, so the caller scopes each page as it reads."""
+    sql = """SELECT id, review_generation, created_at
+               FROM ingest_status_projection
+              WHERE created_at >= %s AND created_at < %s AND kind <> 'event'"""
+    params: list[Any] = [start_ms, end_ms]
+    if after is not None:
+        sql += " AND (created_at, id) > (%s, %s)"
+        params += [after[0], after[1]]
+    sql += """
+              ORDER BY created_at, id
+              LIMIT %s"""
+    params.append(limit)
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, tuple(params))
+            return [dict(r) for r in cur.fetchall()]
+
+
 def fail_stalled(*, stage: str, older_than_seconds: int, now_ms: Optional[int] = None) -> list[str]:
     """The WATCHDOG (2026-10-12, pipeline failure must reach the row; extended to `extracting`
     2026-10-16): mark every document row that has sat at `stage` for longer than

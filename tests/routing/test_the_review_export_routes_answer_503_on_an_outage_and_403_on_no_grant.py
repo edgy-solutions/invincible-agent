@@ -64,6 +64,9 @@ def _cleanup():
     ep.clear_cache()
 
 
+PROFILE_LIST = "/ingest/export/profiles"
+
+
 def _routes():
     """The review-export GET routes, from the app."""
     out = []
@@ -172,7 +175,12 @@ def _matrix(monkeypatch, tmp_path, who, forms, denials):
                     bad.append((path, cap, form, got.status_code, _code(got)))
             for how in denials:
                 got, _ = _hit(monkeypatch, tmp_path, path, who, {cap: how})
-                if got.status_code != 403:
+                if path == PROFILE_LIST:
+                    # The listing serves only what the caller may use: no grant is an EMPTY
+                    # list (a 403 would be wrong: asking what you may use is not a refusal).
+                    if got.status_code != 200 or got.json() != []:
+                        bad.append((path, cap, how, got.status_code, _code(got)))
+                elif got.status_code != 403:
                     bad.append((path, cap, how, got.status_code, _code(got)))
     return bad, rail_routes
 

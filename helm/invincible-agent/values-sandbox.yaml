@@ -130,6 +130,15 @@ agentFleet:
     # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
     # and its template are invented. engine-fin reads it.
     FIN_EXPORT_PROFILE_OVERLAY_DIRS: "/app/policy/overlays/sample/fin_export_profiles"
+    # The sample REVIEW-export profiles (`part-list`, `part-list-reviewed`), SANDBOX ONLY. cortex-bff reads it;
+    # the topaz-seed and task-grant-sync Jobs read it from here too, so capability_grant_sync knows the
+    # profiles a `can_export:` row may name (a deployment without this line refuses those two rows).
+    INGEST_EXPORT_PROFILE_OVERLAY_DIRS: "/app/policy/overlays/sample/exports"
+    # bob's three sample capability grants (can_export:part-list, can_export:part-list-reviewed,
+    # ingest:exportBatch), SANDBOX ONLY. Read only by capability_grant_sync; it reaches the
+    # task-grant-sync and topaz-seed Jobs through the invincible-agent.podOverlayEnv helper, which
+    # exports every *_OVERLAY_DIRS key of agentFleet.env. Add-only: the shared seed names no sample user.
+    CAPABILITY_GRANT_OVERLAY_DIRS: "/app/policy/overlays/sample"
 
     # MinIO / S3 — the SHARED config (iagent-config) the prime-substrate Job reads
     # (it bridges these to S3_ENDPOINT_URL / AWS_* via optional configMapKeyRefs).
@@ -689,15 +698,20 @@ centralGateway:
   # in its hypercorn invocation). Chart default of 8000 caused
   # readiness/liveness probes to hit a closed port — pod stuck 0/1 Running.
   port: 8090
-  # PINNED BY DIGEST in values.yaml `global.imageDigests` (dag-tools v0.11.0); no image override here.
+  # PINNED BY DIGEST in values.yaml `global.imageDigests` (dag-tools v0.14.0); no image override here.
   env:
     # The gateway's verified identity (dag-tools PR #6). The issuer is what a realm token carries,
     # so it is the public realm URL. JWKS is fetched inside the cluster, like every other realm read.
+    # From v0.14.0 the gateway accepts LISTS: GATEWAY_JWT_ISSUERS and GATEWAY_JWT_AUDIENCES are
+    # rendered by the chart from cortexBff.auth (templates/engines.yaml), so they cannot be set here.
+    # The singular issuer below stays: cortexBff.auth.acceptedIssuers quotes it, and the gateway reads
+    # it as one more entry of the same list, so the union equals the BFF's list.
     #
     # THE POSTURE IS WRITTEN OUT, not left to the default, because the parser reads any value it does
-    # not recognise as enforce. The architect's ruling keeps this roll in observe. The internal doors
-    # (dag-tools PR #8) read their own INTERNAL_DOOR_POSTURE, unset here, which also means observe.
-    GATEWAY_IDENTITY_POSTURE: "observe"
+    # not recognise as enforce. The sandbox enforces from 0.4.85 (architect, 11-11), with the lists
+    # served in the same roll; post-roll the startup line reads enforce_ready=yes. The internal doors
+    # (dag-tools PR #8) read their own INTERNAL_DOOR_POSTURE, unset here, which means observe.
+    GATEWAY_IDENTITY_POSTURE: "enforce"
     GATEWAY_JWKS_URL: "http://iagent-keycloak:8080/realms/invincible-agent/protocol/openid-connect/certs"
     GATEWAY_JWT_ISSUER: "https://keycloak.edgy-solutions.com/realms/invincible-agent"
 
@@ -755,7 +769,9 @@ cortexUi:
     # boot from /config.js like the URLs above; rendered by frontend.yaml's generic env loop.
     # 0.4.72 (architect, 2026-10-30): `promotionRuns` goes on in the same roll that first stores
     # `review_coverage` on the promotion record (ingest-v1 1.4.0) -- never ahead of it.
-    VITE_FEATURES: "canvasExport,ingest,promotionRuns"
+    # 0.4.85 (architect via Chris, 2026-11-11): `reviewExport` goes on in the same roll as cortex
+    # a255a8e and saf's #356 export routes -- never ahead of the image that reads exportable_states.
+    VITE_FEATURES: "canvasExport,ingest,promotionRuns,reviewExport"
     # 2026-10-10, rev 186b: cortex #6 sends `frontend_version` on /interview/stream only when this
     # is "true" (docker-entrypoint.sh at 865c080 filters it to "true"/""). Its platform half, IA
     # #27, rolled in 186 and reads a request with or without it, so this is the switch, not a
@@ -780,6 +796,14 @@ cortexBff:
   enabled: true
   image:
     tag: ""
+  # CPU limit 2, not the base 500m. One GET /me/entitlements costs ~2.6 s of CPU: ~37 Topaz directory
+  # calls, each building its own httpx.Client. At 500m the pod was throttled in 40% of periods, and the
+  # UI's 15 s entitlements timeout expired on every attempt (2026-11-12 incident). At 2 it was 4%.
+  # The limit was set by hand on the live pod first; this carries it so a roll does not reset it.
+  # Revisit once human_tasks.py reuses one client per request.
+  resources:
+    limits:
+      cpu: "2"
   # MinIO connection for the /federated_image endpoint (Option A: bff
   # proxies image reads from MinIO so they share the same JWT +
   # entitled_domains gate as the rest of the data path; the browser

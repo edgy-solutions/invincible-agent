@@ -241,6 +241,9 @@ spec:
               export PROGRAM_MEMBERS_FILE="$POLICY_DIR/program_members.yaml"
               export RECIPIENT_READERS_FILE="$POLICY_DIR/recipient_readers.yaml"
               export CAPABILITY_GRANTS_FILE="$POLICY_DIR/capability_grants.yaml"
+              # What the engine pods see: their overlay-directory variables, so the capability sync can tell an
+              # overlay export profile from a misspelt name (a refused can_export row is a report, never a failed Job).
+              {{- include "invincible-agent.podOverlayEnv" (dict "root" $ "mode" $mode) | nindent 14 }}
               echo "===== PROGRAM MEMBER SYNC (program_member_sync — program membership, startup sync, runs BEFORE grants) ====="
               python policy/sync/program_member_sync.py
               echo "===== TASK GRANT SYNC (task_grant_sync — HITL fifth namespace, startup sync) ====="
