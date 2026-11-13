@@ -38,6 +38,13 @@ except ImportError:
         FISCAL_PERIODS, ControlAccount, FinanceState, NotInModel, PeriodFact, Program, WorkPackage,
     )
 
+try:  # the shared contract reader: /app/utils in the image, agent_fleet/utils in the repo
+    from utils.dataset_contracts import ContractViolation, check_contract_rows, check_contract_schema
+except ImportError:
+    from agent_fleet.utils.dataset_contracts import (
+        ContractViolation, check_contract_rows, check_contract_schema,
+    )
+
 URN_ENV = "FIN_DATASET_URN"
 BANNER_ENV = "FIN_DATASET_BANNER"
 GATEWAY_ENV = "CENTRAL_GATEWAY_URL"
@@ -88,15 +95,6 @@ if not log.handlers:
 
 
 # ── outcomes ────────────────────────────────────────────────────────────────────────────
-
-class ContractViolation(Exception):
-    """The asset's rows break the column contract. Carries the rule, never a row's value."""
-
-    def __init__(self, rule: str, message: str):
-        super().__init__(message)
-        self.rule = rule
-        self.message = message
-
 
 class AssetDenied(Exception):
     """The gate refused this caller the asset."""
@@ -279,51 +277,8 @@ def state_from_rows(df: Any, program_id: str) -> FinanceState:
 
 
 # ── a dataset row's contract ────────────────────────────────────────────────────────────
-# A dataset row's read is held to the contract the row names (`dataset_contracts.DatasetContract`):
-# the contract declares the columns, their types, the key and the dependencies, and these two
-# functions enforce them. They name no column of any contract (ruled 2026-11-10).
-
-def _is_type(dtype: Any, kind: str) -> bool:
-    import polars as pl
-
-    if kind == "string":
-        return dtype == pl.String
-    return dtype.is_integer() if kind == "integer" else dtype.is_numeric()
-
-
-def check_contract_schema(schema: Any, contract: Any, named: tuple[str, ...]) -> list[str]:
-    """The columns a read selects: every column the contract declares that the asset carries.
-
-    Every required column, and every column the row `named`, must be present (`missing_column`),
-    and every selected column must be of its declared type (`wrong_type`), whether or not the row
-    reads it: the key and the dependencies are checked over columns the row may never name."""
-    missing = [c for c in dict.fromkeys((*contract.required, *named)) if c not in schema]
-    if missing:
-        raise ContractViolation("missing_column", "missing column(s): " + ", ".join(missing))
-    selected = [c for c in contract.types if c in schema]
-    bad = [c for c in selected if not _is_type(schema[c], contract.types[c])]
-    if bad:
-        raise ContractViolation("wrong_type", "column(s) of the wrong type: " + ", ".join(bad))
-    return selected
-
-
-def check_contract_rows(df: Any, contract: Any) -> None:
-    """The key and the dependencies, over one program's collected rows. A message names the
-    columns, never a value."""
-    import polars as pl
-
-    if df.select(list(contract.key)).is_duplicated().any():
-        raise ContractViolation("duplicate_key", f"more than one row for one ({', '.join(contract.key)})")
-    for by, determined in contract.dependencies:
-        present = [c for c in determined if c in df.columns]
-        if not present:
-            continue
-        counts = df.group_by(by).agg(pl.col(c).n_unique() for c in present)
-        for c in present:
-            if (counts[c] > 1).any():
-                raise ContractViolation("not_determined_by",
-                                        f"{c} is not determined by {by}: one {by} carries more than one {c}")
-
+# The contract's checks live in `utils/dataset_contracts.py` and are imported above; this module
+# calls them on every dataset-row read.
 
 # ── the read ────────────────────────────────────────────────────────────────────────────
 

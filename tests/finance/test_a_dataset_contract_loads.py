@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_fleet.finance_agent import dataset_contracts
+from agent_fleet.utils import dataset_contracts
 
 ROOT = Path(__file__).resolve().parents[2]
 SHIPPED = ROOT / "contracts" / "ev_fixture.yaml"
@@ -110,19 +110,21 @@ def test_a_contract_with_no_file_is_refused_naming_it(tmp_path):
 def test_the_image_carries_the_contracts_beside_the_flattened_loader():
     lines = [ln.strip() for ln in DOCKERFILE.read_text(encoding="utf-8").splitlines()]
     assert "COPY contracts/ /app/contracts/" in lines
+    assert "COPY agent_fleet/utils/ /app/utils/" in lines
 
 
 def test_the_flattened_loader_finds_the_contracts_at_app(tmp_path, monkeypatch):
-    """`COPY ${AGENT_DIR}/ /app/` puts the module at /app/dataset_contracts.py; the walk-up must land
-    on /app/contracts, which the COPY above provides."""
+    """`COPY agent_fleet/utils/ /app/utils/` puts the module at /app/utils/dataset_contracts.py;
+    the walk-up must land on /app/contracts, which the COPY above provides."""
     app = tmp_path / "app"
     (app / "contracts").mkdir(parents=True)
     (app / "contracts" / "ev_fixture.yaml").write_bytes(SHIPPED.read_bytes())
     src = Path(dataset_contracts.__file__)
-    (app / src.name).write_bytes(src.read_bytes())
+    (app / "utils").mkdir()
+    (app / "utils" / src.name).write_bytes(src.read_bytes())
     monkeypatch.delenv("DATASET_CONTRACT_DIR", raising=False)
     unique = "_flat_image_dataset_contracts"
-    spec = importlib.util.spec_from_file_location(unique, app / src.name)
+    spec = importlib.util.spec_from_file_location(unique, app / "utils" / src.name)
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, unique, module)  # restored: gov's ratchet reds a bare write
     spec.loader.exec_module(module)
