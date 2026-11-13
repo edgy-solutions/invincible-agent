@@ -150,7 +150,18 @@ global:
     # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
     # a255a8e..fb3162a changes src/, sessions/ and e2e/ only: no Dockerfile, package.json or
     # build.yml change, and no import.meta.env read added. No other value changes with it.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:37d6e0166938c3fc13c1a2d294ea56a16b0aae64c509af718121742ce9588972"
+    # RE-PINNED FOR 0.4.88 (architect via Chris, 2026-11-13: "cortex pairing PR (6a441d9, digest
+    # sha256:c4048781…, not 0d5a59d)"): cortex-ui fb3162a -> 6a441d941ece9b09da3dea309c768ed225feece5,
+    # digest c4048781, from CI run 43250577656. It adds:
+    # - the "Export as…" dialog names the notice by its number, else `drop <12 hex>`, never the sha;
+    # - a reviewer sees "Export as…" on the Promote review of a notice they did not drop, while
+    #   Promote is held. When the status read 404s, cortex asks check_only once per profile the
+    #   viewer holds (a workaround that goes once the status read answers every permitted reader).
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
+    # fb3162a..6a441d9 changes src/ (and sessions/) only: no Dockerfile, package.json or build.yml
+    # change, and no import.meta.env read added. 0d5a59d is sessions-only and builds no image.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:c40487815f41132292043077d431cc25d13d1f24df9572e2d6a004f868abf2ab"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
