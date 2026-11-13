@@ -44,6 +44,9 @@ META_PREFIX = "refs/proposal-meta/"
 # ADR-0062 section 1's governed roots. The rail can narrow check 6; it cannot widen it.
 GOVERNED_ROOTS = ("policy/", "docs/adr/", "tests/fixtures/", "sessions/")
 
+# A path row whose `review` is this refuses every commit under it (check 6, `path_closed`).
+CLOSED_REVIEW = "closed"
+
 TRAILER_KEYS = ("On-Behalf-Of", "Auth-Via", "Proposal")
 
 
@@ -387,13 +390,22 @@ class Repo:
         diff = self._proposal_diff(meta)
         paths = self._paths_of(diff)
 
-        # check6: only governed paths merge
+        # check6: only governed paths merge, and never under a `review: closed` row. The row that
+        # governs a path is its LONGEST matching prefix, so a narrower open row can sit inside a
+        # closed root (and vice versa). Which roots are closed is the rail's to say, not this code's.
         for path in paths:
-            if not any(path.startswith(prefix) for prefix in p.governed):
+            matching = [prefix for prefix in p.governed if path.startswith(prefix)]
+            if not matching:
                 raise RepoRefusal(
                     403, "path_not_governed", policy_id="repository_paths",
                     missing_binding=f"a row covering {path}",
                     message="path not governed by engine-r", check="check6",
+                )
+            row = p.governed[max(matching, key=len)]
+            if isinstance(row, dict) and row.get("review") == CLOSED_REVIEW:
+                raise RepoRefusal(
+                    403, "path_closed", missing_binding="a diff that changes no path under a closed row",
+                    message=f"{path} is under a closed row: nothing is committed there", check="check6",
                 )
         checks["check6"] = "pass"
 
