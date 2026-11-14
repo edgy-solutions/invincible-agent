@@ -25,6 +25,24 @@
 # these users (`@example.com`, per the iagent-keycloak-realm import),
 # NOT `@edgy-solutions.com`. The lookup keys on USER_ENTITLEMENT_CLAIM
 # (email); a domain mismatch here silently blanks the user's matrix.
+#
+# `retired_users` lists user objects topaz_sync DELETES, with all their relations. A `user` is
+# ensure-only in every sync, so an id nothing asserts any more stays in the directory for ever;
+# retiring one is this reviewed row, never a hand delete. The sync refuses a retired id that any
+# other policy file still names (the next sync would re-create it), and reads each one back by
+# exact key after the apply. Every field is required.
+retired_users:
+  - id: alice@company.com
+    reason: >-
+      Old DataHub catalog seed owner. The seed moved to the canonical @example.com ids in 0.4.80;
+      sign-in never issues this id, so it is never the caller. Held two dataset owner relations.
+    ruled: architect dispatch 2026-11-14 item 6 (fix in policy, not by hand); 0.4.80 CHANGELOG
+  - id: bob@company.com
+    reason: >-
+      Old DataHub catalog seed owner. The seed moved to the canonical @example.com ids in 0.4.80;
+      sign-in never issues this id, so it is never the caller. Held two dataset owner relations.
+    ruled: architect dispatch 2026-11-14 item 6 (fix in policy, not by hand); 0.4.80 CHANGELOG
+
 users:
   # ── Catalog access (data-engineers) — the 2026-07-03 grant ──────────
   # First deliberate human assertion of DATA_ENGINEERING-catalog access
