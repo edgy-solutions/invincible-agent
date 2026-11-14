@@ -206,3 +206,122 @@ def configure_litellm():
 
 # Auto-configure LiteLLM on import (unchanged from the pre-leaf shim).
 configure_litellm()
+
+
+# --- Model-call generations (analyst) -----------------------------------------
+def _count_miss(reason: str) -> None:
+    try:
+        from provenance_telemetry.emit import _miss
+        _miss(reason)
+    except Exception:  # noqa: BLE001 — leaf absent: nothing to count into
+        import logging
+        logging.getLogger(__name__).debug("telemetry miss: %s", reason)
+
+
+def instrument_model_calls(model, name="analyst.model"):
+    """Wrap ``model.generate`` (and ``generate_stream`` when present) so each call is a
+    Langfuse *generation* observation nested under the AMBIENT OTel context (a call run
+    through ``asyncio.to_thread`` keeps the caller's span as parent, contextvars are copied).
+
+    DELIBERATE: no prompt or completion text is recorded -- no input, no output. The
+    observation carries only the model id, usage (input/output tokens) and error level.
+
+    The model's own exceptions propagate unchanged (the observation is ended, level ERROR).
+    Telemetry never breaks the call: any setup/update/end failure is swallowed, counted as a
+    leaf miss, and the original is called and returned. When telemetry is disabled (both
+    LANGFUSE keys unset) the model is returned untouched. Idempotent: a second call does
+    not wrap again.
+    """
+    if not (os.getenv("LANGFUSE_SECRET_KEY") and os.getenv("LANGFUSE_PUBLIC_KEY")):
+        return model
+    model_id = getattr(model, "model_id", None)
+
+    def _usage(res):
+        tu = getattr(res, "token_usage", None)
+        if tu is None:
+            return None
+        return {"input": tu.input_tokens, "output": tu.output_tokens}
+
+    def _open(current: bool):
+        try:
+            from langfuse import get_client
+            kw = {"name": name, "as_type": "generation"}
+            if model_id:
+                kw["model"] = str(model_id)
+            c = get_client()
+            if current:
+                cm = c.start_as_current_observation(**kw)
+                return cm, cm.__enter__()
+            obs = c.start_observation(**kw)
+            return None, obs
+        except Exception as exc:  # noqa: BLE001
+            _count_miss(f"instrument_model_calls setup failed: {exc!r}")
+            return None, None
+
+    def _safe(fn, what):
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001
+            _count_miss(f"instrument_model_calls {what} failed: {exc!r}")
+
+    def _close(cm, obs, exc_info):
+        if cm is not None:
+            _safe(lambda: cm.__exit__(*exc_info), "end")
+        elif obs is not None:
+            _safe(obs.end, "end")
+
+    def _wrap(orig, stream):
+        if getattr(orig, "_ia_instrumented", False):
+            return orig
+
+        if not stream:
+            @functools.wraps(orig)
+            def wrapper(*a, **k):
+                cm, obs = _open(True)
+                try:
+                    res = orig(*a, **k)
+                except BaseException as exc:
+                    if obs is not None:
+                        _safe(lambda: obs.update(level="ERROR", status_message=type(exc).__name__),
+                              "update")
+                    _close(cm, obs, (type(exc), exc, exc.__traceback__))
+                    raise
+                if obs is not None:
+                    u = _usage(res)
+                    if u is not None:
+                        _safe(lambda: obs.update(usage_details=u), "update")
+                _close(cm, obs, (None, None, None))
+                return res
+        else:
+            @functools.wraps(orig)
+            def wrapper(*a, **k):
+                cm, obs = _open(False)
+                total = {"input": 0, "output": 0}
+                try:
+                    for item in orig(*a, **k):
+                        # Stream deltas each carry their own share of usage (smolagents sums
+                        # them in agglomerate_stream_deltas), so accumulate, never overwrite.
+                        u = _usage(item) if obs is not None else None
+                        if u is not None:
+                            total["input"] += u["input"] or 0
+                            total["output"] += u["output"] or 0
+                            _safe(lambda: obs.update(usage_details=dict(total)), "update")
+                        yield item
+                except BaseException as exc:
+                    if obs is not None:
+                        _safe(lambda: obs.update(level="ERROR", status_message=type(exc).__name__),
+                              "update")
+                    raise
+                finally:
+                    _close(cm, obs, (None, None, None))
+        wrapper._ia_instrumented = True
+        return wrapper
+
+    try:
+        if callable(getattr(model, "generate", None)):
+            model.generate = _wrap(model.generate, False)
+        if callable(getattr(model, "generate_stream", None)):
+            model.generate_stream = _wrap(model.generate_stream, True)
+    except Exception as exc:  # noqa: BLE001
+        _count_miss(f"instrument_model_calls wrap failed: {exc!r}")
+    return model
