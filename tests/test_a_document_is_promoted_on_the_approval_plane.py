@@ -29,6 +29,7 @@ import pytest
 
 from src.iagent import decision_record, human_tasks, ingest_status, promotion, provenance
 from src.iagent.decision_record import canonical_json
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 HEX = "ab" * 32
 INGEST_ID = "sha256:" + HEX
@@ -460,6 +461,7 @@ def route(monkeypatch, fresh_declarations):
     task = {"task_id": "t-1", "kind": promotion.KIND, "audience": AUDIENCE,
             "payload": dict(PAYLOAD)}
     monkeypatch.setattr(human_tasks, "list_tasks_for", lambda caller, status="pending": [task])
+    route_viewer_tasks_through(monkeypatch)
 
     def can_act(audience, caller):
         calls["can_act"].append((audience, caller))

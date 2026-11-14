@@ -758,7 +758,8 @@ def get_status_unscoped(ingest_id: str) -> Optional[dict[str, Any]]:
     return out
 
 
-def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]]:
+def get_status_for(ingest_id: str, *, caller_id: str,
+                   any_caller: bool = False) -> Optional[dict[str, Any]]:
     """The status of an ingest THIS caller submitted or is the on_behalf_of principal for, or
     None otherwise.
 
@@ -770,8 +771,13 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
     `origin_suggestion` is parsed back from its stored JSON text to a dict, or left `None` when
     the column is NULL (no suggestion was ever recorded for this row).
     """
-    if not ingest_id or not caller_id:
+    if not ingest_id or (not caller_id and not any_caller):
         return None
+    # `any_caller` drops the submitter scoping (ADR-0068 s6: the status read answers anyone who may
+    # read the notice). It is for a route that has ALREADY decided the caller may read this row.
+    where, args = (("id = %s", (ingest_id,)) if any_caller else
+                   ("id = %s AND (submitted_by = %s OR on_behalf_of = %s)",
+                    (ingest_id, caller_id, caller_id)))
     with _pg_connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
@@ -782,8 +788,8 @@ def get_status_for(ingest_id: str, *, caller_id: str) -> Optional[dict[str, Any]
                           leaf_source, leaf_candidates, leaf_set_by, leaf_set_at, review_generation,
                           hold_reason
                      FROM ingest_status_projection
-                    WHERE id = %s AND (submitted_by = %s OR on_behalf_of = %s)""",
-                (ingest_id, caller_id, caller_id),
+                    WHERE """ + where,
+                args,
             )
             row = cur.fetchone()
     if not row:

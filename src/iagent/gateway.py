@@ -69,7 +69,7 @@ from .review_coverage import ItemReviewCoverage
 from . import frontend_menu_store
 from .ingest_api import (
     BINARY_200, DROP_GATE_RESPONSES, INGEST_V1_TAG, MCP_REFUSAL_RESPONSES, MCP_TAG, PREVIEW_EXTRA, ActResponse, EmptyDecisionResponse,
-    Entitlements, ExportProfile, Extraction, HumanTasksListing, IngestResponse, LeafResponse, MineListing,
+    Entitlements, ExportProfile, Extraction, HumanTask, HumanTasksListing, IngestResponse, LeafResponse, MineListing,
     RetriesListing,
     RetryResponse, StatusBody, TitleLeafResponse,
 )
@@ -1764,10 +1764,10 @@ async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
     the Electric proxy injects, so REST and streaming agree by construction."""
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
-    try:
-        tasks = await run_in_threadpool(lambda: human_tasks.list_tasks_for(current_user.authz_id))
-    except human_tasks.HumanTaskConfigError:
-        tasks = []
+    # ADR-0068 s6: matched to the caller NOW (a recipient row, or the audience capability in
+    # policy), then withheld task by task where the caller is not entitled to a label of the
+    # task's object. The row shape is the v1 listing's, unchanged.
+    tasks, _ = await _viewer_queue(current_user, None, "GET /me/human_tasks")
     # EACH ROW CARRIES ITS SPECIES' DECLARATION. Without this the only way a client could learn
     # what a kind accepts was to POST a verb and be told it was wrong — `verbs_for_kind` appeared
     # exactly ONCE in this file, inside the REFUSAL body. That is discovery-by-failure, and on
@@ -1777,6 +1777,135 @@ async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
     tasks = await run_in_threadpool(lambda: human_tasks.decorate_with_declarations(tasks))
     # `email` is DISPLAY only; the queue was filtered on authz_id above.
     return {"email": current_user.email, "tasks": tasks}
+
+
+class DelegationMark(_BaseModel):
+    """A read made on behalf of someone (ADR-0068 s5, s7): who delegated, who read, until when, and
+    which row of `policy/queue_delegates.yaml` said so. The clock reading is the read's own."""
+    delegated: bool
+    delegator: str
+    delegate: str
+    expires_at: str
+    row_id: str
+    read_at: str
+
+
+class QueueListing(_BaseModel):
+    """GET /me/queue: the queue of the caller, or of the person the caller reads for."""
+    email: Optional[str] = None
+    tasks: list[HumanTask]
+    delegated: Optional[DelegationMark] = None
+
+
+class NeedsYou(_BaseModel):
+    """GET /me/needs_you: what waits on the viewer, by kind. `counts` is the pending list's own
+    rows counted by `kind`; `total` is their sum. The UI reads its count from here."""
+    email: Optional[str] = None
+    counts: dict[str, int]
+    total: int
+    delegated: Optional[DelegationMark] = None
+
+
+_queue_audit_log = logging.getLogger("iagent.audit.queue_read")
+_ensure_the_audit_line_actually_ARRIVES(_queue_audit_log)
+
+#: The columns of one row of the v1 task listing (`ingest_api.HumanTask`, minus `declaration`).
+_LISTING_COLUMNS = ("id", "kind", "task_id", "workflow_id", "audience", "status", "title", "summary",
+                    "requested_by", "subject_ref", "payload", "created_at", "workflow_service",
+                    "promise_name", "case_id")
+
+
+async def _viewer_queue(current_user: User, on_behalf_of: Optional[str], route: str,
+                        *, kinds: "Optional[list[str]]" = None) -> "tuple[list[dict], Optional[dict]]":
+    """The caller's pending queue (ADR-0068 s6), or the named person's when a live row of
+    `policy/queue_delegates.yaml` lets the caller read it. Returns `(rows, delegation)`;
+    `delegation` is None for a direct read, else the mark the response carries.
+
+    Per task: matched to the subject now (a recipient row, or `can_act` on the audience in policy),
+    then withheld, never redacted, where the subject is not entitled to every label of the task's
+    object (a routing fault is recorded). A delegated read is evaluated as the delegator, restricted
+    to the row's scope, and the delegate must ALSO be entitled to every label: a delegation does not
+    lend a clearance. No live row (absent or expired) is a policy refusal naming the binding.
+    Every delegated read leaves an audit line naming delegator, delegate, expiry and row."""
+    import datetime as _dt
+
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks, queue_delegation
+    from .authz.refusal import policy_refusal
+
+    caller = current_user.authz_id
+    named = (on_behalf_of or "").strip()
+    subject, row_scope, delegation = caller, None, None
+    caller_cells = (lambda: _own_cells(current_user))
+    if named and named.casefold() != (caller or "").casefold():
+        now = _dt.datetime.now(_dt.timezone.utc)
+        try:
+            row, why = await run_in_threadpool(lambda: queue_delegation.live_row(named, caller, now=now))
+        except queue_delegation.QueueDelegatesUnreadable as exc:
+            raise HTTPException(status_code=503, detail={"error": "queue_delegates_unreadable"}) from exc
+        if row is None:
+            _queue_audit_log.warning(
+                "queue_read route=%s delegate=%s delegator=%s decision=refused reason=%s now=%s",
+                route, caller, named, why, now.isoformat())
+            raise policy_refusal(
+                "queue_delegation_refused", policy_id=queue_delegation.POLICY_FAMILY,
+                missing_binding=f"queue_delegate({named})",
+                message="no live delegation lets you read this person's queue")
+        subject, row_scope = named, row
+        delegation = {
+            "delegated": True, "delegator": named, "delegate": caller,
+            "expires_at": queue_delegation.parse_expiry(row.get("expires_at")).isoformat(),
+            "row_id": str(row.get("id")), "read_at": now.isoformat()}
+        _queue_audit_log.info(
+            "queue_read route=%s delegate=%s delegator=%s decision=allowed row=%s expires_at=%s now=%s",
+            route, caller, named, delegation["row_id"], delegation["expires_at"], delegation["read_at"])
+    try:
+        rows = await run_in_threadpool(lambda: human_tasks.viewer_tasks(subject, kinds=kinds))
+    except human_tasks.HumanTaskConfigError:
+        rows = []
+    except (human_tasks.AuthorizationUnavailable, human_tasks.AuthorizationUnconfigured) as exc:
+        raise HTTPException(status_code=503, detail={"error": "authorization_unavailable"}) from exc
+    if row_scope is not None:
+        rows = [r for r in rows if queue_delegation.in_scope(row_scope, r)]
+    subject_cells = caller_cells if subject == caller else (lambda: _cells_of(subject))
+    rows = await _scope_to_viewer(rows, addressee=subject, domains=subject_cells, route=route,
+                                  on_behalf_of=named if delegation else "")
+    if delegation:
+        rows = await _scope_to_viewer(rows, addressee=caller, domains=caller_cells, route=route,
+                                      on_behalf_of=subject)
+    return [{k: r.get(k) for k in _LISTING_COLUMNS} for r in rows], delegation
+
+
+@app.get("/me/queue",
+         responses={200: {"model": QueueListing}, **MCP_REFUSAL_RESPONSES})
+async def get_my_queue(on_behalf_of: Optional[str] = None,
+                       current_user: User = Depends(get_current_user)):
+    """The pending queue the caller may see, or, with `on_behalf_of`, the queue of the named person
+    when a live row of `policy/queue_delegates.yaml` lets the caller read it (ADR-0068 s5, s6).
+    The rows are `GET /me/human_tasks`'s; the response adds `delegated`, null for a direct read.
+    An expired or absent delegation is a 403 policy refusal naming `queue_delegates`."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    tasks, delegation = await _viewer_queue(current_user, on_behalf_of, "GET /me/queue")
+    tasks = await run_in_threadpool(lambda: human_tasks.decorate_with_declarations(tasks))
+    return {"email": current_user.email, "tasks": tasks, "delegated": delegation}
+
+
+@app.get("/me/needs_you",
+         responses={200: {"model": NeedsYou}, **MCP_REFUSAL_RESPONSES})
+async def get_my_needs_you(on_behalf_of: Optional[str] = None,
+                           current_user: User = Depends(get_current_user)):
+    """What waits on the viewer, by kind (ADR-0068 s6): the count of the pending tasks the viewer
+    may see, matched and label-scoped by the very function that serves the list, so the count and
+    the list cannot disagree. `on_behalf_of` reads a named person's, as `GET /me/queue` does."""
+    tasks, delegation = await _viewer_queue(current_user, on_behalf_of, "GET /me/needs_you")
+    counts: dict[str, int] = {}
+    for r in tasks:
+        k = str(r.get("kind"))
+        counts[k] = counts.get(k, 0) + 1
+    return {"email": current_user.email, "counts": counts, "total": len(tasks),
+            "delegated": delegation}
 
 
 @app.get("/task_kinds")
@@ -2227,12 +2356,8 @@ async def get_review_batch(
     peek at another approver's batch. engine-a's get_batch serves only the per-approver-authored state."""
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
-    try:
-        rows = await run_in_threadpool(
-            lambda: human_tasks.list_tasks_for(current_user.authz_id, status="pending")
-        )
-    except human_tasks.HumanTaskConfigError:
-        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured"})
+    rows = await _pending_for_actor(current_user, current_user.authz_id,
+                                    "GET /reviews/{workflow_id}/batch")
     match = next((t for t in rows
                   if t.get("workflow_id") == workflow_id and t.get("kind") == "grouped_review"), None)
     if match is None:
@@ -5845,6 +5970,29 @@ def _audit_delegate_named(route: str, caller: str, named: object, outcome: str) 
         "delegate_named route=%s caller=%s named=%s outcome=%s", route, caller, named, outcome)
 
 
+async def _pending_for_actor(current_user: User, actor: str, route: str) -> list:
+    """The pending tasks `actor` may see NOW (ADR-0068 s6): matched by recipient row or by the
+    audience capability in policy, then withheld task by task where `actor` is not entitled to a
+    label of the task's object (a routing fault is recorded). `actor` is the caller, or the
+    principal of an admitted delegated act. An unconfigured task store is 503 `hitl_unconfigured`;
+    a directory that cannot answer is 503 `authorization_unavailable`."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    try:
+        rows = await run_in_threadpool(lambda: human_tasks.viewer_tasks(actor))
+    except human_tasks.HumanTaskConfigError:
+        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured"})
+    except (human_tasks.AuthorizationUnavailable, human_tasks.AuthorizationUnconfigured) as exc:
+        raise HTTPException(status_code=503, detail={"error": "authorization_unavailable"}) from exc
+    if (actor or "").casefold() == (current_user.authz_id or "").casefold():
+        cells = lambda: _own_cells(current_user)  # noqa: E731
+    else:
+        cells = lambda: _cells_of(actor)  # noqa: E731
+    return await _scope_to_viewer(rows, addressee=actor, domains=cells, route=route)
+
+
 async def _admit_named_on_case(caller: str, case_id: str, named: Optional[str],
                                seeded_by: Optional[str], *, route: str = "") -> str:
     """R-089: admit (or refuse) a person a case-runner route NAMES. Returns the basis, or raises.
@@ -5873,7 +6021,11 @@ async def _admit_named_on_case(caller: str, case_id: str, named: Optional[str],
             basis = "seeding_delegate"
         else:
             try:
-                held = await run_in_threadpool(human_tasks.holds_task_on_case, case_id, name)
+                _held = await run_in_threadpool(
+                    lambda: human_tasks.viewer_tasks(name, status=None, case_id=case_id))
+                held = bool(await _scope_to_viewer(
+                    _held, addressee=name, domains=lambda: _cells_of(name),
+                    route=route or "named_on_case", on_behalf_of=caller))
             except Exception as exc:  # noqa: BLE001 -- unknown is not "not a holder"
                 logger.warning("holder lookup failed on case %s: %s", case_id, exc)
                 _audit_delegate_named(route, caller, named, "refused:authorization_unavailable")
@@ -6012,12 +6164,7 @@ async def act_on_human_task(
     # Look up the task's audience (from any of the caller's recipient rows) to
     # re-check. Keyed on authz_id — same as the replication filter. ON THE ACTOR
     # (the principal, for a delegated act; R-089): the delegate itself holds no audience row.
-    try:
-        rows = await run_in_threadpool(
-            lambda: human_tasks.list_tasks_for(actor, status="pending")
-        )
-    except human_tasks.HumanTaskConfigError:
-        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured"})
+    rows = await _pending_for_actor(current_user, actor, "POST /me/human_tasks/{task_id}/act")
     match = next((t for t in rows if t["task_id"] == task_id), None)
     if match is None:
         # Not PENDING for this caller. Two very different truths hide here, and
@@ -6032,6 +6179,15 @@ async def act_on_human_task(
         settled = await run_in_threadpool(
             lambda: human_tasks.get_task_resolution(task_id, caller_id=actor)
         )
+        if settled:
+            # ADR-0068 s6: a settled task's provenance is withheld on the same label rule as a
+            # pending one (a non-recipient or a label failure is the same 404 below).
+            _cells = ((lambda: _own_cells(current_user))
+                      if (actor or "").casefold() == (current_user.authz_id or "").casefold()
+                      else (lambda: _cells_of(actor)))
+            if not await _scope_to_viewer([settled], addressee=actor, domains=_cells,
+                                          route="POST /me/human_tasks/{task_id}/act"):
+                settled = None
         if settled and settled.get("status") == human_tasks.SUPERSEDED:
             # A superseded task is not pending, so it lands here and never reaches the guard below:
             # answer the same stale_extraction (scoped to a recipient, so a non-recipient is 404).
@@ -12919,25 +13075,22 @@ async def _fetch_instance1_spec(case_id: str) -> Optional[dict]:
     return _restate_answer(resp)
 
 
-async def _load_viewable_case(case_id: str, current_user: User) -> tuple[dict, dict]:
-    """The case-visibility gate `GET /cases/{case_id}` and `GET /cases/{case_id}/action` share:
-    fetch the case (runner unreachable -> 503 `runner_unavailable`), then 404 `case not found`
-    when it is absent OR the caller may not read it (`case_projection.can_view_case`), the two
-    answering IDENTICALLY. Returns `(case, definitions)`."""
+async def _case_state(case_id: str) -> "Optional[tuple[dict, Optional[dict], dict]]":
+    """`(case, instance1_spec, definitions)` for a case, or None when it does not exist. The runner
+    unreachable, or a definition the case chose that this runtime does not ship, is 503
+    `runner_unavailable` (not an authz question, and never "the case does not exist")."""
     from starlette.concurrency import run_in_threadpool
 
     from agent_fleet.restate_analyst.workflow_definition import (  # noqa: PLC0415
         WorkflowDefinitionError, get_workflow_definition,
     )
 
-    from . import case_projection
-
     try:
         case = await _fetch_case(case_id)
     except Exception as exc:  # noqa: BLE001 — connect errors, timeouts, 5xx via raise_for_status
         raise HTTPException(status_code=503, detail={"error": "runner_unavailable"}) from exc
     if not case:
-        raise HTTPException(status_code=404, detail="case not found")
+        return None
 
     instance1_spec = None
     if case.get("instances"):
@@ -12958,6 +13111,108 @@ async def _load_viewable_case(case_id: str, current_user: User) -> tuple[dict, d
         # caller cannot distinguish "the runner is down" from "the runner's definitions aren't"
         # and must not be told their case doesn't exist over a config gap.
         raise HTTPException(status_code=503, detail={"error": "runner_unavailable"}) from exc
+    return case, instance1_spec, definitions
+
+
+#: What a routing fault names as the dimension that failed. The VALUES that fail (the labels) are
+#: read off the task's object; none is named here.
+LABEL_DIMENSION = "entitlement_cell"
+
+
+def _own_cells(user: User) -> "list[str]":
+    """The cell domains on the caller's own (cached) entitlements; a token that carries none has
+    none."""
+    ent = getattr(user, "entitlements", None)
+    return [c.domain for c in (getattr(ent, "cells", None) or [])]
+
+
+async def _cells_of(authz_id: str) -> "list[str]":
+    """The entitlement-cell domains `authz_id` holds NOW, read from the directory with no cache
+    (a grant change shows on the next read). A person's own token is the cached path
+    (`current_user.entitlements`); this is for a person who is not the caller. A directory that
+    cannot answer is 503 `authorization_unavailable`, never an empty list."""
+    from starlette.concurrency import run_in_threadpool
+
+    from .authz.topaz_client import TopazDirectoryClient
+    from .human_tasks import AuthorizationUnavailable
+
+    url = os.getenv("TOPAZ_DIRECTORY_URL", "").strip()
+    if not url:
+        raise HTTPException(status_code=503, detail={"error": "authorization_unconfigured"})
+
+    def _read() -> list:
+        client = TopazDirectoryClient(url)
+        try:
+            return [c.domain for c in client.get_entitlements(authz_id).cells]
+        finally:
+            client.close()
+    try:
+        return await run_in_threadpool(_read)
+    except AuthorizationUnavailable as exc:
+        raise HTTPException(status_code=503, detail={"error": "authorization_unavailable"}) from exc
+
+
+async def _scope_to_viewer(rows: list, *, addressee: str, domains, route: str,
+                           labels_by_case: Optional[dict] = None, on_behalf_of: str = "") -> list:
+    """The label half of ADR-0068 s6: keep each task whose object's labels `addressee` is entitled
+    to every one of. A task that fails is WITHHELD (absent, never redacted: no key survives to
+    say what it was) and recorded as a `routing_fault` with its decision line, naming the task,
+    the addressee and the label that failed. A task filed on no case has no object and so no
+    label to fail. A case whose labels cannot be read (it is gone) withholds its tasks, loudly and
+    without a fault: that is unknown, not a routing error. The runner being down is 503.
+
+    `domains` is the addressee's cell domains, or an async callable that returns them.
+    `labels_by_case` seeds the label lookups a route already holds (the case read)."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import case_projection, human_tasks
+
+    cache = dict(labels_by_case or {})
+    kept = []
+    for row in rows:
+        cid = row.get("case_id")
+        if not cid:
+            kept.append(row)
+            continue
+        if cid not in cache:
+            state = await _case_state(cid)
+            cache[cid] = None if state is None else case_projection.case_labels(*state)
+        labels = cache[cid]
+        if labels is None:
+            logger.warning("task %s withheld: the labels of its case could not be read", row.get("task_id"))
+            continue
+        if not labels:  # an object with no label has none to fail: the directory is not asked
+            kept.append(row)
+            continue
+        if callable(domains):  # resolved lazily: a row with no case never asks the directory
+            domains = domains()
+            if hasattr(domains, "__await__"):
+                domains = await domains
+        failed = case_projection.task_label_failures(labels, domains)
+        if not failed:
+            kept.append(row)
+            continue
+        for lbl in failed:
+            await run_in_threadpool(lambda l=lbl: human_tasks.record_routing_fault(
+                task_id=row.get("task_id"), addressee=addressee, dimension=LABEL_DIMENSION,
+                label=l, route=route, on_behalf_of=on_behalf_of))
+    return kept
+
+
+async def _load_viewable_case(case_id: str, current_user: User) -> tuple[dict, dict, list]:
+    """The case-visibility gate `GET /cases/{case_id}` and `GET /cases/{case_id}/action` share:
+    fetch the case (runner unreachable -> 503 `runner_unavailable`), then 404 `case not found`
+    when it is absent OR the caller may not read it (`case_projection.can_view_case`), the two
+    answering IDENTICALLY. Returns `(case, definitions, labels)`, `labels` being the case's own."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import case_projection
+
+    state = await _case_state(case_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="case not found")
+    case, instance1_spec, definitions = state
+    labels = case_projection.case_labels(case, instance1_spec, definitions)
 
     caller_domains = [c.domain for c in current_user.entitlements.cells]
     if not case_projection.can_view_case(
@@ -12965,19 +13220,29 @@ async def _load_viewable_case(case_id: str, current_user: User) -> tuple[dict, d
         caller_authz_id=current_user.authz_id, caller_domains=caller_domains,
     ):
         # A HOLDER OF A TASK ON THIS CASE MAY READ IT (architect ruling 2026-10-17): the person
-        # a task was routed to must see what they are asked to decide, whatever their domain
-        # cells. Any status counts. The admission is by recipient row alone; a store that is
-        # unconfigured or down admits nobody, and the answer stays the identical 404.
+        # a task was routed to must see what they are asked to decide. Any status counts. Since
+        # ADR-0068 s6 the holder is matched NOW (a recipient row, or the audience capability in
+        # policy) AND must be entitled to every label of the case: a holder who is not is refused
+        # the identical 404, and each such task is recorded as a routing fault. A store that is
+        # unconfigured or down admits nobody.
         from . import human_tasks
 
         try:
-            _holds = await run_in_threadpool(
-                human_tasks.holds_task_on_case, case_id, current_user.authz_id)
+            held = await run_in_threadpool(
+                lambda: human_tasks.viewer_tasks(current_user.authz_id, status=None, case_id=case_id))
+            held = await _scope_to_viewer(
+                held, addressee=current_user.authz_id, domains=caller_domains,
+                route="GET /cases/{case_id}", labels_by_case={case_id: labels})
+        except HTTPException:
+            raise
+        except (human_tasks.AuthorizationUnavailable, human_tasks.AuthorizationUnconfigured) as exc:
+            # unknown is not "not a holder": a directory that cannot answer is 503, never the 404
+            raise HTTPException(status_code=503, detail={"error": "authorization_unavailable"}) from exc
         except Exception:  # noqa: BLE001 -- unreadable store: deny, same 404
-            _holds = False
-        if not _holds:
+            held = []
+        if not held:
             raise HTTPException(status_code=404, detail="case not found")
-    return case, definitions
+    return case, definitions, labels
 
 
 @app.get("/cases/{case_id}", tags=[MCP_TAG], dependencies=_mcp_door(), responses=MCP_REFUSAL_RESPONSES)
@@ -13005,7 +13270,7 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
 
     from . import case_projection, human_tasks
 
-    case, definitions = await _load_viewable_case(case_id, current_user)
+    case, definitions, case_labels = await _load_viewable_case(case_id, current_user)
 
     instance_ids = [inst.get("instance_id") for inst in (case.get("instances") or [])
                     if inst.get("instance_id")]
@@ -13014,6 +13279,26 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
     except human_tasks.HumanTaskConfigError:
         task_rows = []  # HITL substrate unconfigured: approvals are honestly empty, not a 503 --
                         # the case itself is readable without it.
+
+    # THE VIEWER'S OWN TASKS (ADR-0068 s6): matched to this viewer now (a recipient row, or the
+    # audience capability in policy) and entitled to every label of the case. A task that is not
+    # theirs is absent from `approvals[].task`, from the step titles and from `options`; one that
+    # fails the label check is withheld and recorded as a routing fault. The approvals' status
+    # skeleton above stays what any reader of the case sees.
+    try:
+        mine = await run_in_threadpool(
+            lambda: human_tasks.viewer_tasks(
+                current_user.authz_id, status=None, workflow_ids=instance_ids))
+    except human_tasks.HumanTaskConfigError:
+        mine = []
+    except (human_tasks.AuthorizationUnavailable, human_tasks.AuthorizationUnconfigured) as exc:
+        raise HTTPException(status_code=503, detail={"error": "authorization_unavailable"}) from exc
+    for r in mine:
+        r["case_id"] = r.get("case_id") or case_id
+    mine = await _scope_to_viewer(
+        mine, addressee=current_user.authz_id,
+        domains=[c.domain for c in current_user.entitlements.cells],
+        route="GET /cases/{case_id}", labels_by_case={case_id: case_labels})
 
     # The released ActionRecord, read ONLY when a definition could have emitted one. A store that
     # cannot be read is a 503, not a null: null claims "not released", which is false when we
@@ -13029,7 +13314,7 @@ async def get_case(case_id: str, current_user: User = Depends(get_current_user))
         output_artifact = case_projection.release_artifact(case_id, records)
 
     return case_projection.project_workflow_case(
-        case, definitions, task_rows, output_artifact)
+        case, definitions, task_rows, output_artifact, viewer_rows=mine)
 
 
 class CaseSignalRequest(_BaseModel):
@@ -14052,7 +14337,23 @@ async def ingest_status_route(ingest_id: str, current_user: User = Depends(get_c
         lambda: ingest_status.get_status_for(ingest_id, caller_id=current_user.authz_id)
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="ingest not found")
+        # ADR-0068 s6: the status read answers anyone who MAY READ THE NOTICE, not only its
+        # submitter. Who may is the notice gate's own and no other: `_ingest_review_access`, the one
+        # gate GET /ingest/{id}/extraction, /source, /export and /empty call (the dropper or
+        # on_behalf_of; a holder of the open promotion task; a service only as the seeding
+        # delegate). It is CALLED here, not restated, so the two reads cannot disagree. Its 403 is
+        # this route's 404 (nothing here says the ingest exists); a 503 propagates.
+        full = await run_in_threadpool(
+            lambda: ingest_status.get_status_for(ingest_id, caller_id="", any_caller=True))
+        if full is None or full.get("kind") == ingest_status.EVENT:
+            raise HTTPException(status_code=404, detail="ingest not found")
+        try:
+            await _ingest_review_access(ingest_id, current_user, "GET /ingest/{id}/status")
+        except HTTPException as exc:
+            if exc.status_code in (403, 404):
+                raise HTTPException(status_code=404, detail="ingest not found") from exc
+            raise
+        row = full
 
     return await _ingest_status_body(row, current_user)
 
@@ -17427,7 +17728,7 @@ async def get_case_action(case_id: str, current_user: User = Depends(get_current
         # /ingest/{id}/source). Same body as the delegate's refusal, before any read.
         raise _not_your_case()
     else:
-        case, _definitions = await _load_viewable_case(case_id, current_user)
+        case, _definitions, _labels = await _load_viewable_case(case_id, current_user)
     records = await _records()
     if not records:
         raise HTTPException(status_code=404, detail={"error": "no_action_record"})

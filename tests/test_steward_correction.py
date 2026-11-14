@@ -46,6 +46,7 @@ from workflow_bulk_resolve import PartItem, ReviewBatch  # noqa: E402
 from src.iagent import gateway  # noqa: E402
 from src.iagent import human_tasks as ht  # noqa: E402
 from src.iagent import ingest_status as ist  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 FP = "IPCN25300X"
 INGEST = "sha256:" + "ab12" * 16   # a real ingest id: NOT the extracted doc_id
@@ -227,6 +228,7 @@ def act(monkeypatch):
                                         "notice_fingerprint": FP}
     monkeypatch.setattr(gateway.httpx, "AsyncClient", _FakeAsyncClient)
     monkeypatch.setattr(ht, "list_tasks_for", lambda actor, status="pending": [dict(_TASK)])
+    route_viewer_tasks_through(monkeypatch)
     monkeypatch.setattr(ht, "check_can_act", lambda audience, actor: True)
     monkeypatch.setattr(ht, "mark_task_resolved", lambda *a, **k: 1)
     statuses = []
