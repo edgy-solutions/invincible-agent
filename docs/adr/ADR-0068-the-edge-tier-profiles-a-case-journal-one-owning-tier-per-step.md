@@ -12,6 +12,10 @@ uuid5 only as the dedupe lookup key). It is open as a draft PR so it can be read
   - §2: the door checks issuer and audience;
   - §3: an entry with no labels, and one whose labels are empty;
   - §4: who writes `case_closed`.
+**Amended 2026-11-14** with three of the architect's rulings on OpenDDIL's thirteen questions:
+  - §3: a cross-tier step crosses as an entry, never as a call (question 6);
+  - §4: a severed wait keeps waiting (`awaiting_tier`, `overdue`) (question 7);
+  - §6: a grant change takes effect on the next read (question 5).
 **Related:**
   - ADR-0067 (one identity per thing): an occurrence is its episode plus
     `detected_at_ns`. The journal's entries (§3) carry that occurrence id where one exists.
@@ -116,6 +120,9 @@ whose profile lacks it (§1, last bullet).
 - **Replication is by entry.** A tier sends each peer the entries that peer has not acknowledged. The receiver
   applies them by `entry_id`, so a second delivery is a no-op. A receiver never mints for an entry it receives;
   the id travels with the entry.
+- **A cross-tier step crosses as an entry, never as a call** (ruled 2026-11-14, OpenDDIL's question 6). A step
+  that another tier owns is reached by a record on that tier's rail, delivered at that tier's door. One iagent
+  never calls another directly. What crosses is a case-journal entry.
 - **Catch-up is a cursor read:** `(tier, tier_seq)` for each peer. A reader that reconnects asks for entries
   after its cursor and gets every one it missed, in order, per tier.
 - **Projections are derived from the journal.** That includes the task list and the case view, so two tiers that
@@ -141,6 +148,12 @@ whose profile lacks it (§1, last bullet).
   so closing a case has one writer as well.
 - **Ownership moves only by an `ownership_handed` entry that the current owner writes.** Connectivity never moves
   it: a central tier that cannot reach the edge does not take the step back.
+- **A severed wait keeps waiting** (ruled 2026-11-14, OpenDDIL's question 7). A step waiting on another tier
+  keeps waiting through a sever.
+  - A deadline passing never disposes of the step and never moves its ownership.
+  - The case view names the state `awaiting_tier`, with the owning tier and the time of the last entry received
+    from it.
+  - A passed deadline writes an `overdue` entry. It may also open an escalation task at the waiting tier.
 
 ### §5 Ownership and delegation are policy rows
 
@@ -163,6 +176,9 @@ whose profile lacks it (§1, last bullet).
   The task's audience reached someone who cannot see its object, so the fault is in the routing.
 - The same rule applies to every read that admits a viewer because they hold a task, including `approvals[].task`
   on the case read and admission to the case itself.
+- **A grant change takes effect on the next read** (ruled 2026-11-14, OpenDDIL's question 5). The rule above
+  decides at read time, so a new grantee sees a pending task and a revoked one stops seeing it. It replaces the
+  fan-out at registration as the source of truth. The fan-out remains only as a notification aid.
 
 ### §7 A delegated act is marked as delegated (requirement 3)
 
