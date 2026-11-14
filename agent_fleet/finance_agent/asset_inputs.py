@@ -45,6 +45,13 @@ except ImportError:
         ContractViolation, check_contract_rows, check_contract_schema,
     )
 
+#: engine-fin's own refusals, beyond the shared reader's (`dataset_contracts.RULES`), until
+#: `state_from_rows` reads the contract (ruled 11-11).
+RULES = frozenset({
+    "duplicate_work_package_period", "non_finite", "null_value", "other_program_rows",
+    "period_outside_calendar", "program_bac_not_unique", "program_name_not_unique",
+    "varies_within_path", "work_package_in_two_accounts",
+})
 URN_ENV = "FIN_DATASET_URN"
 BANNER_ENV = "FIN_DATASET_BANNER"
 GATEWAY_ENV = "CENTRAL_GATEWAY_URL"

@@ -73,6 +73,10 @@ try:  # the shared contract reader: /app/utils in the image, agent_fleet/utils i
     from utils import dataset_contracts as _contracts
 except ImportError:
     from agent_fleet.utils import dataset_contracts as _contracts
+try:  # engine-fin's own rule ids, with the same two-way import
+    from asset_inputs import RULES as _FIN_RULES
+except ImportError:
+    from agent_fleet.finance_agent.asset_inputs import RULES as _FIN_RULES
 
 def _default_seed_dir() -> Path:
     """`<repo>/policy/measure_verbs`, found by walking up rather than counting levels: in the
@@ -452,6 +456,14 @@ def _join_contract(ds: dict, series_kind: bool) -> Any:
     Holding the named columns to the contract is the shared reader's (`undeclared`, `not_of`); the
     roles are engine-fin's."""
     contract = _contracts.load_contract(ds["contract"])
+    cid = contract.contract_id
+    if not contract.scoped:
+        raise ValueError(f"contract {cid!r} declares scope: none; a fin dataset row filters each read to one "
+                         f"program, so it reads only a scoped contract")
+    unknown = _contracts.unknown_rules(contract, _FIN_RULES)
+    if unknown:
+        raise ValueError(f"contract {cid!r} names rules {unknown} that no reader raises; a contract carries "
+                         f"messages for rules, it cannot add one")
     if series_kind:
         once = [*ds["per_program"].values(), *([ds["status_column"]] if ds["status_column"] else [])]
         scope = ds["scope_column"]
@@ -460,7 +472,6 @@ def _join_contract(ds: dict, series_kind: bool) -> Any:
     else:
         once, scope = [], ds["levels"][0]
         strings, numbers = list(ds["levels"]), list(ds["value_columns"])
-    cid = contract.contract_id
     undeclared = _contracts.undeclared(contract, (*strings, *numbers))
     if undeclared:
         raise ValueError(f"inputs.dataset names {undeclared}, which contract {cid!r} does not declare")

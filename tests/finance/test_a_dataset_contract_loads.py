@@ -67,7 +67,7 @@ def _edit(path, value):
 
 REFUSED = {
     "id_mismatch": (_edit(["contract_id"], "other"), "declares contract_id 'other'"),
-    "unknown_type": (_edit(["columns", 0, "type"], "date"), "has type 'date'"),
+    "unknown_type": (_edit(["columns", 0, "type"], "decimal"), "has type 'decimal'"),
     "column_twice": (lambda r: r["columns"].append(copy.deepcopy(r["columns"][0])), "declared twice"),
     "grain_undeclared": (_edit(["grain"], ["work_package", "pv"]), r"\['pv'\]"),
     "scope_undeclared": (_edit(["scope"], "programme"), r"\['programme'\]"),
