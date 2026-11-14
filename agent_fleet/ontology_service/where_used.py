@@ -59,6 +59,19 @@ DOMAIN = "SUSTAINMENT"
 INPUT_URI = "http://internal/sustainment/product#Part"
 OUTPUT_URI = "http://invincible-agent/mesh#WhereUsedSet"
 
+#: RULED 2026-11-10: the verb is registered a second time on the notice graph's Component, so a
+#: question grounded on a notice's part is offered it. Component is NOT put under `ps:Part` (that
+#: over-claims); whether it sits under `ps:ManufacturerPart` is a separate ontology item.
+COMPONENT_INPUT_URI = "http://internal/sustainment/pcn#Component"
+
+#: (registration name, input class). One name per input: registering one verb twice under one
+#: name deletes the first edge. Every other registration field is shared, so the verb keeps one
+#: description across its subjects.
+REGISTRATIONS = (
+    ("engine_o_where_is_this_part_used", INPUT_URI),
+    ("engine_o_where_is_this_part_used_component", COMPONENT_INPUT_URI),
+)
+
 #: ADR-0065 ruling 2's vocabulary and default. It moves to the ontology slice (board item C) when
 #: C lands; until then this is the one place the fleet spells it.
 CONFIGURATIONS = ("as_designed", "as_built", "as_maintained")

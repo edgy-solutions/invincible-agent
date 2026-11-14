@@ -319,10 +319,36 @@ def _registration_incomplete() -> Optional[List[str]]:
 # Telemetry census: /health reports spans the leaf lost. telemetry.py sits at /app in the
 # fleet image; guarded so a missing shim never breaks startup (None = nothing emitted).
 try:
-    from telemetry import emit_misses
+    from telemetry import emit_misses, observed_trace, MAPPING, build_trace_values
 except Exception:  # pragma: no cover -- telemetry never load-bearing
+    from contextlib import contextmanager as _cm
+
+    @_cm
+    def observed_trace(*_a, **_k):  # type: ignore[misc]
+        yield
+
     def emit_misses():  # type: ignore[misc]
         return None
+
+    def build_trace_values(**_k):  # type: ignore[misc]
+        return {}
+
+    MAPPING = None
+
+
+# This is the binding, not the core. `explain.py` and `reads.py` still import no langfuse
+# (sealed in `tests/docs`).
+@app.middleware("http")
+async def _telemetry_join(request, call_next):
+    tid = request.headers.get("X-Trace-Id")
+    if not tid or request.url.path != "/explain":
+        return await call_next(request)
+    with observed_trace(MAPPING, build_trace_values(
+            trace_id=tid, session_id=request.headers.get("X-Session-Id") or None,
+            engine="engine-docs", verb="/explain"),
+            name="engine-docs.explain",
+            parent_span_id=request.headers.get("X-Parent-Span-Id") or None):
+        return await call_next(request)
 
 
 @app.get("/health", tags=["ops"])

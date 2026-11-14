@@ -126,6 +126,31 @@ from its own worktree is reporting a true fact about a tree nobody deploys.
 seals against `origin/master` as well as your branch — and when they differ, the difference is
 the finding.
 
+### SESSION FILES ARE PLACED, NEVER COMMITTED. — RULED 2026-11-12, all repos
+
+Lane packets and handoffs are **local files under `sessions/`**, which is gitignored. The rule:
+- Nobody commits a session file, pushes one, or force-adds one with `git add -f`.
+- A sender places its packet in the recipient's `sessions/` folder, and the recipient reads it there.
+- Your handoff is still the newest `sessions/*handoff*` file in your own worktree. It is just not committed.
+
+The rule applies in every repo with a `sessions/` folder: invincible-agent, cortex-ui, doc-tools, dag-tools,
+iagent-mesh-sdk, training-consolidation-workbench, provenance-telemetry and ia-gov. Each repo's owner
+lane lands the same `.gitignore`, untrack and rule change.
+
+**A lane branch that still tracks session files drops them when it next merges master.** Do it in
+this order, or the merge deletes the files from your disk:
+
+    git rm -r -q --cached sessions     # index only; the files stay on disk
+    git commit ...                     # then merge master
+
+If a merge or pull already deleted them, restore them from the commit before it. The archive
+writes to disk only, and `.gitignore` keeps the restored files out of the index:
+
+    git archive ORIG_HEAD sessions | tar -x
+
+**Earlier rules that assumed committed packets are now history, not instructions.** That covers
+commit-time packet age and "the owning lane commits the packet with its own work".
+
 ### PUSH YOUR LANE BRANCH ON EVERY COMMIT. No permission, no asking. — RULED 2026-09-11
 
     git push origin lane/<lane>      # after every commit. Always. This is not a gated action.

@@ -420,10 +420,14 @@ ATTESTATION_DEFAULT = ATTESTATION_SELF
 
 
 def _declared_attestation(content_kind: str) -> Optional[str]:
-    """The row that carries `attestation` for a `document_promotion` is gov's to name (packet
-    2026-11-10); until it is, nothing is declared and the ruled default applies. This is the ONLY
-    function that will change when the row is named."""
-    return None
+    """The content-kind row's `attestation` (SDK v0.9.18, `ContentKindRegistration.attestation`),
+    or None when the kind is not registered or declares none (the ruled default then applies). The
+    value is returned as read: `attestation_for` refuses one outside `ATTESTATION_MODES`. This is
+    the ONLY function that reads the declaration."""
+    from . import content_kinds
+
+    reg = content_kinds.by_kind(content_kind)
+    return getattr(reg, "attestation", None)
 
 
 def attestation_for(content_kind: str) -> str:

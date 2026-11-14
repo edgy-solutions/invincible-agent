@@ -18,6 +18,7 @@ inputs:
   dataset:
     urn: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
     banner: "SYNTHETIC earned-value fixture, not a real program."
+    contract: ev_fixture
     levels: [program_id, control_account, work_package]
     value: acwp
   # Shares of the program's actual cost by control account are .10 .145 .35 .121 .283, so 0.15

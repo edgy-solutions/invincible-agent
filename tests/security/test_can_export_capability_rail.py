@@ -1,5 +1,10 @@
 """The `can_export:<profile>` capability rail: DENY-BY-DEFAULT, unlike `can_drop`.
 
+UPDATED 2026-11-11 (Job 26): no row is NOT an error anywhere (deny by default = absent from the
+listing, refused at the route), and a row naming an unknown profile is refused by the SYNC, one row
+at a time (see test_an_export_grant_names_a_known_profile_or_that_row_is_refused.py); the
+completeness paragraph below is the history of the retired rule. Known is per deployment.
+
 A profile with no `can_export:<P>` row is exportable by nobody; object existence decides nothing, so
 the sync has no existence read and no object prune (deleting a row revokes through the invoker
 relation prune). One row gates a single export and a batch alike (ruled 2026-10-29). The defaults are
@@ -16,6 +21,7 @@ Run:  uv run python -m pytest tests/security/test_can_export_capability_rail.py 
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -61,18 +67,31 @@ def _profile_dir(base: Path, name: str, rows: dict[str, dict]) -> Path:
 _ENV = ("INGEST_EXPORT_PROFILE_DIR", "EXPORT_PROFILE_POLICY_DIR", "EXPORT_PROFILE_OVERLAY_DIRS",
         "FIN_EXPORT_PROFILE_POLICY_DIR", "FIN_EXPORT_PROFILE_OVERLAY_DIRS")
 ANSWERS = ROOT / "policy" / "exports" / "answers"
+SAMPLE_REVIEW = ROOT / "policy" / "overlays" / "sample" / "exports"
+
+
+def _sandbox_env(monkeypatch):
+    """The environment of a deployment that loads the sample overlay (the sandbox values set these
+    on every pod). Known is per deployment: the samples are known only where this is set."""
+    monkeypatch.setenv("INGEST_EXPORT_PROFILE_OVERLAY_DIRS", str(SAMPLE_REVIEW))
+    monkeypatch.setenv("FIN_EXPORT_PROFILE_OVERLAY_DIRS", str(SAMPLE))
 
 
 def test_1_the_seed_composition(monkeypatch):
     for v in _ENV:
         monkeypatch.delenv(v, raising=False)
+    _sandbox_env(monkeypatch)
     profiles, notes = vp.known_export_profiles()
     assert profiles.get(CDRL) == "fin-cdrl", profiles
     stems = {p.stem for p in (ROOT / "policy" / "exports").glob("*.yaml")}
     assert stems, "policy/exports ships no profile"
-    assert {n for n, k in profiles.items() if k == "review-export"} == stems, (profiles, stems)
+    # the review seed, then the sample overlay, which the deployment's env names (_sandbox_env).
+    sample = {p.stem for p in (ROOT / "policy" / "overlays" / "sample" / "exports").glob("*.yaml")}
+    assert sample, "the sample overlay ships no review profile"
+    assert {n for n, k in profiles.items() if k == "review-export"} == stems | sample, (profiles, stems)
     review = (ROOT / "policy" / "exports").as_posix()
-    assert f"review-export: {review} -> {len(stems)} profile(s)" in notes, notes
+    assert [n for n in notes if n.startswith(f"review-export: {review}")
+            and f"-> {len(stems | sample)} profile(s)" in n], notes
     # policy/exports/answers is its own kind; the review seed's glob is not recursive.
     answers = {p.stem for p in ANSWERS.glob("*.yaml")}
     assert {n for n, k in profiles.items() if k == "answer-export"} == answers, (profiles, answers)
@@ -81,6 +100,18 @@ def test_1_the_seed_composition(monkeypatch):
     fin = [n for n in notes if n.startswith("fin-cdrl: ")]
     assert len(fin) == 1 and SAMPLE.as_posix() in fin[0], notes
     assert not [n for n in notes if n.startswith(("REFUSED:", "COLLISION:"))], notes
+
+
+def test_1_without_the_overlay_env_the_samples_are_not_known(monkeypatch):
+    """CONTROL for the arm above: the same composition with no overlay env knows the seed only."""
+    for v in _ENV:
+        monkeypatch.delenv(v, raising=False)
+    profiles, _ = vp.known_export_profiles()
+    stems = {p.stem for p in (ROOT / "policy" / "exports").glob("*.yaml")}
+    sample = {p.stem for p in SAMPLE_REVIEW.glob("*.yaml")}
+    assert sample and not (sample & set(profiles)), (sample, profiles)
+    assert {n for n, k in profiles.items() if k == "review-export"} == stems
+    assert CDRL not in profiles
 
 
 def test_1_the_source_rows_are_the_sdks_shape_one_per_kind():
@@ -97,7 +128,7 @@ def test_1_the_source_rows_are_the_sdks_shape_one_per_kind():
 def test_1_the_source_rows_name_the_variables_each_loader_reads():
     """Until the engines read policy/export_profile_sources.yaml (01M6A9QDN1GQ20347W16EM0D3X), the
     rows restate each loader's variables. This goes red when a loader renames one and the row is not
-    re-read. The review loader reads no overlay variable, so its row says null."""
+    re-read. Each row names the overlay variable its loader reads."""
     from agent_fleet.finance_agent import export_profiles as fin
     from agent_fleet.utils import answer_exports as ans
     from iagent import export_profiles as rev
@@ -105,7 +136,7 @@ def test_1_the_source_rows_name_the_variables_each_loader_reads():
     rows = {r["kind"]: r for r in yaml.safe_load(
         (ROOT / "policy" / vp.EXPORT_PROFILE_SOURCES).read_text(encoding="utf-8"))["sources"]}
     got = {k: (r["seed_env"], r["overlay_env"]) for k, r in rows.items()}
-    assert got == {"review-export": (rev._DIR_ENV, None),
+    assert got == {"review-export": (rev._DIR_ENV, rev._OVERLAY_ENV),
                    "answer-export": (ans._SEED_ENV, ans._OVERLAY_ENV),
                    "fin-cdrl": (fin._SEED_ENV, fin._OVERLAY_ENV)}, got
 
@@ -178,15 +209,27 @@ def test_2_the_answer_and_review_env_vars_are_read_as_their_loaders_read_them(tm
 
 # -- 3. fin's semantics, on tmp dirs -------------------------------------------------------
 
-def _src(kind, seed, *overlays):
+_TEST_OVERLAY_ENV = "IAGENT_TEST_EXPORT_OVERLAYS"
+
+
+def _src(kind, seed):
     """A source row for tmp dirs: the seed is `seed_default` (its variable is never set) and the
-    overlays ride as offline_overlays, an absolute path under the root being itself."""
+    overlays ride in the row's overlay variable, as a deployment's do."""
     return {"kind": kind, "seed_env": "IAGENT_TEST_UNSET_EXPORT_SEED", "seed_default": str(seed),
-            "overlay_env": None, "offline_overlays": [str(o) for o in overlays]}
+            "overlay_env": _TEST_OVERLAY_ENV}
 
 
-def _compose(*dirs, kind="fin-cdrl"):
-    return vp.known_export_profiles([_src(kind, *dirs)])
+def _compose(seed, *overlays, kind="fin-cdrl"):
+    import os
+    old = os.environ.get(_TEST_OVERLAY_ENV)
+    os.environ[_TEST_OVERLAY_ENV] = os.pathsep.join(str(o) for o in overlays)
+    try:
+        return vp.known_export_profiles([_src(kind, seed)])
+    finally:
+        if old is None:
+            os.environ.pop(_TEST_OVERLAY_ENV, None)
+        else:
+            os.environ[_TEST_OVERLAY_ENV] = old
 
 
 def test_3_an_overlay_replaces_a_same_name_row_and_stays_known_once(tmp_path):
@@ -230,14 +273,13 @@ def test_3_a_tombstone_for_a_name_nothing_ships_is_refused(tmp_path):
     assert [n for n in _compose(seed, ov)[1] if n.startswith("REFUSED: fin-cdrl: ") and "'p2'" in n]
 
 
-def test_3_a_dir_both_in_the_variable_and_offline_is_composed_once(tmp_path, monkeypatch):
-    """The sandbox sets FIN_EXPORT_PROFILE_OVERLAY_DIRS to the dir the fin row names offline. Read
+def test_3_a_dir_listed_twice_is_composed_once(tmp_path, monkeypatch):
+    """A dir listed twice in the variable (the chart helper and a pod env can both name it). Read
     twice, a tombstone in it would delete a name the first read already removed: a refusal."""
     seed = _profile_dir(tmp_path, "seed", {"a": {"name": "p1"}, "c": {"name": "p2"}})
     ov = _profile_dir(tmp_path, "ov", {"b": {"name": "p1", "deleted": True}})
-    monkeypatch.setenv("IAGENT_TEST_EXPORT_OVERLAYS", str(ov))
-    row = {**_src("fin-cdrl", seed, ov), "overlay_env": "IAGENT_TEST_EXPORT_OVERLAYS"}
-    profiles, notes = vp.known_export_profiles([row])
+    monkeypatch.setenv(_TEST_OVERLAY_ENV, os.pathsep.join([str(ov), str(ov)]))
+    profiles, notes = vp.known_export_profiles([_src("fin-cdrl", seed)])
     assert profiles == {"p2": "fin-cdrl"}, (profiles, notes)
 
 
@@ -284,11 +326,13 @@ def test_4_baseline_passes(pol, monkeypatch):
     assert vp.validate(pol, pol) == []
 
 
-def test_4_an_unknown_can_export_name_is_refused(pol, monkeypatch):
+def test_4_an_unknown_can_export_name_is_not_a_validate_error(pol, monkeypatch):
+    """Ruled 2026-11-11 (Job 26): a row naming a profile this image does not know is not the seed
+    Job's error -- the Job cannot see a deployment's overlay profiles. The SYNC refuses that row
+    alone, with a report (tests/security/test_an_export_grant_names_a_known_profile_or_that_row_is_refused.py)."""
     _known(monkeypatch, {CDRL: "fin-cdrl"})
     _add(pol, "can_export:nosuch", _row())
-    errs = vp.validate(pol, pol)
-    assert any("can_export:nosuch" in e and "NOT a known export profile" in e for e in errs), errs
+    assert vp.validate(pol, pol) == []
 
 
 def test_4_a_known_cdrl_name_passes(pol, monkeypatch):
@@ -303,24 +347,7 @@ def test_4_a_known_review_export_name_passes(pol, monkeypatch):
     assert vp.validate(pol, pol) == []
 
 
-# -- 5. completeness -----------------------------------------------------------------------
-
-def _no_row(errs, name):
-    return [e for e in errs if f"profile {name!r} has no" in e and "NOBODY could export it" in e]
-
-
-def test_5_a_review_export_profile_with_no_row_is_refused(pol, monkeypatch):
-    _known(monkeypatch, {CDRL: "fin-cdrl", "ingest_review": "review-export"})
-    hit = _no_row(vp.validate(pol, pol), "ingest_review")
-    assert len(hit) == 1 and "review-export profile" in hit[0], hit
-    assert f"grant_to_groups: [{GROUP}]" in hit[0] and FIN_GROUP not in hit[0], hit
-
-
-def test_5_with_the_row_present_it_passes(pol, monkeypatch):
-    _known(monkeypatch, {CDRL: "fin-cdrl", "ingest_review": "review-export"})
-    _add(pol, "can_export:ingest_review", _row())
-    assert vp.validate(pol, pol) == []
-
+# -- 5. a profile with no grant is not an error ----------------------------------------------
 
 def _drop_row(pol, name):
     p = pol / "capability_grants.yaml"
@@ -329,69 +356,19 @@ def _drop_row(pol, name):
         p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 
-def test_5_a_cdrl_profile_with_no_row_is_refused_and_names_the_finance_group(pol, monkeypatch):
-    """Ruled 2026-10-29: completeness covers CDRL profiles too. The advice is the group the seed's
-    CDRL row grants (the program-finance persona's group), drawn from that ROW, never the
-    review-export rows' alert-processors (the rejected single default)."""
-    _known(monkeypatch, {CDRL: "fin-cdrl", "cdrl_b": "fin-cdrl"})
-    hit = _no_row(vp.validate(pol, pol), "cdrl_b")
-    assert len(hit) == 1 and "fin-cdrl profile" in hit[0], hit
-    assert f"grant_to_groups: [{FIN_GROUP}]" in hit[0] and GROUP not in hit[0], hit
+@pytest.mark.parametrize("name, kind", [("ingest_review", "review-export"), ("cdrl_b", "fin-cdrl"),
+                                        ("other-answers", "answer-export")])
+def test_5_a_profile_with_no_row_is_not_an_error(pol, monkeypatch, name, kind):
+    """Ruled 2026-11-11: deny by default means absent from listings and refused at the route, never
+    an error. Each kind's known profile with no row validates clean."""
+    _known(monkeypatch, {CDRL: "fin-cdrl", name: kind})
+    assert vp.validate(pol, pol) == []
 
 
-def test_5_the_seed_cdrl_row_is_what_keeps_the_seed_green(pol, monkeypatch):
-    """CONTROL for the arm above on the real seed: delete the shipped row and the seed's own
-    profile is refused."""
+def test_5_dropping_the_seeds_own_row_is_not_an_error_either(pol, monkeypatch):
     _known(monkeypatch, {CDRL: "fin-cdrl"})
     _drop_row(pol, CDRL)
-    assert len(_no_row(vp.validate(pol, pol), CDRL)) == 1
-
-
-def _set_groups(pol, names, groups):
-    p = pol / "capability_grants.yaml"
-    data = yaml.safe_load(p.read_text(encoding="utf-8"))
-    for n in names:
-        data["capabilities"][f"can_export:{n}"]["grant_to_groups"] = list(groups)
-    p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-
-
-def test_5_the_advice_follows_the_rows_not_a_constant(pol, monkeypatch):
-    """Standing rule (2026-10-30): no grantee is held in code. Re-grant every seed review-export
-    row to another real group and the refusal's advice for a new review profile moves with them."""
-    seed = [n for n, k in _seed_review().items() if k == "review-export"]
-    assert seed, "no review-export profile in the seed"
-    _set_groups(pol, seed, ["portfolio-leads"])
-    _known(monkeypatch, {CDRL: "fin-cdrl", "ingest_review": "review-export"})
-    hit = _no_row(vp.validate(pol, pol), "ingest_review")
-    assert len(hit) == 1 and "grant_to_groups: [portfolio-leads]" in hit[0], hit
-    assert GROUP not in hit[0], hit
-
-
-def test_5_a_lone_kind_profile_with_no_row_is_refused_and_names_no_group(pol, monkeypatch):
-    """Ruled 2026-10-30: answer-export profiles need a row. With no other answer-export row to
-    follow, the refusal invents no group -- neither another kind's group nor a ruled one held in
-    code; the ruled grantee arrives as the first ROW."""
-    _known(monkeypatch, {CDRL: "fin-cdrl", "plan-answers": "answer-export"})
-    _drop_row(pol, "plan-answers")
-    hit = _no_row(vp.validate(pol, pol), "plan-answers")
-    assert len(hit) == 1 and "answer-export profile" in hit[0], hit
-    assert "no other answer-export profile has a row" in hit[0] and "grant_to_groups" not in hit[0], hit
-    assert GROUP not in hit[0] and FIN_GROUP not in hit[0] and "portfolio-leads" not in hit[0], hit
-
-
-def test_5_the_ruled_plan_answers_row_is_what_the_next_answer_profile_is_told(pol, monkeypatch):
-    """Ruled 2026-10-29/30: `can_export:plan-answers` -> [portfolio-leads] is a ROW (it ships with
-    whichever of #148 and #151 merges second). Once it is there, another answer-export profile with
-    no row is pointed at portfolio-leads -- by the row, not by code."""
-    _known(monkeypatch, {CDRL: "fin-cdrl", "plan-answers": "answer-export",
-                         "other-answers": "answer-export"})
-    _drop_row(pol, "plan-answers")
-    _add(pol, "can_export:plan-answers", _row(group=("portfolio-leads",)))
-    errs = vp.validate(pol, pol)
-    assert _no_row(errs, "plan-answers") == [], errs
-    hit = _no_row(errs, "other-answers")
-    assert len(hit) == 1 and "grant_to_groups: [portfolio-leads]" in hit[0], hit
-    assert GROUP not in hit[0] and FIN_GROUP not in hit[0], hit
+    assert vp.validate(pol, pol) == []
 
 
 def test_5_no_grantee_is_held_in_code():
@@ -480,7 +457,7 @@ def test_6_validate_turns_a_refusal_into_one_error_not_a_misspelt_key_per_row(po
         {}, ["REFUSED: fin-cdrl: ExportProfileError: a.yaml has no name"]))
     errs = vp.validate(pol, pol)
     assert [e for e in errs if e.startswith("export profiles: REFUSED: fin-cdrl:")], errs
-    assert not [e for e in errs if "NOT a known export profile" in e], errs
+    assert len(errs) == 1, errs
 
 
 # -- 7. grantees ---------------------------------------------------------------------------

@@ -1,0 +1,13 @@
+# SAMPLE -- a generic part list: one column, one row per part, whatever notice it came from.
+# Shows the server vocabulary (grain, version, dedupe) on the review-export loader's overlay; names
+# no domain and no kind (no `accepts`: it takes every kind that carries parts).
+column_map_version: 1
+name: part-list
+label: "Part list, one row per part"
+format: csv
+grain: per_part
+version: 1
+dedupe: ["Part"]
+columns:
+  - output: "Part"
+    source: {field: mpn}

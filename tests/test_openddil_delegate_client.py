@@ -42,6 +42,7 @@ Run: uv run --frozen python -m pytest tests/test_openddil_delegate_client.py -v
 """
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import shutil
@@ -106,14 +107,34 @@ def _configmap_clients(rendered: str) -> dict[str, dict]:
 
 
 def _reconcile_script(rendered: str) -> str:
-    """Return the realm-reconcile Job's shell script (the container's args string)."""
-    docs = yaml.safe_load_all(rendered)
+    """Return the realm-reconcile shell script: the `reconcile.sh` file of its ConfigMap (no longer the
+    container args). A render of the BASE SHA predates the move, so it falls back to the Job's args."""
+    docs = [d for d in yaml.safe_load_all(rendered) if d]
     for doc in docs:
-        if doc and doc.get("kind") == "Job" and doc["metadata"]["name"].endswith("-realm-reconcile"):
-            args = doc["spec"]["template"]["spec"]["containers"][0]["args"]
-            assert len(args) == 1
+        if doc.get("kind") == "ConfigMap" and doc["metadata"]["name"].endswith("-realm-reconcile-script"):
+            return doc["data"]["reconcile.sh"]
+    for doc in docs:
+        if doc.get("kind") == "Job" and doc["metadata"]["name"].endswith("-realm-reconcile"):
+            args = doc["spec"]["template"]["spec"]["containers"][0].get("args")
+            assert args and len(args) == 1, "neither a script ConfigMap nor the old single-argument form"
             return args[0]
-    raise AssertionError("realm-reconcile Job not found in render")
+    raise AssertionError("realm-reconcile script not found in render")
+
+
+def _effective_script(rendered: str) -> str:
+    """The script as it ran before the move: each `-d @"$BODIES/svc-<id>.json"` replaced by that body,
+    inline, from the bodies Secret. Used where a test pins a client's create branch to the base sha."""
+    script = _reconcile_script(rendered)
+    for doc in yaml.safe_load_all(rendered):
+        if doc and doc.get("kind") == "Secret" and doc["metadata"]["name"].endswith("-realm-reconcile-bodies"):
+            for key, body in doc["stringData"].items():
+                if key.startswith("svc-"):
+                    token = f'-d @"$BODIES/{key}"'
+                    assert token in script, f"{key} is in the bodies Secret but the script never sends it"
+                    # the script's own block scalar lost its 14-space template indent; a Secret value keeps it
+                    body = "\n".join(ln[14:] if ln.startswith(" " * 14) else ln for ln in body.split("\n"))
+                    script = script.replace(token, f"-d '{body}'")
+    return script
 
 
 _SEGMENT_SPLIT = re.compile(
@@ -186,6 +207,33 @@ def _sandbox_claim() -> str:
     species, so the ONLY intended difference in a pre-existing client is that claim name."""
     values = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
     return values["keycloak"]["authzClaim"]
+
+
+def _bff_audience() -> str:
+    values = yaml.safe_load((_REPO / _CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
+    return values["cortexBff"]["auth"]["realmAudience"]
+
+
+def _without_bff_audience_mapper(client: dict, cid: str) -> dict:
+    """0.4.85 adds ONE mapper to every service client on purpose (the BFF accepts only tokens naming
+    its audience). Assert it is exactly that mapper, then drop it, so the rest is compared unchanged."""
+    mappers = client.get("protocolMappers", [])
+    added = [m for m in mappers if m.get("name") == "audience-bff"]
+    assert len(added) == 1, f"{cid}: expected one audience-bff mapper, got {len(added)}"
+    assert added[0]["protocolMapper"] == "oidc-audience-mapper", cid
+    assert added[0]["config"]["included.custom.audience"] == _bff_audience(), cid
+    assert added[0]["config"]["access.token.claim"] == "true", cid
+    return {**client, "protocolMappers": [m for m in mappers if m.get("name") != "audience-bff"]}
+
+
+_BFF_AUDIENCE_CREATE = re.compile(r',\{\s*"name": "audience-bff",.*?"id\.token\.claim": "false"\s*\}\s*\}', re.S)
+_BFF_AUDIENCE_REGION = re.compile(r"[ \t]*# ── begin BFF audience (repair|readback).*?# ── end BFF audience \1\n?", re.S)
+
+
+def _cut_bff_audience(seg: str) -> str:
+    """The reconcile side of the same addition: the mapper in a client's create payload, and the
+    marked repair and readback regions."""
+    return _BFF_AUDIENCE_REGION.sub("", _BFF_AUDIENCE_CREATE.sub("", seg))
 
 
 def _pre_existing_client_ids() -> list[str]:
@@ -315,7 +363,7 @@ def test_preexisting_clients_import_unchanged(sandbox_render, base_sha_render):
     claim = _sandbox_claim()
     for cid in _pre_existing_client_ids():
         expected = json.loads(json.dumps(old[cid]).replace('"claim.name": "email"', f'"claim.name": "{claim}"'))
-        assert new[cid] == expected, f"{cid}'s rendered import object changed"
+        assert _without_bff_audience_mapper(new[cid], cid) == expected, f"{cid}'s rendered import object changed"
 
 
 def _cut_present_mapper_branch(seg: str) -> str:
@@ -336,19 +384,20 @@ def test_preexisting_clients_reconcile_segments_unchanged(sandbox_render, base_s
     a one-newline difference from WHERE a segment sits, not from what it renders. Comparing the
     content with trailing newlines stripped keeps the assertion about the client's OWN
     templated text rather than its neighbour's position."""
-    old_segs = _client_segments(_reconcile_script(base_sha_render))
-    new_segs = _client_segments(_reconcile_script(sandbox_render))
+    old_segs = _client_segments(_effective_script(base_sha_render))
+    new_segs = _client_segments(_effective_script(sandbox_render))
     for cid in _pre_existing_client_ids():
         claim = _sandbox_claim()
         old = [s.rstrip("\n").replace('"claim.name": "email"', f'"claim.name": "{claim}"') for s in old_segs[cid]]
-        new = [s.rstrip("\n") for s in new_segs[cid]]
+        new = [_cut_bff_audience(s).rstrip("\n") for s in new_segs[cid]]
         # 0.4.38 rewrote ONE region on purpose: the present-branch for an existing authz-id-svc
         # mapper (a chart-owned stale mapper is now migrated in place; tests/test_oidc_broker_chart.py
         # runs it). Cut that region from both sides; everything else, create branch and delegate
         # tail included, must still be byte-identical to the base sha.
         old = [_cut_present_mapper_branch(s) for s in old]
         new = [_cut_present_mapper_branch(s) for s in new]
-        assert old == new, f"{cid}'s reconcile script segments changed"
+        assert old == new, f"{cid}'s reconcile script segments changed:\n" + "\n".join(
+            ln for o, n in zip(old, new) for ln in difflib.unified_diff(o.splitlines(), n.splitlines(), lineterm="", n=0))
 
 
 def test_sandbox_extraserviceclients_appends_base_clients(sandbox_render):

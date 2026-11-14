@@ -64,9 +64,11 @@ from iagent_mesh import MeasureSeries, MeasureSeriesReference
 from iagent_mesh.declarations import DeclarationError, compose_rows
 
 try:  # flat in the image (/app), packaged in the repo -- see `measures.py`
+    import dataset_contracts as _contracts
     import measures as _measures
     from entities import periods_in
 except ImportError:
+    from agent_fleet.finance_agent import dataset_contracts as _contracts
     from agent_fleet.finance_agent import measures as _measures
     from agent_fleet.finance_agent.entities import periods_in
 
@@ -244,6 +246,7 @@ class MeasureVerbRow:
     status_column: str = ""               # "" = the row marks no status period
     per_period: dict[str, str] = field(default_factory=dict)    # keyword -> column, summed per period
     per_program: dict[str, str] = field(default_factory=dict)   # keyword -> column, one value per program
+    contract: Any = None                  # a dataset row's `dataset_contracts.DatasetContract`
     menu: Optional[dict[str, Any]] = None     # the `menu:` block, checked; None when undeclared
     # Where a state row reads under `FIN_DATASET_URN`; `source_reason`/`ratified_by` only for seed.
     source: str = SOURCE_ASSET
@@ -304,9 +307,9 @@ def _check_dataset(inputs: dict) -> dict:
     ds = inputs["dataset"]
     if not isinstance(ds, dict):
         raise ValueError("inputs.dataset must be a mapping")
-    unknown = sorted(set(ds) - {"urn", "banner", "levels", "value", "per_path"})
+    unknown = sorted(set(ds) - {"urn", "banner", "contract", "levels", "value", "per_path"})
     if unknown:
-        raise ValueError(f"inputs.dataset carries {unknown}; it holds urn, banner, levels, value and per_path only")
+        raise ValueError(f"inputs.dataset carries {unknown}; it holds urn, banner, contract, levels, value and per_path only")
     urn, banner = _check_urn_banner(ds)
     levels = ds.get("levels")
     if (not isinstance(levels, list) or len(levels) < 2
@@ -343,8 +346,8 @@ def _check_dataset(inputs: dict) -> dict:
     except ArithmeticError:  # InvalidOperation is one
         raise ValueError(
             f"inputs.other_threshold {raw_t!r} must be a Decimal string with 0 <= t < 1") from None
-    return {"urn": urn, "banner": banner, "levels": tuple(levels), "value_columns": columns,
-            "value_op": op, "per_path": per_path, "other_threshold": threshold}
+    return {"urn": urn, "banner": banner, "contract": ds["contract"], "levels": tuple(levels),
+            "value_columns": columns, "value_op": op, "per_path": per_path, "other_threshold": threshold}
 
 
 def _source(raw: dict) -> tuple[str, str, str]:
@@ -373,6 +376,11 @@ def _check_urn_banner(ds: dict) -> tuple[str, str]:
     if not isinstance(banner, str) or not banner.strip():
         raise ValueError(
             "inputs.dataset.banner is required: it is what stops a synthetic asset reading as real")
+    contract = ds.get("contract")
+    if not isinstance(contract, str) or not contract.strip():
+        raise ValueError(
+            "inputs.dataset.contract is required: it names the dataset contract the asset is read "
+            "under (contracts/<id>.yaml), which declares its columns, types, key and dependencies")
     return urn, banner.strip()
 
 
@@ -389,11 +397,12 @@ def _check_dataset_series(inputs: dict) -> dict:
     ds = inputs["dataset"]
     if not isinstance(ds, dict):
         raise ValueError("inputs.dataset must be a mapping")
-    unknown = sorted(set(ds) - {"urn", "banner", "scope", "period", "status", "per_period", "per_program"})
+    unknown = sorted(set(ds) - {"urn", "banner", "contract", "scope", "period", "status",
+                                "per_period", "per_program"})
     if unknown:
         raise ValueError(
-            f"inputs.dataset carries {unknown}; a series row's dataset holds urn, banner, scope, "
-            f"period, status, per_period and per_program only")
+            f"inputs.dataset carries {unknown}; a series row's dataset holds urn, banner, contract, "
+            f"scope, period, status, per_period and per_program only")
     urn, banner = _check_urn_banner(ds)
     roles: dict[str, str] = {}
     for key in ("scope", "period", "status"):
@@ -425,9 +434,43 @@ def _check_dataset_series(inputs: dict) -> dict:
     twice = sorted({c for c in named if named.count(c) > 1})
     if twice:
         raise ValueError(f"column(s) {twice} are named twice; a column is read in one role")
-    return {"urn": urn, "banner": banner, "scope_column": roles["scope"],
+    return {"urn": urn, "banner": banner, "contract": ds["contract"], "scope_column": roles["scope"],
             "period_column": roles["period"], "status_column": roles.get("status", ""),
             "per_period": maps["per_period"], "per_program": maps["per_program"]}
+
+
+def _join_contract(ds: dict, series_kind: bool) -> Any:
+    """The contract a dataset row names, loaded, with the row's columns held to it. ValueError.
+
+    Every column the row reads is a contract column: a level, scope, period or status column a
+    string one, a value column a numeric one. The column a read filters on is the contract's scope,
+    and a series row's `per_program` and `status` columns are declared determined by it, so the
+    read's dependency check is what leaves each one value across the program's rows."""
+    contract = _contracts.load_contract(ds["contract"])
+    if series_kind:
+        once = [*ds["per_program"].values(), *([ds["status_column"]] if ds["status_column"] else [])]
+        scope = ds["scope_column"]
+        strings = [scope, ds["period_column"], *([ds["status_column"]] if ds["status_column"] else [])]
+        numbers = [*ds["per_period"].values(), *ds["per_program"].values()]
+    else:
+        once, scope = [], ds["levels"][0]
+        strings, numbers = list(ds["levels"]), list(ds["value_columns"])
+    cid = contract.contract_id
+    undeclared = sorted(c for c in (*strings, *numbers) if c not in contract.types)
+    if undeclared:
+        raise ValueError(f"inputs.dataset names {undeclared}, which contract {cid!r} does not declare")
+    wrong = sorted({*(c for c in strings if contract.types[c] != "string"),
+                    *(c for c in numbers if contract.types[c] == "string")})
+    if wrong:
+        raise ValueError(f"inputs.dataset reads {wrong} in a role contract {cid!r} types otherwise: a "
+                         f"level, scope, period or status column is a string, a value column a number")
+    if scope != contract.scope:
+        raise ValueError(f"the row filters on {scope!r}; contract {cid!r} scopes a read by {contract.scope!r}")
+    loose = sorted(c for c in once if scope not in contract.determined_by(c))
+    if loose:
+        raise ValueError(f"inputs.dataset reads {loose} once per {scope}; contract {cid!r} declares no "
+                         f"dependency of them on {scope!r}, so nothing holds them to one value")
+    return contract
 
 
 def _check_series(rnd: dict, *, single: bool) -> tuple[tuple[dict[str, Any], ...], Optional[dict[str, Any]]]:
@@ -544,6 +587,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
     dataset: dict = {}
     if kind == KIND_DATASET:
         dataset = _check_dataset_series(inputs) if series_kind else _check_dataset(inputs)
+        dataset["contract"] = _join_contract(dataset, series_kind)
         state: dict = {}
     else:
         state = dict(inputs["state"])
@@ -678,7 +722,7 @@ def _build(raw: dict, builtins: tuple[Iterable[str], Iterable[str]]) -> MeasureV
         other_threshold=dataset.get("other_threshold"),
         scope_column=dataset.get("scope_column", ""), period_column=dataset.get("period_column", ""),
         status_column=dataset.get("status_column", ""), per_period=dataset.get("per_period", {}),
-        per_program=dataset.get("per_program", {}),
+        per_program=dataset.get("per_program", {}), contract=dataset.get("contract"),
         menu=menu,
         source=source, source_reason=source_reason, ratified_by=ratified_by,
     )

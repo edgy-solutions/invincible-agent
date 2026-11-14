@@ -1,7 +1,9 @@
-"""contracts/ev_fixture.yaml says what the governed read refuses on; the reader still holds its own copy.
+"""contracts/ev_fixture.yaml says what the governed read refuses on; one reader still holds its own copy.
 
-Until `asset_inputs` reads the contract instead of its constants, there are two homes for one
-claim, and the contract is the one that goes on passing after the reader changes. So every fact
+A dataset measure row's read loads the contract and enforces it (`dataset_contracts`, ruled
+2026-11-10). The `FIN_DATASET_URN` read (`state_from_rows`) still holds its constants, so until it
+reads the contract too there are two homes for one claim, and the contract is the one that goes on
+passing after the reader changes. So every fact
 the contract states about the reader is read FROM the reader here: its column sets, the rule ids
 it raises (found by the form `ContractViolation("<id>"` in its source, so a new refusal site is a
 red until the contract names it), its period vocabulary and its row cap.
@@ -21,7 +23,6 @@ from agent_fleet.finance_agent import asset_inputs, entities
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / "contracts" / "ev_fixture.yaml"
 DATASET_OVERLAYS = ROOT / "policy" / "overlays" / "sample" / "measure_verbs"
-SERIES_FIXTURES = ROOT / "tests" / "finance" / "fixtures" / "measure_verbs"
 SANDBOX_VALUES = ROOT / "helm" / "invincible-agent" / "values-sandbox.yaml"
 LIVE_CASE = ROOT / "tests" / "sandbox_e2e" / "variance_set_live.yaml"
 RAISED = re.compile(r"""ContractViolation\(\s*["']([a-z_]+)["']""")
@@ -74,12 +75,13 @@ def test_every_name_the_contract_uses_is_a_declared_column(contract):
     named = {*contract["grain"], contract["scope"], contract["period"]["column"], contract["status_period"]}
     for col in cols.values():
         named |= set(col.get("constant_within", ())) | set(col.get("additive_over", ()))
+    for dep in contract["dependencies"]:
+        named |= {dep["by"], *dep["determines"]}
     assert named <= set(cols), sorted(named - set(cols))
 
 
 def test_the_dataset_overlays_name_this_contracts_urn_and_banner(contract):
-    # the series rows are test fixtures until the dag-tools 0.12.0 pin, and are held here all the same
-    files = [*sorted(DATASET_OVERLAYS.rglob("*.yaml")), *sorted(SERIES_FIXTURES.glob("*.yaml"))]
+    files = sorted(DATASET_OVERLAYS.rglob("*.yaml"))
     rows = [yaml.safe_load(p.read_text(encoding="utf-8")) for p in files]
     datasets = [r["inputs"]["dataset"] for r in rows if isinstance(r, dict) and "dataset" in r.get("inputs", {})]
     assert datasets, "positive control: some sample row reads a dataset"

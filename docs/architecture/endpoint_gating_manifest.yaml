@@ -1858,14 +1858,16 @@ services:
       - method: GET
         path: /ingest/export/profiles
         identity: keycloak-jwt
-        gate: "get_current_user only; lists the valid policy/exports profiles (name, format, granularity, label)"
+        gate: "get_current_user; lists only the valid profiles the caller holds can_invoke(can_export:<profile>) for (human_tasks.can_invoke_or_unavailable per profile; Topaz down is 503; a service caller sees none)"
         exposes: ui-state
         consumers: [cortex-ui export picker]
         class: releasable_by_design
         justification: >-
-          A profile's name, format, granularity and label are policy configuration, not notice
-          content; the same shape as the finance CDRL profile listing. Nothing per-document is
-          read, so authentication is the whole gate.
+          A profile's name, format, grain, version, accepts and dedupe are policy configuration,
+          not notice content, so the listing is releasable by design; it is nonetheless narrowed
+          to the profiles the caller may use (the can_export rail, the same rows that gate the
+          export routes), so the picker never offers a profile the route would refuse. Nothing
+          per-document is read.
       - method: GET
         path: /review-shapes
         identity: keycloak-jwt
@@ -1890,6 +1892,20 @@ services:
           capability (policy/capability_grants.yaml, the alert-processors group), not to the
           dropper rule. Loud, not partial: a notice that cannot be exported refuses the whole
           export.
+      - method: POST
+        path: /ingest/export/notices
+        identity: keycloak-jwt
+        gate: "get_current_user + can_invoke(ingest:exportBatch) (403 not_entitled_to_export_batch) AND can_invoke(can_export:<profile>) (403 not_entitled_to_export), both via human_tasks.can_invoke_or_unavailable (Topaz down is 503); every notice is pre-flighted against the caller's entitlement-cell domains, the profile's accepts, promotion and corrections BEFORE any file is built; the actor recorded is the authenticated principal (a body-supplied actor is 422)"
+        exposes: gated-content
+        consumers: [cortex-ui export by notice ids]
+        class: gated
+        justification: >-
+          The named notices rendered through one profile, up to 500. It reads other people's
+          notices, so it is held to the batch capability AND the profile's can_export row, and
+          each notice must sit in a domain the caller's cells name (a notice outside them is
+          reported as not_available, the same word as a missing one). Loud, not partial: if any
+          notice is unexportable the answer lists them with reasons and builds no file. One
+          audit record per export: actor, notice ids, profile id and version used, destination.
       - method: GET
         path: /ingest/{ingest_id}/export
         identity: keycloak-jwt

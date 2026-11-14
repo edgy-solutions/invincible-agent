@@ -34,57 +34,40 @@ reconciler that silently half-applies is how the original hand-seeded state got 
 MINTS NOTHING NEW: the secrets come from values (the same keys secrets.yaml reads), so this job
 cannot invent a credential that is not already declared in the chart.
 */}}
-apiVersion: batch/v1
-kind: Job
+
+{{- /*
+SHIPPING: the script is a ConfigMap file mounted at /scripts, NOT a `sh -c` argument. Linux caps one
+argument at 131072 bytes (MAX_ARG_STRLEN); the script outgrew it (0.4.85: 153266 bytes, the pod died
+`exec /bin/sh: argument list too long`). Every credential-bearing request body is a file in the
+{{ .Release.Name }}-realm-reconcile-bodies Secret, mounted at /run/realm-reconcile and sent with
+`curl -d @file`; the chart rule stands: no credential in a ConfigMap or a literal env value.
+The Job below therefore has no `args` (tests/test_chart_no_oversized_argument.py records it).
+
+HOOK PHASE (see invincible-agent.realmReconcileHookPhase). FRESH INSTALL: Keycloak is created by this
+release, so the reconcile runs post-install, after Keycloak, as it always has. UPGRADE: it runs
+pre-upgrade, BEFORE any workload changes, against the running Keycloak (the script waits on
+.well-known). If it fails the roll stops before anything changes, so a new workload that requires a
+claim (the BFF's `aud`) never goes live ahead of the mapper that mints it. EDGE CASE: an upgrade that
+turns keycloak.enabled on for the first time has no Keycloak pre-upgrade, so the wait loop holds
+until the hook times out; the bypass is keycloak.reconcileClients.skip for that one roll.
+The ConfigMap and Secret are hook objects too (weight 1, below the Job's 2): pre-upgrade the release's
+own non-hook objects, including -secrets, are still the OLD ones, so the Job depends on nothing
+release-managed.
+*/}}
+apiVersion: v1
+kind: ConfigMap
 metadata:
-  name: {{ .Release.Name }}-realm-reconcile
+  name: {{ .Release.Name }}-realm-reconcile-script
   labels:
     {{- include "invincible-agent.labels" . | nindent 4 }}
   annotations:
-    "helm.sh/hook": post-install,post-upgrade
-    # After keycloak is up (restate-init is weight 0); before the syncs that assume identities.
-    "helm.sh/hook-weight": "2"
+    "helm.sh/hook": {{ include "invincible-agent.realmReconcileHookPhase" . }}
+    "helm.sh/hook-weight": "1"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
-spec:
-  backoffLimit: 3
-  template:
-    metadata:
-      labels:
-        {{- include "invincible-agent.selectorLabels" (dict "component" "realm-reconcile" "root" .) | nindent 8 }}
-    spec:
-      restartPolicy: Never
-      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
-      containers:
-        - name: realm-reconcile
-          image: {{ include "invincible-agent.image" (dict "name" "curl" "registry" .Values.utilImages.curl.registry "repository" .Values.utilImages.curl.repository "tag" .Values.utilImages.curl.tag "root" .) }}
-          env:
-            - name: KC_BASE
-              value: "http://{{ .Release.Name }}-keycloak{{ include "invincible-agent.svcDomain" . }}:8080"
-            - name: KC_REALM
-              value: {{ .Values.keycloak.realm | quote }}
-            - name: KC_ADMIN
-              value: {{ .Values.keycloak.auth.adminUser | quote }}
-            - name: KC_ADMIN_PASSWORD
-              value: {{ .Values.keycloak.auth.adminPassword | quote }}
-            {{- /* Broker client secrets: ONLY via secretKeyRef, never a value or a ConfigMap. */}}
-            {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}
-            {{- if include "invincible-agent.brokerActive" $b }}
-            - name: BROKER_{{ $bn | upper }}_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  {{- if $b.existingSecret }}
-                  name: {{ $b.existingSecret | quote }}
-                  key: {{ $b.secretKey | default "client-secret" | quote }}
-                  {{- else }}
-                  name: {{ $.Release.Name }}-secrets
-                  key: {{ printf "broker-%s-client-secret" $bn | quote }}
-                  {{- end }}
-            {{- end }}
-            {{- end }}
-          command: ["sh", "-c"]
-          args:
-            - |
+data:
+  reconcile.sh: |
               set -eu
+              BODIES="${RECONCILE_BODIES_DIR:-/run/realm-reconcile}"
               echo "== keycloak realm reconcile =="
 
               {{- if .Values.keycloak.reconcileClients.skip }}
@@ -156,6 +139,7 @@ spec:
               {{- include "invincible-agent.validatePublicClients" $ }}
               {{- include "invincible-agent.validateRetiredUsers" $ }}
               {{- $allServiceClients := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
+              {{- $bffAud := ((.Values.cortexBff.auth | default dict).realmAudience | default "") }}
               {{- range $c := $allServiceClients }}
               {{- $kind := $c.kind | default "service" }}
               {{- $secret := "" }}
@@ -173,43 +157,13 @@ spec:
 
               if [ -z "$UUID" ]; then
                 echo "   absent -> creating"
+                {{- if $c.secretRef }}
                 curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
-                  "$API/clients" -d '{
-                    "clientId": {{ $c.clientId | quote }},
-                    "enabled": true,
-                    "publicClient": false,
-                    "serviceAccountsEnabled": true,
-                    "standardFlowEnabled": false,
-                    "directAccessGrantsEnabled": false,
-                    {{- if $c.secretRef }}
-                    "secret": {{ $secret | quote }},
-                    {{- end }}
-                    "protocolMappers": [{
-                      "name": "authz-id-svc",
-                      "protocol": "openid-connect",
-                      "protocolMapper": "oidc-hardcoded-claim-mapper",
-                      "config": {
-                        "claim.name": {{ $claim | quote }},
-                        "claim.value": {{ $c.authzId | quote }},
-                        "jsonType.label": "String",
-                        "access.token.claim": "true",
-                        "id.token.claim": "true",
-                        "userinfo.token.claim": "true"
-                      }
-                    }{{ if eq $kind "delegate" }},{
-                      "name": "initiator-kind-svc",
-                      "protocol": "openid-connect",
-                      "protocolMapper": "oidc-hardcoded-claim-mapper",
-                      "config": {
-                        "claim.name": "initiator_kind",
-                        "claim.value": "delegate",
-                        "jsonType.label": "String",
-                        "access.token.claim": "true",
-                        "id.token.claim": "true",
-                        "userinfo.token.claim": "true"
-                      }
-                    }{{ end }}]
-                  }'
+                  "$API/clients" -d @"$BODIES/svc-{{ $c.clientId }}.json"
+                {{- else }}
+                curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                  "$API/clients" -d '{{ include "invincible-agent.realmReconcileSvcBody" (dict "c" $c "root" $ "claim" $claim "bffAud" $bffAud) }}'
+                {{- end }}
                 echo "   created"
               else
                 # Present. Repair a MISSING mapper — the exact defect found in sandbox, where a
@@ -289,6 +243,26 @@ spec:
                   echo "   present, initiator_kind mapper ok"
                 fi
                 {{- end }}
+                {{- if $bffAud }}
+                # ── begin BFF audience repair. Keyed on what a mapper EMITS, never its name, and an
+                # existing mapper is never rewritten.
+                if [ "$(curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" | grep -cF '"included.custom.audience":"{{ $bffAud }}"' || true)" = "0" ]; then
+                  echo "   audience-bff mapper absent -> adding"
+                  curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                    "$API/clients/$UUID/protocol-mappers/models" -d '{
+                      "name": "audience-bff",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-audience-mapper",
+                      "config": {
+                        "included.custom.audience": {{ $bffAud | quote }},
+                        "access.token.claim": "true",
+                        "id.token.claim": "false"
+                      }
+                    }' \
+                    || { echo "   FAIL $CID: could not add audience-bff mapper"; rc=1; }
+                fi
+                # ── end BFF audience repair
+                {{- end }}
               fi
               {{- end }}
 
@@ -305,7 +279,7 @@ spec:
               else
                 echo "   absent -> creating (demo password = username, non-temporary)"
                 curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" "$API/users" \
-                  -d {{ dict "username" $u.username "email" $u.email "emailVerified" true "enabled" true "credentials" (list (dict "type" "password" "value" $u.username "temporary" false)) | toJson | squote }} \
+                  -d @"$BODIES/user-{{ $u.username }}.json" \
                   || { echo "   FAIL: could not create $HU"; rc=1; }
                 echo "   created"
               fi
@@ -442,6 +416,30 @@ spec:
               fi
               {{- end }}
               # ── end cortex-ui redirect set
+              {{- if $bffAud }}
+              echo "-- cortex-ui audience mapper"
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              if [ -z "$CUI" ]; then
+                echo "   FAIL cortex-ui: client absent, audience-bff not repaired"; rc=1
+              elif [ "$(curl -sf -H "$AUTH" "$API/clients/$CUI/protocol-mappers/models" | grep -cF '"included.custom.audience":"{{ $bffAud }}"' || true)" = "0" ]; then
+                echo "   audience-bff mapper absent -> adding"
+                curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                  "$API/clients/$CUI/protocol-mappers/models" -d '{
+                      "name": "audience-bff",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-audience-mapper",
+                      "config": {
+                        "included.custom.audience": {{ $bffAud | quote }},
+                        "access.token.claim": "true",
+                        "id.token.claim": "false"
+                      }
+                    }' \
+                  || { echo "   FAIL cortex-ui: could not add audience-bff mapper"; rc=1; }
+              else
+                echo "   present"
+              fi
+              {{- end }}
               {{- range $pc := (.Values.keycloak.publicClients | default list) }}
               PCID={{ $pc.clientId | quote }}
               echo "-- public client $PCID"
@@ -768,6 +766,22 @@ spec:
               fi
               {{- end }}
               # ── end cortex-ui redirect readback
+              {{- if $bffAud }}
+              # One config object per line, so the audience and its access-token flag are judged on the
+              # SAME mapper in any key order.
+              CUI=$(curl -sf -H "$AUTH" "$API/clients?clientId=cortex-ui" \
+                    | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+              CUAUD=""
+              if [ -n "$CUI" ]; then
+                CUAUD=$(curl -sf -H "$AUTH" "$API/clients/$CUI/protocol-mappers/models" | grep -o '"config":{[^}]*}' \
+                        | grep -F '"included.custom.audience":"{{ $bffAud }}"' || true)
+              fi
+              if printf '%s' "$CUAUD" | grep -qF '"access.token.claim":"true"'; then
+                echo "   ok   cortex-ui aud {{ $bffAud }}"
+              else
+                echo "   FAIL cortex-ui: no mapper puts {{ $bffAud }} in the access token's aud (the BFF would refuse every login)"; rc=1
+              fi
+              {{- end }}
               {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}
               {{- if include "invincible-agent.brokerActive" $b }}
               {{- $alias := $b.alias | default $bn }}
@@ -843,6 +857,20 @@ spec:
               else
                 echo "   ok   $CID -> {{ $c.authzId }}"
               fi
+              {{- if $bffAud }}
+              # ── begin BFF audience readback
+              SVAUD=""
+              if [ -n "$UUID" ]; then
+                SVAUD=$(curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" | grep -o '"config":{[^}]*}' \
+                        | grep -F '"included.custom.audience":"{{ $bffAud }}"' || true)
+              fi
+              if printf '%s' "$SVAUD" | grep -qF '"access.token.claim":"true"'; then
+                echo "   ok   $CID aud {{ $bffAud }}"
+              else
+                echo "   FAIL $CID: no mapper puts {{ $bffAud }} in the access token's aud (the BFF would refuse it)"; rc=1
+              fi
+              # ── end BFF audience readback
+              {{- end }}
               {{- end }}
               {{- range $pc := (.Values.keycloak.publicClients | default list) }}
               PCID={{ $pc.clientId | quote }}
@@ -883,4 +911,99 @@ spec:
 
               [ "$rc" = "0" ] || { echo "READBACK FAILED — identities are NOT as declared"; exit 4; }
               echo "== realm reconcile OK =="
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-realm-reconcile-bodies
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": {{ include "invincible-agent.realmReconcileHookPhase" . }}
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+type: Opaque
+stringData:
+  {{- /* Every credential-bearing request body, as the file the script sends. Same logic as the inline
+  bodies it replaced. A broker's upstream secret lives HERE (not in -secrets): pre-upgrade -secrets is
+  still the old object and would lack a newly added key. */}}
+  {{- $claim := .Values.keycloak.authzClaim | default "email" }}
+  {{- $bffAud := ((.Values.cortexBff.auth | default dict).realmAudience | default "") }}
+  {{- range $c := concat .Values.keycloak.serviceClients (.Values.keycloak.extraServiceClients | default list) }}
+  {{- if $c.secretRef }}
+  {{ printf "svc-%s.json" $c.clientId }}: {{ include "invincible-agent.realmReconcileSvcBody" (dict "c" $c "root" $ "claim" $claim "bffAud" $bffAud) | quote }}
+  {{- end }}
+  {{- end }}
+  {{- range $u := .Values.keycloak.localHumanUsers }}
+  {{ printf "user-%s.json" $u.username }}: {{ dict "username" $u.username "email" $u.email "emailVerified" true "enabled" true "credentials" (list (dict "type" "password" "value" $u.username "temporary" false)) | toJson | quote }}
+  {{- end }}
+  {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}
+  {{- if and (include "invincible-agent.brokerActive" $b) (not $b.existingSecret) }}
+  {{ printf "broker-%s-client-secret" $bn }}: {{ $b.clientSecret | quote }}
+  {{- end }}
+  {{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-realm-reconcile
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": {{ include "invincible-agent.realmReconcileHookPhase" . }}
+    # After its ConfigMap and Secret (weight 1); on install also after keycloak (restate-init is weight 0).
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.selectorLabels" (dict "component" "realm-reconcile" "root" .) | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
+      containers:
+        - name: realm-reconcile
+          image: {{ include "invincible-agent.image" (dict "name" "curl" "registry" .Values.utilImages.curl.registry "repository" .Values.utilImages.curl.repository "tag" .Values.utilImages.curl.tag "root" .) }}
+          env:
+            - name: KC_BASE
+              value: "http://{{ .Release.Name }}-keycloak{{ include "invincible-agent.svcDomain" . }}:8080"
+            - name: KC_REALM
+              value: {{ .Values.keycloak.realm | quote }}
+            - name: KC_ADMIN
+              value: {{ .Values.keycloak.auth.adminUser | quote }}
+            - name: KC_ADMIN_PASSWORD
+              value: {{ .Values.keycloak.auth.adminPassword | quote }}
+            {{- /* Broker client secrets: ONLY via secretKeyRef, never a value or a ConfigMap. */}}
+            {{- range $bn, $b := (.Values.keycloak.brokers | default dict) }}
+            {{- if include "invincible-agent.brokerActive" $b }}
+            - name: BROKER_{{ $bn | upper }}_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- if $b.existingSecret }}
+                  name: {{ $b.existingSecret | quote }}
+                  key: {{ $b.secretKey | default "client-secret" | quote }}
+                  {{- else }}
+                  name: {{ $.Release.Name }}-realm-reconcile-bodies
+                  key: {{ printf "broker-%s-client-secret" $bn | quote }}
+                  {{- end }}
+            {{- end }}
+            {{- end }}
+          command: ["sh", "/scripts/reconcile.sh"]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: bodies
+              mountPath: /run/realm-reconcile
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: {{ .Release.Name }}-realm-reconcile-script
+            defaultMode: 0555
+        - name: bodies
+          secret:
+            secretName: {{ .Release.Name }}-realm-reconcile-bodies
+            defaultMode: 0400
 {{- end }}

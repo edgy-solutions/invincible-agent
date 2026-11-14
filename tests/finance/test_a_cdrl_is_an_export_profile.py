@@ -316,7 +316,7 @@ def _post(c, profile=PROFILE, user=ALICE):
 
 def test_7_profiles_are_header_keys_only(served):
     c, _, _ = served
-    r = c.get("/cdrl_profiles")
+    r = c.get("/cdrl_profiles", params={"user_email": ALICE})
     assert r.status_code == 200
     got = r.json()
     assert PROFILE in [x["name"] for x in got]

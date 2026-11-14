@@ -326,10 +326,13 @@ def _jwks(monkeypatch, key):
                         lambda tok: types.SimpleNamespace(key=pub))
     monkeypatch.setattr(auth, "_get_entitlement_cache", lambda: None)
     monkeypatch.setenv("DELEGATE_ON_BEHALF_OF", json.dumps({"svc:zz-delegate": ["zz@example.com"]}))
+    monkeypatch.setenv(auth.ACCEPTED_ISSUERS_ENV, "https://realm.test/realms/r")
+    monkeypatch.setenv(auth.ACCEPTED_AUDIENCES_ENV, "bff.test")
 
 
 def _bearer(key, authz_id):
     tok = jwt.encode({"exp": time.time() + 600, "iat": time.time(), "sub": "33333333-aaaa-bbbb-cccc-000000000009",
+                      "iss": "https://realm.test/realms/r", "aud": "bff.test",
                       "azp": "x", auth.USER_ENTITLEMENT_CLAIM: authz_id}, key, algorithm="RS256")
     return {"Authorization": f"Bearer {tok}"}
 

@@ -1816,7 +1816,7 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
     return baml_response.model_dump()
 
 @app.get("/health")
-def health() -> Dict[str, str]:
+def health() -> Dict[str, Any]:
     return {"status": "ok", "engine": "F", "telemetry_misses": emit_misses()}
 
 if __name__ == "__main__":

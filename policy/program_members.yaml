@@ -52,3 +52,114 @@ programs:
     grant_to:
       - alice@example.com
       - erin@example.com
+  NP-PLANT-DUPLICATE-WORK-PACKAGE-PERIOD:
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: a program planted in dag-tools' refusal assets (dag-tools 0.13.0,
+      mesh_demo_refusal). engine-fin answers only a program the caller can_view_program, so a
+      planted case is reached only through membership. Not a claim about any real program's
+      membership.
+    grant_to:
+      - alice@example.com
+  NP-PLANT-MISSING-COLUMN:
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: a program planted in dag-tools' refusal assets (dag-tools 0.13.0,
+      mesh_demo_refusal). engine-fin answers only a program the caller can_view_program, so a
+      planted case is reached only through membership. Not a claim about any real program's
+      membership.
+    grant_to:
+      - alice@example.com
+  NP-PLANT-NON-FINITE:
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: a program planted in dag-tools' refusal assets (dag-tools 0.13.0,
+      mesh_demo_refusal). engine-fin answers only a program the caller can_view_program, so a
+      planted case is reached only through membership. Not a claim about any real program's
+      membership.
+    grant_to:
+      - alice@example.com
+  NP-PLANT-NONE:
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: a program planted in dag-tools' refusal assets (dag-tools 0.13.0,
+      mesh_demo_refusal). engine-fin answers only a program the caller can_view_program, so a
+      planted case is reached only through membership. Not a claim about any real program's
+      membership. erin is a member here and holds no refusal-asset grant: the 403 control.
+    grant_to:
+      - alice@example.com
+      - erin@example.com
+  NP-PLANT-NULL-VALUE:
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: a program planted in dag-tools' refusal assets (dag-tools 0.13.0,
+      mesh_demo_refusal). engine-fin answers only a program the caller can_view_program, so a
+      planted case is reached only through membership. Not a claim about any real program's
+      membership.
+    grant_to:
+      - alice@example.com
+  NP-PLANT-PERIOD-OUTSIDE-CALENDAR:
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: a program planted in dag-tools' refusal assets (dag-tools 0.13.0,
+      mesh_demo_refusal). engine-fin answers only a program the caller can_view_program, so a
+      planted case is reached only through membership. Not a claim about any real program's
+      membership.
+    grant_to:
+      - alice@example.com
+  NP-PLANT-PROGRAM-BAC-NOT-UNIQUE:
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: a program planted in dag-tools' refusal assets (dag-tools 0.13.0,
+      mesh_demo_refusal). engine-fin answers only a program the caller can_view_program, so a
+      planted case is reached only through membership. Not a claim about any real program's
+      membership.
+    grant_to:
+      - alice@example.com
+  NP-PLANT-PROGRAM-NAME-NOT-UNIQUE:
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: a program planted in dag-tools' refusal assets (dag-tools 0.13.0,
+      mesh_demo_refusal). engine-fin answers only a program the caller can_view_program, so a
+      planted case is reached only through membership. Not a claim about any real program's
+      membership.
+    grant_to:
+      - alice@example.com
+  NP-PLANT-VARIES-WITHIN-PATH:
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: a program planted in dag-tools' refusal assets (dag-tools 0.13.0,
+      mesh_demo_refusal). engine-fin answers only a program the caller can_view_program, so a
+      planted case is reached only through membership. Not a claim about any real program's
+      membership.
+    grant_to:
+      - alice@example.com
+  NP-PLANT-WORK-PACKAGE-IN-TWO-ACCOUNTS:
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: a program planted in dag-tools' refusal assets (dag-tools 0.13.0,
+      mesh_demo_refusal). engine-fin answers only a program the caller can_view_program, so a
+      planted case is reached only through membership. Not a claim about any real program's
+      membership.
+    grant_to:
+      - alice@example.com
+  NP-PLANT-WRONG-TYPE:
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture: a program planted in dag-tools' refusal assets (dag-tools 0.13.0,
+      mesh_demo_refusal). engine-fin answers only a program the caller can_view_program, so a
+      planted case is reached only through membership. Not a claim about any real program's
+      membership.
+    grant_to:
+      - alice@example.com

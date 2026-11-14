@@ -48,9 +48,15 @@ def test_sandbox_import_carries_the_literal_origin_set_and_keeps_every_other_fie
     assert "*" not in json.dumps([c["redirectUris"], c["webOrigins"], c["attributes"]])
     # the rest of the client is untouched (literal values, as on master)
     assert c["publicClient"] is True and c["directAccessGrantsEnabled"] is True and c["enabled"] is True
-    (m,) = c["protocolMappers"]
+    mappers = {x["name"]: x for x in c["protocolMappers"]}
+    assert set(mappers) == {"authz-id-user", "audience-bff"}, sorted(mappers)
+    m = mappers["authz-id-user"]
     assert m["name"] == "authz-id-user" and m["protocolMapper"] == "oidc-usermodel-attribute-mapper"
     assert m["config"]["claim.name"] == "authz_id" and m["config"]["user.attribute"] == "authz_id"
+    # 0.4.85: the BFF accepts only tokens naming its audience, so cortex-ui's tokens must carry it
+    aud = mappers["audience-bff"]
+    assert aud["protocolMapper"] == "oidc-audience-mapper" and aud["config"]["access.token.claim"] == "true"
+    assert aud["config"]["included.custom.audience"] == "cortex-bff"
 
 
 def test_default_values_emit_no_redirect_at_all():
