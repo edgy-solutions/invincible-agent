@@ -47,7 +47,7 @@ docs:runbook-adding-a-task-kind a mesh:DocPage ;
   mesh:doc_kind "how-to" ;
   mesh:audience_hint "ARCHITECT" ;
   mesh:source "docs/pages/76c066f6ea6a8612409be1f23e5c03f6def684e91e0458c5f9cdace53ac04362/adding-a-task-kind.md" ;
-  mesh:source_committed_at "2026-09-15T08:32:52-05:00" ;
+  mesh:source_committed_at "2026-11-14T22:40:35-06:00" ;
   mesh:body_sha "76c066f6ea6a8612409be1f23e5c03f6def684e91e0458c5f9cdace53ac04362" ;
   mesh:explains mesh:DispositionReview .
 
