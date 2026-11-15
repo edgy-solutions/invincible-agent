@@ -53,6 +53,7 @@ for _p in (str(REPO / "src"), str(_RA), str(REPO)):
         sys.path.insert(0, _p)
 
 from tests.conftest import stub_modules  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 READERS = {"check_answer", "decision_answer"}
 SCANNED = ("agent_fleet", "src")
@@ -1387,6 +1388,7 @@ def act_world(client, monkeypatch):
     monkeypatch.setattr(ht, "mark_task_resolved", lambda tid, **k: 1)
     monkeypatch.setattr(ht, "get_task_resolution", lambda tid, *, caller_id: None)
     monkeypatch.setattr(ht, "list_tasks_for", lambda caller, *, status="pending": [row])
+    route_viewer_tasks_through(monkeypatch, a_case_with_no_label=True)
     monkeypatch.setattr(httpx, "AsyncClient", _FakeRestate())
     return c, state
 
@@ -1443,6 +1445,7 @@ def origin_world(client, monkeypatch):
     monkeypatch.setattr(gateway, "_CASE_RUNNER_SERVICE_AUTHZ_ID", "a@x")
     # the route admits the named steward on the case; the real holder lookup is Postgres
     monkeypatch.setattr("src.iagent.human_tasks.holds_task_on_case", lambda case_id, who: True)
+    route_viewer_tasks_through(monkeypatch, a_case_with_no_label=True)
     monkeypatch.setattr(ng, "Neo4jGraphWriter", _no_store)
     return c, state
 

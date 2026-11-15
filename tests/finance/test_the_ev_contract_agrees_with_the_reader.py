@@ -64,6 +64,16 @@ def test_every_rule_the_reader_raises_is_registered():
     assert not set(dataset_contracts.RULES) & asset_inputs.RULES, "a rule has one home"
 
 
+def test_no_reader_raises_a_producer_checked_rule():
+    """Ruled 2026-11-14: the producer's checks are names a block may carry, and no reader raises
+    them. Every module under agent_fleet/ is read for the raising form, not only engine-fin's."""
+    sources = sorted((ROOT / "agent_fleet").rglob("*.py"))
+    assert Path(dataset_contracts.__file__).resolve() in {p.resolve() for p in sources}
+    raised = {r for p in sources for r in RAISED.findall(p.read_text(encoding="utf-8"))}
+    assert not raised & dataset_contracts.PRODUCER_CHECKED
+    assert not dataset_contracts.PRODUCER_CHECKED & (set(dataset_contracts.RULES) | asset_inputs.RULES)
+
+
 def test_the_ev_contract_names_no_rule_nobody_raises():
     ev = dataset_contracts.load_contract("ev_fixture", CONTRACT.parent)
     assert dataset_contracts.unknown_rules(ev, asset_inputs.RULES) == []

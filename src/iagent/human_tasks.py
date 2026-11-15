@@ -103,6 +103,27 @@ ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS case_id TEXT;
 -- on_behalf_of: who the task acts for, recorded apart from who requested it (ADR-0063 /
 -- OpenDDIL ADR-0052 s5). '' = service-origin finding; never NULL.
 ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS on_behalf_of TEXT NOT NULL DEFAULT '';
+-- excludes: the authz_ids the definition bars from deciding THIS task, as a JSON array of
+-- casefolded ids, written at registration (ADR-0068 s6). It lets a READ-TIME capability match
+-- honour the bar without re-resolving it. NULL = a row registered before this column existed:
+-- its bar is unknown, so only its recipient rows (the authz_id match) ever admit a viewer.
+ALTER TABLE human_task_projection ADD COLUMN IF NOT EXISTS excludes TEXT;
+-- routing_fault: a task withheld from a viewer its audience reached, because the viewer is not
+-- entitled to every label of the task's object (ADR-0068 s6). One row per (task, addressee,
+-- label); a repeat read bumps seen_count and last_seen_at. A record of the fault in the routing,
+-- never of the task's content.
+CREATE TABLE IF NOT EXISTS routing_fault (
+    task_id TEXT NOT NULL,
+    addressee TEXT NOT NULL,
+    dimension TEXT NOT NULL,
+    label TEXT NOT NULL,
+    route TEXT NOT NULL,
+    on_behalf_of TEXT NOT NULL DEFAULT '',
+    first_seen_at BIGINT NOT NULL,
+    last_seen_at BIGINT NOT NULL,
+    seen_count BIGINT NOT NULL DEFAULT 1,
+    PRIMARY KEY (task_id, addressee, dimension, label)
+);
 """
 
 
@@ -698,12 +719,14 @@ def register_task(
     now = int(time.time() * 1000)
     on_behalf_of = str(on_behalf_of or "").strip()
     payload_json = json.dumps(payload or {})
+    excludes_json = json.dumps(sorted(barred))
     rows = []
     for actor_id in actors:
         rows.append((
             str(uuid.uuid4()), kind, task_id, workflow_id, audience, actor_id,
             "pending", title, summary, requested_by, subject_ref, payload_json,
             None, None, None, None, now, now, workflow_service, promise_name, case_id, on_behalf_of,
+            excludes_json,
         ))
     if rows:
         with _pg_connect() as conn:
@@ -714,7 +737,7 @@ def register_task(
                        (id, kind, task_id, workflow_id, audience, recipient_id,
                         status, title, summary, requested_by, subject_ref, payload,
                         acted_by, acted_at, decision, comment, created_at, updated_at,
-                        workflow_service, promise_name, case_id, on_behalf_of)
+                        workflow_service, promise_name, case_id, on_behalf_of, excludes)
                        VALUES %s""",
                     rows,
                 )
@@ -768,6 +791,140 @@ from iagent.identity_vault import _ensure_the_audit_line_actually_ARRIVES  # noq
 
 _grant_audit_log = logging.getLogger("iagent.audit.grant_write")
 _ensure_the_audit_line_actually_ARRIVES(_grant_audit_log)
+
+
+# ── The per-viewer read (ADR-0068 s6): the recipient match is made WHEN THE VIEWER READS ──────
+
+MATCH_AUTHZ_ID = "authz_id"
+MATCH_CAPABILITY = "capability"
+
+_VIEW_COLUMNS = """id, kind, task_id, workflow_id, audience, recipient_id, status, title, summary,
+                          requested_by, subject_ref, payload, created_at, workflow_service,
+                          promise_name, case_id, decision, acted_by, acted_at, comment, excludes"""
+
+
+def _barred(raw: Any) -> "set[str] | None":
+    """The `excludes` column as a casefolded set; None when the row predates the column (the bar
+    is UNKNOWN, which is not the same as 'nobody is barred')."""
+    if raw is None:
+        return None
+    try:
+        v = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+    except ValueError:
+        return None
+    return {str(x).casefold() for x in v} if isinstance(v, list) else None
+
+
+def viewer_tasks(viewer_id: str, *, status: Optional[str] = PENDING, case_id: Optional[str] = None,
+                 workflow_ids: "Optional[list[str]]" = None,
+                 kinds: "Optional[list[str]]" = None,
+                 audiences: "Optional[list[str]]" = None) -> list[dict[str, Any]]:
+    """The tasks `viewer_id` is a recipient of, matched NOW, one row per task, newest first. Each
+    row carries `matched_by`: `authz_id` (a recipient row names the viewer AND policy still lets
+    them act on its audience: a revoked grant drops the row on the next read) or `capability` (the
+    viewer holds `can_act` on the task's audience in policy at THIS read, so a grant made after
+    the task was registered shows on the next read with no re-registration).
+
+    `status=None` reads every status (a decided task still shows the person the case it was about);
+    only an open task can be matched by capability.
+
+    The capability match covers OPEN tasks only, and only rows that recorded their `excludes` (a
+    row that predates the column keeps its recipient rows as its only match, so a barred actor is
+    never re-admitted by a check that cannot see the bar). A barred actor is never matched by
+    capability. A directory failure RAISES (`AuthorizationUnavailable` / `AuthorizationUnconfigured`):
+    a partial list would hide a task from someone entitled to it.
+
+    LABELS ARE NOT CHECKED HERE; this is the recipient half of the rule. The caller applies the
+    label half (gateway `_scope_to_viewer`), because a task's labels live on its object."""
+    if not viewer_id:
+        return []
+    filters, params = [], []
+    if case_id is not None:
+        filters.append("case_id = %s"); params.append(case_id)
+    if workflow_ids is not None:
+        filters.append("workflow_id = ANY(%s)"); params.append(list(workflow_ids))
+    if kinds is not None:
+        filters.append("kind = ANY(%s)"); params.append(list(kinds))
+    if audiences is not None:
+        filters.append("audience = ANY(%s)"); params.append(list(audiences))
+    extra = "".join(f" AND {f}" for f in filters)
+    own_status, own_params = ("", ()) if status is None else (" AND status = %s", (status,))
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                f"SELECT {_VIEW_COLUMNS} FROM human_task_projection "
+                f"WHERE {INBOX_RECIPIENT_COLUMN} = %s{own_status}{extra} "
+                "ORDER BY created_at DESC", (viewer_id, *own_params, *params))
+            own = [dict(r) for r in cur.fetchall()]
+            cands: list[dict[str, Any]] = []
+            if status in (None, PENDING):
+                cur.execute(
+                    f"SELECT DISTINCT ON (task_id) {_VIEW_COLUMNS} FROM human_task_projection "
+                    f"WHERE status = %s AND excludes IS NOT NULL{extra} "
+                    "ORDER BY task_id, created_at DESC", (PENDING, *params))
+                cands = [dict(r) for r in cur.fetchall()]
+    out: dict[str, dict[str, Any]] = {}
+    held: dict[str, bool] = {}
+    me = viewer_id.casefold()
+    # A recipient row is a CANDIDATE, not a grant: every row was expanded from its audience when
+    # the task registered (no row names a person outside policy), so it is confirmed against the
+    # policy as it stands NOW, one `can_act` per audience. A person who has lost the grant since
+    # registration drops out on this read; a person who still holds it keeps the row. Rows
+    # written before this rule are treated the same (there is no "direct" bit to trust).
+    for r in own:
+        aud = r["audience"]
+        if aud not in held:
+            held[aud] = bool(can_act_or_unavailable(aud, viewer_id))
+        if not held[aud]:
+            continue
+        r["matched_by"] = MATCH_AUTHZ_ID
+        out.setdefault(r["task_id"], r)
+    for r in cands:
+        if r["task_id"] in out:
+            continue
+        if me in (_barred(r.get("excludes")) or set()):
+            continue
+        aud = r["audience"]
+        if aud not in held:
+            held[aud] = bool(can_act_or_unavailable(aud, viewer_id))
+        if held[aud]:
+            r["recipient_id"] = viewer_id
+            r["matched_by"] = MATCH_CAPABILITY
+            out[r["task_id"]] = r
+    for r in out.values():
+        r.pop("excludes", None)
+    return sorted(out.values(), key=lambda r: r["created_at"], reverse=True)
+
+
+_routing_fault_log = logging.getLogger("iagent.audit.routing_fault")
+_ensure_the_audit_line_actually_ARRIVES(_routing_fault_log)
+
+
+def record_routing_fault(*, task_id: str, addressee: str, dimension: str, label: str,
+                         route: str, on_behalf_of: str = "") -> None:
+    """A task withheld from a viewer its audience reached: the viewer is not entitled to the label
+    `label` of the task's object (ADR-0068 s6). Writes the decision line, then the record. The task
+    stays withheld whatever happens here: a record that cannot be written is logged at ERROR and
+    never turns the withhold into a serve."""
+    _routing_fault_log.warning(
+        "routing_fault decision=withheld task=%s addressee=%s dimension=%s label=%s route=%s"
+        " on_behalf_of=%s", task_id, addressee, dimension, label, route, on_behalf_of or "-")
+    now = int(time.time() * 1000)
+    try:
+        with _pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO routing_fault (task_id, addressee, dimension, label, route,
+                                                  on_behalf_of, first_seen_at, last_seen_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (task_id, addressee, dimension, label) DO UPDATE
+                         SET last_seen_at = EXCLUDED.last_seen_at, route = EXCLUDED.route,
+                             on_behalf_of = EXCLUDED.on_behalf_of,
+                             seen_count = routing_fault.seen_count + 1""",
+                    (task_id, addressee, dimension, label, route, on_behalf_of or "", now, now))
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001 -- the withhold stands; the record's loss is loud
+        logger.error("routing_fault record not written for task %s: %s", task_id, type(exc).__name__)
 
 
 def write_grant_and_sync(*, subject: str, asset: str, granted_by: str,
@@ -840,7 +997,7 @@ def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, A
     with _pg_connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                """SELECT task_id, kind, status, decision, acted_by, acted_at, audience, payload
+                """SELECT task_id, kind, status, decision, acted_by, acted_at, audience, payload, case_id
                      FROM human_task_projection
                     WHERE task_id = %s AND recipient_id = %s
                     ORDER BY updated_at DESC

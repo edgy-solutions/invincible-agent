@@ -15,8 +15,10 @@ Run: uv run pytest tests/test_the_written_action_record_meets_the_pinned_schema.
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
+import rdflib
 import pytest_asyncio
 
 pytest.importorskip("httpx")
@@ -48,6 +50,24 @@ def _nonblank(x):
     return isinstance(x, str) and bool(x.strip())
 
 
+#: The walk's fixture graph. A task_ref's `graph_uri` must be the node whose label IS its
+#: `data_module_code` -- not merely non-blank. Two procedure DMs with swapped nodes are both
+#: non-blank, so only this join catches a `.0`/`.1` swap (lane/74's #344 review, F2).
+_MRAD_TTL = Path(__file__).resolve().parent / "fixtures" / "s1000d_mrad" / "mrad.ttl"
+_GRAPH = None
+
+
+def _graph():
+    global _GRAPH
+    if _GRAPH is None:
+        _GRAPH = rdflib.Graph().parse(_MRAD_TTL, format="turtle")
+    return _GRAPH
+
+
+def _labels_its_dmc(graph_uri, dmc) -> bool:
+    return (rdflib.URIRef(graph_uri), rdflib.RDFS.label, rdflib.Literal(dmc)) in _graph()
+
+
 def violations(record) -> list:
     """Every reason `record` fails the seal; empty means it meets it."""
     out = []
@@ -63,6 +83,9 @@ def violations(record) -> list:
     for i, ref in enumerate((record.get("work_order") or {}).get("task_refs") or []):
         if not _nonblank(ref.get("graph_uri")):
             out.append(f"task_refs[{i}].graph_uri is {ref.get('graph_uri')!r}")
+        elif not _labels_its_dmc(ref["graph_uri"], ref.get("data_module_code")):
+            out.append(f"task_refs[{i}].graph_uri {ref['graph_uri']!r} is not the node labelled "
+                       f"{ref.get('data_module_code')!r}")
     nodes = (record.get("provenance") or {}).get("manual_nodes_consulted")
     if not isinstance(nodes, list) or not nodes or not all(_nonblank(n) for n in nodes):
         out.append(f"manual_nodes_consulted is not a flat list of non-empty strings: {nodes!r}")
@@ -97,6 +120,24 @@ async def test_the_written_record_meets_the_pinned_schema(record):
 async def test_POSITIVE_CONTROL_a_null_graph_uri_is_refused(record):
     bad = copy.deepcopy(record)
     bad["work_order"]["task_refs"][0]["graph_uri"] = None
+    assert violations(bad)
+
+
+@pytest.mark.asyncio
+async def test_every_task_ref_cites_the_node_its_dmc_labels(record):
+    refs = record["work_order"]["task_refs"]
+    assert len(refs) >= 3, refs  # fault isolation, then remove and install
+    for ref in refs:
+        assert _labels_its_dmc(ref["graph_uri"], ref["data_module_code"]), ref
+
+
+@pytest.mark.asyncio
+async def test_POSITIVE_CONTROL_swapped_procedure_nodes_are_refused(record):
+    """Both swapped URIs are non-blank, so the old seal passed this. The label join refuses it."""
+    bad = copy.deepcopy(record)
+    refs = bad["work_order"]["task_refs"]
+    assert refs[1]["graph_uri"] != refs[2]["graph_uri"], refs
+    refs[1]["graph_uri"], refs[2]["graph_uri"] = refs[2]["graph_uri"], refs[1]["graph_uri"]
     assert violations(bad)
 
 

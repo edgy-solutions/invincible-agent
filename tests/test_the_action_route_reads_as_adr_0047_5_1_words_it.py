@@ -34,6 +34,7 @@ from tests.test_a_case_action_record_names_who_chose_approved_released import ( 
     DELEGATE, OTHER_DELEGATE, _CASE, _delegates, _record, _row, client_for,
 )
 from tests.test_cases_route import _FakeRestate, _user  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 #: A service identity that is NOT a key of DELEGATE_ON_BEHALF_OF.
 UNDECLARED = "svc:undeclared"
@@ -57,6 +58,7 @@ def tasks(monkeypatch):
     held: set[tuple[str, str]] = set()
     monkeypatch.setattr(human_tasks, "holds_task_on_case",
                         lambda case_id, who: (case_id, who) in held)
+    route_viewer_tasks_through(monkeypatch)
     return held
 
 
@@ -106,7 +108,10 @@ def test_W1_a_holder_of_every_label_reads_it_only_if_a_person(client_for, tasks,
 def test_W1_a_task_holder_reads_it_only_if_a_person(client_for, tasks, who, expect_admitted):
     """Q13's words for the same shape: "a service holding a review task counts for nothing"."""
     tasks.add(("c-1", who))
-    c = client_for(_user(who), _FakeRestate(case=_undelegated_case(), spec1=_spec("alice")),
+    # a task no longer admits a viewer who lacks a label of the case (ADR-0068 s6): the person is
+    # entitled to the case's label here, the service is not and is refused whatever it holds
+    c = client_for(_user(who, domains=["SAFETY"] if expect_admitted else []),
+                   _FakeRestate(case=_undelegated_case(), spec1=_spec("alice")),
                    {"c-1": [_row(_record(), seeded_by=None)]})
     resp = c.get("/cases/c-1/action")
     if expect_admitted:
@@ -114,6 +119,15 @@ def test_W1_a_task_holder_reads_it_only_if_a_person(client_for, tasks, who, expe
     else:
         assert gateway.neo4j_driver.runs == [], "the artifact store was read for a refusal"
         _refused_like_absent(client_for, resp)
+
+
+def test_W1_CONTROL_a_person_holding_the_task_without_the_cases_label_is_refused(client_for, tasks):
+    tasks.add(("c-1", PERSON))
+    c = client_for(_user(PERSON), _FakeRestate(case=_undelegated_case(), spec1=_spec("alice")),
+                   {"c-1": [_row(_record(), seeded_by=None)]})
+    resp = c.get("/cases/c-1/action")
+    assert gateway.neo4j_driver.runs == [], "the artifact store was read for a refusal"
+    assert resp.status_code == 404 and resp.json()["detail"] == "case not found"
 
 
 # -- W2: a declared delegate is admitted on its seeding, and on nothing else -------------------

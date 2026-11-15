@@ -67,6 +67,7 @@ never guessed, and never emitted empty to look present (an empty list claims "th
 from __future__ import annotations
 
 import datetime as _dt
+import json
 from typing import Any, Optional
 
 
@@ -128,6 +129,39 @@ def can_view_case(case: dict, instance1_spec: Optional[dict], definitions: dict[
 
 
 # ── PROJECTION ──────────────────────────────────────────────────────────────────────────────
+
+def task_label_failures(labels: "list[str]", caller_domains: "set[str] | list[str]") -> list[str]:
+    """The labels of a task's object the viewer is NOT entitled to, in the labels' own order and
+    as stored. Empty = the viewer is entitled to every label (an object with no label has none
+    to fail). The one rule `can_view_case`'s second arm applies, case-insensitively, asked of a
+    TASK (ADR-0068 s6); a reader of `policy/classification/dimensions.yaml` replaces this body,
+    not its callers."""
+    held = {str(d).casefold() for d in caller_domains}
+    return [lbl for lbl in labels if str(lbl).casefold() not in held]
+
+
+def approval_task_payload(row: dict) -> dict:
+    """`ApprovalTaskPayload` (cortex-ui `ApprovalTaskCard`) from one projection row the viewer
+    was matched to: the live task the viewer may act on. `payload` is the row's own, passed
+    through (a clearance-safe summary by `register_task`'s contract)."""
+    raw = row.get("payload")
+    if isinstance(raw, (str, bytes)):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            raw = None
+    return {
+        "task_id": row.get("task_id"),
+        "kind": row.get("kind"),
+        "task_state": row.get("status"),
+        "title": row.get("title"),
+        "summary": row.get("summary"),
+        "audience": row.get("audience"),
+        "requested_by": row.get("requested_by"),
+        "subject_ref": row.get("subject_ref"),
+        "payload": raw if isinstance(raw, dict) else {},
+    }
+
 
 def _rendered(raw: Any) -> Any:
     """A declared string that still holds a ``{placeholder}`` is NOT shown: ``None`` (cortex falls
@@ -340,7 +374,8 @@ def _iso_from_epoch_ms(ms: Optional[int]) -> Optional[str]:
     return _dt.datetime.fromtimestamp(ms / 1000, tz=_dt.timezone.utc).isoformat()
 
 
-def project_approvals(case: dict, task_rows: list[dict]) -> list[dict]:
+def project_approvals(case: dict, task_rows: list[dict],
+                      viewer_tasks: "Optional[dict[str, dict]]" = None) -> list[dict]:
     """``CaseApproval[]``, in chain order. One entry per logical task (``human_task_projection``
     carries one ROW PER RECIPIENT of the same task_id; they are collapsed to one entry since
     ``mark_task_resolved`` writes the same decision to all of them). ``step_id`` is recovered by
@@ -350,7 +385,10 @@ def project_approvals(case: dict, task_rows: list[dict]) -> list[dict]:
     task_id does not carry that exact prefix (e.g. a grouped-review task registered under a
     bare id) is SKIPPED -- the contract requires ``step_id``, and guessing one would be exactly
     the fabrication this module's docstring refuses elsewhere. ``task`` (the live
-    ``ApprovalTaskPayload``) is omitted per the roll spec ("omit unless trivially available")."""
+    ``ApprovalTaskPayload``) is present iff the entry is pending AND the VIEWER holds that task:
+    ``viewer_tasks`` is ``{task_id: row}`` of the tasks the viewer was matched to and is entitled
+    to every label of (the gateway's per-viewer scope, ADR-0068 s6). A task the viewer may not see
+    is ABSENT from the entry, never a redacted ``task``."""
     by_task_id: dict[str, dict] = {}
     for row in task_rows:
         tid = row.get("task_id")
@@ -369,7 +407,7 @@ def project_approvals(case: dict, task_rows: list[dict]) -> list[dict]:
             if not step_id:
                 continue
             pending = row.get("status") == "pending"
-            out.append({
+            entry = {
                 "workflow_id": wf,
                 "step_id": step_id,
                 "status": "pending" if pending else "decided",
@@ -377,15 +415,26 @@ def project_approvals(case: dict, task_rows: list[dict]) -> list[dict]:
                 "decision": None if pending else row.get("decision"),
                 "reason": None if pending else (row.get("comment") or None),
                 "decided_at": None if pending else _iso_from_epoch_ms(row.get("acted_at")),
-            })
+            }
+            mine = (viewer_tasks or {}).get(task_id)
+            if pending and mine is not None:
+                entry["task"] = approval_task_payload(mine)
+            out.append(entry)
     return out
 
 
 def project_workflow_case(case: dict, definitions: dict[str, Any], task_rows: list[dict],
-                          output_artifact: Optional[dict] = None) -> dict:
+                          output_artifact: Optional[dict] = None,
+                          viewer_rows: "Optional[list[dict]]" = None) -> dict:
     """Build the ``WorkflowCasePayload`` dict. ``output_artifact`` is handed in by the route (this
     module does no I/O); ``options`` is omitted when no task row carries any -- see the module
-    docstring."""
+    docstring.
+
+    ``viewer_rows`` (ADR-0068 s6) are the task rows THIS viewer was matched to and is entitled to
+    every label of. When given, the step titles, the options and each approval's ``task`` come
+    from them alone; ``task_rows`` then only supplies the approvals' status skeleton. ``None``
+    (a caller with no viewer) keeps every row for every part."""
+    scoped = task_rows if viewer_rows is None else viewer_rows
     stage = ("closed" if case.get("terminal") else
              "failed" if case.get("state") == "failed" else
              "attached" if case.get("state") == "attached" else "running")
@@ -397,15 +446,17 @@ def project_workflow_case(case: dict, definitions: dict[str, Any], task_rows: li
         "episode_id_source": case.get("episode_id_source") or (
             "derived" if case.get("episode") else None),
         "predecessor": case.get("predecessor"),
-        "instances": project_instances(case, definitions, task_rows),
+        "instances": project_instances(case, definitions, scoped),
         "history": project_history(case),
-        "approvals": project_approvals(case, task_rows),
+        "approvals": project_approvals(
+            case, task_rows,
+            None if viewer_rows is None else {r["task_id"]: r for r in viewer_rows}),
         "output_artifact": output_artifact,
     }
     if case.get("intake"):
         out["intake"] = case["intake"]
-    options = project_options(case, task_rows)
+    options = project_options(case, scoped)
     if options is not None:
         out["options"] = options
-        out["options_declaration"] = project_options_declaration(case, task_rows)
+        out["options_declaration"] = project_options_declaration(case, scoped)
     return out
