@@ -13156,11 +13156,9 @@ async def _cells_of(authz_id: str) -> "list[str]":
         raise HTTPException(status_code=503, detail={"error": "authorization_unconfigured"})
 
     def _read() -> list:
-        client = TopazDirectoryClient(url)
-        try:
-            return [c.domain for c in client.get_entitlements(authz_id).cells]
-        finally:
-            client.close()
+        # The process's one directory client (`directory_http_client`): never built per call.
+        client = TopazDirectoryClient(url, shared=True)
+        return [c.domain for c in client.get_entitlements(authz_id).cells]
     try:
         return await run_in_threadpool(_read)
     except AuthorizationUnavailable as exc:

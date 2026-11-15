@@ -26,6 +26,7 @@ from iagent.authz.topaz_client import (
     Entitlements,
     EntitlementCell,
     TopazDirectoryClient,
+    directory_http_client,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "Entitlements",
     "EntitlementCell",
     "TopazDirectoryClient",
+    "directory_http_client",
 ]

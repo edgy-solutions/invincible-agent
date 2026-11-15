@@ -25,6 +25,7 @@ in starlette.run_in_threadpool.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -41,6 +42,7 @@ import psycopg2.extras
 # so a raise here and a catch at the BFF are the same module object.
 from iagent.authz import AuthorizationUnavailable  # noqa: F401 -- raised and re-exported
 from iagent.authz import AuthorizationUnconfigured  # noqa: F401 -- raised and re-exported
+from iagent.authz import directory_http_client
 from agent_fleet.utils.pdp_answer import check_answer
 
 try:
@@ -59,6 +61,15 @@ logger = logging.getLogger(__name__)
 _PG_DSN = os.getenv("PROJECTOR_POSTGRES_DSN", "").strip()
 # Topaz Directory (relations + check). Same URL cortex-bff uses for entitlements.
 _TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "").strip()
+
+
+def _directory() -> "contextlib.AbstractContextManager[httpx.Client]":
+    """The process's ONE directory client (`iagent.authz.directory_http_client`), wrapped for a
+    `with` block that must NOT close it. Every directory call in this module goes through here.
+
+    A client built per call cost about 70 ms of CPU, and one `GET /me/entitlements` built about 37
+    of them."""
+    return contextlib.nullcontext(directory_http_client(_TOPAZ_DIRECTORY_URL))
 
 # Authoritative migration (cortex-bff applies at startup; mirrors
 # sql/create_human_task_projection.sql, kept in-module so the container has no
@@ -208,7 +219,7 @@ def _resolve_audience_actors(audience: str) -> list[str]:
         if authz_id and authz_id not in actors:
             actors.append(authz_id)
 
-    with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+    with _directory() as c:
         rels = _list(c, {"object_type": "task_audience", "object_id": audience,
                          "relation": "actor"})
         for rel in rels:
@@ -251,7 +262,7 @@ def can_act_or_unavailable(audience: str, caller_id: str) -> bool:
         "subject_id": caller_id,
     }
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             r = c.post("/api/v3/directory/check", json=payload)
             r.raise_for_status()
             return check_answer(r)
@@ -298,7 +309,7 @@ def can_invoke_or_unavailable(capability: str, caller_id: str) -> bool:
         "subject_id": caller_id,
     }
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             r = c.post("/api/v3/directory/check", json=payload)
             if r.status_code == 404:
                 return False
@@ -332,7 +343,7 @@ def check_can_invoke(capability: str, caller_id: str) -> bool:
         "subject_id": caller_id,
     }
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             r = c.post("/api/v3/directory/check", json=payload)
             if r.status_code == 404:
                 return False
@@ -356,7 +367,7 @@ def capability_object_exists(capability: str) -> bool:
     from urllib.parse import quote
 
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             r = c.get(f"/api/v3/directory/object/capability/{quote(capability, safe='')}")
     except httpx.HTTPError as exc:
         raise AuthorizationUnavailable(type(exc).__name__) from exc
@@ -380,7 +391,7 @@ def capability_keys() -> list[str]:
     seen: set[str] = set()
     token = ""
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             while True:
                 params = {"object_type": "capability"}
                 if token:
