@@ -52,12 +52,24 @@ def test_the_template_parses_whole():
 
 
 def test_TRIPWIRE_THE_TEMPLATE_NAMES_RULES_NO_READER_RAISES():
-    """`key_not_unique` is this reader's `duplicate_key` under dag-tools' name. The other two are
-    rules no reader raises yet. This goes red when the template changes them, and then the fixture
-    and this set move together."""
+    """`key_not_unique` is this reader's `duplicate_key` under dag-tools' name, which dag-tools
+    renames (ruled 2026-11-14). When the rename lands, this goes red: re-vendor the template, and
+    this set becomes empty."""
     got = dc.load_contracts(TEMPLATE)
-    assert {r for c in got.values() for r in dc.unknown_rules(c)} == {
-        "key_not_unique", "interval_overlap", "orphan_reference"}
+    assert {r for c in got.values() for r in dc.unknown_rules(c)} == {"key_not_unique"}
+
+
+def test_the_template_names_the_producer_checked_rules_and_a_block_may():
+    """`interval_overlap` and `orphan_reference` are the producer's checks (ruled 2026-11-14): a
+    block naming them is accepted, so the template's use of them is not unknown. The control: the
+    same block without the exception is unknown."""
+    named = {r for c in dc.load_contracts(TEMPLATE).values() for r in c.rules}
+    assert dc.PRODUCER_CHECKED <= named
+    assert not dc.PRODUCER_CHECKED & set(dc.RULES)
+    c = dc.DatasetContract(contract_id="x", types={}, required=(), key=(), scope=None,
+                           dependencies=(), rules={r: "m" for r in dc.PRODUCER_CHECKED})
+    assert dc.unknown_rules(c) == []
+    assert sorted(set(c.rules) - set(dc.RULES)) == sorted(dc.PRODUCER_CHECKED)
 
 
 def test_load_contract_finds_a_table_in_its_set(tmp_path):
@@ -232,6 +244,13 @@ def _fin(monkeypatch, tmp_path, doc):
 def test_engine_fin_refuses_a_scope_none_contract_at_its_join(monkeypatch, tmp_path):
     join = _fin(monkeypatch, tmp_path, _doc("demo", scope="none"))
     with pytest.raises(ValueError, match="declares scope: none"):
+        join()
+
+
+def test_engine_fin_takes_a_producer_checked_rule_at_its_join(monkeypatch, tmp_path):
+    # past the rules check the join reads the row's roles: this minimal row has no `levels`
+    join = _fin(monkeypatch, tmp_path, _doc("demo", rules={"interval_overlap": "m"}))
+    with pytest.raises(KeyError, match="levels"):
         join()
 
 

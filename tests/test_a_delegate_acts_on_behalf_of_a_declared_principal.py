@@ -42,6 +42,7 @@ import restate  # noqa: E402
 import main  # noqa: E402  -- the real executor
 import workflow_definition as wd  # noqa: E402
 import workflow_runner as wr  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 _CHART = "helm/invincible-agent"
 
@@ -138,6 +139,7 @@ def route(monkeypatch):
     monkeypatch.setattr(human_tasks, "get_task_resolution",
                          lambda tid, *, caller_id: calls["settled"])
     monkeypatch.setattr(human_tasks, "list_tasks_for", list_tasks_for)
+    route_viewer_tasks_through(monkeypatch)
 
     def login(authz_id):
         gateway.app.dependency_overrides[gateway.get_current_user] = lambda: _User(authz_id)

@@ -18,6 +18,7 @@ from fastapi import HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import content_kinds, gateway, human_tasks, ingest_status, promotion  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 #: `pcn` is an openddil-lab overlay kind; its declared review_shape (`notice`) is what a legacy
 #: `parts` body is read under (0.4.73), so the overlay must be composed.
@@ -103,6 +104,7 @@ def world(monkeypatch):
 
     stores = promotion.PromotionStores(ledger=w.ledger, graph=_Graph())
     monkeypatch.setattr(human_tasks, "list_tasks_for", list_tasks)
+    route_viewer_tasks_through(monkeypatch)
     monkeypatch.setattr(human_tasks, "check_can_act", lambda a, c: True)
     monkeypatch.setattr(human_tasks, "mark_task_resolved",
                         lambda tid, **kw: w.resolved.append((tid, kw)) or 1)

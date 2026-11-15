@@ -18,6 +18,7 @@ from src.iagent import gateway, human_tasks as ht, ingest_status as ist, promoti
 from tests.test_a_promotion_takes_row_edits_behind_its_flag import (  # noqa: E402,F401
     CORRECT, INGEST_ID, PAYLOAD, world,
 )
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 EV = {"page": 1, "bbox": [0.1, 0.2, 0.3, 0.4]}
 HEX = "cd" * 32
@@ -267,6 +268,7 @@ def _act(w, monkeypatch=None, tid=TID, payload=None):
         monkeypatch.setattr(ht, "list_tasks_for", lambda caller, status="pending": [
             {"task_id": tid, "kind": promotion.KIND, "audience": "document_promotion:SUSTAINMENT",
              "payload": pl}])
+        route_viewer_tasks_through(monkeypatch)
     return w.client.post(f"/human_tasks/{tid}/act", json={"decision": "promoted"})
 
 

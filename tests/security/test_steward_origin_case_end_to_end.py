@@ -57,6 +57,7 @@ from tests.test_an_origin_suggestion_runs_as_a_case import (  # noqa: F401 -- fi
     CONFIRM, _real_policy, _run, _suggestion, registered, writer, _emitted)
 from tests.test_ingest_status_projection import (
     _SqliteConnCm, _status_columns, ist)
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 ALICE = "alice@example.com"      # the dropper
 BOB = "bob@example.com"          # SUSTAINMENT, member of every program
@@ -413,6 +414,7 @@ async def _accept_through_the_route(g, rec, monkeypatch):
     monkeypatch.setattr(gateway, "_read_accepted_origin", _read_origin)
     # the route admits the named steward on the case; the real holder lookup is Postgres
     monkeypatch.setattr("src.iagent.human_tasks.holds_task_on_case", lambda case_id, who: True)
+    route_viewer_tasks_through(monkeypatch, a_case_with_no_label=True)
     req = gateway.OriginWriteRequest(case_id="C-1", **{k: rec[k] for k in (
         "artifact_id", "dropped_by", "origin", "evidence", "approval_chain")})
     return await gateway.write_origin_route(req, current_user=_case_runner())

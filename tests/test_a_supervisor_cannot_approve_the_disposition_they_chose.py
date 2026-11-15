@@ -17,6 +17,7 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import gateway, human_tasks  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 ENV_NAME = "DELEGATE_ON_BEHALF_OF"
 DELEGATE = "svc:openddil"
@@ -95,6 +96,7 @@ def route(monkeypatch):
     monkeypatch.setattr(human_tasks, "get_task_resolution", lambda tid, *, caller_id: None)
     monkeypatch.setattr(human_tasks, "list_tasks_for",
                         lambda caller_id, *, status="pending": rows)
+    route_viewer_tasks_through(monkeypatch)
     monkeypatch.setattr(human_tasks, "check_can_act", lambda audience, caller: True)
     fake = _FakeRestate()
     monkeypatch.setattr(gateway.httpx, "AsyncClient", fake)
@@ -144,12 +146,17 @@ def test_2_a_different_supervisor_approving_resumes(route):
     resp = _act(c)
     assert resp.status_code == 200, resp.text
     assert len(fake.posts) == 1
-    assert cases["fetched"] == [CASE], "the control must have consulted the case"
+    # the label gate (ADR-0068 s6) reads the case once; the same-actor check reads it again
+    assert cases["fetched"] == [CASE, CASE], "the control must have consulted the case"
 
 
 def test_3_a_delegate_acting_for_the_chooser_is_refused(route):
     c, fake, rows, cases, login, mp = route
     mp.setenv(ENV_NAME, json.dumps({DELEGATE: [BOB]}))
+
+    async def _no_cells(authz_id):   # the principal's cells (ADR-0068 s6): none, no directory here
+        return []
+    mp.setattr(gateway, "_cells_of", _no_cells)
     login(DELEGATE)
     resp = _act(c, on_behalf_of=BOB)
     assert resp.status_code == 409, resp.text
@@ -225,7 +232,7 @@ def test_9_a_kind_outside_the_map_is_not_refused(route):
     login(BOB)
     resp = _act(c)
     assert resp.status_code == 200, resp.text
-    assert cases["fetched"] == [], "an unmapped kind must not even consult the case"
+    assert cases["fetched"] == [CASE], "an unmapped kind: the label gate reads the case, the same-actor check does not"
 
 
 def test_10_an_unauthorized_chooser_gets_403_not_409(route):
@@ -235,4 +242,4 @@ def test_10_an_unauthorized_chooser_gets_403_not_409(route):
     resp = _act(c)
     assert resp.status_code == 403, resp.text
     assert _err(resp) == "not_authorized_to_act", resp.json()
-    assert cases["fetched"] == []
+    assert cases["fetched"] == [CASE]   # the label gate only; the same-actor check never ran
