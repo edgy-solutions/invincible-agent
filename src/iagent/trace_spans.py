@@ -50,6 +50,7 @@ try:
     MAPPING = _t.MAPPING
     build_trace_values = _t.build_trace_values
     flush = _t.flush
+    instrument_model_calls = _t.instrument_model_calls
 except Exception:  # noqa: BLE001  no-op stubs: the mesh runs identically without telemetry
 
     @contextmanager
@@ -63,6 +64,9 @@ except Exception:  # noqa: BLE001  no-op stubs: the mesh runs identically withou
 
     def flush(*_a, **_k):  # type: ignore[misc]
         return None
+
+    def instrument_model_calls(model, **_k):  # type: ignore[misc]
+        return model
 
 
 def mint_trace_id() -> str:

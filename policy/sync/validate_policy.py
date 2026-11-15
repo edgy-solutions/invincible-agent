@@ -94,7 +94,7 @@ from types import SimpleNamespace
 import yaml
 from pydantic import ValidationError
 
-from topaz_sync import PolicyBundle, expand_platform_domains
+from topaz_sync import PolicyBundle, expand_platform_domains, retired_still_named
 from grant_sync import load_grants
 from task_grant_sync import load_audiences
 from ontology_compartment_sync import load_compartments
@@ -575,6 +575,10 @@ GOVERNED_ROOTS = ("policy/", "docs/adr/", "tests/fixtures/", "sessions/")
 
 _RP_ROW_FIELDS = ("review", "approvers", "granted_by", "reason", "unowned_review", "unmatched_review")
 
+#: Mirrors `repo_core.CLOSED_REVIEW` (restated for the same reason as GOVERNED_ROOTS; the rail test
+#: asserts the two are equal). A row with this `review` refuses every commit under it.
+_RP_CLOSED = "closed"
+
 #: A `review` ending `:<DOMAIN>` is a per-row audience (section 5: `access_grant:<DOMAIN>`, "taken
 #: from each row the diff changes"). engine-r resolves it per changed row; validate_policy checks
 #: every audience it could resolve to, and the `unmatched_review` a row with no such audience falls
@@ -623,6 +627,15 @@ def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> 
             v = row.get(f)
             if not isinstance(v, str) or not v.strip():
                 e.append(f"{where}: `{f}` is required and must be a non-empty string")
+        if row.get("review") == _RP_CLOSED:
+            # A closed row refuses every commit under it (engine-r check 6, `path_closed`): it names
+            # no audience and no approver count, because nothing under it is ever reviewed.
+            if is_tag:
+                e.append(f"{where}: `review: {_RP_CLOSED}` is legal only on a path row, never on a tag")
+            for k in ("approvers", "unowned_review", "unmatched_review"):
+                if k in row:
+                    e.append(f"{where}: a `review: {_RP_CLOSED}` row carries no `{k}`")
+            return e
         ap = row.get("approvers")
         if "approvers" not in row:
             e.append(f"{where}: `approvers` is required")
@@ -1483,10 +1496,15 @@ def validate(
             domains=domains,
             groups=_groups,
             users=users_raw.get("users", []),
+            retired_users=users_raw.get("retired_users", []) or [],
         )
+        # The sync's own refusal, from the same function: a retired id another policy file still
+        # names would be re-created by the next sync that asserts it.
+        errors.extend(retired_still_named(
+            policy_dir, [r.id for r in bundle.retired_users]))
         print(f"  users.yaml/groups.yaml: personas={len(bundle.personas)} "
               f"domains={len(bundle.domains)} groups={len(bundle.groups)} "
-              f"users={len(bundle.users)}")
+              f"users={len(bundle.users)} retired_users={len(bundle.retired_users)}")
     except (ValidationError, ValueError) as e:
         errors.append(f"users.yaml/groups.yaml: {e}")
 

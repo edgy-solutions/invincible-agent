@@ -20,6 +20,7 @@ import hashlib
 import pathlib
 import sys
 
+import httpx
 import pytest
 
 _REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -87,15 +88,9 @@ class _Topaz:
         ok = (json["object_type"] == "capability" and json["relation"] == "can_invoke"
               and json["subject_type"] == "user"
               and json["object_id"] in GRANTS.get(json["subject_id"], set()))
-
-        class _R:
-            def raise_for_status(self):
-                pass
-
-            def json(self):
-                return {"check": ok}
-
-        return _R()
+        # A real httpx.Response, so the double answers whatever `can_invoke` reads of the wire
+        # (status_code since the 11-03 outage arm), not only the two methods it read before.
+        return httpx.Response(200, json={"check": ok}, request=httpx.Request("POST", url))
 
 
 class _Reader:

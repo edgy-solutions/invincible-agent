@@ -9343,6 +9343,20 @@ def _boundary_failure_bundle(
     }
 
 
+def _trace_headers(trace_id: str, session_id: str = "") -> dict:
+    """Trace headers for an outbound hop. A parent span without a trace id is a counted
+    miss on the receiver, so X-Parent-Span-Id is never sent alone."""
+    h: dict = {}
+    if trace_id:
+        h["X-Trace-Id"] = trace_id
+        sid = current_span_id()
+        if sid:
+            h["X-Parent-Span-Id"] = sid
+    if session_id:
+        h["X-Session-Id"] = session_id
+    return h
+
+
 async def _generate_dagster_stream_inner(
     request: InterviewRequest,
     trace_id: str = "",   # cortex-ui X-Trace-Id (ADR-0038); seeds the analyst trace via the supervisor
@@ -9660,7 +9674,8 @@ async def _generate_dagster_stream_inner(
                         "query": user_query,
                         "user_persona": user_persona,
                         "entitled_domains": entitled_domains,
-                    }
+                    },
+                    headers=_trace_headers(trace_id, session_id),
                 )
                 resp.raise_for_status()
                 intent_extraction = resp.json()

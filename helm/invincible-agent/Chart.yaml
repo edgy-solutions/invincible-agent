@@ -21,5 +21,6 @@ type: application
 # never rolls again (architect, 2026-11-12).
 # 0.4.86 = b2cb6b8c + the realm-reconcile fix PR alone (master frozen to it), cut 2026-11-12.
 # 0.4.87 = cc4104d4..b10068fd (3 PRs: #369, #368, #370, Chris's pre-approved train), cut 2026-11-12.
-version: 0.4.87
+# 0.4.88 = e29f7442..d4e50dac (the architect's train: #373, #365, #357, #362, #364, #327; and #372), cut 2026-11-13.
+version: 0.4.88
 appVersion: "2026.07.02"
