@@ -21,15 +21,23 @@ or `scope: none`, which declares there is none. Under `scope: none` no value fil
 the read is decided on the asset grant alone. An engine whose reads need a scope refuses such a
 contract at its join, as engine-fin does.
 
+PERSONAL DATA. A column marked `personal_data: true` records a FACT about the column; the
+classification level and who may see it are the deployment's, applied through its dimensions
+(gov's rail), never written in a contract. This reader holds the fact: a personal column is
+withheld from every read unless the reading engine releases it (`released`), so by default
+nothing personal is read. Because the broker may project it away for a caller not entitled to
+it, nothing every read needs may be one: a personal column is never required, in the grain, the
+scope, or a dependency.
+
 RULES. Refusal rules live here, once (`RULES`), and apply to every contract. A contract's `rules`
 block carries messages for them (and for an engine's own rules); leaving a rule out of it disables
 nothing. Naming a rule nobody raises is refused at the engine's join (`unknown_rules`), because a
 rule that nothing raises would read as enforced.
 
 WHAT LIVES HERE: loading and validating a contract; the read-time checks (`missing_column`,
-`wrong_type`, `duplicate_key`, `not_determined_by`), which raise `ContractViolation`; and the generic
-load-time hold of a row's named columns (declared, and of a type in the role's set: `undeclared`,
-`not_of`).
+`wrong_type`, `personal_data`, `duplicate_key`, `not_determined_by`), which raise
+`ContractViolation`; and the generic load-time hold of a row's named columns (declared, and of a
+type in the role's set: `undeclared`, `not_of`).
 
 WHAT DOES NOT LIVE HERE: a row's ROLES (level, scope, period, status; "a series row's status is
 determined by the scope"). They are each engine's, e.g. `finance_agent/measure_verbs._join_contract`.
@@ -59,6 +67,7 @@ _ID = re.compile(r"[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)?")
 RULES = {
     "missing_column": "a required column, or a column the reading row names, is absent",
     "wrong_type": "a column is not of the type the contract declares",
+    "personal_data": "a reading row names a personal_data column the reading engine did not release",
     "duplicate_key": "more than one row for one grain tuple",
     "not_determined_by": "one value of a dependency's `by` column carries two values of a column "
                          "it determines",
@@ -88,6 +97,7 @@ class DatasetContract:
     scope: str | None                                        # a read filters on it; None: `scope: none`
     dependencies: tuple[tuple[str, tuple[str, ...]], ...]    # (by, the columns it determines)
     rules: dict[str, str] = field(default_factory=dict)      # rule id -> the contract's message for it
+    personal: frozenset[str] = frozenset()                   # the columns marked personal_data
 
     @property
     def scoped(self) -> bool:
@@ -103,6 +113,11 @@ def unknown_rules(contract: DatasetContract, also=()) -> list[str]:
     ids the reading engine raises itself) raises, sorted. A contract carries messages for rules;
     it cannot add one, so an engine refuses a contract this is not empty for at its join."""
     return sorted(set(contract.rules) - set(RULES) - set(also))
+
+
+def withheld(contract: DatasetContract, released=frozenset()) -> list[str]:
+    """The personal_data columns a read withholds: every one the reading engine did not release, sorted."""
+    return sorted(contract.personal - set(released))
 
 
 def load_contracts(path: Path) -> dict[str, DatasetContract]:
@@ -155,6 +170,7 @@ def _parse(raw: dict) -> DatasetContract:
     contract_id = raw["contract_id"]
     types: dict[str, str] = {}
     required = []
+    personal = []
     for col in raw["columns"]:
         name, kind = col["name"], col["type"]
         if kind not in TYPES:
@@ -167,6 +183,11 @@ def _parse(raw: dict) -> DatasetContract:
             raise ValueError(f"column {name!r} has required {req!r}; it is true or false")
         if req:
             required.append(name)
+        pd = col.get("personal_data", False)
+        if not isinstance(pd, bool):
+            raise ValueError(f"column {name!r} has personal_data {pd!r}; it is true or false")
+        if pd:
+            personal.append(name)
     key, scope = tuple(raw["grain"]), raw.get("scope")
     if scope is None:
         raise ValueError("declares no scope: a contract names its scope column, "
@@ -185,6 +206,13 @@ def _parse(raw: dict) -> DatasetContract:
     for by, cols in dependencies:
         if not cols or by in cols:
             raise ValueError(f"the dependency on {by!r} must determine at least one column other than itself")
+    # A personal column may be projected away for a caller not entitled to it, so nothing every
+    # read needs may be one. Checked first: the remedy is to unmark it, never to make it required.
+    bad = sorted(set(personal) & {*required, *named})
+    if bad:
+        raise ValueError(f"personal_data column(s) {bad} are required, or a grain, scope or dependency "
+                         f"column; a personal column is read only by a caller entitled to it, so nothing "
+                         f"every read needs may be one")
     # A check over a column the asset may lack would pass by skipping, so what the checks key on is required.
     optional = sorted({*key, *scoped, *(by for by, _ in dependencies)} - set(required))
     if optional:
@@ -196,7 +224,8 @@ def _parse(raw: dict) -> DatasetContract:
             isinstance(k, str) and isinstance(v, str) and v for k, v in rules.items()):
         raise ValueError(f"rules maps a rule id to its message; {rules!r} is not")
     return DatasetContract(contract_id=contract_id, types=types, required=tuple(required),
-                           key=key, scope=scope, dependencies=dependencies, rules=dict(rules))
+                           key=key, scope=scope, dependencies=dependencies, rules=dict(rules),
+                           personal=frozenset(personal))
 
 
 class ContractViolation(Exception):
@@ -228,20 +257,34 @@ def _is_type(dtype: Any, kind: str) -> bool:
     return _type_checks()[kind](dtype)
 
 
-def check_contract_schema(schema: Any, contract: Any, named: tuple[str, ...]) -> list[str]:
-    """The columns a read selects: every column the contract declares that the asset carries.
+def check_contract_schema(schema: Any, contract: Any, named: tuple[str, ...],
+                          released=frozenset()) -> list[str]:
+    """The columns a read selects: every column the contract declares that the asset carries, less
+    the personal_data columns withheld (every one the reading engine did not name in `released`).
 
     Every required column, and every column the row `named`, must be present (`missing_column`),
-    and every selected column must be of its declared type (`wrong_type`), whether or not the row
-    reads it: the key and the dependencies are checked over columns the row may never name."""
+    and every declared column the asset carries must be of its declared type (`wrong_type`), whether
+    or not the row reads it: the key and the dependencies are checked over columns the row may never
+    name. The type check still covers a withheld column (a dtype is schema metadata, not a value). A
+    row naming a withheld personal column is refused `personal_data`; a release names only personal
+    columns (ValueError), and nothing in this module releases one (ruled 2026-11-14)."""
+    released = frozenset(released)
+    if released - contract.personal:
+        raise ValueError(f"released {sorted(released - contract.personal)} are not personal_data columns "
+                         f"of {contract.contract_id!r}")
+    hidden = set(withheld(contract, released))
+    personal = [c for c in dict.fromkeys(named) if c in hidden]
+    if personal:
+        raise ContractViolation("personal_data", "the row names personal_data column(s) not released: "
+                                + ", ".join(personal))
     missing = [c for c in dict.fromkeys((*contract.required, *named)) if c not in schema]
     if missing:
         raise ContractViolation("missing_column", "missing column(s): " + ", ".join(missing))
-    selected = [c for c in contract.types if c in schema]
-    bad = [c for c in selected if not _is_type(schema[c], contract.types[c])]
+    present = [c for c in contract.types if c in schema]
+    bad = [c for c in present if not _is_type(schema[c], contract.types[c])]
     if bad:
         raise ContractViolation("wrong_type", "column(s) of the wrong type: " + ", ".join(bad))
-    return selected
+    return [c for c in present if c not in hidden]
 
 
 def check_contract_rows(df: Any, contract: Any) -> None:
