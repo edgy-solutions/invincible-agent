@@ -479,6 +479,10 @@ class _ElectricResp:
 @pytest.fixture
 def stub_electric(monkeypatch):
     sent: dict = {}
+    import pathlib
+    # the shipped allow-list (ADR-0068 s8): the proxy serves only the tables it names
+    monkeypatch.setenv("ELECTRIC_SHAPES_FILE", str(
+        pathlib.Path(__file__).resolve().parents[1] / "policy" / "electric_shapes.yaml"))
 
     class _Client:
         def __init__(self, *a, **k): ...

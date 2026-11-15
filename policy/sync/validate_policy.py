@@ -835,6 +835,53 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
     return out
 
 
+#: The row fields of policy/electric_shapes.yaml (ADR-0068 s8): an allow-list of streamable tables.
+_ES_ROW_FIELDS = ("table", "granted_by", "reason", "ratified_by")
+
+
+def electric_shapes_errors(raw: dict, users: list) -> list[str]:
+    """Validate policy/electric_shapes.yaml. PURE. A row names one `table` (a bare identifier:
+    letters, digits and underscore, no schema prefix, quote or space), once; and states its
+    grantor, reason and the ratifying seat (a seat such as `owner`, never an identity in users.yaml).
+    Unknown keys are refused by name."""
+    import re as _re
+
+    pre = "electric_shapes.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"electric_shapes"}:
+        extra = sorted(map(str, set(raw) - {"electric_shapes"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `electric_shapes`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    rows = raw["electric_shapes"]
+    if not isinstance(rows, list):
+        return [f"{pre}: `electric_shapes` must be a list of rows (an empty list serves no table)"]
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    seen: set[str] = set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        t = row.get("table")
+        where = f"{pre}: {t if isinstance(t, str) and t.strip() else f'row {i}'}"
+        for k in row:
+            if k not in _ES_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_ES_ROW_FIELDS)})")
+        if not isinstance(t, str) or not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            out.append(f"{where}: `table` must be a bare table name (letters, digits, underscore)")
+        elif t in seen:
+            out.append(f"{where}: table is listed more than once")
+        else:
+            seen.add(t)
+        for k in ("granted_by", "reason", "ratified_by"):
+            v = row.get(k)
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and v.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
+    return out
+
+
 #: The row fields of policy/classification/dimensions.yaml, policy/level_readers.yaml and
 #: policy/dimension_holders.yaml (ADR-0064 item B, Proposed, #266; dimensions per the 2026-11-06
 #: ruling). No code reads any of them yet; dag-tools step 5 serves a dataset's level.
@@ -1647,6 +1694,14 @@ def validate(
         errors.extend(gateway_delegates_errors(gd_raw, users_raw.get("users") or []))
         _gd_rows = gd_raw.get("gateway_delegates")
         print(f"  gateway_delegates.yaml: {len(_gd_rows) if isinstance(_gd_rows, list) else 0} row(s)")
+
+    # electric_shapes.yaml: validated WHEN PRESENT only, like gateway_delegates.yaml above.
+    _es_path = policy_dir / "electric_shapes.yaml"
+    if _es_path.is_file():
+        es_raw = _read_yaml(_es_path, errors)
+        errors.extend(electric_shapes_errors(es_raw, users_raw.get("users") or []))
+        _es_rows = es_raw.get("electric_shapes")
+        print(f"  electric_shapes.yaml: {len(_es_rows) if isinstance(_es_rows, list) else 0} row(s)")
 
     # classification/dimensions.yaml + level_readers.yaml + dimension_holders.yaml (ADR-0064 item B,
     # Proposed, #266; 2026-11-06 ruling): validated WHEN PRESENT only (not in DATA_FILES -- see the

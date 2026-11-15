@@ -17728,43 +17728,54 @@ async def electric_shape_proxy(
     table = upstream_params.get("table") or "answer_artifact_projection"
     upstream_params["table"] = table
 
+    # 2b. ADR-0068 s8: the allow-list. A table is streamed only if a row of
+    #     policy/electric_shapes.yaml names it exactly. Tasks are NOT on it: a shape's WHERE cannot
+    #     evaluate a label, so a task is read through /me/queue and /me/needs_you. Unknown is not
+    #     "allowed": an unreadable list is 503, never a served shape.
+    from . import electric_shapes as _electric_shapes
+    from .authz.refusal import policy_refusal
+    try:
+        _shape_row = _electric_shapes.allowed_row(table)
+    except _electric_shapes.ElectricShapesUnreadable as exc:
+        logger.error("electric shape allow-list unreadable: %s", exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the shape allow-list could not be read"}) from exc
+    if _shape_row is None:
+        raise policy_refusal(
+            "shape_refused", policy_id=_electric_shapes.POLICY_FAMILY,
+            missing_binding=f"electric_shape({table})",
+            message="this table is not streamed; read tasks through GET /me/queue")
+
     # 3. Build the server-verified WHERE clause, per table. Electric's WHERE
     #    parser supports a subset of PostgreSQL and does NOT accept the `->>`
     #    JSONB operator, so each filter references a plain column populated at
     #    write time.
-    #      - human_task_projection: recipient_id = <verified caller AUTHZ_ID>.
-    #        The HITL queue is keyed on the authz identity (Topaz's key) end-to-end,
-    #        so the replication filter and the Topaz can_act gate derive from ONE
-    #        truth and there is no sub<->email bridge to mis-route. authz_id == email
-    #        in sandbox; at work-deploy it becomes the employee-ID claim, and this
-    #        filter re-keys with the knob (no code change here).
+    #      - human_task_projection: NOT STREAMED (ADR-0068 s8). It is refused at 2b above and no
+    #        branch here filters it: a shape cannot evaluate a label.
     #      - answer_artifact_projection (default): produced_for_user_id = <sub>
     #        (interim per-user ownership isolation, NOT Topaz authz — unchanged).
-    # NOTE the `else` catches EVERY non-task table -> every table gets a
-    # server-side WHERE; there is no branch that serves a table UNFILTERED.
-    if table == "human_task_projection":
-        escaped_id = _escape_identity_literal(current_user.authz_id)
-        # Scope the inbox stream to PENDING rows only, so it agrees with the REST snapshot
-        # (/me/human_tasks): resolving a task moves it OUT of the shape -> Electric emits a delete.
-        # The predicate's definition now lives in human_tasks (inbox_where_literal), shared with
-        # list_tasks_for; this site only supplies the validated, escaped identity.
-        from . import human_tasks as _human_tasks
-        server_where = _human_tasks.inbox_where_literal(escaped_id)
-    elif table == "ingest_status_projection":
+    # NOTE the `else` REFUSES: there is no branch that serves a table UNFILTERED.
+    if table == "ingest_status_projection":
         # ADR-0041 §8: the ingestion seam's status stream. Same authz_id-keyed discipline
-        # as human_task_projection above (submitted_by/on_behalf_of are authz identities,
+        # as the answers stream (submitted_by/on_behalf_of are authz identities,
         # not sub/email) — a caller sees rows where they are EITHER the submitter or the
         # on_behalf_of principal, mirroring ingest_status.get_status_for's REST scoping so
         # the streamed shape and the REST snapshot agree on who can see what.
         escaped_id = _escape_identity_literal(current_user.authz_id)
         server_where = f"(submitted_by = '{escaped_id}' OR on_behalf_of = '{escaped_id}')"
-    else:
+    elif table == "answer_artifact_projection":
         escaped = _escape_sql_string_literal(verified_user_id)
-        server_where = f"produced_for_user_id = '{escaped}'"
-        if table == "answer_artifact_projection":
-            # Rev 187: the default view hides archived answers (archive hides, never deletes;
-            # `GET /answers?include_archived=true` lists them). Other tables keep their filter.
-            server_where += " AND archived_at IS NULL"
+        # Rev 187: the default view hides archived answers (archive hides, never deletes;
+        # `GET /answers?include_archived=true` lists them).
+        server_where = f"produced_for_user_id = '{escaped}' AND archived_at IS NULL"
+    else:
+        # A listed table this proxy has no per-caller filter for is never served: a row of the
+        # allow-list is permission, not a filter, so it cannot open an unfiltered shape.
+        raise policy_refusal(
+            "shape_refused", policy_id=_electric_shapes.POLICY_FAMILY,
+            missing_binding=f"electric_shape_filter({table})",
+            message="this table has no per-caller filter on the shape proxy")
     upstream_params["where"] = server_where
 
     upstream_url = f"{_ELECTRIC_UPSTREAM_URL}/v1/shape"
