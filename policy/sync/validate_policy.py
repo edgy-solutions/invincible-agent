@@ -94,7 +94,7 @@ from types import SimpleNamespace
 import yaml
 from pydantic import ValidationError
 
-from topaz_sync import PolicyBundle, expand_platform_domains
+from topaz_sync import PolicyBundle, expand_platform_domains, retired_still_named
 from grant_sync import load_grants
 from task_grant_sync import load_audiences
 from ontology_compartment_sync import load_compartments
@@ -1496,10 +1496,15 @@ def validate(
             domains=domains,
             groups=_groups,
             users=users_raw.get("users", []),
+            retired_users=users_raw.get("retired_users", []) or [],
         )
+        # The sync's own refusal, from the same function: a retired id another policy file still
+        # names would be re-created by the next sync that asserts it.
+        errors.extend(retired_still_named(
+            policy_dir, [r.id for r in bundle.retired_users]))
         print(f"  users.yaml/groups.yaml: personas={len(bundle.personas)} "
               f"domains={len(bundle.domains)} groups={len(bundle.groups)} "
-              f"users={len(bundle.users)}")
+              f"users={len(bundle.users)} retired_users={len(bundle.retired_users)}")
     except (ValidationError, ValueError) as e:
         errors.append(f"users.yaml/groups.yaml: {e}")
 
