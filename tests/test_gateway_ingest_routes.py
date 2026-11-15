@@ -455,7 +455,9 @@ def test_status_non_owner_gets_404_not_another_users_row(client, monkeypatch):
     test_ingest_status_projection.py); here we assert the ROUTE turns a None into a plain
     404, never leaking existence via a different status code."""
     captured = {}
-    def _fake(ingest_id, *, caller_id):
+    def _fake(ingest_id, *, caller_id, any_caller=False):
+        if any_caller:   # the second read (ADR-0068 s6): no such row either
+            return None
         captured["caller_id"] = caller_id
         return None
     monkeypatch.setattr(ist, "get_status_for", _fake)

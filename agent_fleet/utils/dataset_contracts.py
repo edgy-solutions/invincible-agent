@@ -32,7 +32,8 @@ scope, or a dependency.
 RULES. Refusal rules live here, once (`RULES`), and apply to every contract. A contract's `rules`
 block carries messages for them (and for an engine's own rules); leaving a rule out of it disables
 nothing. Naming a rule nobody raises is refused at the engine's join (`unknown_rules`), because a
-rule that nothing raises would read as enforced.
+rule that nothing raises would read as enforced. The one exception is `PRODUCER_CHECKED`: rules the
+producer checks before it publishes. A block may name them, and no reader raises them.
 
 WHAT LIVES HERE: loading and validating a contract; the read-time checks (`missing_column`,
 `wrong_type`, `personal_data`, `duplicate_key`, `not_determined_by`), which raise
@@ -72,6 +73,9 @@ RULES = {
     "not_determined_by": "one value of a dependency's `by` column carries two values of a column "
                          "it determines",
 }
+#: Rules the PRODUCER checks before it publishes (ruled 2026-11-14). A contract's block may name
+#: them, and carry their messages; no reader raises them, and a seal holds that it never does.
+PRODUCER_CHECKED = frozenset({"interval_overlap", "orphan_reference"})
 
 
 def _default_dir() -> Path:
@@ -110,9 +114,10 @@ class DatasetContract:
 
 def unknown_rules(contract: DatasetContract, also=()) -> list[str]:
     """The rule ids the contract's `rules` block names that neither this reader nor `also` (the
-    ids the reading engine raises itself) raises, sorted. A contract carries messages for rules;
-    it cannot add one, so an engine refuses a contract this is not empty for at its join."""
-    return sorted(set(contract.rules) - set(RULES) - set(also))
+    ids the reading engine raises itself) raises, and the producer does not check
+    (`PRODUCER_CHECKED`), sorted. A contract carries messages for rules; it cannot add one, so an
+    engine refuses a contract this is not empty for at its join."""
+    return sorted(set(contract.rules) - set(RULES) - PRODUCER_CHECKED - set(also))
 
 
 def withheld(contract: DatasetContract, released=frozenset()) -> list[str]:
