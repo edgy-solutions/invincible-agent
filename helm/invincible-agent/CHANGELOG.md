@@ -1,19 +1,20 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.88 — not yet cut
+## 0.4.88 — 2026-11-13
 
-**0.4.88 is 0.4.87 plus the architect's train (via Chris, 2026-11-13), in this order.** The cut
-bumps `Chart.yaml` and dates this heading once every row below is merged. The roll waits for
-Chris's approval of the values diff against live revision 234.
+**0.4.88 is 0.4.87 (`e29f7442`) plus the architect's train (via Chris, 2026-11-13), merged in
+this order, `e29f7442..d4e50dac`.** The roll waits for Chris's approval of the values diff
+against the live release. #372 also falls in the range: it untracks `sessions/` and changes
+nothing at runtime.
 
-| order | PR | what |
-| --- | --- | --- |
-| 1 | this PR | cortex `6a441d9` (`sha256:c4048781`): the export dialog names the notice; the reviewer sees "Export as…" on Promote |
-| 2 | #365 | fin: the CDRL export reads the `can_export` rail, deny by default |
-| 3 | #357 | fin: a dataset row is read under its contract; the three gaps refuse |
-| 4 | #362 | fin: the overlay test's git fixture no longer fails on a long temp folder |
-| 5 | #364 | saf: select export notices by a receipt-date range (after gov approves) |
-| 6 | #327 | perf: trace one answer on provenance-telemetry 0.2.1 |
+| order | PR | merge | what |
+| --- | --- | --- | --- |
+| 1 | #373 | `fe9cb34a` | cortex `6a441d9` (`sha256:c4048781`): the export dialog names the notice; the reviewer sees "Export as…" on Promote |
+| 2 | #365 | `322ccd32` | fin: the CDRL export reads the `can_export` rail, deny by default |
+| 3 | #357 | `79afb42d` | fin: a dataset row is read under its contract; the three gaps refuse |
+| 4 | #362 | `70abe679` | fin: the overlay test's git fixture no longer fails on a long temp folder |
+| 5 | #364 | `47263e51` | saf: select export notices by a receipt-date range (gov approved at `df5e484b`) |
+| 6 | #327 | `d4e50dac` | perf: trace one answer on provenance-telemetry 0.2.1 |
 
 **Not on 0.4.88:** #360 (SDK pin) and the engines' refusal-or-NetworkPolicy decision. Both go
 to 0.4.89, one token change per roll.
@@ -34,6 +35,50 @@ stays hidden.
 - Pin measured: the full tag resolves to this digest (OCI index, amd64 and arm64); the
   abbreviated tag and the digest with its last hex altered both answer 404. `fb3162a..6a441d9`
   changes `src/` only. `0d5a59d` is sessions-only and builds no image.
+
+### The CDRL export reads the `can_export` rail (#365)
+- engine-fin's `/cdrl_export` and `/cdrl_profiles` read `capability_grants.yaml`'s
+  `can_export:<profile>` rows, as engine-cost already does: deny by default. A caller without the
+  grant gets 403 `not_entitled_to_export` with `policy_id: capability_grants:can_export:<profile>`,
+  and the picker offers only the profiles the caller holds.
+- The three CDRL rows (`cdrl_a001_ev_summary`, `cdrl_a001_ev_summary_json`,
+  `cdrl_a002_cost_performance_docx`) are granted to `finance-analysts`. They have been on the rail
+  since 10-29, and this is the first release that reads them.
+
+### A dataset row is read under its contract (#357)
+- **Upgrade note:** every dataset measure row must name `inputs.dataset.contract`. A row without
+  it is refused at load. The eight shipped rows (four sample, four sandbox probes) name
+  `ev_fixture`. A work overlay's dataset rows need the same key before this release rolls there.
+- engine-fin reads `contracts/<id>.yaml` by name, from the repo, from `/app/contracts` in the image
+  (the agent Dockerfile now copies it), or from `DATASET_CONTRACT_DIR`. A row's columns are
+  joined to the contract at load. A duplicate key, a wrong column type and the three gap cases
+  each refuse.
+
+### The overlay test on a long temp folder (#362)
+- Test-only. The git fixture in `test_the_policy_overlay_reaches_only_the_named_pods.py` no longer
+  fails when the temp folder's path is long.
+
+### Export notices by receipt-date range (#364, merged `47263e51`)
+- `POST /ingest/export/notices` accepts `range: {from, to}` instead of `notice_ids`. The range is
+  in YYYY-MM-DD UTC days, both ends inclusive, at most 92 days, and is matched on the receipt's
+  `created_at`. Sending both selectors, or neither, is 422 `export_selection_invalid`.
+- A range resolves to ids and then runs the same gates as the id form: the preflight, 422/503,
+  the file and the audit record. `check_only` works on a range.
+- The GET batch route and this route now share one range parser.
+- Sandbox's cortex does not offer the range in this release, because its `VITE_FEATURES` does not
+  name it. Cortex unhides it against this merge, in a later pin.
+
+### One answer traced on provenance-telemetry 0.2.1 (#327)
+- The BFF mints a trace id when the caller sends none, and returns it as `X-Trace-Id` on
+  `/interview/stream`.
+- Three spans are emitted:
+  - `bff.orchestrate`, over the whole stream;
+  - `supervisor.<op>`, over the four supervisor steps, each flushed;
+  - `engine-docs.explain`, only when a trace id is present.
+- The parent travels as `parent_span_id` at every hop.
+- The pin moves to `provenance-telemetry==0.2.1` in the root and six engine projects.
+- **After the roll:** dagster-user-code must be Ready, because the supervisor steps it runs import
+  the new span code.
 
 ## 0.4.87 — 2026-11-12
 

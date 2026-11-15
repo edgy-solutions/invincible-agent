@@ -1126,7 +1126,8 @@ async def _telemetry_join(request: Request, call_next):
         return await call_next(request)
     with observed_trace(MAPPING, build_trace_values(
         trace_id=tid, engine="ontology_service", verb=request.url.path,
-    ), name="engine-o " + request.url.path):
+    ), name="engine-o " + request.url.path,
+        parent_span_id=request.headers.get("X-Parent-Span-Id")):
         return await call_next(request)
 
 

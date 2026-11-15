@@ -83,6 +83,19 @@ class UserSpec(BaseModel):
     default: DefaultCell | None = None
 
 
+class RetiredUser(BaseModel):
+    """A `user` object this sync DELETES, with its relations (users.yaml `retired_users`).
+
+    `user` is ensure-only family-wide (ENSURE_ONLY_TYPES), so an identity no sync asserts any more
+    is never pruned: it stays in the directory with whatever relations it last held. Retiring it is
+    a declared, reviewed row here, never a hand delete. Every field is required, so the audit trail
+    is in the row, not in a commit message."""
+
+    id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    ruled: str = Field(min_length=1)
+
+
 class PolicyBundle(BaseModel):
     """Everything the sync tool loads from `policy/`."""
 
@@ -90,12 +103,23 @@ class PolicyBundle(BaseModel):
     domains: list[str]
     groups: dict[str, GroupSpec]
     users: list[UserSpec]
+    retired_users: list[RetiredUser] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _cross_validate(self) -> "PolicyBundle":
         """Vocabulary + reference checks — catches typos in YAML
         before topaz would reject them with a less-friendly error.
         """
+        retired_ids = [r.id for r in self.retired_users]
+        dupes = sorted({i for i in retired_ids if retired_ids.count(i) > 1})
+        if dupes:
+            raise ValueError(f"retired_users lists {dupes} more than once")
+        both = sorted(set(retired_ids) & {u.id for u in self.users})
+        if both:
+            raise ValueError(
+                f"retired_users {both} also appear in users: a user is either "
+                f"asserted or retired, never both"
+            )
         personas_set = set(self.personas)
         domains_set = set(self.domains)
         groups_set = set(self.groups.keys())
@@ -213,16 +237,50 @@ def load_policy(policy_dir: Path) -> PolicyBundle:
     domains = list(_domains_doc.get("domains", []))
     platform = list(_domains_doc.get("platform_domains", []))
     groups = _read("groups.yaml").get("groups", {})
-    users = _read("users.yaml").get("users", [])
+    _users_doc = _read("users.yaml")
+    users = _users_doc.get("users", [])
+    retired = _users_doc.get("retired_users", []) or []
 
     domains = expand_platform_domains(domains, platform, groups)
 
-    return PolicyBundle(
+    bundle = PolicyBundle(
         personas=personas,
         domains=domains,
         groups=groups,
         users=users,
+        retired_users=retired,
     )
+    named = retired_still_named(policy_dir, [r.id for r in bundle.retired_users])
+    if named:
+        raise ValueError("; ".join(named))
+    return bundle
+
+
+def retired_still_named(policy_dir: Path, retired_ids: list[str]) -> list[str]:
+    """Every policy file OTHER than users.yaml that still names a retired id, one error each.
+
+    A retired user that a grant, delegate or membership file still names would be re-created by
+    the next sync that asserts it, and the retirement would undo itself on every tick. So the
+    retirement is refused until nothing in policy names the id. The match is on the literal id in
+    the file's text, so a comment that names it also refuses: rename the comment."""
+    errors: list[str] = []
+    if not retired_ids:
+        return errors
+    for path in sorted(policy_dir.rglob("*.yaml")):
+        if path.name == "users.yaml" and path.parent == policy_dir:
+            continue
+        # A ConfigMap volume keeps a second copy of every file under `..data/` (and a dated
+        # `..<timestamp>/`): reading those would find users.yaml's own retired rows and refuse.
+        if any(part.startswith(".") for part in path.relative_to(policy_dir).parts[:-1]):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for rid in retired_ids:
+            if rid in text:
+                errors.append(
+                    f"retired user {rid!r} is still named in "
+                    f"{path.relative_to(policy_dir).as_posix()}: drop it there first"
+                )
+    return errors
 
 
 # ---------------------------------------------------------------------------
@@ -701,14 +759,20 @@ class Plan:
 ENSURE_ONLY_TYPES = frozenset({"user"})
 
 
-def plan_diff(desired: DesiredState, live_objects, live_relations) -> Plan:
+def plan_diff(desired: DesiredState, live_objects, live_relations,
+              retired_users: frozenset[str] = frozenset()) -> Plan:
+    """`retired_users` is the one exception to ENSURE_ONLY_TYPES: a live `user` object whose id is
+    declared retired (users.yaml `retired_users`) is deleted, and `apply_plan` deletes it with its
+    relations, including relations outside this sync's managed scope. Only topaz_sync passes it, so
+    no other sync can delete a user."""
     return Plan(
         add_objects=sorted(
             desired.objects - live_objects, key=lambda o: (o.type, o.id)
         ),
         del_objects=sorted(
             (o for o in live_objects - desired.objects
-             if o.type not in ENSURE_ONLY_TYPES),
+             if o.type not in ENSURE_ONLY_TYPES
+             or (o.type == "user" and o.id in retired_users)),
             key=lambda o: (o.type, o.id),
         ),
         add_relations=sorted(
@@ -861,10 +925,12 @@ def main() -> int:
         f"  personas={len(bundle.personas)}  "
         f"domains={len(bundle.domains)}  "
         f"groups={len(bundle.groups)}  "
-        f"users={len(bundle.users)}"
+        f"users={len(bundle.users)}  "
+        f"retired_users={len(bundle.retired_users)}"
     )
 
     desired = derive_desired(bundle)
+    retired_ids = frozenset(r.id for r in bundle.retired_users)
     users_by_id = {u.id: u for u in bundle.users}
 
     with TopazClient(args.topaz_url) as client:
@@ -889,7 +955,11 @@ def main() -> int:
             f"live relations={len(live_relations)}"
         )
 
-        plan = plan_diff(desired, live_objects, live_relations)
+        # A retired user is looked up by exact key as well as by the listing, so the plan does
+        # not depend on the listing having returned it.
+        live_objects |= {DirObject("user", i) for i in retired_ids
+                         if client.object_exists("user", i)}
+        plan = plan_diff(desired, live_objects, live_relations, retired_ids)
         print("===== Plan =====")
         plan.print()
 
@@ -911,6 +981,17 @@ def main() -> int:
             print(
                 "FAIL: readback found asserted grants that don't "
                 "resolve TRUE in topaz. The apply lied — investigate.",
+                file=sys.stderr,
+            )
+            return 4
+
+        # A retirement is verified by exact key, not by the listing the plan was built from: a
+        # retired user the listing missed would otherwise pass as "nothing to do".
+        still_there = sorted(i for i in retired_ids if client.object_exists("user", i))
+        print(f"  retired_checked={len(retired_ids)}  retired_still_present={len(still_there)}")
+        if still_there:
+            print(
+                f"FAIL: retired users {still_there} still exist in topaz after apply.",
                 file=sys.stderr,
             )
             return 4

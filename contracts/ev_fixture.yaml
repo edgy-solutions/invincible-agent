@@ -6,8 +6,8 @@
 # READ BY THE ENGINE (ruled 2026-11-10). A dataset measure row names this contract
 # (`inputs.dataset.contract: ev_fixture`) and every read of the row's asset is held to it: the
 # required columns, each column's type, the key (`grain`) and the dependencies, by
-# agent_fleet/finance_agent/dataset_contracts.py and asset_inputs.check_contract_*. The FIN_DATASET_URN
-# read (`asset_inputs.state_from_rows`) still holds its own constants, and
+# agent_fleet/utils/dataset_contracts.py and its check_contract_*. The FIN_DATASET_URN read
+# (`asset_inputs.state_from_rows`) still holds its own constants, and
 # tests/finance/test_the_ev_contract_agrees_with_the_reader.py keeps those in agreement with this file.
 # The sandbox's refusal probes read dag-tools' planted-refusal assets under this contract too: they
 # are built to its shape and to break it.

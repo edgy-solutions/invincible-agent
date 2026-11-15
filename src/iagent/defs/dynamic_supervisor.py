@@ -45,6 +45,9 @@ if str(_BAML_CLIENT_PATH) not in sys.path:
 # stays only because other modules in this defs/ directory may still need
 # baml_client and rely on this entry being present.
 
+# Must precede the ops: `@step_spanned` decorates them at definition time.
+from iagent.trace_spans import current_span_id, step_spanned
+
 from dagster import (
     DynamicOut,
     DynamicOutput,
@@ -170,9 +173,12 @@ class SupervisorQueryConfig(Config):
     # Empty for older serialized runs / direct callers.
     trace_id: str = ""
     session_id: str = ""
+    # The BFF span's id; empty for older serialized runs and direct callers.
+    parent_span_id: str = ""
 
 
 @op(out=DynamicOut(Dict[str, Any]))
+@step_spanned("supervisor.create_task_plan")
 def create_task_plan(context, config: SupervisorQueryConfig):
     """
     Calls Engine O (Ontology Reasoner) to decompose a complex query into a
@@ -1490,6 +1496,9 @@ def _telemetry_headers(config, caller_token: str = "") -> Dict[str, str]:
       * RESTATE engines (E, and D) join on the ``trace_id`` BODY FIELD, because a durable
         handler reads the request body and never sees HTTP headers.
     Engine E's proxy exists precisely to translate the first into the second.
+
+    ``X-Parent-Span-Id`` is the current step span's id. The receiving engine passes it as
+    ``parent_span_id=``. engine-docs reads it.
     """
     headers: Dict[str, str] = {}
 
@@ -1578,6 +1587,10 @@ def _telemetry_headers(config, caller_token: str = "") -> Dict[str, str]:
 
     if getattr(config, "trace_id", ""):
         headers["X-Trace-Id"] = config.trace_id
+    # Only sent with a trace id: a parent without a seed is a counted miss on the receiver.
+    _parent = current_span_id()
+    if getattr(config, "trace_id", "") and _parent:
+        headers["X-Parent-Span-Id"] = _parent
     if getattr(config, "session_id", ""):
         headers["X-Session-Id"] = config.session_id
     return headers
@@ -2747,6 +2760,7 @@ def _log_no_verb_decision(
 
 
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
+@step_spanned("supervisor.execute_subtask")
 def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
     Execute a single decomposed sub-task by routing it through the
@@ -3814,6 +3828,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
 
 
 @op(ins={"results": In(List[Dict[str, Any]])}, out=Out(Dict[str, Any]))
+@step_spanned("supervisor.synthesize_stateful")
 def synthesize_stateful(context, config: SupervisorQueryConfig, results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Fans-in the results from all parallel sub-tasks and forwards them to
@@ -3854,6 +3869,7 @@ def synthesize_stateful(context, config: SupervisorQueryConfig, results: List[Di
 
 
 @op(ins={"results": In(List[Dict[str, Any]])}, out=Out(Any))
+@step_spanned("supervisor.generate_ui_payload")
 def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
     """
     Takes the aggregated results array from the Domain Agents and calls
