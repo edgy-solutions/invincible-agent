@@ -162,3 +162,20 @@ def test_supervisor_op_config_equals_what_launch_sends(gw, monkeypatch):
     want = gw._supervisor_op_config("q", "thr", **kw)
     got = json.loads(sent["variables"]["runConfig"])["ops"]["create_task_plan"]["config"]
     assert got == want
+
+
+def test_the_durable_launch_carries_the_callers_identity(gw, monkeypatch):
+    """The identity-hop seal (test_the_person_reaches_the_migrated_route) traces the Dagster
+    launcher only. On the durable path the caller's entitlement key travels through
+    `_answer_backend().launch` into the workflow body; this seals that hop."""
+    da, calls = _client(lambda r: httpx.Response(200, json={}))
+    monkeypatch.setenv("IAGENT_ANSWER_PATH", "durable")
+    monkeypatch.setattr(gw, "_DURABLE_ANSWERS", da)
+    kw = dict(domain="D", user_id="u", user_email="e@x", frontend_id="f", user_persona="P",
+              entitled_domains=["D"], entity_refs=["r"], slots={"a": 1}, trace_id="t1",
+              session_id="s1", task_plan_json="{}")
+    aid = asyncio.run(gw._answer_backend().launch("q", "thr", **kw))
+    [(path, body)] = calls
+    assert path == f"/SupervisorAnswer/{aid}/run/send"
+    assert body["user_email"] == "e@x"
+    assert body == gw._supervisor_op_config("q", "thr", **kw)
