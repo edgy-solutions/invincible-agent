@@ -9,10 +9,12 @@ derived from the database the chart provisions, not from the allow-list.
 
 ## Verdict
 
-**The census FAILS: the UNDECIDED bucket is not empty (2 classes).** Two table classes (Dagster's
-run storage, LangGraph's checkpoints) live in the same database and are readable by the sync
-service, but their DDL is a dependency's, not this repo's, so their columns were not read.
-Everything else is decided.
+**The census PASSES with an empty UNDECIDED bucket, over 38 tables** (12 provisioned by this repo, 22 Dagster,
+4 LangGraph), under one stated premise: path (c) counts every table the role can read as reachable, an
+upper bound; whether the role owns a given Dagster table at runtime is a cluster fact this file-only
+census cannot check (the evidence that would decide it: the table owner column of `pg_tables`). A first
+version of this report left the Dagster and LangGraph classes UNDECIDED; they are now read from the
+installed packages (section 3) and bucketed.
 
 The finding that matters: **path (c) is open for every table.** The BFF allow-list at #395 closes
 the browser path, but Electric itself runs unauthenticated, as a role that can read the whole
@@ -92,12 +94,46 @@ carry a domain or label.
 
 That is 12 tables, one row each above.
 
-Two further classes are not defined in this repo and are not enumerated by the chart:
+Two further classes are defined by dependencies, not by this repo. Their DDL was read from this
+worktree's own synced venv (`dagster-postgres` 0.28.20 / `dagster` 1.12.20 table definitions in
+`dagster/_core/storage/{runs,event_log,schedules}/schema.py`; `langgraph-checkpoint-postgres` 3.0.5
+`langgraph/checkpoint/postgres/base.py:38-74`). Both share the database and role Electric uses:
+`templates/dagster.yaml:50-53` sets `DAGSTER_POSTGRES_DB`/`USER` from the same `pgDatabase`/`pgUser`
+defines as everything else, and `GRAPH_HOST_POSTGRES_DSN` (`values.yaml:803`) is composed from the
+same `BPMN_POSTGRES_*` parts Electric's `DATABASE_URL` uses. Both create their tables as that role
+(`AsyncPostgresSaver.setup()` at `agent_fleet/graph_host/main.py:197`; Dagster's alembic storage init).
+Neither has a `produced_for_user_id` column.
 
-- Dagster run, event-log, schedule and asset storage. `templates/dagster.yaml:50-53` points
-  `DAGSTER_POSTGRES_DB` at the same database and role as everything else.
-- LangGraph checkpoint tables, created by `AsyncPostgresSaver` (`agent_fleet/graph_host/main.py:184`)
-  against the same database (`GRAPH_HOST_POSTGRES_DSN`, `values.yaml:803`).
+LangGraph (4 tables):
+
+| table | person columns | payload columns |
+| --- | --- | --- |
+| `checkpoints` | `thread_id` (a run id, not a user), `metadata` | `checkpoint` (JSONB graph state: conversation and intermediate content) |
+| `checkpoint_blobs` | none | `blob` (BYTEA channel values: content). The caller's bearer token is redacted before write by `agent_fleet/graph_host/identity_scrub.py`, so a credential should not be here; a JWT-shape predicate, not a seal on this path |
+| `checkpoint_writes` | none | `blob` (BYTEA pending writes: content) |
+| `checkpoint_migrations` | none | none |
+
+Dagster (22 tables). The caller identity reaches Dagster as run config: `gateway.py:9026-9037`
+launches `supervisor_query_job` with `user_query`, `user_id`, `user_email` and `user_persona`, so
+`runs.run_body` and the event log carry the question and the person.
+
+| table | person or payload columns |
+| --- | --- |
+| `runs` | `run_body` (run config: question, user id, email, persona), `pipeline_name`, `partition` |
+| `run_tags` | `key`, `value` (tags) |
+| `event_logs` | `event` (serialized event payloads and log messages), `run_id`, `asset_key` |
+| `snapshots` | `snapshot_body` (job structure) |
+| `bulk_actions` | `body` (backfill definition) |
+| `backfill_tags` | `key`, `value` |
+| `asset_keys` | `last_materialization`, `asset_details`, `tags`, `cached_status_data` (materialization metadata) |
+| `asset_event_tags` | `key`, `value` |
+| `asset_check_executions` | `evaluation_event` |
+| `asset_daemon_asset_evaluations` | `asset_evaluation_body` |
+| `job_ticks` | `tick_body` |
+| `jobs`, `instigators` | `job_body`, `instigator_body` (schedule and sensor definitions and cursors) |
+| `kvs` | `key`, `value` |
+| `daemon_heartbeats` | `body` (host and process info) |
+| `dynamic_partitions`, `concurrency_limits`, `concurrency_slots`, `pending_steps`, `secondary_indexes`, `instance_info`, `alembic_version` | no person column; keys and counters only (`run_id`, `step_key`) |
 
 ### Partition, path by path
 
@@ -109,9 +145,9 @@ does not.
 | bucket | (a) #395 allow-list | (b) master proxy | (c) in-cluster, no proxy |
 | --- | --- | --- | --- |
 | exposed and checked | `answer_artifact_projection`, `ingest_status_projection` (2) | `answer_artifact_projection`, `ingest_status_projection` (2) | none (0) |
-| exposed, unchecked | none (0) | `human_task_projection` (1): row-keyed on `recipient_id` but no label match on `payload` / `subject_ref`; the gap #395 closes by removing it | all 12 provisioned tables (12) |
-| not exposed | the other 10 tables, by allow-list (10) | the other 9 tables, by the missing `produced_for_user_id` column only (9) | none (0) |
-| UNDECIDED | Dagster class, LangGraph class (2) | the same 2 | the same 2 |
+| exposed, unchecked | none (0) | `human_task_projection` (1): row-keyed on `recipient_id` but no label match on `payload` / `subject_ref`; the gap #395 closes by removing it | all 38 tables (38) |
+| not exposed | the other 36, by allow-list (36) | the other 35, by the missing `produced_for_user_id` column only (35) | none (0) |
+| UNDECIDED | none (0) | none (0) | none (0) |
 
 Per table:
 
@@ -121,19 +157,19 @@ Per table:
 | `ingest_status_projection` | checked: allow-list row, WHERE submitter or on-behalf-of = authz id | checked: `:18054-18058` | unchecked |
 | `human_task_projection` | not exposed: refused, no row | exposed-unchecked for content: `:18046-18052` filters on recipient only | unchecked |
 | `projector_cursor`, `projector_skip_log`, `bpmn_catalog`, `routing_fault`, `ingest_processable_kinds`, `case_summary`, `document_decision_record`, `frontend_menu`, `user_canvas` | not exposed: refused | not exposed by accident: WHERE names a column they lack | unchecked (`routing_fault`, `user_canvas`, `document_decision_record`, `case_summary` name people; `projector_skip_log.exception_message` can echo content) |
-| Dagster tables | not exposed: refused (by name) | UNDECIDED whether any has a `produced_for_user_id` column; the dependency's schema was not read | unchecked if the role owns them; UNDECIDED which columns carry people |
-| LangGraph checkpoint tables | not exposed: refused | UNDECIDED, same reason | unchecked if owned; checkpoints hold conversation state, so assume content |
+| 22 Dagster tables | not exposed: refused (by name) | not exposed by accident: no `produced_for_user_id` column in any of them | unchecked: `runs.run_body`, `run_tags`, `event_logs` carry the question, user id and email |
+| 4 LangGraph tables | not exposed: refused (by name) | not exposed by accident: no `produced_for_user_id` column | unchecked: `checkpoints.checkpoint`, `checkpoint_blobs.blob`, `checkpoint_writes.blob` hold graph state, i.e. content |
 
-Totals across the 12 provisioned tables:
+Totals across all 38 tables (12 provisioned, 22 Dagster, 4 LangGraph):
 
-- path (a): 2 exposed-and-checked, 0 exposed-unchecked, 10 not exposed.
-- path (b): 2 exposed-and-checked, 1 exposed-unchecked, 9 not exposed (accidental).
-- path (c): 0 exposed-and-checked, 12 exposed-unchecked, 0 not exposed.
-- UNDECIDED: 2 classes, on every path. Nonempty, so the census fails.
+- path (a): 2 exposed-and-checked, 0 exposed-unchecked, 36 not exposed.
+- path (b): 2 exposed-and-checked, 1 exposed-unchecked, 35 not exposed (accidental).
+- path (c): 0 exposed-and-checked, 38 exposed-unchecked, 0 not exposed.
+- UNDECIDED: 0 on every path.
 
-How to close the UNDECIDED bucket: list the two dependencies' table names and columns from their
-installed packages in a synced venv (read the DDL, do not run it), and re-bucket. The (c) result will
-not change; the (a) and (b) results for them follow from the name check and the column check.
+Premise on (c): the count is an upper bound. Electric needs to own or be able to publish a table;
+the role created the Dagster and LangGraph tables, so the census assumes it can. Evidence that would
+shrink (c): `pg_tables.tableowner` for each table on a live database (not read here).
 
 ## 4. Who can reach what
 
@@ -172,9 +208,10 @@ not change; the (a) and (b) results for them follow from the name check and the 
 5. **Close path (b)'s accidental refusal.** Move #395 to master (it removes the `else` that builds a
    WHERE on a column most tables lack), and treat the schema-qualified-name bypass of the archive
    clause as fixed by the exact-match refusal at `:18048`.
-6. **Read and bucket the two UNDECIDED classes.** Enumerate Dagster's and LangGraph's tables from the
-   installed packages; consider moving Dagster to its own database, which removes the class from
-   the sync role's reach at no cost to Dagster.
+6. **Move Dagster, and the LangGraph checkpoints, out of the sync role's reach.** They add 26 of the 38
+   tables, including `runs.run_body` with each question, user id and email. A separate database or role
+   for Dagster removes 22 tables from path (c) at no cost to the sync stream; recommendation 3 would
+   remove all 26 as a side effect.
 7. **Remove or correct the sandbox `VITE_ELECTRIC_URL` line and its comments** (`values-sandbox.yaml`
    `:762-767`, `:866-886`) so the values file stops describing a direct browser path the chart does
    not provide. #395 already removes the variable; the comment at `:866` needs the same.
