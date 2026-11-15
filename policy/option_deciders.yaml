@@ -36,7 +36,7 @@
 #   * RULING 3, verbatim: "Options live on the decide step of the workflow definition
 #     (`steps[id=...].options`, the SDK's WorkflowDefinition). The three hard-coded option lists retire when
 #     the runner reads the step -- item for 74, after the Socratic bar work."
-#   * MEASURED: SDK v0.9.16 through v0.9.19 (the fleet pin) carry `HumanAwaitStep.options`, option ids (no
+#   * MEASURED: SDK v0.9.16 through v0.9.20 (the fleet pin) carry `HumanAwaitStep.options`, option ids (no
 #     whitespace, no `:`, no `.`, none twice), refused on a grouped await.
 #
 # No reader applies this file, and its options are not checked for membership, until a workflow
