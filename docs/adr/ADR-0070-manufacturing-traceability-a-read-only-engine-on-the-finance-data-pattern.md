@@ -1,12 +1,13 @@
 # ADR-0070 — Manufacturing traceability: a read-only engine on the finance data pattern
 
-**Status:** Proposed (Lane 1, 2026-11-13). This is design only: there is no code and no roll. It
+**Status:** Proposed (Lane 1, 2026-11-13); its five questions ruled by the architect on 2026-11-14
+(section 10), not ratified. This is design only: there is no code and no roll. It
 answers the architect's mfg-trace dispatch of 2026-11-11 (`sessions/2026-11-11-dispatch-mfg-trace.md`,
 #359), and it allocates the number 0070. 0066 is reserved for "contracts are data" (ADR-0065:18),
 0068 is the edge-tier draft and 0069 is the accepted export template.
 **Date:** 2026-11-13
 **Deciders:**
-- the architect, for the verbs, the disclosure rule and the open questions in section 10;
+- the architect, for the verbs, the disclosure rule and the questions in section 10 (ruled 11-14);
 - gov, for the rails, the census and the personal-data handling of the operator column;
 - the program's manufacturing owner, for the vocabularies, rules and part-to-program rows a deployment
   supplies.
@@ -235,7 +236,7 @@ How the verbs apply it:
   - Downward: a visible node with one or more invisible children carries `children_withheld: true`.
     The invisible children are absent, and so is everything below them.
   - Upward: the chain stops at the last visible ancestor, which carries `parent_withheld: true`.
-    This is the same rule applied to the other direction; see question 10.3.
+    This is the same rule applied to the other direction, accepted on 2026-11-14 (section 10.3).
 - **`mesh:containment`.**
   - A level's count counts visible units only.
   - A level that lost any unit to visibility carries `children_withheld: true`, with no count of
@@ -330,19 +331,24 @@ is a dead row.
 - the projection into the product-structure graph, so that obsolescence where-used and containment
   share one walk.
 
-## 10. Questions for a ruling
+## 10. Rulings (the architect, 2026-11-14)
 
-1. **Is `scope` mandatory in the shared reader?** fin's packet of 11-11 asks this. `ingest_status`
-   and `test_measurement` have no single column for the scope to be pushed into; the part arrives by
-   join. **Proposed: (b).** `scope` becomes optional in the shared reader, and engine-fin's load check
-   still requires it. fin's behaviour is unchanged, and this engine declares its scope join in the
-   verb row.
-2. **The verb names.** Proposed: `mesh:` plus the dispatch's names, with `search` renamed to
-   `mesh:mfgSearch`.
-3. **The upward half of disclosure.** The ruling names children. Proposed: a chain stopped at an
-   invisible parent carries `parent_withheld: true` under the same rule (no identity, no count), and
-   the register's parent link does the same.
-4. **The operator column.** Proposed: it is omitted from every phase 1 answer. In phase 2 it appears
+The five questions this record asked were ruled on 2026-11-14. The record is still Proposed: the
+rulings settle its open questions, and they do not ratify it.
+
+1. **`scope` is never optional.** The proposal was (b): optional in the shared reader. It was
+   **not accepted**. Every contract declares its scope column, and a contract with no single scope
+   column says `scope: none`, the form fin built in #383. The shared reader refuses a missing or null
+   `scope`. So `ingest_status` and `test_measurement`, whose part arrives by join, declare
+   `scope: none`, and this engine declares its scope join in the verb row. engine-fin is unchanged.
+2. **The verb names: accepted.** `mesh:` plus the dispatch's names, with `search` as
+   `mesh:mfgSearch` (section 3).
+3. **The upward half of disclosure: accepted.** A chain stopped at an invisible parent carries
+   `parent_withheld: true` under the same rule as `children_withheld` (no identity, no count), and
+   the register's parent link does the same (section 4).
+4. **The operator column: accepted.** It is omitted from every phase 1 answer. In phase 2 it appears
    only to a caller entitled on its ADR-0064 dimension. gov confirms the handling against the
    dimensions rail.
-5. **The engine and lane names** in section 7.
+5. **The engine and lane names: accepted.** `engine-mt`, `agent_fleet/mfg_trace_agent/`,
+   `invincible-agent/lane/mt`, and the hooks row `ia-mt` (section 7). The names are still reserved
+   only, until the lane's first PR adds them to the registries.
