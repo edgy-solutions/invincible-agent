@@ -373,7 +373,20 @@ externalRestate:
 dagster:
   # Instance config, rendered into the `<release>-dagster-home` ConfigMap (templates/
   # dagster-instance.yaml) and mounted as dagster.yaml.
-  maxConcurrentRuns: 2
+  #
+  # RUN SLOTS BY CODE LOCATION (architect, 2026-11-14; numbers from lane/perf's run census of
+  # 4,244 runs). A tag limit can only cap runs below the global limit; it cannot reserve one.
+  # So answers get slots of their own only when the global limit is the SUM of the rows and
+  # every location that launches runs has a row. Every run already carries the system tag
+  # `dagster/code_location`. Answers (`supervisor_query_job`) run in `iagent`; prime's
+  # ontology ingests run in `doc-tools`, so ingest concurrency is that row's limit.
+  # Adding a code location without a row lets it take any free slot of the global limit.
+  maxConcurrentRuns: 6
+  runTagConcurrencyLimits:
+    - {key: dagster/code_location, value: iagent, limit: 2}
+    - {key: dagster/code_location, value: doc-tools, limit: 2}
+    - {key: dagster/code_location, value: pub-tools, limit: 1}
+    - {key: dagster/code_location, value: dag-tools, limit: 1}
   runMonitoring:
     enabled: true
     startTimeoutSeconds: 600
@@ -1404,7 +1417,7 @@ primeSubstrate:
   # work it waited on, so a prime timed out on a queue that had not failed.
   #
   #   ingests launched per prime      15   (prime_databases.py partition set)
-  #   dagster max_concurrent_runs      2   (.Values.dagster.maxConcurrentRuns)
+  #   doc-tools run slots              2   (.Values.dagster.runTagConcurrencyLimits)
   #   => serialised batches            8
   #   observed throughput   10 runs / 1800s  ~= 6 min per run-slot   (measured, this cluster)
   #   => all 15                     ~45 min = 2700s
