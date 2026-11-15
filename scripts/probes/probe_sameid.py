@@ -7,13 +7,22 @@ Three questions in one trace:
   Q2 idempotence    - same body.id emitted TWICE (distinct envelope ids): upsert or append?
   Q3 interop        - does an OTel-emitted child with parent_span_id=B nest under the
                       ingestion-created observation B (emitted AFTER the child)?
+
+KEPT AS THE RECORD, NOT RE-RUNNABLE ON CLOUD: the write leg posts to the legacy
+`/api/public/ingestion`, which Langfuse Cloud removed on 2026-11-16. (OTel cannot set a span's
+own id, so there is no OTLP form of Q1/Q2.) It still runs against a self-hosted server that
+keeps legacy ingestion. The read-back leg is on v2 observations (`_lf_v2.py`).
 """
 import os, json, time, datetime, uuid
 import requests
 from requests.auth import HTTPBasicAuth
 
-HOST = os.environ["LANGFUSE_HOST"].rstrip("/")
+HOST = (os.environ.get("LANGFUSE_BASE_URL") or os.environ["LANGFUSE_HOST"]).rstrip("/")
 AUTH = HTTPBasicAuth(os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"])
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from _lf_v2 import observations as _v2_observations  # noqa: E402
 
 SEED = "adr0038-sameid-probe-0805"
 BOUNDARY_ID = "beef0000beef0001"          # fixed 16 lowercase hex - valid otel span id shape
@@ -75,12 +84,11 @@ for attempt in (1, 2):
 counts = {}
 for i in range(12):
     time.sleep(5)
-    r = requests.get(f"{HOST}/api/public/observations", auth=AUTH,
-                     params={"traceId": TRACE_ID, "limit": 100}, timeout=30)
-    if r.status_code != 200:
-        print(f"readback http={r.status_code}")
+    status, _obs = _v2_observations(trace_id=TRACE_ID, max_pages=1)
+    if status != 200:
+        print(f"readback http={status}")
         continue
-    data = r.json().get("data", [])
+    data = _obs
     counts = {}
     for o in data:
         counts[o.get("name")] = counts.get(o.get("name"), 0) + 1
