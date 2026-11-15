@@ -3,15 +3,17 @@ import os, json
 import requests
 from requests.auth import HTTPBasicAuth
 
-HOST = os.environ["LANGFUSE_HOST"].rstrip("/")
+HOST = (os.environ.get("LANGFUSE_BASE_URL") or os.environ["LANGFUSE_HOST"]).rstrip("/")
 AUTH = HTTPBasicAuth(os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"])
 TRACE_ID = "38d2ff41359c925a1bf26a5f50696aa4"
 BOUNDARY_ID = "beef0000beef0001"
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from _lf_v2 import observations as _v2_observations  # noqa: E402
 
-r = requests.get(f"{HOST}/api/public/observations", auth=AUTH,
-                 params={"traceId": TRACE_ID, "limit": 100}, timeout=30)
-data = r.json().get("data", [])
-print(f"http={r.status_code} total_observations={len(data)}")
+status, data = _v2_observations(trace_id=TRACE_ID, fields="core,basic,metadata")
+print(f"http={status} total_observations={len(data)}")
 for o in data:
     print(json.dumps({
         "name": o.get("name"),
