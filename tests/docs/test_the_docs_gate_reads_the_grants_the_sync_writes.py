@@ -23,6 +23,7 @@ import pathlib
 import re
 import sys
 
+import httpx
 import pytest
 import yaml
 
@@ -84,15 +85,9 @@ def _decider(relations: set):
                  == (json["object_type"], json["object_id"], via,
                      json["subject_type"], json["subject_id"])
                  for r in relations)
-
-        class _R:
-            def raise_for_status(self):
-                pass
-
-            def json(self):
-                return {"check": ok}
-
-        return _R()
+        # A real httpx.Response, so the double answers whatever `can_invoke` reads of the wire
+        # (status_code since the 11-03 outage arm), not only the two methods it read before.
+        return httpx.Response(200, json={"check": ok}, request=httpx.Request("POST", url))
     return post
 
 
