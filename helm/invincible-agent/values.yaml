@@ -161,7 +161,21 @@ global:
     # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
     # fb3162a..6a441d9 changes src/ (and sessions/) only: no Dockerfile, package.json or build.yml
     # change, and no import.meta.env read added. 0d5a59d is sessions-only and builds no image.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:c40487815f41132292043077d431cc25d13d1f24df9572e2d6a004f868abf2ab"
+    # RE-PINNED FOR 0.4.89 (dispatch 2026-11-14: "0.4.89 train: ... cortex's image"; cortex-ui/master's
+    # packet names this build): cortex-ui 6a441d9 -> 312064b65b15d7b2a11ff5084ebbfd764955c8ff, digest
+    # cf5596bb, built with PRODUCER_REF 581d5a60 (#386's head, which merged unchanged). It adds:
+    # - tasks read ONLY from GET /me/queue (the list) and GET /me/needs_you (the counts); the Electric
+    #   `human_task_projection` subscription is gone (4000d92). NEEDS a BFF carrying #386: behind an
+    #   older one both routes 404 and every viewer's Tasks badge reads "unavailable";
+    # - entitlements read once per session, refreshed on a timer or after a 403 (e24e21e);
+    # - "Select by range" in the Export as... dialog, behind `exportRange` (7d31ed7; see VITE_FEATURES
+    #   in values-sandbox.yaml);
+    # - the /task/{task_id} deep link (312064b).
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
+    # 6a441d9..312064b changes src/, e2e/, fixtures/, docs/, scripts/, sessions/ and build.yml's
+    # PRODUCER_REF only: no Dockerfile or package.json change, and no import.meta.env read added.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:cf5596bbd67bd88252abf72b4e470af0e423ec68c32f13d55fb8bbdec631c535"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
