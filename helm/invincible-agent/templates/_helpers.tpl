@@ -881,3 +881,105 @@ of existingSecret / existingConfigMap; caPem was removed. Called from keycloak.y
   value: "true"
 {{- end }}
 {{- end -}}
+
+{{/*
+The overlay-directory variables the ENGINE PODS see, as shell `export` lines for a sync Job.
+
+WHY: "which export profiles does this deployment know" is a question about the overlay the pods
+load (the same variables the engines' loaders read). The sync Jobs run the image, which sees only
+its base profiles, so capability_grant_sync could not tell a misspelt `can_export:<name>` from an
+overlay profile (architect 2026-11-11). This gives the Job what the pods get, with no profile or
+variable named here: every `*_OVERLAY_DIRS` entry of agentFleet.env (the shared pod config, which
+is where the sandbox points at the sample overlay), then, when policyOverlay is on and the Job reads
+the policy repo (mode git), every dir policyOverlay copies into any pod, at the path the pod's
+variable would hold. policyOverlay is applied last, as it is on a pod: its variable replaces the
+shared one. A dir the repo lacks is skipped (a pod whose required dir is missing refuses to start;
+the Job only needs the names).
+
+Call: {{ include "invincible-agent.podOverlayEnv" (dict "root" $ "mode" $mode) | nindent N }}
+*/}}
+{{- define "invincible-agent.podOverlayEnv" -}}
+{{- $v := .root.Values -}}
+{{- range $k, $val := ($v.agentFleet.env | default dict) }}
+{{- if hasSuffix "_OVERLAY_DIRS" $k }}
+export {{ $k }}={{ $val | toString | quote }}
+{{- end }}
+{{- end }}
+{{- if and $v.policyOverlay.enabled (eq .mode "git") }}
+{{- $repo := printf "/overlay-src/repo%s" (ternary (printf "/%s" ($v.policyOverlay.path | default "")) "" (ne ($v.policyOverlay.path | default "") "")) }}
+{{- range $comp, $rows := $v.policyOverlay.components }}
+{{- range $rows }}
+if [ -d "{{ $repo }}/{{ .dir }}" ]; then export {{ .env }}="{{ $repo }}/{{ .dir }}"; fi
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
+The request body that creates one declared service client (POST /clients). One definition, two
+callers: realm-reconcile-job.yaml puts it INLINE for a client with no secretRef, and in the
+realm-reconcile-bodies Secret (a file the script sends with -d @file) for a client that carries a
+"secret". Call: include "invincible-agent.realmReconcileSvcBody" (dict "c" $c "root" $ "claim" $claim "bffAud" $bffAud)
+*/}}
+{{- define "invincible-agent.realmReconcileSvcBody" -}}
+{{- $c := .c }}{{- $claim := .claim }}{{- $bffAud := .bffAud }}
+{{- $kind := $c.kind | default "service" }}
+{{- $secret := "" }}
+{{- if $c.secretRef }}{{- $secret = get .root.Values.keycloak $c.secretRef }}{{- end -}}
+{
+                    "clientId": {{ $c.clientId | quote }},
+                    "enabled": true,
+                    "publicClient": false,
+                    "serviceAccountsEnabled": true,
+                    "standardFlowEnabled": false,
+                    "directAccessGrantsEnabled": false,
+                    {{- if $c.secretRef }}
+                    "secret": {{ $secret | quote }},
+                    {{- end }}
+                    "protocolMappers": [{
+                      "name": "authz-id-svc",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-hardcoded-claim-mapper",
+                      "config": {
+                        "claim.name": {{ $claim | quote }},
+                        "claim.value": {{ $c.authzId | quote }},
+                        "jsonType.label": "String",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "userinfo.token.claim": "true"
+                      }
+                    }{{ if eq $kind "delegate" }},{
+                      "name": "initiator-kind-svc",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-hardcoded-claim-mapper",
+                      "config": {
+                        "claim.name": "initiator_kind",
+                        "claim.value": "delegate",
+                        "jsonType.label": "String",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "userinfo.token.claim": "true"
+                      }
+                    }{{ end }}
+                    {{- if $bffAud }},{
+                      "name": "audience-bff",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-audience-mapper",
+                      "config": {
+                        "included.custom.audience": {{ $bffAud | quote }},
+                        "access.token.claim": "true",
+                        "id.token.claim": "false"
+                      }
+                    }
+                    {{- end }}]
+                  }
+{{- end }}
+
+{{/*
+The hook phase of the realm reconcile and the two objects it mounts. A fresh install creates Keycloak
+in this very release, so the reconcile must run AFTER it (post-install). An upgrade has a running
+Keycloak already, and the reconcile must land BEFORE any workload changes (pre-upgrade).
+*/}}
+{{- define "invincible-agent.realmReconcileHookPhase" -}}
+{{- if .Release.IsInstall }}post-install{{- else }}pre-upgrade{{- end }}
+{{- end }}

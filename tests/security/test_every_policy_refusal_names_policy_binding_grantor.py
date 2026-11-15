@@ -354,6 +354,9 @@ NOT_POLICY: dict[str, str] = {
     f"{ER}::Repo.merge::target_moved": CONFLICT,
     f"{ER}::Repo.merge::merge_conflict": CONFLICT,
     f"{ER}::Repo.merge::missing_trailers": REPO_CHECK,
+    # 2026-11-13: check 6 under a `review: closed` row (sessions/: placed, never committed). No grant
+    # lifts it; only a diff that touches no closed path merges.
+    f"{ER}::Repo.merge::path_closed": REPO_CHECK,
     f"{ER}::Repo.merge::secret_in_diff": REPO_CHECK,
     f"{ER}::Repo.merge::customer_context_in_diff": REPO_CHECK,
     f"{ER}::Repo.merge::customer_terms_absent": REPO_UNCONFIGURED,

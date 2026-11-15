@@ -38,3 +38,23 @@ def _the_directory_says_every_caller_holds_the_sample_cell(request, monkeypatch)
 def no_default_directory():
     """Ask for this and the autouse default above stands down."""
     return None
+
+
+# The `can_export` rail on `/cdrl_export` (`_cdrl_can_export_or_refuse`) came after these tests too.
+# Each of them that builds a CDRL is about the file, the program check or the cells, so it runs with
+# a rail that grants every caller every profile. The arms that ARE about the rail
+# (`test_the_cdrl_export_reads_the_can_export_rail.py`) set their own double over this one, and a
+# test that wants the real, unconfigured rail (deny by default) asks for `no_default_export_grant`.
+@pytest.fixture(autouse=True)
+def _the_rail_grants_every_caller_every_export_profile(request, monkeypatch):
+    if "no_default_export_grant" in request.fixturenames:
+        return
+    for m in _engine_modules():
+        if hasattr(m, "can_export"):
+            monkeypatch.setattr(m, "can_export", lambda profile_name, caller_id, **kw: True)
+
+
+@pytest.fixture
+def no_default_export_grant():
+    """Ask for this and the autouse grant above stands down."""
+    return None

@@ -16,6 +16,7 @@ inputs:
   dataset:
     urn: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
     banner: "SYNTHETIC earned-value fixture, not a real program."
+    contract: ev_fixture
     scope: program_id
     period: period
     status: status_period

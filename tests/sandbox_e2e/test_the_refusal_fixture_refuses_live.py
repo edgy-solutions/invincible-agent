@@ -10,10 +10,8 @@ WHAT IT PROVES ON THE RUNNING CLUSTER, through `POST /finance/measure/{fn}`:
            `access_denied` naming the asset, and no figure
 
 EXPECTED and its cells are imported from tests/finance/test_the_refusal_probes_refuse_as_derived.py,
-so there is one table. Four planted cases are OWED a dataset-contract refusal (ruled 2026-11-10).
-Each of their legs is a strict xfail asserting the refusal, never a pass: a 200 is the expected
-failure, anything else but the refusal is a hard red, and the refusal itself XPASSes red until the
-PR that declares it names its rule in the seal.
+so there is one table. Every probe reads under the dataset contract its row names, so every planted
+case but the control refuses on some probe, by the rule the seal names.
 
 SKIPPED UNTIL THE ROLL, AND A SKIP IS NOT A PASS. `missing_preconditions` names everything still
 missing, so the skip retires itself. Run with `-rsxX`. It needs: the rail (grants and membership)
@@ -50,16 +48,13 @@ from tests.sandbox_e2e.test_variance_set_reads_the_ev_fixture import (  # noqa: 
 
 DEFAULT_CONFIG = HERE / "refusal_probes_live.yaml"
 DEFAULT_POLICY = REPO / "policy"
-#: A problem no xfail may absorb: the leg answered neither as today nor with the owed refusal.
-HARD = "HARD "
-
 
 def load_case(path: Path = DEFAULT_CONFIG) -> dict:
     return _yaml(str(path))
 
 
 def seal():
-    """The offline seal: EXPECTED, OWED, cells(), scope_of and SERIES are its, imported, never restated."""
+    """The offline seal: EXPECTED, cells(), scope_of and SERIES are its, imported, never restated."""
     from tests.finance import test_the_refusal_probes_refuse_as_derived as s
     return s
 
@@ -139,16 +134,7 @@ def _name(body: Any) -> str:
 
 def answer_problems(status: int, body: Any, urn: str, reader_rule: Optional[str], banner: str) -> list[str]:
     """A 200 from the probe's own asset when `reader_rule` is None, a 502 naming exactly it when it is
-    a rule, and for OWED a contract refusal naming any rule: a 200 there is the owed gap, anything
-    else is HARD."""
-    if reader_rule is seal().OWED:
-        detail = body.get("detail") if isinstance(body, dict) else None
-        if status == 502 and isinstance(detail, dict) and detail.get("error") == "asset_contract_violation" \
-                and detail.get("rule"):
-            return []
-        if status == 200:
-            return ["answered 200: the contract refusal is owed"]
-        return [f"{HARD}expected 200 or the owed refusal, got {status} {_name(body)}".rstrip()]
+    a rule."""
     if reader_rule is not None:
         if status != 502 or _name(body) != reader_rule:
             return [f"expected 502 {reader_rule}, got {status} {_name(body)}".rstrip()]
@@ -253,9 +239,6 @@ def test_each_planted_case_answers_live_as_offline(live, first, rule, fn, reader
     if not_run_after(first):
         pytest.fail(not_run_after(first))
     problems = case_problems(CASE, *live, rule, fn, reader_rule)
-    hard = [p for p in problems if HARD in p]
-    if hard:
-        pytest.fail("\n".join(hard))
     assert not problems, "\n".join(problems)
 
 

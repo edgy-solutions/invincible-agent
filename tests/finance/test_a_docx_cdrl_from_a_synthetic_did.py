@@ -214,12 +214,12 @@ def test_5_the_bff_picker_lists_what_engine_fin_serves(served, monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
-        async def get(self, url, headers=None):
+        async def get(self, url, params=None, headers=None):
             assert url.startswith(gw._ENGINE_FIN_URL)
-            return c.get(url[len(gw._ENGINE_FIN_URL):], headers=headers)
+            return c.get(url[len(gw._ENGINE_FIN_URL):], params=params, headers=headers)
 
     monkeypatch.setattr(gw.httpx, "AsyncClient", _Client)
     got = asyncio.run(gw.export_cdrl_profiles(_Req(), _User()))
-    assert got == c.get("/cdrl_profiles").json()
+    assert got == c.get("/cdrl_profiles", params={"user_email": _User.authz_id}).json()
     row = next(p for p in got if p["name"] == NAME)
     assert row["label"] == _raw()["label"] and row["format"] == "docx"

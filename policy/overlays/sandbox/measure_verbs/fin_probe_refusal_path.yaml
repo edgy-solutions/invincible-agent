@@ -20,6 +20,7 @@ inputs:
   dataset:
     urn: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_refusal_fixture,PROD)"
     banner: "SYNTHETIC rows planted to be refused, not a real program."
+    contract: ev_fixture
     levels: [program_id, control_account, work_package]
     value: {minus: [eac, bac]}
     per_path: once

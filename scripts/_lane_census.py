@@ -18,9 +18,11 @@ scheduler; this gives them the list.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -40,14 +42,23 @@ def _age(epoch: str) -> str:
     return f"{int(days)}d"
 
 
-def _commit_epoch(repo: Path, path: str) -> float | None:
-    """Seconds-since-epoch for `path`'s last commit in `repo`, or None if it has never been
-    committed there. This is `unanswered_over`'s `age_of` -- an untracked file has no commit log
-    at all, so `_git` returns "" and this returns None rather than guessing a time, which is what
-    keeps an uncommitted packet from being measured as "fresh" (see that function's docstring)."""
-    out = _git(repo, "log", "-1", "--format=%ct", "--", path)
+_FILENAME_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
+
+
+def _packet_epoch(path: str) -> float | None:
+    """Seconds-since-epoch of the `YYYY-MM-DD` that opens a packet's FILENAME (UTC midnight), or None
+    when the name carries no valid date. This is `unanswered_over`'s `age_of` and every printed age.
+
+    Ruled 2026-11-12/13: session files are placed, never committed, so a packet has no commit log;
+    dating by commit time read every packet as `?` and dropped it from UNANSWERED. Same rule as
+    `scripts/inbox_census_repos.py` (`iagent_pure.inbox_repos.filename_date`), restated here
+    because this script imports nothing from the tree it scans. None, never a guessed time, so an
+    undated packet is never measured as fresh."""
+    m = _FILENAME_DATE.match(Path(path).name)
+    if not m:
+        return None
     try:
-        return float(out) if out else None
+        return datetime(int(m[1]), int(m[2]), int(m[3]), tzinfo=timezone.utc).timestamp()
     except ValueError:
         return None
 
@@ -113,7 +124,7 @@ def report_lanes(repo: Path) -> None:
         lr = _git(repo, "rev-list", "--left-right", "--count", f"origin/master...{b}") or "? ?"
         behind, ahead = (lr.split() + ["?", "?"])[:2]
         mine = unread.get(lane, [])
-        ages = ", ".join(_age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)) for p in mine)
+        ages = ", ".join(_age(_packet_epoch(p.path)) for p in mine)
         note = f"{len(mine)} unread ({ages})" if mine else "inbox clear"
         print(f"        ia-{lane:<4} last commit {_age(last):>4}  behind {behind:>3} ahead "
               f"{ahead:>3}  {note}")
@@ -121,7 +132,7 @@ def report_lanes(repo: Path) -> None:
         # picked up work someone is waiting on, and the architect is the only one who can open
         # or poke a session.
         for p in mine:
-            if not _age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)).endswith("h"):
+            if not _age(_packet_epoch(p.path)).endswith("h"):
                 standing += 1
 
     # NO BRANCH: the general case of the `doc-tools`/`iagent-mesh-sdk` defect. Any lane-kind
@@ -133,11 +144,11 @@ def report_lanes(repo: Path) -> None:
     for lane, mine in sorted(unread.items()):
         if lane in known_lanes:
             continue
-        ages = ", ".join(_age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)) for p in mine)
+        ages = ", ".join(_age(_packet_epoch(p.path)) for p in mine)
         print(f"        NO BRANCH  {lane:<12} {len(mine)} unread ({ages}) — addressed to a lane "
               f"this repo does not have")
         for p in mine:
-            if not _age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)).endswith("h"):
+            if not _age(_packet_epoch(p.path)).endswith("h"):
                 standing += 1
 
     # SEATS: the lane-less ones, ruled 2026-09-26. Enumerated from the PACKETS, because a seat owns
@@ -147,10 +158,10 @@ def report_lanes(repo: Path) -> None:
     # have printed nowhere at all — a gap the census had been built specifically to end, reopened by
     # the fix for a different gap one door over.
     for seat, mine in sorted(unread_by_seat(packets).items()):
-        ages = ", ".join(_age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)) for p in mine)
+        ages = ", ".join(_age(_packet_epoch(p.path)) for p in mine)
         print(f"        seat/{seat:<12} no branch, no commit age  {len(mine)} unread ({ages})")
         for p in mine:
-            if not _age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)).endswith("h"):
+            if not _age(_packet_epoch(p.path)).endswith("h"):
                 standing += 1
 
     # EXTERNAL: recipients in ANOTHER repo -- `doc-tools/lane/7f`, `openddil`'s agent. This is NOT
@@ -164,7 +175,7 @@ def report_lanes(repo: Path) -> None:
         print(f"\n        EXTERNAL: {len(externals)} recipient(s) in other repos -- what we sent, "
               f"not what they read.")
         for addressee, mine in sorted(externals.items()):
-            ages = ", ".join(_age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)) for p in mine)
+            ages = ", ".join(_age(_packet_epoch(p.path)) for p in mine)
             print(f"        {addressee:<28} {len(mine)} packet(s) ({ages})")
 
     # ADDRESS FORM: STATE, printed every run. The ruled form is `<repo>/<branch>` (2026-10-07); a
@@ -195,7 +206,7 @@ def report_lanes(repo: Path) -> None:
 
     if standing:
         print(f"        {standing} packet(s) unread for more than a day. Reading is an ACT: the "
-              f"recipient commits `read-by: ia-<lane>/lane/<lane> <date>` — or `read-by: "
+              f"recipient writes `read-by: ia-<lane>/lane/<lane> <date>` — or `read-by: "
               f"<repo>/seat/<name> <date>` — to the packet. Delivery is the inbox, reading is the "
               f"stamp, and both are on the rail.")
 
@@ -204,14 +215,14 @@ def report_lanes(repo: Path) -> None:
     # seat sharing a bare name never share a row -- see `unanswered_over`.
     unanswered, undecided = unanswered_over(
         packets, now=time.time(),
-        age_of=lambda path: _commit_epoch(repo, path),
+        age_of=_packet_epoch,
     )
     if unanswered:
         print(f"\n        UNANSWERED >48h: {sum(len(v) for v in unanswered.values())} packet(s), "
               f"{len(unanswered)} addressee(s). Answered = a `read-by` stamp OR a later reply; "
               f"neither has happened yet.")
         for (kind, addressee), mine in sorted(unanswered.items())[:15]:
-            ages = ", ".join(_age(_git(repo, "log", "-1", "--format=%ct", "--", p.path)) for p in mine)
+            ages = ", ".join(_age(_packet_epoch(p.path)) for p in mine)
             print(f"        {kind}/{addressee:<24} {len(mine)} unanswered ({ages})")
         if len(unanswered) > 15:
             print(f"        ... and {len(unanswered) - 15} more addressee(s)")
@@ -228,13 +239,17 @@ def report_lanes(repo: Path) -> None:
     # worktree's uncommitted packets as a clean zero; see docs/measurements/2026-09-28-the-inbox-
     # census-and-the-third-state-is-not-where-the-dispatch-put-it.md §1 and §3. Never printed as a
     # zero: a branch with no local worktree gets its own UNENUMERABLE line instead of silence.
+    # Since 2026-11-12 `sessions/` is gitignored (packets are placed, never committed), so the
+    # untracked listing alone hid EVERY packet; the ignored listing is read too, and the two are
+    # one set. Every placed packet is "not committed" now, by ruling: this block counts them.
     worktrees = _worktrees(repo)
     seen: dict = {}
     first = True
     for wt_path, _branch in worktrees:
         try:
-            files = [f for f in _git(Path(wt_path), "ls-files", "--others", "--exclude-standard",
-                                      "sessions/").splitlines() if f]
+            files = sorted({f for flags in (("--exclude-standard",), ("--ignored", "--exclude-standard"))
+                            for f in _git(Path(wt_path), "ls-files", "--others", *flags,
+                                          "sessions/").splitlines() if f})
         except (OSError, subprocess.SubprocessError):
             continue
         if files:

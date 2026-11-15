@@ -96,15 +96,26 @@ differences under `inputs` and `render`:
 
 - `inputs.params` is `program_id` only (`window` is refused: this kind has no period axis).
 - `inputs.dataset` holds `urn` (a `urn:li:dataset:...` URN, read as the caller; `FIN_DATASET_URN` is
-  not consulted), `banner` (required, shown beside every answer), `levels` (at least two distinct
-  column names, root first; the root column is selected by `program_id`), `value` and optionally
-  `per_path`. `value` is a numeric column that is not one of the levels, or exactly
+  not consulted), `banner` (required, shown beside every answer), `contract` (required, below),
+  `levels` (at least two distinct column names, root first; the root column is selected by
+  `program_id`), `value` and optionally `per_path`. `value` is a numeric column that is not one of the levels, or exactly
   `{minus: [a, b]}`: two distinct numeric columns, neither a level, whose difference `a - b` is the
   row's amount (computed per row in exact Decimal). `per_path` is `sum` (the default: every row of
   the asset adds) or `once` (rows are grouped by the full level tuple, the amount is taken once per
   group, and a group whose rows disagree is a 502 `asset_contract_violation` with rule
   `varies_within_path`, naming the column(s) and never a value). Anything else is refused at load.
   The row cap counts rows read, before any reduction.
+- `contract` names the dataset contract the asset is read under: `contracts/<contract>.yaml`
+  (`contracts/ev_fixture.yaml` is the worked example; the engine reads that directory, or
+  `DATASET_CONTRACT_DIR`). At load, every column the row names must be one the contract declares,
+  a level a string column and a value column a numeric one, and the root level must be the
+  contract's `scope`; anything else is refused naming the file. On every read the WHOLE contract is
+  enforced, not only the columns the row names, each as a 502 `asset_contract_violation` whose
+  message names the column(s) and never a value: a required column, or one the row names, absent is
+  `missing_column`; a column not of its declared type is `wrong_type`; two rows for one value of the
+  contract's `grain` is `duplicate_key`; and a `dependencies` entry (`by` determines each of
+  `determines`) broken by one `by` value carrying two values of such a column is
+  `not_determined_by`, naming both columns.
 - `inputs.other_threshold` is a Decimal string, 0 up to but not including 1: the share below which
   two or more siblings collapse into an "All other" sink. `0` collapses nothing.
 - `inputs.state` is refused, and the module's function takes exactly the keyword-only `root`,
@@ -133,7 +144,8 @@ with one row per period instead of an edge table. The samples
 `policy/overlays/sample/measure_verbs/fin_ev_cumulative.yaml` and `fin_eac_trend.yaml` are the
 worked examples. The differences from a flow row:
 
-- `inputs.dataset` holds `urn`, `banner`, `scope` (the column the read filters to `program_id`),
+- `inputs.dataset` holds `urn`, `banner`, `contract` (as for a flow row), `scope` (the column the
+  read filters to `program_id`, and the contract's `scope`),
   `period` (the x axis), optionally `status` (the column naming the period the program is reported
   through), `per_period` and `per_program`. `levels`, `value`, `per_path` and
   `inputs.other_threshold` are refused.
@@ -141,8 +153,11 @@ worked examples. The differences from a flow row:
   at each period. It must have at least one entry. `per_program` maps a keyword to a numeric column
   that holds one value across the program's rows. A keyword is a lower-case identifier other than
   `period`, it appears in one map only, and no column is named twice.
-- A `per_program` column, or the `status` column, that differs between the program's rows is a 502
-  `asset_contract_violation` with rule `varies_within_scope`. A period or a status outside the
+- The contract is joined and enforced as for a flow row (`period` and `status` are string columns,
+  the `per_period` and `per_program` ones numeric). A `per_program` column, and the `status`
+  column, must be declared determined by the scope in the contract's `dependencies` (else the row
+  is refused at load), so one that differs between the program's rows is a 502
+  `asset_contract_violation` with rule `not_determined_by`. A period or a status outside the
   fiscal calendar is `period_outside_calendar`. A message names the rule and the column, never a
   value.
 - The function takes exactly the keyword-only `periods`: a list, in calendar order, of one mapping
