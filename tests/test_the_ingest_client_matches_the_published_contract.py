@@ -41,6 +41,7 @@ import pytest
 httpx = pytest.importorskip("httpx")
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT = ROOT / "samples" / "ingest_client.py"
@@ -349,6 +350,7 @@ def world(monkeypatch):
     stores = promotion.PromotionStores(ledger=w.ledger, graph=Graph(), corrections=SimpleNamespace(
         emit=lambda record: "corrections/x.json"))
     monkeypatch.setattr(ht, "list_tasks_for", list_tasks)
+    route_viewer_tasks_through(monkeypatch)
     monkeypatch.setattr(gateway, "_promotion_stores", lambda acted_by: stores)
     monkeypatch.setattr(gateway, "_review_mpns_for_payload", lambda subject: ["ABC123"])
     user = SimpleNamespace(authz_id=WHO, id=WHO, sub=WHO, email=WHO, persona=None,

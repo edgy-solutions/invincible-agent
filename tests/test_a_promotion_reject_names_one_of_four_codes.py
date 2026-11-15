@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import human_tasks, ingest_status, promotion  # noqa: E402
 from src.iagent import gateway  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 INGEST_ID = "sha256:" + "ab" * 32
 FOUR = ("not_a_notice", "unreadable", "parts_unusable", "duplicate")
@@ -63,6 +64,7 @@ def world(monkeypatch):
         return {"ingest_id": INGEST_ID, "record_id": "dr-1"}
 
     monkeypatch.setattr(human_tasks, "list_tasks_for", list_tasks)
+    route_viewer_tasks_through(monkeypatch)
     monkeypatch.setattr(human_tasks, "check_can_act", lambda a, c: True)
     monkeypatch.setattr(human_tasks, "mark_task_resolved",
                         lambda tid, **kw: w.resolved.append((tid, kw)) or 1)

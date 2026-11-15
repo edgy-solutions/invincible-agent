@@ -37,6 +37,7 @@ from src.iagent import ingest_status as ist  # noqa: E402
 from tests._can_drop_open import can_drop_open  # noqa: E402,F401
 from tests.identity._identity_support import install_delegates, pair_and_outsider  # noqa: E402
 from tests.test_ingest_routes_admit_a_declared_delegate import _PAYLOAD  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 pytestmark = pytest.mark.usefixtures("can_drop_open")
 
@@ -76,6 +77,7 @@ class _Fx:
 def _drive_act(monkeypatch, who, named):
     fx = _Fx()
     monkeypatch.setattr(ht, "list_tasks_for", lambda actor, **k: (fx.note(actor), [])[1])
+    route_viewer_tasks_through(monkeypatch)
     monkeypatch.setattr(ht, "get_task_resolution", lambda *a, **k: None)
     _login(who)
     r = _client().post("/human_tasks/t-1/act", json={"decision": "approved", "on_behalf_of": named})

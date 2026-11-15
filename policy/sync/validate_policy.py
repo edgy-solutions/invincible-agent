@@ -835,6 +835,109 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
     return out
 
 
+#: The row fields of policy/queue_delegates.yaml (ADR-0068 s5, s6): person-to-person, expiry required.
+_QD_ROW_FIELDS = ("id", "delegator", "delegate", "scope", "expires_at", "granted_by", "reason",
+                  "ratified_by")
+_QD_SCOPE_FIELDS = ("kinds", "audiences")
+
+
+def queue_delegates_errors(raw: dict, users: list) -> list[str]:
+    """Validate policy/queue_delegates.yaml. PURE. A row names a delegator and a delegate (each a
+    seeded person in users.yaml, never a `svc:` identity and never the same person twice), a
+    `scope` (`kinds` and/or `audiences`, at least one value), an `expires_at` (REQUIRED: an aware
+    ISO-8601 time), a unique `id`, and the grantor, reason and ratifying seat. One row per
+    (delegator, delegate). Unknown keys are refused by name."""
+    import datetime as _dt
+
+    pre = "queue_delegates.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"queue_delegates"}:
+        extra = sorted(map(str, set(raw) - {"queue_delegates"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `queue_delegates`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    rows = raw["queue_delegates"]
+    if not isinstance(rows, list):
+        return [f"{pre}: `queue_delegates` must be a list of rows (an empty list names no delegate)"]
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    seen_ids: set[str] = set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        rid = row.get("id")
+        where = f"{pre}: {rid if isinstance(rid, str) and rid.strip() else f'row {i}'}"
+        for k in row:
+            if k not in _QD_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_QD_ROW_FIELDS)})")
+        if not isinstance(rid, str) or not rid.strip():
+            out.append(f"{where}: `id` must be a non-empty string")
+        elif rid in seen_ids:
+            out.append(f"{where}: `id` is used by more than one row")
+        else:
+            seen_ids.add(rid)
+        people = {}
+        for k in ("delegator", "delegate"):
+            v = row.get(k)
+            people[k] = v.strip().casefold() if isinstance(v, str) else ""
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif v.startswith(SERVICE_SUBJECT_PREFIX) or v.startswith(_PIPELINE_PREFIX):
+                out.append(f"{where}: `{k}` must be a person; a service is no queue delegate "
+                           "(gateway_delegates.yaml is the service rail)")
+            elif v not in seeded:
+                out.append(f"{where}: `{k}` is not a seeded identity in users.yaml")
+        if people["delegator"] and people["delegator"] == people["delegate"]:
+            out.append(f"{where}: a person cannot delegate to themselves")
+        if people["delegator"] and people["delegate"]:
+            if (people["delegator"], people["delegate"]) in seen_pairs:
+                out.append(f"{where}: more than one row names this delegator and delegate")
+            seen_pairs.add((people["delegator"], people["delegate"]))
+        scope = row.get("scope")
+        if not isinstance(scope, dict):
+            out.append(f"{where}: `scope` must be a mapping with `kinds` and/or `audiences`")
+        else:
+            for k in scope:
+                if k not in _QD_SCOPE_FIELDS:
+                    out.append(f"{where}: scope: unknown key {k!r} (allowed: "
+                               f"{', '.join(_QD_SCOPE_FIELDS)})")
+            vals = 0
+            for k in _QD_SCOPE_FIELDS:
+                v = scope.get(k)
+                if v is None:
+                    continue
+                if not isinstance(v, list) or not all(isinstance(x, str) and x.strip() for x in v):
+                    out.append(f"{where}: scope.{k} must be a list of non-empty strings")
+                else:
+                    vals += len(v)
+            if vals == 0:
+                out.append(f"{where}: `scope` must name at least one kind or audience")
+        exp = row.get("expires_at")
+        if exp is None or exp == "":
+            out.append(f"{where}: `expires_at` is required")
+        else:
+            d = None
+            if isinstance(exp, _dt.datetime):
+                d = exp
+            elif isinstance(exp, str):
+                try:
+                    d = _dt.datetime.fromisoformat(exp.strip().replace("Z", "+00:00"))
+                except ValueError:
+                    d = None
+            if d is None:
+                out.append(f"{where}: `expires_at` must be an ISO-8601 time")
+            elif d.tzinfo is None:
+                out.append(f"{where}: `expires_at` must carry a zone (e.g. a trailing Z)")
+        for k in ("granted_by", "reason", "ratified_by"):
+            v = row.get(k)
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and v.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
+    return out
+
+
 #: The row fields of policy/classification/dimensions.yaml, policy/level_readers.yaml and
 #: policy/dimension_holders.yaml (ADR-0064 item B, Proposed, #266; dimensions per the 2026-11-06
 #: ruling). No code reads any of them yet; dag-tools step 5 serves a dataset's level.
@@ -1647,6 +1750,14 @@ def validate(
         errors.extend(gateway_delegates_errors(gd_raw, users_raw.get("users") or []))
         _gd_rows = gd_raw.get("gateway_delegates")
         print(f"  gateway_delegates.yaml: {len(_gd_rows) if isinstance(_gd_rows, list) else 0} row(s)")
+
+    # queue_delegates.yaml: validated WHEN PRESENT only, like gateway_delegates.yaml above.
+    _qd_path = policy_dir / "queue_delegates.yaml"
+    if _qd_path.is_file():
+        qd_raw = _read_yaml(_qd_path, errors)
+        errors.extend(queue_delegates_errors(qd_raw, users_raw.get("users") or []))
+        _qd_rows = qd_raw.get("queue_delegates")
+        print(f"  queue_delegates.yaml: {len(_qd_rows) if isinstance(_qd_rows, list) else 0} row(s)")
 
     # classification/dimensions.yaml + level_readers.yaml + dimension_holders.yaml (ADR-0064 item B,
     # Proposed, #266; 2026-11-06 ruling): validated WHEN PRESENT only (not in DATA_FILES -- see the

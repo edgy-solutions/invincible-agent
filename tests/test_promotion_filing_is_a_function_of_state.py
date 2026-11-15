@@ -28,6 +28,7 @@ from src.iagent import gateway  # noqa: E402
 from src.iagent import human_tasks as ht  # noqa: E402
 from src.iagent import ingest_status as ist  # noqa: E402
 from src.iagent import origin_writer  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 _REAL_READ_ACCEPTED_ORIGIN = gateway._read_accepted_origin
 
@@ -136,6 +137,7 @@ def _accept(world, *, store_owner=None, body=None):
     mp = pytest.MonkeyPatch()
     # the route admits the named steward on the case; the real lookup is Postgres
     mp.setattr("src.iagent.human_tasks.holds_task_on_case", lambda case_id, who: True)
+    route_viewer_tasks_through(mp, a_case_with_no_label=True)
     mp.setattr(origin_writer, "write_origin", _fake)
     mp.setattr("agent_fleet.utils.mesh_writers.neo4j_graph.Neo4jGraphWriter",
                lambda **kw: object())
