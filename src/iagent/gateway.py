@@ -1158,26 +1158,24 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
     from . import content_kinds, human_tasks
 
     ent = current_user.entitlements
-    # `droppable_kinds`: every registered kind except a GATED kind (Topaz object
-    # `capability:can_drop:<kind>` exists) this caller is not granted. One unreadable object makes
-    # the whole answer 503 -- never a partial or guessed list.
-    def _droppable() -> list[str]:
-        out: list[str] = []
-        for reg in content_kinds.registrations():
-            if human_tasks.can_drop_refusal(reg.kind, current_user.authz_id) is None:
-                out.append(reg.kind)
-        return out
+    # Both fields come from ONE capability list and ONE batched check (`capabilities_and_held`),
+    # never a request per key or per kind:
+    # - `capabilities`: the keys the caller holds `can_invoke` on, sorted;
+    # - `droppable_kinds`: every registered kind except a GATED kind (Topaz object
+    #   `capability:can_drop:<kind>` exists) this caller is not granted (`may_drop`).
+    # One unreadable answer makes the whole response 503 -- never a partial or guessed list.
+    def _read() -> "tuple[list[str], list[str]]":
+        keys, held = human_tasks.capabilities_and_held(current_user.authz_id)
+        known, mine = set(keys), set(held)
+        kinds = [reg.kind for reg in content_kinds.registrations()
+                 if human_tasks.may_drop(reg.kind, known, mine)]
+        return kinds, held
 
-    def _held() -> list[str]:
-        return human_tasks.held_capabilities(current_user.authz_id)
-
-    # Both reads sit in this one try, called through `run_in_threadpool` by name: the PDP seal
-    # follows a reader into that form and no other (a helper taking `fn` hides it).
-    what = "which kinds are restricted"
+    # The read sits in this try, called through `run_in_threadpool` by name: the PDP seal follows a
+    # reader into that form and no other (a helper taking `fn` hides it).
+    what = "which capabilities the caller holds"
     try:
-        droppable_kinds = await run_in_threadpool(_droppable)
-        what = "which capabilities the caller holds"
-        capabilities = await run_in_threadpool(_held)
+        droppable_kinds, capabilities = await run_in_threadpool(_read)
     except human_tasks.AuthorizationUnconfigured as exc:
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unconfigured",
