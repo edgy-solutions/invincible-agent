@@ -155,14 +155,15 @@ def load_policy_rules() -> dict:  # pragma: no cover - deploy-gated (live engine
 TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "http://topaz-svc:9393")
 # Independent dark-launch toggle for the review-START authz gate. NOT the terminal ENABLE_AGENTIC_AUTH
 # (whose flip turns on EVERY dark-launched content gate cluster-wide, irreversibly). It gates WHO may
-# INITIATE a review — capability can_invoke(mesh:startReview) — so it gets its OWN toggle: dark until the
-# capability grant is seeded (capability_grants.yaml), then flipped for this gate alone. Off -> no-op True
-# (like the other gates when their flag is off). (Name kept as ENABLE_DISPOSITION_AUTHZ to avoid deploy-env
+# INITIATE a review — capability can_invoke(mesh:startReview) — so it gets its OWN toggle. ON BY DEFAULT
+# since chart 0.4.89 (a gate must not fail open because a deploy forgot an env): only an explicit
+# false/0/no turns it off, and off -> no-op True. Sandbox ran it on by hand from 2026-07-31; the
+# default now matches. (Name kept as ENABLE_DISPOSITION_AUTHZ to avoid deploy-env
 # churn mid-flight — it has always been the review-start authz switch.) WHO may REVIEW is a SEPARATE gate
 # that lives at the HITL task layer (task_audience disposition_review:<compartment>, enforced at task
 # registration + /act) — not here. Conflating "may initiate" with "is a reviewer" was the latent bug the
 # first non-human initiator (svc:review-starter) exposed; this split is its repair.
-ENABLE_DISPOSITION_AUTHZ = os.getenv("ENABLE_DISPOSITION_AUTHZ", "false").lower() in ("true", "1", "yes")
+ENABLE_DISPOSITION_AUTHZ = os.getenv("ENABLE_DISPOSITION_AUTHZ", "true").lower() in ("true", "1", "yes")
 
 # The capability a review INITIATOR must be able to invoke. Starting a review is invoking mesh:startReview
 # (an EFFECT), gated on the SAME single decider as every direct_call (ADR-0029 capability `can_invoke`,
