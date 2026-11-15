@@ -134,7 +134,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # directly.
 # ============================================================================
 
-#: Dagster's max_concurrent_runs on this cluster. N ingests serialise into ceil(N/2) batches.
+#: The doc-tools row of the chart's `dagster.runTagConcurrencyLimits` (prime's ingests run in
+#: that code location). N ingests serialise into ceil(N/2) batches. Sealed equal to the row by
+#: tests/test_prime_timeout_bounds_agree.py.
 _INGEST_CONCURRENCY = 2
 #: Measured 2026-08-22: 10 runs completed within 1800s on this cluster.
 _SECONDS_PER_SLOT = 360
