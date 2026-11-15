@@ -56,9 +56,11 @@ HOPS: list[tuple[str, str, str, str, tuple[str, ...]]] = [
     ("2 · into the stream generator",
      GATEWAY, "generate_dagster_stream", "_generate_dagster_stream_inner", (FIELD,)),
     ("3 · into the job launcher",
-     GATEWAY, "_generate_dagster_stream_inner", "_launch_supervisor_job", (FIELD,)),
+     GATEWAY, "_generate_dagster_stream_inner", "launch", (FIELD,)),  # `_ab.launch`: either answer path
+    ("4a · into the op-config builder",
+     GATEWAY, "_launch_supervisor_job", "_supervisor_op_config", (FIELD,)),
     ("4 · into the Dagster run config",
-     GATEWAY, "_launch_supervisor_job", "<dict>", (FIELD,)),
+     GATEWAY, "_supervisor_op_config", "<dict>", (FIELD,)),
     ("5 · out of the op's config",
      SUPERVISOR, "execute_subtask", "_classify_route", ("config." + FIELD,)),
     ("6 · into subject resolution",

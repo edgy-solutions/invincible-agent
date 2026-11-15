@@ -40,6 +40,7 @@ import weakref
 from contextlib import asynccontextmanager
 from datetime import date as _date, datetime, timezone
 from typing import AsyncGenerator, Any, Literal, Optional
+from types import SimpleNamespace
 
 import httpx
 from dotenv import load_dotenv
@@ -8929,6 +8930,94 @@ async def unarchive_answer(
     return await _set_archive(answer_id, current_user, archive=False, reason=req.reason)
 
 
+def _supervisor_op_config(
+    query: str,
+    thread_id: str,
+    persona: str = "PROCESS_ENGINEER",
+    domain: str = "MAINTENANCE",
+    task_plan_json: str = "",
+    user_id: str = "default_testing_user",
+    # ADR-0017 amendment: which frontend will render the answer. Threaded to Engine F so
+    # the archetype is chosen from THAT client's registered menu. Empty is not an error --
+    # Engine F falls back to its global table, i.e. today's behaviour.
+    frontend_id: str = "",
+    frontend_version: str = "",
+    # ADR-0025 hop 2: caller's entitlement key (email) forwarded as a
+    # runConfig key so the generalist-fallback subtask can hand it to
+    # Engine D's query_metadata for the Topaz can_view ask.
+    user_email: str = "",
+    # Per ADR-0009 Step F'.2: thread user-context fields into the supervisor
+    # so the supervisor's per-subtask predicate lookup (Step F'.3) can scope
+    # by entitled_domains and use user_persona as the answerer fallback when
+    # the matched predicate is persona-agnostic.
+    # Step F'.6: candidate_verb dropped — supervisor now sends user_query
+    # directly to /search_predicates (Weaviate hybrid).
+    user_persona: str | None = None,
+    entitled_domains: list[str] | None = None,
+    entity_refs: list[str] | None = None,
+    # THE SPOKEN SLOTS from /route_intent, argument name -> value. Passed explicitly rather
+    # than read off the caller's `intent_extraction`, which is a local of the streaming
+    # handler and not in scope here - the first draft of this carry did exactly that and
+    # would have raised NameError on every request in the cluster while every test stayed
+    # green, because no test calls this function.
+    slots: dict | None = None,
+    # The user's pick from an ask, kept SEPARATE from `slots` all the way down so the
+    # supervisor can tell a chosen value from an extracted one and validate only the
+    # first against the menu it offered.
+    bound_slots: dict | None = None,
+    spoken_slot: str | None = None,
+    spoken_answer: str | None = None,
+    # The route an earlier ask already established, read back under the caller's ownership
+    # edge. `{}` for an ordinary question, which is every request that answers nothing.
+    pre_resolved: dict | None = None,
+    trace_id: str = "",
+    session_id: str = "",
+) -> dict:
+    """The op_config both answer paths hand the supervisor ops (Dagster run config, or the
+    durable workflow input)."""
+    entitled_domains = entitled_domains or []
+    entity_refs = entity_refs or []
+    # candidate_verb is no longer threaded — supervisor sends user_query to
+    # /search_predicates directly. Keep the op_config field as an empty
+    # string so the existing Dagster schema still validates.
+    candidate_verb = ""
+    # Shared op config — same keys to every op so a Dagster op author can
+    # rely on consistent context regardless of which op they're in.
+    op_config = {
+        "user_query": query,
+        "thread_id": thread_id,
+        "persona": persona,
+        "domain": domain,
+        "task_plan_json": task_plan_json,
+        "user_id": user_id,
+        "user_email": user_email,
+        # ADR-0017 amendment: names the rendering client so Engine F resolves ITS menu.
+        "frontend_id": frontend_id or "",
+        "frontend_version": frontend_version or "",
+        # ADR-0009 Step F'.2 additions:
+        "user_persona": user_persona,
+        "entitled_domains": entitled_domains,
+        "candidate_verb": candidate_verb,
+        "entity_refs": entity_refs,
+        # THE SPOKEN SLOTS, forwarded rather than dropped. `{}` on every request until the
+        # slot-filler is called - see the finding. Threaded here, beside entity_refs,
+        # because the two come from the same response and are constantly confused: refs are
+        # untyped values, slots are argument name -> value.
+        "slots": dict(slots or {}),
+        "bound_slots": dict(bound_slots or {}),
+        "spoken_slot": spoken_slot or "",
+        "spoken_answer": spoken_answer or "",
+        "pre_resolved": dict(pre_resolved or {}),
+        # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
+        # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
+        "trace_id": trace_id,
+        "session_id": session_id,
+        # The bff.orchestrate span's id, ambient in the producer task.
+        "parent_span_id": current_span_id(),
+    }
+    return op_config
+
+
 async def _launch_supervisor_job(
     query: str,
     thread_id: str,
@@ -8981,12 +9070,27 @@ async def _launch_supervisor_job(
     runConfig keys; the legacy ones default to sane values so the existing
     Dagster ops still validate.
     """
-    entitled_domains = entitled_domains or []
-    entity_refs = entity_refs or []
-    # candidate_verb is no longer threaded — supervisor sends user_query to
-    # /search_predicates directly. Keep the op_config field as an empty
-    # string so the existing Dagster schema still validates.
-    candidate_verb = ""
+    op_config = _supervisor_op_config(
+        query=query,
+        thread_id=thread_id,
+        persona=persona,
+        domain=domain,
+        task_plan_json=task_plan_json,
+        user_id=user_id,
+        frontend_id=frontend_id,
+        frontend_version=frontend_version,
+        user_email=user_email,
+        user_persona=user_persona,
+        entitled_domains=entitled_domains,
+        entity_refs=entity_refs,
+        slots=slots,
+        bound_slots=bound_slots,
+        spoken_slot=spoken_slot,
+        spoken_answer=spoken_answer,
+        pre_resolved=pre_resolved,
+        trace_id=trace_id,
+        session_id=session_id,
+    )
     mutation = """
     mutation LaunchSupervisor($repo: String!, $loc: String!, $runConfig: RunConfigData!) {
       launchRun(
@@ -9018,41 +9122,6 @@ async def _launch_supervisor_job(
     }
     """
     
-    # Shared op config — same keys to every op so a Dagster op author can
-    # rely on consistent context regardless of which op they're in.
-    op_config = {
-        "user_query": query,
-        "thread_id": thread_id,
-        "persona": persona,
-        "domain": domain,
-        "task_plan_json": task_plan_json,
-        "user_id": user_id,
-        "user_email": user_email,
-        # ADR-0017 amendment: names the rendering client so Engine F resolves ITS menu.
-        "frontend_id": frontend_id or "",
-        "frontend_version": frontend_version or "",
-        # ADR-0009 Step F'.2 additions:
-        "user_persona": user_persona,
-        "entitled_domains": entitled_domains,
-        "candidate_verb": candidate_verb,
-        "entity_refs": entity_refs,
-        # THE SPOKEN SLOTS, forwarded rather than dropped. `{}` on every request until the
-        # slot-filler is called - see the finding. Threaded here, beside entity_refs,
-        # because the two come from the same response and are constantly confused: refs are
-        # untyped values, slots are argument name -> value.
-        "slots": dict(slots or {}),
-        "bound_slots": dict(bound_slots or {}),
-        "spoken_slot": spoken_slot or "",
-        "spoken_answer": spoken_answer or "",
-        "pre_resolved": dict(pre_resolved or {}),
-        # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
-        # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
-        "trace_id": trace_id,
-        "session_id": session_id,
-        # The bff.orchestrate span's id, ambient in the producer task.
-        "parent_span_id": current_span_id(),
-    }
-
     run_config = {
         "ops": {
             "create_task_plan": {
@@ -9509,6 +9578,50 @@ def _trace_headers(trace_id: str, session_id: str = "") -> dict:
     if session_id:
         h["X-Session-Id"] = session_id
     return h
+
+
+_DURABLE_ANSWERS = None
+
+
+def _answer_path() -> str:
+    # IAGENT_ANSWER_PATH: "dagster" (default) or "durable"; read per request.
+    raw = os.getenv("IAGENT_ANSWER_PATH", "dagster")
+    val = (raw or "").strip().lower() or "dagster"
+    if val not in ("dagster", "durable"):
+        logger.warning("IAGENT_ANSWER_PATH=%r is not 'dagster' or 'durable'; using 'dagster'", raw)
+        return "dagster"
+    return val
+
+
+def _answer_backend():
+    """The launch and the four run reads for ONE stream, chosen at call time.
+
+    Every dagster-side helper is looked up when it is CALLED (the lambdas), never bound here:
+    the seam's tests monkeypatch the module-level names."""
+    global _DURABLE_ANSWERS
+    if _answer_path() == "durable":
+        if _DURABLE_ANSWERS is None:
+            from src.iagent.durable_answers import DurableAnswers
+            _DURABLE_ANSWERS = DurableAnswers(_RESTATE_INGRESS_URL)
+        client = _DURABLE_ANSWERS
+        return SimpleNamespace(
+            launch=lambda *a, **kw: client.launch(_supervisor_op_config(*a, **kw)),
+            status=client.get_run_status,
+            events=client.get_run_events,
+            steps=client.get_step_stats,
+            payload=client.get_ui_payload_output,
+            poll_s=client.poll_interval_s,
+            max_ticks=int(round(900 / client.poll_interval_s)),
+        )
+    return SimpleNamespace(
+        launch=lambda *a, **kw: _launch_supervisor_job(*a, **kw),
+        status=lambda rid: _get_run_status(rid),
+        events=lambda rid: _get_run_events(rid),
+        steps=lambda rid: _get_step_stats(rid),
+        payload=lambda rid: _get_ui_payload_output(rid),
+        poll_s=1.0,
+        max_ticks=900,
+    )
 
 
 async def _generate_dagster_stream_inner(
@@ -10282,7 +10395,8 @@ async def _generate_dagster_stream_inner(
             "domain": domain,
             "extracted_concepts": [],
         })
-    run_id = await _launch_supervisor_job(
+    _ab = _answer_backend()
+    run_id = await _ab.launch(
         user_query,
         session_id,
         domain=domain,
@@ -10359,7 +10473,8 @@ async def _generate_dagster_stream_inner(
     # handled by _keepalive_wrap's `: keepalive\n\n` comment lines.
     # The accumulating-rows UI bug is fixed at its source.
 
-    # THE ONE DEADLINE IN THIS GENERATOR: 900 one-second ticks, the 15 minute ceiling for slow
+    # THE ONE DEADLINE IN THIS GENERATOR: `_ab.max_ticks` ticks of `_ab.poll_s` (900 x 1 s on
+    # dagster, the same 15 minutes on the durable path), the ceiling for slow
     # backends. A run paused for its person (`awaiting_reauth`, ruling 2026-11-03) must not be
     # ended by it, so a paused tick does not count toward it; the pause is bounded by the
     # vault entry's own life, after which the state is None and the ticks count again. The
@@ -10367,8 +10482,8 @@ async def _generate_dagster_stream_inner(
     # fetch.
     _ticks = 0
     _reauth_paused = False
-    while _ticks < 900:
-        await asyncio.sleep(1.0)
+    while _ticks < _ab.max_ticks:
+        await asyncio.sleep(_ab.poll_s)
 
         _vstate = VAULT.state(run_id)
         if _vstate == "awaiting_reauth":
@@ -10387,7 +10502,7 @@ async def _generate_dagster_stream_inner(
                 if _vstate == "live":
                     yield _sse("run_reauth_resumed", json.dumps({"run_id": run_id}))
 
-        status_data = await _get_run_status(run_id)
+        status_data = await _ab.status(run_id)
         if status_data.get("status") == "CANCELED":
             VAULT.close(run_id)
             break
@@ -10432,7 +10547,7 @@ async def _generate_dagster_stream_inner(
         # Decision card focuses on the primary route the user's
         # answer flows through. Multi-subtask UI semantics is a
         # future ADR.
-        mats = await _get_run_events(run_id)
+        mats = await _ab.events(run_id)
         for mat in mats:
             path = mat.get("assetKey", {}).get("path")
             if path == ["active_agent_roster"] and "plan_emitted" not in emitted_steps:
@@ -10701,7 +10816,7 @@ async def _generate_dagster_stream_inner(
                 return ["retrieving"]
             return STEP_TO_COMPLETED_KINDS.get(step_key, [])
 
-        step_stats = await _get_step_stats(run_id)
+        step_stats = await _ab.steps(run_id)
         for stat in step_stats:
             step_key = stat.get("stepKey", "")
             status = stat.get("status", "")
@@ -10752,7 +10867,7 @@ async def _generate_dagster_stream_inner(
 
     # THE ORDINARY PATH'S `review_request` CONSUMER (R-076). Before the payload fetch, and
     # whatever the run's outcome: see `_open_acceptances_from_run` for why both.
-    for _acc_err in await _open_acceptances_from_run(run_id, _artifact_bundle):
+    for _acc_err in await _open_acceptances_from_run(run_id, _artifact_bundle, get_events=_ab.events):
         yield _acc_err
 
     if is_success:
@@ -10761,7 +10876,7 @@ async def _generate_dagster_stream_inner(
         # payload happens here. No extra "Retrieving Final UI Payload"
         # status row needed — composing stays loading until either
         # the payload arrives (completed) or fetching fails (error).
-        result = await _get_ui_payload_output(run_id)
+        result = await _ab.payload(run_id)
 
         if "error" in result:
             logger.error("BFF Error: %s", result["error"])
@@ -10974,7 +11089,7 @@ async def _open_safety_acceptance(
         )
 
 
-async def _open_acceptances_from_run(run_id: str, bundle: dict) -> list[str]:
+async def _open_acceptances_from_run(run_id: str, bundle: dict, get_events=None) -> list[str]:
     """The ordinary (Dagster) path's consumer: every `subtask_review_request` the run
     materialized, opened once each. Returns the error SSEs to yield.
 
@@ -10992,7 +11107,8 @@ async def _open_acceptances_from_run(run_id: str, bundle: dict) -> list[str]:
     every run materializes `active_agent_roster`, so zero materializations means the read
     failed. That is recorded on the artifact rather than read as absence.
     """
-    mats = await _get_run_events(run_id)
+    get_events = get_events or _get_run_events
+    mats = await get_events(run_id)
     if not mats:
         logger.warning(
             "acceptance check for run %s read ZERO materializations — the read failed, "
