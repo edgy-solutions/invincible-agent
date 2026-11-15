@@ -6,7 +6,9 @@ reads the contract too there are two homes for one claim, and the contract is th
 passing after the reader changes. So every fact
 the contract states about the reader is read FROM the reader here: its column sets, the rule ids
 it raises (found by the form `ContractViolation("<id>"` in its source, so a new refusal site is a
-red until the contract names it), its period vocabulary and its row cap.
+red until the contract names it), its period vocabulary and its row cap. The reader's source is two
+files since the contract checks moved to the shared reader (`agent_fleet/utils/dataset_contracts.py`):
+`asset_inputs` and that module, and the rules are read from both.
 
 Run: uv run --no-sync python -I -m pytest -c pyproject.toml --rootdir=. -p no:cacheprovider tests/finance/test_the_ev_contract_agrees_with_the_reader.py
 """
@@ -19,6 +21,7 @@ import pytest
 import yaml
 
 from agent_fleet.finance_agent import asset_inputs, entities
+from agent_fleet.utils import dataset_contracts
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / "contracts" / "ev_fixture.yaml"
@@ -26,6 +29,7 @@ DATASET_OVERLAYS = ROOT / "policy" / "overlays" / "sample" / "measure_verbs"
 SANDBOX_VALUES = ROOT / "helm" / "invincible-agent" / "values-sandbox.yaml"
 LIVE_CASE = ROOT / "tests" / "sandbox_e2e" / "variance_set_live.yaml"
 RAISED = re.compile(r"""ContractViolation\(\s*["']([a-z_]+)["']""")
+READER_SOURCES = (Path(asset_inputs.__file__), Path(dataset_contracts.__file__))
 
 
 @pytest.fixture(scope="module")
@@ -53,7 +57,7 @@ def test_a_required_column_is_already_produced(contract):
 
 
 def test_every_rule_the_reader_raises_is_named_and_none_is_invented(contract):
-    raised = set(RAISED.findall(Path(asset_inputs.__file__).read_text(encoding="utf-8")))
+    raised = {r for p in READER_SOURCES for r in RAISED.findall(p.read_text(encoding="utf-8"))}
     assert set(contract["rules"]) == raised
 
 
