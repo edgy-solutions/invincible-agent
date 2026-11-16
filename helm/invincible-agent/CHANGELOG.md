@@ -5,6 +5,10 @@
 ### The 0.4.89 upgrade notes name the run-limit default change
 - 0.4.89's "Before the roll" note for #391 now says that the chart default for Dagster's run limit changed from 2 to 6. A user-values diff does not show this change. Docs only; the render is unchanged.
 
+### pub-tools gets the variable names its code reads
+- The pub-tools code location and broker set `PUBLOG_S3_BUCKET_URL: "s3://publog-lake"` instead of `PUBLOG_S3_BUCKET`, and the code location sets `DATAHUB_GMS_URL` instead of `DATAHUB_SERVER`. pub-tools reads only the new names, so the old ones were ignored, and pub-tools ran on code defaults equal to these values. Behaviour is unchanged; the two pub-tools pods restart because their env changed.
+- `tests/test_pub_tools_chart_env_is_read_by_its_code.py` renders the chart and fails on any variable set on pub-tools that its code does not read. It names each variable's reader by pub-tools or dag-tools commit.
+
 ## 0.4.89 — 2026-11-16
 
 **0.4.89 is 0.4.88 (`4525a1cf`) plus the 11-15/11-16 train, `4525a1cf..36968d59`. The roll waits for Chris's approval of the values diff against the live release, after lane 74's hand-back.**
