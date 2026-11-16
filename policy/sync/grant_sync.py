@@ -220,16 +220,25 @@ def main() -> int:
     Malformed/dangling → apply NOTHING (fail-closed: a broken grant file does
     not partially apply)."""
     import yaml
-    from topaz_sync import TopazClient
 
     grants_file = os.getenv("ASSET_GRANTS_FILE", "policy/asset_grants.yaml")
     topaz_url = os.getenv("TOPAZ_DIRECTORY_URL", "http://topaz-svc:9393")
 
     with open(grants_file) as f:
         raw = yaml.safe_load(f) or {}
+    return run(raw, topaz_url)
+
+
+def run(raw: dict, topaz_url: str) -> int:
+    """The apply, from a parsed grants dict (`{"grants": [...]}`), not from a file: the same
+    validate / prove-the-negative / sync / readback as the CLI, with the same exit codes. The BFF
+    calls it with the committed policy plus the decision ledger, so a grant approved at runtime
+    never needs a file in the pod."""
+    from topaz_sync import TopazClient
+
     grants, malformed = load_grants(raw)
     if malformed:
-        print("REFUSED — malformed grants (fix policy/asset_grants.yaml; nothing applied):",
+        print("REFUSED — malformed grants (fix the grant source; nothing applied):",
               file=sys.stderr)
         for e in malformed:
             print(f"  {e}", file=sys.stderr)

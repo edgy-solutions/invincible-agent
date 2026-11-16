@@ -604,6 +604,15 @@ async def lifespan(application: FastAPI):
         from . import human_tasks
         await run_in_threadpool(human_tasks.apply_migration)
         logger.info("human_task_projection migration applied")
+        # An approved access grant lives in the decision ledger, not in a file in the pod:
+        # re-apply the ledger so a restart keeps every approved grant. Never a boot blocker.
+        try:
+            _re = await run_in_threadpool(human_tasks.reapply_ledger_grants)
+            logger.info("access grants re-applied from the ledger: %s",
+                        _re.get("skipped") or f"ok={_re.get('ok')} grants={_re.get('grants')}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("access grant re-apply failed (grants stay in the ledger): %s",
+                           type(exc).__name__)
     except human_tasks.HumanTaskConfigError as exc:
         logger.info("HITL substrate dormant (no PG DSN): %s", exc)
     except Exception as exc:
@@ -6972,9 +6981,9 @@ async def act_on_human_task(
     logger.info("human_task acted: task_id=%s by=%s decision=%s rows=%d",
                 task_id, actor, req.decision, n)
 
-    # FULFILLMENT (access_request — Case 1, ASYNC): approving writes a git-asserted
-    # reader grant (asset_grants.yaml assertion, granted_by = THIS approver) and
-    # flows it through the SEALED grant_sync -> Topaz -> the DA-read gate opens ->
+    # FULFILLMENT (access_request — Case 1, ASYNC): approving records the grant in the decision
+    # ledger (requester, approver = THIS caller, time, reason) and applies the ledger to the
+    # directory through the SEALED grant_sync -> Topaz -> the DA-read gate opens ->
     # the requester succeeds on a FRESH request (nothing suspended to resume). This
     # is the automation of the manual alice->reader->customers_gold rehearsal.
     granted = False
@@ -6984,13 +6993,19 @@ async def act_on_human_task(
         subject = payload.get("subject")
         asset = payload.get("asset")
         if subject and asset:
-            grant_detail = await run_in_threadpool(
-                lambda: human_tasks.write_grant_and_sync(
-                    subject=subject, asset=asset,
-                    granted_by=current_user.authz_id,
-                    reason=(req.comment or f"HITL access grant approved by {current_user.email}"),
+            try:
+                grant_detail = await run_in_threadpool(
+                    lambda: human_tasks.write_grant_and_sync(
+                        subject=subject, asset=asset,
+                        granted_by=current_user.authz_id,
+                        reason=(req.comment or f"HITL access grant approved by {current_user.email}"),
+                        requested_by=str(match.get("requested_by") or subject),
+                        task_id=task_id,
+                    )
                 )
-            )
+            except Exception as exc:  # noqa: BLE001 -- no ledger row means no grant; say so
+                logger.error("access grant not recorded: task_id=%s %s", task_id, type(exc).__name__)
+                grant_detail = {"ok": False, "exit_code": None, "output": type(exc).__name__}
             granted = bool(grant_detail.get("ok"))
             if not granted:
                 logger.warning("access grant sync failed: task_id=%s exit=%s",

@@ -29,6 +29,7 @@ import contextlib
 import json
 import logging
 import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -192,6 +193,7 @@ def apply_migration() -> None:
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(_MIGRATION_SQL)
+            cur.execute(_GRANT_LEDGER_SQL)
         conn.commit()
 
 
@@ -938,55 +940,168 @@ def record_routing_fault(*, task_id: str, addressee: str, dimension: str, label:
         logger.error("routing_fault record not written for task %s: %s", task_id, type(exc).__name__)
 
 
-def write_grant_and_sync(*, subject: str, asset: str, granted_by: str,
-                         reason: str) -> dict[str, Any]:
-    """Case-1 fulfillment: append a git-asserted reader grant to asset_grants.yaml
-    (subject may READ asset, granted_by a named human) and flow it to Topaz via
-    the SEALED grant_sync (reused VERBATIM — same validate/prove-the-negative/
-    readback). Returns {ok, exit_code, output}.
+# The DECISION LEDGER for access grants (ruled 2026-11-15): an approved access request is a row
+# here, not a line in a file in the pod. Append-only by (subject, asset, kind): a second approval
+# of the same grant is a no-op that keeps the first approver on record. The directory is written
+# FROM this record and re-written from it at startup, so a restart keeps an approved grant.
+_GRANT_LEDGER_SQL = """
+CREATE TABLE IF NOT EXISTS access_grant_ledger (
+    subject      TEXT   NOT NULL,
+    asset        TEXT   NOT NULL,
+    kind         TEXT   NOT NULL DEFAULT 'dataset',
+    requested_by TEXT   NOT NULL,
+    granted_by   TEXT   NOT NULL,
+    reason       TEXT   NOT NULL DEFAULT '',
+    task_id      TEXT   NOT NULL DEFAULT '',
+    granted_at   BIGINT NOT NULL,
+    PRIMARY KEY (subject, asset, kind)
+);
+"""
 
-    AUDIT NOTE (load-bearing, not hardening): the git-blame audit the grant core
-    guarantees requires this asset_grants.yaml change to be COMMITTED TO GIT with
-    the APPROVER as the author. This sandbox path writes the file + syncs to prove
-    the deny->grant->allow loop; a grant that enforces WITHOUT a git commit is not
-    git-blame-auditable = the unauditable grant the core forbids at classification.
-    Committing (approver-attributed) is an AUDIT-COMPLETING REQUIREMENT before
-    classification use, filed with real-grant-seeding-before-the-flip."""
-    import yaml as _yaml
-    import subprocess
+_GRANT_INSERT_SQL = """
+INSERT INTO access_grant_ledger (subject, asset, kind, requested_by, granted_by, reason, task_id,
+                                 granted_at)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+ON CONFLICT (subject, asset, kind) DO NOTHING
+"""
 
-    with open(_ASSET_GRANTS_FILE) as f:
-        data = _yaml.safe_load(f) or {}
-    grants = data.get("grants") or []
-    # Idempotent: a duplicate (subject, asset) is a no-op, not a second grant.
-    if not any(g.get("subject") == subject and g.get("asset") == asset for g in grants):
-        grants.append({
-            "subject": subject, "asset": asset,
-            "granted_by": granted_by, "reason": reason,
-        })
-        data["grants"] = grants
-        with open(_ASSET_GRANTS_FILE, "w") as f:
-            # block style, no default_style — avoids the safe_dump block-scalar
-            # flattening gotcha; the single-line reason needs no block scalar.
-            _yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+_GRANT_SELECT_SQL = """
+SELECT subject, asset, kind, requested_by, granted_by, reason, task_id, granted_at
+  FROM access_grant_ledger ORDER BY granted_at, subject, asset
+"""
+
+_GRANT_FIELDS = ("subject", "asset", "kind", "requested_by", "granted_by", "reason", "task_id",
+                 "granted_at")
+
+
+def record_grant(*, subject: str, asset: str, requested_by: str, granted_by: str, reason: str,
+                 task_id: str = "", kind: str = "dataset", now_ms: Optional[int] = None) -> bool:
+    """Append one approved grant to the ledger: who asked, who approved, when, why. True when a
+    row was added; False when the same grant was already on record (the first approver stays).
+    Both people are required: a grant that names no requester or no approver is not recorded."""
+    for name, value in (("subject", subject), ("asset", asset), ("requested_by", requested_by),
+                        ("granted_by", granted_by)):
+        if not str(value or "").strip():
+            raise ValueError(f"record_grant: {name} is required")
+    at = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_GRANT_INSERT_SQL, (subject, asset, kind, requested_by, granted_by,
+                                            reason or "", task_id or "", at))
+            added = cur.rowcount > 0
+        conn.commit()
+    if added:
         _grant_audit_log.info(
-            "grant_written granted_by=%s subject=%s asset=%s at=%s",
-            granted_by, subject, asset, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        )
+            "grant_recorded granted_by=%s requested_by=%s subject=%s asset=%s at=%s",
+            granted_by, requested_by, subject, asset,
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at / 1000)))
+    return added
 
-    env = dict(os.environ)
-    env["ASSET_GRANTS_FILE"] = _ASSET_GRANTS_FILE
-    env["PYTHONPATH"] = "/app/policy/sync:" + env.get("PYTHONPATH", "")
-    if _TOPAZ_DIRECTORY_URL:
-        env["TOPAZ_DIRECTORY_URL"] = _TOPAZ_DIRECTORY_URL
-    proc = subprocess.run(
-        ["python", _GRANT_SYNC], env=env, capture_output=True, text=True, timeout=60,
-    )
-    return {
-        "ok": proc.returncode == 0,
-        "exit_code": proc.returncode,  # 0 ok · 2 malformed · 3 dangling · 4 readback
-        "output": (proc.stdout or "")[-800:] + (proc.stderr or "")[-400:],
-    }
+
+def ledger_grants() -> list[dict[str, Any]]:
+    """Every approved grant on record, oldest first."""
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_GRANT_SELECT_SQL)
+            return [dict(zip(_GRANT_FIELDS, row)) for row in cur.fetchall()]
+
+
+def committed_grants() -> list[dict[str, Any]]:
+    """The grants in COMMITTED policy (`asset_grants.yaml` as the image ships it). Read only:
+    nothing in this module writes it. A missing file is no grants."""
+    import yaml as _yaml
+
+    try:
+        with open(_ASSET_GRANTS_FILE, encoding="utf-8") as f:
+            data = _yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        return []
+    return [dict(g) for g in (data.get("grants") or []) if isinstance(g, dict)]
+
+
+def _grant_key(g: dict) -> tuple:
+    return (g.get("subject"), g.get("asset"), g.get("kind") or "dataset")
+
+
+def desired_grants(ledger: Optional[list] = None) -> list[dict[str, Any]]:
+    """Committed policy plus the ledger: what the directory's readers must be. Committed policy
+    wins a duplicate (its git history is the stronger record). The sync PRUNES reader relations
+    outside this set, so a ledger grant must always travel with the committed ones."""
+    out = {_grant_key(g): g for g in committed_grants()}
+    for row in (ledger_grants() if ledger is None else ledger):
+        out.setdefault(_grant_key(row), {
+            "subject": row["subject"], "asset": row["asset"], "kind": row["kind"],
+            "granted_by": row["granted_by"], "reason": row["reason"]})
+    return list(out.values())
+
+
+def _grant_sync_run(raw: dict) -> int:
+    """The sealed `grant_sync.run` (validate, prove the negative, sync, readback), called in
+    process with a grants dict. The ONE seam a test replaces: no directory write in a unit test."""
+    import importlib.util
+
+    sync_dir = os.path.dirname(_GRANT_SYNC)
+    if sync_dir not in sys.path:
+        sys.path.insert(0, sync_dir)
+    spec = importlib.util.spec_from_file_location("_iagent_grant_sync", _GRANT_SYNC)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.run(raw, _TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393")
+
+
+def apply_ledger_to_directory() -> dict[str, Any]:
+    """Apply committed policy plus the ledger to the directory. `{ok, exit_code, output,
+    grants}`; 0 ok, 2 malformed, 3 dangling, 4 readback (grant_sync's own codes)."""
+    import contextlib as _ctx
+    import io as _io
+
+    grants = desired_grants()
+    out, err = _io.StringIO(), _io.StringIO()
+    with _ctx.redirect_stdout(out), _ctx.redirect_stderr(err):
+        code = _grant_sync_run({"grants": grants})
+    return {"ok": code == 0, "exit_code": code, "grants": len(grants),
+            "output": out.getvalue()[-800:] + err.getvalue()[-400:]}
+
+
+def write_grant_and_sync(*, subject: str, asset: str, granted_by: str, reason: str,
+                         requested_by: str = "", task_id: str = "") -> dict[str, Any]:
+    """Case-1 fulfilment: record the approved grant in the decision ledger (requester, approver,
+    time, reason), then apply the ledger to the directory through the sealed grant sync. No file
+    is written in the pod. Returns {ok, exit_code, output}.
+
+    The record is made FIRST and stands whatever the apply does: a failed apply is repaired by
+    the startup re-apply, never by asking the approver again. A store that cannot record the grant
+    raises, and nothing is applied: a grant with no record is not a grant.
+
+    AUDIT: the git-blame audit the grant core wants is ADR-0062 section 7's engine-r commit, not
+    built yet. Until then the ledger row (and its audit line) is the record of who approved what."""
+    record_grant(subject=subject, asset=asset, granted_by=granted_by, reason=reason,
+                 requested_by=requested_by or subject, task_id=task_id)
+    return apply_ledger_to_directory()
+
+
+def reapply_ledger_grants() -> dict[str, Any]:
+    """Startup: re-apply the ledger so a restarted pod keeps every approved grant. Nothing to do
+    (and nothing pruned) when the ledger is empty or no directory is configured."""
+    if not _TOPAZ_DIRECTORY_URL:
+        return {"ok": True, "skipped": "no directory"}
+    if not ledger_grants():
+        return {"ok": True, "skipped": "empty ledger"}
+    return apply_ledger_to_directory()
+
+
+def grants_absent_from_policy(live: Optional[Any] = None) -> dict[str, list]:
+    """The report: grants that enforce but are not in committed policy. `ledger`: approved and
+    recorded, awaiting the commit (ADR-0062 section 7). `directory`: reader relations live in the
+    directory that neither committed policy nor the ledger names (a hand write), when `live`
+    (an iterable of `(subject, asset, kind)`) is given."""
+    committed = {_grant_key(g) for g in committed_grants()}
+    rows = ledger_grants()
+    report = {"ledger": [r for r in rows if _grant_key(r) not in committed], "directory": []}
+    if live is not None:
+        known = committed | {_grant_key(r) for r in rows}
+        report["directory"] = sorted(k for k in set(live) if k not in known)
+    return report
 
 
 def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, Any]]:
