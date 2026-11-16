@@ -44,8 +44,26 @@ def _spy(monkeypatch):
 
 
 def _writes(monkeypatch):
+    """Stateful: the writers change the stored receipt as the real SQL does (`set_domain` replaces
+    anything different; `set_no_domain` marks only a NULL), and record what they were asked."""
     done: list = []
-    monkeypatch.setattr(ist, "set_domain", lambda i, d: done.append((i, d)) or True)
+    rows = {r["id"]: r for r in _range_world.rows}
+
+    def set_domain(i, d):
+        done.append((i, d))
+        changed = rows[i].get("domain") != d
+        rows[i]["domain"] = d
+        return changed
+
+    def set_no_domain(i):
+        done.append((i, ist.NO_DOMAIN))
+        if rows[i].get("domain") is None:
+            rows[i]["domain"] = ist.NO_DOMAIN
+            return True
+        return False
+
+    monkeypatch.setattr(ist, "set_domain", set_domain)
+    monkeypatch.setattr(ist, "set_no_domain", set_no_domain)
     return done
 
 
@@ -228,3 +246,95 @@ def test_5_the_column_and_its_index_are_in_the_migration_and_the_ddl():
         t = (ROOT / rel).read_text(encoding="utf-8")
         assert "ADD COLUMN IF NOT EXISTS domain TEXT" in t, rel
         assert "idx_isp_domain_created" in t and "(domain, created_at, id)" in t, rel
+
+
+# 6. a receipt that resolves to no domain leaves the scan -------------------------------------
+
+def _no_domain_world(monkeypatch, tmp_path, junk):
+    """`junk` receipts that no record and no task names, then the caller's own notice, one per
+    page, with a bound of 3 pages."""
+    specs = [{"created_at": MID + i} for i in range(junk)] + [{"created_at": MID + junk, "domain": DOM_A}]
+    _range_world(monkeypatch, tmp_path, specs, page=1)
+    done = _writes(monkeypatch)
+    real = gateway._export_notice_domain
+
+    async def derive(ingest_id, row, rec):
+        if ingest_id == _iid(junk + 1):
+            return await real(ingest_id, row, rec)
+        return None
+
+    monkeypatch.setattr(gateway, "_export_notice_domain", derive)
+    monkeypatch.setattr(gateway, "_EXPORT_RANGE_MAX_PAGES", 3)
+    return done
+
+
+def _range():
+    return _post({"range": RANGE, "profile": "t", "check_only": True})
+
+
+def test_6a_a_caller_under_the_cap_is_not_refused_by_receipts_that_belong_to_no_domain(
+        monkeypatch, tmp_path, built):
+    done = _no_domain_world(monkeypatch, tmp_path, junk=4)       # more than the bound, fewer than two
+    first = _range()                                              # pays the write-back, may refuse
+    assert first.status_code == 422 and first.json()["detail"]["error"] == "export_range_scan_bound"
+    second = _range()
+    assert second.status_code == 200 and second.json()["notice_ids"] == [_iid(5)]
+    assert {i for i, d in done if d == ist.NO_DOMAIN} == {_iid(n) for n in (1, 2, 3, 4)}
+    third = _range()                                              # nothing left to write back
+    assert third.status_code == 200 and len(done) == 4
+
+
+def test_6a_control_with_rows_left_NULL_the_same_caller_is_refused_again(monkeypatch, tmp_path, built):
+    _no_domain_world(monkeypatch, tmp_path, junk=4)
+    monkeypatch.setattr(ist, "set_no_domain", lambda i: False)    # the marker is never written
+    assert _range().status_code == 422
+    assert _range().status_code == 422                            # and it does not get better
+
+
+def test_6b_a_receipt_marked_no_domain_that_later_gets_a_task_is_found_by_its_domains_range(
+        monkeypatch, tmp_path, built):
+    _no_domain_world(monkeypatch, tmp_path, junk=1)
+    assert _range().json()["notice_ids"] == [_iid(2)]
+    assert _range_world.rows[0]["domain"] == ist.NO_DOMAIN        # marked, and out of the scan
+    ist.set_domain(_iid(1), DOM_A)                                # the filer files its task
+    async def filed(*a, **k):                                     # the open task now names DOM_A
+        return DOM_A
+
+    monkeypatch.setattr(gateway, "_export_notice_domain", filed)
+    r = _range()
+    assert r.status_code == 200 and r.json()["notice_ids"] == [_iid(1), _iid(2)]
+    assert _range_world.rows[0]["domain"] == DOM_A
+
+
+def test_6b_control_a_marked_receipt_is_not_found_by_any_domains_range(monkeypatch, tmp_path, built):
+    _no_domain_world(monkeypatch, tmp_path, junk=1)
+    _range()
+    assert _range_world.rows[0]["domain"] == ist.NO_DOMAIN
+    assert _iid(1) not in _range().text
+
+
+def test_6_the_marker_is_not_a_domain_and_no_cell_can_match_it(monkeypatch):
+    with pytest.raises(ValueError):
+        ist.set_domain("x", ist.NO_DOMAIN)
+    sqls: list = []
+
+    class Cur:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def execute(self, sql, params): sqls.append((" ".join(sql.split()), params))
+        def fetchall(self): return []
+        rowcount = 1
+
+    class Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def cursor(self, **k): return Cur()
+        def commit(self): pass
+
+    monkeypatch.setattr(ist, "_pg_connect", lambda: Conn())
+    ist.list_by_created(0, 9, 5, domains={"A", ist.NO_DOMAIN})   # a cell spelled like the marker
+    assert sqls[-1][1][2] == ["A"]
+    ist.set_no_domain("x")
+    assert "domain IS NULL" in sqls[-1][0] and sqls[-1][1] == (ist.NO_DOMAIN, "x")
+    ist.set_domain("x", "A")
+    assert "IS DISTINCT FROM" in sqls[-1][0]                      # replaces the marker, not only NULL

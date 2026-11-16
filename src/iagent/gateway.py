@@ -14869,14 +14869,17 @@ async def _note_receipt_domain(ingest_id: str, domain: Optional[str]) -> None:
     """Write a receipt's review domain once a source has named it (a promotion task filed against
     `document_promotion:<DOMAIN>`, or an old row resolved on read). Best effort by design: the
     column only moves the scope into the query, and a NULL row is always resolved the old way, so a
-    failed write loses speed, never a notice and never a scope. None writes nothing."""
+    failed write loses speed, never a notice and never a scope. None (resolved, no domain) marks
+    the row `NO_DOMAIN`, only from NULL, so it leaves every later scan; a filed task overwrites it."""
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status
 
-    if not (domain and str(domain).strip()):
-        return
     try:
+        if not (domain and str(domain).strip()):
+            # resolved and none: mark it, so the row leaves the scan (only ever from NULL)
+            await run_in_threadpool(lambda: ingest_status.set_no_domain(ingest_id))
+            return
         await run_in_threadpool(lambda: ingest_status.set_domain(ingest_id, str(domain)))
     except Exception as exc:  # noqa: BLE001
         logger.warning("receipt domain write failed for %s: %s", ingest_id, type(exc).__name__)

@@ -853,6 +853,13 @@ def list_mine(*, caller_id: str, limit: int,
     return out
 
 
+# "Resolved, and no domain": a receipt that no decision record and no task names (a kind that
+# skips promotion). It is written so the row leaves every range scan. It is not a domain:
+# `set_domain` refuses it and `list_by_created` strips it from the caller's domains, so no cell
+# can match it however it is spelled. A filed task overwrites it (`set_domain`).
+NO_DOMAIN = "<none>"
+
+
 def list_by_created(start_ms: int, end_ms: int, limit: int, *,
                     after: Optional[tuple[int, str]] = None,
                     domains: Optional[Iterable[str]] = None) -> list[dict]:
@@ -873,7 +880,7 @@ def list_by_created(start_ms: int, end_ms: int, limit: int, *,
     params: list[Any] = [start_ms, end_ms]
     if domains is not None:
         sql += " AND (domain IS NULL OR domain = ANY(%s))"
-        params.append(sorted(set(domains)))
+        params.append(sorted({d for d in domains if d != NO_DOMAIN}))
     if after is not None:
         sql += " AND (created_at, id) > (%s, %s)"
         params += [after[0], after[1]]
@@ -895,12 +902,28 @@ def set_domain(ingest_id: str, domain: str) -> bool:
     domain = str(domain or "").strip()
     if not domain:
         raise ValueError("set_domain: a blank domain is not a domain (NULL means none)")
+    if domain == NO_DOMAIN:
+        raise ValueError("set_domain: NO_DOMAIN is a marker, not a domain; use set_no_domain")
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """UPDATE ingest_status_projection SET domain = %s
                     WHERE id = %s AND kind <> 'event' AND domain IS DISTINCT FROM %s""",
                 (domain, ingest_id, domain))
+            changed = cur.rowcount
+        conn.commit()
+    return changed > 0
+
+
+def set_no_domain(ingest_id: str) -> bool:
+    """Mark a receipt "resolved, no domain" (`NO_DOMAIN`), only while its domain is NULL: it never
+    overwrites a real domain. A later `set_domain` (a task filed) replaces it. True when changed."""
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE ingest_status_projection SET domain = %s
+                    WHERE id = %s AND kind <> 'event' AND domain IS NULL""",
+                (NO_DOMAIN, ingest_id))
             changed = cur.rowcount
         conn.commit()
     return changed > 0

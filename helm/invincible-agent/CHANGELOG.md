@@ -30,8 +30,12 @@
   at the roll has a NULL `domain`. NULL means "no task has said", and the range query always returns
   NULL rows, which are resolved the old way (decision record, else the open task's audience) and
   written back. No backfill job is required, and no notice is dropped while rows are NULL; the first
-  range over old receipts is as slow as before, the second is not. A receipt that never gains a domain
-  (no task) stays NULL and is re-read each request, inside the page bound. `POST /ingest/export/notices`
+  range over old receipts is as slow as before, the second is not. **On the first wide range after the
+  roll, a 422 `export_range_scan_bound` is possible while old rows are being written back; a retry
+  makes progress** (each row read is written before the bound is checked). A receipt that resolves to
+  no domain (no decision record, no task) is marked `<none>`, a value that is not a domain: `set_domain`
+  refuses it and the query strips it from the caller's domains, so no cell can match it. Such a row
+  leaves every later scan, and a promotion task filed later overwrites the marker. `POST /ingest/export/notices`
   by `range` reads at most `_EXPORT_RANGE_MAX_PAGES` (40) pages of receipts, then answers 422
   `export_range_scan_bound` stating the bound and no count. Chart values and endpoints are unchanged.
   `ingest_status_projection`'s Electric shape serves the same rows (identity-scoped) and now carries

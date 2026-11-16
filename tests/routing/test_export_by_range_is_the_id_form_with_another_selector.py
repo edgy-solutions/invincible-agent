@@ -61,6 +61,7 @@ def _range_world(monkeypatch, tmp_path, specs, *, extra="", grants=None, page=No
                  else {BATCH, "can_export:t"}, worlds=worlds,
                  profiles={"t": _yaml("t", version=7, extra=extra)})
     rows = [w[0] for w in worlds]
+    _range_world.rows = rows                 # the stored receipts, for a test that writes them
     calls: list = []
 
     def list_by_created(start_ms, end_ms, limit, *, after=None, domains=None):
