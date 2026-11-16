@@ -2272,6 +2272,8 @@ try:
         identifier_name_and_qualifiers as _ir_split_identifier,
         decide_instance_abstention as _ir_abstention,
         instance_not_found_message as _ir_not_found_msg,
+        instance_out_of_domain_message as _ir_out_of_domain_msg,
+        OUT_OF_DOMAIN_REASON as _IR_OUT_OF_DOMAIN,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
         declared_id_namespaces as _ir_declared_namespaces,
@@ -2285,6 +2287,8 @@ except ImportError:
         identifier_name_and_qualifiers as _ir_split_identifier,
         decide_instance_abstention as _ir_abstention,
         instance_not_found_message as _ir_not_found_msg,
+        instance_out_of_domain_message as _ir_out_of_domain_msg,
+        OUT_OF_DOMAIN_REASON as _IR_OUT_OF_DOMAIN,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
         declared_id_namespaces as _ir_declared_namespaces,
@@ -2733,6 +2737,9 @@ async def _resolve_instance(
                          for r in resolvers}
     candidates: list[_IRCandidate] = []
     demoted: list[dict] = []
+    #: the demoted providers' own claims, kept ONLY to tell "nobody knows this name" from
+    #: "it is known outside the asked domains". Never resolves the question.
+    demoted_candidates: list[_IRCandidate] = []
     for o in outcomes:
         owns = _provider_domains.get(o.provider) or set()
         # Empty `_asked` = the caller named no domain, so there is nothing to scope
@@ -2742,6 +2749,7 @@ async def _resolve_instance(
         if _asked and owns and not (owns & _asked):
             demoted.append({"provider": o.provider, "provider_domains": sorted(owns),
                             "n_candidates": len(o.candidates)})
+            demoted_candidates.extend(o.candidates)
             continue
         candidates.extend(o.candidates)
 
@@ -2879,6 +2887,31 @@ async def _resolve_instance(
         # another domain" are different answers and the trace must distinguish them.
         provenance["instance_out_of_domain_demoted"] = demoted
         provenance["instance_asked_domains"] = sorted(_asked)
+        # KNOWN, BUT NOT HERE (2026-11-16). When nothing in the asked domains resolves the name,
+        # ask the SAME decision table whether the demoted claims would have. If they would, the
+        # name is known outside the asked domains and the abstention must say so, rather than
+        # "no provider recognizes it". The shadow subject is recorded as a fact and never used:
+        # the question still does not resolve, because the caller did not ask in that domain.
+        if decision.subject_uri is None and demoted_candidates:
+            _shadow = _ir_decide(
+                demoted_candidates,
+                exact_threshold=_INSTANCE_RESOLVE_EXACT,
+                min_score=_INSTANCE_RESOLVE_MIN_SCORE,
+                identifier=identifier,
+                class_chains=None,
+            )
+            if _shadow.subject_uri is not None:
+                _winner = _shadow.provenance.get("instance_provider")
+                _where = (_provider_domains.get(_winner) if _winner
+                          else set().union(*(set(d["provider_domains"]) for d in demoted
+                                             if d["n_candidates"])))
+                # The winning provider's DECLARED domains, which this same provenance already
+                # carries under `instance_out_of_domain_demoted`, so naming them discloses
+                # nothing new. Not intersected with `_entitled`: every caller forwards its
+                # ACTIVE domains as the entitlement, so that intersection is empty by
+                # construction and would never name anything.
+                provenance["instance_resolves_out_of_domain"] = True
+                provenance["instance_out_of_domain_domains"] = sorted(_where or ())
 
     # Per-provider audit so the trace shows which phone book said what.
     provenance["instance_provider_outcomes"] = [
@@ -4110,16 +4143,24 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         # ``instance_match``. When it fires, we emit UNKNOWN (the router's
         # honest short-circuit) with an ACTIONABLE message — NOT another
         # LLM re-judgment. See [[project_abstention_gate_llm_mediated]].
-        if _ir_abstention(
+        _abstain = _ir_abstention(
             identifier=identifier,
             instance_subject=instance_subject,   # None on this branch
             instance_match=str(instance_provenance.get("instance_match") or ""),
-        ) == "instance_not_found":
-            instance_provenance["abstention_reason"] = "instance_not_found"
+            resolves_out_of_domain=bool(
+                instance_provenance.get("instance_resolves_out_of_domain")),
+        )
+        if _abstain in ("instance_not_found", _IR_OUT_OF_DOMAIN):
+            instance_provenance["abstention_reason"] = _abstain
             return SemanticResolutionResponse(
                 resolved_uri="UNKNOWN",
                 confidence_score=0.0,
-                reasoning=_ir_not_found_msg(identifier),
+                reasoning=(
+                    _ir_out_of_domain_msg(
+                        identifier,
+                        instance_provenance.get("instance_out_of_domain_domains"))
+                    if _abstain == _IR_OUT_OF_DOMAIN
+                    else _ir_not_found_msg(identifier)),
                 provenance=instance_provenance,
                 candidates=candidates,
                 excluded=_gate_excluded,
