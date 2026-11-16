@@ -323,11 +323,8 @@ def test_every_pyproject_pins_provenance_telemetry_0_2_2():
         if pins:
             pinned[f] = pins
     assert len(pinned) >= 8, sorted(str(p) for p in pinned)
-    # 0.2.2 (trace_id_for, the W3C parsers, traced capture flags). While the tag is unpublished the
-    # pin is the 0.2.2 PR head, as a direct reference; ``==0.2.2`` replaces it.
-    ok = (["==0.2.2"], [" @ git+https://github.com/edgy-solutions/provenance-telemetry.git@"
-                        "fa6bc680f3e38e3e6cd3e58d9366ec103070ebab"])
-    assert {f: p for f, p in pinned.items() if p not in ok} == {}
+    # 0.2.2 (trace_id_for, the W3C parsers, traced capture flags), published from tag v0.2.2.
+    assert {f: p for f, p in pinned.items() if p != ["==0.2.2"]} == {}
 
 
 def test_the_pin_scanner_sees_a_stale_pin():

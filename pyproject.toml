@@ -69,7 +69,7 @@ dependencies = [
     # The cortex-bff and dagster user-code images install --no-dev with no extras, so the
     # telemetry leaf must be a main dependency or trace_spans degrades to no-ops
     # (bff.orchestrate and supervisor.* never emit).
-    "provenance-telemetry==0.2.1",
+    "provenance-telemetry==0.2.2",
     "mcp",
     # boto3 for cortex-bff's /federated_image endpoint: proxies MinIO image
     # reads through the same JWT + entitled_domains gate the rest of the bff
