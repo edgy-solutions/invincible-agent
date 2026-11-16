@@ -160,11 +160,20 @@ groups:
   # change the workbench's deck template. Sandbox member = alice.
   training-admins: {}
 
-  # DECIDE-RAIL GROUP ONLY (2026-11-07 dispatch). Grants NO persona.domain cell; named in
-  # policy/option_deciders.yaml `grant_to_groups` for every `obsolescence_resolution.<option>`. A member
-  # may CHOOSE that option at the workflow's decide step; who APPROVES is task_grants' audience.
+  # DECIDE-RAIL GROUP (2026-11-07 dispatch), named in policy/option_deciders.yaml `grant_to_groups`
+  # for every `obsolescence_resolution.<option>`. A member may CHOOSE that option at the workflow's
+  # decide step; who APPROVES is task_grants' audience.
   # Sandbox members = alice, and the walkers erin and chris (2026-11-10 ruling: the walkers mirror alice).
-  obsolescence-deciders: {}
+  #
+  # AND ONE CELL (2026-11-16 dispatch): SUSTAINMENT_ENGINEER in SUSTAINMENT, so a member asking an
+  # obsolescence question can act as the persona the answer speaks in. Before it, the only
+  # SUSTAINMENT cell was safety-engineers' (the hazard plane), and the rehearsal's "Acting as" read
+  # SAFETY_ENGINEER on every notice and where-used question. The DOMAIN is unchanged (members already
+  # hold SUSTAINMENT through safety-engineers), so this widens no one's reach: it adds a persona label
+  # the picker can offer. Topaz must be synced before the roll that relies on it.
+  obsolescence-deciders:
+    grants:
+      - {persona: SUSTAINMENT_ENGINEER, domain: SUSTAINMENT}
 
   # TASK-AUDIENCE ACTOR GROUP ONLY (2026-10-11 ruling). Grants NO persona.domain cell; named in
   # task_grants.yaml `grant_to_groups` for maint_supervisor_approval:edge-01.
