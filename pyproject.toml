@@ -66,6 +66,10 @@ dependencies = [
     # c5fec43 (branch only, no tag yet) for write_node on MeshGraphWriter — the ingest node's
     # move off raw Cypher MERGE needs it now.
     "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.20",
+    # The cortex-bff and dagster user-code images install --no-dev with no extras, so the
+    # telemetry leaf must be a main dependency or trace_spans degrades to no-ops
+    # (bff.orchestrate and supervisor.* never emit).
+    "provenance-telemetry==0.2.1",
     "mcp",
     # boto3 for cortex-bff's /federated_image endpoint: proxies MinIO image
     # reads through the same JWT + entitled_domains gate the rest of the bff
@@ -138,8 +142,6 @@ dev = [
     "pytest-random-order",
     "weaviate-client>=4.4,<5.0",
     "lxml>=6.1.1",
-    # ADR-0038 telemetry leaf — lets the mesh-mapping truth-check (tests/test_telemetry.py)
-    # RUN rather than importorskip. Also declared in restate_analyst for runtime emission.
     # Mesh membership package — owns transport auth (the app-factory dependency) and the
     # ONE general mint. PINNED TO A TAG OR A FULL SHA, never a branch: this package now governs
     # fleet auth and identity minting, so a floating ref would let a single SDK commit change
@@ -147,7 +149,6 @@ dev = [
     # credentials attached (cf. the doc-tools floating-@rev finding).
     # TODO(0.9.6): re-pin to the v0.9.6 TAG once it is cut — see the matching pin above.
     "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.9.20",
-    "provenance-telemetry==0.2.1",
 ]
 
 [build-system]
