@@ -84,6 +84,7 @@ def app(monkeypatch):
     monkeypatch.setattr(engine, "can_view_program", lambda program, caller_id, **kw: True)
     monkeypatch.setenv("FIN_DATASET_URN", URN)
     monkeypatch.setenv("FIN_DATASET_BANNER", "SYNTHETIC")
+    monkeypatch.setenv("FIN_DATASET_CONTRACT", "ev_fixture")
 
 
 def _call(gateway_url: str, monkeypatch):

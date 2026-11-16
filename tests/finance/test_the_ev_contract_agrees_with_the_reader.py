@@ -1,9 +1,10 @@
-"""contracts/ev_fixture.yaml says what the governed read refuses on; one reader still holds its own copy.
+"""contracts/ev_fixture.yaml says what the governed read refuses on; the reader holds no copy.
 
 A dataset measure row's read loads the contract and enforces it (`dataset_contracts`, ruled
-2026-11-10). The `FIN_DATASET_URN` read (`state_from_rows`) still holds its constants, so until it
-reads the contract too there are two homes for one claim, and the contract is the one that goes on
-passing after the reader changes. So every fact
+2026-11-10), and so does the `FIN_DATASET_URN` read (`state_from_rows`), which reads the contract
+the deployment names (`FIN_DATASET_CONTRACT`). There is one home for the key and the dependencies:
+the contract. What is left to agree is engine-fin's roles, the columns its state is built from,
+which the contract must carry. So every fact
 the contract states about the reader is read FROM the reader here: its column sets, the rule ids
 it raises (found by the form `ContractViolation("<id>"` in its source, so a new refusal site is a
 red until it is registered in code, `RULES` of either file; the contract need not name it, since
@@ -16,6 +17,7 @@ Run: uv run --no-sync python -I -m pytest -c pyproject.toml --rootdir=. -p no:ca
 """
 from __future__ import annotations
 
+import dataclasses
 import re
 from pathlib import Path
 
@@ -43,13 +45,13 @@ def _columns(c):
     return {col["name"]: col for col in c["columns"]}
 
 
-def test_the_required_columns_are_the_readers_fixed_set(contract):
-    cols = _columns(contract)
-    assert {n for n, col in cols.items() if col["required"]} == set(asset_inputs.COLUMNS)
-    for n in asset_inputs.STRING_COLUMNS:
-        assert cols[n]["type"] == "string", n
-    for n in asset_inputs.NUMERIC_COLUMNS:
-        assert cols[n]["type"] in ("numeric", "integer"), n
+def test_the_ev_contract_carries_engine_fins_roles():
+    ev = dataset_contracts.load_contract("ev_fixture", CONTRACT.parent)
+    assert asset_inputs.contract_problems(ev) == []
+    # the control: the contract without program_name determined by program_id is refused, by name
+    cut = tuple((by, tuple(c for c in cols if c != "program_name")) for by, cols in ev.dependencies)
+    problems = asset_inputs.contract_problems(dataclasses.replace(ev, dependencies=cut))
+    assert len(problems) == 1 and "ev_fixture" in problems[0] and "program_name" in problems[0]
 
 
 def test_a_required_column_is_already_produced(contract):
@@ -125,6 +127,7 @@ def test_the_sandbox_flag_names_this_contracts_asset(contract):
     # The flag is the only place the running engine learns the URN; a typo there reads nothing.
     env = yaml.safe_load(SANDBOX_VALUES.read_text(encoding="utf-8"))["engineFinance"]["env"]
     assert (env["FIN_DATASET_URN"], env["FIN_DATASET_BANNER"]) == (contract["dataset"]["urn"], contract["dataset"]["banner"])
+    assert env["FIN_DATASET_CONTRACT"] == contract["contract_id"]
     live = yaml.safe_load(LIVE_CASE.read_text(encoding="utf-8"))
     assert live["asset"] == contract["dataset"]["urn"]
     assert live["banner_must_say"].lower() in env["FIN_DATASET_BANNER"].lower()

@@ -494,6 +494,7 @@ way.)*
 | `DATAHUB_GMS_URL` / `DATAHUB_TOKEN` | ConfigMap / Secret | only on the legacy path | unset → registration logs a warning and returns |
 | `REQUIRE_TRANSPORT_AUTH` | ConfigMap | no | unset → **OBSERVE**: inbound callers logged, none refused. This is the intended posture today |
 | `CENTRAL_GATEWAY_URL` | ConfigMap | only when `FIN_DATASET_URN` is set | the gateway the mesh client asks for a ticket. Unset with the flag set, engine-fin refuses to boot. It is **not** consulted on the notional path |
+| `FIN_DATASET_CONTRACT` | ConfigMap | only when `FIN_DATASET_URN` is set | the id of the contract the read is held to. Unset with the flag set, engine-fin refuses to boot |
 | `NEO4J_*` | ConfigMap / Secret | **not read by this engine** | listed so the next reader does not add a driver it does not need |
 
 ### The degraded-default law

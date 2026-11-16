@@ -381,6 +381,7 @@ engineFinance:
   env:
     FIN_DATASET_URN: "urn:li:dataset:(urn:li:dataPlatform:s3,ev_fixture,PROD)"
     FIN_DATASET_BANNER: "SYNTHETIC earned-value fixture, not a real program."
+    FIN_DATASET_CONTRACT: "ev_fixture"
 
 engineCost:
   enabled: true

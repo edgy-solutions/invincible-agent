@@ -618,13 +618,21 @@ Design: `docs/plans/fin-inputs-resolver.md`. Nothing here has run on a cluster.
 | --- | --- |
 | `FIN_DATASET_URN` | the asset, `urn:li:dataset:...`. Unset: the notional model answers, as before. |
 | `FIN_DATASET_BANNER` | required with the URN. It is shown beside every answer, so a synthetic asset cannot read as real. |
+| `FIN_DATASET_CONTRACT` | required with the URN: the id of the contract, in the contract directory, the read is held to. |
 | `CENTRAL_GATEWAY_URL` | required with the URN: the gateway that issues the read ticket. |
 | `FIN_ASSET_MAX_ROWS` | optional, default 100000. |
 
 With the URN set, the engine refuses to start if the banner or gateway is missing, the URN is not
-of the `urn:li:dataset:` form, or the mesh client cannot be imported.
+of the `urn:li:dataset:` form, the mesh client cannot be imported, the contract is unset or cannot
+be loaded, or it does not declare engine-fin's roles (the nine columns below, each required and of
+its type, the scope, the grain and the dependencies).
 
-**Columns.** Fixed names, file-backed assets only, one row per work package and period:
+**Columns.** File-backed assets only. These are the roles the named contract must declare, as
+required columns of these types. It must be scoped by `program_id`, hold one row per
+(`work_package`, `period`) at most, and declare `program_name` and `program_bac` determined by
+`program_id` and `control_account` determined by `work_package`. The read selects every column the
+contract declares that the asset carries, and refuses a broken key or dependency with the shared
+reader's `duplicate_key` and `not_determined_by`:
 
 | column | type | rule |
 | --- | --- | --- |

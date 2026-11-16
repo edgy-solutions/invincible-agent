@@ -1061,8 +1061,9 @@ def _asset_state(urn: str, params: dict[str, Any], receipts: list[dict[str, Any]
     window = params.get("window")
     periods = periods_in(window) if window is not None else None  # an unknown period: no read
     with _asset_read_errors(urn):
-        df = asset_inputs.read_rows(_ticketed_reader(receipts), urn, program_id, periods)
-        return asset_inputs.state_from_rows(df, program_id)
+        contract = asset_inputs.dataset_contract()
+        df = asset_inputs.read_rows(_ticketed_reader(receipts), urn, program_id, periods, contract)
+        return asset_inputs.state_from_rows(df, program_id, contract)
 
 
 @contextmanager

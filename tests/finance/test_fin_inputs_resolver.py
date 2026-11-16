@@ -20,6 +20,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+import yaml
 
 pl = pytest.importorskip("polars")
 jwt = pytest.importorskip("jwt")
@@ -34,8 +35,10 @@ for _p in (REPO, REPO / "src", REPO / "scripts"):
 from agent_fleet.finance_agent import asset_inputs, measure_verbs, seed, state_codec  # noqa: E402
 from agent_fleet.finance_agent import main as engine  # noqa: E402
 from agent_fleet.finance_agent.entities import FISCAL_PERIODS, NotInModel  # noqa: E402
+from agent_fleet.utils import dataset_contracts  # noqa: E402
 from dag_tools.cortex_data.client import ticket_receipt  # noqa: E402
 
+CONTRACTS = REPO / "contracts"
 SAMPLE = REPO / "policy" / "overlays" / "sample" / "measure_verbs"
 PROFILES_DIR = REPO / "policy" / "overlays" / "sample" / "fin_export_profiles"
 PROGRAM = seed.PROGRAM_ID
@@ -44,6 +47,7 @@ ALICE = "alice@example.com"
 URN = "urn:li:dataset:(urn:li:dataPlatform:file,fin_test_asset,TEST)"
 BANNER = "SYNTHETIC TEST ASSET - not a real program."
 GATEWAY = "http://gateway.test"
+CONTRACT_ID = "ev_fixture"
 PREFIX = "a governed finance read requires the caller's id"
 SECRET = "hunter2-fake-credential"
 #: The as-of a test broker stamps on every ticket. Each read gets its own ticket id (`Seam`).
@@ -104,13 +108,29 @@ class Seam:
         return self.Client, NotEntitled, MeshUnavailable
 
 
+def EV():
+    """The contract the deployment names for the state read: the sample EV fixture's."""
+    return dataset_contracts.load_contract(CONTRACT_ID, CONTRACTS)
+
+
+#: Each planted case's own name is what the case plants; the id that refuses it is the shared
+#: reader's where the contract declares the rule (ruled 2026-11-14), engine-fin's otherwise.
+REFUSED_AS = {
+    "duplicate_work_package_period": "duplicate_key",
+    "program_name_not_unique": "not_determined_by",
+    "program_bac_not_unique": "not_determined_by",
+    "work_package_in_two_accounts": "not_determined_by",
+}
+
+
 def token(email: str) -> str:
     return jwt.encode({"email": email}, "k", algorithm="HS256")
 
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    for k in ("FIN_DATASET_URN", "FIN_DATASET_BANNER", "FIN_ASSET_MAX_ROWS", "CENTRAL_GATEWAY_URL",
+    for k in ("FIN_DATASET_URN", "FIN_DATASET_BANNER", "FIN_DATASET_CONTRACT", "DATASET_CONTRACT_DIR",
+              "FIN_ASSET_MAX_ROWS", "CENTRAL_GATEWAY_URL",
               "MESH_JWT_PUBLIC_KEY", "KEYCLOAK_PUBLIC_KEY", "REQUIRE_TRANSPORT_AUTH",
               "MEASURE_VERB_OVERLAY_DIRS"):
         monkeypatch.delenv(k, raising=False)
@@ -145,6 +165,7 @@ def seam(monkeypatch):
 def flag(monkeypatch):
     monkeypatch.setenv("FIN_DATASET_URN", URN)
     monkeypatch.setenv("FIN_DATASET_BANNER", BANNER)
+    monkeypatch.setenv("FIN_DATASET_CONTRACT", CONTRACT_ID)
     monkeypatch.setenv("CENTRAL_GATEWAY_URL", GATEWAY)
 
 
@@ -259,7 +280,7 @@ WINDOWS = [None, ["FY26-02", "FY26-03", "FY26-05"]]
 @pytest.mark.parametrize("window", WINDOWS, ids=["no-window", "subset-window"])
 def test_every_declared_row_computes_the_same_figures_over_rows_as_over_the_seed(declared, window):
     assert set(declared) >= {"fin_tcpi", "fin_vac_cpi"}
-    state = asset_inputs.state_from_rows(frame_of(), PROGRAM)
+    state = asset_inputs.state_from_rows(frame_of(), PROGRAM, EV())
     for fn, row in declared.items():
         got = measure_verbs.run_declared(state, row, program_id=PROGRAM, window=window)
         want = measure_verbs.run_declared(seed.build_seed(), row, program_id=PROGRAM, window=window)
@@ -270,7 +291,7 @@ def test_every_declared_row_computes_the_same_figures_over_rows_as_over_the_seed
 def test_a_source_with_float_amounts_changes_the_audit_strings_and_no_figure(declared):
     """A real source may hold every amount as a float. The strings then read 12000000.0, and the values are equal."""
     floats = frame_of().with_columns(pl.col(c).cast(pl.Float64) for c in asset_inputs.NUMERIC_COLUMNS)
-    state = asset_inputs.state_from_rows(floats, PROGRAM)
+    state = asset_inputs.state_from_rows(floats, PROGRAM, EV())
     changed = 0
     for fn, row in declared.items():
         got = measure_verbs.run_declared(state, row, program_id=PROGRAM)
@@ -292,7 +313,7 @@ def test_the_same_figures_seal_can_fail(declared):
     df = frame_of()
     bumped = df.with_columns(
         pl.when(pl.int_range(pl.len()) == 0).then(pl.col("acwp") + 1).otherwise(pl.col("acwp")).alias("acwp"))
-    state = asset_inputs.state_from_rows(bumped, PROGRAM)
+    state = asset_inputs.state_from_rows(bumped, PROGRAM, EV())
     row = declared["fin_tcpi"]
     got = measure_verbs.run_declared(state, row, program_id=PROGRAM)
     want = measure_verbs.run_declared(seed.build_seed(), row, program_id=PROGRAM)
@@ -315,8 +336,8 @@ def test_the_route_over_a_parquet_asset_answers_the_seeds_figures(client, seam, 
 def test_dropping_a_work_package_from_the_window_does_not_move_the_programs_bac(declared):
     df = frame_of()
     dropped_wp = df["work_package"][0]
-    full = asset_inputs.state_from_rows(df, PROGRAM)
-    short = asset_inputs.state_from_rows(df.filter(pl.col("work_package") != dropped_wp), PROGRAM)
+    full = asset_inputs.state_from_rows(df, PROGRAM, EV())
+    short = asset_inputs.state_from_rows(df.filter(pl.col("work_package") != dropped_wp), PROGRAM, EV())
     for fn in ("fin_tcpi", "fin_vac_cpi"):
         a = measure_verbs.run_declared(full, declared[fn], program_id=PROGRAM)
         b = measure_verbs.run_declared(short, declared[fn], program_id=PROGRAM)
@@ -341,11 +362,13 @@ def _two_program_parquet(tmp_path):
 
 def test_the_read_collects_only_the_asked_program_and_only_the_contract_columns(tmp_path):
     path, df = _two_program_parquet(tmp_path)
-    got = asset_inputs.read_rows(lambda urn: pl.scan_parquet(path), URN, PROGRAM, None)
-    assert got.columns == list(asset_inputs.COLUMNS)
+    got = asset_inputs.read_rows(lambda urn: pl.scan_parquet(path), URN, PROGRAM, None, EV())
+    carried = pl.scan_parquet(path).collect_schema()
+    assert got.columns == [c for c in EV().types if c in carried]
+    assert set(asset_inputs.COLUMNS) <= set(got.columns)
     assert set(got["program_id"]) == {PROGRAM} and got.height == df.height
     assert "extra_column" not in got.columns
-    windowed = asset_inputs.read_rows(lambda urn: pl.scan_parquet(path), URN, PROGRAM, ["FY26-02"])
+    windowed = asset_inputs.read_rows(lambda urn: pl.scan_parquet(path), URN, PROGRAM, ["FY26-02"], EV())
     assert set(windowed["period"]) == {"FY26-02"} and set(windowed["program_id"]) == {PROGRAM}
 
 
@@ -364,7 +387,7 @@ def test_a_frame_that_forgot_its_filter_is_refused_not_blended(tmp_path):
     path, _ = _two_program_parquet(tmp_path)
     unfiltered = pl.read_parquet(path).select(list(asset_inputs.COLUMNS))
     with pytest.raises(asset_inputs.ContractViolation) as ei:
-        asset_inputs.state_from_rows(unfiltered, PROGRAM)
+        asset_inputs.state_from_rows(unfiltered, PROGRAM, EV())
     assert ei.value.rule == "other_program_rows"
 
 
@@ -470,6 +493,30 @@ def test_mesh_unavailable_is_a_503_and_its_text_reaches_neither_the_answer_nor_t
     assert any("MeshUnavailable" in line for line in logs.lines), "the type is the log's evidence"
 
 
+@pytest.mark.parametrize("change", ["unset", "unknown", "lacks-a-role"])
+def test_a_contract_that_changed_under_a_running_engine_is_a_503_naming_no_cause(
+        client, seam, declared, logs, monkeypatch, tmp_path, change):
+    """Boot refuses all three; a request after the deployment changed under the engine is
+    `asset_unavailable`, never a bare 500, and the cause is in the log, not the answer."""
+    if change == "unset":
+        monkeypatch.delenv("FIN_DATASET_CONTRACT")
+    elif change == "unknown":
+        monkeypatch.setenv("FIN_DATASET_CONTRACT", "no_such_contract")
+    else:
+        doc = yaml.safe_load((CONTRACTS / f"{CONTRACT_ID}.yaml").read_text(encoding="utf-8"))
+        doc["dependencies"] = [d for d in doc["dependencies"] if d["by"] != "work_package"]
+        (tmp_path / f"{CONTRACT_ID}.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8")
+        monkeypatch.setenv("DATASET_CONTRACT_DIR", str(tmp_path))
+    seam.frame = frame_of().lazy()
+    r = measure(client)
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"]["error"] == "asset_unavailable"
+    assert "FIN_DATASET_CONTRACT" not in r.text and "no_such_contract" not in r.text
+    assert "control_account" not in r.text
+    assert not any(f in r.text for f in seed_figures(declared))
+    assert any("FIN_DATASET_CONTRACT" in line for line in logs.lines), "the cause is the log's evidence"
+
+
 def test_a_scan_failure_is_a_503_by_type_only(client, seam, declared, logs, tmp_path):
     seam.frame = pl.scan_parquet(tmp_path / f"{SECRET}-missing.parquet")
     r = measure(client)
@@ -501,12 +548,12 @@ def _mutations():
 
 
 @pytest.mark.parametrize("rule", list(_mutations()))
-def test_each_contract_rule_is_its_own_502_and_names_no_money(client, seam, declared, rule):
+def test_each_planted_case_is_a_502_naming_its_rule_and_no_money(client, seam, declared, rule):
     seam.frame = _mutations()[rule].lazy()
     r = measure(client)
     assert r.status_code == 502, r.text
     d = r.json()["detail"]
-    assert d["error"] == "asset_contract_violation" and d["rule"] == rule
+    assert d["error"] == "asset_contract_violation" and d["rule"] == REFUSED_AS.get(rule, rule)
     assert not any(f in r.text for f in seed_figures(declared))
     # the control: the same frame, unbroken, is served
     seam.frame = frame_of().lazy()
@@ -542,7 +589,7 @@ def test_an_unknown_period_is_refused_before_any_read(client, seam):
 
 def test_state_from_rows_refuses_an_empty_frame_by_name():
     with pytest.raises(NotInModel):
-        asset_inputs.state_from_rows(frame_of().head(0), PROGRAM)
+        asset_inputs.state_from_rows(frame_of().head(0), PROGRAM, EV())
 
 
 # ── boot ────────────────────────────────────────────────────────────────────────────────
@@ -556,7 +603,8 @@ def test_the_flag_set_with_everything_present_boots(on):
     _boots()
 
 
-@pytest.mark.parametrize("break_it", ["banner", "gateway", "urn-form", "client-not-importable"])
+@pytest.mark.parametrize("break_it", ["banner", "gateway", "urn-form", "client-not-importable",
+                                      "contract-unset", "contract-unknown"])
 def test_a_flag_that_cannot_be_honoured_fails_the_boot(on, monkeypatch, break_it):
     if break_it == "banner":
         monkeypatch.delenv("FIN_DATASET_BANNER")
@@ -564,12 +612,76 @@ def test_a_flag_that_cannot_be_honoured_fails_the_boot(on, monkeypatch, break_it
         monkeypatch.delenv("CENTRAL_GATEWAY_URL")
     elif break_it == "urn-form":
         monkeypatch.setenv("FIN_DATASET_URN", "s3://bucket/key")
+    elif break_it == "contract-unset":
+        monkeypatch.delenv("FIN_DATASET_CONTRACT")
+    elif break_it == "contract-unknown":
+        monkeypatch.setenv("FIN_DATASET_CONTRACT", "no_such_contract")
     else:
         def missing():
             raise ImportError("No module named 'dag_tools.cortex_data.identity'")
         monkeypatch.setattr(engine.asset_inputs, "_load_client", missing)
     with pytest.raises(RuntimeError, match="FIN_DATASET_URN"):
         _boots()
+
+
+def _ev_doc() -> dict:
+    return yaml.safe_load((CONTRACTS / f"{CONTRACT_ID}.yaml").read_text(encoding="utf-8"))
+
+
+def _lacks_program_name(doc):
+    doc["columns"] = [c for c in doc["columns"] if c["name"] != "program_name"]
+    doc["dependencies"][0]["determines"].remove("program_name")
+
+
+def _optional_acwp(doc):
+    next(c for c in doc["columns"] if c["name"] == "acwp")["required"] = False
+
+
+def _wrong_scope(doc):
+    doc["scope"] = "work_package"
+
+
+def _no_name_dependency(doc):
+    doc["dependencies"][0]["determines"].remove("program_name")
+
+
+def _wider_grain(doc):
+    doc["grain"] = ["control_account", "work_package", "period"]
+
+
+def _string_bcws(doc):
+    next(c for c in doc["columns"] if c["name"] == "bcws")["type"] = "string"
+
+
+def _integer_program_name(doc):
+    next(c for c in doc["columns"] if c["name"] == "program_name")["type"] = "integer"
+
+
+@pytest.mark.parametrize("plant,names", [
+    (_lacks_program_name, "does not declare column(s): program_name"),
+    (_optional_acwp, "does not require column(s) the read needs: acwp"),
+    (_string_bcws, "does not type column(s) as numbers: bcws"),
+    (_integer_program_name, "does not type column(s) as string: program_name"),
+    (_wrong_scope, "scoped by program_id"),
+    (_no_name_dependency, "program_name determined by program_id"),
+    (_wider_grain, "grain"),
+], ids=lambda v: v.__name__ if callable(v) else v)
+def test_a_contract_that_does_not_carry_the_roles_fails_the_boot_naming_what_is_wrong(
+        on, monkeypatch, tmp_path, plant, names):
+    doc = _ev_doc()
+    doc["contract_id"] = "broken"
+    plant(doc)
+    (tmp_path / "broken.yaml").write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    monkeypatch.setenv("DATASET_CONTRACT_DIR", str(tmp_path))
+    monkeypatch.setenv("FIN_DATASET_CONTRACT", "broken")
+    with pytest.raises(RuntimeError, match="FIN_DATASET_URN") as ei:
+        _boots()
+    assert "broken" in str(ei.value) and names in str(ei.value)
+    # the control: the sample contract, in the same directory, boots
+    (tmp_path / f"{CONTRACT_ID}.yaml").write_text((CONTRACTS / f"{CONTRACT_ID}.yaml").read_text(
+        encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setenv("FIN_DATASET_CONTRACT", CONTRACT_ID)
+    _boots()
 
 
 def test_a_bad_row_cap_fails_the_boot(on, monkeypatch):
@@ -638,7 +750,7 @@ def test_under_the_flag_a_package_runs_as_the_caller_over_the_asset(client, seam
 
     kw = built[0]
     assert isinstance(kw["state"], asset_inputs.AssetState), "the build reads what the panels read"
-    expected = asset_inputs.state_from_rows(frame, PROGRAM)
+    expected = asset_inputs.state_from_rows(frame, PROGRAM, EV())
     assert {f.period: f.acwp for f in kw["state"].facts} == {f.period: f.acwp for f in expected.facts}
     assert kw["state"].facts != seed.build_seed().facts, "the control: the frame moves the facts"
     assert kw["program_source"] == {"kind": "asset", "urn": URN}
@@ -683,7 +795,7 @@ def test_a_package_with_a_seed_sourced_funding_panel_builds_over_one_mixed_state
 
     kw = built[0]
     state = kw["state"]
-    expected = asset_inputs.state_from_rows(frame, PROGRAM)
+    expected = asset_inputs.state_from_rows(frame, PROGRAM, EV())
     assert {f.period: f.acwp for f in state.facts} == {f.period: f.acwp for f in expected.facts}, (
         "the carried collections are the asset's")
     assert state.funding and state.funding == state_codec.narrow(seed.build_seed(), PROGRAM).funding, (
@@ -796,7 +908,7 @@ def test_the_real_build_over_the_asset_verifies_and_names_where_its_figures_came
     manifest = manifests[0]
     assert manifest["program_source"] == {"kind": "asset", "urn": URN}
     assert manifest["data_provenance"] == asset_inputs.provenance(URN, seam.issued[1])
-    narrowed = state_codec.narrow(asset_inputs.state_from_rows(frame, PROGRAM), PROGRAM)
+    narrowed = state_codec.narrow(asset_inputs.state_from_rows(frame, PROGRAM, EV()), PROGRAM)
     assert manifest["state_sha256"] == export.content_hash(state_codec.state_to_dict(narrowed))
     page = (tmp_path / r.json()["artifact_filename"]).read_text(encoding="utf-8")
     assert URN in page and BANNER in page
@@ -1102,7 +1214,7 @@ def test_a_built_in_with_the_flag_set_reads_the_asset_as_the_caller(client, seam
     r = measure(client, fn, params=params)
     assert r.status_code == 200, r.text
     env = r.json()
-    over_asset = measures.fin_performance_indices(asset_inputs.state_from_rows(frame, PROGRAM), **params)
+    over_asset = measures.fin_performance_indices(asset_inputs.state_from_rows(frame, PROGRAM, EV()), **params)
     over_seed = measures.fin_performance_indices(seed.build_seed(), **params)
     assert engine._artifact_id(fn, params, over_asset) != engine._artifact_id(fn, params, over_seed), (
         "the control: the frame must move the figures")
