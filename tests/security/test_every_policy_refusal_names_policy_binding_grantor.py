@@ -429,6 +429,11 @@ PENDING: dict[str, str] = {
     # and grantor row arrive with engine-r's engine PR; until then the governed rows are held in
     # code, which is what `code` names. That PR moves this row to `repository_paths` and builds it.
     f"{ER}::Repo.merge::path_not_governed": "code",
+    # the grant quorum (grant_flow.grant_quorum): each names policy_id repository_paths and its missing_binding
+    # in the RepoRefusal; the engine service layer carries them into the standard body.
+    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::too_few_approvers': "repository_paths",
+    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::no_approver_in_audience': "repository_paths",
+    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::rail_row_without_approvers': "repository_paths",
 }
 
 

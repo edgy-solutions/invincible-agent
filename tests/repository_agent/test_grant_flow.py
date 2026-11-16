@@ -52,16 +52,19 @@ def domain_of(row):
     return DOMAINS.get(row["asset"])
 
 
+def production_policy(signer, rail=None):
+    return gf.grant_policy(
+        rail or RAIL, holders=holders, domain_of=domain_of, signer=signer, committer_name="engine-r",
+        committer_email="engine-r@engine-r.invalid", customer_terms=["zz-acme-test"],
+    )
+
+
 @pytest.fixture
 def w(tmp_path):
     src = pygit2.init_repository(str(tmp_path / "src.git"), bare=True, initial_head="trunk")
     commit_files(src, {"policy/asset_grants.yaml": HEADER.encode(), "policy/x.yaml": b"a: 1\n"}, [], REF)
     signer = sshsig.Signer.generate()
-    policy = repo_core.Policy(
-        governed=dict(RAIL), customer_terms=["zz-acme-test"], signer=signer, committer_name="engine-r",
-        committer_email="engine-r@engine-r.invalid",
-        extra_checks=[gf.grant_quorum(RAIL, holders=holders, domain_of=domain_of)],
-    )
+    policy = production_policy(signer)
     repo = repo_core.Repo.init_bare(tmp_path / "engine.git", CFG.repo_id, policy)
     repo.import_from(str(tmp_path / "src.git"))
     return SimpleNamespace(repo=repo, tmp=tmp_path)
@@ -282,3 +285,36 @@ def test_6_propose_review_merge_apply(w):
     assert {(g["subject"], g["asset"]) for g in raw["grants"]} == {
         ("carol", "urn:li:dataset:(a,asset-c,PROD)"), ("alice", DATASET)}
     assert w.repo.audit(path=gf.GRANTS_PATH)[0]["approvers"] == ["dana", "pat"]
+
+
+# 7. the production constructor and the fail-closed rail -------------------------------------------
+
+def _world(tmp_path, rail):
+    src = pygit2.init_repository(str(tmp_path / "s2.git"), bare=True, initial_head="trunk")
+    commit_files(src, {"policy/asset_grants.yaml": HEADER.encode(), "policy/x.yaml": b"a: 1\n"}, [], REF)
+    repo = repo_core.Repo.init_bare(tmp_path / "e2.git", CFG.repo_id, production_policy(sshsig.Signer.generate(), rail))
+    repo.import_from(str(tmp_path / "s2.git"))
+    return SimpleNamespace(repo=repo, tmp=tmp_path)
+
+
+def test_7_a_policy_built_by_the_constructor_refuses_a_one_approver_grant_merge(tmp_path):
+    w2 = _world(tmp_path, RAIL)
+    refuses(w2, file(w2), ["dana"], 409, "too_few_approvers")
+
+
+def test_7_extra_checks_can_add_but_not_remove_the_quorum():
+    pol = production_policy(sshsig.Signer.generate())
+    assert [f.__name__ for f in pol.extra_checks] == ["grant_quorum_check"]
+
+
+def test_7_a_matching_row_without_approvers_fails_closed(tmp_path):
+    rail = {"policy/asset_grants.yaml": {"review": "access_grant:<DOMAIN>", "unmatched_review": "repo_review:POLICY"},
+            "policy/": {"review": "repo_review:POLICY", "approvers": 2}}
+    w2 = _world(tmp_path, rail)
+    refuses(w2, file(w2), ["dana"], 409, "rail_row_without_approvers")
+    refuses(w2, file(w2), ["dana", "pat"], 409, "rail_row_without_approvers")   # even a full quorum
+
+
+def test_7_control_the_same_row_with_approvers_merges_two(tmp_path):
+    w2 = _world(tmp_path, RAIL)
+    merge(w2, file(w2), ["dana", "pat"])

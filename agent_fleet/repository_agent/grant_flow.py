@@ -206,7 +206,16 @@ def grant_quorum(
         meta = ctx["proposal"]
         who = {a.authz_id for a in approvals}
         rows = {p: _longest_row(p, governed) for p in ctx["paths"]}
-        need = max([int((r or {}).get("approvers", 1)) for r in rows.values()] or [1])
+        for path, r in rows.items():
+            n = (r or {}).get("approvers")
+            if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+                raise RepoRefusal(
+                    409, "rail_row_without_approvers", policy_id="repository_paths",
+                    missing_binding=f"an `approvers` count on the rail row governing {path}",
+                    message=f"the rail row governing {path} names no approvers count; refusing rather than guessing",
+                    check="quorum",
+                )
+        need = max(int(r["approvers"]) for r in rows.values()) if rows else 1
         if len(who) < need:
             raise RepoRefusal(
                 409, "too_few_approvers", policy_id="repository_paths",
@@ -233,6 +242,31 @@ def grant_quorum(
                     )
 
     return grant_quorum_check
+
+
+def grant_policy(
+    governed: Mapping[str, dict],
+    *,
+    holders: Callable[[str], set[str]],
+    domain_of: Callable[[Mapping], str | None],
+    signer,
+    committer_name: str,
+    committer_email: str,
+    customer_terms: list[str] | None,
+    extra_checks: Iterable[Callable[["repo_core.Repo", dict], None]] = (),
+) -> "repo_core.Policy":
+    """The ONE way the service builds its Policy: the grant quorum is always in it (ruled D5).
+
+    ``extra_checks`` may add checks; none can remove the quorum.
+    """
+    return repo_core.Policy(
+        governed=dict(governed),
+        customer_terms=customer_terms,
+        signer=signer,
+        committer_name=committer_name,
+        committer_email=committer_email,
+        extra_checks=[grant_quorum(governed, holders=holders, domain_of=domain_of), *extra_checks],
+    )
 
 
 # --------------------------------------------------------------------------- the merge-time sync
