@@ -44,7 +44,7 @@ def test_run_impl_journals_each_step_once_and_persists():
     out = asyncio.run(svc._run_impl(ctx, CFG, gather=asyncio.gather, ops=fake_ops()))
     assert out["status"] == "SUCCESS" and ctx.state["snapshot"] == out
     assert all(attempts == 1 for _, attempts in ctx.runs)
-    names = [n for n, _ in ctx.runs]
+    names = [n for n, _ in ctx.runs if n != "admission"]  # the journaled admission decision comes first
     assert names[0] == "t_start" and "execute_subtask[task_1]" in names
     from src.iagent.runless import peek_live
     assert peek_live("k1") is None  # dropped in finally

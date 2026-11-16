@@ -23,6 +23,9 @@ spans:
   supervisor.synthesize_stateful:
     kind: stage
     service: dagster-supervisor
+  supervisor.queue_wait:
+    kind: stage
+    service: dagster-supervisor
   supervisor.generate_ui_payload:
     kind: stage
     service: dagster-supervisor

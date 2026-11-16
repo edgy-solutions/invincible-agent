@@ -278,7 +278,7 @@ def _span_names_in(source: str) -> set:
 
 
 SOURCES = ("src/iagent/gateway.py", "src/iagent/defs/dynamic_supervisor.py",
-           "agent_fleet/docs_agent/main.py")
+           "agent_fleet/docs_agent/main.py", "src/iagent/supervisor_service.py")
 
 
 def test_every_emitted_span_name_is_declared():

@@ -11,10 +11,16 @@ route and the registration come up without the fleet's clients.
 The BFF reaches it through `src/iagent/durable_answers.py`:
   POST /SupervisorAnswer/{answer_id}/run/send   -> the workflow
   POST /SupervisorAnswer/{answer_id}/snapshot   -> the poll read
+  POST /SupervisorAnswer/{answer_id}/withdraw   -> take a still-waiting answer out of the queue
+
+At most IAGENT_ANSWER_LIMIT answers run at once (`answer_admission`, ADR-0072 5); the rest wait
+in arrival order, and their snapshot reads QUEUED with their place.
 """
 from __future__ import annotations
 
 import logging
+import time
+from contextlib import nullcontext
 from typing import Any
 
 import restate
@@ -22,6 +28,8 @@ from fastapi import FastAPI
 from restate import WorkflowContext, WorkflowSharedContext
 from restate.context import RunOptions
 
+from src.iagent import trace_spans as ts
+from src.iagent.answer_admission import AdmissionWithdrawn, get_gate
 from src.iagent.runless import drop_live, live_sink, peek_live, run_answer
 
 logger = logging.getLogger("iagent.supervisor_service")
@@ -33,6 +41,11 @@ async def _gather_values(*futures: Any) -> list:
     """`restate.gather` waits (deterministically) and returns the futures; read each result."""
     done = await restate.gather(*futures)
     return [await f for f in done]
+
+
+def _enter(answer_id: str) -> dict:
+    now = time.time()
+    return {"arrived_at": now, "decision": get_gate().try_enter(answer_id, now)}
 
 
 async def _run_impl(ctx: WorkflowContext, op_config: dict, *, gather=_gather_values,
@@ -47,10 +60,52 @@ async def _run_impl(ctx: WorkflowContext, op_config: dict, *, gather=_gather_val
     def persist(snapshot: dict) -> None:
         ctx.set("snapshot", snapshot)
 
+    # Admission (ADR-0072 5). The decision is JOURNALED first: on a replay the stored dict comes
+    # back and `_enter` does not run, so a restarted answer keeps its first arrival time and its
+    # "admitted"/"queued" decision, and is never re-checked against a full queue.
+    adm = await ctx.run_typed("admission", lambda: _enter(answer_id), RunOptions(max_attempts=1))
+    gate = get_gate()
+    if adm["decision"] == "busy":
+        refused = gate.refused(answer_id) or {"reason": "queue_full", **gate.state()}
+        busy = {"reason": refused["reason"], "limit": refused.get("limit"),
+                "queue_max": refused.get("queue_max")}
+        persist({"status": "BUSY", "events": [], "steps": [], "result": None, "busy": busy})
+        return {"busy": True}
+
+    # The wait is its own span, emitted on every answer (even one admitted at once), metadata only.
+    arrived_at = adm["arrived_at"]
+    restarted = not gate.knows(answer_id)
+    if restarted:
+        gate.reenter(answer_id, arrived_at)
+    position_at_entry = gate.position(answer_id) or 0
+    limit = gate.state()["limit"]
+    t0 = time.monotonic()
+    trace_id = op_config.get("trace_id") or ""
+    span = (ts.observed_trace(
+        ts.MAPPING,
+        ts.build_trace_values(trace_id=trace_id, session_id=op_config.get("session_id") or None,
+                              engine="supervisor", verb="supervisor.queue_wait"),
+        name="supervisor.queue_wait",
+        parent_span_id=op_config.get("parent_span_id") or None,
+    ) if trace_id else nullcontext())
     try:
+        try:
+            with span:
+                try:
+                    await gate.acquire(answer_id, arrived_at)
+                finally:
+                    ts.annotate_span(position_at_entry=position_at_entry, limit=limit,
+                                     waited_ms=int((time.monotonic() - t0) * 1000),
+                                     restarted=restarted)
+        except AdmissionWithdrawn:
+            persist({"status": "CANCELED", "events": [], "steps": [], "result": None,
+                     "withdrawn": True})
+            return {"withdrawn": True}
         return await run_answer(answer_id, op_config, durable_step=durable_step, persist=persist,
                                 gather=gather, ops=ops, sink=live_sink(answer_id))
     finally:
+        # A suspended or cancelled attempt leaves nothing behind: its queue place or its slot.
+        gate.leave(answer_id)
         drop_live(answer_id)
 
 
@@ -85,8 +140,22 @@ def _merge_snapshot(durable: dict | None, live) -> dict:
 # then only the durable (per-stage) snapshot is served.
 @supervisor_answer.handler()
 async def snapshot(ctx: WorkflowSharedContext) -> dict:
+    gate = get_gate()
+    pos = gate.position(ctx.key())
+    if pos is not None:
+        return {"status": "QUEUED", "events": [], "steps": [], "result": None,
+                "queue": {"position": pos, "ahead": pos - 1, **gate.state()}}
     durable = await ctx.get("snapshot")
+    refused = gate.refused(ctx.key())
+    if refused is not None and durable is None:
+        # Refused at entry: say so at once, without waiting for the journal.
+        return {"status": "BUSY", "events": [], "steps": [], "result": None, "busy": refused}
     return _merge_snapshot(durable, peek_live(ctx.key()))
+
+
+@supervisor_answer.handler()
+async def withdraw(ctx: WorkflowSharedContext) -> dict:
+    return {"withdrawn": get_gate().withdraw(ctx.key())}
 
 
 app = FastAPI(title="supervisor-answer")
