@@ -73,8 +73,8 @@ Ingestion, ontology loads, assets, batch, `start_review_job` and the BPMN jobs s
 - **Why not inside the BFF:** the BFF's CPU is already the entitlements bottleneck (ADR-0071), and
   an answer that crashes or runs out of memory would take the door down with it.
 - **Why not inside engine-a:** a different image and dependency set.
-- **What it saves:** the service imports once at pod start. The per-run import (about 3.6 s) and
-  the per-step fork go away.
+- **What it saves:** the service imports once at pod start. The per-run import and the per-step
+  fork go away. The import's own cost is unmeasured: it sits inside 0.4.88's 6.3 s launch stage.
 
 ### 4. The BFF chooses the path per request
 - **The flag** is `IAGENT_ANSWER_PATH`, `dagster` (the default) or `durable`. It is read per
@@ -96,11 +96,15 @@ invocations of a service for us, so on `durable` nothing does.
 - **#396 does not have it.** It is the change that must land before `durable` becomes a default.
 
 ### 6. The trace is the run record
-- The spans are the ones `step_spanned` emits on Dagster, with `supervisor.run` as their parent.
-- A retried step emits a second span with its attempt number, so the trace shows retries.
-- **The Decision Map is drawn from the span tree** that the workflow holds in its state, served by
-  the BFF. It is not read back from the trace store: export there is asynchronous, and work's UI
-  may not reach the store. Both share span ids, so they agree. The map change belongs to cortex.
+- The spans are the ones `step_spanned` emits on Dagster: `supervisor.create_task_plan`,
+  `.execute_subtask`, `.synthesize_stateful` and `.generate_ui_payload`. Their parent is the BFF's
+  answer span (the op config's `parent_span_id`). `assert_every_engine_answered` emits none.
+- Steps are not retried (section 2). A failed step is one span, with status error.
+- **To build, not in #396: the Decision Map from the workflow's state.** Today the workflow's
+  state holds the snapshot (`status`, `events`, `steps`, `result`), not a span tree. The plan is
+  that the BFF serves the map from that state, not from the trace store: export there is
+  asynchronous, and work's UI may not reach the store. cortex's withheld-subtasks ruling governs
+  which spans it serves. The map change belongs to cortex.
 
 ### 7. What is lost, and what replaces it
 | lost | replaced by | gap |
@@ -149,9 +153,19 @@ The decision to make `durable` the default rests on that report and on section 5
    card naming the step and the trace id; it never stays silent."
    - **The defect it closes:** `assert_every_engine_answered`'s docstring says the BFF still
      delivers the card on a failed run. It does not: the stream stops on `FAILURE` and never
-     fetches the card. The durable path keeps the card on a failed snapshot.
+     fetches the card. The stream stops on `FAILURE` on **both** paths, and on the durable path
+     it labels the cause `dagster_run_failed`, which is wrong there.
+   - **What each path holds today:**
+     - **Durable:** the snapshot keeps a content card only when the final check
+       (`assert_every_engine_answered`) fails. A run that fails at the plan, a subtask, synthesis
+       or rendering has none. Since #396 at `6fa08893`, every snapshot carries `failed_step` (the
+       `stepKey` that ended the run; the first failed in plan order for parallel subtasks) and
+       `trace_id` (None, never `""`, when the config has none).
+     - **Dagster:** neither field exists. The card reads the failed step from the run's step
+       stats, and the trace id from the run config's `trace_id`.
    - **What the ruling requires, on both paths:** the card names the step that failed and the
-     run's trace id (section 6: the trace is the run record).
+     run's trace id (section 6: the trace is the run record). The durable path's cause must not
+     say `dagster`.
    - **What it forbids:** a failed run that ends the stream with no card.
    - **The seal it needs:** a run made to fail at a named step yields a card carrying that step
      and the trace id. A control is the same run succeeding. Mutation: drop the card on `FAILURE`,
