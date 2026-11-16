@@ -34,7 +34,7 @@ import os
 import re
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 import psycopg2
 import psycopg2.extras
@@ -256,6 +256,15 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS hold_reason TEXT;
 -- fallback. TRUE once a steward answered `has_parts` on a `document_empty_confirm`; doc-tools reads it
 -- from GET /ingest/retries. NOT NULL DEFAULT FALSE, IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS force_text_fallback BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- 2026-11-15 (the receipt carries its domain): `domain` -- NULLABLE. The review audience's domain
+-- (`document_promotion:<DOMAIN>`, upper case, as `promotion.domain_of` reads it), written when a
+-- promotion task is filed for the row, so an export range scopes IN THE QUERY. NULL until a task
+-- says one, and for every row written before this column existed: a NULL row is never dropped by
+-- the scope, it is resolved the old way (decision record, then the open task) and its answer
+-- written back. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS domain TEXT;
+CREATE INDEX IF NOT EXISTS idx_isp_domain_created ON ingest_status_projection (domain, created_at, id);
 """
 
 
@@ -845,17 +854,26 @@ def list_mine(*, caller_id: str, limit: int,
 
 
 def list_by_created(start_ms: int, end_ms: int, limit: int, *,
-                    after: Optional[tuple[int, str]] = None) -> list[dict]:
+                    after: Optional[tuple[int, str]] = None,
+                    domains: Optional[Iterable[str]] = None) -> list[dict]:
     """The DOCUMENT rows received in `[start_ms, end_ms)` (`created_at`, receipt time, set once and
-    never moved), oldest first, one page of at most `limit`: `{id, review_generation,
-    created_at}` only, what the export range needs to find each notice's domain. `after` is the
-    `(created_at, id)` of the last row already seen (keyset paging, as `list_mine`). EVENT rows are
-    excluded. Not scoped to a caller and not to a domain: a notice's domain lives in its decision
-    record or its open review task, not in this table, so the caller scopes each page as it reads."""
-    sql = """SELECT id, review_generation, created_at
+    never moved), oldest first, one page of at most `limit`: `{id, review_generation, created_at,
+    domain}` only. `after` is the `(created_at, id)` of the last row already seen (keyset paging, as
+    `list_mine`). EVENT rows are excluded. Not scoped to a caller.
+
+    `domains`, when given, puts the domain scope IN THE QUERY: a row is returned when its `domain`
+    is one of them OR its `domain` is NULL. A row whose domain is another domain's never leaves the
+    database. A NULL row is returned on purpose: NULL means "no task has said", not "no domain"
+    (a row written before the column, or one whose review task is not filed yet), so the caller
+    resolves it the old way and `set_domain`s the answer. The scope must never drop a notice that
+    later gains a domain. `domains=None` is the unscoped read; an empty set matches only NULL."""
+    sql = """SELECT id, review_generation, created_at, domain
                FROM ingest_status_projection
               WHERE created_at >= %s AND created_at < %s AND kind <> 'event'"""
     params: list[Any] = [start_ms, end_ms]
+    if domains is not None:
+        sql += " AND (domain IS NULL OR domain = ANY(%s))"
+        params.append(sorted(set(domains)))
     if after is not None:
         sql += " AND (created_at, id) > (%s, %s)"
         params += [after[0], after[1]]
@@ -867,6 +885,25 @@ def list_by_created(start_ms: int, end_ms: int, limit: int, *,
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(sql, tuple(params))
             return [dict(r) for r in cur.fetchall()]
+
+
+def set_domain(ingest_id: str, domain: str) -> bool:
+    """Write the row's review domain (the audience's, as `promotion.domain_of` reads it). The ONE
+    writer of `domain`. A blank domain is refused (ValueError): "no domain" is NULL, never ''. Re-
+    assignable: a re-class that files a task under another audience moves it. True when a row
+    changed. EVENT rows are never given one."""
+    domain = str(domain or "").strip()
+    if not domain:
+        raise ValueError("set_domain: a blank domain is not a domain (NULL means none)")
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE ingest_status_projection SET domain = %s
+                    WHERE id = %s AND kind <> 'event' AND domain IS DISTINCT FROM %s""",
+                (domain, ingest_id, domain))
+            changed = cur.rowcount
+        conn.commit()
+    return changed > 0
 
 
 def fail_stalled(*, stage: str, older_than_seconds: int, now_ms: Optional[int] = None) -> list[str]:

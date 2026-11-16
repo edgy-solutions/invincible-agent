@@ -19,6 +19,24 @@
   person-scoped verbs even in OBSERVE. **Post-roll check:** a BFF-issued call to a person-scoped verb
   answers as the person, as before the roll.
 
+- **The receipt carries its review domain, so a range export's scope sits in the query** (saf; the
+  architect, 11-15: "store the domain on the receipt so the scope sits in the query, with a bound on
+  pages read"). `ingest_status_projection` gains a nullable `domain TEXT` and the index
+  `idx_isp_domain_created (domain, created_at, id)`; the migration is `ADD COLUMN IF NOT EXISTS` /
+  `CREATE INDEX IF NOT EXISTS`, applied by the BFF at startup (log line
+  `ingest_status_projection migration applied`), so a re-run changes nothing. The column is written
+  when a document-promotion task is filed against `document_promotion:<DOMAIN>`, and back-written by
+  the first range that meets an old row. **Upgrade note for existing rows:** every row that exists
+  at the roll has a NULL `domain`. NULL means "no task has said", and the range query always returns
+  NULL rows, which are resolved the old way (decision record, else the open task's audience) and
+  written back. No backfill job is required, and no notice is dropped while rows are NULL; the first
+  range over old receipts is as slow as before, the second is not. A receipt that never gains a domain
+  (no task) stays NULL and is re-read each request, inside the page bound. `POST /ingest/export/notices`
+  by `range` reads at most `_EXPORT_RANGE_MAX_PAGES` (40) pages of receipts, then answers 422
+  `export_range_scan_bound` stating the bound and no count. Chart values and endpoints are unchanged.
+  `ingest_status_projection`'s Electric shape serves the same rows (identity-scoped) and now carries
+  `domain` as one more field; its filter does not use it.
+
 ## 0.4.88 — 2026-11-13
 
 **0.4.88 is 0.4.87 (`e29f7442`) plus the architect's train (via Chris, 2026-11-13), merged in

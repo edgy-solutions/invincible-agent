@@ -14612,6 +14612,10 @@ _EXPORT_DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 # POST-by-range: receipts read from the store per page. A page is a read size, never a cap: the
 # only cap is `_EXPORT_MAX_NOTICES`, and it counts the CALLER's notices only.
 _EXPORT_RANGE_PAGE = 500
+# POST-by-range: pages read from the store per request, a BOUND on work and never a count of anything.
+# The domain scope sits in the query (a receipt carries its domain), so another domain's volume is
+# not read; what remains is the caller's own receipts plus the NULL-domain rows not yet resolved.
+_EXPORT_RANGE_MAX_PAGES = 40
 
 
 def _export_parse_range(from_, to) -> tuple:
@@ -14861,6 +14865,23 @@ async def _export_notice_domain(ingest_id: str, row: dict, rec) -> Optional[str]
         return None
 
 
+async def _note_receipt_domain(ingest_id: str, domain: Optional[str]) -> None:
+    """Write a receipt's review domain once a source has named it (a promotion task filed against
+    `document_promotion:<DOMAIN>`, or an old row resolved on read). Best effort by design: the
+    column only moves the scope into the query, and a NULL row is always resolved the old way, so a
+    failed write loses speed, never a notice and never a scope. None writes nothing."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    if not (domain and str(domain).strip()):
+        return
+    try:
+        await run_in_threadpool(lambda: ingest_status.set_domain(ingest_id, str(domain)))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("receipt domain write failed for %s: %s", ingest_id, type(exc).__name__)
+
+
 async def _export_range_ids(rng: ExportRange, current_user) -> tuple:
     """`(ids, echo)`: the notices RECEIVED (`ingest_status.created_at`) in the UTC-day range, both
     ends inclusive, narrowed to the caller's cell domains. The timestamp is receipt, not
@@ -14886,20 +14907,33 @@ async def _export_range_ids(rng: ExportRange, current_user) -> tuple:
     domains = {c.domain for c in current_user.entitlements.cells}
     ids: list = []
     after = None
+    pages = 0
     while domains:
+        if pages >= _EXPORT_RANGE_MAX_PAGES:
+            raise HTTPException(status_code=422, detail={
+                "error": "export_range_scan_bound",
+                "message": f"a range read at most {_EXPORT_RANGE_MAX_PAGES} pages of receipts; "
+                           "narrow the range"})
         try:
             page = await run_in_threadpool(
                 lambda a=after: ingest_status.list_by_created(
-                    start_ms, end_ms, _EXPORT_RANGE_PAGE, after=a))
+                    start_ms, end_ms, _EXPORT_RANGE_PAGE, after=a, domains=domains))
         except Exception as exc:  # noqa: BLE001
             logger.warning("ingest range read failed: %s", exc)
             raise HTTPException(status_code=503, detail={
                 "error": "ingest_store_unreachable",
                 "message": f"the ingest store did not answer: {type(exc).__name__}"})
+        pages += 1
         for row in page:
             ingest_id = row["id"]
-            rec = await run_in_threadpool(lambda i=ingest_id: _export_decision_record(i))
-            if await _export_notice_domain(ingest_id, row, rec) in domains:
+            domain = row.get("domain")
+            if domain is None:
+                # NULL: no task has said (or the row predates the column). Resolve it the old way
+                # and write the answer back, so the next range finds it in the query.
+                rec = await run_in_threadpool(lambda i=ingest_id: _export_decision_record(i))
+                domain = await _export_notice_domain(ingest_id, row, rec)
+                await _note_receipt_domain(ingest_id, domain)
+            if domain in domains:
                 ids.append(ingest_id)
                 if len(ids) > _EXPORT_MAX_NOTICES:
                     raise HTTPException(status_code=422, detail={
@@ -15986,9 +16020,11 @@ async def _file_or_find_document_promotion_task(
         # always. The audience must not move.
         existing = await run_in_threadpool(lambda: human_tasks.get_open_task_payload(task_id))
         if existing is None:
+            await _note_receipt_domain(ingest_id, domain)
             return task_id, "ALREADY_FILED"
         if (str(existing.get("content_kind") or "").strip().lower()
                 == str(row.get("content_kind") or "").strip().lower()):
+            await _note_receipt_domain(ingest_id, domain)
             return task_id, "ALREADY_FILED"
         state = await run_in_threadpool(lambda: human_tasks.get_task_open_state(task_id))
         if (state or {}).get("audience") != audience:
@@ -16063,6 +16099,7 @@ async def _file_or_find_document_promotion_task(
     if _refresh:
         await run_in_threadpool(lambda: human_tasks.refresh_open_task(
             task_id, payload=payload, title=_title, summary=_summary))
+        await _note_receipt_domain(ingest_id, domain)
         return task_id, "ALREADY_FILED"
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
@@ -16077,6 +16114,7 @@ async def _file_or_find_document_promotion_task(
         raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
     except human_tasks.NoRequester as exc:
         raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
+    await _note_receipt_domain(ingest_id, domain)
     return task_id, "FILED"
 
 
