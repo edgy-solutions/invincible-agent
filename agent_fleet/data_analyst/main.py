@@ -95,7 +95,8 @@ except ImportError:
     from llm_utils import get_smolagent_model
 
 # Telemetry (ADR-0038): join Engine D's work to the caller's trace via observed_trace
-# (create_trace_id(seed=X-Trace-Id)). telemetry.py is at /app in the fleet image; guarded so
+# (the X-Trace-Id seed goes through trace_id_for: a 32-hex id is used verbatim, anything else
+# is hashed). telemetry.py is at /app in the fleet image; guarded so
 # the engine runs identically when the shim/leaf is absent (no-op).
 try:
     # `observed_trace` is retained for reference/compat; D's handler now uses the REPLAY-SAFE

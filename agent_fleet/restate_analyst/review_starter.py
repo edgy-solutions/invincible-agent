@@ -444,7 +444,7 @@ async def start_review(ctx: Context, request: dict) -> dict:
     def _compose_batch():
         # v4: open (or JOIN) the trace on the EXTRACTION's id so this composition nests
         # under the SAME Langfuse trace as the doc-tools extraction — native, via
-        # create_trace_id(seed=trace_id). No seed (older review.json) -> a fresh trace.
+        # trace_id_for(trace_id) (a 32-hex id is used verbatim, anything else is hashed). No seed (older review.json) -> a fresh trace.
         # Enrichment + fail-soft are handled inside observed_trace.
         with observed_trace(MAPPING, build_trace_values(
             trace_id=_trace_id,

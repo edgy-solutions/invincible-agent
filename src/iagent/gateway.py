@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import time
 import uuid
 import weakref
@@ -60,7 +61,10 @@ from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, oauth2_scheme, User
 from . import identity_exchange
-from .trace_spans import observed_trace, MAPPING, build_trace_values, current_span_id, request_trace_id
+from .trace_spans import (
+    observed_trace, MAPPING, build_trace_values, current_span_id, request_trace_id,
+    request_trace_context, trace_id_for, format_traceparent, parse_traceparent, annotate_span,
+)
 from iagent_mesh import Refusal as _Refusal
 from iagent_mesh.review_coverage import ReviewShapeRow
 from iagent_mesh.provenance import EvidenceRef  # the SDK model; the one EvidenceRef (ruling 2026-10-31)
@@ -8212,10 +8216,11 @@ async def _audit_orchestrate_wrap(gen, *, who: str, via: str, session_id: str):
         )
 
 
-async def _traced_stream(stream, *, trace_id, session_id, authz_id):
+async def _traced_stream(stream, *, trace_id, session_id, authz_id, parent_span_id=None):
     with observed_trace(MAPPING, build_trace_values(
             trace_id=trace_id, authz_id=authz_id, session_id=session_id or None,
-            engine="cortex-bff", verb="/interview/stream"), name="bff.orchestrate"):
+            engine="cortex-bff", verb="/interview/stream"), name="bff.orchestrate",
+            parent_span_id=parent_span_id):
         async for event in stream:
             yield event
 
@@ -12004,7 +12009,9 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
     # uses request.session_id (the conversation thread) downstream.
     # The BFF mints one when the caller sends none, so no client can silence tracing
     # (architect ruling 4, 2026-11-10).
-    _trace_id = request_trace_id(http_request.headers.get("X-Trace-Id"))
+    # A valid W3C `traceparent` wins: its trace-id is the trace and its parent-id parents the root span.
+    _trace_ctx = request_trace_context(http_request.headers)
+    _trace_id = _trace_ctx.trace_id
     entitled_cells = [
         {"persona": c.persona, "domain": c.domain} for c in ent.cells
     ]
@@ -12270,6 +12277,7 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
           trace_id=_trace_id,
           session_id=request.session_id,
           authz_id=current_user.authz_id,
+          parent_span_id=_trace_ctx.parent_span_id,
         ),
         media_type="text/event-stream",
         headers={
@@ -13132,7 +13140,8 @@ def _create_ingest_node(*, ingest_id: str, kind: str, sha256: str, object_ref: s
 
 async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str,
                      provenance_block: dict, seeded_by: Optional[str] = None,
-                     predecessor: Optional[str] = None) -> bool:
+                     predecessor: Optional[str] = None,
+                     trace_context: Optional[dict] = None) -> bool:
     """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/run/send` -- the same case-runner
     call `_open_safety_acceptance` makes above (~6590), reused here for the ingest/origin seam's
     two case-opening points (an event-branch content kind on arrival, section 3; an origin
@@ -13152,7 +13161,8 @@ async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str,
             resp = await client.post(
                 f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/run/send",
                 json={"trigger": trigger, "facts": facts, "provenance": provenance_block,
-                      "seeded_by": seeded_by, "predecessor": predecessor},
+                      "seeded_by": seeded_by, "predecessor": predecessor,
+                      **({"trace_context": trace_context} if trace_context is not None else {})},
             )
         resp.raise_for_status()
         return True
@@ -13934,9 +13944,21 @@ def _dotted_get(d: dict[str, Any], path: str) -> Any:
     return cur
 
 
+def _door_trace_context(tctx) -> Optional[dict]:
+    """The `trace_context` the door hands the case runner: a W3C traceparent naming the trace and
+    the door span (else the inbound parent-id, else a fresh span id) plus the inbound tracestate.
+    None only when the leaf is absent, so no valid trace id can be named."""
+    trace_id = trace_id_for(tctx.trace_id)
+    if not trace_id:
+        return None
+    span_id = current_span_id() or tctx.parent_span_id or secrets.token_hex(8)
+    return {"traceparent": format_traceparent(trace_id, span_id), "tracestate": tctx.tracestate}
+
+
 @app.post("/ingest/events", responses=DROP_GATE_RESPONSES)
 async def ingest_event(
     req: IngestEventRequest,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
 ):
     """POST /ingest/events (section C, ingest/origin seam) — the JSON door for an event-branch
@@ -13969,6 +13991,39 @@ async def ingest_event(
     revised; the same event_id with different bytes is a revision. A delegate attaches only to a
     case it seeded: otherwise 403 `delegate_not_seeder`, and nothing is recorded.
     """
+    tctx = request_trace_context(http_request.headers)
+    span_ids: dict[str, Any] = {}
+    outcome = "error"
+    with observed_trace(
+        MAPPING,
+        build_trace_values(trace_id=tctx.trace_id, authz_id=current_user.authz_id,
+                           engine="cortex-bff", verb="/ingest/events"),
+        name="bff.ingest_event", parent_span_id=tctx.parent_span_id,
+    ):
+        try:
+            result = await _ingest_event_body(
+                req, current_user, _door_trace_context(tctx), span_ids)
+            wf = result.get("workflow") or {}
+            outcome = ("attached" if wf.get("attached") else "revised" if "rev" in result
+                       else "started" if wf.get("started") else "not_started")
+            return result
+        except HTTPException as exc:
+            detail = exc.detail
+            outcome = (str(detail.get("error") or exc.status_code) if isinstance(detail, dict)
+                       else str(exc.status_code))
+            raise
+        finally:
+            # OPAQUE IDS ONLY: never a fact, label, asset id or any record field.
+            annotate_span(outcome=outcome, **span_ids)
+
+
+async def _ingest_event_body(
+    req: IngestEventRequest,
+    current_user: User,
+    trace_context: Optional[dict],
+    span_ids: dict,
+):
+    """The body of POST /ingest/events; the route above wraps it in the door span."""
     from . import content_kinds, provenance
 
     # R-089: on_behalf_of from a delegate is ASSERTED by configuration this pass (R-089); token
@@ -13980,6 +14035,8 @@ async def ingest_event(
         current_user.authz_id if current_user.authz_id in _delegate_principals() else None
     )
     _registered_kind = content_kinds.by_kind(req.content_kind)
+    if _registered_kind is not None:
+        span_ids["content_kind"] = _registered_kind.kind
     if _registered_kind is None or _registered_kind.branch != "event":
         raise HTTPException(
             status_code=422,
@@ -14062,6 +14119,7 @@ async def ingest_event(
             },
         )
     case_id = str(identity_value)
+    span_ids["ingest_id"], span_ids["case_id"] = ingest_id, case_id
     # The runner's OWN intake check, run here before the case opens: `requires` above is only
     # part of what intake refuses (key, episode, `carries`, outcome clash), and an event the door
     # answered 200 must not be refused 123 ms later where the producer cannot see it. Shared by
@@ -14266,7 +14324,7 @@ async def ingest_event(
     started = await _open_case(
         case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
         ingest_id=ingest_id, provenance_block=provenance_block, seeded_by=seeded_by,
-        predecessor=predecessor,
+        predecessor=predecessor, trace_context=trace_context,
     )
     if started:
         await run_in_threadpool(lambda: ingest_status.update_status(
@@ -17785,8 +17843,35 @@ def _action_chain(record: dict, transitions: list) -> list[dict]:
     return chain
 
 
+def _continue_case_trace(response: Response, case: Optional[dict], case_id: str,
+                         current_user: User) -> None:
+    """The return leg of a case's W3C trace, on a 200 ONLY (the caller reaches here past every
+    refusal, so a 403/404/503 carries no trace header and leaks nothing about which cases exist).
+    The case's STORED `trace_context` is the only source: a `traceparent` this GET arrives with
+    is neither read nor adopted. Opens `bff.case_action` on the stored trace under the stored
+    parent and answers `traceparent` (this span's id, else the stored parent) and the stored
+    `tracestate`, echoed and never interpreted. The body is untouched."""
+    tc = case.get("trace_context") if isinstance(case, dict) else None
+    parsed = parse_traceparent(tc.get("traceparent")) if isinstance(tc, dict) else None
+    if parsed is None:
+        return
+    trace_id, parent_id, _flags = parsed
+    with observed_trace(
+        MAPPING,
+        build_trace_values(trace_id=trace_id, authz_id=current_user.authz_id,
+                           engine="cortex-bff", verb="/cases/action"),
+        name="bff.case_action", parent_span_id=parent_id,
+    ):
+        annotate_span(case_id=case_id)
+        response.headers["traceparent"] = format_traceparent(
+            trace_id, current_span_id() or parent_id)
+    if tc.get("tracestate"):
+        response.headers["tracestate"] = tc["tracestate"]
+
+
 @app.get("/cases/{case_id}/action")
-async def get_case_action(case_id: str, current_user: User = Depends(get_current_user)):
+async def get_case_action(case_id: str, response: Response,
+                          current_user: User = Depends(get_current_user)):
     """GET /cases/{case_id}/action -- who chose, who approved, who released a maintenance case,
     with the work order and the manual data modules it cites.
 
@@ -17880,6 +17965,7 @@ async def get_case_action(case_id: str, current_user: User = Depends(get_current
     body = dict(record)
     for k, v in additive.items():
         body.setdefault(k, v)  # a key the record carries is never overwritten
+    _continue_case_trace(response, case, case_id, current_user)
     return body
 
 

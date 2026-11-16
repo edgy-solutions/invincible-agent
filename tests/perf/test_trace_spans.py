@@ -89,7 +89,7 @@ def test_request_trace_id_keeps_a_header_and_mints_otherwise():
 def test_orchestrate_mints_through_request_trace_id():
     from iagent import gateway
     src = inspect.getsource(gateway.orchestrate)
-    assert "request_trace_id(" in src
+    assert "request_trace_context(" in src  # a W3C traceparent first, then X-Trace-Id, then mint
     assert 'headers.get("X-Trace-Id", "")' not in src
 
 
@@ -315,7 +315,7 @@ def _pins(text: str) -> list:
     return _PIN.findall(text)
 
 
-def test_every_pyproject_pins_provenance_telemetry_0_2_1():
+def test_every_pyproject_pins_provenance_telemetry_0_2_2():
     files = [ROOT / "pyproject.toml", *sorted((ROOT / "agent_fleet").glob("*/pyproject.toml"))]
     pinned = {}
     for f in files:
@@ -323,7 +323,8 @@ def test_every_pyproject_pins_provenance_telemetry_0_2_1():
         if pins:
             pinned[f] = pins
     assert len(pinned) >= 8, sorted(str(p) for p in pinned)
-    assert {f: p for f, p in pinned.items() if p != ["==0.2.1"]} == {}
+    # 0.2.2 (trace_id_for, the W3C parsers, traced capture flags), published from tag v0.2.2.
+    assert {f: p for f, p in pinned.items() if p != ["==0.2.2"]} == {}
 
 
 def test_the_pin_scanner_sees_a_stale_pin():

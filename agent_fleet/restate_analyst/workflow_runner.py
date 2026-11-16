@@ -43,6 +43,14 @@ from datetime import timedelta
 from typing import Any, Optional
 
 import restate
+try:
+    from provenance_telemetry import parse_traceparent, parse_tracestate
+except Exception:  # noqa: BLE001 -- leaf absent: no trace context can be validated, so none is kept
+    def parse_traceparent(_v):  # type: ignore[misc]
+        return None
+
+    def parse_tracestate(_v):  # type: ignore[misc]
+        return None
 from restate import ObjectContext, VirtualObject, Workflow, WorkflowContext, WorkflowSharedContext
 
 logger = logging.getLogger(__name__)
@@ -358,6 +366,11 @@ async def _run_case(ctx: WorkflowContext, request: dict) -> dict:
                   "episode": episode, "episode_id": episode_id,
                   "episode_id_source": episode_id_source, "instances": [], "transitions": [],
                   "seeded_by": seeded_by, "predecessor": predecessor, "intake": trig.intake}
+    # W3C trace context from the door (data only: no span is opened here). Kept only when its
+    # traceparent parses; its tracestate is re-validated. A case from an older BFF has no key.
+    trace_context = _kept_trace_context(request.get("trace_context"))
+    if trace_context is not None:
+        case["trace_context"] = trace_context
     await _record(ctx, case, frm=None, outcome="received", to="received", by="system",
                   at_name="at_received")
     # THE ORIGINAL EVENT IS REVISION 1 (SDK ``ArtifactRevision``). ``input_revisions`` is the
@@ -664,6 +677,18 @@ async def signal(ctx: WorkflowSharedContext, request: dict) -> dict:
     await ctx.promise(name, type_hint=dict).resolve(
         {"status": status, "comments": request.get("comments", ""), "acted_by": acted_by})
     return {"signal": name, "status": status}
+
+
+def _kept_trace_context(raw: Any) -> Optional[dict]:
+    """The door's `trace_context`, or None when its traceparent is absent or invalid."""
+    if not isinstance(raw, dict):
+        return None
+    tp = raw.get("traceparent")
+    if not isinstance(tp, str) or parse_traceparent(tp) is None:
+        return None
+    ts = raw.get("tracestate")
+    return {"traceparent": tp.strip(),
+            "tracestate": parse_tracestate(ts) if isinstance(ts, str) else None}
 
 
 @workflow_runner.handler()
