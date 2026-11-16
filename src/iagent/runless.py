@@ -282,8 +282,11 @@ async def run_answer(answer_id: str, op_config: dict, *, durable_step, persist,
     make_cfg = _config
     steps: list[dict] = []
     events: list = []
+    # `failed_step` and `trace_id` are what the BFF's failure card names (ADR-0072 8.1, ruled
+    # 2026-11-15): the step key that failed, and the trace the run belongs to.
     state: dict = {"status": "STARTED", "t_start": None, "steps": steps, "events": events,
-                   "result": None, "error": None}
+                   "result": None, "error": None, "failed_step": None,
+                   "trace_id": op_config.get("trace_id") or None}
 
     def view(rec: dict) -> dict:
         return {k: v for k, v in rec.items() if k not in ("value", "outputs")}
@@ -308,9 +311,10 @@ async def run_answer(answer_id: str, op_config: dict, *, durable_step, persist,
                             inputs=inputs, sink=sink)
         return durable_step(name, fn)
 
-    async def finish(error: str | None) -> dict:
+    async def finish(failed: dict) -> dict:
         state["status"] = "FAILURE"
-        state["error"] = error
+        state["error"] = failed["error"]
+        state["failed_step"] = failed["stepKey"]
         return await save()
 
     t = await durable_step("t_start", lambda: {"t": time.time()})
@@ -320,7 +324,7 @@ async def run_answer(answer_id: str, op_config: dict, *, durable_step, persist,
     plan = await step("create_task_plan", "create_task_plan", "create_task_plan")
     absorb([plan])
     if plan["status"] != "SUCCESS":
-        return await finish(plan["error"])
+        return await finish(plan)
     await save()
 
     tasks = plan["outputs"]
@@ -331,7 +335,7 @@ async def run_answer(answer_id: str, op_config: dict, *, durable_step, persist,
     absorb(list(subs))
     bad = [r for r in subs if r["status"] != "SUCCESS"]
     if bad:
-        return await finish(bad[0]["error"])
+        return await finish(bad[0])
     results = [r["value"] for r in subs]
     await save()
 
@@ -342,7 +346,7 @@ async def run_answer(answer_id: str, op_config: dict, *, durable_step, persist,
              inputs={"results": results}))
     absorb([synth, render])
     if synth["status"] != "SUCCESS" or render["status"] != "SUCCESS":
-        return await finish(synth["error"] if synth["status"] != "SUCCESS" else render["error"])
+        return await finish(synth if synth["status"] != "SUCCESS" else render)
     state["result"] = {"payload": render["value"], "referenced_uris": _referenced_uris(render)}
     await save()
 
@@ -351,6 +355,6 @@ async def run_answer(answer_id: str, op_config: dict, *, durable_step, persist,
                        inputs={"results": results, "ui_payload": render["value"]})
     absorb([check])
     if check["status"] != "SUCCESS":
-        return await finish(check["error"])
+        return await finish(check)
     state["status"] = "SUCCESS"
     return await save()

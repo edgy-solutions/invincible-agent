@@ -202,10 +202,10 @@ async def _thread_step(name, fn):
     return await asyncio.to_thread(fn)
 
 
-async def _go(ops, snaps=None):
+async def _go(ops, snaps=None, cfg=None):
     STEP_LOG.clear()
     snaps = [] if snaps is None else snaps
-    out = await run_answer("ans", CFG, durable_step=_thread_step, persist=snaps.append,
+    out = await run_answer("ans", cfg or CFG, durable_step=_thread_step, persist=snaps.append,
                            ops=ops, sink=LiveSink())
     return out, snaps
 
@@ -246,6 +246,31 @@ def test_assert_failure_keeps_the_payload():
     assert out["status"] == "FAILURE"
     assert out["result"]["payload"] == {"ui": 1}
     assert "generate_ui_payload" in _keys(out)
+
+
+# The failure card (ADR-0072 8.1, ruled 2026-11-15) names the failed step and the trace id; the
+# BFF reads both from the snapshot's `failed_step` and `trace_id`.
+TID = "4bf92f3577b34da6a3ce929d0e0e4736"
+
+
+def test_failed_snapshot_names_the_failed_step_and_the_trace():
+    out, snaps = asyncio.run(_go(fake_ops(fail_subtask=1), cfg={**CFG, "trace_id": TID}))
+    assert out["status"] == "FAILURE"
+    assert out["failed_step"] == "execute_subtask[task_1]"
+    assert out["trace_id"] == TID
+    assert all(s["trace_id"] == TID for s in snaps)  # every snapshot, not only the last
+
+
+def test_failed_check_names_its_step_and_keeps_the_payload():
+    out, _ = asyncio.run(_go(fake_ops(unreachable=True), cfg={**CFG, "trace_id": TID}))
+    assert out["failed_step"] == "assert_every_engine_answered"
+    assert out["result"]["payload"] == {"ui": 1} and out["trace_id"] == TID
+
+
+def test_success_names_no_failed_step_and_no_trace_without_one():
+    out, _ = asyncio.run(_go(fake_ops()))
+    assert out["status"] == "SUCCESS" and out["failed_step"] is None
+    assert out["trace_id"] is None  # CFG carries no trace id: None, never ""
 
 
 def test_persist_after_every_stage_and_last_equals_return():
