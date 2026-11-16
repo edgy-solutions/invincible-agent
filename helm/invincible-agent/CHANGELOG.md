@@ -1,7 +1,132 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.89 — not yet cut
+## 0.4.89 — 2026-11-16
 
+**0.4.89 is 0.4.88 (`4525a1cf`) plus the 11-15/11-16 train, `4525a1cf..36968d59`. The roll waits for Chris's approval of the values diff against the live release, after lane 74's hand-back.**
+
+| order | PR | merge | what |
+| --- | --- | --- | --- |
+| 1 | #376 | `f5e58d23` | Lane 1: engine-r refuses a commit under `sessions/` (`review: closed`); the lane census dates packets by filename |
+| 2 | #374 | `4fe860a3` | 74: the provenance tripwire pins v0.9.19's shape; master green again (no runtime change) |
+| 3 | #385 | `d5ebdfde` | Lane 1: `topaz_sync` deletes a user declared retired in `users.yaml`, with its relations |
+| 4 | #380 | `32838458` | Lane 1: board item, TI page 2 invisible to `find_tables` (no runtime change) |
+| 5 | #382 | `0c9b3389` | perf: spans for engine-o's `/route_intent` and the analyst's model calls |
+| 6 | #378 | `efdbc1b2` | fin: the dataset-contract reader moves to `agent_fleet/utils`, shared and unchanged |
+| 7 | #347 | `01f87610` | Lane 1: ADR-0068, the edge tier (Proposed; no runtime change) |
+| 8 | #381 | `9d6d8902` | gov: the docs gate's Topaz test doubles answer with a real `httpx.Response` (no runtime change) |
+| 9 | #383 | `b94a3e62` | fin: the shared reader reads the multi-document form, `scope: none`, and holds rules once |
+| 10 | #379 | `c39be1e4` | Lane 1: ADR-0070, manufacturing traceability (no runtime change) |
+| 11 | #387 | `f7c3cf2a` | fin: the reader accepts producer-checked rule names it never raises |
+| 12 | #386 | `2c69d256` | saf: per-viewer tasks, `/me/queue`, `/me/needs_you`, delegated queue reads (ADR-0068 s6) |
+| 13 | #388 | `fb5f3312` | Lane 1: board item, a failed answer run never delivers its card (no runtime change) |
+| 14 | #389 | `f431cb99` | Lane 1: `ORDER BY ?dmc ?dm` in the fault-walk verb; the node-to-DMC join sealed |
+| 15 | #391 | `3485d3bb` | Lane 1: each Dagster code location gets its own run slots |
+| 16 | #392 | `2d27e27d` | Lane 1: the review-start gate (`ENABLE_DISPOSITION_AUTHZ`) is on by default |
+| 17 | #397 | `6762c005` | Lane 1: the BFF retries a signing-key fetch once, then answers an outage as 503 |
+| 18 | #398 | `e25c7709` | perf: the operator probes read Langfuse v2 observations |
+| 19 | #360 | `b94dac99` | gov: the SDK pin moves from v0.9.19 to v0.9.20 |
+| 20 | #401 | `9538c180` | Lane 1: cortex pin `312064b`; `exportRange` on in sandbox |
+| 21 | #404 | `3d876a34` | Lane 1: cortex re-pinned to `52cc9a6` (supersedes `312064b`) |
+| 22 | #402 | `b63ee44b` | gov: one directory HTTP client per process (ADR-0071 step 1) |
+| 23 | #403 | `250dd38b` | gov: `/me/entitlements` asks the directory twice, one list and one batched check (ADR-0071 step 2) |
+| 24 | #390 | `ec6a69d1` | perf: the telemetry leaf ships in the root images |
+| 25 | #394 | `036783a9` | 74: the prime skips an ontology domain whose inputs did not change |
+| 26 | #406 | `0f70aa55` | Lane 1: board items for engine-r's first slice and the interim grant fix (no runtime change) |
+| 27 | #395 | `5dac9d4b` | saf: `/electric/shape` serves only an allow-list (ADR-0068 s8) |
+| 28 | #405 | `0f497918` | saf: the holder test names the 404 and adds the entitled-viewer control (no runtime change) |
+| 29 | #399 | `0c457271` | Lane 1: ADR-0072, a live answer is one durable workflow (Proposed; no runtime change) |
+| 30 | #396 | `a13345d0` | perf: answers off Dagster behind `IAGENT_ANSWER_PATH` (default unchanged) |
+| 31 | #384 | `36968d59` | Lane 1: ADR-0071, a directory client is built once per process (Proposed; no runtime change) |
+
+#347, #379, #384 and #399 are ADRs, #374, #381 and #405 are tests, and #380, #388 and #406 are board files. None of the ten changes anything at runtime.
+
+**Rolls together.** #386, #395 and the cortex pin (#401, #404) go in this one cut. The pinned cortex reads tasks only from `/me/queue` and `/me/needs_you`, so it needs a BFF that carries #386. #395 closes the task stream, so it must not roll ahead of the pin.
+
+**Before the roll:**
+- Show the values diff against the live release (sandbox `exportRange` in `VITE_FEATURES`, the removed `VITE_ELECTRIC_URL`, the cortex digest, the Dagster run limits) and wait for Chris's approval.
+- #392: a deploy that never set `ENABLE_DISPOSITION_AUTHZ` now enforces the gate. Its `policy/capability_grants.yaml` must grant `mesh:startReview` to the review-starter service identity, or notices refuse `NOT_ENTITLED_TO_INITIATE`. After the grant is synced, bump `REVIEW_REQUEST_KEY_EPOCH` (runbook section B). Sandbox already runs the gate on, with the grant synced.
+- #391: the global `max_concurrent_runs` becomes 6, the sum of four per-location rows. Any code location the daemon loads needs its own row. List STARTED runs first (a dead worker holds a slot).
+- #395: the allow-list file reaches the BFF pod inside the BFF image (`/app/policy/electric_shapes.yaml`), not through a chart mount. A deployment with its own policy replaces it by pointing `ELECTRIC_SHAPES_FILE` at its own file. An absent or empty file serves no stream, and an unreadable one answers 503.
+
+**After the roll:**
+- #385: Chris hand-runs `topaz_sync` in the cortex-bff pod, `--dry-run` first. It deletes the retired seed twins `alice@company.com` and `bob@company.com`. `topazSeed` is off on sandbox and the roll hook does not run `topaz_sync`. Expect `retired_still_present=0`, then `SYNC OK`; a retired user still present exits 4.
+- #360: a BFF-issued call to a person-scoped verb answers as the person, as before the roll.
+- #391: the orphan ConfigMap `iagent-dagster-instance` on sandbox has no helm labels and nothing mounts it. The chart does not touch it. Deleting it is a separate hand step.
+- #390: perf re-runs the ten answers; `bff.orchestrate` and `supervisor.*` spans should now arrive in Langfuse.
+- #394: the first prime has no load records, so every domain loads whole. Read the second prime's totals line: it should show 0 loaded.
+- #403: perf reads `cpu.stat` and wall time on `/me/entitlements`. If it is still CPU-bound, the per-user cache is a separate PR.
+- Cortex: Tasks badge reads "unavailable" if the BFF does not carry #386.
+
+
+### engine-r refuses a commit under `sessions/` (#376)
+- engine-r check 6 takes the longest matching path row. A path under a `review: closed` row is refused with 403 `path_closed`, for a new file, a delete or a mixed diff. An ungoverned path still gets `path_not_governed`.
+- `policy/repository_paths.yaml`: the `sessions/` row is now `review: closed`. `validate_policy` allows `closed` on path rows only; a closed row carries no approvers and still needs `granted_by` and `reason`.
+- `repo_review:SESSIONS` stays defined in task_grants but nothing reads it. Removing it is a separate two-approver change.
+- `scripts/_lane_census.py` dates a packet by the date in its filename; an undated name prints `?`.
+
+### A retired user is deleted by the sync (#385)
+- `policy/users.yaml` gains `retired_users:` (each row: `id`, `reason`, `ruled`). The first two rows are `alice@company.com` and `bob@company.com`, the old DataHub seed owners that 0.4.80 left as a hand step.
+- `topaz_sync` deletes a live retired user with all its relations, including the dataset `owner` relations outside its managed scope. It looks each id up by exact key as well as by listing, and reads each back after the apply. A retired user still present exits 4.
+- The loader refuses a retired id that `users` also asserts, one listed twice, and one any other policy file still names. `validate_policy` runs the same refusal.
+- The other four syncs can still never delete a user.
+- **Upgrade note:** the seed CronJob's git and configMap modes copy `users.yaml` from the overlay, so this retires nothing there. Its `image` mode would delete the two twins on its next tick. Sandbox has no CronJob; see "After the roll".
+
+### Spans for engine-o's first call and the analyst's model calls (#382)
+- `/route_intent` (ExtractIntent, about 7 s of an answer) joins the answer's trace. The BFF sends `X-Trace-Id`, `X-Parent-Span-Id` and `X-Session-Id` on that post, and never a parent without a trace id.
+- engine-o spans nest under the caller's `X-Parent-Span-Id`. The span name is unchanged.
+- Each analyst model call is one `analyst.model` generation with the model id and token usage. It records no prompt or completion text. A telemetry failure never breaks the call.
+- Not fixed here: `configure_litellm` sets `LITELLM_SUCCESS_CALLBACKS`, which litellm 1.82.6 never reads.
+
+### The dataset-contract reader is shared (#378)
+- `agent_fleet/utils/dataset_contracts.py` now holds the reader and its checks, moved out of engine-fin. One exception class, one set of checks.
+- No behaviour, value or wire change. The image copies the module to `/app/utils/`; the Dockerfile's COPY lines are unchanged.
+
+### The shared reader reads the multi-document form (#383)
+- `load_contracts(path)` is the one parser for a `<set>.yaml` file of documents, ids `<set>` or `<set>.<table>`. One bad document refuses the whole file.
+- Every contract declares its scope column or `scope: none`. A missing scope is refused. engine-fin refuses a `scope: none` contract at load.
+- New types: `float`, `boolean`, `timestamp` (UTC-aware only), `date`, `array<string>`.
+- Refusal rules live once, in the reader. A contract's `rules` block carries messages; leaving a rule out disables nothing. engine-fin refuses a block that names a rule no reader raises.
+- No deployed contract changes. `ev_fixture` reads as before.
+
+### Producer-checked rule names (#387)
+- The reader accepts `interval_overlap` and `orphan_reference` in a contract's block, as the producer's checks, and never raises them. The duplicate rule has one name, `duplicate_key`; dag-tools renames `key_not_unique`.
+- engine-fin's join takes a contract that names them. No deployed contract changes.
+
+### Per-viewer tasks (#386)
+- A task is matched to the viewer at read time. Own rows are re-checked against current policy and capability holders are added, so a revoked recipient disappears on the next read.
+- The label dimension applies at the queue list, case admission, `approvals[].task`, act and review batch, the named-on-case holder and the settled-task fallback. A task the viewer cannot see is withheld, not redacted, and recorded as a `routing_fault`.
+- Notice status reads the same gate as the other notice reads (`_ingest_review_access`).
+- New routes `GET /me/queue` and `GET /me/needs_you` (counts equal the list). `on_behalf_of` needs a live row of the new `policy/queue_delegates.yaml` (expiry, grantor, reason and `ratified_by` required; deny by default; the read is marked and audited). Neither route is on the MCP surface. `/me/human_tasks` is unchanged.
+- **Upgrade note:** a reader of `human_task_projection` through `/electric/shape` is not label-scoped. #395 closes that stream in the same cut.
+- Not built: the s7 journal. `dimensions.yaml` is empty, so only the label dimension is applied. Built against ADR-0068 as Proposed.
+
+### The fault walk breaks a DMC tie (#389)
+- `remove_install` and `remove_install_nodes` in the `openddil-lab` overlay now `ORDER BY ?dmc ?dm`. Two issues of one DMC no longer tie, so `task_refs[n].graph_uri` cannot cite the other row's node. With distinct labels the output is unchanged.
+- The action-record seal now checks the graph holds `<graph_uri> rdfs:label "<data_module_code>"` for every task_ref. The tie case itself is not measured.
+
+### Each Dagster code location gets its own run slots (#391)
+- `QueuedRunCoordinator` renders `tag_concurrency_limits` on `dagster/code_location`: iagent 2, doc-tools 2, pub-tools 1, dag-tools 1. The global `max_concurrent_runs` is 6, the sum.
+- Answers (`supervisor_query_job`, in iagent) no longer wait behind prime's ingest wave (doc-tools). Prime ingest concurrency stays 2, now the doc-tools row.
+- **Upgrade note:** a tag limit caps and cannot reserve. The slots stay separate only while the global equals the sum and every loaded code location has a row. Seals check both. The orphan ConfigMap `iagent-dagster-instance` is untouched; see "After the roll".
+- Run behaviour on the cluster is not measured.
+
+### The review-start gate is on by default (#392)
+- `ENABLE_DISPOSITION_AUTHZ` defaulted to `"false"`, so a deploy that forgot it ran the gate as a no-op. The default is now `"true"`. Only an explicit `false`, `0` or `no` turns it off, and off still admits.
+- The chart renders the variable nowhere; sandbox's engine-a had it set by hand to `true`, so sandbox is unchanged.
+- **Upgrade note:** a deploy that never set it now enforces. Grant `mesh:startReview` to the review-starter service identity and sync it, or notices refuse `NOT_ENTITLED_TO_INITIATE`. Then bump `REVIEW_REQUEST_KEY_EPOCH`.
+
+### The BFF retries a signing-key fetch (#397)
+- `verified_claims` fetched the realm's JWKS once. A connection failure (realm restarting, a timeout, a 5xx) answered 401 "Token validation failed".
+- Now it retries a connection failure once, after 0.5 s. If both fail, `get_current_user` answers 503 `authorization_unavailable`, `retryable: true`, the ADR-0026 outage body.
+- An unknown `kid` is still one attempt and 401. A key endpoint that answers with something other than a key set still falls to 401.
+- `docs/api/ingest-v1.md` names the second cause of the 503. Not measured against a live realm restart.
+
+### Probes read Langfuse v2 observations (#398)
+- Five operator probes under `scripts/probes` move their reads to `/api/public/v2/observations`, because Langfuse Cloud removes the v1 reads on 2026-11-16. A shared `_lf_v2.py` pages them 2.5 s apart.
+- `probe_sameid` keeps its legacy-ingestion write leg as a record and no longer runs on Cloud.
+- Operator tools only. Nothing in the fleet, chart or CI references them.
+
+### The fleet's SDK pin moves to v0.9.20 (#360)
 - **The fleet's SDK pin moves from v0.9.19 to v0.9.20** (gov; the architect, 11-13: "#360 stays a
   draft for 0.4.89", and 11-14: "Prepare #360 for 0.4.89"; these supersede 11-11's "the v0.9.20 pin
   moves to 0.4.86"). v0.9.20 changes `iagent_mesh/transport_auth.py` alone: `verify_bearer` is RS256-only, checks
@@ -18,6 +143,51 @@
   fails closed on that. So a list that does not match the BFF's tokens shows up as refusals on
   person-scoped verbs even in OBSERVE. **Post-roll check:** a BFF-issued call to a person-scoped verb
   answers as the person, as before the roll.
+
+### Cortex `6a441d9` → `52cc9a6` (`sha256:be1360d7448baab07e3ee4d7a4215176301b7d76559c1cb702ddb22bf43ac324`) (#401, #404)
+- #401 pins `312064b` (`sha256:cf5596bb…`); #404 re-pins to `52cc9a6`, which includes `312064b`. Only the second digest ships.
+- Tasks are read only from `GET /me/queue` and `GET /me/needs_you`. The Electric `human_task_projection` subscription is gone. Entitlements are read once per session, then refreshed on a timer or after a 403. The `/task/{task_id}` deep link is new.
+- "Select by range" returns in the Export as… dialog behind `exportRange`. `values-sandbox.yaml` adds `exportRange` to `VITE_FEATURES`; the BFF's range form (#364) is already live.
+- `312064b..52cc9a6` adds multi-select in the answers list and a zoom floor on the canvas stage (Zoom in, Zoom out, Fit).
+- **Upgrade note:** this image needs a BFF that carries #386. Behind an older BFF both task routes 404 and every Tasks badge reads "unavailable". Roll it with #386 and #395.
+- Pin measured: the full tag resolves to this digest (OCI index, amd64 and arm64); the abbreviated tag and the digest with its last hex altered both answer 404. The tag tests do not check the digest.
+
+### One directory client per process (#402)
+- The BFF's directory calls (ADR-0071 step 1) share one pooled `httpx.Client` per URL and process, instead of building one per call. A forked child builds its own.
+- On a stub directory over real HTTP: 37 client builds per request become 0, and BFF CPU per request falls from about 9 s to about 20 ms. Directory hits are unchanged at 37. Sandbox was about 2.6 s per request.
+- An `http://` directory gets a bare TLS context that loads no trust store and still requires a certificate. An `https://` directory keeps httpx's default verification, which honours `SSL_CERT_FILE`.
+- No chart value or image contract changes.
+
+### `/me/entitlements` asks the directory twice (#403)
+- ADR-0071 step 2: one list and one batched `/checks`, in place of 37 requests. On the stub, CPU per request falls from about 20 ms to about 4 ms, with the same answer digest.
+- `pdp_answer.checks_answer` reads the batch strictly: an item is a boolean, E20025 with `check: false` is a no, any other reason code is malformed, and a wrong count is malformed. Malformed is the outage class, a 503. A non-2xx, a 404 included, is also a 503.
+- The per-user cache is not built, because most grant writers run outside the BFF and any invalidation costs a directory read. If `/me/entitlements` is still CPU-bound after this rolls, it follows as its own PR.
+- The batch size limit in Topaz is unmeasured. An over-limit refusal reads as a 503, never as a partial list.
+
+### The telemetry leaf ships in the root images (#390)
+- `bff.orchestrate` and the `supervisor.*` spans of #327 never emitted from a deployed image: `provenance-telemetry` was pinned only in the root `dev` group, and both root images install with `--no-dev`. The pin moves to `[project].dependencies`. No package version changes; `langfuse>=4.7.0` was already locked.
+- `trace_spans` warns once at import when the Langfuse keys are set but the leaf is not importable. It never raises.
+- Both cortex-bff and dagster-control-plane images change. See "After the roll".
+
+### The prime skips an ontology domain whose inputs did not change (#394)
+- The prime skips an ontology domain whose inputs did not change (a digest over the loader identity and each file's ETag, plus live Jena and Neo4j counts). Any doubt reloads; `--reload-ontologies` forces a reload. A domain with any changed file reloads whole.
+- The record is a `PrimeOntologyLoad` node in Neo4j. The prime prints `SKIP <domain>` or `LOAD <domain>: <reason>` and a totals line.
+- Reason: the last roll's prime took 976 s of 19.5 minutes. The target is under 15 minutes on a roll with no ontology change. Not measured yet.
+- Hazard, neither caused nor fixed: doc-tools' ontology sensor appends to a graph without dropping it when an ETag changes.
+
+### `/electric/shape` serves only an allow-list (#395)
+- New `policy/electric_shapes.yaml`, read on every call: `answer_artifact_projection` and `ingest_status_projection` only. Any other table is 403 `policy_refusal`, `policy_id: electric_shapes`. A listed table with no per-caller WHERE branch is 403 `electric_shape_filter(<table>)`.
+- The task table's branch is removed, so `human_task_projection` is no longer served. This closes the label bypass left by #386.
+- Deny by default. An absent file, an empty list or no row serves nothing; an unreadable file is 503 `authorization_unavailable`. Matching is exact.
+- `ELECTRIC_SHAPES_FILE` defaults to `/app/policy/electric_shapes.yaml`. The file comes with the BFF image, not a chart mount; a deployment replaces it through that variable.
+- `values-sandbox.yaml` drops the stale `VITE_ELECTRIC_URL`; the pinned cortex does not read it.
+- **Upgrade note:** it must not roll ahead of the cortex pin. A UI older than that build loses its live task layer (the shape returns 403), though its REST seed still loads.
+
+### Answers off Dagster behind `IAGENT_ANSWER_PATH` (#396)
+- A second answer path, flag `IAGENT_ANSWER_PATH`: `dagster` (default) or `durable`. Read per request; any other value logs a warning and falls back to `dagster`. With the default, nothing changes.
+- On `durable`, one answer is one Restate workflow, `SupervisorAnswer`, running the same five supervisor ops with the same spans.
+- `restate-sdk==0.14.0` moves from the `agent-fleet` extra into the main dependencies, because the control-plane image installs no extras.
+- **Upgrade note:** no chart Deployment ships in 0.4.89. The `iagent-supervisor` Deployment is later work, so `durable` is not usable on this release. Nothing ran against a real Restate; the workflow is tested with fakes.
 
 ## 0.4.88 — 2026-11-13
 
