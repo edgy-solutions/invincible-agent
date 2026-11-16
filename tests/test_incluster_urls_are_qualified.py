@@ -123,20 +123,21 @@ def test_the_guard_is_PROVEN_RED_and_ignores_the_prose_that_documents_it():
     assert prose.lstrip().startswith("#"), "the comment case must be filtered by _code_lines"
 
 
-def test_the_four_restate_deployment_uris_are_qualified():
+def test_the_five_restate_deployment_uris_are_qualified():
     """THE SPECIFIC REGRESSION, pinned by name.
 
-    These four are the only URLs in the chart dereferenced by a process OUTSIDE the release
+    These are the only URLs in the chart dereferenced by a process OUTSIDE the release
     namespace, which is why they broke first and why a general rule alone is not enough —
     a future edit could reintroduce one and the aggregate guard would catch it, but naming
-    them records WHY they are special.
+    them records WHY they are special. The fifth (ADR-0072 §3) is the supervisor's
+    SupervisorAnswer registration, rendered only when `supervisorService.enabled`.
     """
     jobs = (_TEMPLATES / "jobs.yaml")
     uris = [
         line for _, line in _code_lines(jobs)
         if '"uri": "http://' in line
     ]
-    assert len(uris) == 4, f"expected 4 registered Restate deployments, found {len(uris)}"
+    assert len(uris) == 5, f"expected 5 registered Restate deployments, found {len(uris)}"
     for line in uris:
         assert "svcDomain" in line, (
             "a registered Restate deployment URI is bare; Restate resolves it from ITS "

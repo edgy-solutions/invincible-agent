@@ -6,6 +6,7 @@
 - `supervisorService.enabled` renders `<release>-supervisor`: one replica, the cortex-bff image, Dagster user-code's env, and registration with the Restate admin. The default is `false`.
 - `supervisorService.answerLimit` (default 2) and `supervisorService.queueMax` (no default; an enabled render fails without it) reach the process as `IAGENT_ANSWER_LIMIT` and `IAGENT_ANSWER_QUEUE_MAX`. Each overlay sets them from its model-server measurement.
 - With the service off, the render is unchanged.
+- **Sandbox turns it on** with `answerLimit: 2` and `queueMax: 4`, from perf's 11-16 sizing. The roll adds one Deployment and one Service, and registers a new Restate deployment, `SupervisorAnswer`. The BFF's `IAGENT_ANSWER_PATH` is unchanged, so no answer takes this path until the measurement window. The semaphore that reads the two envs is perf's #422. Until it merges, the envs are set but nothing reads them.
 
 ## 0.4.89 — 2026-11-16
 
