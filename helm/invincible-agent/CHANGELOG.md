@@ -1,5 +1,10 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.90 — not yet cut
+
+### The 0.4.89 upgrade notes name the run-limit default change
+- 0.4.89's "Before the roll" note for #391 now says that the chart default for Dagster's run limit changed from 2 to 6. A user-values diff does not show this change. Docs only; the render is unchanged.
+
 ## 0.4.89 — 2026-11-16
 
 **0.4.89 is 0.4.88 (`4525a1cf`) plus the 11-15/11-16 train, `4525a1cf..36968d59`. The roll waits for Chris's approval of the values diff against the live release, after lane 74's hand-back.**
@@ -45,7 +50,7 @@
 **Before the roll:**
 - Show the values diff against the live release (sandbox `exportRange` in `VITE_FEATURES`, the removed `VITE_ELECTRIC_URL`, the cortex digest, the Dagster run limits) and wait for Chris's approval.
 - #392: a deploy that never set `ENABLE_DISPOSITION_AUTHZ` now enforces the gate. Its `policy/capability_grants.yaml` must grant `mesh:startReview` to the review-starter service identity, or notices refuse `NOT_ENTITLED_TO_INITIATE`. After the grant is synced, bump `REVIEW_REQUEST_KEY_EPOCH` (runbook section B). Sandbox already runs the gate on, with the grant synced.
-- #391: the global `max_concurrent_runs` becomes 6, the sum of four per-location rows. Any code location the daemon loads needs its own row. List STARTED runs first (a dead worker holds a slot).
+- #391: **the chart default for Dagster's run limit changed from 2 to 6.** The global `max_concurrent_runs` is now 6, the sum of four per-location rows. A deploy that never set it gets 6 on this roll, and a user-values diff does not show it. Any code location the daemon loads needs its own row. List STARTED runs first (a dead worker holds a slot).
 - #395: the allow-list file reaches the BFF pod inside the BFF image (`/app/policy/electric_shapes.yaml`), not through a chart mount. A deployment with its own policy replaces it by pointing `ELECTRIC_SHAPES_FILE` at its own file. An absent or empty file serves no stream, and an unreadable one answers 503.
 
 **After the roll:**
