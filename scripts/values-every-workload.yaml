@@ -45,6 +45,10 @@ topazManifestLoad:
   enabled: true
 litellm:
   enabled: true
+# The queue length is required when the service is on; any integer renders.
+supervisorService:
+  enabled: true
+  queueLength: 1
 networkPolicy:
   enabled: true
 # The same user values-sandbox.yaml declares, so layering this over it changes nothing there.

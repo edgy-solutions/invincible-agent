@@ -1856,6 +1856,39 @@ cortexUi:
             pathType: ImplementationSpecific
     tls: []
 
+# The durable answer service (invincible-agent ADR-0072 §3): `src/iagent/supervisor_service.py`,
+# the `SupervisorAnswer` Restate workflow, served by uvicorn on the cortex-bff image. It runs
+# with dagster user-code's env (the same ConfigMap, Secret, Postgres env and instance file),
+# and the restate-init hook registers `<release>-supervisor:<port>/restate` with the Restate
+# admin. The BFF reaches it only through Restate ingress, and only when
+# `IAGENT_ANSWER_PATH=durable`. Off by default; enabling it changes no answer path by itself.
+#
+# ONE REPLICA, and not as a sizing default. The admission limit (§5) is a semaphore held in
+# the process, so it counts once per replica: two replicas admit twice the limit. The
+# template hard-codes `replicas: 1`; there is no value to raise.
+supervisorService:
+  enabled: false
+  # No image key: the template renders `cortexBff.image`, so the service always runs the
+  # image the BFF runs. That image is built from the repo root, so it carries src/iagent and
+  # the root dependencies (dagster, restate-sdk).
+  port: 8091
+  # IAGENT_ANSWER_LIMIT: K, the answers the service runs at once (§5's FIFO semaphore).
+  # §5 rules that K starts at 2, the `iagent` row of Dagster's run limits. An overlay sets
+  # its own K from a measurement of its model server.
+  answerLimit: 2
+  # IAGENT_ANSWER_QUEUE_LENGTH: how many answers may wait for a slot. Past it, the service
+  # answers "busy". No default is ruled, so the render FAILS when the service is enabled
+  # without one. Each overlay sets it from its model-server measurement.
+  queueLength: null
+  # The same as dagster user-code's: the service runs the answer's ops in its own process.
+  resources:
+    requests:
+      cpu: "1"
+      memory: 1Gi
+    limits:
+      cpu: "4"
+      memory: 2Gi
+
 cortexBff:
   enabled: true
   # SINGLE REPLICA IS LOAD-BEARING, not a sizing default.
