@@ -1,0 +1,118 @@
+{{- if .Values.supervisorService.enabled }}
+{{- /*
+  The durable answer service (invincible-agent ADR-0072 §3). One replica, on the cortex-bff
+  image, with dagster user-code's env. values.yaml's `supervisorService` block says why.
+
+  The two admission values reach the process as env (§5):
+    IAGENT_ANSWER_LIMIT         K, the answers run at once
+    IAGENT_ANSWER_QUEUE_MAX     a count: the answers that may wait. A request arriving at a
+                                full queue is refused "busy" at once; no wait ceiling.
+  The queue max has no ruled default, so `required` fails the render without one.
+*/}}
+{{- $sup := .Values.supervisorService }}
+{{- $queueMax := required "supervisorService.queueMax is required when supervisorService.enabled: set it from the overlay's model-server measurement (ADR-0072 §5)" $sup.queueMax }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-supervisor
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "supervisor" "root" .) | nindent 4 }}
+spec:
+  # Not a value: the §5 limit counts once per replica.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "supervisor" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/dagster-instance: {{ include (print $.Template.BasePath "/dagster-instance.yaml") . | sha256sum }}
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "supervisor" "root" .) | nindent 8 }}
+    spec:
+      {{- include "invincible-agent.avoidStatefulNodes" . | nindent 6 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: supervisor
+          image: {{ include "invincible-agent.image" (dict "name" .Values.cortexBff.image.name "repository" .Values.cortexBff.image.repository "tag" .Values.cortexBff.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - python
+            - "-m"
+            - uvicorn
+            - "src.iagent.supervisor_service:app"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "{{ $sup.port }}"
+          ports:
+            - name: http
+              containerPort: {{ $sup.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          env:
+            - name: IAGENT_ANSWER_LIMIT
+              value: {{ $sup.answerLimit | quote }}
+            - name: IAGENT_ANSWER_QUEUE_MAX
+              value: {{ $queueMax | quote }}
+            - name: DAGSTER_POSTGRES_HOST
+              value: {{ include "invincible-agent.pgHost" . | quote }}
+            - name: DAGSTER_POSTGRES_PORT
+              value: {{ include "invincible-agent.pgPort" . | quote }}
+            - name: DAGSTER_POSTGRES_DB
+              value: {{ include "invincible-agent.pgDatabase" . | quote }}
+            - name: DAGSTER_POSTGRES_USER
+              value: {{ include "invincible-agent.pgUser" . | quote }}
+            - name: DAGSTER_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: BPMN_POSTGRES_PASSWORD
+          volumeMounts:
+            - name: dagster-instance
+              mountPath: /opt/dagster/dagster_home/dagster.yaml
+              subPath: dagster.yaml
+          resources:
+            {{- toYaml $sup.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+      volumes:
+        - name: dagster-instance
+          configMap:
+            name: {{ .Release.Name }}-dagster-home
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-supervisor
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "supervisor" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $sup.port }}
+      targetPort: http
+{{- end }}

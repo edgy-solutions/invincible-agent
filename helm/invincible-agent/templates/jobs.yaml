@@ -53,6 +53,11 @@ spec:
               until curl -sf http://{{ .Release.Name }}-engine-w{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineW.port }}/health; do sleep 2; done
               {{- end }}
 
+              {{- if .Values.supervisorService.enabled }}
+              echo "Waiting for the supervisor (durable answers)..."
+              until curl -sf http://{{ .Release.Name }}-supervisor{{ include "invincible-agent.svcDomain" . }}:{{ .Values.supervisorService.port }}/healthz; do sleep 2; done
+              {{- end }}
+
               echo "Awaiting total readiness..."
               sleep 5
       containers:
@@ -115,6 +120,14 @@ spec:
                      defect could only ever surface at a fresh deploy. */}}
               echo "Registering Weaviate Expert Service (Engine W)..."
               curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-engine-w{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineW.port }}/restate", "force": true}'
+              {{- end }}
+
+              {{- if .Values.supervisorService.enabled }}
+              {{- /* invincible-agent ADR-0072 §3: the SupervisorAnswer workflow. The BFF's
+                     durable path posts to RESTATE_INGRESS/SupervisorAnswer/<id>/run/send;
+                     unregistered, that is Restate's 404. */}}
+              echo "Registering the supervisor (SupervisorAnswer)..."
+              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-supervisor{{ include "invincible-agent.svcDomain" . }}:{{ .Values.supervisorService.port }}/restate", "force": true}'
               {{- end }}
 
 ---

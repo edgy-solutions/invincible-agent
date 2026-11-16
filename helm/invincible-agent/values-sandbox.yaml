@@ -791,6 +791,17 @@ cortexUi:
     # IAGENT_PROMOTION_ROW_EDITS.
     VITE_PROMOTION_ROW_EDITS: "true"
 
+# invincible-agent ADR-0072 §3/§5: the SupervisorAnswer service, with sandbox's admission values
+# from perf's 11-16 sizing. K=2: one answer keeps the model server busy about 78% of its run, and
+# two admitted together were measured at 79.3 s and 93.4 s against 79 s alone (0.4.87). M=4: a
+# 4th waiter finishes about 3.8 min after asking, the worst wait sandbox already showed (217 s on
+# 0.4.87, 4 min 05 s in the rehearsal). These are starting values, re-measured on `durable` in
+# perf's window. The BFF's IAGENT_ANSWER_PATH is not changed here, so no answer takes this path yet.
+supervisorService:
+  enabled: true
+  answerLimit: 2
+  queueMax: 4
+
 cortexBff:
   enabled: true
   image:
