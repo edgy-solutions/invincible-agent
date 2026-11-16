@@ -33,8 +33,9 @@ docstring cite as "provisional".
 - **Already true on master:** sections 1, 2, 3, 5, 7 and the `inputs.dataset.contract` half of 8.
 - **True once the open PRs merge:** section 4 for the `FIN_DATASET_URN` read (#409) and section 6
   (#393).
-- **Not built:** the superset check against dag-tools' template at a pinned tag. The template
-  copy also still names `key_not_unique` (section 9).
+- **Not built:** the superset check against dag-tools' template at a pinned tag (section 9).
+- **Ruled 2026-11-16, not yet done:** the repin to dag-tools v0.16.0 carries the registered
+  contract's `null_value`, `wrong_type` and `non_finite` in the same PR (section 9).
 - **The questions for the architect** are in section 11.
 
 ## 1. A contract is a file of data
@@ -210,11 +211,22 @@ From ADR-0070 §1, restated here as the rule for every contract a producer publi
   that the multi-document seal reads. No check pins a dag-tools tag, and no check compares a
   registered contract to its template. The check arrives with the first registered
   `mfg_trace` contract.
-- **The copy still says `key_not_unique`.** Every document in the fixture names `key_not_unique`
-  in its `rules` block. Since #383, `duplicate_key` is the one name, and `unknown_rules` lists
-  `key_not_unique`, so an engine's join would refuse a contract registered from the copy as it
-  stands. The template's next tag should use `duplicate_key`. That is dag-tools' change, and this
-  repo's copy follows the tag.
+- **The superset covers the rules block too** (ruled 2026-11-16, with Lane 1). When the reader
+  repins to dag-tools v0.16.0, the registered `mfg_trace` contract declares `null_value`,
+  `wrong_type` and `non_finite` in the same PR, so it stays a superset of the template.
+- **What the repin meets.** The copy on master is dag-tools at `398d82d`, and every document in it
+  names `key_not_unique`. A tripwire in `tests/test_the_contract_reader_reads_the_multi_document_form.py`
+  pins that set. dag-tools' master at `f07b7f0` is not tagged yet. Loaded through the current
+  shared reader, it gives:
+  - 12 documents, with two new ones: `conf_test_repo_result` and `conf_test_repo_step_parameter`;
+  - `key_not_unique` gone, replaced by `duplicate_key` in every document;
+  - `unknown_rules` listing `non_finite` and `null_value` on `conf_test_repo_result`, and
+    `null_value` on `conf_test_repo_step_parameter`.
+
+  `wrong_type` is already one of the reader's four. dag-tools' plan emits the other two as
+  producer-side tests (`not_null` → `null_value`, `non_finite` → `non_finite`), with the same ids
+  engine-fin raises. Which reader raises them for a registered contract is question 4 in
+  section 11.
 
 ## 10. Three readers of one format
 
@@ -247,6 +259,21 @@ From ADR-0070 §1, restated here as the rule for every contract a producer publi
 3. **Where does the superset check live?** In iagent CI against a pinned tag, as ADR-0070 §1
    says, or as a load-time refusal when a registered contract names its template. fin proposes CI
    only: a running engine should not depend on another repo.
+4. **Who raises `null_value` and `non_finite` for a registered contract?** The 11-16 ruling has the
+   registered `mfg_trace` contract declare them. A block cannot add a rule (section 3), so unless
+   something raises them, `unknown_rules` lists them and an engine's join refuses the contract.
+   There are three ways out:
+   - **(a)** The shared reader raises both generically: `null_value` on a column declared
+     `nullable: false`, and `non_finite` on a `numeric` or `float` column. They join `RULES`, and
+     engine-fin's two retire into them, as four ids did in #409. This is question 2, widened.
+   - **(b)** Add them to `PRODUCER_CHECKED`. This breaks the seal that no reader raises a
+     producer-checked rule, because engine-fin raises both. It would also leave the read
+     unenforced.
+   - **(c)** The engine that reads these documents passes them as its own (`also`). No such engine
+     exists yet.
+
+   fin proposes (a): its messages are already the template's generic ones. It would land in its own
+   PR, before the repin.
 
 ## Consequences
 
