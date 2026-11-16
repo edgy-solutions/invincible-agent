@@ -175,7 +175,17 @@ global:
     # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
     # 6a441d9..312064b changes src/, e2e/, fixtures/, docs/, scripts/, sessions/ and build.yml's
     # PRODUCER_REF only: no Dockerfile or package.json change, and no import.meta.env read added.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:cf5596bbd67bd88252abf72b4e470af0e423ec68c32f13d55fb8bbdec631c535"
+    # RE-PINNED AGAIN FOR 0.4.89 (dispatch 2026-11-15: "Re-pin cortex to 52cc9a6 ... it supersedes
+    # 312064b and includes it"): 312064b -> 52cc9a68372dcd44ecd38503b4e355f084a72ec4, digest be1360d7.
+    # 312064b is its ancestor, so every 312064b line above still holds. It adds:
+    # - multi-select in the answers list (fb8f58f);
+    # - a zoom floor on the canvas stage, with Zoom in / Zoom out / Fit (fb8f58f);
+    # - build.yml's PRODUCER_REF re-pinned to 2c69d256, master's merge of #386 (second parent 581d5a60).
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64 (plus two attestation manifests); the abbreviated tag and this digest with its last hex
+    # altered both answer 404. 312064b..52cc9a6 changes src/ and build.yml only: no Dockerfile or
+    # package.json change, no import.meta.env read added, and no feature-flag change.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:be1360d7448baab07e3ee4d7a4215176301b7d76559c1cb702ddb22bf43ac324"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
