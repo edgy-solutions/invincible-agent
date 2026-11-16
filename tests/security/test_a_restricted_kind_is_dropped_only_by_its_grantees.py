@@ -7,7 +7,8 @@ a row's kind makes the one check (`gateway._can_drop_or_refuse`): POST /ingest, 
 POST /ingest/{id}/title_leaf, POST /ingest/{id}/leaf, and the BFF leaf backstop. `GET /me/entitlements`
 reports `droppable_kinds`.
 
-The doubles sit at the `human_tasks` boundary (`capability_object_exists`, `check_can_invoke`) except
+The doubles sit at the `human_tasks` boundary (`capability_object_exists`, `check_can_invoke`, and for
+`/me/entitlements` the capability list `capability_keys` and the batched `can_invoke_each`) except
 the a4/a5 arms, which drive the real `capability_object_exists` through an httpx transport: the control
 for "False means OPEN" is that a failed read is a 503, never an accept.
 
@@ -86,6 +87,11 @@ def gate(monkeypatch):
     monkeypatch.setattr(ht, "capability_object_exists", _exists)
     monkeypatch.setattr(ht, "check_can_invoke", _invoke)
     monkeypatch.setattr(ht, "can_invoke_or_unavailable", _invoke)
+    # `/me/entitlements` reads the capability list (an object exists iff it is listed) and one
+    # batched check, never `capability_object_exists` per kind.
+    monkeypatch.setattr(ht, "capability_keys", lambda: sorted(g.gated))
+    monkeypatch.setattr(ht, "can_invoke_each",
+                        lambda caps, who: [bool(c) and _invoke(c, who) for c in caps])
     return g
 
 
@@ -159,6 +165,7 @@ def test_a3b_a_leaf_at_the_drop_is_the_effective_kind(as_user, gate, rig):
 _REAL_CLIENT = httpx.Client
 _REAL_EXISTS = ht.capability_object_exists
 _REAL_INVOKE = ht.can_invoke_or_unavailable
+_REAL_EACH = ht.can_invoke_each
 
 
 def _real_read(monkeypatch, handler):
@@ -356,7 +363,6 @@ def test_e2_the_backstop_with_topaz_unavailable_leaves_the_row_untouched(rows, g
 # ---- f: GET /me/entitlements -------------------------------------------------------------------
 
 def test_f1_droppable_kinds_lists_every_kind_for_a_granted_caller_and_omits_the_gated_for_another(as_user, gate, monkeypatch):
-    monkeypatch.setattr(ht, "capability_keys", lambda: [])   # `capabilities` has its own seal
     every = [r.kind for r in _REGISTRY]
     r = as_user(GRANTED).get("/me/entitlements")
     assert r.status_code == 200, r.text
@@ -367,10 +373,10 @@ def test_f1_droppable_kinds_lists_every_kind_for_a_granted_caller_and_omits_the_
 
 
 def test_f2_an_object_read_error_is_503_for_the_whole_response(as_user, gate, monkeypatch):
-    def _down(cap):
+    def _down():
         raise ht.AuthorizationUnavailable("ConnectError")
 
-    monkeypatch.setattr(ht, "capability_object_exists", _down)
+    monkeypatch.setattr(ht, "capability_keys", _down)
     r = as_user(GRANTED).get("/me/entitlements")
     assert r.status_code == 503, r.text
     assert "droppable_kinds" not in r.text
@@ -379,10 +385,11 @@ def test_f2_an_object_read_error_is_503_for_the_whole_response(as_user, gate, mo
 # ---- t: a Topaz failure on the check is "unavailable", never a refusal -------------------------
 
 def _real_both(monkeypatch, check_response):
-    """The REAL object read (answers: exists) and the REAL check, over a transport whose check
-    answers `check_response()`."""
+    """The REAL object read (answers: exists) and the REAL check, single and batched, over a
+    transport whose check answers `check_response()`."""
     monkeypatch.setattr(ht, "capability_object_exists", _REAL_EXISTS)
     monkeypatch.setattr(ht, "can_invoke_or_unavailable", _REAL_INVOKE)
+    monkeypatch.setattr(ht, "can_invoke_each", _REAL_EACH)
 
     def handler(request):
         if request.method == "GET":
