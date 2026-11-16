@@ -34,6 +34,7 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from src.iagent import gateway, human_tasks  # noqa: E402
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 _REPO = Path(__file__).resolve().parents[2]
 _RA = _REPO / "agent_fleet" / "restate_analyst"
@@ -120,6 +121,7 @@ def _task(**over):
 def _wire(route, task, client):
     c, calls, mp = route
     mp.setattr(human_tasks, "list_tasks_for", lambda caller, status="pending": [task])
+    route_viewer_tasks_through(mp)
     mp.setattr(gateway.httpx, "AsyncClient", client)
     return c, calls
 

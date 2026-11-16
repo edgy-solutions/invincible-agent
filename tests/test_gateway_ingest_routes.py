@@ -455,7 +455,9 @@ def test_status_non_owner_gets_404_not_another_users_row(client, monkeypatch):
     test_ingest_status_projection.py); here we assert the ROUTE turns a None into a plain
     404, never leaking existence via a different status code."""
     captured = {}
-    def _fake(ingest_id, *, caller_id):
+    def _fake(ingest_id, *, caller_id, any_caller=False):
+        if any_caller:   # the second read (ADR-0068 s6): no such row either
+            return None
         captured["caller_id"] = caller_id
         return None
     monkeypatch.setattr(ist, "get_status_for", _fake)
@@ -479,6 +481,10 @@ class _ElectricResp:
 @pytest.fixture
 def stub_electric(monkeypatch):
     sent: dict = {}
+    import pathlib
+    # the shipped allow-list (ADR-0068 s8): the proxy serves only the tables it names
+    monkeypatch.setenv("ELECTRIC_SHAPES_FILE", str(
+        pathlib.Path(__file__).resolve().parents[1] / "policy" / "electric_shapes.yaml"))
 
     class _Client:
         def __init__(self, *a, **k): ...

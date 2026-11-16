@@ -120,18 +120,44 @@ def test_the_ingest_count_is_readable():
     assert count >= 10, f"parsed only {count} ingests from prime_databases.py — shape moved"
 
 
+def _ingest_slots() -> int:
+    """The doc-tools row of `dagster.runTagConcurrencyLimits` — READ from values.yaml."""
+    dag = yaml.safe_load(_VALUES.read_text(encoding="utf-8"))["dagster"]
+    rows = [
+        r for r in dag.get("runTagConcurrencyLimits") or []
+        if r.get("key") == "dagster/code_location" and r.get("value") == "doc-tools"
+    ]
+    assert len(rows) == 1, f"expected one doc-tools run-slot row, found {len(rows)}"
+    return min(int(rows[0]["limit"]), int(dag["maxConcurrentRuns"]))
+
+
+def test_the_prime_derives_its_bound_from_the_doc_tools_slots():
+    """The join: `derived_ingest_timeout()` divides by `_INGEST_CONCURRENCY`, a constant in
+    setup/prime_databases.py. If the chart's doc-tools row moves and the constant does not,
+    the derived bound is computed for a queue the cluster no longer runs."""
+    import sys
+    if str(_ROOT / "setup") not in sys.path:
+        sys.path.insert(0, str(_ROOT / "setup"))
+    import prime_databases  # noqa: PLC0415
+    assert prime_databases._INGEST_CONCURRENCY == _ingest_slots(), (
+        f"prime_databases._INGEST_CONCURRENCY ({prime_databases._INGEST_CONCURRENCY}) != the "
+        f"chart's doc-tools run slots ({_ingest_slots()})"
+    )
+
+
 def test_the_inner_bound_covers_the_serialised_queue():
     """The arithmetic that made this a disposal rather than a guess, pinned so a later
     'tidy the timeouts down' has to argue with the measurement.
 
-    dagster max_concurrent_runs 2, so N ingests serialise into ceil(N/2) batches; observed
-    ~6 min per run-slot on this cluster (10 runs completed within 1800s on 2026-08-22).
+    The doc-tools code location's run-slot row (prime's ingests run there) sets the
+    concurrency C, so N ingests serialise into ceil(N/C) batches; observed ~6 min per
+    run-slot on this cluster (10 runs completed within 1800s on 2026-08-22).
 
     The ingest count is READ from prime_databases.py, so adding an ontology tightens this
     seal automatically instead of silently eating the margin.
     """
     observed_seconds_per_slot = 360      # 10 runs / 1800s, measured 2026-08-22
-    ingests, concurrency = _ingest_count(), 2
+    ingests, concurrency = _ingest_count(), _ingest_slots()
     batches = -(-ingests // concurrency)  # ceil
     needed = batches * observed_seconds_per_slot
     assert _inner_seconds() >= needed, (

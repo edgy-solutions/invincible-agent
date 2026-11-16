@@ -1663,6 +1663,45 @@
         "title": "DecisionSubgraphResponse",
         "type": "object"
       },
+      "DelegationMark": {
+        "description": "A read made on behalf of someone (ADR-0068 s5, s7): who delegated, who read, until when, and\nwhich row of `policy/queue_delegates.yaml` said so. The clock reading is the read's own.",
+        "properties": {
+          "delegate": {
+            "title": "Delegate",
+            "type": "string"
+          },
+          "delegated": {
+            "title": "Delegated",
+            "type": "boolean"
+          },
+          "delegator": {
+            "title": "Delegator",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "read_at": {
+            "title": "Read At",
+            "type": "string"
+          },
+          "row_id": {
+            "title": "Row Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "delegated",
+          "delegator",
+          "delegate",
+          "expires_at",
+          "row_id",
+          "read_at"
+        ],
+        "title": "DelegationMark",
+        "type": "object"
+      },
       "DeletedRow": {
         "additionalProperties": false,
         "properties": {
@@ -4218,6 +4257,49 @@
         "title": "MineListing",
         "type": "object"
       },
+      "NeedsYou": {
+        "description": "GET /me/needs_you: what waits on the viewer, by kind. `counts` is the pending list's own\nrows counted by `kind`; `total` is their sum. The UI reads its count from here.",
+        "properties": {
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "delegated": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DelegationMark"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "counts",
+          "total"
+        ],
+        "title": "NeedsYou",
+        "type": "object"
+      },
       "NotEntitledToDrop": {
         "additionalProperties": false,
         "description": "The 403 body of a door that refused a kind the dropper is not granted.",
@@ -4642,6 +4724,44 @@
           "kinds"
         ],
         "title": "ProcessableKindsBody",
+        "type": "object"
+      },
+      "QueueListing": {
+        "description": "GET /me/queue: the queue of the caller, or of the person the caller reads for.",
+        "properties": {
+          "delegated": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DelegationMark"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/HumanTask"
+            },
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tasks"
+        ],
+        "title": "QueueListing",
         "type": "object"
       },
       "RedeemIdentityBody": {
@@ -9380,6 +9500,86 @@
         ]
       }
     },
+    "/me/needs_you": {
+      "get": {
+        "description": "What waits on the viewer, by kind (ADR-0068 s6): the count of the pending tasks the viewer\nmay see, matched and label-scoped by the very function that serves the list, so the count and\nthe list cannot disagree. `on_behalf_of` reads a named person's, as `GET /me/queue` does.",
+        "operationId": "get_my_needs_you_me_needs_you_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "on_behalf_of",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "On Behalf Of"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NeedsYou"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get My Needs You"
+      }
+    },
     "/me/paused-runs": {
       "get": {
         "description": "The caller's own runs paused as ``awaiting_reauth``, as ``{\"paused\": [record, ...]}``\nwith ``record = {run_id, paused_call, instruction, reason}``; the same record the\n``run_awaiting_reauth`` event carries. Ownership is the door's: the run's stashed subject\nmust equal the caller. A service token is refused 403, as at the door. Nothing paused is\na normal 200 with an empty list.\n\nThe vault is in-process memory in this pod: a cortex-bff restart (or another replica)\nempties this list. There is no storage behind it, by design.",
@@ -9400,6 +9600,86 @@
           }
         ],
         "summary": "My Paused Runs"
+      }
+    },
+    "/me/queue": {
+      "get": {
+        "description": "The pending queue the caller may see, or, with `on_behalf_of`, the queue of the named person\nwhen a live row of `policy/queue_delegates.yaml` lets the caller read it (ADR-0068 s5, s6).\nThe rows are `GET /me/human_tasks`'s; the response adds `delegated`, null for a direct read.\nAn expired or absent delegation is a 403 policy refusal naming `queue_delegates`.",
+        "operationId": "get_my_queue_me_queue_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "on_behalf_of",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "On Behalf Of"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueListing"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthenticatedBody"
+                }
+              }
+            },
+            "description": "no verified identity on the request",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRefusalBody"
+                }
+              }
+            },
+            "description": "a policy refused the caller; `detail.refusal`, when present, names the policy, the missing binding and who can grant it"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get My Queue"
       }
     },
     "/mesh/config": {

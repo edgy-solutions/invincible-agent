@@ -28,6 +28,7 @@ from src.iagent import gateway  # noqa: E402
 from src.iagent.ingest_api import (  # noqa: E402
     INGEST_API_VERSION, INGEST_V1_TAG, PREVIEW_ROUTES, V1_ROUTES,
 )
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
     "_gen_ingest_openapi", ROOT / "scripts" / "generate_ingest_openapi.py")
@@ -301,7 +302,8 @@ def test_me_routes_answer_in_their_declared_shape(monkeypatch):
            "created_at": datetime.datetime(2026, 1, 1), "workflow_service": None,
            "promise_name": None, "case_id": None}
     monkeypatch.setattr(human_tasks, "list_tasks_for", lambda caller_id, **kw: [dict(row)])
-    monkeypatch.setattr(human_tasks, "held_capabilities", lambda caller_id: [])
+    route_viewer_tasks_through(monkeypatch)
+    monkeypatch.setattr(human_tasks, "capabilities_and_held", lambda caller_id: ([], []))
     gateway.app.dependency_overrides[get_current_user] = lambda: user
     try:
         client = TestClient(gateway.app)

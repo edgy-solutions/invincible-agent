@@ -135,8 +135,8 @@ a body field on the act route), never a header or a claim.
 | 401 | `"Token has expired"` | get a new token |
 | 401 | `"Token validation failed: …"` | bad signature, malformed token |
 | 401 | `"Invalid token payload: …"` | the token carries neither the entitlement claim nor `sub` |
-| 401 | `"Authentication failed: …"` | the BFF could not validate at all, e.g. the realm's keys were unreachable |
-| 503 | `{"error": "authorization_unavailable", "retryable": true, …}` | the authorisation directory is down and this token has no cached grants. Retry with backoff. |
+| 401 | `"Authentication failed: …"` | the BFF could not validate at all for a reason that is not an outage, e.g. the realm's key endpoint answered with something other than a key set |
+| 503 | `{"error": "authorization_unavailable", "retryable": true, …}` | the authorisation directory is down and this token has no cached grants, or the realm's signing keys could not be fetched after one retry. Retry with backoff. |
 
 The 503 is a fix that ships with this contract. Before it, the same outage reached the caller as a
 401 `"Authentication failed: 503: …"`. Treat both as retryable until your deployment carries the
@@ -537,7 +537,7 @@ naming the holder, and its occurrence is recorded on the holder's episode as wel
 | 404 | `ingest_not_found` | extraction, source, leaf, empty | absent | – |
 | 403 | `not_entitled` | extraction, source, leaf, empty | neither dropper nor steward | – |
 | 503 | `hitl_unconfigured` | extraction, source, leaf, empty, act | the task store is not configured | report it |
-| 503 | `authorization_unavailable` | any | the authorisation directory is down | retry with backoff |
+| 503 | `authorization_unavailable` | any | the authorisation directory is down, or the realm's signing keys are unreachable | retry with backoff |
 | 422 | `no_extraction_ref`, `extraction_unbound`, `extraction_absent`, `extraction_rows_absent` | extraction | not extracted yet, or its record is incomplete | poll, then retry the read |
 | 422 | `extraction_unreadable` | extraction | the stored result could not be parsed | report it |
 | 422 | `source_unbound` | source | the drop's object is not bound | report it |

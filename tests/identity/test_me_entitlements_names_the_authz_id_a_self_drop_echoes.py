@@ -24,7 +24,7 @@ _WORK_CALLER = User(
 @pytest.fixture(autouse=True)
 def _no_directory(monkeypatch):
     # The subject is authz_id; the capabilities read has its own seal and needs a directory.
-    monkeypatch.setattr(human_tasks, "held_capabilities", lambda caller_id: [])
+    monkeypatch.setattr(human_tasks, "capabilities_and_held", lambda caller_id: ([], []))
 
 
 def _body(user: User) -> dict:

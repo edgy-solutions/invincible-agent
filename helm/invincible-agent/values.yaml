@@ -161,7 +161,31 @@ global:
     # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
     # fb3162a..6a441d9 changes src/ (and sessions/) only: no Dockerfile, package.json or build.yml
     # change, and no import.meta.env read added. 0d5a59d is sessions-only and builds no image.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:c40487815f41132292043077d431cc25d13d1f24df9572e2d6a004f868abf2ab"
+    # RE-PINNED FOR 0.4.89 (dispatch 2026-11-14: "0.4.89 train: ... cortex's image"; cortex-ui/master's
+    # packet names this build): cortex-ui 6a441d9 -> 312064b65b15d7b2a11ff5084ebbfd764955c8ff, digest
+    # cf5596bb, built with PRODUCER_REF 581d5a60 (#386's head, which merged unchanged). It adds:
+    # - tasks read ONLY from GET /me/queue (the list) and GET /me/needs_you (the counts); the Electric
+    #   `human_task_projection` subscription is gone (4000d92). NEEDS a BFF carrying #386: behind an
+    #   older one both routes 404 and every viewer's Tasks badge reads "unavailable";
+    # - entitlements read once per session, refreshed on a timer or after a 403 (e24e21e);
+    # - "Select by range" in the Export as... dialog, behind `exportRange` (7d31ed7; see VITE_FEATURES
+    #   in values-sandbox.yaml);
+    # - the /task/{task_id} deep link (312064b).
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
+    # 6a441d9..312064b changes src/, e2e/, fixtures/, docs/, scripts/, sessions/ and build.yml's
+    # PRODUCER_REF only: no Dockerfile or package.json change, and no import.meta.env read added.
+    # RE-PINNED AGAIN FOR 0.4.89 (dispatch 2026-11-15: "Re-pin cortex to 52cc9a6 ... it supersedes
+    # 312064b and includes it"): 312064b -> 52cc9a68372dcd44ecd38503b4e355f084a72ec4, digest be1360d7.
+    # 312064b is its ancestor, so every 312064b line above still holds. It adds:
+    # - multi-select in the answers list (fb8f58f);
+    # - a zoom floor on the canvas stage, with Zoom in / Zoom out / Fit (fb8f58f);
+    # - build.yml's PRODUCER_REF re-pinned to 2c69d256, master's merge of #386 (second parent 581d5a60).
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64 (plus two attestation manifests); the abbreviated tag and this digest with its last hex
+    # altered both answer 404. 312064b..52cc9a6 changes src/ and build.yml only: no Dockerfile or
+    # package.json change, no import.meta.env read added, and no feature-flag change.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:be1360d7448baab07e3ee4d7a4215176301b7d76559c1cb702ddb22bf43ac324"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -373,7 +397,20 @@ externalRestate:
 dagster:
   # Instance config, rendered into the `<release>-dagster-home` ConfigMap (templates/
   # dagster-instance.yaml) and mounted as dagster.yaml.
-  maxConcurrentRuns: 2
+  #
+  # RUN SLOTS BY CODE LOCATION (architect, 2026-11-14; numbers from lane/perf's run census of
+  # 4,244 runs). A tag limit can only cap runs below the global limit; it cannot reserve one.
+  # So answers get slots of their own only when the global limit is the SUM of the rows and
+  # every location that launches runs has a row. Every run already carries the system tag
+  # `dagster/code_location`. Answers (`supervisor_query_job`) run in `iagent`; prime's
+  # ontology ingests run in `doc-tools`, so ingest concurrency is that row's limit.
+  # Adding a code location without a row lets it take any free slot of the global limit.
+  maxConcurrentRuns: 6
+  runTagConcurrencyLimits:
+    - {key: dagster/code_location, value: iagent, limit: 2}
+    - {key: dagster/code_location, value: doc-tools, limit: 2}
+    - {key: dagster/code_location, value: pub-tools, limit: 1}
+    - {key: dagster/code_location, value: dag-tools, limit: 1}
   runMonitoring:
     enabled: true
     startTimeoutSeconds: 600
@@ -1022,7 +1059,7 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.9.19"
+  meshSdkVersion: "v0.9.20"
   # CLOSED NETWORK (no route to github.com / pypi.org): point the install at a mirror.
   # The SDK is fetched from <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz, so the mirror holds the
   # GitHub tag tarball under that same file name (e.g. an Artifactory generic repo holding
@@ -1032,7 +1069,7 @@ domainBroker:
   #   meshSdkSource: index  -> "iagent-mesh==<meshSdkVersion without the v>" from pip.indexUrl,
   #                            for an internal PyPI that holds the SDK (upload the sdist or a
   #                            wheel built from the tag; the package's version equals the tag's:
-  #                            v0.9.19 builds as 0.9.19, so `index` serves this pin).
+  #                            v0.9.20 builds as 0.9.20, so `index` serves this pin).
   meshSdkSource: "url"
   meshSdkBaseUrl: "https://github.com/edgy-solutions/iagent-mesh-sdk/archive/refs/tags"
   pip:
@@ -1404,7 +1441,7 @@ primeSubstrate:
   # work it waited on, so a prime timed out on a queue that had not failed.
   #
   #   ingests launched per prime      15   (prime_databases.py partition set)
-  #   dagster max_concurrent_runs      2   (.Values.dagster.maxConcurrentRuns)
+  #   doc-tools run slots              2   (.Values.dagster.runTagConcurrencyLimits)
   #   => serialised batches            8
   #   observed throughput   10 runs / 1800s  ~= 6 min per run-slot   (measured, this cluster)
   #   => all 15                     ~45 min = 2700s

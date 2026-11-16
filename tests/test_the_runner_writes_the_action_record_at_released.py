@@ -34,6 +34,7 @@ from tests.test_the_maintenance_fault_runs_as_a_case import (  # noqa: E402,F401
     DECIDE, TRIGGER, _declared_walk_double, _event, _real_policy, registered)
 
 import spo_step_executor as ex  # noqa: E402 -- on sys.path once the harness above is imported
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 DELEGATE = "svc:openddil"
 PERSON = "alice@example.com"
@@ -117,6 +118,7 @@ def api(monkeypatch):
     # holder check is a double that says the named person holds a task on the case.
     from src.iagent import human_tasks
     monkeypatch.setattr(human_tasks, "holds_task_on_case", lambda case_id, who: True)
+    route_viewer_tasks_through(monkeypatch, a_case_with_no_label=True)
     _login(RUNNER)
     yield TestClient(gateway.app), store
     gateway.app.dependency_overrides.clear()

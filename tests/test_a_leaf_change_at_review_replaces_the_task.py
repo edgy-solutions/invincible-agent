@@ -25,6 +25,7 @@ pytestmark = pytest.mark.usefixtures("can_drop_open")
 from tests.test_the_leaf_is_on_the_row_and_the_dropper_can_correct_it import (  # noqa: E402,F401
     ALICE, BOB, DOCTOOLS, ID, PREFIX, REF, _as, _by_kind_pdn_reruns, _leaf, _title, db,
 )
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 G0 = f"document_promotion:{ID}"
 G1 = f"document_promotion:{ID}:g1"
@@ -154,6 +155,7 @@ def test_the_steward_gate_honours_the_current_generation(db, monkeypatch):
 def _settle_superseded(monkeypatch):
     """The caller no longer has the task pending; their own row says superseded."""
     monkeypatch.setattr(ht, "list_tasks_for", lambda caller, status="pending": [])
+    route_viewer_tasks_through(monkeypatch)
     monkeypatch.setattr(ht, "get_task_resolution", lambda t, caller_id: {
         "task_id": t, "kind": "document_promotion", "status": ht.SUPERSEDED, "decision": None,
         "acted_by": None, "acted_at": None, "audience": "document_promotion:SUSTAINMENT",
@@ -194,6 +196,7 @@ def test_acting_on_the_current_generation_task_proceeds(world, monkeypatch):
     monkeypatch.setattr(ht, "list_tasks_for", lambda caller, status="pending": [
         {"task_id": g1, "kind": "document_promotion", "audience": "document_promotion:SUSTAINMENT",
          "payload": dict(PAYLOAD)}])
+    route_viewer_tasks_through(monkeypatch)
     monkeypatch.setattr(ist, "get_row", lambda i: _row_at(1))
     r = world.client.post(f"/human_tasks/{g1}/act", json={"decision": "promoted"})
     assert r.status_code == 200, r.text
@@ -205,6 +208,7 @@ def test_a_pending_task_that_is_not_the_current_generation_is_stale(world, monke
     monkeypatch.setattr(ht, "list_tasks_for", lambda caller, status="pending": [
         {"task_id": g0, "kind": "document_promotion", "audience": "document_promotion:SUSTAINMENT",
          "payload": dict(PAYLOAD)}])
+    route_viewer_tasks_through(monkeypatch)
     monkeypatch.setattr(ist, "get_row", lambda i: _row_at(1))
     monkeypatch.setattr(ht, "get_task_open_state", lambda t: None)
     r = world.client.post(f"/human_tasks/{g0}/act", json={"decision": "promoted"})

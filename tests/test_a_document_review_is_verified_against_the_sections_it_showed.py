@@ -30,6 +30,7 @@ from src.iagent import human_tasks as ht  # noqa: E402
 from tests.test_a_promotion_records_what_was_looked_at import (  # noqa: E402,F401
     _LAB, _act, _nothing_written, world,
 )
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 HEX = "c0" * 32
 ID = "sha256:" + HEX
@@ -128,6 +129,7 @@ def _serve(w, monkeypatch, payload):
     monkeypatch.setattr(ht, "list_tasks_for", lambda caller, status="pending": [
         {"task_id": "t-1", "kind": w.kind, "audience": "document_promotion:TRAINING",
          "payload": copy.deepcopy(payload)}])
+    route_viewer_tasks_through(monkeypatch)
 
 
 # ---- the served payload ------------------------------------------------------------------------

@@ -194,7 +194,9 @@ def _install(monkeypatch, worlds, *, topaz=None, holders=()):
                                       request=httpx.Request("POST", "http://topaz" + path))
 
         monkeypatch.setattr(ht, "_TOPAZ_DIRECTORY_URL", "http://topaz")
-        monkeypatch.setattr(ht, "httpx", SimpleNamespace(Client=_Client, HTTPError=httpx.HTTPError))
+        # The one shared client (#402) is built in iagent.authz, which never reads `ht.httpx`:
+        # double the name `_directory()` calls.
+        monkeypatch.setattr(ht, "directory_http_client", lambda url, **kw: _Client())
     return fake, asked
 
 

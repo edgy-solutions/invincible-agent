@@ -13,8 +13,12 @@ from opentelemetry import trace as otel
 from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 from opentelemetry import context as otel_context
 
-HOST = os.environ["LANGFUSE_HOST"].rstrip("/")
+HOST = (os.environ.get("LANGFUSE_BASE_URL") or os.environ["LANGFUSE_HOST"]).rstrip("/")
 AUTH = HTTPBasicAuth(os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"])
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent))
+from _lf_v2 import observations as _v2_observations  # noqa: E402
 
 from langfuse import get_client
 client = get_client()
@@ -46,9 +50,8 @@ print("emitted=1")
 
 for i in range(12):
     time.sleep(5)
-    r = requests.get(f"{HOST}/api/public/observations", auth=AUTH,
-                     params={"traceId": TRACE_ID, "limit": 100}, timeout=30)
-    data = r.json().get("data", []) if r.status_code == 200 else []
+    status, _obs = _v2_observations(trace_id=TRACE_ID, max_pages=1)
+    data = _obs if status == 200 else []
     if data:
         by = {o.get("name"): (o.get("id"), o.get("parentObservationId")) for o in data}
         print(f"readback_after={5*(i+1)}s count={len(data)}")

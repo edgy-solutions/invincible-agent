@@ -79,11 +79,13 @@ selects:
         ?fc mil:hasFaultCodeValue ?fault_code .
         ?dm a mil:ProcedureDataModule ;
             rdfs:label ?dmc .
-      } ORDER BY ?dmc
+      } ORDER BY ?dmc ?dm
   # THE NODE URIS the citations' labels are bound off -- a separate select, so `citations` keeps
-  # the shape the cross-repo contract pins. Same body and same ORDER BY ?dmc as `remove_install`,
-  # so index n here is the node of `remove_install.dmc.n` (a `values` select projects only its
-  # first variable, hence `?dm` alone). Cited on the action record's task_refs as `graph_uri`.
+  # the shape the cross-repo contract pins. Same body and same ORDER BY ?dmc ?dm as
+  # `remove_install`, so index n here is the node of `remove_install.dmc.n` (a `values` select
+  # projects only its first variable, hence `?dm` alone). `?dm` breaks a tie between two nodes
+  # with one label (two issues of one DMC), which `?dmc` alone left to the store's order, read
+  # by two separate queries (lane/74's #344 review, F1). Cited on task_refs as `graph_uri`.
   remove_install_nodes:
     cardinality: values
     sparql: |
@@ -96,7 +98,7 @@ selects:
         ?fc mil:hasFaultCodeValue ?fault_code .
         ?dm a mil:ProcedureDataModule ;
             rdfs:label ?dmc .
-      } ORDER BY ?dmc
+      } ORDER BY ?dmc ?dm
   ipd:
     cardinality: one
     integers: [quantity]

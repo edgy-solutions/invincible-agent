@@ -50,7 +50,8 @@ try:
     from telemetry import (safe_observe, safe_update_observation,
                            set_trace_standard, observed_trace, build_trace_values, MAPPING,
                            litellm_metadata,
-                           mint_boundary_ids, boundary_parent, emit_boundary, emit_misses)
+                           mint_boundary_ids, boundary_parent, emit_boundary, emit_misses,
+                           instrument_model_calls)
 except ImportError:
     def safe_observe(**kwargs):
         def decorator(func):
@@ -77,6 +78,8 @@ except ImportError:
         pass
     def emit_misses():  # None = no telemetry leaf here, so nothing emitted, nothing missed
         return None
+    def instrument_model_calls(model, **_k):
+        return model
     MAPPING = None
 
 from fastapi import FastAPI, Request
@@ -1222,6 +1225,7 @@ to decide the next call. Use only what the tools return — never invent data.
                 agent_prompt += f"\n\n{tool_reminder}"
 
                 model = get_smolagent_model()
+                model = instrument_model_calls(model, name="analyst.model")
                 
                 # Generation->trace linking (ADR-0038, v4): the replay-safe boundary at the
                 # run-smolagent call below opens + JOINS + enriches the analyst trace on a

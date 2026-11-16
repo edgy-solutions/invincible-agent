@@ -1,0 +1,24 @@
+# QUEUE DELEGATES -- which person may read which other person's task queue, until when (ADR-0068 s5, s6).
+#
+#   * A ROW lets `delegate` read `delegator`'s queue: `GET /me/human_tasks?on_behalf_of=<delegator>`
+#     and `GET /me/needs_you?on_behalf_of=<delegator>`. The read is evaluated as the delegator
+#     (recipient match and labels), AND the delegate must be entitled to every label as well: a
+#     delegation never lends a clearance.
+#   * `scope` says which tasks the row covers: `kinds` and/or `audiences` (at least one value in
+#     one of them). A task outside the scope is not shown.
+#   * `expires_at` IS REQUIRED: an aware ISO-8601 time (`2026-12-31T00:00:00Z`). A row whose time
+#     has passed grants nothing. There is no row without an end.
+#   * A row states its `id` (unique; the row's identity, recorded with every delegated read), its
+#     `granted_by`, a `reason`, and `ratified_by` (a seat such as `owner`, never an identity in
+#     users.yaml). One row per (delegator, delegate).
+#   * DENY BY DEFAULT. An absent file, an empty list, no row for the pair, or an expired row is
+#     refused 403, naming `queue_delegates` as the policy and the binding missing.
+#   * NO PERSON, KIND OR AUDIENCE IS NAMED IN CODE OR IN THIS SEED. A deployment adds a row.
+#   * NOT gateway_delegates.yaml: that is service-to-person, has no expiry, and its rows grant no read.
+#
+# The BFF reads this file on every call (env `QUEUE_DELEGATES_FILE`, default
+# `/app/policy/queue_delegates.yaml`). Validated WHEN PRESENT by validate_policy.queue_delegates_errors.
+#
+# Grantor row: policy/grantors/queue_delegates.yaml.
+
+queue_delegates: []

@@ -497,6 +497,10 @@ async def _proxy_where(monkeypatch, table):
     import iagent.gateway as gw
 
     seen = {}
+    # the shipped allow-list (ADR-0068 s8): the proxy serves only the tables it names
+    import pathlib
+    monkeypatch.setenv("ELECTRIC_SHAPES_FILE", str(
+        pathlib.Path(__file__).resolve().parents[1] / "policy" / "electric_shapes.yaml"))
 
     class _Resp:
         headers = {}
@@ -534,4 +538,3 @@ async def test_10_electric_default_view_hides_archived(monkeypatch):
     where = await _proxy_where(monkeypatch, "answer_artifact_projection")
     assert where == f"produced_for_user_id = '{ALICE}' AND archived_at IS NULL"
     assert "archived_at" in await _proxy_where(monkeypatch, None)
-    assert "archived_at" not in await _proxy_where(monkeypatch, "human_task_projection")

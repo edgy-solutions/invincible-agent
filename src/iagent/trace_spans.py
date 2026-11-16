@@ -11,6 +11,8 @@ from __future__ import annotations
 import functools
 import importlib.util
 import inspect
+import logging
+import os
 import sys
 import uuid
 from contextlib import contextmanager
@@ -45,11 +47,29 @@ def _load_shim() -> Any:
 
 _t = _load_shim()
 
+
+def _warn_if_leaf_missing() -> None:
+    # Silent degradation hid #327: both span families were no-ops in images without the leaf.
+    try:
+        if not (os.environ.get("LANGFUSE_SECRET_KEY") and os.environ.get("LANGFUSE_PUBLIC_KEY")):
+            return
+        if _t is None or not getattr(_t, "_LEAF_AVAILABLE", False):
+            logging.getLogger(__name__).warning(
+                "trace spans are no-ops: provenance_telemetry is not importable in this "
+                "environment (bff.orchestrate / supervisor.* will not emit)"
+            )
+    except Exception:  # noqa: BLE001  never break import
+        pass
+
+
+_warn_if_leaf_missing()
+
 try:
     observed_trace = _t.observed_trace
     MAPPING = _t.MAPPING
     build_trace_values = _t.build_trace_values
     flush = _t.flush
+    instrument_model_calls = _t.instrument_model_calls
 except Exception:  # noqa: BLE001  no-op stubs: the mesh runs identically without telemetry
 
     @contextmanager
@@ -63,6 +83,9 @@ except Exception:  # noqa: BLE001  no-op stubs: the mesh runs identically withou
 
     def flush(*_a, **_k):  # type: ignore[misc]
         return None
+
+    def instrument_model_calls(model, **_k):  # type: ignore[misc]
+        return model
 
 
 def mint_trace_id() -> str:

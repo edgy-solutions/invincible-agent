@@ -1,0 +1,29 @@
+# ELECTRIC SHAPES -- which tables the BFF's `/electric/shape` proxy streams to a browser (ADR-0068 s8).
+#
+#   * AN ALLOW-LIST. A table is served only if a row below names it exactly. Every other table --
+#     `human_task_projection` and `routing_fault` included -- is refused 403, naming `electric_shapes`
+#     as the policy and `electric_shape(<table>)` as the missing binding.
+#   * TASKS ARE NOT STREAMED. A shape's WHERE cannot evaluate a label, so a task is read through
+#     `GET /me/queue` and `GET /me/needs_you`, which match the viewer at read time and withhold by
+#     label. Do not add a task table here; the proxy refuses it even if a row names it (it has no
+#     server-side filter for it).
+#   * A ROW IS PERMISSION, NEVER A FILTER. The per-caller WHERE is injected by the proxy; a client
+#     `where` is dropped. A listed table the proxy has no filter for is refused.
+#   * DENY BY DEFAULT. An absent file or an empty list serves nothing.
+#   * A row states its `table`, `granted_by`, a `reason` and `ratified_by` (a seat such as `owner`,
+#     never an identity in users.yaml). Every row carries all of them.
+#
+# The BFF reads this file on every call (env `ELECTRIC_SHAPES_FILE`, default
+# `/app/policy/electric_shapes.yaml`). Validated WHEN PRESENT by validate_policy.electric_shapes_errors.
+#
+# Grantor row: policy/grantors/electric_shapes.yaml.
+
+electric_shapes:
+  - table: answer_artifact_projection
+    granted_by: seed
+    reason: the caller's own answers, filtered to produced_for_user_id = the verified sub
+    ratified_by: owner
+  - table: ingest_status_projection
+    granted_by: seed
+    reason: the caller's own ingest status, filtered to submitter or on_behalf_of = the verified authz id
+    ratified_by: owner

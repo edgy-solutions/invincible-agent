@@ -34,6 +34,7 @@ from src.iagent import origin_writer  # noqa: E402
 from tests.identity._identity_support import install_delegates, pair_and_outsider  # noqa: E402
 from tests.identity.test_a_service_token_cannot_name_a_user_outside_the_delegate_list import (  # noqa: E402
     _client, _login)
+from tests.viewer_double import route_viewer_tasks_through  # noqa: E402
 
 RUNNER = gateway._CASE_RUNNER_SERVICE_AUTHZ_ID
 AUDIT = "iagent.audit.delegate_named"
@@ -67,6 +68,7 @@ class _Holders:
     def __init__(self, monkeypatch, holders=(), raises=None):
         self.holders, self.raises, self.asked = set(holders), raises, []
         monkeypatch.setattr(ht, "holds_task_on_case", self)
+        route_viewer_tasks_through(monkeypatch, a_case_with_no_label=True)
 
     def __call__(self, case_id, person):
         self.asked.append((case_id, person))

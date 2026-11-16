@@ -74,13 +74,14 @@ prune); never hand-surgery Topaz.
 > **What work's equivalent state must be at deploy — decide it EXPLICITLY, do not inherit it.**
 > If work runs `ENABLE_DISPOSITION_AUTHZ=true`, `capability_grants.yaml` must carry BOTH
 > `mesh:startReview` **and** `mesh:fileTriageTask` for the service identity, or notices refuse
-> loudly at start and refusals fail to route. If work leaves it unset, note that
+> loudly at start and refusals fail to route. **Since chart 0.4.89 unset means ON** (the gate
+> fails closed by default); only an explicit `false` turns it off. If work sets it `false`, note that
 > `mesh:fileTriageTask` is enforced **regardless** — the triage gate has no toggle — so that
 > grant is required in BOTH configurations. It is load-bearing for VISIBILITY, not just
 > permission.
 
-**If you leave `ENABLE_DISPOSITION_AUTHZ` unset (NO LONGER the sandbox config — see the flip
-rider above):**
+**If you set `ENABLE_DISPOSITION_AUTHZ=false` (an explicit opt-out: since chart 0.4.89 an UNSET
+variable means the gate is ON; NO LONGER the sandbox config — see the flip rider above):**
 - ✅ **Drop** item 2 (the `can_invoke(mesh:startReview)` capability grant). With the gate off,
   `can_invoke_start_review` is a no-op, so the auto-starter needs no capability. This is exactly
   the hands-off witness config we ran in sandbox.
