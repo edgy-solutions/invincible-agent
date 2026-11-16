@@ -4,7 +4,7 @@
 
 ### The supervisor Deployment, off by default (invincible-agent ADR-0072 §3)
 - `supervisorService.enabled` renders `<release>-supervisor`: one replica, the cortex-bff image, Dagster user-code's env, and registration with the Restate admin. The default is `false`.
-- `supervisorService.answerLimit` (default 2) and `supervisorService.queueLength` (no default; an enabled render fails without it) reach the process as `IAGENT_ANSWER_LIMIT` and `IAGENT_ANSWER_QUEUE_LENGTH`. Each overlay sets them from its model-server measurement.
+- `supervisorService.answerLimit` (default 2) and `supervisorService.queueMax` (no default; an enabled render fails without it) reach the process as `IAGENT_ANSWER_LIMIT` and `IAGENT_ANSWER_QUEUE_MAX`. Each overlay sets them from its model-server measurement.
 - With the service off, the render is unchanged.
 
 ## 0.4.89 — 2026-11-16

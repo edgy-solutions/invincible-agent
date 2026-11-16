@@ -5,8 +5,9 @@ on the cortex-bff image, one replica, with dagster user-code's env, behind
 `supervisorService.enabled`, and registered with the Restate admin like the engines.
 §5: a FIFO semaphore of K answers, which counts once per replica.
 
-`IAGENT_ANSWER_LIMIT` (K) and `IAGENT_ANSWER_QUEUE_LENGTH` are chart values on that
-Deployment. Each overlay sets them from its model-server measurement. The queue length has
+`IAGENT_ANSWER_LIMIT` (K) and `IAGENT_ANSWER_QUEUE_MAX` are chart values on that
+Deployment. Each overlay sets them from its model-server measurement. The queue max (a count:
+a request at a full queue is refused "busy" at once, with no wait ceiling) has
 no ruled default, so an enabled render without one must FAIL rather than ship a number
 nobody measured.
 
@@ -30,7 +31,7 @@ _RELEASE = "t"
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
 
-_ON = ("--set", "supervisorService.enabled=true", "--set", "supervisorService.queueLength=7")
+_ON = ("--set", "supervisorService.enabled=true", "--set", "supervisorService.queueMax=7")
 
 
 def _helm(*extra: str) -> subprocess.CompletedProcess:
@@ -93,11 +94,11 @@ def test_off_by_default_and_on_when_enabled():
     _one(on, "Service", name)
 
 
-def test_an_enabled_render_without_a_queue_length_fails():
-    assert _defaults()["queueLength"] is None, "a default queue length was added: it needs a ruling"
+def test_an_enabled_render_without_a_queue_max_fails():
+    assert _defaults()["queueMax"] is None, "a default queue max was added: it needs a ruling"
     r = _helm("--set", "supervisorService.enabled=true")
     assert r.returncode != 0
-    assert "supervisorService.queueLength is required" in r.stderr
+    assert "supervisorService.queueMax is required" in r.stderr
     # The control: the same render with the value set succeeds.
     assert _helm(*_ON).returncode == 0
 
@@ -105,7 +106,7 @@ def test_an_enabled_render_without_a_queue_length_fails():
 def test_the_admission_values_reach_the_process_as_env():
     env = _env(_container(_one(_render(*_ON), "Deployment", f"{_RELEASE}-supervisor")))
     assert env["IAGENT_ANSWER_LIMIT"]["value"] == str(_defaults()["answerLimit"])
-    assert env["IAGENT_ANSWER_QUEUE_LENGTH"]["value"] == "7"
+    assert env["IAGENT_ANSWER_QUEUE_MAX"]["value"] == "7"
     # K is a value, not a constant: an overlay's number reaches the env.
     env3 = _env(_container(_one(
         _render(*_ON, "--set", "supervisorService.answerLimit=3"),

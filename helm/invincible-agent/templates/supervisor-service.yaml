@@ -5,11 +5,12 @@
 
   The two admission values reach the process as env (§5):
     IAGENT_ANSWER_LIMIT         K, the answers run at once
-    IAGENT_ANSWER_QUEUE_LENGTH  the answers that may wait; past it, "busy"
-  The queue length has no ruled default, so `required` fails the render without one.
+    IAGENT_ANSWER_QUEUE_MAX     a count: the answers that may wait. A request arriving at a
+                                full queue is refused "busy" at once; no wait ceiling.
+  The queue max has no ruled default, so `required` fails the render without one.
 */}}
 {{- $sup := .Values.supervisorService }}
-{{- $queueLength := required "supervisorService.queueLength is required when supervisorService.enabled: set it from the overlay's model-server measurement (ADR-0072 §5)" $sup.queueLength }}
+{{- $queueMax := required "supervisorService.queueMax is required when supervisorService.enabled: set it from the overlay's model-server measurement (ADR-0072 §5)" $sup.queueMax }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -60,8 +61,8 @@ spec:
           env:
             - name: IAGENT_ANSWER_LIMIT
               value: {{ $sup.answerLimit | quote }}
-            - name: IAGENT_ANSWER_QUEUE_LENGTH
-              value: {{ $queueLength | quote }}
+            - name: IAGENT_ANSWER_QUEUE_MAX
+              value: {{ $queueMax | quote }}
             - name: DAGSTER_POSTGRES_HOST
               value: {{ include "invincible-agent.pgHost" . | quote }}
             - name: DAGSTER_POSTGRES_PORT
