@@ -193,6 +193,28 @@ spec:
                       name: {{ .Release.Name }}-secrets
                       key: DATAHUB_TOKEN
                       optional: true
+                # THE APPROVED-GRANT LEDGER (ruled 2026-11-16): this Job is the ONE pruner of
+                # `reader` relations, and its grant_sync input is committed policy UNION the
+                # ledger rows not yet committed (`access_grant_ledger`, in the same Postgres the
+                # BFF records into). Without it each tick would revoke every approved grant. The
+                # Job reads the ledger and nothing else. An unreadable ledger exits 5 with
+                # nothing applied and nothing pruned. The password is a secretKeyRef (never
+                # envFrom the whole secret); same DSN template as projector.yaml.
+                - name: BPMN_POSTGRES_HOST
+                  value: {{ include "invincible-agent.pgHost" . | quote }}
+                - name: BPMN_POSTGRES_PORT
+                  value: {{ include "invincible-agent.pgPort" . | quote }}
+                - name: BPMN_POSTGRES_DB
+                  value: {{ include "invincible-agent.pgDatabase" . | quote }}
+                - name: BPMN_POSTGRES_USER
+                  value: {{ include "invincible-agent.pgUser" . | quote }}
+                - name: BPMN_POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Release.Name }}-secrets
+                      key: BPMN_POSTGRES_PASSWORD
+                - name: PROJECTOR_POSTGRES_DSN
+                  value: "postgresql://$(BPMN_POSTGRES_USER):$(BPMN_POSTGRES_PASSWORD)@$(BPMN_POSTGRES_HOST):$(BPMN_POSTGRES_PORT)/$(BPMN_POSTGRES_DB)"
                 - name: PYTHONPATH
                   value: "/app/policy/sync"
               command: ["sh", "-c"]
@@ -272,7 +294,9 @@ spec:
                   # and grant_sync REFUSES a grant to an asset not yet in the
                   # directory (deny-on-dangling). Exits 2 (malformed) / 3
                   # (dangling) / 4 (readback) — `set -e` fails the Job loudly, so
-                  # a bad grant file cannot silently seed a broken grant.
+                  # a bad grant file cannot silently seed a broken grant. This is the ONE
+                  # pruner: its input is committed policy plus the approved-grant ledger rows
+                  # not yet committed; exit 5 = the ledger is unreadable (nothing pruned).
                   python policy/sync/grant_sync.py
                   echo ""
                   echo "===== ONTOLOGY COMPARTMENT SYNC (ontology_compartment_sync) ====="

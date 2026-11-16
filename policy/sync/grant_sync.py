@@ -213,10 +213,58 @@ def readback_grants(client, grants: list[GrantRecord]) -> tuple[int, int]:
     return checked, failures
 
 
+#: Exit code: the approved-grant ledger is configured but cannot be read. Nothing is applied and
+#: nothing is pruned: an unreachable store must never revoke a grant it holds.
+EXIT_LEDGER_UNREADABLE = 5
+
+_LEDGER_SELECT = ("SELECT subject, asset, kind, granted_by, reason FROM access_grant_ledger "
+                  "ORDER BY granted_at, subject, asset")
+
+
+def _grant_key(g: dict) -> tuple:
+    return (g.get("subject"), g.get("asset"), g.get("kind") or "dataset")
+
+
+def union_grants(committed: list, ledger: list) -> list:
+    """Committed policy plus the ledger rows it does not already name. Committed policy wins a
+    duplicate (its git history is the stronger record). The pruner's input is this union, so it
+    never revokes an approved grant that has not been committed yet."""
+    out = {_grant_key(g): dict(g) for g in committed if isinstance(g, dict)}
+    rest = [g for g in committed if not isinstance(g, dict)]    # kept: load_grants reports them
+    for row in ledger:
+        out.setdefault(_grant_key(row), {
+            "subject": row["subject"], "asset": row["asset"], "kind": row.get("kind") or "dataset",
+            "granted_by": row["granted_by"], "reason": row.get("reason") or ""})
+    return list(out.values()) + rest
+
+
+def read_ledger(dsn: str) -> list:
+    """Every approved grant in `access_grant_ledger`. A table that does not exist yet is an EMPTY
+    ledger (no BFF has recorded a grant); any other failure (connect, auth, query) RAISES, so the
+    caller can refuse to prune."""
+    import psycopg2
+
+    conn = psycopg2.connect(dsn, connect_timeout=10)
+    try:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(_LEDGER_SELECT)
+            except psycopg2.errors.UndefinedTable:
+                return []
+            cols = ("subject", "asset", "kind", "granted_by", "reason")
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
 def main() -> int:
-    """CLI: sync git-asserted reader grants into Topaz.
-    Env: ASSET_GRANTS_FILE (default policy/asset_grants.yaml), TOPAZ_DIRECTORY_URL.
-    Exit: 0 ok · 2 malformed grants · 3 dangling grants · 4 readback failed.
+    """CLI (the seed CronJob, THE one pruner): sync git-asserted reader grants into Topaz.
+    The input is committed policy UNION the approved-grant ledger rows not yet committed, when
+    PROJECTOR_POSTGRES_DSN is set. A ledger that is configured but unreadable exits 5 having
+    applied and pruned NOTHING.
+    Env: ASSET_GRANTS_FILE (default policy/asset_grants.yaml), TOPAZ_DIRECTORY_URL,
+    PROJECTOR_POSTGRES_DSN (the ledger; unset = no ledger, committed policy only).
+    Exit: 0 ok · 2 malformed grants · 3 dangling grants · 4 readback failed · 5 ledger unreadable.
     Malformed/dangling → apply NOTHING (fail-closed: a broken grant file does
     not partially apply)."""
     import yaml
@@ -227,6 +275,18 @@ def main() -> int:
 
     with open(grants_file) as f:
         raw = yaml.safe_load(f) or {}
+    dsn = os.getenv("PROJECTOR_POSTGRES_DSN", "").strip()
+    if dsn:
+        try:
+            rows = read_ledger(dsn)
+        except Exception as exc:  # noqa: BLE001 -- ANY failure reading the ledger refuses the run
+            print(f"REFUSED — the approved-grant ledger cannot be read ({type(exc).__name__}); "
+                  "nothing applied, nothing pruned.", file=sys.stderr)
+            return EXIT_LEDGER_UNREADABLE
+        committed = raw.get("grants") or []
+        if isinstance(committed, list):      # a non-list is malformed: load_grants refuses it below
+            raw = {**raw, "grants": union_grants(committed, rows)}
+        print(f"ledger: {len(rows)} approved grant(s) unioned into committed policy")
     grants, malformed = load_grants(raw)
     if malformed:
         print("REFUSED — malformed grants (fix policy/asset_grants.yaml; nothing applied):",
