@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
 import uuid
@@ -4969,6 +4970,58 @@ def _slot_spec(declarations: list[dict]) -> tuple[str, dict[str, dict]]:
     }
 
 
+#: One `key: value` pair of a flat map that was turned into a string: an identifier key, then the
+#: value up to the next pair or the end.
+_STRINGIFIED_PAIR = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*?)\s*$", re.DOTALL)
+
+
+def _parse_slots_reply(text: Any) -> Any:
+    """`slots_json` as JSON, or as the one other form measured on the wire. Raises ValueError otherwise.
+
+    MEASURED 2026-11-16 (rehearsal, "where is part 5530-182 used as built"): the model's reply
+    held `"slots_json": {"configuration": "as_built"}`, an OBJECT where the contract declares a
+    string. The parser turned that object into the string `{configuration: as_built}`. That
+    string is not JSON, so this endpoint returned no slots, the verb ran on its default
+    (`as_designed`), and an `as_built` question was answered with as-designed rows and no word
+    that it had been substituted.
+
+    The second form accepted here is exactly that: a FLAT map of identifier keys to scalar values.
+    Each value is read as JSON when it is valid JSON (a number, true/false, null or a quoted
+    string), and kept as the bare string otherwise. Anything nested, any piece without a key, or a
+    key named twice still raises, because the reader cannot tell where such a value ends. A slot
+    that arrives here still goes through the same acceptance checks below as a JSON one does.
+    """
+    if text is None or text == "":
+        return {}
+    if not isinstance(text, str):
+        raise TypeError(f"slots_json is a {type(text).__name__}, not a string")
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    body = text.strip()
+    if not (body.startswith("{") and body.endswith("}")):
+        raise ValueError("neither JSON nor a stringified flat map")
+    inner = body[1:-1].strip()
+    if not inner:
+        return {}
+    if any(ch in inner for ch in "{}[]\"'"):
+        raise ValueError("a stringified map with nested or quoted values is not read")
+    out: dict[str, Any] = {}
+    for piece in inner.split(","):
+        m = _STRINGIFIED_PAIR.match(piece)
+        if m is None or not m.group(2):
+            raise ValueError(f"not a key: value pair: {piece!r}")
+        key, value = m.group(1), m.group(2)
+        if key in out:
+            raise ValueError(f"key named twice: {key!r}")
+        try:
+            out[key] = json.loads(value)
+        except ValueError:
+            out[key] = value
+    return out
+
+
 @app.post("/fill_slots", response_model=FillSlotsResponse)
 async def fill_slots(request: FillSlotsRequest):
     """Extract the parameters the speaker named, for an already-routed verb.
@@ -5017,7 +5070,7 @@ async def fill_slots(request: FillSlotsRequest):
         return FillSlotsResponse(reasoning=f"slot extraction unavailable: {exc}")
 
     try:
-        raw = json.loads(filled.slots_json or "{}")
+        raw = _parse_slots_reply(filled.slots_json)
     except (ValueError, TypeError):
         _slots_logger.warning(
             "fill_slots: %s returned unparseable slots_json %r",
