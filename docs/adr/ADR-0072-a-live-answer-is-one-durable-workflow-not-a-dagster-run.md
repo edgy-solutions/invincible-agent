@@ -2,7 +2,8 @@
 
 **Status:** Proposed (Lane 1 and lane/perf, 2026-11-14). The prototype is #396, behind a flag that
 defaults to today's path. Nothing is rolled, and no answer has run on the new path.
-Sections 3 and 8.1 were ruled by the architect on 2026-11-15 (via Chris); the rest is still proposed.
+Sections 3 and 8.1 were ruled by the architect on 2026-11-15 (via Chris), and section 5 on 2026-11-16;
+the rest is still proposed.
 **Date:** 2026-11-14
 **Deciders:**
 - the architect, for the decision and the open questions in section 8;
@@ -90,10 +91,18 @@ invocations of a service for us, so on `durable` nothing does.
 **The rule:**
 - `durable` may run **only in a declared measurement window**, one answer at a time, until the
   service has an admission limit.
-- The limit is a FIFO semaphore of K concurrent answers. K starts at 2, the `iagent` tag row's
-  value. Past a wait ceiling, the service answers "busy", and the BFF emits it as an error event.
+- **The limit and the queue are two values per deployment** (amended 2026-11-16, by the architect's ruling via Chris):
+  - `IAGENT_ANSWER_LIMIT` is K, the number of concurrent answers. It is sized from what the model server can serve.
+  - `IAGENT_ANSWER_QUEUE_MAX` is M, the most answers that may wait.
+  - Each deployment declares both values. The default that applies when a value is unset is read from the code, not restated here.
+- **Order.** A request over the limit waits in a strict FIFO queue, ordered by its first arrival time. A freed slot passes straight to the head of the queue, so no later request can barge past it.
+- **The user is told.** A waiting request is shown as queued, together with its position. The time it spends waiting is its own span, `supervisor.queue_wait`.
+- **Busy is decided at the door, and only there.** A request that arrives when M answers are already waiting is refused at once with "busy", and the refusal says that the queue is full. The BFF emits it as an error event. Nobody waits and is then refused.
+- **Once admitted, never dropped.** A request admitted to the queue is never dropped, except when its user leaves. The BFF withdraws it when the client disconnects. There is no wait ceiling.
+- **A restart keeps its place.** An answer that Restate re-invokes mid-run re-enters ordered by its first arrival time, which is journaled. It does not go to the back of the queue, and it is never refused as busy.
 - **The limit counts once per replica,** so the one-replica rule in section 3 is part of it.
 - **#396 does not have it.** It is the change that must land before `durable` becomes a default.
+  The change is lane/perf's admission PR.
 
 ### 6. The trace is the run record
 - The spans are the ones `step_spanned` emits on Dagster: `supervisor.create_task_plan`,
