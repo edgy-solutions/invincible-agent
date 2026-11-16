@@ -345,6 +345,7 @@ NOT_POLICY: dict[str, str] = {
     'src/iagent/gateway.py::act_on_human_task::no_open_empty_task | the task names no ingest': CONFLICT,
     # -- engine-r (#133, ADR-0062 §2), classified 2026-10-28 --
     f"{ER}::Repo._check_approvals::proposer_cannot_approve": DUTIES,
+    f"{ER}::Repo._check_approvals::approver_is_excluded": DUTIES,
     f"{ER}::Repo._check_approvals::approval_of_another_sha": STATE,
     f"{ER}::Repo._check_approvals::no_approval": STATE,
     f"{ER}::Repo.proposal::unknown_proposal": CONFLICT,

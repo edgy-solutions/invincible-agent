@@ -281,7 +281,19 @@ class Repo:
 
     # ---- propose
 
-    def propose(self, *, caller: Caller, target_ref: str, changes: dict, intent: str, message: str) -> dict:
+    def propose(
+        self,
+        *,
+        caller: Caller,
+        target_ref: str,
+        changes: dict,
+        intent: str,
+        message: str,
+        excluded: "tuple[str, ...] | list[str]" = (),
+    ) -> dict:
+        """Open a proposal. ``excluded`` is the authz_ids that may never approve it (ruled 2026-11-16, D6:
+        the requester and the grantee of a grant, by authz_id, even when the proposal is filed on their
+        behalf). The proposer is always excluded; the set is part of the proposal's meta."""
         tip = self._read_tip(target_ref)
         if tip is None:
             raise ValueError(f"target_ref {target_ref} does not exist")
@@ -307,6 +319,7 @@ class Repo:
             "head_sha": str(head),
             "intent": intent,
             "proposer": caller.authz_id,
+            "excluded": sorted({caller.authz_id, *excluded}),
             "auth_via": caller.auth_via,
             "state": "open",
             "created_at": _now(),
@@ -343,7 +356,9 @@ class Repo:
     # ---- approvals (the part of section 5 that is not who-may-approve)
 
     @staticmethod
-    def _check_approvals(approvals: list[Approval], sha: str, proposer: str | None) -> None:
+    def _check_approvals(
+        approvals: list[Approval], sha: str, proposer: str | None, excluded: "list[str] | tuple[str, ...]" = ()
+    ) -> None:
         for a in approvals:
             if a.sha != sha:
                 raise RepoRefusal(
@@ -357,6 +372,13 @@ class Repo:
                         403, "proposer_cannot_approve", missing_binding="the dropper rule",
                         message="a proposer may not approve their own proposal", check="approvals",
                     )
+        for a in approvals:
+            if a.authz_id in excluded:
+                raise RepoRefusal(
+                    403, "approver_is_excluded", missing_binding="an approver who is not the requester or grantee",
+                    message="an approver is the proposer, the requester or the grantee of this proposal",
+                    check="approvals",
+                )
         if not approvals:
             raise RepoRefusal(
                 409, "no_approval", missing_binding="at least one approval",
@@ -384,7 +406,7 @@ class Repo:
             )
         checks["check1"] = "pass"
 
-        self._check_approvals(approvals, reviewed_sha, meta["proposer"])
+        self._check_approvals(approvals, reviewed_sha, meta["proposer"], meta.get("excluded", ()))
         checks["approvals"] = "pass"
 
         diff = self._proposal_diff(meta)
@@ -448,7 +470,7 @@ class Repo:
         checks["check4"] = "pass"
 
         # pluggable extra checks
-        ctx = {"proposal": meta, "paths": paths}
+        ctx = {"proposal": meta, "paths": paths, "approvals": approvals, "diff": diff}
         for fn in p.extra_checks:
             fn(self, ctx)
             checks[getattr(fn, "__name__", "extra_check")] = "pass"
