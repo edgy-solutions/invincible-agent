@@ -33,6 +33,7 @@ class FakeLedgerDb:
     def __init__(self):
         self.rows: dict = {}
         self.down = False
+        self.prunes: list = []          # the `prune` each directory apply was called with
 
     def __call__(self):
         if self.down:
@@ -79,7 +80,9 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(ht, "_ASSET_GRANTS_FILE", str(committed))
     monkeypatch.setattr(ht, "_TOPAZ_DIRECTORY_URL", "http://directory.invalid")
     monkeypatch.setattr(ht, "_pg_connect", db)
-    monkeypatch.setattr(ht, "_grant_sync_run", lambda raw: sent.append(raw) or 0)
+    # `prune` defaults to True HERE, so a call that forgets to say add-only records True (red)
+    monkeypatch.setattr(ht, "_grant_sync_run",
+                        lambda raw, prune=True: sent.append(raw) or db.prunes.append(prune) or 0)
     return db, sent, committed, policy
 
 
@@ -251,3 +254,82 @@ def test_5_the_report_script_prints_both_people_and_exits_1_while_anything_is_ab
     out = capsys.readouterr().out
     assert "asked by req-person, approved by approver-person" in out and "mallory" in out
     assert "carol" not in out                              # committed policy: not reported
+
+
+# 8. add-only: the BFF is never the pruner (ruled 2026-11-16) ------------------------------------
+
+def test_8_the_approval_apply_and_the_startup_re_apply_are_add_only(world):
+    db, sent, _c, _p = world
+    _approve()
+    assert db.prunes == [False]                              # approval path
+    ht.reapply_ledger_grants()
+    assert db.prunes == [False, False]                       # startup path
+
+
+def _load_grant_sync():
+    import importlib.util
+    import sys
+    sys.path.insert(0, str(ROOT / "policy" / "sync"))
+    spec = importlib.util.spec_from_file_location("_gs_seal", ROOT / "policy" / "sync" / "grant_sync.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_gs_seal"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _stub_run_world(mod, monkeypatch, seen):
+    import topaz_sync
+
+    class _Client:
+        def __init__(self, url): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    class _Plan:
+        add_relations: list = []
+        del_relations: list = []
+
+    monkeypatch.setattr(topaz_sync, "TopazClient", _Client)
+    monkeypatch.setattr(mod, "find_dangling", lambda c, g: [])
+    monkeypatch.setattr(mod, "sync_grants", lambda c, g, *, prune=True: seen.append(prune) or _Plan())
+    monkeypatch.setattr(mod, "readback_grants", lambda c, g: (0, 0))
+
+
+RAW = {"grants": [{"subject": "a", "asset": "b", "granted_by": "g"}]}
+
+
+def test_8_run_passes_prune_through_to_the_sync(monkeypatch):
+    mod, seen = _load_grant_sync(), []
+    _stub_run_world(mod, monkeypatch, seen)
+    assert mod.run(RAW, "http://x.invalid", prune=False) == 0
+    assert seen == [False]
+
+
+def test_8_control_the_seed_cli_still_prunes(monkeypatch, tmp_path):
+    mod, seen = _load_grant_sync(), []
+    _stub_run_world(mod, monkeypatch, seen)
+    import yaml
+    f = tmp_path / "g.yaml"
+    f.write_text(yaml.safe_dump(RAW), encoding="utf-8")
+    monkeypatch.setenv("ASSET_GRANTS_FILE", str(f))
+    assert mod.main() == 0
+    assert seen == [True]                                    # the one pruner
+
+
+def test_8_the_real_seam_calls_run_add_only(monkeypatch, tmp_path):
+    fake = tmp_path / "fake_gs.py"
+    fake.write_text(
+        "SEEN = []; run = lambda raw, url, prune=True: (SEEN.append(prune), 0)[1]",
+        encoding="utf-8")
+    import importlib.util
+    monkeypatch.setattr(ht, "_GRANT_SYNC", str(fake))
+    captured = []
+    real = importlib.util.module_from_spec
+
+    def spy(spec):
+        m = real(spec)
+        captured.append(m)
+        return m
+    monkeypatch.setattr(importlib.util, "module_from_spec", spy)
+    assert ht._grant_sync_run(RAW) == 0
+    assert captured[-1].SEEN == [False]

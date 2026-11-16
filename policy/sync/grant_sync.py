@@ -16,6 +16,12 @@ THREE SYNCS, ONE DIRECTORY, DISJOINT SCOPE (no two prune the same relation):
   - topaz_sync.py         — persona/cell/group/member/user (git entitlements)
   - datahub_topaz_sync.py — dataset `owner` (DataHub resource facts)
   - grant_sync.py (THIS)  — dataset `reader` (git-asserted human grants)
+
+ONE PRUNER, THE SEED (ruled 2026-11-16). Of every caller of `run()`, exactly one prunes `reader`
+relations: the topaz-seed CronJob's CLI (`main()`), from the full input (committed policy plus
+the approved-grant ledger rows not yet committed). Every other caller (the BFF's approval and
+startup apply, engine-r's merge-time sync) is ADD-ONLY: `run(..., prune=False)`. An add-only
+caller never holds the full input, and a pruner fed a partial input revokes what it did not see.
 Reader is this tool's alone; it ensures grantee `user` objects exist
 (idempotent, never pruned — the ADR-0026 sync owns `user`) and it PRUNES reader
 relations not asserted in git (removing a grant from the file REVOKES it — the
@@ -229,11 +235,14 @@ def main() -> int:
     return run(raw, topaz_url)
 
 
-def run(raw: dict, topaz_url: str) -> int:
+def run(raw: dict, topaz_url: str, *, prune: bool = True) -> int:
     """The apply, from a parsed grants dict (`{"grants": [...]}`), not from a file: the same
     validate / prove-the-negative / sync / readback as the CLI, with the same exit codes. The BFF
     calls it with the committed policy plus the decision ledger, so a grant approved at runtime
-    never needs a file in the pod."""
+    never needs a file in the pod.
+
+    `prune` defaults to True, the seed CLI's behaviour (the one pruner). The BFF and engine-r pass
+    `prune=False`: they only ADD readers, and a removal waits for the seed's next tick."""
     from topaz_sync import TopazClient
 
     grants, malformed = load_grants(raw)
@@ -254,7 +263,7 @@ def run(raw: dict, topaz_url: str) -> int:
                 print(f"  {d}", file=sys.stderr)
             return 3
 
-        plan = sync_grants(client, grants)
+        plan = sync_grants(client, grants, prune=prune)
         print(f"synced: +{len(plan.add_relations)} reader grants, "
               f"-{len(plan.del_relations)} revoked")
 

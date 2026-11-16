@@ -1035,9 +1035,10 @@ def desired_grants(ledger: Optional[list] = None) -> list[dict[str, Any]]:
     return list(out.values())
 
 
-def _grant_sync_run(raw: dict) -> int:
+def _grant_sync_run(raw: dict, *, prune: bool = False) -> int:
     """The sealed `grant_sync.run` (validate, prove the negative, sync, readback), called in
-    process with a grants dict. The ONE seam a test replaces: no directory write in a unit test."""
+    process with a grants dict. ADD-ONLY by default: the BFF never prunes (one pruner, the seed).
+    The ONE seam a test replaces: no directory write in a unit test."""
     import importlib.util
 
     sync_dir = os.path.dirname(_GRANT_SYNC)
@@ -1046,19 +1047,20 @@ def _grant_sync_run(raw: dict) -> int:
     spec = importlib.util.spec_from_file_location("_iagent_grant_sync", _GRANT_SYNC)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.run(raw, _TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393")
+    return mod.run(raw, _TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393", prune=prune)
 
 
 def apply_ledger_to_directory() -> dict[str, Any]:
-    """Apply committed policy plus the ledger to the directory. `{ok, exit_code, output,
-    grants}`; 0 ok, 2 malformed, 3 dangling, 4 readback (grant_sync's own codes)."""
+    """Apply committed policy plus the ledger to the directory, ADD-ONLY (`prune=False`): the BFF
+    is never the pruner (one pruner, the seed), so it can never revoke a grant it did not see.
+    `{ok, exit_code, output, grants}`; 0 ok, 2 malformed, 3 dangling, 4 readback."""
     import contextlib as _ctx
     import io as _io
 
     grants = desired_grants()
     out, err = _io.StringIO(), _io.StringIO()
     with _ctx.redirect_stdout(out), _ctx.redirect_stderr(err):
-        code = _grant_sync_run({"grants": grants})
+        code = _grant_sync_run({"grants": grants}, prune=False)
     return {"ok": code == 0, "exit_code": code, "grants": len(grants),
             "output": out.getvalue()[-800:] + err.getvalue()[-400:]}
 

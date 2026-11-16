@@ -1,5 +1,27 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.90 — not yet cut
+
+- **An approved access request no longer writes a file in the pod** (saf; the architect, 11-15).
+  `POST /human_tasks/{id}/act` with `approved` on an `access_request` now records the grant in a new
+  Postgres table `access_grant_ledger` (subject, asset, kind, requested_by, granted_by, reason,
+  task_id, granted_at; primary key subject+asset+kind, so a second approval keeps the first approver),
+  then applies committed policy plus the ledger to the directory through the same `grant_sync`
+  (validate, prove the negative, sync, readback), called in process as `grant_sync.run`. The BFF
+  re-applies the ledger at startup, so a restarted pod keeps every approved grant. The table is created
+  by the BFF's existing startup migration (`CREATE TABLE IF NOT EXISTS`). **Upgrade note:** grants
+  written to a pod's `asset_grants.yaml` before this roll were lost with the pod (or live only in the
+  directory); they are not in the ledger. `scripts/report_access_grants.py` lists ledger grants and
+  directory `reader` relations that committed policy does not name; run it after the roll with the
+  directory URL set and decide each hand-written one (re-approve it, or commit it). Until ADR-0062's
+  engine-r path commits a grant, the ledger row and the `iagent.audit.grant_write` line are its record.
+  **The BFF only ADDS readers; the seed is the one pruner** (ruled 11-16): both the approval apply
+  and the startup re-apply call `grant_sync.run(..., prune=False)`, so a restart never revokes a reader
+  that the policy source asserts and the image copy lacks. A grant removed from committed policy is
+  revoked by the seed's next tick. **Ships with the seed-reads-the-ledger PR in the same release:**
+  the seed CronJob (the pruner) must read the ledger too, or it revokes an approved grant at its next
+  tick; no deployment gets one without the other. Chart values and endpoints are unchanged here.
+
 ## 0.4.89 — not yet cut
 
 - **The fleet's SDK pin moves from v0.9.19 to v0.9.20** (gov; the architect, 11-13: "#360 stays a
@@ -18,21 +40,6 @@
   fails closed on that. So a list that does not match the BFF's tokens shows up as refusals on
   person-scoped verbs even in OBSERVE. **Post-roll check:** a BFF-issued call to a person-scoped verb
   answers as the person, as before the roll.
-
-- **An approved access request no longer writes a file in the pod** (saf; the architect, 11-15).
-  `POST /human_tasks/{id}/act` with `approved` on an `access_request` now records the grant in a new
-  Postgres table `access_grant_ledger` (subject, asset, kind, requested_by, granted_by, reason,
-  task_id, granted_at; primary key subject+asset+kind, so a second approval keeps the first approver),
-  then applies committed policy plus the ledger to the directory through the same `grant_sync`
-  (validate, prove the negative, sync, readback), called in process as `grant_sync.run`. The BFF
-  re-applies the ledger at startup, so a restarted pod keeps every approved grant. The table is created
-  by the BFF's existing startup migration (`CREATE TABLE IF NOT EXISTS`). **Upgrade note:** grants
-  written to a pod's `asset_grants.yaml` before this roll were lost with the pod (or live only in the
-  directory); they are not in the ledger. `scripts/report_access_grants.py` lists ledger grants and
-  directory `reader` relations that committed policy does not name; run it after the roll with the
-  directory URL set and decide each hand-written one (re-approve it, or commit it). Until ADR-0062's
-  engine-r path commits a grant, the ledger row and the `iagent.audit.grant_write` line are its record.
-  Chart values and endpoints are unchanged.
 
 ## 0.4.88 — 2026-11-13
 
