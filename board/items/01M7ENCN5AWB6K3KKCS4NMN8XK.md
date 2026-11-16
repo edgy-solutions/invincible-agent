@@ -1,13 +1,13 @@
 ---
 title: A failed answer run never delivers its card, though assert_every_engine_answered's docstring says the gateway still finds it
 feature: cross-cutting
-lane:
+lane: invincible-agent/lane/01
 repo: invincible-agent
 status: open
 priority: next
 blocked_on: []
 pr: []
-ruling_ref: Architect via Chris 2026-11-14 night dispatch, item 8 -- "File the bug perf found: a failed run never delivers its answer card, though the docstring says it does." Found by invincible-agent/lane/perf in its answers-off-dagster design packet, section 6.
+ruling_ref: Architect via Chris 2026-11-14 night dispatch, item 8 -- "File the bug perf found: a failed run never delivers its answer card, though the docstring says it does." Found by invincible-agent/lane/perf in its answers-off-dagster design packet, section 6. RULED architect 2026-11-15 (via Chris), dispatch item 4 to Lane 1: "On a failed run the BFF delivers a failure card naming the step and the trace id; it never stays silent."
 updated: 2026-11-15
 ---
 
@@ -28,7 +28,17 @@ The answer stream's poll loop (`src/iagent/gateway.py`, from line 10216) reads t
 
 So the user gets red with a blank card and two error events. That is the outcome the docstring says the ordering exists to prevent.
 
-## The decision this needs (owner to be named)
+## Ruled 2026-11-15
+
+"On a failed run the BFF delivers a failure card naming the step and the trace id; it never stays silent." The ruling came in dispatch item 4, addressed to Lane 1, so Lane 1 owns this item.
+
+- **Both paths:** today's Dagster path, and #396's durable path. One function builds the card for both.
+- **Order:** it lands after #396 merges, because both change the same stream code in `gateway.py`.
+- **The card names** the failed step and the run's trace id. Where `generate_ui_payload`'s output exists, the card carries it, marked failed.
+- **The second error event goes**, with its wrong `ui_payload_timeout` cause.
+- ADR-0072 section 8.1 records the same ruling (#399).
+
+## The decision this needed (now ruled, above)
 
 Does the BFF deliver the card from a failed run, marked failed?
 
