@@ -2,6 +2,7 @@
 
 **Status:** Proposed (Lane 1 and lane/perf, 2026-11-14). The prototype is #396, behind a flag that
 defaults to today's path. Nothing is rolled, and no answer has run on the new path.
+Sections 3 and 8.1 were ruled by the architect on 2026-11-15 (via Chris); the rest is still proposed.
 **Date:** 2026-11-14
 **Deciders:**
 - the architect, for the decision and the open questions in section 8;
@@ -15,7 +16,7 @@ defaults to today's path. Nothing is rolled, and no answer has run on the new pa
   provenance projection. The trace is the run record here.
 - #391: the Dagster run limits. Their `iagent` tag row today counts answers and ingest together
   (section 7).
-- #388: the failed-run card bug. Section 8 asks for its ruling.
+- #388: the failed-run card bug. Section 8.1 records its ruling.
 
 ## Context
 
@@ -64,6 +65,7 @@ Ingestion, ontology loads, assets, batch, `start_review_job` and the BPMN jobs s
   cortex sees the same SSE events.
 
 ### 3. It runs as its own Deployment
+**Ruled 2026-11-15:** the answer service is hosted as its own Deployment in the chart.
 - **The Deployment** is `iagent-supervisor`, on the control-plane image that cortex-bff runs, with
   one replica. It is behind `supervisorService.enabled`, and it registers with the Restate admin
   the way the engines do.
@@ -142,12 +144,18 @@ not before.
 
 The decision to make `durable` the default rests on that report and on section 5's limit.
 
-## 8. Open questions (named, not decided here)
-1. **The failed-run card (#388).** `assert_every_engine_answered`'s docstring says the BFF still
-   delivers the card on a failed run. It does not: the stream stops on `FAILURE` and never fetches
-   the card. The durable path keeps the card on a failed snapshot. Does the BFF deliver it, marked
-   failed, on both paths? Lane 1's recommendation is **yes**: the card is the same filtered content
-   the success path would show, and the failure says which engine did not answer.
+## 8. Open questions (named, not decided here, except 8.1)
+1. **The failed-run card (#388). RULED 2026-11-15:** "On a failed run the BFF delivers a failure
+   card naming the step and the trace id; it never stays silent."
+   - **The defect it closes:** `assert_every_engine_answered`'s docstring says the BFF still
+     delivers the card on a failed run. It does not: the stream stops on `FAILURE` and never
+     fetches the card. The durable path keeps the card on a failed snapshot.
+   - **What the ruling requires, on both paths:** the card names the step that failed and the
+     run's trace id (section 6: the trace is the run record).
+   - **What it forbids:** a failed run that ends the stream with no card.
+   - **The seal it needs:** a run made to fail at a named step yields a card carrying that step
+     and the trace id. A control is the same run succeeding. Mutation: drop the card on `FAILURE`,
+     and the seal fails.
 2. **A completion event in Dagster.** The workflow could report one runless `answer_record` asset
    event when an answer completes, off the critical path. Whether Dagster 1.12.20 accepts an
    asset outside the code location's graph is unverified. Wanted, or not?
