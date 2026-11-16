@@ -150,6 +150,10 @@ direction would let a declaration add a species the code never had.
 
 Everything else is order-free.
 
+## A task is not streamed
+
+A task reaches the UI only through `GET /me/queue` and `GET /me/needs_you`, where the viewer's label rule is evaluated at read time (ADR-0068 s6). The browser's `/electric/shape` proxy serves only the tables a row of `policy/electric_shapes.yaml` names, and `human_task_projection` is not one of them: a shape's WHERE cannot evaluate a label, so listing the task table there would be refused anyway (`electric_shape_filter(<table>)`). A new kind needs nothing here. To stream a different table, add a row (`table`, `granted_by`, `reason`, `ratified_by`) AND a per-caller WHERE branch in `electric_shape_proxy`; a row alone is permission, not a filter, and is refused.
+
 ## Errors hit, and what each one teaches
 
 | what happened | the general lesson |
