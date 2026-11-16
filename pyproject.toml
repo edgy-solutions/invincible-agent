@@ -87,6 +87,8 @@ dependencies = [
     # the intersection of the extra (>=4.5.4) and dev (>=4.4,<5.0) pins so
     # one resolved version serves all three.
     "weaviate-client>=4.5.4,<5.0",
+    # The durable answer path (src/iagent/supervisor_service.py) runs on the control-plane image, which installs no extras.
+    "restate-sdk==0.14.0",
 ]
 
 [project.optional-dependencies]
@@ -95,7 +97,6 @@ agent-fleet = [
     "uvicorn",
     "rdflib",
     "baml-py",
-    "restate-sdk==0.14.0",
     "smolagents",
     "langgraph",
     "langgraph-checkpoint-postgres",
