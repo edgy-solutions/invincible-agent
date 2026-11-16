@@ -1,5 +1,22 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.90 — not yet cut
+
+- **The topaz-seed CronJob reads the approved-grant ledger, so the one pruner keeps approved grants**
+  (saf; the architect, 11-16: "one pruner, the seed"; ships with the access-ledger PR #408 in this
+  release, so no deployment gets one without the other). The seed's `grant_sync` input is now
+  committed policy UNION the `access_grant_ledger` rows that policy does not yet name; without it
+  every tick would revoke each grant approved at runtime. The ledger read FAILS CLOSED: if the store
+  cannot be read the Job exits 5 having applied and pruned nothing (`set -e` fails the Job loudly).
+  A ledger table that does not exist yet is an empty ledger. **Chart change:** the Job gains
+  `PROJECTOR_POSTGRES_DSN` (host, port, db and user from the chart's pg helpers; the password by a
+  `secretKeyRef` to `BPMN_POSTGRES_PASSWORD`, never the whole secret) and the seed image, which is the
+  cortex-bff image, already carries `psycopg2-binary` (root `dependencies`). The seed is off by default
+  and in sandbox; at work (`policySource.type: git`) it is on, so this is the roll that matters there.
+  **Not rendered by this PR:** with `networkPolicy.enabled`, Postgres ingress admits only the
+  listed components; the seed would need a `directCallers` entry for `postgresql` (the gate is off
+  today).
+
 ## 0.4.89 — not yet cut
 
 - **The fleet's SDK pin moves from v0.9.19 to v0.9.20** (gov; the architect, 11-13: "#360 stays a
