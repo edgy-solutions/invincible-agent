@@ -22,8 +22,8 @@ Every call to the permission directory builds a new HTTP client and discards it 
   - 10 content-kind checks;
   - 1 capability listing;
   - 26 capability checks.
-- **Measured once by Lane 1 on 2026-11-12, and not yet repeated:** about 70 ms of CPU per client, and about 2.6 s of
-  CPU per GET.
+- **Measured once by Lane 1 on 2026-11-12:** about 70 ms of CPU per client, and about 2.6 s of CPU per GET.
+  perf repeated the GET figure on 0.4.88: 2.224 s, 3 of 3 reps (the cost column below).
   - At the BFF's then-limit of half a core, the GET outlived the UI's 15 s timeout, and the server logged nothing for
     the abandoned request.
   - Raising the limit to two cores (0.4.86) hid the cost without removing it.
@@ -99,17 +99,20 @@ before this record was written.
 
 | measure | before | after step 1 | after step 2 |
 | --- | --- | --- | --- |
-| CPU per `/me/entitlements` (BFF) | ≈2.6 s, measured once (11-12, Lane 1) | owed: perf | owed: perf |
+| CPU per `/me/entitlements` (BFF) | **2.224 s** (perf, 0.4.88: 3 of 3 reps, range 2.191–2.272). Lane 1's earlier ≈2.6 s was n=1 (11-12). | owed: perf, on the sandbox roll that carries #402 and #403 | owed: perf, same roll |
 | clients built per `/me/entitlements` | ≈37 | 0 after warm-up (the seal) | 0 |
-| directory calls per `/me/entitlements` | ≈37 | ≈37 | owed: gov |
-| CPU per answer, flag on (row 1) | owed: perf | — | — |
+| directory calls per `/me/entitlements` | ≈37 | ≈37 | 2, by gov's seal (#403); unmeasured on sandbox |
+| CPU per answer, flag on (row 1) | owed: perf; it cannot be measured while the flag is off | — | — |
 
-**Method:**
-- Read the container's CPU counter (`cpu.stat` `usage_usec`) before and after N requests on an idle service, and
-  divide the difference by N.
-- Record the throttled-periods ratio beside it.
-- Run it three or more times.
-- Record the command, not just the figure.
+gov's dev-box figures for step 1 (37 calls at 18.8–21.9 ms of CPU each) are not comparable to sandbox. They show the
+direction, not the after-figure.
+
+**Method (the accepted one, perf's):**
+- cAdvisor `container_cpu_usage_seconds_total`, read through the apiserver's node proxy, with no exec into the pod.
+- The s2-freshness rule, and the idle subtraction.
+- 5 GETs per rep, three or more reps.
+- The command is `ent_cpu.py`. Record it, not just the figure.
+- The before-figure is perf's measurement of 2026-11-14 on 0.4.88.
 
 ## What iagent builds from it
 
