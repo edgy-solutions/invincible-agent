@@ -1,5 +1,12 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.91 — not yet cut
+
+### The supervisor Deployment, off by default (invincible-agent ADR-0072 §3)
+- `supervisorService.enabled` renders `<release>-supervisor`: one replica, the cortex-bff image, Dagster user-code's env, and registration with the Restate admin. The default is `false`.
+- `supervisorService.answerLimit` (default 2) and `supervisorService.queueLength` (no default; an enabled render fails without it) reach the process as `IAGENT_ANSWER_LIMIT` and `IAGENT_ANSWER_QUEUE_LENGTH`. Each overlay sets them from its model-server measurement.
+- With the service off, the render is unchanged.
+
 ## 0.4.89 — 2026-11-16
 
 **0.4.89 is 0.4.88 (`4525a1cf`) plus the 11-15/11-16 train, `4525a1cf..36968d59`. The roll waits for Chris's approval of the values diff against the live release, after lane 74's hand-back.**
