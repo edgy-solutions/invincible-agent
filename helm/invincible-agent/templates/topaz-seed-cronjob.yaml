@@ -296,8 +296,15 @@ spec:
                   # (dangling) / 4 (readback) — `set -e` fails the Job loudly, so
                   # a bad grant file cannot silently seed a broken grant. This is the ONE
                   # pruner: its input is committed policy plus the approved-grant ledger rows
-                  # not yet committed; exit 5 = the ledger is unreadable (nothing pruned).
-                  python policy/sync/grant_sync.py
+                  # not yet committed; exit 5 = the ledger is unreadable (nothing applied, nothing
+                  # pruned). That one code does NOT stop the run: the syncs below do not depend on
+                  # the ledger, so they still run, and the Job exits 5 at the END so it fails
+                  # visibly. Every other non-zero code keeps `set -e` (stops here).
+                  GRANT_SYNC_RC=0
+                  python policy/sync/grant_sync.py || GRANT_SYNC_RC=$?
+                  if [ "$GRANT_SYNC_RC" -ne 0 ] && [ "$GRANT_SYNC_RC" -ne 5 ]; then
+                    exit "$GRANT_SYNC_RC"
+                  fi
                   echo ""
                   echo "===== ONTOLOGY COMPARTMENT SYNC (ontology_compartment_sync) ====="
                   python policy/sync/ontology_compartment_sync.py
@@ -316,6 +323,10 @@ spec:
                   # `capability` object type exists before set_object.
                   python policy/sync/capability_grant_sync.py
                   echo ""
+                  if [ "$GRANT_SYNC_RC" -ne 0 ]; then
+                    echo "FAIL: grant_sync could not read the approved-grant ledger (exit $GRANT_SYNC_RC); nothing was pruned and the other syncs ran" >&2
+                    exit "$GRANT_SYNC_RC"
+                  fi
                   echo "===== SEED COMPLETE — six syncs applied + readbacks passed ====="
               {{- if or (ne $mode "image") .Values.topazSeed.loadManifest }}
               volumeMounts:

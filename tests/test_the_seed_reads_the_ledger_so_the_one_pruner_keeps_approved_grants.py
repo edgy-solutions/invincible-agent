@@ -197,7 +197,7 @@ def test_5_a_non_mapping_committed_entry_is_not_dropped_either():
 @pytest.mark.skipif(shutil.which("helm") is None, reason="helm not installed")
 def test_6_the_seed_job_carries_the_dsn_with_the_password_by_secret_ref():
     r = subprocess.run(["helm", "template", "t", "helm/invincible-agent", "--set",
-                        "topazSeed.enabled=true"], capture_output=True, text=True, cwd=str(ROOT),
+                        "topazSeed.enabled=true"], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(ROOT),
                        timeout=300)
     assert r.returncode == 0, r.stderr[-500:]
     docs = [d for d in yaml.safe_load_all(r.stdout) if d]
@@ -222,3 +222,64 @@ def test_6_the_seed_image_imports_psycopg2():
     assert '"psycopg2-binary"' in deps
     values = yaml.safe_load((ROOT / "helm" / "invincible-agent" / "values.yaml").read_text(encoding="utf-8"))
     assert values["topazSeed"]["image"]["name"] == "cortex-bff"
+
+
+# 7. the Job: a ledger failure fails it at the END, not at once -------------------------------------
+
+def _seed_script() -> str:
+    r = subprocess.run(["helm", "template", "t", "helm/invincible-agent", "--set",
+                        "topazSeed.enabled=true"], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(ROOT),
+                       timeout=300)
+    assert r.returncode == 0, r.stderr[-500:]
+    (cj,) = [d for d in yaml.safe_load_all(r.stdout)
+             if d and d.get("kind") == "CronJob" and d["metadata"]["name"] == "t-topaz-seed"]
+    (c,) = cj["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"]
+    return c["args"][0]
+
+
+def _run_seed(tmp_path, rcs: dict):
+    """Run the rendered seed script with a fake `python` that records which sync ran and exits
+    with the code `rcs` names for it (default 0)."""
+    import os
+    sh = shutil.which("sh")
+    if sh is None or shutil.which("helm") is None:
+        pytest.skip("sh or helm not available")
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    work = tmp_path / "app"
+    work.mkdir()
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    log = tmp_path / "ran.log"
+    fake = shim / "python"
+    fake.write_text('#!/bin/sh\nname=$(basename "$1" .py)\necho "$name" >> "$RAN_LOG"\n'
+                    'eval "rc=\${RC_$name:-0}"\nexit "$rc"\n', encoding="utf-8", newline="\n")
+    fake.chmod(0o755)
+    script = _seed_script().replace("cd /app\n", f"cd '{work.as_posix()}'\n", 1)
+    env = {**os.environ, "PATH": f"{shim.as_posix()}{os.pathsep}{os.environ['PATH']}",
+           "RAN_LOG": str(log), "TOPAZ_DIRECTORY_URL": "http://x.invalid",
+           **{f"RC_{k}": str(v) for k, v in rcs.items()}}
+    p = subprocess.run([sh, "-c", script], capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=120)
+    ran = log.read_text(encoding="utf-8").split() if log.exists() else []
+    return p, ran
+
+
+def test_7_a_ledger_failure_lets_the_other_syncs_run_and_the_job_fails_at_the_end(tmp_path):
+    p, ran = _run_seed(tmp_path, {"grant_sync": 5})
+    assert "task_grant_sync" in ran and "capability_grant_sync" in ran
+    assert ran.index("grant_sync") < ran.index("task_grant_sync")
+    assert p.returncode == 5                                    # still fails visibly, at the end
+    assert "SEED COMPLETE" not in p.stdout
+    assert "FAIL: grant_sync could not read the approved-grant ledger" in p.stderr
+
+
+def test_7_control_any_other_grant_sync_code_still_stops_the_run(tmp_path):
+    for rc in (2, 3, 4):
+        p, ran = _run_seed(tmp_path / f"rc{rc}", {"grant_sync": rc})
+        assert p.returncode == rc
+        assert "task_grant_sync" not in ran, rc
+
+
+def test_7_control_a_clean_run_completes(tmp_path):
+    p, ran = _run_seed(tmp_path, {})
+    assert p.returncode == 0 and "SEED COMPLETE" in p.stdout
+    assert "task_grant_sync" in ran

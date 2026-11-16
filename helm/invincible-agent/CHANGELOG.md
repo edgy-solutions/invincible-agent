@@ -7,7 +7,7 @@
   release, so no deployment gets one without the other). The seed's `grant_sync` input is now
   committed policy UNION the `access_grant_ledger` rows that policy does not yet name; without it
   every tick would revoke each grant approved at runtime. The ledger read FAILS CLOSED: if the store
-  cannot be read the Job exits 5 having applied and pruned nothing (`set -e` fails the Job loudly).
+  cannot be read grant_sync exits 5 having applied and pruned nothing; the other syncs still run that tick (they do not depend on the ledger) and the Job then exits 5 at the end, so it fails visibly.
   A ledger table that does not exist yet is an empty ledger. **Chart change:** the Job gains
   `PROJECTOR_POSTGRES_DSN` (host, port, db and user from the chart's pg helpers; the password by a
   `secretKeyRef` to `BPMN_POSTGRES_PASSWORD`, never the whole secret) and the seed image, which is the
