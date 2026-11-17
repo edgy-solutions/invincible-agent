@@ -174,7 +174,7 @@
       },
       "ActPromotion": {
         "additionalProperties": false,
-        "description": "POST /human_tasks/{id}/act on a document_promotion; fact/origin only when promoted, swept only\nwhen rejected, the row_edits..extraction_defect keys only when the steward corrected.",
+        "description": "POST /human_tasks/{id}/act on a document_promotion; fact/origin only when promoted, swept only\nwhen rejected, the row_edits..extraction_defect keys only when the steward corrected, review\nonly when promoted and the kind declares a review workflow.",
         "properties": {
           "correction": {
             "anyOf": [
@@ -255,6 +255,16 @@
           "replayed": {
             "title": "Replayed",
             "type": "boolean"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PromotionReviewStart"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "row_edits": {
             "anyOf": [
@@ -2272,6 +2282,71 @@
           }
         },
         "title": "PolicyRefusalDetail",
+        "type": "object"
+      },
+      "PromotionReviewStart": {
+        "additionalProperties": false,
+        "description": "What a promotion did about its kind's declared review workflow: started or retried (with the\nworkflow, its request key and the start's own status), not_restarted or failed (with a reason).\nAbsent when the kind declares no such workflow.",
+        "properties": {
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "request_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Key"
+          },
+          "status": {
+            "enum": [
+              "started",
+              "retried",
+              "not_restarted",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "workflow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PromotionReviewStart",
         "type": "object"
       },
       "RefusalEnvelope": {
