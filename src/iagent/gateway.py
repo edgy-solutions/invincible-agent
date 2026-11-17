@@ -5239,6 +5239,24 @@ async def canvas_seed(
                            "(or user_persona) too",
             },
         )
+    # THE SERVER OWNS THE DOMAIN LIST (Lane 1, 2026-11-16). A client-sent `active_domains` is a
+    # REQUEST for a cell, never a grant of one. Before this gate the 409 path's ask
+    # (`_canvas_seed_ask`) forwarded the client's list to engine-o's `/enumerate_instances` as
+    # `entitled_domains`, and engine-o decides origin visibility from that list
+    # (`origin_entitlement.can_consume`), so a domain the caller does not hold widened what the
+    # ask enumerated. Same rule as `/orchestrate`: every named domain must be entitled under the
+    # named persona, and one miss refuses the whole request; nothing is silently dropped.
+    if request.active_persona and request.active_domains:
+        _missing = [d for d in request.active_domains
+                    if not current_user.entitlements.contains(request.active_persona, d)]
+        if _missing:
+            from .authz.refusal import policy_refusal as _policy_refusal
+            raise _policy_refusal(
+                "cell_not_entitled", policy_id="groups",
+                missing_binding=f"a_group_granting({request.active_persona}, {_missing[0]})",
+                message=f"you hold no cell under persona {request.active_persona} "
+                        f"for domains {_missing}",
+            )
 
     _requested = (request.template_id or "").strip()
     if not _requested:
