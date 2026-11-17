@@ -1086,6 +1086,11 @@ try:
 except ImportError:
     from agent_fleet.utils import origin_entitlement as _origin_entitlement
 
+try:  # the caller's FULL entitlement, for naming another domain only to one entitled to it
+    from utils.entitled_domains import entitled_domains as _held_domains_of  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.utils.entitled_domains import entitled_domains as _held_domains_of
+
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
@@ -2905,13 +2910,32 @@ async def _resolve_instance(
                 _where = (_provider_domains.get(_winner) if _winner
                           else set().union(*(set(d["provider_domains"]) for d in demoted
                                              if d["n_candidates"])))
-                # The winning provider's DECLARED domains, which this same provenance already
-                # carries under `instance_out_of_domain_demoted`, so naming them discloses
-                # nothing new. Not intersected with `_entitled`: every caller forwards its
-                # ACTIVE domains as the entitlement, so that intersection is empty by
-                # construction and would never name anything.
-                provenance["instance_resolves_out_of_domain"] = True
-                provenance["instance_out_of_domain_domains"] = sorted(_where or ())
+                # RULED 2026-11-16 (Chris): "The answer names the other domain only when the
+                # caller is entitled to that domain; otherwise it is a plain 'not found'."
+                # `_entitled` is the caller's ACTIVE domains, so it cannot answer that. The
+                # caller's FULL entitlement is read from the directory, and ONLY here (the shadow
+                # path), so no other resolution pays for it. Only the held domains are named,
+                # never the rest of the provider's set. A non-person, an empty answer, or a
+                # directory failure is not entitled (fail closed): no flag is set, the gate
+                # returns `instance_not_found`, and the answer is byte-identical to a name nobody
+                # knows. The trace key below is internal and carries no domain name.
+                _held: set[str] = set()
+                _unnamed = "not_entitled"
+                if not _origin_entitlement.is_person(user_email):
+                    _unnamed = "no_person"
+                else:
+                    try:
+                        _held = {str(d).upper() for d in
+                                 await asyncio.to_thread(_held_domains_of, user_email)}
+                    except Exception:  # noqa: BLE001 -- fail closed; nothing logged names a domain
+                        _held = set()
+                        _unnamed = "directory_unavailable"
+                _named = sorted(set(_where or ()) & _held)
+                if _named:
+                    provenance["instance_resolves_out_of_domain"] = True
+                    provenance["instance_out_of_domain_domains"] = _named
+                else:
+                    provenance["instance_out_of_domain_unnamed"] = _unnamed
 
     # Per-provider audit so the trace shows which phone book said what.
     provenance["instance_provider_outcomes"] = [

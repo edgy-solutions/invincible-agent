@@ -27,10 +27,12 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -93,9 +95,29 @@ _DROPPER_SEES = [
 _OTHERS_SEE = [_c("PCN24-029", 0.667), _c("PCN-23-002", 0.632), _c("PDN-23_0120", 0.5, _PDN)]
 
 
-def _resolve(monkeypatch, candidates, asked, identifier=_ID):
+_PERSON = "caller@example.org"
+_OTHER_DOMAIN = "SECOND_DOMAIN_OF_THE_PROVIDER"
+
+
+class _Held:
+    """A recording fake for `main._held_domains_of`: what the directory returns, and who asked."""
+
+    def __init__(self, result=(), raises=None):
+        self.result, self.raises, self.calls = set(result), raises, []
+
+    def __call__(self, user_id):
+        self.calls.append(user_id)
+        if self.raises is not None:
+            raise self.raises
+        return frozenset(self.result)
+
+
+def _resolve(monkeypatch, candidates, asked, identifier=_ID, *, held=None,
+             user_email=_PERSON, provider_domains=(_PROVIDER_DOMAIN,)):
+    held = held if held is not None else _Held()
+    monkeypatch.setattr(main, "_held_domains_of", held, raising=False)
     resolvers = [{"provider": _PROVIDER, "endpoint_url": "http://p", "timeout_s": None,
-                  "domains": [_PROVIDER_DOMAIN]}]
+                  "domains": list(provider_domains)}]
     monkeypatch.setattr(main, "_discover_instance_resolvers",
                         lambda *a, **k: main.MeshResult.answered(resolvers))
 
@@ -109,7 +131,17 @@ def _resolve(monkeypatch, candidates, asked, identifier=_ID):
     monkeypatch.setattr(main, "_read_class_chains", _no_chains)
     return asyncio.run(main._resolve_instance(
         identifier, "which parts does it affect", asked,
-        user_email="caller@example.org", entitled_domains=list(asked)))
+        user_email=user_email, entitled_domains=list(asked)))
+
+
+def _answer(identifier, subject, prov):
+    """The user-visible pair `resolve()` builds from what `_resolve_instance` returned, by the
+    SAME functions and arguments it calls (this does not run `resolve()` itself)."""
+    reason = _gate(identifier, subject, prov)
+    if reason == "domain_scope_excluded":
+        return reason, main._ir_out_of_domain_msg(
+            identifier, prov.get("instance_out_of_domain_domains"))
+    return reason, main._ir_not_found_msg(identifier)
 
 
 def _gate(identifier, subject, prov):
@@ -124,21 +156,89 @@ def _gate(identifier, subject, prov):
 
 # ── the seal ──────────────────────────────────────────────────────────────────────────
 
-def test_A_NAME_KNOWN_ONLY_ELSEWHERE_SAYS_SO_and_still_does_not_resolve(monkeypatch):
-    subject, prov = _resolve(monkeypatch, _DROPPER_SEES, _ASKED)
+def test_A_NAME_KNOWN_ONLY_ELSEWHERE_SAYS_SO_to_a_caller_entitled_to_that_domain(monkeypatch):
+    held = _Held({_PROVIDER_DOMAIN.lower()})
+    subject, prov = _resolve(monkeypatch, _DROPPER_SEES, _ASKED, held=held)
     assert subject is None, (
         f"the out-of-domain claim RESOLVED the question to {subject!r}: the shadow decision "
         f"is acting as an authority, which the 2026-09-11 ruling forbids")
     assert prov.get("instance_resolves_out_of_domain") is True, (
         f"an exact out-of-domain hit was not recorded as one: {sorted(prov)}")
     assert prov.get("instance_out_of_domain_domains") == [_PROVIDER_DOMAIN]
-    reason = _gate(_ID, subject, prov)
+    assert held.calls == [_PERSON]
+    reason, msg = _answer(_ID, subject, prov)
     assert reason == "domain_scope_excluded", (
         f"abstained as {reason!r}: the caller is told nobody knows a name one provider "
         f"knows exactly")
-    msg = main._ir_out_of_domain_msg(_ID, prov["instance_out_of_domain_domains"])
     assert _ID in msg and _PROVIDER_DOMAIN in msg
     assert "recognizes" not in msg, "the message still claims nobody recognizes the name"
+
+
+def _assert_plain_not_found(subject, prov, unnamed, domains=(_PROVIDER_DOMAIN,)):
+    assert subject is None
+    assert "instance_resolves_out_of_domain" not in prov
+    assert "instance_out_of_domain_domains" not in prov
+    assert prov.get("instance_out_of_domain_unnamed") == unnamed
+    reason, msg = _answer(_ID, subject, prov)
+    assert reason == "instance_not_found"
+    assert msg == main._ir_not_found_msg(_ID), "not byte-identical to a name nobody knows"
+    seen = json.dumps([reason, msg])
+    for d in domains:
+        assert d not in seen, f"{d} reached the user-visible answer"
+
+
+def test_A_NAME_KNOWN_ELSEWHERE_is_a_plain_not_found_to_a_caller_NOT_entitled(monkeypatch):
+    held = _Held({"SOMETHING_ELSE"})
+    subject, prov = _resolve(monkeypatch, _DROPPER_SEES, _ASKED, held=held)
+    _assert_plain_not_found(subject, prov, "not_entitled")
+    assert held.calls == [_PERSON]
+
+
+def test_an_empty_entitlement_is_not_entitled(monkeypatch):
+    subject, prov = _resolve(monkeypatch, _DROPPER_SEES, _ASKED, held=_Held())
+    _assert_plain_not_found(subject, prov, "not_entitled")
+
+
+def test_PARTIAL_only_the_held_domain_is_named(monkeypatch):
+    held = _Held({_PROVIDER_DOMAIN})
+    subject, prov = _resolve(monkeypatch, _DROPPER_SEES, _ASKED, held=held,
+                             provider_domains=(_PROVIDER_DOMAIN, _OTHER_DOMAIN))
+    assert prov.get("instance_out_of_domain_domains") == [_PROVIDER_DOMAIN]
+    reason, msg = _answer(_ID, subject, prov)
+    assert reason == "domain_scope_excluded" and _PROVIDER_DOMAIN in msg
+    assert _OTHER_DOMAIN not in json.dumps([reason, msg, prov["instance_out_of_domain_domains"]])
+
+
+def test_DIRECTORY_DOWN_fails_closed_to_a_plain_not_found(monkeypatch):
+    held = _Held(raises=httpx.ConnectError("directory down"))
+    subject, prov = _resolve(monkeypatch, _DROPPER_SEES, _ASKED, held=held)
+    _assert_plain_not_found(subject, prov, "directory_unavailable")
+    assert held.calls == [_PERSON]
+
+
+@pytest.mark.parametrize("who", ["svc:x", ""])
+def test_NOT_A_PERSON_gets_no_lookup_and_a_plain_not_found(monkeypatch, who):
+    held = _Held({_PROVIDER_DOMAIN})
+    subject, prov = _resolve(monkeypatch, _DROPPER_SEES, _ASKED, held=held, user_email=who)
+    _assert_plain_not_found(subject, prov, "no_person")
+    assert held.calls == [], "the directory was asked about a non-person"
+
+
+def test_NO_LOOKUP_off_the_shadow_path(monkeypatch):
+    held = _Held({_PROVIDER_DOMAIN})
+    _resolve(monkeypatch, _DROPPER_SEES, _ASKED + [_PROVIDER_DOMAIN], held=held)
+    _resolve(monkeypatch, [], _ASKED, identifier="ZZQ-0000", held=held)
+    _resolve(monkeypatch, _OTHERS_SEE, _ASKED, held=held)
+    assert held.calls == [], "the directory was read on a path that is not the shadow decision"
+
+
+def test_the_supervisor_keeps_no_out_of_domain_provenance_key():
+    sup = (_REPO / "src" / "iagent" / "defs" / "dynamic_supervisor.py").read_text(encoding="utf-8")
+    i = sup.index('provenance = data.get("provenance") or {}')
+    block = sup[i:sup.index("def _find_compatible_verbs", i)]
+    keys = set(re.findall(r'provenance\.get\("([^"]+)"\)', block))
+    assert keys == {"instance_id", "abstention_reason", "instance_label"}, keys
+    assert "instance_out_of_domain" not in block
 
 
 # ── its controls ──────────────────────────────────────────────────────────────────────
