@@ -1911,6 +1911,50 @@ async def get_my_needs_you(on_behalf_of: Optional[str] = None,
             "delegated": delegation}
 
 
+class MenuBlock(_BaseModel):
+    subject: str
+    archetype: str
+    persona_fit: list[str]
+    domain_fit: list[str]
+    declared_by: str
+
+
+class MenuBlockInvalid(_BaseModel):
+    source: str
+    reason: str
+
+
+class MenuBlocksResponse(_BaseModel):
+    composed: bool
+    blocks: list[MenuBlock]
+    invalid: list[MenuBlockInvalid]
+
+
+@app.get("/menu_blocks", response_model=MenuBlocksResponse)
+async def get_menu_blocks(current_user: User = Depends(get_current_user)):
+    """The menu placements the overlay rows declare (`<overlay>/menu_blocks/*.yaml`), sorted by
+    (subject, archetype). The 2026-11-07 ruling: the row declares its placement, the BFF serves
+    it, cortex reads it.
+
+    NOT GATED ON ENTITLEMENT, matching `/task_kinds`: this is the shape of the menu, not data,
+    and `persona_fit` / `domain_fit` only RANK, they never gate.
+
+    NOTHING DECLARED, three ways. `composed: false` means the registry was NOT READ (no overlay
+    dir configured, or one is unreadable); it never means "no blocks". `composed: true` with
+    `blocks: []` means this deployment declares none. A client replaces a hand-written row only
+    with a served block for the SAME subject. A row that does not validate, or that shares its
+    (subject, archetype) with another, is left out of `blocks`, named in `invalid`, and logged at
+    ERROR.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from . import menu_blocks
+
+    result = await run_in_threadpool(menu_blocks.compose)
+    for bad in result.invalid:
+        logger.error("menu block %s is invalid: %s", bad["source"], bad["reason"])
+    return {"composed": result.composed, "blocks": result.blocks, "invalid": result.invalid}
+
+
 @app.get("/task_kinds")
 async def get_task_kinds(current_user: User = Depends(get_current_user)):
     """Every declared species and its contract — the menu, readable without attempting it.

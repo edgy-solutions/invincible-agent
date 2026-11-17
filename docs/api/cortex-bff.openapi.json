@@ -4227,6 +4227,92 @@
         "title": "LineageEdgesProxyBody",
         "type": "object"
       },
+      "MenuBlock": {
+        "properties": {
+          "archetype": {
+            "title": "Archetype",
+            "type": "string"
+          },
+          "declared_by": {
+            "title": "Declared By",
+            "type": "string"
+          },
+          "domain_fit": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Domain Fit",
+            "type": "array"
+          },
+          "persona_fit": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Persona Fit",
+            "type": "array"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "archetype",
+          "persona_fit",
+          "domain_fit",
+          "declared_by"
+        ],
+        "title": "MenuBlock",
+        "type": "object"
+      },
+      "MenuBlockInvalid": {
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "reason"
+        ],
+        "title": "MenuBlockInvalid",
+        "type": "object"
+      },
+      "MenuBlocksResponse": {
+        "properties": {
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/MenuBlock"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "composed": {
+            "title": "Composed",
+            "type": "boolean"
+          },
+          "invalid": {
+            "items": {
+              "$ref": "#/components/schemas/MenuBlockInvalid"
+            },
+            "title": "Invalid",
+            "type": "array"
+          }
+        },
+        "required": [
+          "composed",
+          "blocks",
+          "invalid"
+        ],
+        "title": "MenuBlocksResponse",
+        "type": "object"
+      },
       "MineListing": {
         "additionalProperties": false,
         "description": "GET /ingest/mine: the caller's drops, newest first; next is the cursor `{created_at}|{id}` or null.",
@@ -9680,6 +9766,30 @@
           }
         ],
         "summary": "Get My Queue"
+      }
+    },
+    "/menu_blocks": {
+      "get": {
+        "description": "The menu placements the overlay rows declare (`<overlay>/menu_blocks/*.yaml`), sorted by\n(subject, archetype). The 2026-11-07 ruling: the row declares its placement, the BFF serves\nit, cortex reads it.\n\nNOT GATED ON ENTITLEMENT, matching `/task_kinds`: this is the shape of the menu, not data,\nand `persona_fit` / `domain_fit` only RANK, they never gate.\n\nNOTHING DECLARED, three ways. `composed: false` means the registry was NOT READ (no overlay\ndir configured, or one is unreadable); it never means \"no blocks\". `composed: true` with\n`blocks: []` means this deployment declares none. A client replaces a hand-written row only\nwith a served block for the SAME subject. A row that does not validate, or that shares its\n(subject, archetype) with another, is left out of `blocks`, named in `invalid`, and logged at\nERROR.",
+        "operationId": "get_menu_blocks_menu_blocks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MenuBlocksResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Menu Blocks"
       }
     },
     "/mesh/config": {

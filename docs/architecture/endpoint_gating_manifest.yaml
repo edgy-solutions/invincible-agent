@@ -353,6 +353,19 @@ services:
         class: internal
         justification: "Property -> instance lookup. READ. Same closure condition."
       - method: POST
+        path: /where_used
+        identity: user_email
+        gate: "entitled_domains must include the engine's own domain (deny by default), then per-row program visibility via the Topaz directory"
+        exposes: gated-content
+        consumers: [dynamic_supervisor.py]
+        class: gated
+        justification: >-
+          mesh:whereIsThisPartUsed. READ. A caller whose entitled domains lack the verb's domain
+          is refused before the dataset is read. Each row's program is checked against the
+          caller (`can_view_program`), and a directory outage is a 503, never rows. Added
+          2026-11-07 without its row; declared 2026-11-16 with GET /menu_blocks, whose subject
+          is this route's output class.
+      - method: POST
         path: /page_for_subject
         identity: none
         gate: none
@@ -2375,6 +2388,26 @@ services:
           surface, or its only consumer is the error handler). It went in undeclared and this
           manifest caught it — the route shipped a day before its row, which is the gap the
           derived-population check exists for.
+      - method: GET
+        path: /menu_blocks
+        identity: get_current_user
+        gate: "auth only — DELIBERATELY not entitlement-scoped"
+        exposes: schema
+        consumers: [cortex-ui]
+        class: releasable_by_design
+        justification: |
+          The served menu (the 2026-11-07 ruling: the overlay row declares its placement, the
+          BFF serves it, cortex reads it). Returns, per declared row, a subject class, an
+          archetype class, the verb that declared it and the personas/domains it RANKS for:
+          the SHAPE of the menu, never an answer, a row or a task. Nothing is read from the
+          substrate; the source is `<overlay>/menu_blocks/*.yaml`.
+
+          NOT ENTITLEMENT-SCOPED ON PURPOSE, for /task_kinds' reason: persona_fit and
+          domain_fit only rank, the picker stays entitlement-driven, and the verb behind each
+          block refuses on its own gate. Invalid rows are named by file stem, never by path.
+
+          WHAT WOULD CHANGE THIS ROW: a block carrying anything deployment-specific beyond a
+          class name — a customer or programme name in a subject. Then it becomes `gated`.
       - method: POST
         path: /plan/measure/{fn}
         identity: get_current_user
