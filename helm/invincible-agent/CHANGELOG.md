@@ -75,6 +75,17 @@
   refusal) until the BFF is up; roll the BFF first. Not run against a live Postgres in this PR
   (tests use a fake of the table); the upgrade block should be rehearsed on a copy first. Two
   concurrent approvals of one key can both append (harmless: the latest act is the same).
+- **A revocation is effective at once** (saf; the architect, 11-16; DRAFT, on top of the re-grant
+  PR). `POST /access_grants/revoke` records the act, then the BFF removes that ONE reader relation from
+  the directory (a single delete of `dataset:<asset>#reader@user:<subject>`; it lists nothing and
+  prunes nothing, the seed stays the one pruner of everything else). Removed: 200 `effective: now`.
+  The directory could not remove it: **202** `effective: not yet`, `removed: false`, the act still
+  recorded and never shown as done; the removal is retried three times in the call, again at every BFF
+  start (for each key whose latest act is a revocation), whenever the request is repeated, and by the
+  seed's next sync. A re-grant that lands between the record and the removal is not undone (the latest
+  act is re-read before each attempt; the window is not closed, only narrowed to that read). The
+  response codes of the route change (202 is new); `cortex-bff.openapi.json` is regenerated (the
+  description only). No schema change, no values change.
 - **An approval names an asset that exists, and a stale ledger row stops nothing** (saf; the
   architect, 11-16). Approving an access request whose asset is not in the directory is refused 422
   `asset_not_in_directory` before the task is resolved or anything is recorded (503
