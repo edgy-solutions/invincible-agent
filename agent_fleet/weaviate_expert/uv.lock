@@ -1798,7 +1798,7 @@ requires-dist = [
     { name = "httpx" },
     { name = "hypercorn" },
     { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20" },
-    { name = "langfuse", specifier = ">=3.0.0" },
+    { name = "langfuse", specifier = ">=3.0.0,<5" },
     { name = "litellm" },
     { name = "packaging" },
     { name = "provenance-telemetry", specifier = "==0.2.2" },

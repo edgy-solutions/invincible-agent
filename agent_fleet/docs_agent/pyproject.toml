@@ -82,3 +82,8 @@ dependencies = [
 # `/app/.venv`; the CMD then fails with `/app/.venv/bin/python: not found` and the engine
 # crash-loops. A conditional written to tolerate an absent file cannot distinguish "this service
 # needs no venv" from "this service's inputs are missing".
+
+# Cap the langfuse client below 5 (it arrives only through provenance-telemetry, which
+# allows <6): client 5 needs a Langfuse server on v4.59.0+. Lifted when that is confirmed.
+[tool.uv]
+constraint-dependencies = ["langfuse<5"]

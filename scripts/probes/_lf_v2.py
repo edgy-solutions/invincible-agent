@@ -9,6 +9,11 @@ and legacy ingestion on 2026-11-16. Measured against Cloud on 2026-11-14:
   - an unknown field group is IGNORED, not refused, so a typo there fails silently;
   - no field group serves the trace's `tags`.
 
+Server compatibility (the architect's reading, 2026-11-16; not measured from this repo): these
+probes read the **v2** observations API, which Langfuse Cloud serves. On a self-hosted v3
+server the default observations and metrics reads need the legacy (v1) API, so these probes
+will not read a v3 server as written. No fallback is added here, on purpose.
+
 Credentials come from the environment only. Never print them, or the host.
 """
 from __future__ import annotations

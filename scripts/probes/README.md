@@ -30,6 +30,14 @@ behind**: `rendered_with_secrets.yaml`, `pod_env_raw.txt`, and the bulky live ca
 `rendered_with_secrets.yaml` announces itself in its filename; `pod_env_raw.txt` does not,
 which makes it the more dangerous of the two. **Recover by allowlist; never by directory.**
 
+## Langfuse server compatibility
+
+The Langfuse probes (`_lf_v2.py` and its users) read the **v2** observations API, which Langfuse
+Cloud serves. On a self-hosted v3 server, the default observations and metrics reads need the
+legacy (v1) API, so these probes will not read a v3 server as written. That is stated here
+rather than papered over with a fallback. (The architect's reading, 2026-11-16; not measured
+from this repo.)
+
 ## What each one is
 
 | tool | question it settled |

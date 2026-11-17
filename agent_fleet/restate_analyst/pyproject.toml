@@ -20,7 +20,7 @@ dependencies = [
     "langchain-ollama",
     "langchain-openai",
     "ollama",
-    "langfuse",
+    "langfuse<5",
     "litellm",
     # Mesh membership package — owns transport auth (the app-factory dependency) and the
     # ONE general mint. PINNED TO A TAG, never a branch: this package now governs fleet
