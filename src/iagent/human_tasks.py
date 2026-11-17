@@ -1062,6 +1062,18 @@ def record_grant(*, subject: str, asset: str, requested_by: str, granted_by: str
                          now_ms=now_ms)
 
 
+class GrantRevoked(ValueError):
+    """An approval names a grant that has been revoked. Until a re-grant is its own approved act
+    (the follow-up), a revocation is permanent for its (subject, asset, kind): nothing is recorded
+    and nothing is applied, and the answer is a refusal, never "granted"."""
+
+
+def grant_is_revoked(subject: str, asset: str, kind: str = "dataset") -> bool:
+    """True when the ledger holds a revocation row for this grant."""
+    key = (subject, asset, kind or "dataset")
+    return any(r["entry"] == "revoke" and _grant_key(r) == key for r in ledger_entries())
+
+
 class NoSuchGrant(ValueError):
     """A revocation names a grant that is not in effect (not in committed policy, not in the ledger)."""
 
@@ -1224,6 +1236,8 @@ def write_grant_and_sync(*, subject: str, asset: str, granted_by: str, reason: s
     built yet. Until then the ledger row (and its audit line) is the record of who approved what."""
     if not asset_exists(asset):
         raise UnknownAsset(f"{asset} is not in the directory: no grant is recorded")
+    if grant_is_revoked(subject, asset):
+        raise GrantRevoked(f"the grant of {asset} to {subject} was revoked; nothing is recorded")
     record_grant(subject=subject, asset=asset, granted_by=granted_by, reason=reason,
                  requested_by=requested_by or subject, task_id=task_id)
     return {**apply_ledger_to_directory(), "recorded": True}
