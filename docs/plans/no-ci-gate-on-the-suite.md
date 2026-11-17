@@ -126,3 +126,9 @@ split to the step summary, so an author sees what their PR added on a red master
 is retired by deleting its line in the PR that fixes the test; entries that did not go red in a
 run are listed as candidates to delete. The definition of done above is unchanged: this job is
 a signal, not the gate.
+
+Its first run (2026-11-17, master 74e26cce) found 89 reds on the Linux runner. The box census
+had seen 28 of them. The other 61 are listed as group G (the runner's environment: no
+`sessions/` inbox, its own pytest process, a real `helm` on PATH) and group H (master reds whose
+cause is not yet read). An H entry quotes its assertion and names the lane that last touched the
+test file; that lane is a lead, not an assigned owner. Reading the H causes is the open triage.
