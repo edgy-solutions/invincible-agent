@@ -26,7 +26,6 @@ Run: uv run --frozen pytest tests/routing/test_a_name_known_in_another_domain_sa
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
 import re
 import sys
@@ -37,19 +36,16 @@ import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
 _OS = _REPO / "agent_fleet" / "ontology_service"
-if str(_OS) not in sys.path:
-    sys.path.insert(0, str(_OS))
 
-_MOD_NAME = "ontology_service_main_known_elsewhere"
-_spec = importlib.util.spec_from_file_location(_MOD_NAME, str(_OS / "main.py"))
-if _spec is None or _spec.loader is None:  # pragma: no cover
-    pytest.skip("ontology_service/main.py not found", allow_module_level=True)
-main = importlib.util.module_from_spec(_spec)
-sys.modules[_MOD_NAME] = main
+# PACKAGE FORM ONLY: the same import the Q8 seal uses. An earlier spec-load put `_OS` on
+# sys.path and left it there. Engine O's sibling imports (`import notice_parts`) then
+# resolved top-level and stayed in sys.modules, so a later package-form import got a
+# second `notice_parts`. The Q8 seal's monkeypatch then missed the code under test, and it
+# went red by order (Lane 1, 11-16). `test_this_file_leaves_no_top_level_sibling_behind`
+# pins the fix.
 try:
-    _spec.loader.exec_module(main)
+    from agent_fleet.ontology_service import main
 except Exception as _exc:  # noqa: BLE001
-    sys.modules.pop(_MOD_NAME, None)
     pytest.skip(
         f"ontology_service not importable here ({type(_exc).__name__}: {_exc}). "
         f"Run: uv run --frozen --with rdflib pytest {Path(__file__).name}",
@@ -289,3 +285,50 @@ def test_the_router_passes_the_reason_through():
     i = sup.index("_ENGINE_O_ABSTENTION_REASONS = frozenset({")
     assert '"domain_scope_excluded"' in sup[i:i + 300], (
         "engine-o's reason would flatten to subject_unknown at the router")
+
+
+# Fresh interpreter, so the answer does not depend on which tests ran first. It loads a module,
+# then reports whether engine O's sibling exists as a TOP-LEVEL module and whether the engine
+# dir was left on sys.path.
+_PROBE = r"""
+import importlib.util, json, sys
+os_dir, target = sys.argv[1], sys.argv[2]
+if target == "OLD_SPEC_LOAD":   # the control: the loader this file used before the fix
+    sys.path.insert(0, os_dir)
+    spec = importlib.util.spec_from_file_location("eo_old_form", os_dir + "/main.py")
+else:
+    spec = importlib.util.spec_from_file_location("this_test_module", target)
+mod = importlib.util.module_from_spec(spec)
+try:
+    spec.loader.exec_module(mod)
+    loaded = True
+except BaseException as exc:   # pytest.skip raises outside pytest too
+    loaded = type(exc).__name__
+print(json.dumps({"loaded": loaded, "top_level_notice_parts": "notice_parts" in sys.modules,
+                  "os_dir_on_path": os_dir in sys.path}))
+"""
+
+
+def _probe(target: str) -> dict:
+    import subprocess
+    out = subprocess.run(
+        [sys.executable, "-c", _PROBE, str(_OS), target],
+        cwd=str(_REPO), capture_output=True, text=True, timeout=300,
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def test_this_file_leaves_no_top_level_sibling_behind():
+    """Loading this file must not leave a top-level `notice_parts` or the engine dir on
+    sys.path. Either one splits engine O's sibling into two module objects for every later test.
+    The control is the loader this file used before the fix, run in the same probe. It must
+    show the pollution, so the probe is shown able to see it."""
+    control = _probe("OLD_SPEC_LOAD")
+    assert control["loaded"] is True, control
+    assert control["top_level_notice_parts"] and control["os_dir_on_path"], (
+        f"the control no longer pollutes, so this probe proves nothing: {control}")
+    mine = _probe(str(Path(__file__).resolve()))
+    assert mine["loaded"] is True, mine
+    assert not mine["top_level_notice_parts"], mine
+    assert not mine["os_dir_on_path"], mine
