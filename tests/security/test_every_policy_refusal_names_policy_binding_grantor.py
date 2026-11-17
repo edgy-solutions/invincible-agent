@@ -347,6 +347,11 @@ NOT_POLICY: dict[str, str] = {
     f"{ER}::Repo._check_approvals::proposer_cannot_approve": DUTIES,
     f"{ER}::Repo._check_approvals::approver_is_excluded": DUTIES,
     f"{ER}::Repo._check_approvals::approval_of_another_sha": STATE,
+    # the grant checks (grant_flow), classified with #414: a quorum short of its count, and a row that could
+    # never apply, are the state of the proposal; a rail row with no count is the rail unconfigured.
+    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::too_few_approvers': STATE,
+    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::rail_row_without_approvers': REPO_UNCONFIGURED,
+    'agent_fleet/repository_agent/grant_flow.py::grant_rows_appliable.grant_rows_appliable_check::grant_row_unappliable': STATE,
     f"{ER}::Repo._check_approvals::no_approval": STATE,
     f"{ER}::Repo.proposal::unknown_proposal": CONFLICT,
     f"{ER}::Repo.merge::proposal_closed": CONFLICT,
@@ -431,9 +436,7 @@ PENDING: dict[str, str] = {
     f"{ER}::Repo.merge::path_not_governed": "code",
     # the grant quorum (grant_flow.grant_quorum): each names policy_id repository_paths and its missing_binding
     # in the RepoRefusal; the engine service layer carries them into the standard body.
-    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::too_few_approvers': "repository_paths",
     'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::no_approver_in_audience': "repository_paths",
-    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::rail_row_without_approvers': "repository_paths",
 }
 
 

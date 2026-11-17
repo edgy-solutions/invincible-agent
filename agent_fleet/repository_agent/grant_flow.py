@@ -75,6 +75,48 @@ def _row_key(g: Mapping) -> tuple:
     return (g.get("subject"), g.get("asset"), g.get("kind") or "dataset")
 
 
+def load_grant_sync(path: Path):
+    """Load ``policy/sync/grant_sync.py`` by path. It is the ONE place the effective grant set
+    (``union_grants``), the dangling proof (``find_dangling``) and the apply (``run``) live; engine-r
+    calls them and holds no second copy. Fails closed when the file lacks any of them or ``run`` has no
+    ``prune`` / ``ledger_keys`` switch (an old grant_sync cannot be told to stay add-only or to skip a
+    stale ledger row alone)."""
+    spec = importlib.util.spec_from_file_location("_engine_r_grant_sync", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(Path(path).parent))
+    try:
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+    finally:
+        sys.path.remove(str(Path(path).parent))
+    run = getattr(mod, "run", None)
+    params = inspect.signature(run).parameters if run is not None else {}
+    if "prune" not in params:
+        raise RuntimeError("grant_sync.run has no prune switch: engine-r will not apply grants without it")
+    for need in ("union_grants", "find_dangling", "ledger_grant_keys", "load_grants"):
+        if not callable(getattr(mod, need, None)):
+            raise RuntimeError(f"grant_sync has no {need}: engine-r will not apply grants without it")
+    if "ledger_keys" not in params:
+        raise RuntimeError("grant_sync.run has no ledger_keys switch: engine-r will not apply grants without it")
+    return mod
+
+
+class _ExistsClient:
+    """The one method ``find_dangling`` asks of a Topaz client, answered by ``asset_exists``."""
+
+    def __init__(self, asset_exists: Callable[[str], bool]):
+        self._exists = asset_exists
+
+    def object_exists(self, kind: str, asset: str) -> bool:
+        return bool(self._exists(asset))
+
+
+def _dangling(grant_sync, asset_exists: Callable[[str], bool], rows: Iterable[Mapping]) -> tuple[list[str], list[str]]:
+    """(dangling descriptions, malformed descriptions) for ``rows``, by grant_sync's own judgement."""
+    grants, malformed = grant_sync.load_grants({"grants": [dict(r) for r in rows]})
+    return grant_sync.find_dangling(_ExistsClient(asset_exists), grants), list(malformed)
+
+
 def _grants_of(text: str | None) -> list[dict]:
     doc = yaml.safe_load(text or "") or {}
     g = doc.get("grants") or []
@@ -143,21 +185,35 @@ def backfill_ledger(
     cfg: TargetConfig,
     ledger: Iterable[Mapping],
     service: Caller,
+    grant_sync,
+    asset_exists: Callable[[str], bool],
 ) -> list[dict]:
     """One service-filed proposal per ledger decision that policy does not yet name (ruled D8).
 
     ``service`` must be ``Auth-Via: service``. The original approver is named in the intent; it is
-    not an approval of the proposal, which is reviewed like any other. The grantee is excluded.
+    not an approval of the proposal, which is reviewed like any other. The requester (the row's
+    ``requested_by``) and the grantee are excluded.
+
+    The proposals are the EFFECTIVE set's ledger-only grants, by ``grant_sync.union_grants``: a
+    revocation row is never proposed as a grant, a grant its own ledger revokes is not proposed, and
+    a revoked committed grant is not re-proposed. A grant whose asset is not in the directory
+    (``asset_exists``) is skipped, since the merge check would refuse it and it could never apply.
     """
     if service.auth_via != "service":
         raise ValueError("a backfill is filed by a service identity (Auth-Via: service)")
     tip = repo._read_tip(cfg.target_ref)
     if tip is None:
         raise ValueError(f"target_ref {cfg.target_ref} does not exist")
-    committed = {_row_key(g) for g in _grants_of(_blob_text(repo, tip, GRANTS_PATH))}
+    ledger = [dict(r) for r in ledger]
+    committed_rows = _grants_of(_blob_text(repo, tip, GRANTS_PATH))
+    committed = {_row_key(g) for g in committed_rows}
+    effective = {_row_key(g) for g in grant_sync.union_grants(committed_rows, ledger)}
+    by_key = {_row_key(r): r for r in ledger if (r.get("entry") or "grant") == "grant"}
     out = []
-    for row in ledger:
-        if _row_key(row) in committed:
+    for key, row in by_key.items():
+        if key in committed or key not in effective:
+            continue
+        if _dangling(grant_sync, asset_exists, [row])[0]:
             continue
         grant = {k: row[k] for k in ("subject", "asset", "granted_by", "reason") if row.get(k) is not None}
         if row.get("kind") and row["kind"] != "dataset":
@@ -167,7 +223,7 @@ def backfill_ledger(
                 repo,
                 cfg=cfg,
                 rows=[grant],
-                requester=str(row["subject"]),
+                requester=str(row.get("requested_by") or row["subject"]),
                 proposer=service,
                 intent=(
                     f"Backfill of a decision already applied to the directory: approved by "
@@ -179,6 +235,36 @@ def backfill_ledger(
 
 
 # --------------------------------------------------------------------------- the merge-time check
+
+
+def grant_rows_appliable(
+    grant_sync, *, asset_exists: Callable[[str], bool]
+) -> Callable[["repo_core.Repo", dict], None]:
+    """An extra check for ``Policy.extra_checks``: a grant row that could never apply does not merge.
+
+    ``grant_sync.run`` refuses the WHOLE file (exit 3) on one committed row whose asset is not in the
+    directory, and (exit 2) on one malformed row, so such a row would stop every later apply, add-only
+    or not. Each ADDED row is judged by grant_sync's own ``find_dangling`` / ``load_grants``; rows
+    already committed are not re-judged here (the seed CronJob names them).
+    """
+
+    def grant_rows_appliable_check(repo: "repo_core.Repo", ctx: dict) -> None:
+        meta = ctx["proposal"]
+        for path in ctx["paths"]:
+            if path != GRANTS_PATH:
+                continue
+            before = {_row_key(g) for g in _grants_of(_blob_text(repo, meta["base_sha"], path))}
+            added = [g for g in _grants_of(_blob_text(repo, meta["head_sha"], path)) if _row_key(g) not in before]
+            dangling, malformed = _dangling(grant_sync, asset_exists, added)
+            if dangling or malformed:
+                raise RepoRefusal(
+                    409, "grant_row_unappliable", policy_id="repository_paths",
+                    missing_binding="grant rows whose asset is in the directory and that are well formed",
+                    message="the grants file would stop every apply: " + "; ".join([*dangling, *malformed]),
+                    check="grant_rows",
+                )
+
+    return grant_rows_appliable_check
 
 
 def _longest_row(path: str, governed: Mapping[str, dict]) -> dict | None:
@@ -253,11 +339,12 @@ def grant_policy(
     committer_name: str,
     committer_email: str,
     customer_terms: list[str] | None,
+    grant_sync,
+    asset_exists: Callable[[str], bool],
     extra_checks: Iterable[Callable[["repo_core.Repo", dict], None]] = (),
 ) -> "repo_core.Policy":
-    """The ONE way the service builds its Policy: the grant quorum is always in it (ruled D5).
-
-    ``extra_checks`` may add checks; none can remove the quorum.
+    """The ONE way the service builds its Policy: the grant quorum and the appliable-rows check are
+    always in it (ruled D5). ``extra_checks`` may add checks; none can remove those two.
     """
     return repo_core.Policy(
         governed=dict(governed),
@@ -265,37 +352,49 @@ def grant_policy(
         signer=signer,
         committer_name=committer_name,
         committer_email=committer_email,
-        extra_checks=[grant_quorum(governed, holders=holders, domain_of=domain_of), *extra_checks],
+        extra_checks=[
+            grant_quorum(governed, holders=holders, domain_of=domain_of),
+            grant_rows_appliable(grant_sync, asset_exists=asset_exists),
+            *extra_checks,
+        ],
     )
 
 
 # --------------------------------------------------------------------------- the merge-time sync
 
 
-def make_sync_run(topaz_url: str, grant_sync_path: Path) -> Callable[[dict], object]:
+def make_sync_run(
+    topaz_url: str, grant_sync_path: Path, *, ledger: Callable[[], Iterable[Mapping]] = lambda: ()
+) -> Callable[[dict], object]:
     """``policy/sync/grant_sync.run`` bound to the directory, ADD-ONLY (``prune=False``).
 
-    Fails closed: a grant_sync whose ``run`` has no ``prune`` switch cannot be told to stay add-only,
-    so it is refused rather than called (the seed CronJob is the one pruner).
+    The set it applies is the EFFECTIVE one: the committed rows it is handed plus the ledger's grants
+    minus the ledger's revocations (``grant_sync.union_grants``), read through ``ledger()`` at each
+    apply. A stale ledger grant is skipped alone (``ledger_keys``); a dangling committed row still
+    refuses (exit 3), which ``grant_rows_appliable`` keeps from merging.
+
+    Fails closed (``load_grant_sync``): a grant_sync that cannot be told to stay add-only is refused
+    rather than called (the seed CronJob is the one pruner).
     """
-    spec = importlib.util.spec_from_file_location("_engine_r_grant_sync", grant_sync_path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.path.insert(0, str(grant_sync_path.parent))
-    try:
-        sys.modules[spec.name] = mod
-        spec.loader.exec_module(mod)
-    finally:
-        sys.path.remove(str(grant_sync_path.parent))
-    run = getattr(mod, "run", None)
-    if run is None or "prune" not in inspect.signature(run).parameters:
-        raise RuntimeError("grant_sync.run has no prune switch: engine-r will not apply grants without it")
-    return lambda raw: run(raw, topaz_url, prune=False)
+    mod = load_grant_sync(grant_sync_path)
+
+    def sync(raw: dict):
+        rows = [dict(r) for r in ledger()]
+        effective = mod.union_grants(list(raw.get("grants") or []), rows)
+        return mod.run(
+            {**raw, "grants": effective}, topaz_url, prune=False, ledger_keys=mod.ledger_grant_keys(rows)
+        )
+
+    return sync
 
 
 def apply_on_merge(repo: "repo_core.Repo", merged: Mapping, sync_run: Callable[[dict], object]) -> object | None:
     """After a merge that touched the grants file, apply the file at the merge sha, add-only.
 
     Returns the sync's result, or None when the merge did not touch the grants file.
+
+    ``sync_run`` must be the one ``make_sync_run`` built with the ledger (it applies the EFFECTIVE set: committed
+    rows plus ledger grants minus ledger revocations). A bare callable that ignores the ledger re-adds revoked grants.
     """
     new = merged["new"]
     old = merged["old"]
