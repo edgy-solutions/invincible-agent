@@ -10,7 +10,7 @@ Sections 3 and 8.1 were ruled by the architect on 2026-11-15 (via Chris); the re
 - lane/perf, who wrote the design and the prototype; Lane 1, who owns the chart half.
 
 **Related:**
-- ADR-0071 (#384, Proposed, not yet on master): a directory client is built once per process.
+- [ADR-0071](ADR-0071-a-directory-client-is-built-once-per-process.md) (#384, Proposed): a directory client is built once per process.
   The BFF's CPU budget is the reason the new service does not run inside the BFF (section 3).
 - [ADR-0038](ADR-0038-telemetry-as-provenance-projection-langfuse-standard.md): telemetry as a
   provenance projection. The trace is the run record here.

@@ -69,7 +69,7 @@ dependencies = [
     # The cortex-bff and dagster user-code images install --no-dev with no extras, so the
     # telemetry leaf must be a main dependency or trace_spans degrades to no-ops
     # (bff.orchestrate and supervisor.* never emit).
-    "provenance-telemetry==0.2.1",
+    "provenance-telemetry==0.2.2",
     "mcp",
     # boto3 for cortex-bff's /federated_image endpoint: proxies MinIO image
     # reads through the same JWT + entitled_domains gate the rest of the bff
@@ -87,6 +87,8 @@ dependencies = [
     # the intersection of the extra (>=4.5.4) and dev (>=4.4,<5.0) pins so
     # one resolved version serves all three.
     "weaviate-client>=4.5.4,<5.0",
+    # The durable answer path (src/iagent/supervisor_service.py) runs on the control-plane image, which installs no extras.
+    "restate-sdk==0.14.0",
 ]
 
 [project.optional-dependencies]
@@ -95,7 +97,6 @@ agent-fleet = [
     "uvicorn",
     "rdflib",
     "baml-py",
-    "restate-sdk==0.14.0",
     "smolagents",
     "langgraph",
     "langgraph-checkpoint-postgres",

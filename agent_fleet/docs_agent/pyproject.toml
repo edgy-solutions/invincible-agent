@@ -47,7 +47,7 @@ dependencies = [
     # store driver — it reads no corpus and answers nothing. It enters at the binding (main.py,
     # through the /app/telemetry.py shim) only; the core may still not import it
     # (tests/docs/test_explain_refuses_before_it_renders.py::test_the_core_holds_no_driver).
-    "provenance-telemetry==0.2.1",
+    "provenance-telemetry==0.2.2",
 ]
 
 # DELIBERATELY THIN, and the omissions are the argument.

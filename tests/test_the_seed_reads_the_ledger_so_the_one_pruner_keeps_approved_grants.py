@@ -35,7 +35,8 @@ from tests.test_grant_sync import _FakeTopaz  # noqa: E402
 A = "urn:li:dataset:(a,asset-a,PROD)"
 C = "urn:li:dataset:(a,asset-c,PROD)"
 COMMITTED = {"grants": [{"subject": "carol", "asset": C, "granted_by": "cnogradi", "reason": "seed"}]}
-LEDGER = [{"subject": "alice", "asset": A, "kind": "dataset", "granted_by": "bob", "reason": "r"}]
+LEDGER = [{"subject": "alice", "asset": A, "kind": "dataset", "entry": "grant", "granted_by": "bob",
+           "reason": "r"}]
 
 
 class _Ctx:
@@ -165,7 +166,7 @@ def test_4_control_any_other_error_raises(monkeypatch):
 
 def test_4_rows_are_returned_as_dicts(monkeypatch):
     psycopg2 = pytest.importorskip("psycopg2")
-    conn = _FakeConn(rows=[("alice", A, "dataset", "bob", "r")])
+    conn = _FakeConn(rows=[("alice", A, "dataset", "grant", "bob", "r")])
     monkeypatch.setattr(psycopg2, "connect", lambda dsn, connect_timeout=0: conn)
     assert gs.read_ledger("x") == LEDGER
 
@@ -283,3 +284,84 @@ def test_7_control_a_clean_run_completes(tmp_path):
     p, ran = _run_seed(tmp_path, {})
     assert p.returncode == 0 and "SEED COMPLETE" in p.stdout
     assert "task_grant_sync" in ran
+
+
+# 8. a revocation row reaches the seed (ruled 2026-11-16) -----------------------------------------
+# The ledger is append-only: a revocation is a row with `entry` = 'revoke'. A seed that reads every
+# row as a grant would RESTORE the access that was revoked, so it must read `entry`.
+
+REVOKE_ALICE = {"subject": "alice", "asset": A, "kind": "dataset", "entry": "revoke",
+                "granted_by": "rita", "reason": "left the team"}
+REVOKE_CAROL = {"subject": "carol", "asset": C, "kind": "dataset", "entry": "revoke",
+                "granted_by": "rita", "reason": "committed, revoked without a commit"}
+
+
+def _tick(seed, rows):
+    fake, _c, mp = seed
+    mp.setenv("PROJECTOR_POSTGRES_DSN", "postgresql://x.invalid/db")
+    mp.setattr(gs, "read_ledger", lambda dsn: rows)
+    return fake, gs.main()
+
+
+def test_8_read_ledger_selects_entry():
+    assert "entry" in gs._LEDGER_SELECT
+
+
+def test_8_a_revoke_row_reaches_the_seed_and_the_ledger_grant_is_gone(seed):
+    fake, _c, _mp = seed
+    fake.relations.add(_reader("alice", A))                    # approved at runtime, in the directory
+    fake, rc = _tick(seed, [*LEDGER, REVOKE_ALICE])
+    assert rc == 0
+    assert _reader("alice", A) not in fake.relations           # revoked, and the seed pruned it
+    assert _reader("carol", C) in fake.relations               # the rest of policy is untouched
+
+
+def test_8_a_revoke_row_removes_a_committed_grant_too(seed):
+    fake, _c, _mp = seed
+    fake.relations.add(_reader("carol", C))
+    fake, rc = _tick(seed, [REVOKE_CAROL])
+    assert rc == 0
+    assert _reader("carol", C) not in fake.relations           # committed, and revoked by a row
+
+
+def test_8_control_the_same_ledger_without_the_revoke_row_keeps_the_grant(seed):
+    fake, _c, _mp = seed
+    fake.relations.add(_reader("alice", A))
+    fake, rc = _tick(seed, LEDGER)
+    assert rc == 0 and _reader("alice", A) in fake.relations
+
+
+def test_8_the_revocation_is_not_a_grant_in_what_the_seed_syncs():
+    out = gs.union_grants(COMMITTED["grants"], [*LEDGER, REVOKE_ALICE, REVOKE_CAROL])
+    assert out == []                                           # neither the revoked ledger grant nor the committed one
+
+
+def test_8_a_revoke_row_alone_is_never_read_as_a_grant():
+    out = gs.union_grants([], [REVOKE_ALICE])
+    assert out == []                                           # a lone revoke row adds nothing
+
+
+def test_8_a_ledger_grant_whose_asset_is_gone_is_skipped_alone(seed):
+    fake, _c, _mp = seed
+    fake.objects.discard(DirObject("dataset", A))              # the asset has since gone
+    fake, rc = _tick(seed, LEDGER)
+    assert rc == 0                                             # skipped and reported, never stops the sync
+    assert _reader("carol", C) in fake.relations
+
+
+def test_8_control_a_dangling_committed_grant_still_refuses_the_run(seed):
+    fake, _c, _mp = seed
+    fake.objects.discard(DirObject("dataset", C))              # committed grant's asset is gone
+    fake, rc = _tick(seed, LEDGER)
+    assert rc == 3
+
+
+def test_8_a_revoke_row_read_from_the_store_removes_the_grant(monkeypatch):
+    psycopg2 = pytest.importorskip("psycopg2")
+    conn = _FakeConn(rows=[("alice", A, "dataset", "grant", "bob", "r"),
+                           ("alice", A, "dataset", "revoke", "rita", "left"),
+                           ("carol", C, "dataset", "revoke", "rita", "left")])
+    monkeypatch.setattr(psycopg2, "connect", lambda dsn, connect_timeout=0: conn)
+    rows = gs.read_ledger("x")
+    assert [r["entry"] for r in rows] == ["grant", "revoke", "revoke"]
+    assert gs.union_grants(COMMITTED["grants"], rows) == []    # through the real reader, not a stub
