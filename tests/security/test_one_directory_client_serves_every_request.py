@@ -42,6 +42,7 @@ URL = "http://topaz.test"
 _REAL_CLIENT = httpx.Client
 LIST = "/api/v3/directory/objects"
 CHECK = "/api/v3/directory/check"
+CHECKS = "/api/v3/directory/checks"
 RELATIONS = "/api/v3/directory/relations"
 OBJECT = "/api/v3/directory/object/capability/"
 
@@ -55,6 +56,9 @@ def _handler(seen: list):
                                                          for k in ("zz:alpha", "zz:beta", "zz:gamma")]})
         if p == CHECK:
             return httpx.Response(200, json={"check": json.loads(request.content)["object_id"] != "zz:beta"})
+        if p == CHECKS:
+            return httpx.Response(200, json={"checks": [{"check": c["object_id"] != "zz:beta"}
+                                                        for c in json.loads(request.content)["checks"]]})
         if p == RELATIONS:
             if request.url.params.get("object_type") == "group":
                 return httpx.Response(200, json={"results": [{"subject_type": "user", "subject_id": "m@x.test"}]})
@@ -92,7 +96,8 @@ READERS = {
     "check_can_invoke": lambda: ht.check_can_invoke("zz:alpha", AUTHZ),
     "capability_object_exists": lambda: ht.capability_object_exists("zz:alpha"),
     "capability_keys": lambda: ht.capability_keys(),
-    "held_capabilities": lambda: ht.held_capabilities(AUTHZ),
+    "can_invoke_each": lambda: ht.can_invoke_each(["zz:alpha", "zz:beta"], AUTHZ),
+    "capabilities_and_held": lambda: ht.capabilities_and_held(AUTHZ),
 }
 
 
@@ -126,7 +131,9 @@ def test_a_whole_entitlements_request_builds_no_client_after_warm_up(directory, 
             assert r.json()["capabilities"] == ["zz:alpha", "zz:gamma"]
     finally:
         gateway.app.dependency_overrides.clear()
-    assert len(directory.seen) - asked >= 3 * 4, "the requests asked the directory too little to count"
+    # One list and one batched check each (the count itself is sealed in
+    # test_entitlements_asks_the_directory_twice.py).
+    assert len(directory.seen) - asked >= 3 * 2, "the requests asked the directory too little to count"
     assert len(directory.built) == warm, (
         f"3 entitlements requests built {len(directory.built) - warm} httpx.Client(s) after warm-up")
 

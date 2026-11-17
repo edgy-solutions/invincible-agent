@@ -443,7 +443,7 @@ requires-dist = [
     { name = "httpx" },
     { name = "hypercorn" },
     { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20" },
-    { name = "provenance-telemetry", specifier = "==0.2.1" },
+    { name = "provenance-telemetry", specifier = "==0.2.2" },
     { name = "pydantic" },
 ]
 
@@ -1016,7 +1016,7 @@ wheels = [
 
 [[package]]
 name = "provenance-telemetry"
-version = "0.2.1"
+version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langfuse" },
@@ -1024,9 +1024,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/60/1f/d864432ecaaf5e93641c4174817c2f3aa6f1d0aa95b4be7bcf96ab857643/provenance_telemetry-0.2.1.tar.gz", hash = "sha256:98989c66e0fecd99e0ac0bd8a7d5c977d64045ef7e6c061d184cdc878ecf6979", size = 30572, upload-time = "2026-11-11T03:12:54.179Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/c4/28f7eedbda6ad53c018eddb50b4b7bfe2c406b45511b467683dfe7ef83e2/provenance_telemetry-0.2.2.tar.gz", hash = "sha256:f9aff5a5f27736a90e6b9bcd821de8bcfa3fce4710fcc90f083856d2ed31aa20", size = 34330, upload-time = "2026-11-16T17:32:54.21Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/32/e6/6aff57a31d6f6dade4ee853a95d6208727db878dd7a5da9623b352b53ca3/provenance_telemetry-0.2.1-py3-none-any.whl", hash = "sha256:95690eee381b2fc48aeb60c17e49c335a1e046ae48322cb070aadb4f92167086", size = 21112, upload-time = "2026-11-11T03:12:52.794Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/91/8f025721d7e15c71717cd1f402da25bd4c4528c7dff69e152032156c96af/provenance_telemetry-0.2.2-py3-none-any.whl", hash = "sha256:4feac328c7d517441377544505392753dc320b78d2523ac87b539a8642c876c2", size = 23621, upload-time = "2026-11-16T17:32:52.979Z" },
 ]
 
 [[package]]
