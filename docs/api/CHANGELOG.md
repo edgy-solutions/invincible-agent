@@ -2,6 +2,12 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.9.2 — 2026-11-16
+
+Declaration, narrowing a response (architect, item 4). The shape hash moves.
+
+- **`HumanTask.task_id` is a required string, no longer nullable.** Every queue row has one: the column is `TEXT NOT NULL` (`sql/create_human_task_projection.sql`), `register_task` and the register request body both require it, and each of the ten producers supplies it (census: `docs/measurements/2026-11-16-humantask-task-id-census.md`). A client that read `task_id` as nullable still reads every body; a client generated from the old shape may drop its null branch.
+
 ## 1.9.1 — 2026-11-10
 
 Declaration, additive (architect, 2026-11-09). The shape hash moves.
