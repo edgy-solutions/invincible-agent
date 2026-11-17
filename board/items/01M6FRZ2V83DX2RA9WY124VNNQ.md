@@ -3,10 +3,10 @@ title: Master red: the phantom allowlist's acceptance-consumer entry is past 30 
 feature: cross-cutting
 lane: invincible-agent/lane/74
 repo: invincible-agent
-status: claimed
+status: review
 priority: next
 blocked_on: []
-pr: []
+pr: [invincible-agent#430]
 ruling_ref: none; 11-03 full-suite census, triaged by Chris's 11-02 instruction
 updated: 2026-11-16
 ---

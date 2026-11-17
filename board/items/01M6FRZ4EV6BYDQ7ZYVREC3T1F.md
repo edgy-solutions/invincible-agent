@@ -3,10 +3,10 @@ title: Master red: four cited docs paths don't resolve
 feature: docs
 lane: invincible-agent/lane/gov
 repo: invincible-agent
-status: claimed
+status: review
 priority: next
 blocked_on: []
-pr: []
+pr: [invincible-agent#430]
 ruling_ref: none; 11-03 full-suite census, triaged by Chris's 11-02 instruction
 updated: 2026-11-16
 ---
