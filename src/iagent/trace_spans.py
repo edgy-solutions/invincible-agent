@@ -17,7 +17,7 @@ import sys
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, NamedTuple, Optional
 
 
 def _load_shim() -> Any:
@@ -70,6 +70,10 @@ try:
     build_trace_values = _t.build_trace_values
     flush = _t.flush
     instrument_model_calls = _t.instrument_model_calls
+    trace_id_for = _t.trace_id_for
+    parse_traceparent = _t.parse_traceparent
+    parse_tracestate = _t.parse_tracestate
+    format_traceparent = _t.format_traceparent
 except Exception:  # noqa: BLE001  no-op stubs: the mesh runs identically without telemetry
 
     @contextmanager
@@ -87,6 +91,18 @@ except Exception:  # noqa: BLE001  no-op stubs: the mesh runs identically withou
     def instrument_model_calls(model, **_k):  # type: ignore[misc]
         return model
 
+    def trace_id_for(seed):  # type: ignore[misc]
+        return None
+
+    def parse_traceparent(value):  # type: ignore[misc]
+        return None
+
+    def parse_tracestate(value):  # type: ignore[misc]
+        return None
+
+    def format_traceparent(trace_id, span_id, flags="01"):  # type: ignore[misc]
+        return f"00-{trace_id}-{span_id}-{flags}"
+
 
 def mint_trace_id() -> str:
     return uuid.uuid4().hex
@@ -95,6 +111,60 @@ def mint_trace_id() -> str:
 def request_trace_id(header_value: str | None) -> str:
     v = (header_value or "").strip()
     return v if v else mint_trace_id()
+
+
+class TraceContext(NamedTuple):
+    trace_id: str
+    parent_span_id: Optional[str]
+    tracestate: Optional[str]
+    source: str  # "traceparent" | "x-trace-id" | "minted"
+
+
+def _header_values(headers: Any, name: str) -> list:
+    """Every value of ``name`` (case-insensitive), from a Starlette Headers or a plain mapping."""
+    try:
+        getlist = getattr(headers, "getlist", None)
+        if callable(getlist):
+            return list(getlist(name))
+        return [v for k, v in dict(headers or {}).items() if str(k).lower() == name]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def request_trace_context(headers: Any) -> TraceContext:
+    """Where a request's trace comes from: a valid W3C ``traceparent`` (its trace-id and
+    parent-id; ``tracestate`` parsed only then), else a non-blank ``X-Trace-Id`` with no
+    parent, else a minted id. Several ``traceparent`` headers are invalid, so they fall
+    through. Fail-soft: without the leaf nothing parses and the old rule applies."""
+    tp = _header_values(headers, "traceparent")
+    parsed = None
+    try:
+        parsed = parse_traceparent(tp) if tp else None
+    except Exception:  # noqa: BLE001
+        parsed = None
+    if parsed:
+        try:
+            ts = parse_tracestate(_header_values(headers, "tracestate") or None)
+        except Exception:  # noqa: BLE001
+            ts = None
+        return TraceContext(parsed[0], parsed[1], ts, "traceparent")
+    xt = (_header_values(headers, "x-trace-id") or [None])[0]
+    if (xt or "").strip():
+        return TraceContext(xt.strip(), None, None, "x-trace-id")
+    return TraceContext(mint_trace_id(), None, None, "minted")
+
+
+def annotate_span(**metadata: Any) -> None:
+    """Add opaque-id metadata to the current span. Callers pass ids, names and outcomes only,
+    never record content. Fail-soft, and a no-op when Langfuse is not configured."""
+    try:
+        import os
+        if not (os.getenv("LANGFUSE_SECRET_KEY") and os.getenv("LANGFUSE_PUBLIC_KEY")):
+            return
+        from langfuse import get_client
+        get_client().update_current_span(metadata={k: v for k, v in metadata.items() if v is not None})
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def current_span_id() -> str:
