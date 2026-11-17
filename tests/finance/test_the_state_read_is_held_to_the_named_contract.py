@@ -68,17 +68,54 @@ def test_an_optional_contract_column_that_breaks_a_dependency_is_refused():
     assert state.programs and state.facts
 
 
-def test_a_null_in_an_optional_column_the_state_does_not_read_is_served():
-    """`null_value` is over the columns the read USES (the roles), as the dataset reads check only
-    the columns a row names: a declared optional column the state is not built from may be null."""
+def _null_eac(frame):
+    return frame.with_columns(pl.lit(None, dtype=pl.Int64).alias("eac"))
+
+
+def test_a_null_in_a_non_nullable_column_the_state_does_not_read_is_refused():
+    """`null_value` is over every column the contract declares `nullable: false` that the frame
+    carries (ruled 2026-11-16), whether or not the state is built from it."""
     ev = _ev()
-    assert "eac" in ev.types and "eac" not in ev.required
-    with_eac = _frame().with_columns(pl.lit(None, dtype=pl.Int64).alias("eac"))
-    assert _read(with_eac, ev).facts
-    # the control: the same null in a role is refused
+    assert "eac" in ev.types and "eac" not in ev.required and "eac" in ev.non_nullable
+    with pytest.raises(asset_inputs.ContractViolation) as ei:
+        _read(_null_eac(_frame()), ev)
+    assert ei.value.rule == "null_value" and "eac" in ei.value.message
+    # the control: the same null in a role is refused, naming the role
     with pytest.raises(asset_inputs.ContractViolation) as ei:
         _read(_frame().with_columns(pl.lit(None, dtype=pl.Int64).alias("bcws")), ev)
     assert ei.value.rule == "null_value" and "bcws" in ei.value.message
+
+
+def test_a_null_in_a_nullable_column_is_served(tmp_path):
+    doc = yaml.safe_load((CONTRACTS / "ev_fixture.yaml").read_text(encoding="utf-8"))
+    (eac,) = [c for c in doc["columns"] if c["name"] == "eac"]
+    assert eac["nullable"] is False
+    del eac["nullable"]
+    (tmp_path / "ev_fixture.yaml").write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    loose = dataset_contracts.load_contract("ev_fixture", tmp_path)
+    assert "eac" in loose.types and "eac" not in loose.non_nullable
+    assert _read(_null_eac(_frame()), loose).facts
+    # the control: the same frame under the real ev_fixture refuses
+    with pytest.raises(asset_inputs.ContractViolation) as ei:
+        _read(_null_eac(_frame()), _ev())
+    assert ei.value.rule == "null_value"
+
+
+def test_a_null_outranks_a_row_of_another_program():
+    """`state_from_rows` checks the values before `other_program_rows`, as its own null check did
+    before the shared reader took it over: a frame breaking both answers `null_value`."""
+    ev = _ev()
+    other = pl.col("work_package") == pl.col("work_package").first()
+    stray = _frame().with_columns(
+        pl.when(other).then(pl.lit("ANOTHER")).otherwise(pl.col("program_id")).alias("program_id"))
+    # the control: the stray row alone is other_program_rows
+    with pytest.raises(asset_inputs.ContractViolation) as ei:
+        asset_inputs.state_from_rows(stray, PROGRAM, ev)
+    assert ei.value.rule == "other_program_rows"
+    both = stray.with_columns(pl.lit(None, dtype=pl.Int64).alias("eac"))
+    with pytest.raises(asset_inputs.ContractViolation) as ei:
+        asset_inputs.state_from_rows(both, PROGRAM, ev)
+    assert ei.value.rule == "null_value" and "eac" in ei.value.message
 
 
 def test_the_contract_not_a_constant_decides_the_key(tmp_path):

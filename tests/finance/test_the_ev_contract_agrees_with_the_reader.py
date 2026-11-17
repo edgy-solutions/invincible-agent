@@ -131,3 +131,11 @@ def test_the_sandbox_flag_names_this_contracts_asset(contract):
     live = yaml.safe_load(LIVE_CASE.read_text(encoding="utf-8"))
     assert live["asset"] == contract["dataset"]["urn"]
     assert live["banner_must_say"].lower() in env["FIN_DATASET_BANNER"].lower()
+
+
+def test_a_role_the_contract_leaves_nullable_is_named_by_contract_problems():
+    ev = dataset_contracts.load_contract("ev_fixture", CONTRACT.parent)
+    assert asset_inputs.contract_problems(ev) == []
+    loose = dataclasses.replace(ev, non_nullable=tuple(c for c in ev.non_nullable if c != "bcws"))
+    problems = asset_inputs.contract_problems(loose)
+    assert len(problems) == 1 and "nullable: false" in problems[0] and "bcws" in problems[0]

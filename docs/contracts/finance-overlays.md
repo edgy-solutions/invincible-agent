@@ -108,14 +108,17 @@ differences under `inputs` and `render`:
 - `contract` names the dataset contract the asset is read under: `contracts/<contract>.yaml`
   (`contracts/ev_fixture.yaml` is the worked example; the engine reads that directory, or
   `DATASET_CONTRACT_DIR`). At load, every column the row names must be one the contract declares,
-  a level a string column and a value column a numeric one, and the root level must be the
-  contract's `scope`; anything else is refused naming the file. On every read the WHOLE contract is
-  enforced, not only the columns the row names, each as a 502 `asset_contract_violation` whose
-  message names the column(s) and never a value: a required column, or one the row names, absent is
-  `missing_column`; a column not of its declared type is `wrong_type`; two rows for one value of the
-  contract's `grain` is `duplicate_key`; and a `dependencies` entry (`by` determines each of
-  `determines`) broken by one `by` value carrying two values of such a column is
-  `not_determined_by`, naming both columns.
+  and declares `nullable: false`; a level must be a string column and a value column a numeric one;
+  and the root level must be the contract's `scope`. Anything else is refused naming the file. On
+  every read the WHOLE contract is enforced, not only the columns the row names, each as a 502
+  `asset_contract_violation` whose message names the column(s) and never a value:
+  - a required column, or one the row names, absent is `missing_column`;
+  - a column not of its declared type is `wrong_type`;
+  - a null in a column declared `nullable: false` is `null_value`;
+  - a NaN or infinity in a column declared `numeric` or `float` is `non_finite`;
+  - two rows for one value of the contract's `grain` is `duplicate_key`;
+  - a `dependencies` entry (`by` determines each of `determines`) broken by one `by` value
+    carrying two values of such a column is `not_determined_by`, naming both columns.
 - `inputs.other_threshold` is a Decimal string, 0 up to but not including 1: the share below which
   two or more siblings collapse into an "All other" sink. `0` collapses nothing.
 - `inputs.state` is refused, and the module's function takes exactly the keyword-only `root`,
@@ -625,14 +628,15 @@ Design: `docs/plans/fin-inputs-resolver.md`. Nothing here has run on a cluster.
 With the URN set, the engine refuses to start if the banner or gateway is missing, the URN is not
 of the `urn:li:dataset:` form, the mesh client cannot be imported, the contract is unset or cannot
 be loaded, or it does not declare engine-fin's roles (the nine columns below, each required and of
-its type, the scope, the grain and the dependencies).
+its type and declared `nullable: false`, the scope, the grain and the dependencies).
 
 **Columns.** File-backed assets only. These are the roles the named contract must declare, as
-required columns of these types. It must be scoped by `program_id`, hold one row per
-(`work_package`, `period`) at most, and declare `program_name` and `program_bac` determined by
-`program_id` and `control_account` determined by `work_package`. The read selects every column the
-contract declares that the asset carries, and refuses a broken key or dependency with the shared
-reader's `duplicate_key` and `not_determined_by`:
+required columns of these types, each declared `nullable: false`. It must be scoped by
+`program_id`, hold one row per (`work_package`, `period`) at most, and declare `program_name` and
+`program_bac` determined by `program_id` and `control_account` determined by `work_package`. The
+read selects every column the contract declares that the asset carries. It refuses with the shared
+reader's ids: a broken key or dependency as `duplicate_key` and `not_determined_by`, and a null or
+a NaN or infinity as `null_value` and `non_finite`:
 
 | column | type | rule |
 | --- | --- | --- |

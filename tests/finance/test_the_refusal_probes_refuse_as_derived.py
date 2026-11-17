@@ -13,6 +13,10 @@ Every probe reads under contracts/ev_fixture.yaml, and every read is held to the
 not only to the columns its row names (ruled 2026-11-10). So a planted case in a column no probe
 reads is still refused, by the generic rule that enforces the contract's declaration:
 * `wrong_type`: `control_account` arriving as Float64 is not the string the contract declares.
+* `null_value`: a planted null in a column the contract declares `nullable: false` refuses on every
+  read, whether or not the probe names it (ruled 2026-11-16); the path probe answers it as the
+  series probe does.
+* `non_finite`: a NaN or infinity in a column the contract declares numeric refuses the same way.
 * `duplicate_work_package_period`: two rows for one (work_package, period), the contract's grain,
   refuse `duplicate_key`.
 * `program_name_not_unique`, `program_bac_not_unique`, `work_package_in_two_accounts`: one
@@ -50,8 +54,8 @@ MISSING, WRONG = "fin_probe_missing_column", "fin_probe_wrong_type"
 #: control scope. Derived offline over the reader (asset_inputs), then held here at the route.
 EXPECTED = {
     "none": {SERIES: None, PATH: None},
-    "null_value": {SERIES: "null_value", PATH: None},
-    "non_finite": {SERIES: "non_finite", PATH: None},
+    "null_value": {SERIES: "null_value", PATH: "null_value"},
+    "non_finite": {SERIES: "non_finite", PATH: "non_finite"},
     "period_outside_calendar": {SERIES: "period_outside_calendar", PATH: None},
     "program_bac_not_unique": {SERIES: "not_determined_by", PATH: "not_determined_by"},
     "varies_within_path": {SERIES: None, PATH: "varies_within_path"},

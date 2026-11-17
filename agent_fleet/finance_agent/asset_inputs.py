@@ -40,17 +40,20 @@ except ImportError:
 
 try:  # the shared contract reader: /app/utils in the image, agent_fleet/utils in the repo
     from utils import dataset_contracts as _contracts
-    from utils.dataset_contracts import ContractViolation, check_contract_rows, check_contract_schema
+    from utils.dataset_contracts import (
+        ContractViolation, check_contract_rows, check_contract_schema, check_contract_values,
+    )
 except ImportError:
     from agent_fleet.utils import dataset_contracts as _contracts
     from agent_fleet.utils.dataset_contracts import (
-        ContractViolation, check_contract_rows, check_contract_schema,
+        ContractViolation, check_contract_rows, check_contract_schema, check_contract_values,
     )
 
-#: engine-fin's own refusals, beyond the shared reader's (`dataset_contracts.RULES`). The key and
-#: the dependencies are the named contract's, refused by the shared reader's ids.
+#: engine-fin's own refusals, beyond the shared reader's (`dataset_contracts.RULES`). The key, the
+#: dependencies, nulls and non-finite values are the named contract's, refused by the shared
+#: reader's ids.
 RULES = frozenset({
-    "non_finite", "null_value", "other_program_rows", "period_outside_calendar", "varies_within_path",
+    "other_program_rows", "period_outside_calendar", "varies_within_path",
 })
 URN_ENV = "FIN_DATASET_URN"
 CONTRACT_ENV = "FIN_DATASET_CONTRACT"
@@ -250,8 +253,9 @@ async def capture_bearer(request: Request) -> None:
 
 def contract_problems(contract: Any) -> list[str]:
     """What keeps `contract` from carrying engine-fin's roles, each a sentence naming it. Empty:
-    the contract declares every role column, requires it, types it, and holds the read's scope,
-    one row per (work_package, period), and the dependencies the state is built on."""
+    the contract declares every role column, requires it, declares it `nullable: false`, types it,
+    and holds the read's scope, one row per (work_package, period), and the dependencies the state
+    is built on."""
     cid = contract.contract_id
     problems: list[str] = []
     missing = _contracts.undeclared(contract, COLUMNS)
@@ -260,6 +264,10 @@ def contract_problems(contract: Any) -> list[str]:
     unrequired = sorted(set(COLUMNS) - set(contract.required))
     if unrequired:
         problems.append(f"contract {cid!r} does not require column(s) the read needs: " + ", ".join(unrequired))
+    loose = _contracts.nullable(contract, COLUMNS)
+    if loose:
+        problems.append(f"contract {cid!r} does not declare column(s) nullable: false, "
+                        "which the state is built from: " + ", ".join(loose))
     wrong = _contracts.not_of(contract, STRING_COLUMNS, {"string"})
     if wrong:
         problems.append(f"contract {cid!r} does not type column(s) as string: " + ", ".join(wrong))
@@ -299,17 +307,14 @@ def dataset_contract() -> Any:
 def state_from_rows(df: Any, program_id: str, contract: Any) -> FinanceState:
     """A real `FinanceState` from one program's rows. PURE over the frame.
 
-    Raises `NotInModel` for an empty frame, `ContractViolation` for any rule broken. The key and
-    the dependencies are the `contract`'s (`check_contract_rows`), as for a dataset row's read.
+    Raises `NotInModel` for an empty frame, `ContractViolation` for any rule broken. The values
+    (`check_contract_values`), the key and the dependencies are the `contract`'s, as for a dataset
+    row's read.
     The frame is expected to hold the asked program ONLY; a row of another program is a
     violation, so a read that forgot its filter fails loudly rather than blending programs."""
     check_contract_schema(df.schema, contract, COLUMNS)
-    for c in COLUMNS:
-        if df[c].null_count():
-            raise ContractViolation("null_value", f"null value(s) in column {c}")
-    for c in NUMERIC_COLUMNS:
-        if df[c].dtype.is_float() and not df[c].is_finite().all():
-            raise ContractViolation("non_finite", f"non-finite number(s) in column {c}")
+    # Before other_program_rows, so a null outranks it; check_contract_rows reruns it, a no-op here.
+    check_contract_values(df, contract)
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r} in this window")
     if (df["program_id"] != program_id).any():
@@ -402,8 +407,8 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
     every contract column the asset carries is selected, and the row cap is applied before collect,
     so it counts rows read, before any reduction. Every outcome maps as `read_rows` maps it. An
     empty frame raises `NotInModel`, as `state_from_rows` does for a program the asset does not
-    hold. Nulls and non-finite values are checked in the row's columns, then the contract's key and
-    dependencies (`check_contract_rows`); a message names the rule and the column, never a row's
+    hold. The contract's value rules, key and dependencies are checked over every contract column the
+    frame carries (`check_contract_rows`); a message names the rule and the column, never a row's
     value.
 
     RETURNS the `(path below the root, Decimal amount)` list `run_dataset` takes. A row's amount is
@@ -439,12 +444,6 @@ def read_dataset_rows(read: Callable[[str], Any], urn: str, levels: tuple[str, .
              round((t1 - t0) * 1000), round((t2 - t1) * 1000), df.height, df.estimated_size(), urn)
     if df.height > cap:
         raise AssetTooLarge(cap)
-    for c in (*levels, *value_columns):
-        if df[c].null_count():
-            raise ContractViolation("null_value", f"null value(s) in column {c}")
-    for c in value_columns:
-        if df[c].dtype.is_float() and not df[c].is_finite().all():
-            raise ContractViolation("non_finite", f"non-finite number(s) in column {c}")
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r}")
     check_contract_rows(df, contract)
@@ -482,8 +481,9 @@ def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, per
     The schema is checked against the row's `contract` before a row is collected, as
     `read_dataset_rows` checks it. The filter keeps the rows whose `scope` column is `program_id`;
     every contract column the asset carries is selected, and the row cap applies before collect.
-    Every outcome maps as `read_rows` maps it, and an empty frame raises `NotInModel`. Nulls and
-    non-finite values are checked in the row's columns, then the contract's key and dependencies.
+    Every outcome maps as `read_rows` maps it, and an empty frame raises `NotInModel`. The
+    contract's value rules, key and dependencies are checked over every contract column the frame
+    carries (`check_contract_rows`).
 
     A `per_period` column is summed over the program's rows at each period (exactly, as Decimal).
     A `per_program` column, and the `status` column when the row names one, is declared determined
@@ -520,12 +520,6 @@ def read_dataset_series(read: Callable[[str], Any], urn: str, *, scope: str, per
              round((t1 - t0) * 1000), round((t2 - t1) * 1000), df.height, df.estimated_size(), urn)
     if df.height > cap:
         raise AssetTooLarge(cap)
-    for c in (*text, *numeric):
-        if df[c].null_count():
-            raise ContractViolation("null_value", f"null value(s) in column {c}")
-    for c in numeric:
-        if df[c].dtype.is_float() and not df[c].is_finite().all():
-            raise ContractViolation("non_finite", f"non-finite number(s) in column {c}")
     if df.height == 0:
         raise NotInModel(f"the asset holds no rows for program {program_id!r}")
     check_contract_rows(df, contract)

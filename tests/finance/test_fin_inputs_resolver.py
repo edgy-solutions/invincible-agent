@@ -637,6 +637,10 @@ def _optional_acwp(doc):
     next(c for c in doc["columns"] if c["name"] == "acwp")["required"] = False
 
 
+def _nullable_bcws(doc):
+    del next(c for c in doc["columns"] if c["name"] == "bcws")["nullable"]
+
+
 def _wrong_scope(doc):
     doc["scope"] = "work_package"
 
@@ -660,6 +664,7 @@ def _integer_program_name(doc):
 @pytest.mark.parametrize("plant,names", [
     (_lacks_program_name, "does not declare column(s): program_name"),
     (_optional_acwp, "does not require column(s) the read needs: acwp"),
+    (_nullable_bcws, "does not declare column(s) nullable: false, which the state is built from: bcws"),
     (_string_bcws, "does not type column(s) as numbers: bcws"),
     (_integer_program_name, "does not type column(s) as string: program_name"),
     (_wrong_scope, "scoped by program_id"),

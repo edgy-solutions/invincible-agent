@@ -5,7 +5,7 @@
 #
 # READ BY THE ENGINE (ruled 2026-11-10). A dataset measure row names this contract
 # (`inputs.dataset.contract: ev_fixture`) and every read of the row's asset is held to it: the
-# required columns, each column's type, the key (`grain`) and the dependencies, by
+# required columns, each column's type and nullability, the key (`grain`) and the dependencies, by
 # agent_fleet/utils/dataset_contracts.py and its check_contract_*. The FIN_DATASET_URN read
 # (`asset_inputs.read_rows` and `state_from_rows`) is held to the contract its deployment names in
 # FIN_DATASET_CONTRACT, the sandbox's this one, by the same reader; engine-fin only checks, at boot,
@@ -53,6 +53,8 @@ period:
 # data; never a constant in a measure row.
 status_period: status_period
 
+# `nullable: false`: a null in the column refuses `null_value` on every read, named by the row or
+# not (ruled 2026-11-16). Absent: it may be null.
 # `required`: every governed read selects it (the reader's fixed set). Otherwise a column is read
 # only when a measure row names it.
 # `produced_since`: the dag-tools release whose fixture carries it; null = declared, not yet
@@ -63,44 +65,44 @@ status_period: status_period
 # `additive_over`: the axes along which summing the column is meaningful. An amount repeated on
 # a path's rows is taken once per path before it is added (a measure row's `per_path: once`).
 columns:
-  - {name: program_id, type: string, required: true, produced_since: "0.11.0"}
-  - {name: program_name, type: string, required: true, produced_since: "0.11.0"}
-  - {name: program_bac, type: numeric, unit: USD, required: true, produced_since: "0.11.0",
-     additive_over: []}
+  - {name: program_id, type: string, required: true, nullable: false, produced_since: "0.11.0"}
+  - {name: program_name, type: string, required: true, nullable: false, produced_since: "0.11.0"}
+  - {name: program_bac, type: numeric, unit: USD, required: true, nullable: false,
+     produced_since: "0.11.0", additive_over: []}
   # Declared as a string: `1.1` infers as a float.
-  - {name: control_account, type: string, required: true, produced_since: "0.11.0"}
-  - {name: work_package, type: string, required: true, produced_since: "0.11.0"}
-  - {name: period, type: string, required: true, produced_since: "0.11.0"}
+  - {name: control_account, type: string, required: true, nullable: false, produced_since: "0.11.0"}
+  - {name: work_package, type: string, required: true, nullable: false, produced_since: "0.11.0"}
+  - {name: period, type: string, required: true, nullable: false, produced_since: "0.11.0"}
   # Period amounts, never cumulative. A cumulative series is computed by a measure, not stored.
-  - {name: bcws, type: numeric, unit: USD, required: true, produced_since: "0.11.0",
-     additive_over: [work_package, period]}
-  - {name: bcwp, type: numeric, unit: USD, required: true, produced_since: "0.11.0",
-     additive_over: [work_package, period]}
-  - {name: acwp, type: numeric, unit: USD, required: true, produced_since: "0.11.0",
-     additive_over: [work_package, period]}
+  - {name: bcws, type: numeric, unit: USD, required: true, nullable: false,
+     produced_since: "0.11.0", additive_over: [work_package, period]}
+  - {name: bcwp, type: numeric, unit: USD, required: true, nullable: false,
+     produced_since: "0.11.0", additive_over: [work_package, period]}
+  - {name: acwp, type: numeric, unit: USD, required: true, nullable: false,
+     produced_since: "0.11.0", additive_over: [work_package, period]}
   # Completion figures (dag-tools #11, ruling (a)): one per work package, repeated on each of its
   # period rows, so a sum over its rows overcounts by the number of periods.
-  - {name: bac, type: integer, unit: USD, required: false, produced_since: "0.11.0",
-     constant_within: [work_package], additive_over: [work_package]}
-  - {name: eac, type: integer, unit: USD, required: false, produced_since: "0.11.0",
-     constant_within: [work_package], additive_over: [work_package]}
+  - {name: bac, type: integer, unit: USD, required: false, nullable: false,
+     produced_since: "0.11.0", constant_within: [work_package], additive_over: [work_package]}
+  - {name: eac, type: integer, unit: USD, required: false, nullable: false,
+     produced_since: "0.11.0", constant_within: [work_package], additive_over: [work_package]}
   # Ruled 2026-11-05 (ADR-0065/0066 dispatch); in the fixture from dag-tools 0.12.0.
-  - {name: status_period, type: string, required: false, produced_since: "0.12.0"}
+  - {name: status_period, type: string, required: false, nullable: false, produced_since: "0.12.0"}
   # The EAC as stated at each period's status: a stock, so it adds across work packages at one
   # period and never across periods. A new column, because `eac` must stay constant per work
   # package for the rows that read it once per path.
-  - {name: eac_reported, type: integer, unit: USD, required: false, produced_since: "0.12.0",
-     additive_over: [work_package]}
+  - {name: eac_reported, type: integer, unit: USD, required: false, nullable: false,
+     produced_since: "0.12.0", additive_over: [work_package]}
 
 # Every rule the reader refuses on, by the id its 502 `asset_contract_violation` names. A broken
 # rule refuses the whole answer, and its message names the rule and the column, never a value.
 # The key and the dependencies refuse as `duplicate_key` and `not_determined_by` on every read,
-# the FIN_DATASET_URN read's included.
+# the FIN_DATASET_URN read's included. So do `null_value` and `non_finite`, by the shared reader.
 rules:
   missing_column: "a required column, or a column a measure row names, is absent"
   wrong_type: "a column is not of the type the contract declares"
-  null_value: "a null in a column that is read"
-  non_finite: "a NaN or infinity in a numeric column that is read"
+  null_value: "a null in a column the contract declares nullable: false"
+  non_finite: "a NaN or infinity in a column the contract declares numeric or float"
   other_program_rows: "a read holds rows of another program (the asset may; a read that kept them forgot its filter)"
   period_outside_calendar: "a period outside the vocabulary"
   varies_within_path: "under `per_path: once`, a path's rows carry different amounts"

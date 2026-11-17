@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED = "agent_fleet/utils/dataset_contracts.py"
-_FUNCTIONS = {"load_contract", "check_contract_rows", "check_contract_schema"}
+_FUNCTIONS = {"load_contract", "check_contract_rows", "check_contract_schema", "check_contract_values"}
 _CLASSES = {"DatasetContract", "ContractViolation"}
 
 
