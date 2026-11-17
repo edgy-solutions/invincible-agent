@@ -15085,6 +15085,8 @@ async def _note_receipt_domain(ingest_id: str, domain: Optional[str], *, strict:
         try:
             await run_in_threadpool(lambda: ingest_status.set_domain(ingest_id, str(domain)))
             return
+        except ingest_status.IngestStatusConfigError:
+            return                  # no projection store: nothing to scope, and no range can run either
         except Exception as exc:  # noqa: BLE001
             last = exc
             logger.warning("receipt domain write failed for %s (attempt %d): %s",
@@ -15100,6 +15102,36 @@ async def _note_receipt_domain(ingest_id: str, domain: Optional[str], *, strict:
             "error": "receipt_domain_unwritten",
             "message": f"the review domain could not be recorded on the receipt: "
                        f"{type(last).__name__}; retry"})
+
+
+async def _clear_stale_receipt_domain(ingest_id: str, stored: Optional[str], domain: str) -> None:
+    """BEFORE a task is filed against `domain`: a stored domain that differs (a re-class A -> B, or
+    the `<none>` marker) is cleared to NULL first. NULL is never excluded by the range's query, so
+    whatever happens after the filing (the write of `domain` failing, a crash) leaves the notice
+    findable, never hidden under the old domain. Nothing is filed when the clear does not land:
+    503 `receipt_domain_unwritten`, and the caller's retry starts clean. Retried like the write."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    if not stored or stored == domain:
+        return
+    last = None
+    for attempt in range(_RECEIPT_DOMAIN_ATTEMPTS):
+        try:
+            await run_in_threadpool(lambda: ingest_status.clear_domain(ingest_id))
+            return
+        except ingest_status.IngestStatusConfigError:
+            return                  # no projection store: nothing stored to clear
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            logger.warning("receipt domain clear failed for %s (attempt %d): %s",
+                           ingest_id, attempt + 1, type(exc).__name__)
+            await asyncio.sleep(0.05 * (attempt + 1))
+    raise HTTPException(status_code=503, detail={
+        "error": "receipt_domain_unwritten",
+        "message": f"the stored review domain could not be cleared before filing: "
+                   f"{type(last).__name__}; nothing was filed; retry"})
 
 
 async def _export_range_ids(rng: ExportRange, current_user) -> tuple:
@@ -16235,6 +16267,7 @@ async def _file_or_find_document_promotion_task(
     # new task is filed under the next id while the row still carries g.
     task_id = _promotion_task_id(
         ingest_id, int(row.get("review_generation") or 0) if generation is None else generation)
+    await _clear_stale_receipt_domain(ingest_id, row.get("domain"), domain)
     _refresh = False
     if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
         # LEGACY PATH (spec 204): since a leaf change at review files a NEW generation, this in-place

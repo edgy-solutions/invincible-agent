@@ -13,6 +13,7 @@ Run: .venv/Scripts/python -I -m pytest -c pyproject.toml --rootdir=. -q tests/ro
 """
 from __future__ import annotations
 
+import inspect
 import re
 
 import pytest
@@ -511,3 +512,86 @@ def test_8_no_domain_writes_nothing_at_all(monkeypatch):
         monkeypatch.setattr(ist, "set_domain", lambda i, d: pytest.fail(f"wrote {d!r}"))
         monkeypatch.setattr(ist, "clear_domain", lambda i: pytest.fail("cleared"))
         _run(gateway._note_receipt_domain("x", blank, strict=True))
+
+
+# ---------------------------------------------------------------------------
+# 9. the stored domain is cleared BEFORE a task is filed against another one
+# ---------------------------------------------------------------------------
+
+def test_9_a_differing_stored_domain_is_cleared_before_filing(monkeypatch):
+    cleared: list = []
+    monkeypatch.setattr(ist, "clear_domain", lambda i: cleared.append(i) or True)
+    _run(gateway._clear_stale_receipt_domain("x", "A", "B"))            # re-class A -> B
+    _run(gateway._clear_stale_receipt_domain("x", ist.NO_DOMAIN, "B"))  # the marker
+    assert cleared == ["x", "x"]
+
+
+def test_9_control_the_same_domain_or_none_is_not_touched(monkeypatch):
+    monkeypatch.setattr(ist, "clear_domain", lambda i: pytest.fail("cleared a value that agrees"))
+    _run(gateway._clear_stale_receipt_domain("x", "B", "B"))
+    _run(gateway._clear_stale_receipt_domain("x", None, "B"))
+
+
+def test_9_a_clear_that_fails_is_retried_then_503_and_nothing_is_filed(monkeypatch):
+    from fastapi import HTTPException
+    calls: list = []
+
+    def down(i):
+        calls.append(i)
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ist, "clear_domain", down)
+    with pytest.raises(HTTPException) as ei:
+        _run(gateway._clear_stale_receipt_domain("x", "A", "B"))
+    assert ei.value.status_code == 503 and ei.value.detail["error"] == "receipt_domain_unwritten"
+    assert len(calls) == gateway._RECEIPT_DOMAIN_ATTEMPTS
+
+
+def test_9_a_clear_that_fails_once_is_retried_and_lands(monkeypatch):
+    calls: list = []
+
+    def flaky(i):
+        calls.append(i)
+        if len(calls) < 2:
+            raise RuntimeError("blip")
+        return True
+
+    monkeypatch.setattr(ist, "clear_domain", flaky)
+    _run(gateway._clear_stale_receipt_domain("x", "A", "B"))
+    assert len(calls) == 2
+
+
+def test_9_re_class_whose_later_write_fails_leaves_NULL_never_the_old_domain(monkeypatch, tmp_path, built):
+    """The reviewer's variant: g+1 files against B and the write of B fails. The row was cleared
+    first, so it ends at NULL (found by BOTH callers' ranges), not at A."""
+    _no_domain_world(monkeypatch, tmp_path, junk=1)
+    _range_world.rows[0]["domain"] = DOM_A
+    _run(gateway._clear_stale_receipt_domain(_iid(1), DOM_A, DOM_B))
+    assert _range_world.rows[0]["domain"] is None
+
+    def down(i, d):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ist, "set_domain", down)
+    monkeypatch.setattr(ist, "clear_domain", lambda i: (_ for _ in ()).throw(RuntimeError("down")))
+    _run(gateway._note_receipt_domain(_iid(1), DOM_B, strict=False))     # the filing's write fails
+    assert _range_world.rows[0]["domain"] is None
+
+
+def test_9_the_filer_clears_before_it_registers_the_task():
+    src = inspect.getsource(gateway._file_or_find_document_promotion_task)
+    assert "_clear_stale_receipt_domain(" in src
+    assert src.index("_clear_stale_receipt_domain(") < src.index("human_tasks.task_exists(")
+    assert src.index("_clear_stale_receipt_domain(") < src.index("human_tasks.register_task(")
+
+
+def test_9_with_no_projection_store_configured_the_filer_neither_writes_nor_refuses(monkeypatch):
+    """The store is unconfigured (a chart without the projection): there is no stored domain to
+    scope or to clear, and no range can run. Filing must not turn that into a 503."""
+    def unconfigured(*a, **k):
+        raise ist.IngestStatusConfigError("no dsn")
+
+    monkeypatch.setattr(ist, "set_domain", unconfigured)
+    monkeypatch.setattr(ist, "clear_domain", unconfigured)
+    _run(gateway._note_receipt_domain("x", "B", strict=True))
+    _run(gateway._clear_stale_receipt_domain("x", "A", "B"))
