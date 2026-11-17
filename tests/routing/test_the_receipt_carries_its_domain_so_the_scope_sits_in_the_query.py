@@ -45,7 +45,7 @@ def _spy(monkeypatch):
 
 def _writes(monkeypatch):
     """Stateful: the writers change the stored receipt as the real SQL does (`set_domain` replaces
-    anything different; `set_no_domain` marks only a NULL), and record what they were asked."""
+    anything different; `clear_domain` puts it back to NULL), and record what they were asked."""
     done: list = []
     rows = {r["id"]: r for r in _range_world.rows}
 
@@ -53,6 +53,12 @@ def _writes(monkeypatch):
         done.append((i, d))
         changed = rows[i].get("domain") != d
         rows[i]["domain"] = d
+        return changed
+
+    def clear_domain(i):
+        done.append((i, None))
+        changed = rows[i].get("domain") is not None
+        rows[i]["domain"] = None
         return changed
 
     def set_no_domain(i):
@@ -63,8 +69,16 @@ def _writes(monkeypatch):
         return False
 
     monkeypatch.setattr(ist, "set_domain", set_domain)
+    monkeypatch.setattr(ist, "clear_domain", clear_domain)
     monkeypatch.setattr(ist, "set_no_domain", set_no_domain)
     return done
+
+
+@pytest.fixture(autouse=True)
+def _fast_retry(monkeypatch):
+    async def instant(_s):
+        return None
+    monkeypatch.setattr(gateway.asyncio, "sleep", instant)
 
 
 # 1. the query carries the scope ---------------------------------------------------------------
@@ -139,7 +153,8 @@ def test_2_a_null_row_is_resolved_the_old_way_and_written_back(monkeypatch, tmp_
     assert done == [(_iid(1), DOM_A), (_iid(2), DOM_A)]
 
 
-def test_2_a_backfilled_receipt_is_found_by_range_without_the_old_derivation(monkeypatch, tmp_path, built):
+def test_2_the_range_derives_every_domain_with_the_one_function_the_preflight_uses(
+        monkeypatch, tmp_path, built):
     _range_world(monkeypatch, tmp_path, [{"domain": DOM_A}, {"domain": DOM_A}])
     done = _writes(monkeypatch)
     asked: list = []
@@ -152,7 +167,8 @@ def test_2_a_backfilled_receipt_is_found_by_range_without_the_old_derivation(mon
     monkeypatch.setattr(gateway, "_export_notice_domain", counting)
     r = _post({"range": RANGE, "profile": "t", "check_only": True})
     assert r.status_code == 200 and r.json()["notice_ids"] == [_iid(1), _iid(2)]
-    assert asked == [_iid(1), _iid(2)] and done == []   # preflight's own look only: the scan added none
+    assert asked == [_iid(1), _iid(2), _iid(1), _iid(2)]    # the range's look, then the preflight's
+    assert done == []                                        # stored value agreed: nothing to repair
 
 
 def test_2_control_a_null_row_of_another_domain_is_dropped_and_still_written_back(
@@ -239,6 +255,7 @@ def test_5_every_return_of_the_promotion_task_filer_notes_the_domain():
     body = src[i:j]
     returns = len(re.findall(r"^\s+return\b", body, re.M))
     assert body.count("await _note_receipt_domain(") >= 4 and returns >= 4
+    assert body.count("strict=True)") == body.count("await _note_receipt_domain(")
 
 
 def test_5_the_column_and_its_index_are_in_the_migration_and_the_ddl():
@@ -248,7 +265,7 @@ def test_5_the_column_and_its_index_are_in_the_migration_and_the_ddl():
         assert "idx_isp_domain_created" in t and "(domain, created_at, id)" in t, rel
 
 
-# 6. a receipt that resolves to no domain leaves the scan -------------------------------------
+# 6. a receipt whose resolution found no domain is marked and leaves the scan; filing replaces the marker -------------------------------------
 
 def _no_domain_world(monkeypatch, tmp_path, junk):
     """`junk` receipts that no record and no task names, then the caller's own notice, one per
@@ -338,3 +355,159 @@ def test_6_the_marker_is_not_a_domain_and_no_cell_can_match_it(monkeypatch):
     assert "domain IS NULL" in sqls[-1][0] and sqls[-1][1] == (ist.NO_DOMAIN, "x")
     ist.set_domain("x", "A")
     assert "IS DISTINCT FROM" in sqls[-1][0]                      # replaces the marker, not only NULL
+
+
+def test_6b_filing_replaces_the_marker_through_the_strict_writer(monkeypatch, tmp_path, built):
+    _no_domain_world(monkeypatch, tmp_path, junk=1)
+    _range()
+    assert _range_world.rows[0]["domain"] == ist.NO_DOMAIN                  # marked
+    _run(gateway._note_receipt_domain(_iid(1), DOM_A, strict=True))         # the filer files its task
+    assert _range_world.rows[0]["domain"] == DOM_A                          # no longer "no domain"
+
+
+def test_6c_a_marked_row_whose_filing_write_fails_ends_at_NULL_not_at_the_marker(
+        monkeypatch, tmp_path, built):
+    _no_domain_world(monkeypatch, tmp_path, junk=1)
+    _range()
+    assert _range_world.rows[0]["domain"] == ist.NO_DOMAIN
+
+    def down(i, d):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ist, "set_domain", down)
+    _run(gateway._note_receipt_domain(_iid(1), DOM_A, strict=True))         # retried, then repaired
+    assert _range_world.rows[0]["domain"] is None                           # NULL: resolved again next time
+
+
+# 7. a stored domain the preflight no longer derives does not fail the range export -----------------
+
+def _task_superseded(monkeypatch):
+    """The review task was superseded / expired without a decision: no record, no OPEN task."""
+    from src.iagent import human_tasks as ht
+    monkeypatch.setattr(ht, "get_task_open_state",
+                        lambda t: {"audience": f"document_promotion:{DOM_A}", "open": False})
+
+
+def _in_review(n, **over):
+    return {"status": "in_review", "domain": DOM_A, **over}     # not promoted: no decision record
+
+
+def test_7_a_stored_domain_whose_task_was_superseded_is_not_listed_and_the_export_is_not_a_422(
+        monkeypatch, tmp_path, built):
+    _range_world(monkeypatch, tmp_path, [_in_review(1), _in_review(2)])
+    _writes(monkeypatch)
+    _task_superseded(monkeypatch)
+    by_range = _post({"range": RANGE, "profile": "t", "check_only": True})
+    by_ids = _post({"notice_ids": [_iid(1), _iid(2)], "profile": "t", "check_only": True})
+    assert by_range.status_code == 200 and by_range.json()["notice_ids"] == []   # not a failure
+    assert by_range.json()["unexportable"] == []           # the range never listed what it refuses
+    assert {u["reason"] for u in by_ids.json()["unexportable"]} == {"not_available"}   # same answer
+
+
+def test_7_control_the_same_rows_with_an_open_task_are_listed(monkeypatch, tmp_path, built):
+    _range_world(monkeypatch, tmp_path, [_in_review(1), _in_review(2)])
+    _writes(monkeypatch)
+    r = _post({"range": RANGE, "profile": "t", "check_only": True})
+    assert r.status_code == 200 and r.json()["notice_ids"] == [_iid(1), _iid(2)]
+    assert {u["reason"] for u in r.json()["unexportable"]} == {"state_not_exportable"}
+
+
+def test_7_one_superseded_row_among_good_ones_drops_alone(monkeypatch, tmp_path, built):
+    _range_world(monkeypatch, tmp_path, [_in_review(1), _in_review(2)])
+    _writes(monkeypatch)
+    from src.iagent import human_tasks as ht
+    monkeypatch.setattr(ht, "get_task_open_state",
+                        lambda t: {"audience": f"document_promotion:{DOM_A}", "open": _iid(2) in t})
+    r = _post({"range": RANGE, "profile": "t", "check_only": True})
+    assert r.status_code == 200 and r.json()["notice_ids"] == [_iid(2)]
+
+
+def test_7_the_range_and_the_preflight_call_one_domain_function():
+    src = (ROOT / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
+    a = src.index("async def _export_range_ids")
+    b = src.index("async def _export_preflight")
+    c = src.index("\nasync def ", b + 10)
+    assert "await _receipt_domain(" in src[a:b] and "await _receipt_domain(" in src[b:c]
+    assert "_export_notice_domain(" not in src[a:b] and "_export_notice_domain(" not in src[b:c]
+
+
+# 8. a failed domain write at filing is retried or repaired, never left stale ---------------------
+
+def _run(coro):
+    import asyncio
+    return asyncio.run(coro)
+
+
+def test_8_a_write_that_fails_twice_is_retried_and_lands(monkeypatch):
+    calls: list = []
+
+    def flaky(i, d):
+        calls.append(d)
+        if len(calls) < 3:
+            raise RuntimeError("db blip")
+        return True
+
+    monkeypatch.setattr(ist, "set_domain", flaky)
+    monkeypatch.setattr(ist, "clear_domain", lambda i: pytest.fail("repaired though the retry landed"))
+    _run(gateway._note_receipt_domain("x", "B", strict=True))
+    assert calls == ["B", "B", "B"]
+
+
+def test_8_a_write_that_never_lands_is_repaired_to_NULL_so_no_stale_domain_hides_the_notice(monkeypatch):
+    cleared: list = []
+
+    def down(i, d):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ist, "set_domain", down)
+    monkeypatch.setattr(ist, "clear_domain", lambda i: cleared.append(i) or True)
+    _run(gateway._note_receipt_domain("x", "B", strict=True))      # re-class A -> B: A must not stay
+    assert cleared == ["x"]
+
+
+def test_8_when_neither_the_write_nor_the_repair_lands_the_filer_says_503(monkeypatch):
+    from fastapi import HTTPException
+
+    def down(*a):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ist, "set_domain", down)
+    monkeypatch.setattr(ist, "clear_domain", down)
+    with pytest.raises(HTTPException) as e:
+        _run(gateway._note_receipt_domain("x", "B", strict=True))
+    assert e.value.status_code == 503 and e.value.detail["error"] == "receipt_domain_unwritten"
+
+
+def test_8_control_a_reader_never_raises_on_the_same_failure(monkeypatch):
+    def down(*a):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(ist, "set_domain", down)
+    monkeypatch.setattr(ist, "clear_domain", down)
+    _run(gateway._note_receipt_domain("x", "B"))                    # best effort: no raise
+
+
+def test_8_control_a_clean_write_is_one_call_and_no_repair(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(ist, "set_domain", lambda i, d: calls.append((i, d)) or True)
+    monkeypatch.setattr(ist, "clear_domain", lambda i: pytest.fail("repaired a clean write"))
+    _run(gateway._note_receipt_domain("x", "B", strict=True))
+    assert calls == [("x", "B")]
+
+
+def test_8_the_repaired_row_is_then_found_by_the_new_domains_range(monkeypatch, tmp_path, built):
+    _range_world(monkeypatch, tmp_path, [{"domain": "elsewhere"}])      # stale: the re-class to A failed
+    _writes(monkeypatch)
+    r = _post({"range": RANGE, "profile": "t", "check_only": True})
+    assert r.json()["notice_ids"] == []                                 # the stale value hides it
+    _run(gateway._note_receipt_domain(_iid(1), DOM_A, strict=True))     # the retry lands
+    assert _range_world.rows[0]["domain"] == DOM_A
+    r = _post({"range": RANGE, "profile": "t", "check_only": True})
+    assert r.json()["notice_ids"] == [_iid(1)]
+
+
+def test_8_no_domain_writes_nothing_at_all(monkeypatch):
+    for blank in (None, "", "  "):
+        monkeypatch.setattr(ist, "set_domain", lambda i, d: pytest.fail(f"wrote {d!r}"))
+        monkeypatch.setattr(ist, "clear_domain", lambda i: pytest.fail("cleared"))
+        _run(gateway._note_receipt_domain("x", blank, strict=True))

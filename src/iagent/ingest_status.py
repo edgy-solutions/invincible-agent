@@ -929,6 +929,21 @@ def set_no_domain(ingest_id: str) -> bool:
     return changed > 0
 
 
+def clear_domain(ingest_id: str) -> bool:
+    """Put the row back to "no task has said" (NULL). The REPAIR for a `set_domain` that could not
+    be written: NULL is never excluded by the range's query, so a stale domain cannot hide a notice
+    from the caller it now belongs to. True when a row changed. EVENT rows are untouched."""
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE ingest_status_projection SET domain = NULL
+                    WHERE id = %s AND kind <> 'event' AND domain IS NOT NULL""",
+                (ingest_id,))
+            changed = cur.rowcount
+        conn.commit()
+    return changed > 0
+
+
 def fail_stalled(*, stage: str, older_than_seconds: int, now_ms: Optional[int] = None) -> list[str]:
     """The WATCHDOG (2026-10-12, pipeline failure must reach the row; extended to `extracting`
     2026-10-16): mark every document row that has sat at `stage` for longer than

@@ -14865,24 +14865,71 @@ async def _export_notice_domain(ingest_id: str, row: dict, rec) -> Optional[str]
         return None
 
 
-async def _note_receipt_domain(ingest_id: str, domain: Optional[str]) -> None:
-    """Write a receipt's review domain once a source has named it (a promotion task filed against
-    `document_promotion:<DOMAIN>`, or an old row resolved on read). Best effort by design: the
-    column only moves the scope into the query, and a NULL row is always resolved the old way, so a
-    failed write loses speed, never a notice and never a scope. None (resolved, no domain) marks
-    the row `NO_DOMAIN`, only from NULL, so it leaves every later scan; a filed task overwrites it."""
+async def _receipt_domain(ingest_id: str, row: dict) -> Optional[str]:
+    """The ONE way a notice's domain is found: its decision record, else the audience of the
+    current generation's OPEN task (`_export_notice_domain`). The range and the preflight both call
+    it, so a range never lists a notice the export then refuses. The column on the receipt is not
+    this answer: it only keeps other domains' rows out of the range's query."""
+    from starlette.concurrency import run_in_threadpool
+
+    rec = await run_in_threadpool(lambda: _export_decision_record(ingest_id))
+    return await _export_notice_domain(ingest_id, row, rec)
+
+
+_RECEIPT_DOMAIN_ATTEMPTS = 3
+
+
+async def _mark_receipt_no_domain(ingest_id: str) -> None:
+    """A receipt whose resolution SUCCEEDED and found no domain (no decision record, no open task)
+    is marked `NO_DOMAIN`, only from NULL, so it leaves every caller's scan and cannot spend
+    another caller's page bound. NULL stays "not resolved / the write failed". The marker is never
+    permanent: a task filed for the receipt replaces it (`_note_receipt_domain`, strict, at filing).
+    Best effort: a failed mark costs a later range one more look at the row, never a notice."""
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status
 
     try:
-        if not (domain and str(domain).strip()):
-            # resolved and none: mark it, so the row leaves the scan (only ever from NULL)
-            await run_in_threadpool(lambda: ingest_status.set_no_domain(ingest_id))
-            return
-        await run_in_threadpool(lambda: ingest_status.set_domain(ingest_id, str(domain)))
+        await run_in_threadpool(lambda: ingest_status.set_no_domain(ingest_id))
     except Exception as exc:  # noqa: BLE001
-        logger.warning("receipt domain write failed for %s: %s", ingest_id, type(exc).__name__)
+        logger.warning("receipt no-domain mark failed for %s: %s", ingest_id, type(exc).__name__)
+
+
+async def _note_receipt_domain(ingest_id: str, domain: Optional[str], *, strict: bool = False) -> None:
+    """Write a receipt's review domain once a source has named it. No domain is no write
+    here (`_mark_receipt_no_domain` is the marker's only writer, and filing replaces it).
+
+    The write is RETRIED, and if it still fails the stored value is cleared (NULL is never
+    excluded by the range's query), so a stale domain cannot hide a notice. `strict` (the filer):
+    when neither the write nor the clear lands, 503 `receipt_domain_unwritten`; the task is
+    already filed and the call is find-or-file, so the caller's retry writes it. A non-strict
+    caller (the range's write-back, a reader) only logs: the range derives every domain itself."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import ingest_status
+
+    if not (domain and str(domain).strip()):
+        return
+    last = None
+    for attempt in range(_RECEIPT_DOMAIN_ATTEMPTS):
+        try:
+            await run_in_threadpool(lambda: ingest_status.set_domain(ingest_id, str(domain)))
+            return
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            logger.warning("receipt domain write failed for %s (attempt %d): %s",
+                           ingest_id, attempt + 1, type(exc).__name__)
+            await asyncio.sleep(0.05 * (attempt + 1))
+    try:
+        await run_in_threadpool(lambda: ingest_status.clear_domain(ingest_id))
+        return                                       # repaired: NULL, so no stale domain excludes it
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("receipt domain repair failed for %s: %s", ingest_id, type(exc).__name__)
+    if strict:
+        raise HTTPException(status_code=503, detail={
+            "error": "receipt_domain_unwritten",
+            "message": f"the review domain could not be recorded on the receipt: "
+                       f"{type(last).__name__}; retry"})
 
 
 async def _export_range_ids(rng: ExportRange, current_user) -> tuple:
@@ -14901,7 +14948,13 @@ async def _export_range_ids(rng: ExportRange, current_user) -> tuple:
     counted against the cap (the scan stops at the first one past it). So another domain's volume
     in the range neither refuses the caller nor shows in any reply. The refusal states the cap
     (configuration) and NEVER a count: nothing the caller receives says how many notices the range
-    holds, in scope or out."""
+    holds, in scope or out.
+
+    The domain of every receipt is derived by `_receipt_domain`, the ONE function the preflight
+    also uses; the stored column is NEVER the answer, it only keeps other domains' rows out of the
+    query. So a stale or missing stored value cannot make the export differ from the preflight, and
+    a notice whose task was superseded or expired with no decision is dropped alone, never failing
+    the range."""
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status
@@ -14929,13 +14982,14 @@ async def _export_range_ids(rng: ExportRange, current_user) -> tuple:
         pages += 1
         for row in page:
             ingest_id = row["id"]
-            domain = row.get("domain")
-            if domain is None:
-                # NULL: no task has said (or the row predates the column). Resolve it the old way
-                # and write the answer back, so the next range finds it in the query.
-                rec = await run_in_threadpool(lambda i=ingest_id: _export_decision_record(i))
-                domain = await _export_notice_domain(ingest_id, row, rec)
-                await _note_receipt_domain(ingest_id, domain)
+            # The stored domain only kept other domains' rows out of the query. What a row's domain
+            # IS comes from the one function the preflight also calls, so a stale stored value (a
+            # task superseded or expired without a decision) cannot list a notice the export refuses.
+            domain = await _receipt_domain(ingest_id, row)
+            if domain and domain != row.get("domain"):
+                await _note_receipt_domain(ingest_id, domain)      # repair the stored value, best effort
+            elif not domain:
+                await _mark_receipt_no_domain(ingest_id)           # resolved, and none: out of the scan
             if domain in domains:
                 ids.append(ingest_id)
                 if len(ids) > _EXPORT_MAX_NOTICES:
@@ -14972,8 +15026,7 @@ async def _export_preflight(prof, notice_ids: list, current_user) -> tuple:
         if row is None or row.get("kind") == ingest_status.EVENT:
             bad.append({"notice_id": ingest_id, "reason": "not_available"})
             continue
-        rec = await run_in_threadpool(lambda i=ingest_id: _export_decision_record(i))
-        if await _export_notice_domain(ingest_id, row, rec) not in domains:
+        if await _receipt_domain(ingest_id, row) not in domains:
             bad.append({"notice_id": ingest_id, "reason": "not_available"})
             continue
         if prof.accepts is not None and row.get("content_kind") not in prof.accepts:
@@ -16023,11 +16076,11 @@ async def _file_or_find_document_promotion_task(
         # always. The audience must not move.
         existing = await run_in_threadpool(lambda: human_tasks.get_open_task_payload(task_id))
         if existing is None:
-            await _note_receipt_domain(ingest_id, domain)
+            await _note_receipt_domain(ingest_id, domain, strict=True)
             return task_id, "ALREADY_FILED"
         if (str(existing.get("content_kind") or "").strip().lower()
                 == str(row.get("content_kind") or "").strip().lower()):
-            await _note_receipt_domain(ingest_id, domain)
+            await _note_receipt_domain(ingest_id, domain, strict=True)
             return task_id, "ALREADY_FILED"
         state = await run_in_threadpool(lambda: human_tasks.get_task_open_state(task_id))
         if (state or {}).get("audience") != audience:
@@ -16102,7 +16155,7 @@ async def _file_or_find_document_promotion_task(
     if _refresh:
         await run_in_threadpool(lambda: human_tasks.refresh_open_task(
             task_id, payload=payload, title=_title, summary=_summary))
-        await _note_receipt_domain(ingest_id, domain)
+        await _note_receipt_domain(ingest_id, domain, strict=True)
         return task_id, "ALREADY_FILED"
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
@@ -16117,7 +16170,7 @@ async def _file_or_find_document_promotion_task(
         raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
     except human_tasks.NoRequester as exc:
         raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
-    await _note_receipt_domain(ingest_id, domain)
+    await _note_receipt_domain(ingest_id, domain, strict=True)
     return task_id, "FILED"
 
 

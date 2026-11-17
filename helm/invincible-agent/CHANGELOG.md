@@ -35,7 +35,12 @@
   makes progress** (each row read is written before the bound is checked). A receipt that resolves to
   no domain (no decision record, no task) is marked `<none>`, a value that is not a domain: `set_domain`
   refuses it and the query strips it from the caller's domains, so no cell can match it. Such a row
-  leaves every later scan, and a promotion task filed later overwrites the marker. `POST /ingest/export/notices`
+  leaves every later scan, and a promotion task filed later overwrites the marker. The range derives
+  every receipt's domain with the one function the preflight uses and treats the stored column only as
+  a query filter, so a notice whose task was superseded or expired without a decision is dropped alone
+  and never fails the export. The filer retries a failed domain write three times, then repairs the
+  row to NULL (resolved again next time), and only then answers 503 `receipt_domain_unwritten`. The
+  page bound (40 pages) caps one range at about 20,000 receipts read. `POST /ingest/export/notices`
   by `range` reads at most `_EXPORT_RANGE_MAX_PAGES` (40) pages of receipts, then answers 422
   `export_range_scan_bound` stating the bound and no count. Chart values and endpoints are unchanged.
   `ingest_status_projection`'s Electric shape serves the same rows (identity-scoped) and now carries
