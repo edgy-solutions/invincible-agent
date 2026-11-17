@@ -134,7 +134,7 @@ Lane packets and handoffs are **local files under `sessions/`**, which is gitign
 - Your handoff is still the newest `sessions/*handoff*` file in your own worktree. It is just not committed.
 
 The rule applies in every repo with a `sessions/` folder: invincible-agent, cortex-ui, doc-tools, dag-tools,
-iagent-mesh-sdk, training-consolidation-workbench, provenance-telemetry and ia-gov. Each repo's owner
+pub-tools, iagent-mesh-sdk, training-consolidation-workbench, provenance-telemetry and ia-gov. Each repo's owner
 lane lands the same `.gitignore`, untrack and rule change.
 
 **A lane branch that still tracks session files drops them when it next merges master.** Do it in
