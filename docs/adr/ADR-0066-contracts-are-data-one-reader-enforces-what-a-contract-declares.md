@@ -1,14 +1,14 @@
 # ADR-0066 — Contracts are data: one reader enforces what a contract declares
 
 **Status:** Proposed (fin, 2026-11-15). This is a draft for Lane 1's review, and the architect
-rules on it. It records decisions already ruled between 2026-11-10 and 2026-11-15 and the code
-that carries them; it adds no new rule. Sections 4 and 6 describe two PRs that are still open
-(#409 and #393), and each section says so. It fills the number ADR-0065 reserved at its lines 18,
+rules on it. It records decisions already ruled between 2026-11-10 and 2026-11-16 and the code
+that carries them; it adds no new rule. Sections 3, 4 and 6 describe PRs that are still open
+(#409, #426 and #393), and each section says so. It fills the number ADR-0065 reserved at its lines 18,
 178 and 183, which `contracts/ev_fixture.yaml`'s header and `agent_fleet/utils/dataset_contracts.py`'s
 docstring cite as "provisional".
 **Date:** 2026-11-15
 **Deciders:**
-- the architect, for the rulings this record collects (2026-11-10, 11-11, 11-14, 11-15);
+- the architect, for the rulings this record collects (2026-11-10, 11-11, 11-14, 11-15, 11-16);
 - Lane 1, the reviewer, who registers each contract file;
 - gov, for the personal-data handling (section 6) against the dimensions rail.
 
@@ -34,9 +34,11 @@ docstring cite as "provisional".
 - **True once the open PRs merge:** section 4 for the `FIN_DATASET_URN` read (#409) and section 6
   (#393).
 - **Not built:** the superset check against dag-tools' template at a pinned tag (section 9).
-- **Ruled 2026-11-16, not yet done:** the repin to dag-tools v0.16.0 carries the registered
-  contract's `null_value`, `wrong_type` and `non_finite` in the same PR (section 9).
-- **The questions for the architect** are in section 11.
+- **Ruled 2026-11-16, in flight:** the shared reader raises `null_value` (a column declared
+  `nullable: false`) and `non_finite` (a `numeric` or `float` column) for every contract, and
+  engine-fin's two retire into them (sections 3 and 4; #426). The repin is to dag-tools v0.16.1 (#428),
+  stacked on #426, and Lane 1 registers the `mfg_trace` contract stacked on #426 too (section 9).
+- **The questions for the architect** are in section 11. Questions 2 and 4 are ruled.
 
 ## 1. A contract is a file of data
 
@@ -73,6 +75,7 @@ docstring cite as "provisional".
 | `contract_id` | the id, matching the file (section 1) |
 | `columns[].name`, `.type` | each column once; a type is one of `string`, `numeric`, `integer`, `float`, `boolean`, `timestamp`, `date`, `array<string>` |
 | `columns[].required` | a bool; a required column must be present in every read |
+| `columns[].nullable` | a bool, true by default; `false` refuses a null in the column on every read (section 3; #426) |
 | `grain` | the key: the columns one row is unique on |
 | `scope` | the column a read filters to one value of, or `none` (section 5) |
 | `dependencies[]` | `{by, determines}`: one value of `by` carries one value of each `determines` column |
@@ -82,7 +85,8 @@ docstring cite as "provisional".
 `array<string>` is one token. There is no general `array<T>`.
 
 **Refused at load,** so that a bad contract never reaches a read:
-- a type outside the set, a column declared twice, or a non-bool `required`;
+- a type outside the set, a column declared twice, or a non-bool `required` or `nullable`
+  (`nullable` from #426);
 - no `scope` key;
 - `scope: none` beside a column named `none`;
 - a grain, scope or dependency that names an undeclared column;
@@ -92,7 +96,7 @@ docstring cite as "provisional".
 
 **Carried, not read by iagent code.** These include `version`, `status`, `ratified_by`,
 `dataset` (`urn`, `producer`, `storage`, `banner`), `period`, `vocabulary`, `status_period`,
-`limits`, `cadence`, `tags`, `unit`, `produced_since`, `nullable`, `description`,
+`limits`, `cadence`, `tags`, `unit`, `produced_since`, `description`,
 `constant_within` and `additive_over`. They document the asset for a reader and a reviewer. A
 carried key enforces nothing: a review that relies on one must say that nothing checks it.
 
@@ -100,16 +104,21 @@ carried key enforces nothing: a review that relies on one must say that nothing 
 
 - **The contract declares, the reader enforces** (ruled 2026-11-10). The reader holds the generic
   rules and names no column of any contract.
-- **The four generic refusals** (`RULES`), each raised as `ContractViolation(rule, message)`:
+- **The six generic refusals** (`RULES`), each raised as `ContractViolation(rule, message)`:
 
   | id | refuses |
   | --- | --- |
   | `missing_column` | a required column, or a column the reading row names, is absent |
   | `wrong_type` | a column is not of its declared type |
+  | `null_value` | a column declared `nullable: false` carries a null (#426) |
+  | `non_finite` | a column declared `numeric` or `float` carries a NaN or an infinity (#426) |
   | `duplicate_key` | more than one row for one grain tuple |
   | `not_determined_by` | one value of a dependency's `by` carries two values of a column it determines |
 
-  A message names columns, never values.
+  A message names columns, never values. `null_value` and `non_finite` were engine-fin's, raised
+  only over the columns a read used; ruled 2026-11-16, the reader raises them over every declared
+  column, and engine-fin's two retire into them (#426). On master until #426 merges, the reader
+  raises the other four.
 - **They apply to every contract** (ruled #378, 2026-11-14). A contract's `rules` block carries
   messages for them, and for an engine's own rules. Leaving a rule out of the block disables
   nothing.
@@ -135,10 +144,15 @@ carried key enforces nothing: a review that relies on one must say that nothing 
   `ev_fixture`. #409 retires four engine-fin ids in favour of the shared ones:
   `duplicate_work_package_period` becomes `duplicate_key`; `program_name_not_unique`,
   `program_bac_not_unique` and `work_package_in_two_accounts` become `not_determined_by`.
-- **A null is the engine's to decide.** The reader checks presence (`required`), not nulls. An
-  engine refuses a null in a column it uses: engine-fin's `null_value` covers its roles, and a
-  dataset read covers the columns a row names. A null in an optional column the read does not use
-  is served. See question 2 in section 11.
+- **A null is the contract's to declare** (ruled 2026-11-16; #426). `required` is presence;
+  `nullable: false` is the value. A null in a column declared `nullable: false` refuses
+  `null_value` on every read, whether or not the read uses the column, and a NaN or infinity in a
+  `numeric` or `float` column refuses `non_finite` the same way. A column declared nullable (the
+  default) may be null. Since the engine computes on every column it reads, an engine holds its
+  roles to `nullable: false` at load: engine-fin's `_join_contract` refuses a dataset row naming a
+  nullable column, and `contract_problems` a contract whose role columns are nullable.
+  `contracts/ev_fixture.yaml` declares all 13 columns `nullable: false`. Until #426 merges, the
+  reader ignores `nullable` and engine-fin checks nulls in the columns a read uses.
 
 ## 5. Scope is never optional
 
@@ -178,8 +192,8 @@ True once #393 merges (ruled 2026-11-14, ADR-0070 §10 ruling 4).
     nine role columns declared, required and typed; scope `program_id`; a grain within
     (`work_package`, `period`); and its three dependencies.
 - **An engine's own refusal rules stay in the engine**, registered beside the reader's and passed
-  to `unknown_rules` as `also`. engine-fin's, once #409 retires four of them, are `non_finite`,
-  `null_value`, `other_program_rows`, `period_outside_calendar` and `varies_within_path`.
+  to `unknown_rules` as `also`. engine-fin's, once #409 retires four of them and #426 two more,
+  are `other_program_rows`, `period_outside_calendar` and `varies_within_path`.
 
 ## 8. The deployment names the contract
 
@@ -214,10 +228,15 @@ From ADR-0070 §1, restated here as the rule for every contract a producer publi
 - **The superset covers the rules block too** (ruled 2026-11-16, with Lane 1). When the reader
   repins to dag-tools v0.16.0, the registered `mfg_trace` contract declares `null_value`,
   `wrong_type` and `non_finite` in the same PR, so it stays a superset of the template.
+- **The order** (ruled 2026-11-16, second ruling). dag-tools v0.16.0 and v0.16.1 are tagged, and
+  the repin is to v0.16.1. First the shared reader raises `null_value` and `non_finite` (#426).
+  Then fin repins the template copy to v0.16.1 (#428), and Lane 1 registers the `mfg_trace` contract:
+  every table in the template, declaring the refusals the template declares. Both stack on #426.
+  v0.16.1's template is the same file as `f07b7f0`'s, measured below.
 - **What the repin meets.** The copy on master is dag-tools at `398d82d`, and every document in it
   names `key_not_unique`. A tripwire in `tests/test_the_contract_reader_reads_the_multi_document_form.py`
-  pins that set. dag-tools' master at `f07b7f0` is not tagged yet. Loaded through the current
-  shared reader, it gives:
+  pins that set. dag-tools at `f07b7f0` (byte-identical to the template at v0.16.1), loaded
+  through the shared reader as it stands before #426, gives:
   - 12 documents, with two new ones: `conf_test_repo_result` and `conf_test_repo_step_parameter`;
   - `key_not_unique` gone, replaced by `duplicate_key` in every document;
   - `unknown_rules` listing `non_finite` and `null_value` on `conf_test_repo_result`, and
@@ -225,8 +244,9 @@ From ADR-0070 §1, restated here as the rule for every contract a producer publi
 
   `wrong_type` is already one of the reader's four. dag-tools' plan emits the other two as
   producer-side tests (`not_null` → `null_value`, `non_finite` → `non_finite`), with the same ids
-  engine-fin raises. Which reader raises them for a registered contract is question 4 in
-  section 11.
+  engine-fin raises. Question 4 in section 11 asked which reader raises them for a registered
+  contract; it is ruled (a), the shared reader (#426), and with it `unknown_rules` over v0.16.1's
+  template is empty.
 
 ## 10. Three readers of one format
 
@@ -251,11 +271,9 @@ From ADR-0070 §1, restated here as the rule for every contract a producer publi
    (a) to vendor the iagent reader's checks into the SDK, so one engine's contract behaves the
    same on either side, or (b) to keep it schema-only and say so in its docstring. fin proposes
    (b) until an SDK engine reads a governed dataset.
-2. **Who enforces `nullable`?** The template declares `nullable` per column, and the iagent reader
-   ignores it: it checks presence, and each engine checks nulls in the columns it uses (section
-   4). fin proposes that the reader raise a generic `null_value` for a column declared
-   `nullable: false`, in its own PR, with engine-fin's `null_value` then retiring the way the
-   four ids did in #409.
+2. **Who enforces `nullable`?** **Ruled 2026-11-16: the shared reader**, as fin proposed. It
+   raises a generic `null_value` for a column declared `nullable: false`, in its own PR (#426),
+   and engine-fin's `null_value` retires into it, the way the four ids did in #409 (section 4).
 3. **Where does the superset check live?** In iagent CI against a pinned tag, as ADR-0070 §1
    says, or as a load-time refusal when a registered contract names its template. fin proposes CI
    only: a running engine should not depend on another repo.
@@ -272,8 +290,7 @@ From ADR-0070 §1, restated here as the rule for every contract a producer publi
    - **(c)** The engine that reads these documents passes them as its own (`also`). No such engine
      exists yet.
 
-   fin proposes (a): its messages are already the template's generic ones. It would land in its own
-   PR, before the repin.
+   **Ruled 2026-11-16: (a)**, "for every contract", in its own PR before the repin (#426).
 
 ## Consequences
 
