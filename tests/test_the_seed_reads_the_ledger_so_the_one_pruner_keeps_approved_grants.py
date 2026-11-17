@@ -166,9 +166,9 @@ def test_4_control_any_other_error_raises(monkeypatch):
 
 def test_4_rows_are_returned_as_dicts(monkeypatch):
     psycopg2 = pytest.importorskip("psycopg2")
-    conn = _FakeConn(rows=[("alice", A, "dataset", "grant", "bob", "r")])
+    conn = _FakeConn(rows=[(1, "alice", A, "dataset", "grant", "bob", "r")])
     monkeypatch.setattr(psycopg2, "connect", lambda dsn, connect_timeout=0: conn)
-    assert gs.read_ledger("x") == LEDGER
+    assert [{k: v for k, v in r.items() if k != "seq"} for r in gs.read_ledger("x")] == LEDGER
 
 
 # 5. union ---------------------------------------------------------------------------------------
@@ -358,10 +358,50 @@ def test_8_control_a_dangling_committed_grant_still_refuses_the_run(seed):
 
 def test_8_a_revoke_row_read_from_the_store_removes_the_grant(monkeypatch):
     psycopg2 = pytest.importorskip("psycopg2")
-    conn = _FakeConn(rows=[("alice", A, "dataset", "grant", "bob", "r"),
-                           ("alice", A, "dataset", "revoke", "rita", "left"),
-                           ("carol", C, "dataset", "revoke", "rita", "left")])
+    conn = _FakeConn(rows=[(1, "alice", A, "dataset", "grant", "bob", "r"),
+                           (2, "alice", A, "dataset", "revoke", "rita", "left"),
+                           (3, "carol", C, "dataset", "revoke", "rita", "left")])
     monkeypatch.setattr(psycopg2, "connect", lambda dsn, connect_timeout=0: conn)
     rows = gs.read_ledger("x")
     assert [r["entry"] for r in rows] == ["grant", "revoke", "revoke"]
     assert gs.union_grants(COMMITTED["grants"], rows) == []    # through the real reader, not a stub
+
+
+# 9. a re-grant is a later act: the LATEST act per grant wins, ordered by seq, never the clock -------
+
+REGRANT_ALICE = {"seq": 3, "subject": "alice", "asset": A, "kind": "dataset", "entry": "grant",
+                 "granted_by": "bob2", "reason": "back"}
+
+
+def test_9_a_grant_after_its_revocation_is_in_effect_again():
+    rows = [{**LEDGER[0], "seq": 1}, {**REVOKE_ALICE, "seq": 2}, REGRANT_ALICE]
+    assert ("alice", A) in {(g["subject"], g["asset"]) for g in gs.union_grants([], rows)}
+
+
+def test_9_control_the_same_rows_without_the_re_grant_leave_it_out():
+    rows = [{**LEDGER[0], "seq": 1}, {**REVOKE_ALICE, "seq": 2}]
+    assert gs.union_grants([], rows) == []
+
+
+def test_9_the_order_is_seq_not_the_position_in_the_list():
+    rows = [REGRANT_ALICE, {**REVOKE_ALICE, "seq": 2}, {**LEDGER[0], "seq": 1}]   # shuffled
+    assert ("alice", A) in {(g["subject"], g["asset"]) for g in gs.union_grants([], rows)}
+    later_revoke = [{**LEDGER[0], "seq": 1}, {**REVOKE_ALICE, "seq": 9}, REGRANT_ALICE]
+    assert gs.union_grants([], later_revoke) == []                  # the revoke is the later act
+
+
+def test_9_a_committed_grant_revoked_then_re_granted_is_in_effect_again():
+    rows = [{**REVOKE_CAROL, "seq": 1},
+            {"seq": 2, "subject": "carol", "asset": C, "kind": "dataset", "entry": "grant",
+             "granted_by": "bob", "reason": "back"}]
+    assert ("carol", C) in {(g["subject"], g["asset"]) for g in gs.union_grants(COMMITTED["grants"], rows)}
+
+
+def test_9_the_seed_applies_a_re_grant_and_prunes_nothing_it_should_keep(seed):
+    fake, rc = _tick(seed, [{**LEDGER[0], "seq": 1}, {**REVOKE_ALICE, "seq": 2}, REGRANT_ALICE])
+    assert rc == 0 and _reader("alice", A) in fake.relations
+
+
+def test_9_the_select_reads_seq_and_orders_by_it_not_the_clock():
+    assert "seq" in gs._LEDGER_SELECT.split("FROM")[0]
+    assert gs._LEDGER_SELECT.endswith("ORDER BY seq") and "granted_at" not in gs._LEDGER_SELECT

@@ -59,6 +59,22 @@
   route says so (`effective: at the next seed sync`). A database that already holds a
   `access_grant_ledger` from an earlier build of this PR (no `entry` column) needs the table
   dropped before the roll; no release carried it.
+- **A re-grant is its own approved act; the latest act on a grant wins** (saf; the architect, 11-16;
+  DRAFT, ships after #408 and #412 and replaces #412's 409 `grant_revoked`). Each grant and each
+  revocation is a row of its own in `access_grant_ledger`, ordered by a server sequence (`seq`), never
+  by clock time. The latest act per (subject, asset, kind) is the state: revoked then approved again is
+  in effect again, and the approval is the full approval (the same rail as any access request). A
+  second grant of a granted key, or a second revoke of a revoked one, adds no row (the first approver
+  stays). The seed and the BFF read the ledger through one `union_grants`. **Schema note and upgrade
+  path:** the table's key changes from (subject, asset, kind, entry) to `seq BIGSERIAL`. The BFF
+  migration upgrades an existing table in place, once and idempotently, at its first start: it adds
+  `seq`, numbers every existing row with grants BEFORE revokes (so every key a #408/#412 build had
+  revoked is still revoked), then drops the old key. No data is lost and nothing is applied by the
+  migration. **Order the roll:** the seed selects `seq`, so a seed that runs before the BFF has
+  migrated reads an unreadable ledger and exits 5 (nothing applied, nothing pruned: the safe
+  refusal) until the BFF is up; roll the BFF first. Not run against a live Postgres in this PR
+  (tests use a fake of the table); the upgrade block should be rehearsed on a copy first. Two
+  concurrent approvals of one key can both append (harmless: the latest act is the same).
 - **An approval names an asset that exists, and a stale ledger row stops nothing** (saf; the
   architect, 11-16). Approving an access request whose asset is not in the directory is refused 422
   `asset_not_in_directory` before the task is resolved or anything is recorded (503
