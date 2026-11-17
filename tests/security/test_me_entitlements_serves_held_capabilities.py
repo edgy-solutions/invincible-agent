@@ -38,6 +38,7 @@ EMAIL = "a@x.test"
 _REAL_CLIENT = httpx.Client
 LIST = "/api/v3/directory/objects"
 CHECK = "/api/v3/directory/check"
+CHECKS = "/api/v3/directory/checks"
 
 
 def _user(authz):
@@ -67,8 +68,10 @@ def _directory(monkeypatch, handler):
                         lambda **kw: _REAL_CLIENT(transport=httpx.MockTransport(handler), **kw))
 
 
-def _rig(monkeypatch, pages, held, check_status=None):
-    """`pages`: {token-or-"": (keys, next_token)}. `held`: keys answered check:true."""
+def _rig(monkeypatch, pages, held, reasons=None):
+    """`pages`: {token-or-"": (keys, next_token)}. `held`: keys answered check:true. `reasons`:
+    {key: reason}, answered `check: false` with that `context.reason`, as the live directory answers
+    a check it could not decide (measured 2026-11-14)."""
     log = types.SimpleNamespace(requests=[], checks=[])
 
     def handler(request):
@@ -79,13 +82,15 @@ def _rig(monkeypatch, pages, held, check_status=None):
             if nxt:
                 body["page"] = {"next_token": nxt}
             return httpx.Response(200, json=body)
-        if request.url.path == CHECK:
+        if request.url.path == CHECKS:
             req = json.loads(request.content)
             log.checks.append(req)
-            st = (check_status or {}).get(req["object_id"])
-            if st:
-                return httpx.Response(st, json={})
-            return httpx.Response(200, json={"check": req["object_id"] in held})
+            items = []
+            for c in req["checks"]:
+                why = (reasons or {}).get(c["object_id"])
+                items.append({"check": False, "context": {"reason": why}} if why
+                             else {"check": c["object_id"] in held, "context": {}})
+            return httpx.Response(200, json={"checks": items})
         return httpx.Response(404, json={})
 
     _directory(monkeypatch, handler)
@@ -97,19 +102,30 @@ def test_a1_the_held_subset_is_served_sorted(as_user, monkeypatch):
     r = as_user().get("/me/entitlements")
     assert r.status_code == 200, r.text
     assert r.json()["capabilities"] == ["zz:alpha", "zz:gamma"]
-    assert len(log.checks) == 3
-    for c in log.checks:
-        assert c["object_type"] == "capability" and c["relation"] == "can_invoke"
-        assert c["subject_type"] == "user" and c["subject_id"] == AUTHZ
-    assert {c["object_id"] for c in log.checks} == {"zz:alpha", "zz:beta", "zz:gamma"}
+    # One batched check names every key, under the caller's authz_id; no single check is sent.
+    assert len(log.checks) == 1
+    d = log.checks[0]["default"]
+    assert d["object_type"] == "capability" and d["relation"] == "can_invoke"
+    assert d["subject_type"] == "user" and d["subject_id"] == AUTHZ
+    assert sorted(c["object_id"] for c in log.checks[0]["checks"]) == ["zz:alpha", "zz:beta", "zz:gamma"]
+    assert [q.url.path for q in log.requests] == [LIST, CHECKS]
     ingest_api.Entitlements.model_validate(r.json())            # arm 8: the served body validates
 
 
-def test_a2_a_404_on_a_check_is_not_held(as_user, monkeypatch):
-    _rig(monkeypatch, {"": (["zz:alpha", "zz:beta"], "")}, {"zz:alpha"}, check_status={"zz:beta": 404})
+def test_a2_a_check_on_a_missing_object_is_not_held(as_user, monkeypatch):
+    _rig(monkeypatch, {"": (["zz:alpha", "zz:beta"], "")}, {"zz:alpha"},
+         reasons={"zz:beta": "E20025 object not found: capability:zz:beta"})
     r = as_user().get("/me/entitlements")
     assert r.status_code == 200, r.text
     assert r.json()["capabilities"] == ["zz:alpha"]
+
+
+@pytest.mark.parametrize("reason", ["E20036 relation not found", "E20026 object type not found"])
+def test_a2b_a_check_the_directory_could_not_decide_is_503(as_user, monkeypatch, reason):
+    _rig(monkeypatch, {"": (["zz:alpha", "zz:beta"], "")}, {"zz:alpha"}, reasons={"zz:beta": reason})
+    r = as_user().get("/me/entitlements")
+    assert r.status_code == 503, r.text
+    assert r.json()["detail"]["error"] == "authorization_unavailable"
 
 
 def test_a3_pagination_walks_every_page(as_user, monkeypatch):
@@ -133,11 +149,18 @@ def _failing(case):
     repeats: list = []
 
     def handler(request):
-        if request.url.path == CHECK:
-            # Only `check500` fails a check; every other case is held, so its 503 is the list's.
+        if request.url.path == CHECKS:
+            # Only the `check*` cases fail the batch; every other case is held, so its 503 is the list's.
+            asked = json.loads(request.content)["checks"]
             if case == "check500":
                 return httpx.Response(500, json={})
-            return httpx.Response(200, json={"check": True})
+            if case == "check404":
+                return httpx.Response(404, json={})
+            if case == "checkcount":
+                return httpx.Response(200, json={"checks": [{"check": True}] * (len(asked) + 1)})
+            if case == "checkstring":
+                return httpx.Response(200, json={"checks": [{"check": "true"}] * len(asked)})
+            return httpx.Response(200, json={"checks": [{"check": True}] * len(asked)})
         if case == "connect":
             raise httpx.ConnectError("down", request=request)
         if case == "500":
@@ -153,11 +176,12 @@ def _failing(case):
             repeats.append(request)
             page = {"next_token": "t2"} if len(repeats) <= 5 else {}
             return httpx.Response(200, json={"results": [{"id": "zz:alpha"}], "page": page})
-        return httpx.Response(200, json={"results": [{"id": "zz:alpha"}]})   # check500
+        return httpx.Response(200, json={"results": [{"id": "zz:alpha"}]})   # the check* cases
     return handler
 
 
-@pytest.mark.parametrize("case", ["connect", "500", "nonjson", "shape", "noid", "repeat", "check500"])
+@pytest.mark.parametrize("case", ["connect", "500", "nonjson", "shape", "noid", "repeat",
+                                  "check500", "check404", "checkcount", "checkstring"])
 def test_a5_a_failure_is_503_never_a_partial_list(as_user, monkeypatch, case):
     _directory(monkeypatch, _failing(case))
     r = as_user().get("/me/entitlements")
@@ -178,8 +202,10 @@ def test_a6_an_unset_directory_is_503_unconfigured(as_user, monkeypatch):
 
 def test_a7_an_empty_authz_id_holds_nothing_and_asks_no_one(monkeypatch):
     log = _rig(monkeypatch, {"": (["zz:alpha"], "")}, {"zz:alpha"})
-    assert ht.held_capabilities("") == []
+    assert ht.can_invoke_each(["zz:alpha"], "") == [False]
     assert log.requests == []
+    assert ht.capabilities_and_held("") == (["zz:alpha"], [])
+    assert [q.url.path for q in log.requests] == [LIST]          # the list, and no check
 
 
 def test_a8_a_body_without_capabilities_fails_validation(as_user, monkeypatch):

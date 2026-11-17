@@ -25,6 +25,7 @@ in starlette.run_in_threadpool.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -41,7 +42,8 @@ import psycopg2.extras
 # so a raise here and a catch at the BFF are the same module object.
 from iagent.authz import AuthorizationUnavailable  # noqa: F401 -- raised and re-exported
 from iagent.authz import AuthorizationUnconfigured  # noqa: F401 -- raised and re-exported
-from agent_fleet.utils.pdp_answer import check_answer
+from iagent.authz import directory_http_client
+from agent_fleet.utils.pdp_answer import check_answer, checks_answer
 
 try:
     from agent_fleet.utils import program_membership as _program_membership
@@ -59,6 +61,15 @@ logger = logging.getLogger(__name__)
 _PG_DSN = os.getenv("PROJECTOR_POSTGRES_DSN", "").strip()
 # Topaz Directory (relations + check). Same URL cortex-bff uses for entitlements.
 _TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "").strip()
+
+
+def _directory() -> "contextlib.AbstractContextManager[httpx.Client]":
+    """The process's ONE directory client (`iagent.authz.directory_http_client`), wrapped for a
+    `with` block that must NOT close it. Every directory call in this module goes through here.
+
+    A client built per call cost about 70 ms of CPU, and one `GET /me/entitlements` built about 37
+    of them."""
+    return contextlib.nullcontext(directory_http_client(_TOPAZ_DIRECTORY_URL))
 
 # Authoritative migration (cortex-bff applies at startup; mirrors
 # sql/create_human_task_projection.sql, kept in-module so the container has no
@@ -208,7 +219,7 @@ def _resolve_audience_actors(audience: str) -> list[str]:
         if authz_id and authz_id not in actors:
             actors.append(authz_id)
 
-    with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+    with _directory() as c:
         rels = _list(c, {"object_type": "task_audience", "object_id": audience,
                          "relation": "actor"})
         for rel in rels:
@@ -251,7 +262,7 @@ def can_act_or_unavailable(audience: str, caller_id: str) -> bool:
         "subject_id": caller_id,
     }
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             r = c.post("/api/v3/directory/check", json=payload)
             r.raise_for_status()
             return check_answer(r)
@@ -285,7 +296,9 @@ def can_invoke_or_unavailable(capability: str, caller_id: str) -> bool:
 
     An ungranted capability is a DENY, not an outage: `check_can_invoke` documents that Topaz
     answers "object not found" for it, so a 404 from the check is False and every other non-2xx
-    is unavailable. The 404 mapping is asserted against a double, NOT measured live."""
+    is unavailable. Measured live on 2026-11-14, the sandbox's Topaz (0.33.13) answers a check on a
+    capability it does not have 200 `check: false`, not 404; the 404 mapping stays for a directory
+    that answers so, and is asserted against a double only."""
     if not capability or not caller_id:
         return False
     if not _TOPAZ_DIRECTORY_URL:
@@ -298,7 +311,7 @@ def can_invoke_or_unavailable(capability: str, caller_id: str) -> bool:
         "subject_id": caller_id,
     }
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             r = c.post("/api/v3/directory/check", json=payload)
             if r.status_code == 404:
                 return False
@@ -332,7 +345,7 @@ def check_can_invoke(capability: str, caller_id: str) -> bool:
         "subject_id": caller_id,
     }
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             r = c.post("/api/v3/directory/check", json=payload)
             if r.status_code == 404:
                 return False
@@ -356,7 +369,7 @@ def capability_object_exists(capability: str) -> bool:
     from urllib.parse import quote
 
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             r = c.get(f"/api/v3/directory/object/capability/{quote(capability, safe='')}")
     except httpx.HTTPError as exc:
         raise AuthorizationUnavailable(type(exc).__name__) from exc
@@ -380,7 +393,7 @@ def capability_keys() -> list[str]:
     seen: set[str] = set()
     token = ""
     try:
-        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+        with _directory() as c:
             while True:
                 params = {"object_type": "capability"}
                 if token:
@@ -412,16 +425,62 @@ def capability_keys() -> list[str]:
         raise AuthorizationUnavailable(type(exc).__name__) from exc
 
 
-def held_capabilities(caller_id: str) -> list[str]:
-    """The sorted, de-duplicated capability keys the caller holds `can_invoke` on: every key
-    :func:`capability_keys` reads from the directory SERVER, kept when `can_invoke_or_unavailable`
-    is True. Empty `caller_id` -> `[]` with no directory call. A raise from either propagates
-    (503 for the caller), so a failure is never a partial list. It serves HELD keys only: a
-    `can_drop:<kind>` object the caller does not hold is absent here; `droppable_kinds` remains the
-    drop answer."""
+def can_invoke_each(capabilities: "list[str]", caller_id: str) -> list[bool]:
+    """`can_invoke(caller, capability)` for each capability, in the order given, in ONE
+    `POST /api/v3/directory/checks`. Each answer is the one `can_invoke_or_unavailable` gives:
+    - a no is False, and so is a capability the directory does not have (`checks_answer` reads
+      Topaz's not-found code as a no, as the single check answers it 200 false);
+    - an empty capability is False and is not asked;
+    - an empty caller, or no capability, is all False with no directory call;
+    - an unset TOPAZ_DIRECTORY_URL RAISES `AuthorizationUnconfigured`.
+    A transport error, any non-2xx (a 404 here means no batch endpoint, never "not granted"), a
+    malformed answer, an item that is an error and not a decision, or a count other than the count
+    asked RAISES `AuthorizationUnavailable`: a failure is never a partial list."""
+    asked = [k for k in capabilities if k]
+    if not caller_id or not asked:
+        return [False] * len(capabilities)
+    if not _TOPAZ_DIRECTORY_URL:
+        raise AuthorizationUnconfigured("TOPAZ_DIRECTORY_URL is unset")
+    payload = {
+        "default": {"object_type": "capability", "relation": "can_invoke",
+                    "subject_type": "user", "subject_id": caller_id},
+        "checks": [{"object_id": k} for k in asked],
+    }
+    try:
+        with _directory() as c:
+            r = c.post("/api/v3/directory/checks", json=payload)
+            r.raise_for_status()
+            answers = iter(checks_answer(r, len(asked)))
+    except (httpx.HTTPError, ValueError) as exc:  # ValueError: a body that is not JSON
+        raise AuthorizationUnavailable(type(exc).__name__) from exc
+    return [next(answers) if k else False for k in capabilities]
+
+
+def capabilities_and_held(caller_id: str) -> "tuple[list[str], list[str]]":
+    """Every capability key the directory SERVER has (:func:`capability_keys`), and the sorted,
+    de-duplicated ones the caller holds `can_invoke` on: one list read and ONE batched check
+    (:func:`can_invoke_each`), where asking key by key took one request per key. Empty `caller_id`
+    -> the keys and no held key, with no check. A raise from either propagates (503 for the
+    caller), so a failure is never a partial list."""
+    keys = capability_keys()
     if not caller_id:
-        return []
-    return sorted({k for k in capability_keys() if can_invoke_or_unavailable(k, caller_id)})
+        return keys, []
+    unique = sorted(set(keys))
+    return keys, [k for k, held in zip(unique, can_invoke_each(unique, caller_id), strict=True) if held]
+
+
+def drop_capability(kind: str) -> str:
+    """The capability that gates dropping a `kind` document: `can_drop:<kind>`."""
+    return f"can_drop:{kind}"
+
+
+def may_drop(kind: str, keys: "set[str]", held: "set[str]") -> bool:
+    """:func:`can_drop_refusal`'s decision, from a capability list and a held set already read
+    (:func:`capabilities_and_held`): a kind is open iff its `can_drop:<kind>` is not a capability
+    object, or the caller holds it. `/me/entitlements` lists the kinds this way; the drop door
+    itself asks `can_drop_refusal`."""
+    capability = drop_capability(kind)
+    return capability not in keys or capability in held
 
 
 def can_drop_refusal(kind: str, dropper_id: str) -> "dict | None":
@@ -430,7 +489,7 @@ def can_drop_refusal(kind: str, dropper_id: str) -> "dict | None":
     `capability:can_drop:<kind>` exists; an absent object is OPEN. A raise from
     `capability_object_exists` or `can_invoke_or_unavailable` propagates (never open, and a Topaz
     failure is never a refusal: a 404 or `check: false` is the only "no")."""
-    capability = f"can_drop:{kind}"
+    capability = drop_capability(kind)
     if not capability_object_exists(capability):
         return None
     if can_invoke_or_unavailable(capability, dropper_id):

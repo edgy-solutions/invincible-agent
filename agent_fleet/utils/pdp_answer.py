@@ -1,9 +1,10 @@
 """A PDP's boolean answer, read strictly: yes, no, or malformed.
 
 Topaz answers a directory check as `{"check": <bool>}` and an authorizer decision as
-`{"decisions": [{"decision": <name>, "is": <bool>}]}`. A JSON boolean there is an answer. A body that
-is not JSON, is not an object, or carries anything other than a boolean in that field is MALFORMED,
-and a malformed answer is the outage class: it raises, and each site handles it exactly as it
+`{"decisions": [{"decision": <name>, "is": <bool>}]}`, and a batch of directory checks as
+`{"checks": [{"check": <bool>, "context": {...}}, ...]}` (`checks_answer`). A JSON boolean there
+is an answer. A body that is not JSON, is not an object, or carries anything other than a boolean in
+that field is MALFORMED, and a malformed answer is the outage class: it raises, and each site handles it exactly as it
 handles Topaz being down (architect ruling 2026-10-31: "a non-boolean `check` is a malformed PDP
 answer, which is the outage class: 503, never a 403 (a 403 asserts policy said no)"). Reading the
 field with `bool(...)` admitted `"false"`, `"no"` and `"0"`.
@@ -58,6 +59,58 @@ def _strict(obj: dict, field: str) -> bool:
 def check_answer(response: Any) -> bool:
     """The `check` of a `/api/v3/directory/check` answer."""
     return _strict(_body(response), "check")
+
+
+#: The reason code of a batched check on an object or subject the directory does not have. It comes
+#: with `check: false`, which is a "no": the single `/check` answers the same question 200 false.
+_NOT_FOUND = "E20025"
+
+
+def checks_answer(response: Any, asked: int) -> list[bool]:
+    """The `check` of each item of a `/api/v3/directory/checks` answer, in the order asked.
+
+    Read live against the sandbox's Topaz (0.33.13) on 2026-11-14:
+    - the items come back in the order asked;
+    - a plain no is `check: false` with an empty `context`;
+    - a check on an object or subject the directory does not have is `check: false` with a
+      `context.reason` that starts `E20025`;
+    - an unknown object type or relation is `check: false` with another code (`E20026`, `E20036`).
+
+    So each item is read as `check_answer` reads one answer, a JSON boolean and absent is a no, and:
+    - an item whose reason starts `E20025` is a no;
+    - an item with any other reason is MALFORMED: the directory could not decide, which is not a no;
+    - a count other than `asked` is MALFORMED: no answer could be paired with its question.
+    An absent `checks` is an empty list (proto3 JSON omits one)."""
+    body = _body(response)
+    items = body.get("checks")
+    if items is None:
+        items = []
+    if not isinstance(items, list):
+        raise MalformedPdpAnswer(f"`checks` is a {type(items).__name__}, not a list")
+    if len(items) != asked:
+        raise MalformedPdpAnswer(f"{len(items)} answers to {asked} checks")
+    out: list[bool] = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise MalformedPdpAnswer(f"answer {i} is a {type(item).__name__}, not an object")
+        value = _strict(item, "check")
+        context = item.get("context")
+        if context is None:
+            context = {}
+        if not isinstance(context, dict):
+            raise MalformedPdpAnswer(f"answer {i}'s `context` is a {type(context).__name__}, not an object")
+        reason = context.get("reason")
+        if reason is None or reason == "":
+            out.append(value)
+            continue
+        if not isinstance(reason, str):
+            raise MalformedPdpAnswer(f"answer {i}'s reason is a {type(reason).__name__}, not a string")
+        code = reason.split(" ", 1)[0][:16]  # the code only: the rest names the object and subject
+        if code == _NOT_FOUND and value is False:
+            out.append(False)
+            continue
+        raise MalformedPdpAnswer(f"answer {i} is the error {code}, not a decision")
+    return out
 
 
 def decision_answer(response: Any, decision: str) -> bool:

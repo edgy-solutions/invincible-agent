@@ -1119,7 +1119,8 @@ _mount_version(app, "engine-o")
 @app.middleware("http")
 async def _telemetry_join(request: Request, call_next):
     # ADR-0038: join this engine's work to the CALLER's trace. The analyst forwards its trace
-    # id as X-Trace-Id (discovery.py); observed_trace seeds create_trace_id on it, so every
+    # id as X-Trace-Id (discovery.py); observed_trace seeds trace_id_for on it (a 32-hex id is used verbatim,
+    # anything else is hashed), so every
     # endpoint nests under the caller's trace. Fail-soft; no-op without a trace id / when off.
     tid = request.headers.get("X-Trace-Id")
     if not tid:

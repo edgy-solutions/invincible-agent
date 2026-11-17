@@ -164,7 +164,7 @@ def _get_entitlement_cache() -> Optional[EntitlementCache]:
         return _entitlement_cache
     with _topaz_init_lock:
         if _entitlement_cache is None:
-            _topaz_client = TopazDirectoryClient(TOPAZ_DIRECTORY_URL)
+            _topaz_client = TopazDirectoryClient(TOPAZ_DIRECTORY_URL, shared=True)
             _entitlement_cache = EntitlementCache(_topaz_client)
     return _entitlement_cache
 

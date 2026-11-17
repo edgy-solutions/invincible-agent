@@ -8,6 +8,12 @@ spans:
   bff.orchestrate:
     kind: request
     service: cortex-bff
+  bff.ingest_event:
+    kind: request
+    service: cortex-bff
+  bff.case_action:
+    kind: request
+    service: cortex-bff
   supervisor.create_task_plan:
     kind: stage
     service: dagster-supervisor

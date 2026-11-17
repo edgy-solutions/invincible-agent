@@ -113,6 +113,11 @@ def _minio_compat_config():
 
 
 proxy_int = None
+
+# The Dagster code location that owns `ingest_ontology_job`. One name, read by the launcher
+# (`repositoryLocationName`) and by `_read_loader_identity`, so the two cannot drift apart.
+DAGSTER_INGEST_LOCATION = "doc-tools"
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
@@ -611,7 +616,9 @@ def prime_jena() -> None:
 # Step 3: Upload canonical TTLs to MinIO so the dagster pipeline can ingest
 # ============================================================================
 
-def record_prime_run(wiped: bool = False, safety_seed_unmatched: "list | None" = None) -> None:
+def record_prime_run(wiped: bool = False, safety_seed_unmatched: "list | None" = None,
+                     domains_loaded: "list | None" = None,
+                     domains_skipped: "list | None" = None) -> None:
     """Write this prime's own row: when it finished, what code ran it, what it seeded.
 
     Read by `scripts/version_census.py` to answer REGISTRATION RECENCY — an engine whose
@@ -653,7 +660,9 @@ def record_prime_run(wiped: bool = False, safety_seed_unmatched: "list | None" =
         ontology_count:     $n,
         wiped:              $wiped,
         safety_seed_unmatched:       $unmatched,
-        safety_seed_unmatched_count: $unmatched_n
+        safety_seed_unmatched_count: $unmatched_n,
+        domains_loaded:     $loaded,
+        domains_skipped:    $skipped
     })
     RETURN p.completed_at AS at
     """
@@ -674,6 +683,8 @@ def record_prime_run(wiped: bool = False, safety_seed_unmatched: "list | None" =
                 unmatched=safety_seed_unmatched,
                 unmatched_n=(len(safety_seed_unmatched)
                              if safety_seed_unmatched is not None else None),
+                loaded=sorted(domains_loaded or []),
+                skipped=sorted(domains_skipped or []),
             ).consume()
         driver.close()
         print(f"  [PrimeRun] recorded {now.isoformat()} sha={sha[:12] or 'unstamped'} "
@@ -997,9 +1008,24 @@ def _compact_jena(host: str, ds_name: str, auth) -> None:
         print(f"  [warn] TDB2 compaction skipped ({e}); disk reclaim deferred to next prime.")
 
 
-def clear_ontology_graphs() -> None:
+def _jena_endpoint() -> "tuple[str, str, tuple]":
+    """(host, dataset, auth) for Fuseki, resolved from the environment."""
+    raw_host = os.environ.get("JENA_URL") or os.environ.get("JENA_SPARQL_ENDPOINT", "http://localhost:3030")
+    host = get_base_url(raw_host)
+    ds_name = os.environ.get("JENA_DS", "ds")
+    user = os.environ.get("JENA_USERNAME", "admin")
+    pw = os.environ.get("FUSEKI_PASSWORD") or os.environ.get("JENA_PASSWORD", "Admin123!")
+    return host, ds_name, (user, pw)
+
+
+def clear_ontology_graphs(domains: "set[str] | None" = None) -> None:
     """Append-idempotency guard: DROP the MANIFEST-listed domain graphs BEFORE the
     per-file ingests POST-append into them.
+
+    `domains` limits the drop to that set (the domains `trigger_ingest_jobs` is about to
+    reload). The granularity is the DOMAIN because doc-tools POST-appends every file of a
+    domain into ONE graph: one file's triples cannot be removed or kept alone. None keeps the
+    original behaviour for any other caller: every manifest domain.
 
     doc-tools ``ontology_assets.py`` now POSTs (merges) each TTL into its domain
     graph instead of PUT (replace) — because MANY files map to ONE domain and PUT
@@ -1027,16 +1053,12 @@ def clear_ontology_graphs() -> None:
     store audit shows it non-empty.
     """
     print("--- Clearing manifest ontology graphs (append-idempotency; instance graphs untouched) ---")
-    raw_host = os.environ.get("JENA_URL") or os.environ.get("JENA_SPARQL_ENDPOINT", "http://localhost:3030")
-    host = get_base_url(raw_host)
-    ds_name = os.environ.get("JENA_DS", "ds")
-    user = os.environ.get("JENA_USERNAME", "admin")
-    pw = os.environ.get("FUSEKI_PASSWORD") or os.environ.get("JENA_PASSWORD", "Admin123!")
-    auth = (user, pw)
+    host, ds_name, auth = _jena_endpoint()
     update_url = f"{host}/{ds_name}/update"
     # The reproducible set: one vocabulary graph per distinct manifest domain. Instance
     # graphs (…_INSTANCES) are deliberately absent from this set, so they are never dropped.
-    manifest_graphs = sorted({f"http://internal/{e['domain']}" for e in CANONICAL_TTL_MANIFEST})
+    manifest_graphs = sorted({f"http://internal/{e['domain']}" for e in CANONICAL_TTL_MANIFEST
+                              if domains is None or e["domain"] in domains})
     try:
         for g in manifest_graphs:
             # DROP SILENT: a manifest graph may not exist yet on a fresh store.
@@ -1056,8 +1078,232 @@ def clear_ontology_graphs() -> None:
         raise
 
 
-def trigger_ingest_jobs(*, wait: bool = False, wait_timeout: int = 1800) -> None:
-    """OPTIONAL: trigger dagster ingest_ontology_job for each TTL partition.
+# ----------------------------------------------------------------------------
+# Skip-unchanged ontology loading. The unit of reload is the DOMAIN: doc-tools POST-appends
+# every file of a domain into one graph (`http://internal/{DOMAIN}`), dropped once per domain,
+# so a domain is either left alone (no input changed) or dropped and fully reloaded.
+# ----------------------------------------------------------------------------
+_LOAD_RECORD_LABEL = "PrimeOntologyLoad"
+
+
+def _ontology_bucket() -> str:
+    return os.environ.get("ONTOLOGY_BUCKET", "ontologies")
+
+
+def _ontology_file_url(entry: dict) -> str:
+    return f"s3://{_ontology_bucket()}/{entry['s3_key']}"
+
+
+def _neo4j_driver():
+    """Neo4j driver resolved exactly as `record_prime_run` resolves it."""
+    uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+    user = os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME") or "neo4j"
+    password = os.getenv("NEO4J_PASSWORD", "")
+    return GraphDatabase.driver(uri, auth=(user, password))
+
+
+def _read_loader_identity(graphql_url: str) -> "str | None":
+    """The `versionKey` of the doc-tools code location, or None when it cannot be read.
+
+    It is a gRPC server id: stable while the doc-tools pod lives, so a doc-tools restart
+    changes it and reloads every domain (safe). It names no image. Any error, a non-200, a
+    missing location or an empty key is None, which `decide_reloads` treats as "reload all".
+    """
+    query = ("{ workspaceOrError { __typename ... on Workspace { "
+             "locationEntries { name versionKey } } } }")
+    try:
+        r = requests.post(graphql_url, json={"query": query}, timeout=15)
+        if r.status_code != 200:
+            return None
+        entries = ((r.json().get("data") or {}).get("workspaceOrError") or {}).get("locationEntries") or []
+        for e in entries:
+            if e.get("name") == DAGSTER_INGEST_LOCATION:
+                key = e.get("versionKey")
+                return key if isinstance(key, str) and key else None
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [WARNING] loader identity unreadable: {type(exc).__name__}: {exc}")
+    return None
+
+
+def _read_object_etags(entries) -> "dict[str, str | None]":
+    """ETag of every manifest object AS IT SITS IN THE BUCKET (what the ingest reads).
+
+    Read after upload, from the bucket rather than from the fetched bytes, so a URL whose fetch
+    failed and left the old object still reports what will actually be ingested. A missing
+    object or a head error is None for that key.
+    """
+    out: "dict[str, str | None]" = {e["s3_key"]: None for e in entries}
+    if boto3 is None:
+        return out
+    try:
+        endpoint = os.environ.get("S3_ENDPOINT_URL") or os.environ.get("MINIO_URL", "http://localhost:9000")
+        access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            config=_minio_compat_config(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [WARNING] cannot read object ETags: {type(exc).__name__}: {exc}")
+        return out
+    bucket = _ontology_bucket()
+    for e in entries:
+        try:
+            etag = s3.head_object(Bucket=bucket, Key=e["s3_key"]).get("ETag")
+            out[e["s3_key"]] = str(etag).strip('"') if etag else None
+        except Exception:  # noqa: BLE001
+            out[e["s3_key"]] = None
+    return out
+
+
+def domain_digest(loader: "str | None", rows) -> str:
+    """sha256 over the loader and a domain's files (s3_key, etag, domain, file_url). Pure."""
+    import hashlib
+    import json as _json
+
+    files = sorted(
+        ([r["s3_key"], r["etag"], r["domain"], r["file_url"]] for r in rows),
+        key=lambda f: _json.dumps(f),
+    )
+    blob = _json.dumps({"loader": loader, "files": files}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _read_load_records() -> "dict[str, dict]":
+    """Every PrimeOntologyLoad record by domain. Any failure is {} (so: reload everything)."""
+    try:
+        driver = _neo4j_driver()
+        try:
+            with driver.session() as session:
+                rows = session.run(f"MATCH (r:{_LOAD_RECORD_LABEL}) RETURN properties(r) AS p")
+                return {p["domain"]: p for p in (row["p"] for row in rows) if p.get("domain")}
+        finally:
+            driver.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [WARNING] could not read ontology load records ({type(exc).__name__}: {exc}); "
+              f"every domain will reload.")
+        return {}
+
+
+def _delete_load_records(domains) -> None:
+    """Delete the records of `domains`. Never raises: a record left behind is caught by the
+    live-count check, and a failed delete only costs a reload."""
+    try:
+        driver = _neo4j_driver()
+        try:
+            with driver.session() as session:
+                session.run(f"MATCH (r:{_LOAD_RECORD_LABEL}) WHERE r.domain IN $d DETACH DELETE r",
+                            d=sorted(domains)).consume()
+        finally:
+            driver.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [WARNING] could not delete ontology load records ({type(exc).__name__}: {exc}).")
+
+
+def _write_load_record(domain: str, digest: str, loader: "str | None", files: "list[str]",
+                       jena_triples: int, neo4j_classes: int) -> None:
+    """MERGE one record. Never raises: a record not written is a reload next time."""
+    import datetime as _dt
+
+    cypher = f"""
+    MERGE (r:{_LOAD_RECORD_LABEL} {{domain: $domain}})
+    SET r.digest = $digest, r.loader = $loader, r.files = $files,
+        r.jena_triples = $jena, r.neo4j_classes = $classes,
+        r.recorded_at = $at, r.image_sha = $sha
+    """
+    try:
+        driver = _neo4j_driver()
+        try:
+            with driver.session() as session:
+                session.run(
+                    cypher, domain=domain, digest=digest, loader=loader, files=files,
+                    jena=int(jena_triples), classes=int(neo4j_classes),
+                    at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+                    sha=(os.getenv("IAGENT_GIT_SHA") or "").strip() or "unstamped",
+                ).consume()
+        finally:
+            driver.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [WARNING] could not record the load of {domain} ({type(exc).__name__}: {exc}); "
+              f"it will reload next time.")
+
+
+def _jena_triple_count(domain: str) -> "int | None":
+    """Triples in the domain's graph, or None on any error."""
+    try:
+        host, ds_name, auth = _jena_endpoint()
+        q = f"SELECT (COUNT(*) AS ?n) WHERE {{ GRAPH <http://internal/{domain}> {{ ?s ?p ?o }} }}"
+        r = requests.post(
+            f"{host}/{ds_name}/query", data={"query": q}, auth=auth, proxies=proxy_int,
+            verify=False, timeout=60, headers={"Accept": "application/sparql-results+json"},
+        )
+        r.raise_for_status()
+        return int(r.json()["results"]["bindings"][0]["n"]["value"])
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [WARNING] triple count for {domain} unreadable: {type(exc).__name__}: {exc}")
+        return None
+
+
+def _neo4j_class_count(domain: str) -> "int | None":
+    """OntologyClass nodes of the domain, or None on any error."""
+    try:
+        driver = _neo4j_driver()
+        try:
+            with driver.session() as session:
+                return int(session.run(
+                    "MATCH (c:OntologyClass {domain: $d}) RETURN count(c) AS n", d=domain
+                ).single()["n"])
+        finally:
+            driver.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [WARNING] class count for {domain} unreadable: {type(exc).__name__}: {exc}")
+        return None
+
+
+def decide_reloads(domains, digests, loader, records, jena_counts, neo4j_counts, force,
+                   files=None) -> "dict[str, str | None]":
+    """Per domain: None to SKIP, or the reason to reload. Pure. First reason wins.
+
+    `digests[d]` is None when a file of the domain has no ETag (its input is not attestable).
+    `files` (optional, `{domain: ["<s3_key>=<etag>", ...]}`) only sharpens the "input changed"
+    reason into the keys whose ETag moved; the decision does not depend on it.
+    """
+    out: "dict[str, str | None]" = {}
+    for d in domains:
+        rec = records.get(d)
+        digest = digests.get(d)
+        if force:
+            out[d] = "forced: --wipe/--reload-ontologies"
+        elif loader is None:
+            out[d] = "loader identity unreadable"
+        elif digest is None:
+            out[d] = "an input is not attestable"
+        elif not rec:
+            out[d] = "no load record"
+        elif rec.get("digest") != digest:
+            if rec.get("loader") != loader:
+                what = "loader"
+            else:
+                old = {f.rsplit("=", 1)[0]: f for f in (rec.get("files") or [])}
+                new = {f.rsplit("=", 1)[0]: f for f in ((files or {}).get(d) or [])}
+                what = ", ".join(sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k))) or "inputs"
+            out[d] = f"input changed: {what}"
+        elif (jena_counts.get(d) is None or jena_counts[d] != rec.get("jena_triples")
+              or jena_counts[d] == 0):
+            out[d] = "graph is not what was recorded"
+        elif neo4j_counts.get(d) is None or neo4j_counts[d] < (rec.get("neo4j_classes") or 0):
+            out[d] = "classes are fewer than recorded"
+        else:
+            out[d] = None
+    return out
+
+
+def trigger_ingest_jobs(*, wait: bool = False, wait_timeout: int = 1800,
+                        force: bool = False) -> "dict[str, list[str]]":
+    """OPTIONAL: trigger dagster ingest_ontology_job for each TTL partition whose inputs changed.
 
     Without this, the TTLs are uploaded to MinIO but the canonical
     pipeline must be triggered manually (via the dagster sensor's
@@ -1065,13 +1311,32 @@ def trigger_ingest_jobs(*, wait: bool = False, wait_timeout: int = 1800) -> None
     for fresh-bootstrap rehearsals where you want the entire chain to
     run end-to-end in one script.
 
+    UNCHANGED INPUT DOES NO WORK. Each manifest domain gets a digest of the doc-tools loader
+    identity and the bucket ETag of each of its files, compared with the `PrimeOntologyLoad`
+    record written after its last completed load, plus a live check that its Jena graph and
+    Neo4j classes still match that record. A domain that matches is neither dropped nor
+    reloaded. Anything else reloads: `force` (--wipe / --reload-ontologies), an unreadable
+    loader, an input with no ETag, no record, a changed digest, a graph or class count that
+    disagrees with the record.
+
+    THE GRANULARITY IS THE DOMAIN, NOT THE FILE: doc-tools POST-appends every file of a domain
+    into ONE graph, so one file's triples cannot be removed or kept alone. If any file of a
+    domain changed, the whole domain is dropped and all its files are reloaded. `_INSTANCES`
+    graphs are never touched.
+
+    ORDER: the reload set's records are deleted FIRST, then its graphs dropped, then its runs
+    launched. Records are written only when `wait` is true and the await returned normally, so
+    a failed or interrupted reload leaves no record and the next prime reloads it.
+
+    UNCHANGED HAZARD, NOT CAUSED OR FIXED HERE: doc-tools' `ontology_sensor` launches its own
+    run when an object's ETag changes, and that run appends without a drop.
+
+    Returns {"loaded": [...], "skipped": [...]} (sorted domains).
+
     Dagster GraphQL endpoint: defaults to http://localhost:3000/graphql;
     override with DAGSTER_URL.
     """
     print("--- Triggering dagster ingest_ontology_job per partition ---")
-    # Clear the domain graphs ONCE before the per-file POST-appends, so a re-prime
-    # rebuilds cleanly (append-idempotency; pairs with ontology_assets.py PUT->POST).
-    clear_ontology_graphs()
     # Backward-compat: DAGSTER_URL was the original env name; the helm
     # chart emits DAGSTER_HOST (matches the engineering convention used by
     # most fleet services). Read both, prefer DAGSTER_URL when explicitly
@@ -1082,6 +1347,41 @@ def trigger_ingest_jobs(*, wait: bool = False, wait_timeout: int = 1800) -> None
         or "http://localhost:3000"
     )
     graphql = f"{dagster_url}/graphql"
+
+    # ----- Decide which domains must reload (see the docstring) -----
+    domains = sorted({e["domain"] for e in CANONICAL_TTL_MANIFEST})
+    loader = _read_loader_identity(graphql)
+    etags = _read_object_etags(CANONICAL_TTL_MANIFEST)
+    digests: "dict[str, str | None]" = {}
+    file_lists: "dict[str, list[str]]" = {}
+    for d in domains:
+        rows = [
+            {"s3_key": e["s3_key"], "etag": etags.get(e["s3_key"]), "domain": d,
+             "file_url": _ontology_file_url(e)}
+            for e in CANONICAL_TTL_MANIFEST if e["domain"] == d
+        ]
+        file_lists[d] = sorted(f"{r['s3_key']}={r['etag']}" for r in rows)
+        digests[d] = (None if any(r["etag"] is None for r in rows)
+                      else domain_digest(loader, rows))
+    records = _read_load_records()
+    jena_counts = {d: _jena_triple_count(d) for d in domains}
+    neo4j_counts = {d: _neo4j_class_count(d) for d in domains}
+    decisions = decide_reloads(domains, digests, loader, records, jena_counts, neo4j_counts,
+                               force, files=file_lists)
+    reload_set = {d for d, why in decisions.items() if why is not None}
+    for d in domains:
+        print(f"  SKIP {d}" if decisions[d] is None else f"  LOAD {d}: {decisions[d]}")
+    n_runs = sum(1 for e in CANONICAL_TTL_MANIFEST if e["domain"] in reload_set)
+    print(f"domains: {len(reload_set)} load, {len(domains) - len(reload_set)} skip; "
+          f"runs to launch: {n_runs}")
+    summary = {"loaded": sorted(reload_set), "skipped": sorted(set(domains) - reload_set)}
+    if not reload_set:
+        return summary
+
+    # Records go FIRST: a record that outlived its graph's drop would attest a load that is no
+    # longer there. Then the drop (reload set only), then the launches.
+    _delete_load_records(reload_set)
+    clear_ontology_graphs(domains=reload_set)
 
     # ontology_files is a DynamicPartitionsDefinition. Partition keys must
     # be REGISTERED with Dagster (via addDynamicPartition) BEFORE they can
@@ -1112,16 +1412,21 @@ def trigger_ingest_jobs(*, wait: bool = False, wait_timeout: int = 1800) -> None
         "} }"
     )
     add_partition_repo_selector = {
-        "repositoryLocationName": "doc-tools",
+        "repositoryLocationName": DAGSTER_INGEST_LOCATION,
         "repositoryName": "__repository__",
     }
 
     launched: list[tuple[str, str]] = []
+    # Domains with a file whose launch did not succeed: their graph will be partial, so they
+    # must never be recorded as loaded (a record would make every later prime skip them).
+    unlaunched_domains: set[str] = set()
     for entry in CANONICAL_TTL_MANIFEST:
         domain = entry["domain"]
+        if domain not in reload_set:
+            continue
         s3_key = entry["s3_key"]
         partition_key = s3_key.replace("/", "__")
-        file_url = f"s3://{os.environ.get('ONTOLOGY_BUCKET', 'ontologies')}/{s3_key}"
+        file_url = _ontology_file_url(entry)
 
         # Register the partition key first. Errors here are non-fatal —
         # the sensor may have beaten us to it, and DuplicateDynamicPartitionError
@@ -1170,7 +1475,7 @@ def trigger_ingest_jobs(*, wait: bool = False, wait_timeout: int = 1800) -> None
             "variables": {
                 "executionParams": {
                     "selector": {
-                        "repositoryLocationName": "doc-tools",
+                        "repositoryLocationName": DAGSTER_INGEST_LOCATION,
                         "repositoryName": "__repository__",
                         "pipelineName": "ingest_ontology_job",
                         "assetSelection": [
@@ -1205,6 +1510,7 @@ def trigger_ingest_jobs(*, wait: bool = False, wait_timeout: int = 1800) -> None
             resp = requests.post(graphql, json=mutation, timeout=15)
             if resp.status_code != 200:
                 print(f"  [WARNING] {entry['name']}: dagster HTTP {resp.status_code}")
+                unlaunched_domains.add(domain)
                 continue
             data = resp.json().get("data", {}).get("launchPipelineExecution", {})
             if data.get("__typename") == "LaunchRunSuccess":
@@ -1213,8 +1519,10 @@ def trigger_ingest_jobs(*, wait: bool = False, wait_timeout: int = 1800) -> None
                 print(f"  [LAUNCHED] {entry['name']} → run {run_id}")
             else:
                 print(f"  [WARNING] {entry['name']}: {data}")
+                unlaunched_domains.add(domain)
         except Exception as e:
             print(f"  [WARNING] {entry['name']}: {e}")
+            unlaunched_domains.add(domain)
 
     if not wait:
         print(
@@ -1222,7 +1530,8 @@ def trigger_ingest_jobs(*, wait: bool = False, wait_timeout: int = 1800) -> None
             "poll the runOrError query for status. The full chain takes "
             "~30-60s per partition."
         )
-        return
+        print("  [NOTE] no wait, so no load is known to have finished: nothing recorded.")
+        return summary
 
     # WAIT FOR WHAT WE LAUNCHED.
     #
@@ -1240,6 +1549,20 @@ def trigger_ingest_jobs(*, wait: bool = False, wait_timeout: int = 1800) -> None
     # present` immediately and completed in 47s while the mesh ingest was still
     # QUEUED. Existence cannot prove freshness; only the run status can.
     _await_ingest_runs(launched, graphql, wait_timeout)
+
+    # The await returned normally: every launched run succeeded. Record each reloaded domain
+    # with the digest computed BEFORE the launch and the counts as they are now. A count that
+    # cannot be read means no record, which means a reload next time.
+    for d in sorted(reload_set):
+        if d in unlaunched_domains:
+            print(f"  [WARNING] {d}: a file was not launched; no record written, so it reloads next time.")
+            continue
+        j, c = _jena_triple_count(d), _neo4j_class_count(d)
+        if digests[d] is None or j is None or c is None:
+            print(f"  [WARNING] {d}: loaded but not attestable; no record written, so it reloads next time.")
+            continue
+        _write_load_record(d, digests[d], loader, file_lists[d], j, c)
+    return summary
 
 
 
@@ -1758,6 +2081,8 @@ def main() -> None:
     )
     parser.add_argument("--wipe", action="store_true",
                         help="Wipe Neo4j + Weaviate + Jena before priming. REQUIRES --i-mean-it AND --namespace.")
+    parser.add_argument("--reload-ontologies", action="store_true",
+                        help="Reload every ontology domain even if its inputs are unchanged.")
     parser.add_argument("--i-mean-it", action="store_true",
                         help="Second guard for --wipe.")
     parser.add_argument("--namespace", default=None,
@@ -1849,6 +2174,8 @@ def main() -> None:
                   "WILL be destroyed, not just the routing substrate ===")
         wipe_databases(namespace=args.namespace, nuclear=args.nuclear)
 
+    force = bool(args.wipe or args.reload_ontologies)
+
     # ----- Pre-flight -----
     print("=== Prime Pre-Flight ===")
     time.sleep(1)
@@ -1858,9 +2185,10 @@ def main() -> None:
         upload_doc_pages()
         if args.trigger_ingest:
             trigger_ingest_jobs(wait=args.wait_for_ingest,
-                                wait_timeout=args.ingest_timeout)
+                                wait_timeout=args.ingest_timeout, force=force)
         return
 
+    ingest_summary = None
     safety_seed_unmatched = prime_neo4j()
     prime_jena()
 
@@ -1869,8 +2197,8 @@ def main() -> None:
         upload_doc_pages()
 
     if args.trigger_ingest:
-        trigger_ingest_jobs(wait=args.wait_for_ingest,
-                            wait_timeout=args.ingest_timeout)
+        ingest_summary = trigger_ingest_jobs(wait=args.wait_for_ingest,
+                                             wait_timeout=args.ingest_timeout, force=force)
 
     # ── THE PRIME WRITES ITS OWN RECORD. RULED 2026-09-11 ──────────────────
     #
@@ -1891,7 +2219,9 @@ def main() -> None:
     # preserves durability data. A prime's own history belongs with the second group — erasing
     # the record of the last prime as part of priming would be self-defeating.
     record_prime_run(wiped=bool(getattr(args, "wipe", False)),
-                     safety_seed_unmatched=safety_seed_unmatched)
+                     safety_seed_unmatched=safety_seed_unmatched,
+                     domains_loaded=(ingest_summary or {}).get("loaded", []),
+                     domains_skipped=(ingest_summary or {}).get("skipped", []))
 
     print("=== Prime complete ===")
     print(

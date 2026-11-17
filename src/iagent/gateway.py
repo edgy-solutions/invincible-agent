@@ -34,12 +34,14 @@ import json
 import logging
 import os
 import re
+import secrets
 import time
 import uuid
 import weakref
 from contextlib import asynccontextmanager
 from datetime import date as _date, datetime, timezone
 from typing import AsyncGenerator, Any, Literal, Optional
+from types import SimpleNamespace
 
 import httpx
 from dotenv import load_dotenv
@@ -59,7 +61,10 @@ from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, oauth2_scheme, User
 from . import identity_exchange
-from .trace_spans import observed_trace, MAPPING, build_trace_values, current_span_id, request_trace_id
+from .trace_spans import (
+    observed_trace, MAPPING, build_trace_values, current_span_id, request_trace_id,
+    request_trace_context, trace_id_for, format_traceparent, parse_traceparent, annotate_span,
+)
 from iagent_mesh import Refusal as _Refusal
 from iagent_mesh.review_coverage import ReviewShapeRow
 from iagent_mesh.provenance import EvidenceRef  # the SDK model; the one EvidenceRef (ruling 2026-10-31)
@@ -1158,26 +1163,24 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
     from . import content_kinds, human_tasks
 
     ent = current_user.entitlements
-    # `droppable_kinds`: every registered kind except a GATED kind (Topaz object
-    # `capability:can_drop:<kind>` exists) this caller is not granted. One unreadable object makes
-    # the whole answer 503 -- never a partial or guessed list.
-    def _droppable() -> list[str]:
-        out: list[str] = []
-        for reg in content_kinds.registrations():
-            if human_tasks.can_drop_refusal(reg.kind, current_user.authz_id) is None:
-                out.append(reg.kind)
-        return out
+    # Both fields come from ONE capability list and ONE batched check (`capabilities_and_held`),
+    # never a request per key or per kind:
+    # - `capabilities`: the keys the caller holds `can_invoke` on, sorted;
+    # - `droppable_kinds`: every registered kind except a GATED kind (Topaz object
+    #   `capability:can_drop:<kind>` exists) this caller is not granted (`may_drop`).
+    # One unreadable answer makes the whole response 503 -- never a partial or guessed list.
+    def _read() -> "tuple[list[str], list[str]]":
+        keys, held = human_tasks.capabilities_and_held(current_user.authz_id)
+        known, mine = set(keys), set(held)
+        kinds = [reg.kind for reg in content_kinds.registrations()
+                 if human_tasks.may_drop(reg.kind, known, mine)]
+        return kinds, held
 
-    def _held() -> list[str]:
-        return human_tasks.held_capabilities(current_user.authz_id)
-
-    # Both reads sit in this one try, called through `run_in_threadpool` by name: the PDP seal
-    # follows a reader into that form and no other (a helper taking `fn` hides it).
-    what = "which kinds are restricted"
+    # The read sits in this try, called through `run_in_threadpool` by name: the PDP seal follows a
+    # reader into that form and no other (a helper taking `fn` hides it).
+    what = "which capabilities the caller holds"
     try:
-        droppable_kinds = await run_in_threadpool(_droppable)
-        what = "which capabilities the caller holds"
-        capabilities = await run_in_threadpool(_held)
+        droppable_kinds, capabilities = await run_in_threadpool(_read)
     except human_tasks.AuthorizationUnconfigured as exc:
         raise HTTPException(status_code=503, detail={
             "error": "authorization_unconfigured",
@@ -8213,10 +8216,11 @@ async def _audit_orchestrate_wrap(gen, *, who: str, via: str, session_id: str):
         )
 
 
-async def _traced_stream(stream, *, trace_id, session_id, authz_id):
+async def _traced_stream(stream, *, trace_id, session_id, authz_id, parent_span_id=None):
     with observed_trace(MAPPING, build_trace_values(
             trace_id=trace_id, authz_id=authz_id, session_id=session_id or None,
-            engine="cortex-bff", verb="/interview/stream"), name="bff.orchestrate"):
+            engine="cortex-bff", verb="/interview/stream"), name="bff.orchestrate",
+            parent_span_id=parent_span_id):
         async for event in stream:
             yield event
 
@@ -8931,6 +8935,94 @@ async def unarchive_answer(
     return await _set_archive(answer_id, current_user, archive=False, reason=req.reason)
 
 
+def _supervisor_op_config(
+    query: str,
+    thread_id: str,
+    persona: str = "PROCESS_ENGINEER",
+    domain: str = "MAINTENANCE",
+    task_plan_json: str = "",
+    user_id: str = "default_testing_user",
+    # ADR-0017 amendment: which frontend will render the answer. Threaded to Engine F so
+    # the archetype is chosen from THAT client's registered menu. Empty is not an error --
+    # Engine F falls back to its global table, i.e. today's behaviour.
+    frontend_id: str = "",
+    frontend_version: str = "",
+    # ADR-0025 hop 2: caller's entitlement key (email) forwarded as a
+    # runConfig key so the generalist-fallback subtask can hand it to
+    # Engine D's query_metadata for the Topaz can_view ask.
+    user_email: str = "",
+    # Per ADR-0009 Step F'.2: thread user-context fields into the supervisor
+    # so the supervisor's per-subtask predicate lookup (Step F'.3) can scope
+    # by entitled_domains and use user_persona as the answerer fallback when
+    # the matched predicate is persona-agnostic.
+    # Step F'.6: candidate_verb dropped — supervisor now sends user_query
+    # directly to /search_predicates (Weaviate hybrid).
+    user_persona: str | None = None,
+    entitled_domains: list[str] | None = None,
+    entity_refs: list[str] | None = None,
+    # THE SPOKEN SLOTS from /route_intent, argument name -> value. Passed explicitly rather
+    # than read off the caller's `intent_extraction`, which is a local of the streaming
+    # handler and not in scope here - the first draft of this carry did exactly that and
+    # would have raised NameError on every request in the cluster while every test stayed
+    # green, because no test calls this function.
+    slots: dict | None = None,
+    # The user's pick from an ask, kept SEPARATE from `slots` all the way down so the
+    # supervisor can tell a chosen value from an extracted one and validate only the
+    # first against the menu it offered.
+    bound_slots: dict | None = None,
+    spoken_slot: str | None = None,
+    spoken_answer: str | None = None,
+    # The route an earlier ask already established, read back under the caller's ownership
+    # edge. `{}` for an ordinary question, which is every request that answers nothing.
+    pre_resolved: dict | None = None,
+    trace_id: str = "",
+    session_id: str = "",
+) -> dict:
+    """The op_config both answer paths hand the supervisor ops (Dagster run config, or the
+    durable workflow input)."""
+    entitled_domains = entitled_domains or []
+    entity_refs = entity_refs or []
+    # candidate_verb is no longer threaded — supervisor sends user_query to
+    # /search_predicates directly. Keep the op_config field as an empty
+    # string so the existing Dagster schema still validates.
+    candidate_verb = ""
+    # Shared op config — same keys to every op so a Dagster op author can
+    # rely on consistent context regardless of which op they're in.
+    op_config = {
+        "user_query": query,
+        "thread_id": thread_id,
+        "persona": persona,
+        "domain": domain,
+        "task_plan_json": task_plan_json,
+        "user_id": user_id,
+        "user_email": user_email,
+        # ADR-0017 amendment: names the rendering client so Engine F resolves ITS menu.
+        "frontend_id": frontend_id or "",
+        "frontend_version": frontend_version or "",
+        # ADR-0009 Step F'.2 additions:
+        "user_persona": user_persona,
+        "entitled_domains": entitled_domains,
+        "candidate_verb": candidate_verb,
+        "entity_refs": entity_refs,
+        # THE SPOKEN SLOTS, forwarded rather than dropped. `{}` on every request until the
+        # slot-filler is called - see the finding. Threaded here, beside entity_refs,
+        # because the two come from the same response and are constantly confused: refs are
+        # untyped values, slots are argument name -> value.
+        "slots": dict(slots or {}),
+        "bound_slots": dict(bound_slots or {}),
+        "spoken_slot": spoken_slot or "",
+        "spoken_answer": spoken_answer or "",
+        "pre_resolved": dict(pre_resolved or {}),
+        # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
+        # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
+        "trace_id": trace_id,
+        "session_id": session_id,
+        # The bff.orchestrate span's id, ambient in the producer task.
+        "parent_span_id": current_span_id(),
+    }
+    return op_config
+
+
 async def _launch_supervisor_job(
     query: str,
     thread_id: str,
@@ -8983,12 +9075,27 @@ async def _launch_supervisor_job(
     runConfig keys; the legacy ones default to sane values so the existing
     Dagster ops still validate.
     """
-    entitled_domains = entitled_domains or []
-    entity_refs = entity_refs or []
-    # candidate_verb is no longer threaded — supervisor sends user_query to
-    # /search_predicates directly. Keep the op_config field as an empty
-    # string so the existing Dagster schema still validates.
-    candidate_verb = ""
+    op_config = _supervisor_op_config(
+        query=query,
+        thread_id=thread_id,
+        persona=persona,
+        domain=domain,
+        task_plan_json=task_plan_json,
+        user_id=user_id,
+        frontend_id=frontend_id,
+        frontend_version=frontend_version,
+        user_email=user_email,
+        user_persona=user_persona,
+        entitled_domains=entitled_domains,
+        entity_refs=entity_refs,
+        slots=slots,
+        bound_slots=bound_slots,
+        spoken_slot=spoken_slot,
+        spoken_answer=spoken_answer,
+        pre_resolved=pre_resolved,
+        trace_id=trace_id,
+        session_id=session_id,
+    )
     mutation = """
     mutation LaunchSupervisor($repo: String!, $loc: String!, $runConfig: RunConfigData!) {
       launchRun(
@@ -9020,41 +9127,6 @@ async def _launch_supervisor_job(
     }
     """
     
-    # Shared op config — same keys to every op so a Dagster op author can
-    # rely on consistent context regardless of which op they're in.
-    op_config = {
-        "user_query": query,
-        "thread_id": thread_id,
-        "persona": persona,
-        "domain": domain,
-        "task_plan_json": task_plan_json,
-        "user_id": user_id,
-        "user_email": user_email,
-        # ADR-0017 amendment: names the rendering client so Engine F resolves ITS menu.
-        "frontend_id": frontend_id or "",
-        "frontend_version": frontend_version or "",
-        # ADR-0009 Step F'.2 additions:
-        "user_persona": user_persona,
-        "entitled_domains": entitled_domains,
-        "candidate_verb": candidate_verb,
-        "entity_refs": entity_refs,
-        # THE SPOKEN SLOTS, forwarded rather than dropped. `{}` on every request until the
-        # slot-filler is called - see the finding. Threaded here, beside entity_refs,
-        # because the two come from the same response and are constantly confused: refs are
-        # untyped values, slots are argument name -> value.
-        "slots": dict(slots or {}),
-        "bound_slots": dict(bound_slots or {}),
-        "spoken_slot": spoken_slot or "",
-        "spoken_answer": spoken_answer or "",
-        "pre_resolved": dict(pre_resolved or {}),
-        # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
-        # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
-        "trace_id": trace_id,
-        "session_id": session_id,
-        # The bff.orchestrate span's id, ambient in the producer task.
-        "parent_span_id": current_span_id(),
-    }
-
     run_config = {
         "ops": {
             "create_task_plan": {
@@ -9511,6 +9583,50 @@ def _trace_headers(trace_id: str, session_id: str = "") -> dict:
     if session_id:
         h["X-Session-Id"] = session_id
     return h
+
+
+_DURABLE_ANSWERS = None
+
+
+def _answer_path() -> str:
+    # IAGENT_ANSWER_PATH: "dagster" (default) or "durable"; read per request.
+    raw = os.getenv("IAGENT_ANSWER_PATH", "dagster")
+    val = (raw or "").strip().lower() or "dagster"
+    if val not in ("dagster", "durable"):
+        logger.warning("IAGENT_ANSWER_PATH=%r is not 'dagster' or 'durable'; using 'dagster'", raw)
+        return "dagster"
+    return val
+
+
+def _answer_backend():
+    """The launch and the four run reads for ONE stream, chosen at call time.
+
+    Every dagster-side helper is looked up when it is CALLED (the lambdas), never bound here:
+    the seam's tests monkeypatch the module-level names."""
+    global _DURABLE_ANSWERS
+    if _answer_path() == "durable":
+        if _DURABLE_ANSWERS is None:
+            from src.iagent.durable_answers import DurableAnswers
+            _DURABLE_ANSWERS = DurableAnswers(_RESTATE_INGRESS_URL)
+        client = _DURABLE_ANSWERS
+        return SimpleNamespace(
+            launch=lambda *a, **kw: client.launch(_supervisor_op_config(*a, **kw)),
+            status=client.get_run_status,
+            events=client.get_run_events,
+            steps=client.get_step_stats,
+            payload=client.get_ui_payload_output,
+            poll_s=client.poll_interval_s,
+            max_ticks=int(round(900 / client.poll_interval_s)),
+        )
+    return SimpleNamespace(
+        launch=lambda *a, **kw: _launch_supervisor_job(*a, **kw),
+        status=lambda rid: _get_run_status(rid),
+        events=lambda rid: _get_run_events(rid),
+        steps=lambda rid: _get_step_stats(rid),
+        payload=lambda rid: _get_ui_payload_output(rid),
+        poll_s=1.0,
+        max_ticks=900,
+    )
 
 
 async def _generate_dagster_stream_inner(
@@ -10284,7 +10400,8 @@ async def _generate_dagster_stream_inner(
             "domain": domain,
             "extracted_concepts": [],
         })
-    run_id = await _launch_supervisor_job(
+    _ab = _answer_backend()
+    run_id = await _ab.launch(
         user_query,
         session_id,
         domain=domain,
@@ -10361,7 +10478,8 @@ async def _generate_dagster_stream_inner(
     # handled by _keepalive_wrap's `: keepalive\n\n` comment lines.
     # The accumulating-rows UI bug is fixed at its source.
 
-    # THE ONE DEADLINE IN THIS GENERATOR: 900 one-second ticks, the 15 minute ceiling for slow
+    # THE ONE DEADLINE IN THIS GENERATOR: `_ab.max_ticks` ticks of `_ab.poll_s` (900 x 1 s on
+    # dagster, the same 15 minutes on the durable path), the ceiling for slow
     # backends. A run paused for its person (`awaiting_reauth`, ruling 2026-11-03) must not be
     # ended by it, so a paused tick does not count toward it; the pause is bounded by the
     # vault entry's own life, after which the state is None and the ticks count again. The
@@ -10369,8 +10487,8 @@ async def _generate_dagster_stream_inner(
     # fetch.
     _ticks = 0
     _reauth_paused = False
-    while _ticks < 900:
-        await asyncio.sleep(1.0)
+    while _ticks < _ab.max_ticks:
+        await asyncio.sleep(_ab.poll_s)
 
         _vstate = VAULT.state(run_id)
         if _vstate == "awaiting_reauth":
@@ -10389,7 +10507,7 @@ async def _generate_dagster_stream_inner(
                 if _vstate == "live":
                     yield _sse("run_reauth_resumed", json.dumps({"run_id": run_id}))
 
-        status_data = await _get_run_status(run_id)
+        status_data = await _ab.status(run_id)
         if status_data.get("status") == "CANCELED":
             VAULT.close(run_id)
             break
@@ -10434,7 +10552,7 @@ async def _generate_dagster_stream_inner(
         # Decision card focuses on the primary route the user's
         # answer flows through. Multi-subtask UI semantics is a
         # future ADR.
-        mats = await _get_run_events(run_id)
+        mats = await _ab.events(run_id)
         for mat in mats:
             path = mat.get("assetKey", {}).get("path")
             if path == ["active_agent_roster"] and "plan_emitted" not in emitted_steps:
@@ -10703,7 +10821,7 @@ async def _generate_dagster_stream_inner(
                 return ["retrieving"]
             return STEP_TO_COMPLETED_KINDS.get(step_key, [])
 
-        step_stats = await _get_step_stats(run_id)
+        step_stats = await _ab.steps(run_id)
         for stat in step_stats:
             step_key = stat.get("stepKey", "")
             status = stat.get("status", "")
@@ -10754,7 +10872,7 @@ async def _generate_dagster_stream_inner(
 
     # THE ORDINARY PATH'S `review_request` CONSUMER (R-076). Before the payload fetch, and
     # whatever the run's outcome: see `_open_acceptances_from_run` for why both.
-    for _acc_err in await _open_acceptances_from_run(run_id, _artifact_bundle):
+    for _acc_err in await _open_acceptances_from_run(run_id, _artifact_bundle, get_events=_ab.events):
         yield _acc_err
 
     if is_success:
@@ -10763,7 +10881,7 @@ async def _generate_dagster_stream_inner(
         # payload happens here. No extra "Retrieving Final UI Payload"
         # status row needed — composing stays loading until either
         # the payload arrives (completed) or fetching fails (error).
-        result = await _get_ui_payload_output(run_id)
+        result = await _ab.payload(run_id)
 
         if "error" in result:
             logger.error("BFF Error: %s", result["error"])
@@ -10976,7 +11094,7 @@ async def _open_safety_acceptance(
         )
 
 
-async def _open_acceptances_from_run(run_id: str, bundle: dict) -> list[str]:
+async def _open_acceptances_from_run(run_id: str, bundle: dict, get_events=None) -> list[str]:
     """The ordinary (Dagster) path's consumer: every `subtask_review_request` the run
     materialized, opened once each. Returns the error SSEs to yield.
 
@@ -10994,7 +11112,8 @@ async def _open_acceptances_from_run(run_id: str, bundle: dict) -> list[str]:
     every run materializes `active_agent_roster`, so zero materializations means the read
     failed. That is recorded on the artifact rather than read as absence.
     """
-    mats = await _get_run_events(run_id)
+    get_events = get_events or _get_run_events
+    mats = await get_events(run_id)
     if not mats:
         logger.warning(
             "acceptance check for run %s read ZERO materializations — the read failed, "
@@ -11890,7 +12009,9 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
     # uses request.session_id (the conversation thread) downstream.
     # The BFF mints one when the caller sends none, so no client can silence tracing
     # (architect ruling 4, 2026-11-10).
-    _trace_id = request_trace_id(http_request.headers.get("X-Trace-Id"))
+    # A valid W3C `traceparent` wins: its trace-id is the trace and its parent-id parents the root span.
+    _trace_ctx = request_trace_context(http_request.headers)
+    _trace_id = _trace_ctx.trace_id
     entitled_cells = [
         {"persona": c.persona, "domain": c.domain} for c in ent.cells
     ]
@@ -12156,6 +12277,7 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
           trace_id=_trace_id,
           session_id=request.session_id,
           authz_id=current_user.authz_id,
+          parent_span_id=_trace_ctx.parent_span_id,
         ),
         media_type="text/event-stream",
         headers={
@@ -13018,7 +13140,8 @@ def _create_ingest_node(*, ingest_id: str, kind: str, sha256: str, object_ref: s
 
 async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str,
                      provenance_block: dict, seeded_by: Optional[str] = None,
-                     predecessor: Optional[str] = None) -> bool:
+                     predecessor: Optional[str] = None,
+                     trace_context: Optional[dict] = None) -> bool:
     """POST `{RESTATE_INGRESS_URL}/WorkflowRunner/{case_id}/run/send` -- the same case-runner
     call `_open_safety_acceptance` makes above (~6590), reused here for the ingest/origin seam's
     two case-opening points (an event-branch content kind on arrival, section 3; an origin
@@ -13038,7 +13161,8 @@ async def _open_case(*, case_id: str, trigger: str, facts: dict, ingest_id: str,
             resp = await client.post(
                 f"{_RESTATE_INGRESS_URL}/WorkflowRunner/{_restate_key(case_id)}/run/send",
                 json={"trigger": trigger, "facts": facts, "provenance": provenance_block,
-                      "seeded_by": seeded_by, "predecessor": predecessor},
+                      "seeded_by": seeded_by, "predecessor": predecessor,
+                      **({"trace_context": trace_context} if trace_context is not None else {})},
             )
         resp.raise_for_status()
         return True
@@ -13156,11 +13280,9 @@ async def _cells_of(authz_id: str) -> "list[str]":
         raise HTTPException(status_code=503, detail={"error": "authorization_unconfigured"})
 
     def _read() -> list:
-        client = TopazDirectoryClient(url)
-        try:
-            return [c.domain for c in client.get_entitlements(authz_id).cells]
-        finally:
-            client.close()
+        # The process's one directory client (`directory_http_client`): never built per call.
+        client = TopazDirectoryClient(url, shared=True)
+        return [c.domain for c in client.get_entitlements(authz_id).cells]
     try:
         return await run_in_threadpool(_read)
     except AuthorizationUnavailable as exc:
@@ -13822,9 +13944,21 @@ def _dotted_get(d: dict[str, Any], path: str) -> Any:
     return cur
 
 
+def _door_trace_context(tctx) -> Optional[dict]:
+    """The `trace_context` the door hands the case runner: a W3C traceparent naming the trace and
+    the door span (else the inbound parent-id, else a fresh span id) plus the inbound tracestate.
+    None only when the leaf is absent, so no valid trace id can be named."""
+    trace_id = trace_id_for(tctx.trace_id)
+    if not trace_id:
+        return None
+    span_id = current_span_id() or tctx.parent_span_id or secrets.token_hex(8)
+    return {"traceparent": format_traceparent(trace_id, span_id), "tracestate": tctx.tracestate}
+
+
 @app.post("/ingest/events", responses=DROP_GATE_RESPONSES)
 async def ingest_event(
     req: IngestEventRequest,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
 ):
     """POST /ingest/events (section C, ingest/origin seam) — the JSON door for an event-branch
@@ -13857,6 +13991,39 @@ async def ingest_event(
     revised; the same event_id with different bytes is a revision. A delegate attaches only to a
     case it seeded: otherwise 403 `delegate_not_seeder`, and nothing is recorded.
     """
+    tctx = request_trace_context(http_request.headers)
+    span_ids: dict[str, Any] = {}
+    outcome = "error"
+    with observed_trace(
+        MAPPING,
+        build_trace_values(trace_id=tctx.trace_id, authz_id=current_user.authz_id,
+                           engine="cortex-bff", verb="/ingest/events"),
+        name="bff.ingest_event", parent_span_id=tctx.parent_span_id,
+    ):
+        try:
+            result = await _ingest_event_body(
+                req, current_user, _door_trace_context(tctx), span_ids)
+            wf = result.get("workflow") or {}
+            outcome = ("attached" if wf.get("attached") else "revised" if "rev" in result
+                       else "started" if wf.get("started") else "not_started")
+            return result
+        except HTTPException as exc:
+            detail = exc.detail
+            outcome = (str(detail.get("error") or exc.status_code) if isinstance(detail, dict)
+                       else str(exc.status_code))
+            raise
+        finally:
+            # OPAQUE IDS ONLY: never a fact, label, asset id or any record field.
+            annotate_span(outcome=outcome, **span_ids)
+
+
+async def _ingest_event_body(
+    req: IngestEventRequest,
+    current_user: User,
+    trace_context: Optional[dict],
+    span_ids: dict,
+):
+    """The body of POST /ingest/events; the route above wraps it in the door span."""
     from . import content_kinds, provenance
 
     # R-089: on_behalf_of from a delegate is ASSERTED by configuration this pass (R-089); token
@@ -13868,6 +14035,8 @@ async def ingest_event(
         current_user.authz_id if current_user.authz_id in _delegate_principals() else None
     )
     _registered_kind = content_kinds.by_kind(req.content_kind)
+    if _registered_kind is not None:
+        span_ids["content_kind"] = _registered_kind.kind
     if _registered_kind is None or _registered_kind.branch != "event":
         raise HTTPException(
             status_code=422,
@@ -13950,6 +14119,7 @@ async def ingest_event(
             },
         )
     case_id = str(identity_value)
+    span_ids["ingest_id"], span_ids["case_id"] = ingest_id, case_id
     # The runner's OWN intake check, run here before the case opens: `requires` above is only
     # part of what intake refuses (key, episode, `carries`, outcome clash), and an event the door
     # answered 200 must not be refused 123 ms later where the producer cannot see it. Shared by
@@ -14154,7 +14324,7 @@ async def ingest_event(
     started = await _open_case(
         case_id=case_id, trigger=_registered_kind.seeds_workflow, facts=facts,
         ingest_id=ingest_id, provenance_block=provenance_block, seeded_by=seeded_by,
-        predecessor=predecessor,
+        predecessor=predecessor, trace_context=trace_context,
     )
     if started:
         await run_in_threadpool(lambda: ingest_status.update_status(
@@ -17767,8 +17937,35 @@ def _action_chain(record: dict, transitions: list) -> list[dict]:
     return chain
 
 
+def _continue_case_trace(response: Response, case: Optional[dict], case_id: str,
+                         current_user: User) -> None:
+    """The return leg of a case's W3C trace, on a 200 ONLY (the caller reaches here past every
+    refusal, so a 403/404/503 carries no trace header and leaks nothing about which cases exist).
+    The case's STORED `trace_context` is the only source: a `traceparent` this GET arrives with
+    is neither read nor adopted. Opens `bff.case_action` on the stored trace under the stored
+    parent and answers `traceparent` (this span's id, else the stored parent) and the stored
+    `tracestate`, echoed and never interpreted. The body is untouched."""
+    tc = case.get("trace_context") if isinstance(case, dict) else None
+    parsed = parse_traceparent(tc.get("traceparent")) if isinstance(tc, dict) else None
+    if parsed is None:
+        return
+    trace_id, parent_id, _flags = parsed
+    with observed_trace(
+        MAPPING,
+        build_trace_values(trace_id=trace_id, authz_id=current_user.authz_id,
+                           engine="cortex-bff", verb="/cases/action"),
+        name="bff.case_action", parent_span_id=parent_id,
+    ):
+        annotate_span(case_id=case_id)
+        response.headers["traceparent"] = format_traceparent(
+            trace_id, current_span_id() or parent_id)
+    if tc.get("tracestate"):
+        response.headers["tracestate"] = tc["tracestate"]
+
+
 @app.get("/cases/{case_id}/action")
-async def get_case_action(case_id: str, current_user: User = Depends(get_current_user)):
+async def get_case_action(case_id: str, response: Response,
+                          current_user: User = Depends(get_current_user)):
     """GET /cases/{case_id}/action -- who chose, who approved, who released a maintenance case,
     with the work order and the manual data modules it cites.
 
@@ -17862,6 +18059,7 @@ async def get_case_action(case_id: str, current_user: User = Depends(get_current
     body = dict(record)
     for k, v in additive.items():
         body.setdefault(k, v)  # a key the record carries is never overwritten
+    _continue_case_trace(response, case, case_id, current_user)
     return body
 
 
@@ -18123,43 +18321,54 @@ async def electric_shape_proxy(
     table = upstream_params.get("table") or "answer_artifact_projection"
     upstream_params["table"] = table
 
+    # 2b. ADR-0068 s8: the allow-list. A table is streamed only if a row of
+    #     policy/electric_shapes.yaml names it exactly. Tasks are NOT on it: a shape's WHERE cannot
+    #     evaluate a label, so a task is read through /me/queue and /me/needs_you. Unknown is not
+    #     "allowed": an unreadable list is 503, never a served shape.
+    from . import electric_shapes as _electric_shapes
+    from .authz.refusal import policy_refusal
+    try:
+        _shape_row = _electric_shapes.allowed_row(table)
+    except _electric_shapes.ElectricShapesUnreadable as exc:
+        logger.error("electric shape allow-list unreadable: %s", exc)
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the shape allow-list could not be read"}) from exc
+    if _shape_row is None:
+        raise policy_refusal(
+            "shape_refused", policy_id=_electric_shapes.POLICY_FAMILY,
+            missing_binding=f"electric_shape({table})",
+            message="this table is not streamed; read tasks through GET /me/queue")
+
     # 3. Build the server-verified WHERE clause, per table. Electric's WHERE
     #    parser supports a subset of PostgreSQL and does NOT accept the `->>`
     #    JSONB operator, so each filter references a plain column populated at
     #    write time.
-    #      - human_task_projection: recipient_id = <verified caller AUTHZ_ID>.
-    #        The HITL queue is keyed on the authz identity (Topaz's key) end-to-end,
-    #        so the replication filter and the Topaz can_act gate derive from ONE
-    #        truth and there is no sub<->email bridge to mis-route. authz_id == email
-    #        in sandbox; at work-deploy it becomes the employee-ID claim, and this
-    #        filter re-keys with the knob (no code change here).
+    #      - human_task_projection: NOT STREAMED (ADR-0068 s8). It is refused at 2b above and no
+    #        branch here filters it: a shape cannot evaluate a label.
     #      - answer_artifact_projection (default): produced_for_user_id = <sub>
     #        (interim per-user ownership isolation, NOT Topaz authz — unchanged).
-    # NOTE the `else` catches EVERY non-task table -> every table gets a
-    # server-side WHERE; there is no branch that serves a table UNFILTERED.
-    if table == "human_task_projection":
-        escaped_id = _escape_identity_literal(current_user.authz_id)
-        # Scope the inbox stream to PENDING rows only, so it agrees with the REST snapshot
-        # (/me/human_tasks): resolving a task moves it OUT of the shape -> Electric emits a delete.
-        # The predicate's definition now lives in human_tasks (inbox_where_literal), shared with
-        # list_tasks_for; this site only supplies the validated, escaped identity.
-        from . import human_tasks as _human_tasks
-        server_where = _human_tasks.inbox_where_literal(escaped_id)
-    elif table == "ingest_status_projection":
+    # NOTE the `else` REFUSES: there is no branch that serves a table UNFILTERED.
+    if table == "ingest_status_projection":
         # ADR-0041 §8: the ingestion seam's status stream. Same authz_id-keyed discipline
-        # as human_task_projection above (submitted_by/on_behalf_of are authz identities,
+        # as the answers stream (submitted_by/on_behalf_of are authz identities,
         # not sub/email) — a caller sees rows where they are EITHER the submitter or the
         # on_behalf_of principal, mirroring ingest_status.get_status_for's REST scoping so
         # the streamed shape and the REST snapshot agree on who can see what.
         escaped_id = _escape_identity_literal(current_user.authz_id)
         server_where = f"(submitted_by = '{escaped_id}' OR on_behalf_of = '{escaped_id}')"
-    else:
+    elif table == "answer_artifact_projection":
         escaped = _escape_sql_string_literal(verified_user_id)
-        server_where = f"produced_for_user_id = '{escaped}'"
-        if table == "answer_artifact_projection":
-            # Rev 187: the default view hides archived answers (archive hides, never deletes;
-            # `GET /answers?include_archived=true` lists them). Other tables keep their filter.
-            server_where += " AND archived_at IS NULL"
+        # Rev 187: the default view hides archived answers (archive hides, never deletes;
+        # `GET /answers?include_archived=true` lists them).
+        server_where = f"produced_for_user_id = '{escaped}' AND archived_at IS NULL"
+    else:
+        # A listed table this proxy has no per-caller filter for is never served: a row of the
+        # allow-list is permission, not a filter, so it cannot open an unfiltered shape.
+        raise policy_refusal(
+            "shape_refused", policy_id=_electric_shapes.POLICY_FAMILY,
+            missing_binding=f"electric_shape_filter({table})",
+            message="this table has no per-caller filter on the shape proxy")
     upstream_params["where"] = server_where
 
     upstream_url = f"{_ELECTRIC_UPSTREAM_URL}/v1/shape"

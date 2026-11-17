@@ -1,0 +1,9 @@
+# SEED -- deployment-neutral. A deployment names its own approvers in an overlay row
+# (GRANTOR_OVERLAY_DIRS), which replaces this row whole (ADR-0036).
+family: electric_shapes
+rail_file: policy/electric_shapes.yaml
+object_scoped: false
+who: the approvers of policy/electric_shapes.yaml in this deployment's policy repository
+how: >-
+  a reviewed change adding or changing the row that names the table (granted_by, reason,
+  ratified_by); a table whose rows the proxy cannot filter per caller is never added
