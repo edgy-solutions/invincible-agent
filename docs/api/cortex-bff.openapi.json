@@ -5396,6 +5396,35 @@
         "title": "ReviewStartRequest",
         "type": "object"
       },
+      "RevokeAccessGrantRequest": {
+        "description": "Revoke one reader grant: which grant (subject, asset, kind) and WHY.",
+        "properties": {
+          "asset": {
+            "title": "Asset",
+            "type": "string"
+          },
+          "kind": {
+            "default": "dataset",
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "asset",
+          "reason"
+        ],
+        "title": "RevokeAccessGrantRequest",
+        "type": "object"
+      },
       "RowEditCounts": {
         "additionalProperties": false,
         "description": "How many of each edit a steward's correction carried.",
@@ -6262,6 +6291,48 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/access_grants/revoke": {
+      "post": {
+        "description": "Revoke a reader grant by RECORDING the revocation in the decision ledger (who revoked it,\nwhen, why). Nothing is deleted: the grant's own row, if it was approved at runtime, stays. The\ngrant may come from committed policy or from the ledger; a revocation removes it from the\neffective set whichever it was. Who may revoke is a capability row (`mesh:revokeAccessGrant`\nin capability_grants.yaml), asked of the directory like every other effect.\n\nThe directory loses the reader at the seed's next sync (the one pruner); this route never\nprunes, so the answer says `effective: at the next seed sync` rather than pretending the\nreader is already gone. Idempotent: a grant already revoked answers 200 with\n`already_revoked`, and the first revoker stays on record.",
+        "operationId": "revoke_access_grant_access_grants_revoke_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeAccessGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Revoke Access Grant"
+      }
+    },
     "/access_requests": {
       "post": {
         "description": "Case-1: a caller denied read on an asset requests access. ASYNC — creates a\nrequest HumanTask routed to the domain's access-grant approvers and RETURNS\nIMMEDIATELY. Nothing suspends (no Restate workflow, no held state) — the DoS\nruling for query denials. The grant SUBJECT is the caller's authz_id (recorded\nin the payload for the fulfillment); an approver later writes the grant.",

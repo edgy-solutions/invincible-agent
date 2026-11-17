@@ -4,8 +4,9 @@
 
 - **An approved access request no longer writes a file in the pod** (saf; the architect, 11-15).
   `POST /human_tasks/{id}/act` with `approved` on an `access_request` now records the grant in a new
-  Postgres table `access_grant_ledger` (subject, asset, kind, requested_by, granted_by, reason,
-  task_id, granted_at; primary key subject+asset+kind, so a second approval keeps the first approver),
+  Postgres table `access_grant_ledger` (subject, asset, kind, entry, requested_by, granted_by,
+  reason, task_id, granted_at; `entry` is `grant` or `revoke`; primary key subject+asset+kind+entry,
+  so a second approval keeps the first approver and a second revocation the first revoker),
   then applies committed policy plus the ledger to the directory through the same `grant_sync`
   (validate, prove the negative, sync, readback), called in process as `grant_sync.run`. The BFF
   re-applies the ledger at startup, so a restarted pod keeps every approved grant. The table is created
@@ -17,10 +18,37 @@
   engine-r path commits a grant, the ledger row and the `iagent.audit.grant_write` line are its record.
   **The BFF only ADDS readers; the seed is the one pruner** (ruled 11-16): both the approval apply
   and the startup re-apply call `grant_sync.run(..., prune=False)`, so a restart never revokes a reader
-  that the policy source asserts and the image copy lacks. A grant removed from committed policy is
-  revoked by the seed's next tick. **Ships with the seed-reads-the-ledger PR in the same release:**
+  that the policy source asserts and the image copy lacks. **Removing a grant from committed policy
+  revokes a COMMITTED grant at the seed's next tick, and does NOT revoke a ledger grant: a ledger
+  grant is revoked by a revocation row** (below). **Ships with the seed-reads-the-ledger PR in the same release:**
   the seed CronJob (the pruner) must read the ledger too, or it revokes an approved grant at its next
-  tick; no deployment gets one without the other. Chart values and endpoints are unchanged here.
+  tick; no deployment gets one without the other. Chart values are unchanged here.
+- **Revocation is a row in the same ledger, never a deletion** (saf; the architect, 11-16). New
+  `POST /access_grants/revoke` `{subject, asset, kind, reason}` appends an `entry = revoke` row naming
+  the grant, who revoked it, when and why; the grant's own row is untouched. Effective access is
+  committed policy + ledger grants - ledger revocations, computed by one function
+  (`grant_sync.union_grants`) that the BFF and the seed both call; a revocation removes a committed
+  grant too, and a revoked key stays revoked (a later approval of the same grant adds no row that
+  outranks it). The route refuses 403 unless the caller holds `can_invoke(mesh:revokeAccessGrant)`: a
+  new row in `capability_grants.yaml` granted to a new capability-only group, `access-revokers`
+  (sandbox member: alice, as a fixture). **Upgrade note:** the membership is a `users.yaml` change, so
+  it needs a hand-run `topaz_sync` before anyone can revoke; until then the route answers 403 to
+  everyone. The directory loses the reader at the seed's next sync (the BFF never prunes), and the
+  route says so (`effective: at the next seed sync`). A database that already holds a
+  `access_grant_ledger` from an earlier build of this PR (no `entry` column) needs the table
+  dropped before the roll; no release carried it.
+- **An approval names an asset that exists, and a stale ledger row stops nothing** (saf; the
+  architect, 11-16). Approving an access request whose asset is not in the directory is refused 422
+  `asset_not_in_directory` before the task is resolved or anything is recorded (503
+  `directory_unavailable` when the directory cannot be asked); the task stays pending, so it can be
+  rejected. A ledger grant whose asset has since disappeared is skipped alone and reported (a
+  `SKIPPED ledger grant` line, and a warning in the BFF log); every other grant, and every revocation,
+  still applies. A dangling COMMITTED grant still refuses the whole run (exit 3), as before.
+- **The BFF's grant-apply report no longer redirects the process streams** (saf; gov's finding).
+  `grant_sync.run` takes `out` / `err`, so two approvals at once each keep their own output (the
+  redirect was process-global and gave one of them a dead buffer). Found on the way: the BFF loaded
+  `grant_sync.py` from its file without registering the module, which fails at the module's dataclass;
+  the loader now registers it first.
 
 ## 0.4.89 — not yet cut
 

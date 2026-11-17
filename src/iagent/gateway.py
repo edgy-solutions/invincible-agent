@@ -1622,6 +1622,71 @@ async def create_access_request(
             "approvers": len(result.get("recipients", []))}
 
 
+_MESH_REVOKE_ACCESS = "mesh:revokeAccessGrant"
+
+
+class RevokeAccessGrantRequest(_BaseModel):
+    """Revoke one reader grant: which grant (subject, asset, kind) and WHY."""
+    subject: str
+    asset: str
+    kind: str = "dataset"
+    reason: str
+
+
+@app.post("/access_grants/revoke")
+async def revoke_access_grant(
+    req: RevokeAccessGrantRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Revoke a reader grant by RECORDING the revocation in the decision ledger (who revoked it,
+    when, why). Nothing is deleted: the grant's own row, if it was approved at runtime, stays. The
+    grant may come from committed policy or from the ledger; a revocation removes it from the
+    effective set whichever it was. Who may revoke is a capability row (`mesh:revokeAccessGrant`
+    in capability_grants.yaml), asked of the directory like every other effect.
+
+    The directory loses the reader at the seed's next sync (the one pruner); this route never
+    prunes, so the answer says `effective: at the next seed sync` rather than pretending the
+    reader is already gone. Idempotent: a grant already revoked answers 200 with
+    `already_revoked`, and the first revoker stays on record."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    try:
+        allowed = await run_in_threadpool(
+            lambda: human_tasks.check_can_invoke(_MESH_REVOKE_ACCESS, current_user.authz_id))
+    except human_tasks.AuthorizationUnavailable as exc:
+        raise HTTPException(status_code=503, detail={
+            "error": "authorization_unavailable",
+            "message": "the authorizer could not be asked, or its answer could not be read",
+        }) from exc
+    if not allowed:
+        from .authz.refusal import policy_refusal
+        raise policy_refusal(
+            "not_entitled_to_revoke_access", policy_id=f"capability_grants:{_MESH_REVOKE_ACCESS}",
+            missing_binding=f"can_invoke {_MESH_REVOKE_ACCESS}",
+            message=f"{current_user.authz_id} may not revoke access grants",
+            extra={"capability": _MESH_REVOKE_ACCESS})
+    try:
+        added = await run_in_threadpool(
+            lambda: human_tasks.record_revocation(
+                subject=req.subject, asset=req.asset, kind=req.kind,
+                revoked_by=current_user.authz_id, reason=req.reason))
+    except human_tasks.NoSuchGrant as exc:
+        raise HTTPException(status_code=404, detail={
+            "error": "no_such_grant", "message": str(exc)}) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={
+            "error": "revocation_incomplete", "message": str(exc)}) from exc
+    except Exception as exc:  # noqa: BLE001 -- not recorded means not revoked; say so
+        logger.error("access revocation not recorded: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail={
+            "error": "ledger_unavailable",
+            "message": "the decision ledger could not record the revocation; nothing changed",
+        }) from exc
+    return {"subject": req.subject, "asset": req.asset, "kind": req.kind,
+            "revoked": True, "already_revoked": not added,
+            "effective": "at the next seed sync"}
+
+
 class TriageTaskRequest(_BaseModel):
     """File a TRIAGE task: an input that could not be prepared for review, routed to
     the humans who own the answer about it.
@@ -6841,6 +6906,28 @@ async def act_on_human_task(
                 "rows_resolved": n, "review_dispatched": True,
                 "resolved_count": sub.get("resolved_count")}
 
+    # AN APPROVAL NAMES AN ASSET THAT MUST EXIST (ruled 2026-11-16). Checked BEFORE anything is
+    # resolved or recorded: one ledger row for an asset that is not in the directory would make
+    # the directory apply refuse on every run, and revocations behind it. The task stays pending,
+    # so the approver can reject it instead.
+    if match.get("kind") == "access_request" and req.decision == "approved":
+        _asset = (match.get("payload") or {}).get("asset")
+        if _asset and (match.get("payload") or {}).get("subject"):
+            try:
+                _known = await run_in_threadpool(lambda: human_tasks.asset_exists(_asset))
+            except human_tasks.DirectoryUnavailable as exc:
+                raise HTTPException(status_code=503, detail={
+                    "error": "directory_unavailable", "task_id": task_id,
+                    "message": "the directory could not be asked whether the asset exists; "
+                               "nothing was approved and the task stays pending",
+                }) from exc
+            if not _known:
+                raise HTTPException(status_code=422, detail={
+                    "error": "asset_not_in_directory", "task_id": task_id, "asset": _asset,
+                    "message": "the asset named by this request is not in the directory; it "
+                               "cannot be approved (reject it, or ask for the right asset)",
+                })
+
     # FULFILLMENT (workflow_ack generalized, HAZ-1003): CONFIRM BEFORE RESOLVE, not the other
     # way around. The old order resolved the projection FIRST and treated the Restate resume as
     # best-effort afterwards — so a 403 from the handler, or cortex-bff's own hardcoded
@@ -7005,11 +7092,14 @@ async def act_on_human_task(
                 )
             except Exception as exc:  # noqa: BLE001 -- no ledger row means no grant; say so
                 logger.error("access grant not recorded: task_id=%s %s", task_id, type(exc).__name__)
-                grant_detail = {"ok": False, "exit_code": None, "output": type(exc).__name__}
+                grant_detail = {"ok": False, "recorded": False, "exit_code": None,
+                                "output": type(exc).__name__}
             granted = bool(grant_detail.get("ok"))
             if not granted:
                 logger.warning("access grant sync failed: task_id=%s exit=%s",
                                task_id, grant_detail.get("exit_code"))
+    # `grant_written` is the directory's state only. (The recorded/applied split is a contract
+    # change to ActGeneric and ingest-v1, not made here: the ledger row and the log say which.)
     return {"task_id": task_id, "decision": req.decision, "rows_resolved": n,
             "workflow_resumed": resumed, "grant_written": granted}
 

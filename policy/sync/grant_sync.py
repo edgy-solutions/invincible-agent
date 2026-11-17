@@ -131,7 +131,8 @@ def derive_grant_desired(grants: list[GrantRecord]) -> DesiredState:
     return state
 
 
-def find_dangling(client, grants: list[GrantRecord]) -> list[str]:
+def find_dangling(client, grants: list[GrantRecord], *, forgive: frozenset = frozenset(),
+                  skipped: "list | None" = None) -> list[str]:
     """prove-the-negative (deny-on-dangling): a grant whose ASSET is not a
     `dataset` object in the directory is REFUSED — you cannot grant read on an
     asset that isn't there. Returns the offending grant descriptions. The live
@@ -143,7 +144,12 @@ def find_dangling(client, grants: list[GrantRecord]) -> list[str]:
     the store-iterator failure that a full list walks into at catalog scale
     (live E00000 list-500 at 9k+ datasets; this call sitting on list_objects
     was the domino that starved the ontology/task/capability syncs after the
-    asset sync had already survived the same 500 via its degraded mode)."""
+    asset sync had already survived the same 500 via its degraded mode).
+
+    `forgive` is the set of `(subject, asset, kind)` keys that came from the decision ledger, and
+    `skipped` is the list the caller passes to receive those that dangle (the same rule as an
+    unknown export grant: skipped alone, reported). Both default to off: every dangling grant
+    refuses, which is the seed CLI's behaviour for committed policy."""
     exists: dict[str, bool] = {}
     dangling: list[str] = []
     for g in grants:
@@ -156,6 +162,12 @@ def find_dangling(client, grants: list[GrantRecord]) -> list[str]:
         if g.asset not in exists:
             exists[g.asset] = client.object_exists("dataset", g.asset)
         if not exists[g.asset]:
+            if skipped is not None and (g.subject, g.asset, g.kind) in forgive:
+                # A LEDGER grant whose asset has since disappeared is skipped ALONE and reported
+                # by the caller: one stale approved row must not stop every other grant (and every
+                # revocation) from applying. A COMMITTED grant is never forgiven here.
+                skipped.append(g)
+                continue
             dangling.append(
                 f"DANGLING: {g.subject} → reader on {g.asset} (asset not in directory; "
                 f"granted_by={g.granted_by})"
@@ -235,46 +247,94 @@ def main() -> int:
     return run(raw, topaz_url)
 
 
-def run(raw: dict, topaz_url: str, *, prune: bool = True) -> int:
+def run(raw: dict, topaz_url: str, *, prune: bool = True, ledger_keys: frozenset = frozenset(),
+        skipped: "list | None" = None, out=None, err=None) -> int:
     """The apply, from a parsed grants dict (`{"grants": [...]}`), not from a file: the same
     validate / prove-the-negative / sync / readback as the CLI, with the same exit codes. The BFF
     calls it with the committed policy plus the decision ledger, so a grant approved at runtime
     never needs a file in the pod.
 
     `prune` defaults to True, the seed CLI's behaviour (the one pruner). The BFF and engine-r pass
-    `prune=False`: they only ADD readers, and a removal waits for the seed's next tick."""
+    `prune=False`: they only ADD readers, and a removal waits for the seed's next tick.
+
+    `out` / `err` are where the report is written (default: the process streams). A caller that
+    wants the text passes its own streams: redirecting the PROCESS streams is global, so two
+    applies in two threads would capture each other's output (and lose their own).
+
+    `ledger_keys`: keys that came from the ledger. One of those whose asset is gone is skipped
+    alone (appended to `skipped` when given, and named in the report); the rest still apply."""
     from topaz_sync import TopazClient
 
+    out = sys.stdout if out is None else out
+    err = sys.stderr if err is None else err
     grants, malformed = load_grants(raw)
     if malformed:
-        print("REFUSED — malformed grants (fix the grant source; nothing applied):",
-              file=sys.stderr)
+        print("REFUSED — malformed grants (fix the grant source; nothing applied):", file=err)
         for e in malformed:
-            print(f"  {e}", file=sys.stderr)
+            print(f"  {e}", file=err)
         return 2
-    print(f"loaded {len(grants)} well-formed grant(s)")
+    print(f"loaded {len(grants)} well-formed grant(s)", file=out)
 
     with TopazClient(topaz_url) as client:
-        dangling = find_dangling(client, grants)
+        gone: list = []
+        dangling = find_dangling(client, grants, forgive=ledger_keys, skipped=gone)
         if dangling:
-            print("REFUSED — dangling grants (asset not in directory; nothing applied):",
-                  file=sys.stderr)
+            print("REFUSED — dangling grants (asset not in directory; nothing applied):", file=err)
             for d in dangling:
-                print(f"  {d}", file=sys.stderr)
+                print(f"  {d}", file=err)
             return 3
+        if gone:
+            drop = {id(g) for g in gone}
+            grants = [g for g in grants if id(g) not in drop]
+            if skipped is not None:
+                skipped.extend(gone)
+            for g in gone:
+                print(f"SKIPPED ledger grant: {g.subject} → reader on {g.asset} (asset no longer "
+                      f"in directory; granted_by={g.granted_by}); every other grant applies",
+                      file=out)
 
         plan = sync_grants(client, grants, prune=prune)
         print(f"synced: +{len(plan.add_relations)} reader grants, "
-              f"-{len(plan.del_relations)} revoked")
+              f"-{len(plan.del_relations)} revoked", file=out)
 
-        print("===== Readback (positive control — each grant resolves can_read) =====")
+        print("===== Readback (positive control — each grant resolves can_read) =====", file=out)
         checked, failures = readback_grants(client, grants)
-        print(f"  checked={checked}  failures={failures}")
+        print(f"  checked={checked}  failures={failures}", file=out)
         if failures > 0:
             print("FAIL: a git-asserted grant does not resolve can_read — the apply lied.",
-                  file=sys.stderr)
+                  file=err)
             return 4
     return 0
+
+
+def _grant_key(g: dict) -> tuple:
+    return (g.get("subject"), g.get("asset"), g.get("kind") or "dataset")
+
+
+def union_grants(committed: list, ledger: list) -> list:
+    """What the directory's readers must be: committed policy, plus the ledger's grants, minus the
+    ledger's revocations (a revocation row names the grant it revokes). Committed policy wins a
+    duplicate grant (its git history is the stronger record); a revocation removes the key
+    whatever its source, so a committed grant can be revoked without a commit. The ledger is
+    append-only and a revoked key stays revoked: a later approval of the same grant adds no row
+    that outranks the revocation.
+
+    A ledger row has `entry` 'grant' (the default, for rows that carry none) or 'revoke'."""
+    revoked = {_grant_key(r) for r in ledger if (r.get("entry") or "grant") == "revoke"}
+    out = {_grant_key(g): dict(g) for g in committed if isinstance(g, dict)}
+    rest = [g for g in committed if not isinstance(g, dict)]    # kept: load_grants reports them
+    for row in ledger:
+        if (row.get("entry") or "grant") != "grant":
+            continue
+        out.setdefault(_grant_key(row), {
+            "subject": row["subject"], "asset": row["asset"], "kind": row.get("kind") or "dataset",
+            "granted_by": row["granted_by"], "reason": row.get("reason") or ""})
+    return [g for k, g in out.items() if k not in revoked] + rest
+
+
+def ledger_grant_keys(ledger: list) -> frozenset:
+    """The keys of the ledger's GRANT rows: the ones `run` may skip alone when their asset is gone."""
+    return frozenset(_grant_key(r) for r in ledger if (r.get("entry") or "grant") == "grant")
 
 
 if __name__ == "__main__":

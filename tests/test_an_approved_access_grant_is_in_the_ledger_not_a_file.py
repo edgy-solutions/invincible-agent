@@ -12,6 +12,12 @@ that enforce but are not in committed policy. Doubles only: a fake ledger store 
   5. REPORT     grants absent from committed policy are listed, in the ledger and in the directory.
   6. NO RECORD  a store that cannot record the grant applies nothing.
   7. SOURCE     the writer holds no file write; the gateway names the requester and re-applies.
+  8. ADD-ONLY   the BFF never prunes (one pruner, the seed).
+  9. REVOKE     a revocation is a row, never a deletion; the grant it names is gone after the next
+                sync and stays gone; both acts stay on record; who may revoke is a capability row.
+ 10. EXISTS     an approval that names an asset the directory lacks is refused, nothing recorded.
+ 11. DANGLING   a ledger row whose asset has since gone is skipped alone and reported.
+ 12. STREAMS    two applies at once keep their own output (no process-stream redirect).
 """
 from __future__ import annotations
 
@@ -34,6 +40,7 @@ class FakeLedgerDb:
         self.rows: dict = {}
         self.down = False
         self.prunes: list = []          # the `prune` each directory apply was called with
+        self.missing: set = set()       # assets the directory does not have
 
     def __call__(self):
         if self.down:
@@ -56,14 +63,14 @@ class _Cur:
 
     def execute(self, sql, params=()):
         if "INSERT INTO access_grant_ledger" in sql:
-            key = tuple(params[:3])
+            key = tuple(params[:4])         # (subject, asset, kind, entry)
             if key in self.db.rows:
                 self.rowcount = 0
             else:
                 self.db.rows[key] = tuple(params)
                 self.rowcount = 1
         elif "FROM access_grant_ledger" in sql:
-            self._out = sorted(self.db.rows.values(), key=lambda r: (r[7], r[0], r[1]))
+            self._out = sorted(self.db.rows.values(), key=lambda r: (r[8], r[0], r[1]))
         # `CREATE TABLE` and anything else: nothing to do
 
     def fetchall(self): return list(self._out)
@@ -80,9 +87,11 @@ def world(tmp_path, monkeypatch):
     monkeypatch.setattr(ht, "_ASSET_GRANTS_FILE", str(committed))
     monkeypatch.setattr(ht, "_TOPAZ_DIRECTORY_URL", "http://directory.invalid")
     monkeypatch.setattr(ht, "_pg_connect", db)
+    monkeypatch.setattr(ht, "_GRANT_SYNC", str(ROOT / "policy" / "sync" / "grant_sync.py"))
     # `prune` defaults to True HERE, so a call that forgets to say add-only records True (red)
     monkeypatch.setattr(ht, "_grant_sync_run",
-                        lambda raw, prune=True: sent.append(raw) or db.prunes.append(prune) or 0)
+                        lambda raw, prune=True, **kw: sent.append(raw) or db.prunes.append(prune) or 0)
+    monkeypatch.setattr(ht, "asset_exists", lambda asset, kind="dataset": asset not in db.missing)
     return db, sent, committed, policy
 
 
@@ -235,8 +244,8 @@ def test_7_the_cli_and_the_in_process_apply_are_one_function():
 
 
 def test_4_the_insert_is_do_nothing_on_conflict_in_the_real_sql():
-    assert "ON CONFLICT (subject, asset, kind) DO NOTHING" in ht._GRANT_INSERT_SQL
-    assert "PRIMARY KEY (subject, asset, kind)" in ht._GRANT_LEDGER_SQL
+    assert "ON CONFLICT (subject, asset, kind, entry) DO NOTHING" in ht._GRANT_INSERT_SQL
+    assert "PRIMARY KEY (subject, asset, kind, entry)" in ht._GRANT_LEDGER_SQL
 
 
 def test_5_the_report_script_prints_both_people_and_exits_1_while_anything_is_absent(
@@ -290,7 +299,7 @@ def _stub_run_world(mod, monkeypatch, seen):
         del_relations: list = []
 
     monkeypatch.setattr(topaz_sync, "TopazClient", _Client)
-    monkeypatch.setattr(mod, "find_dangling", lambda c, g: [])
+    monkeypatch.setattr(mod, "find_dangling", lambda c, g, **kw: [])
     monkeypatch.setattr(mod, "sync_grants", lambda c, g, *, prune=True: seen.append(prune) or _Plan())
     monkeypatch.setattr(mod, "readback_grants", lambda c, g: (0, 0))
 
@@ -319,7 +328,7 @@ def test_8_control_the_seed_cli_still_prunes(monkeypatch, tmp_path):
 def test_8_the_real_seam_calls_run_add_only(monkeypatch, tmp_path):
     fake = tmp_path / "fake_gs.py"
     fake.write_text(
-        "SEEN = []; run = lambda raw, url, prune=True: (SEEN.append(prune), 0)[1]",
+        "SEEN = []; run = lambda raw, url, prune=True, **kw: (SEEN.append(prune), 0)[1]",
         encoding="utf-8")
     import importlib.util
     monkeypatch.setattr(ht, "_GRANT_SYNC", str(fake))
@@ -333,3 +342,423 @@ def test_8_the_real_seam_calls_run_add_only(monkeypatch, tmp_path):
     monkeypatch.setattr(importlib.util, "module_from_spec", spy)
     assert ht._grant_sync_run(RAW) == 0
     assert captured[-1].SEEN == [False]
+
+
+# 9. revoke ------------------------------------------------------------------------------------
+# Revocation is RECORDED, never a deletion (architect, 2026-11-16). Effective access = committed
+# policy + ledger grants - ledger revocations; the ledger is append-only.
+
+def _revoke(**over):
+    kw = dict(subject="alice", asset="asset-a", revoked_by="rev-person", reason="left the team")
+    kw.update(over)
+    return ht.record_revocation(**kw)
+
+
+def _keys(grants):
+    return {(g["subject"], g["asset"]) for g in grants}
+
+
+def test_9_a_revocation_is_a_row_naming_the_revoker_the_time_and_the_reason(world):
+    _approve()
+    assert _revoke() is True
+    grant, revoke = ht.ledger_entries()
+    assert grant["entry"] == "grant" and grant["granted_by"] == "bob"          # untouched
+    assert revoke["entry"] == "revoke" and revoke["granted_by"] == "rev-person"
+    assert revoke["reason"] == "left the team" and revoke["granted_at"] > 0
+    assert (revoke["subject"], revoke["asset"], revoke["kind"]) == ("alice", "asset-a", "dataset")
+
+
+def test_9_the_revoked_grant_is_gone_after_the_next_sync_and_stays_gone(world):
+    db, sent, _c, _p = world
+    _approve()
+    _approve(subject="dave", asset="asset-d")
+    assert ("alice", "asset-a") in _keys(sent[-1]["grants"])
+    _revoke()
+    for apply in (ht.apply_ledger_to_directory, ht.reapply_ledger_grants,
+                  lambda: _approve(subject="erin", asset="asset-e")):
+        sent.clear()
+        apply()
+        assert ("alice", "asset-a") not in _keys(sent[-1]["grants"])     # gone, and stays gone
+    # the record of BOTH acts remains: nothing was deleted or rewritten
+    assert [(r["entry"], r["subject"]) for r in ht.ledger_entries()
+            if r["subject"] == "alice"] == [("grant", "alice"), ("revoke", "alice")]
+
+
+def test_9_control_the_other_grants_stay(world):
+    _db, sent, _c, _p = world
+    _approve()
+    _approve(subject="dave", asset="asset-d")
+    _revoke()
+    sent.clear()
+    ht.apply_ledger_to_directory()
+    assert _keys(sent[-1]["grants"]) == {("carol", "asset-c"), ("dave", "asset-d")}
+
+
+def test_9_a_committed_grant_is_revoked_by_a_row_too(world):
+    _db, sent, committed, _p = world
+    before = committed.read_bytes()
+    _revoke(subject="carol", asset="asset-c")
+    ht.apply_ledger_to_directory()
+    assert ("carol", "asset-c") not in _keys(sent[-1]["grants"])
+    assert committed.read_bytes() == before                  # no file was changed to do it
+
+
+def test_9_a_later_approval_does_not_revive_a_revoked_grant(world):
+    _db, sent, _c, _p = world
+    _approve()
+    _revoke()
+    _approve(granted_by="someone-else")                       # same grant, approved again
+    assert ("alice", "asset-a") not in _keys(sent[-1]["grants"])
+    assert len([r for r in ht.ledger_entries() if r["entry"] == "grant"]) == 1   # no new row
+
+
+def test_9_a_second_revocation_keeps_the_first_revoker(world):
+    _approve()
+    assert _revoke(revoked_by="first") is True
+    assert _revoke(revoked_by="second") is False
+    (row,) = [r for r in ht.ledger_entries() if r["entry"] == "revoke"]
+    assert row["granted_by"] == "first"
+
+
+def test_9_control_a_grant_that_is_not_in_effect_cannot_be_revoked(world):
+    with pytest.raises(ht.NoSuchGrant):
+        _revoke(subject="nobody", asset="asset-z")
+    assert ht.ledger_entries() == []                          # nothing written
+
+
+def test_9_control_a_revocation_needs_a_revoker_and_a_reason(world):
+    _approve()
+    for bad in ({"revoked_by": " "}, {"reason": ""}):
+        with pytest.raises(ValueError):
+            _revoke(**bad)
+    assert [r["entry"] for r in ht.ledger_entries()] == ["grant"]
+
+
+def test_9_the_report_does_not_list_a_revoked_grant_as_enforcing(world):
+    _approve()
+    assert [r["subject"] for r in ht.grants_absent_from_policy()["ledger"]] == ["alice"]
+    _revoke()
+    assert ht.grants_absent_from_policy()["ledger"] == []
+
+
+def test_9_the_seed_and_the_bff_compute_the_effective_set_with_one_function(world):
+    src = (ROOT / "src" / "iagent" / "human_tasks.py").read_text(encoding="utf-8")
+    body = _body(src, "def desired_grants(", "def _grant_sync_run(")
+    assert "union_grants(" in body                            # the grant_sync function, not a copy
+    assert "revoke" not in body.replace("revocations", "")    # the rule is not restated here
+
+
+def test_9_who_may_revoke_is_a_capability_row_and_the_code_names_no_group():
+    import yaml
+    rows = yaml.safe_load((ROOT / "policy" / "capability_grants.yaml").read_text(
+        encoding="utf-8"))["capabilities"]
+    row = rows["mesh:revokeAccessGrant"]
+    assert row["granted_by"] and row["reason"] and row["grant_to_groups"]
+    assert "grant_to" not in row                              # a group, never a person
+    src = (ROOT / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
+    assert '_MESH_REVOKE_ACCESS = "mesh:revokeAccessGrant"' in src
+    for group in row["grant_to_groups"]:
+        assert group not in src                               # config names the case, not code
+
+
+# the route, through TestClient
+
+@pytest.fixture
+def route(world, monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from src.iagent import gateway
+    state = {"allowed": True}
+    monkeypatch.setattr(ht, "check_can_invoke", lambda cap, who: state.update(asked=(cap, who))
+                        or state["allowed"])
+    user = type("U", (), {"authz_id": "rev-person", "id": "rev-person", "sub": "rev-person",
+                          "email": "r@x", "roles": [], "persona": None,
+                          "entitled_domains": [], "is_authenticated": True})()
+    gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
+    with TestClient(gateway.app) as c:
+        yield c, state
+    gateway.app.dependency_overrides.clear()
+
+
+_BODY = {"subject": "alice", "asset": "asset-a", "reason": "left the team"}
+
+
+def test_9_the_route_refuses_a_caller_without_the_capability_and_records_nothing(route):
+    c, state = route
+    _approve()
+    state["allowed"] = False
+    r = c.post("/access_grants/revoke", json=_BODY)
+    assert r.status_code == 403 and r.json()["detail"]["capability"] == "mesh:revokeAccessGrant"
+    assert [e["entry"] for e in ht.ledger_entries()] == ["grant"]
+
+
+def test_9_control_the_route_records_the_revocation_for_a_caller_with_it(route):
+    c, state = route
+    _approve()
+    r = c.post("/access_grants/revoke", json=_BODY)
+    assert r.status_code == 200 and r.json()["revoked"] is True
+    assert r.json()["effective"] == "at the next seed sync"   # it does not claim the reader is gone
+    assert state["asked"] == ("mesh:revokeAccessGrant", "rev-person")
+    (row,) = [e for e in ht.ledger_entries() if e["entry"] == "revoke"]
+    assert row["granted_by"] == "rev-person"                  # the revoker is the authenticated caller
+    again = c.post("/access_grants/revoke", json=_BODY)
+    assert again.status_code == 200 and again.json()["already_revoked"] is True
+
+
+def test_9_the_route_answers_404_for_a_grant_that_is_not_in_effect(route):
+    c, _state = route
+    r = c.post("/access_grants/revoke", json={**_BODY, "subject": "nobody"})
+    assert r.status_code == 404 and r.json()["detail"]["error"] == "no_such_grant"
+    assert ht.ledger_entries() == []
+
+
+def test_9_the_route_answers_503_when_the_ledger_cannot_record(route, world):
+    c, _state = route
+    db = world[0]
+    _approve()
+    db.down = True
+    r = c.post("/access_grants/revoke", json=_BODY)
+    assert r.status_code == 503 and r.json()["detail"]["error"] == "ledger_unavailable"
+
+
+# 10. an approval names an asset that exists ----------------------------------------------------
+
+def test_10_an_approval_for_an_asset_the_directory_lacks_is_refused_and_nothing_is_recorded(world):
+    db, sent, _c, _p = world
+    db.missing.add("ghost-asset")
+    with pytest.raises(ht.UnknownAsset):
+        _approve(asset="ghost-asset")
+    assert ht.ledger_entries() == [] and sent == []           # no row, no apply
+
+
+def test_10_control_an_asset_the_directory_has_is_recorded_and_applied(world):
+    _db, sent, _c, _p = world
+    assert _approve(asset="real-asset")["recorded"] is True
+    assert [r["asset"] for r in ht.ledger_grants()] == ["real-asset"] and sent
+
+
+def test_10_a_directory_that_cannot_be_asked_records_nothing(world, monkeypatch):
+    _db, sent, _c, _p = world
+
+    def down(asset, kind="dataset"):
+        raise ht.DirectoryUnavailable("ConnectError")
+    monkeypatch.setattr(ht, "asset_exists", down)
+    with pytest.raises(ht.DirectoryUnavailable):
+        _approve()
+    assert ht.ledger_entries() == [] and sent == []
+
+
+def test_10_a_document_is_not_asked_about(monkeypatch):
+    monkeypatch.setattr(ht, "_grant_sync_module",
+                        lambda: (_ for _ in ()).throw(AssertionError("asked the directory")))
+    assert ht.asset_exists("some-doc-id", "document") is True
+
+
+def _act_world(monkeypatch, world, asset):
+    """`/human_tasks/<id>/act` for an access_request, through the real handler."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from src.iagent import gateway
+    calls = {"resolved": []}
+    task = {"task_id": "access-1", "kind": "access_request", "audience": "access_grant:X",
+            "workflow_id": None, "requested_by": "alice",
+            "payload": {"subject": "alice", "asset": asset, "domain": "X"}}
+    monkeypatch.setattr(ht, "list_tasks_for", lambda caller, status="pending": [task])
+    from tests.viewer_double import route_viewer_tasks_through
+    route_viewer_tasks_through(monkeypatch)
+    monkeypatch.setattr(ht, "check_can_act", lambda audience, caller: True)
+    monkeypatch.setattr(ht, "get_task_resolution", lambda tid, *, caller_id: None)
+    monkeypatch.setattr(ht, "mark_task_resolved",
+                        lambda tid, **kw: calls["resolved"].append(tid) or 1)
+    user = type("U", (), {"authz_id": "bob", "sub": "bob", "id": "bob", "email": "bob@x",
+                          "persona": None, "entitled_domains": [], "roles": [],
+                          "is_authenticated": True})()
+    gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
+    return TestClient(gateway.app), calls, gateway
+
+
+def test_10_the_approval_route_refuses_before_resolving_when_the_asset_is_not_there(
+        world, monkeypatch, register_rail):
+    register_rail(["bob"])
+    db, sent, _c, _p = world
+    db.missing.add("ghost-asset")
+    client, calls, gateway = _act_world(monkeypatch, world, "ghost-asset")
+    try:
+        with client as c:
+            r = c.post("/human_tasks/access-1/act", json={"decision": "approved", "comment": "ok"})
+    finally:
+        gateway.app.dependency_overrides.clear()
+    assert r.status_code == 422 and r.json()["detail"]["error"] == "asset_not_in_directory"
+    assert calls["resolved"] == []                            # the task stays pending: reject it instead
+    assert ht.ledger_entries() == [] and sent == []
+
+
+def test_10_control_the_approval_route_records_and_applies_when_the_asset_is_there(
+        world, monkeypatch, register_rail):
+    register_rail(["bob"])
+    client, calls, gateway = _act_world(monkeypatch, world, "asset-a")
+    try:
+        with client as c:
+            r = c.post("/human_tasks/access-1/act", json={"decision": "approved", "comment": "ok"})
+    finally:
+        gateway.app.dependency_overrides.clear()
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["grant_written"] is True
+    assert [r["asset"] for r in ht.ledger_grants()] == ["asset-a"]
+    assert calls["resolved"] == ["access-1"]
+
+
+def test_10_a_recorded_grant_whose_apply_failed_stands_in_the_ledger(world, monkeypatch,
+                                                                    register_rail):
+    register_rail(["bob"])
+    monkeypatch.setattr(ht, "_grant_sync_run", lambda raw, prune=True, **kw: 4)   # apply fails
+    client, calls, gateway = _act_world(monkeypatch, world, "asset-a")
+    try:
+        with client as c:
+            r = c.post("/human_tasks/access-1/act", json={"decision": "approved", "comment": "ok"})
+    finally:
+        gateway.app.dependency_overrides.clear()
+    assert r.json()["grant_written"] is False                  # the directory does not have it yet
+    assert [x["asset"] for x in ht.ledger_grants()] == ["asset-a"]   # but the record stands: repaired at startup
+
+
+# 11. a ledger row whose asset has gone ----------------------------------------------------------
+
+class _DirClient:
+    def __init__(self, present): self.present = set(present)
+    def object_exists(self, kind, asset): return asset in self.present
+
+
+def _grants(mod, *rows):
+    return [mod.GrantRecord(subject=s, asset=a, granted_by="g") for s, a in rows]
+
+
+def test_11_a_dangling_ledger_row_is_skipped_alone_and_reported():
+    mod = _load_grant_sync()
+    grants = _grants(mod, ("alice", "gone"), ("bob", "here"))
+    skipped = []
+    out = mod.find_dangling(_DirClient({"here"}), grants,
+                            forgive=frozenset({("alice", "gone", "dataset")}), skipped=skipped)
+    assert out == [] and [(g.subject, g.asset) for g in skipped] == [("alice", "gone")]
+
+
+def test_11_control_a_dangling_committed_row_still_refuses():
+    mod = _load_grant_sync()
+    grants = _grants(mod, ("alice", "gone"), ("bob", "here"))
+    out = mod.find_dangling(_DirClient({"here"}), grants, forgive=frozenset(), skipped=[])
+    assert len(out) == 1 and "gone" in out[0]
+    # and the default (no forgiveness asked for) is the old behaviour: refuse
+    assert len(mod.find_dangling(_DirClient({"here"}), grants)) == 1
+
+
+def _run_world(mod, monkeypatch, present, synced):
+    import topaz_sync
+
+    class _Client(_DirClient):
+        def __init__(self, url): super().__init__(present)
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    class _Plan:
+        add_relations: list = []
+        del_relations: list = []
+
+    monkeypatch.setattr(topaz_sync, "TopazClient", _Client)
+    monkeypatch.setattr(mod, "sync_grants",
+                        lambda c, g, *, prune=True: synced.append([x.asset for x in g]) or _Plan())
+    monkeypatch.setattr(mod, "readback_grants", lambda c, g: (len(g), 0))
+
+
+def test_11_run_applies_every_other_grant_when_one_ledger_row_has_gone(monkeypatch):
+    import io
+    mod, synced, skipped, out = _load_grant_sync(), [], [], io.StringIO()
+    _run_world(mod, monkeypatch, {"here"}, synced)
+    raw = {"grants": [{"subject": "alice", "asset": "gone", "granted_by": "g"},
+                      {"subject": "bob", "asset": "here", "granted_by": "g"}]}
+    code = mod.run(raw, "http://x.invalid", prune=False,
+                   ledger_keys=frozenset({("alice", "gone", "dataset")}), skipped=skipped, out=out)
+    assert code == 0 and synced == [["here"]]
+    assert [g.asset for g in skipped] == ["gone"] and "SKIPPED ledger grant" in out.getvalue()
+
+
+def test_11_control_a_dangling_committed_grant_applies_nothing(monkeypatch):
+    import io
+    mod, synced, err = _load_grant_sync(), [], io.StringIO()
+    _run_world(mod, monkeypatch, {"here"}, synced)
+    raw = {"grants": [{"subject": "alice", "asset": "gone", "granted_by": "g"},
+                      {"subject": "bob", "asset": "here", "granted_by": "g"}]}
+    code = mod.run(raw, "http://x.invalid", prune=False, ledger_keys=frozenset(),
+                   out=io.StringIO(), err=err)
+    assert code == 3 and synced == [] and "DANGLING" in err.getvalue()
+
+
+def test_11_the_bff_tells_the_sync_which_rows_came_from_the_ledger(world, monkeypatch):
+    seen = {}
+
+    def seam(raw, prune=True, **kw):
+        seen.update(kw)
+        kw["skipped"].append(type("G", (), {"subject": "alice", "asset": "asset-a"})())
+        return 0
+    monkeypatch.setattr(ht, "_grant_sync_run", seam)
+    _approve()
+    out = ht.apply_ledger_to_directory()
+    assert seen["ledger_keys"] == frozenset({("alice", "asset-a", "dataset")})   # not carol: committed
+    assert out["skipped"] == [{"subject": "alice", "asset": "asset-a"}]          # and it is reported
+
+
+def test_11_the_real_apply_loads_the_real_grant_sync(monkeypatch):
+    """The module the BFF loads from its file must LOAD: it defines a dataclass, which needs its
+    module registered while the class is made. (A seam test with a fake file never saw this.)"""
+    monkeypatch.setattr(ht, "_GRANT_SYNC", str(ROOT / "policy" / "sync" / "grant_sync.py"))
+    mod = ht._grant_sync_module()
+    assert callable(mod.run) and callable(mod.union_grants)
+
+
+# 12. the console output of two applies at once --------------------------------------------------
+
+def test_12_run_writes_to_the_streams_it_is_given_and_not_to_the_process_streams(capsys):
+    import io
+    mod = _load_grant_sync()
+    out, err = io.StringIO(), io.StringIO()
+    assert mod.run({"grants": [{"subject": "a", "asset": "b"}]}, "http://x.invalid",
+                   out=out, err=err) == 2
+    assert "malformed" in err.getvalue()
+    seen = capsys.readouterr()
+    assert seen.out == "" and seen.err == ""
+
+
+def test_12_control_without_streams_run_still_writes_the_process_streams(capsys):
+    mod = _load_grant_sync()
+    assert mod.run({"grants": [{"subject": "a", "asset": "b"}]}, "http://x.invalid") == 2
+    assert "malformed" in capsys.readouterr().err
+
+
+def test_12_two_approvals_at_once_each_keep_their_own_output(world, monkeypatch):
+    import threading
+    both_inside = threading.Barrier(2, timeout=10)
+
+    def seam(raw, prune=True, *, out=None, err=None, **kw):
+        n = len(raw["grants"])
+        print(f"applying {n} grants", file=out)
+        both_inside.wait()                      # BOTH applies are mid-run at the same moment
+        print(f"done {n}", file=out)
+        return 0
+    monkeypatch.setattr(ht, "_grant_sync_run", seam)
+    results = {}
+
+    def work(name):
+        results[name] = ht.apply_ledger_to_directory()
+    threads = [threading.Thread(target=work, args=(n,)) for n in ("one", "two")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+    assert set(results) == {"one", "two"}
+    for r in results.values():                  # each caller got its OWN complete report
+        assert "applying 1 grants" in r["output"] and "done 1" in r["output"]
+
+
+def test_12_the_apply_redirects_no_process_stream():
+    src = (ROOT / "src" / "iagent" / "human_tasks.py").read_text(encoding="utf-8")
+    assert "redirect_stdout" not in src and "redirect_stderr" not in src

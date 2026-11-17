@@ -941,37 +941,63 @@ def record_routing_fault(*, task_id: str, addressee: str, dimension: str, label:
 
 
 # The DECISION LEDGER for access grants (ruled 2026-11-15): an approved access request is a row
-# here, not a line in a file in the pod. Append-only by (subject, asset, kind): a second approval
-# of the same grant is a no-op that keeps the first approver on record. The directory is written
-# FROM this record and re-written from it at startup, so a restart keeps an approved grant.
+# here, not a line in a file in the pod. APPEND-ONLY: a row is never updated or deleted. `entry`
+# says what the row is: 'grant' (an approval) or 'revoke' (a revocation, which names the grant it
+# revokes by the same (subject, asset, kind), and records who revoked it, when and why). Effective
+# access = committed policy + ledger grants - ledger revocations. Append-only by key within an
+# entry: a second approval of the same grant is a no-op that keeps the first approver on record,
+# and a second revocation keeps the first revoker. The directory is written FROM this record and
+# re-written from it at startup, so a restart keeps an approved grant (and a revoked one stays
+# revoked: the seed, the one pruner, reads the same rows).
+#
+# A 'revoke' row carries the revoker in `granted_by` and `requested_by` (one person), and the
+# why in `reason`; `task_id` is empty.
 _GRANT_LEDGER_SQL = """
 CREATE TABLE IF NOT EXISTS access_grant_ledger (
     subject      TEXT   NOT NULL,
     asset        TEXT   NOT NULL,
     kind         TEXT   NOT NULL DEFAULT 'dataset',
+    entry        TEXT   NOT NULL DEFAULT 'grant',
     requested_by TEXT   NOT NULL,
     granted_by   TEXT   NOT NULL,
     reason       TEXT   NOT NULL DEFAULT '',
     task_id      TEXT   NOT NULL DEFAULT '',
     granted_at   BIGINT NOT NULL,
-    PRIMARY KEY (subject, asset, kind)
+    PRIMARY KEY (subject, asset, kind, entry)
 );
 """
 
 _GRANT_INSERT_SQL = """
-INSERT INTO access_grant_ledger (subject, asset, kind, requested_by, granted_by, reason, task_id,
-                                 granted_at)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-ON CONFLICT (subject, asset, kind) DO NOTHING
+INSERT INTO access_grant_ledger (subject, asset, kind, entry, requested_by, granted_by, reason,
+                                 task_id, granted_at)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+ON CONFLICT (subject, asset, kind, entry) DO NOTHING
 """
 
 _GRANT_SELECT_SQL = """
-SELECT subject, asset, kind, requested_by, granted_by, reason, task_id, granted_at
+SELECT subject, asset, kind, entry, requested_by, granted_by, reason, task_id, granted_at
   FROM access_grant_ledger ORDER BY granted_at, subject, asset
 """
 
-_GRANT_FIELDS = ("subject", "asset", "kind", "requested_by", "granted_by", "reason", "task_id",
-                 "granted_at")
+_GRANT_FIELDS = ("subject", "asset", "kind", "entry", "requested_by", "granted_by", "reason",
+                 "task_id", "granted_at")
+
+
+def _append_entry(entry: str, *, subject: str, asset: str, requested_by: str, granted_by: str,
+                  reason: str, task_id: str, kind: str, now_ms: Optional[int]) -> bool:
+    at = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_GRANT_INSERT_SQL, (subject, asset, kind, entry, requested_by, granted_by,
+                                            reason or "", task_id or "", at))
+            added = cur.rowcount > 0
+        conn.commit()
+    if added:
+        _grant_audit_log.info(
+            "grant_%s granted_by=%s requested_by=%s subject=%s asset=%s at=%s",
+            "recorded" if entry == "grant" else "revoked", granted_by, requested_by, subject, asset,
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at / 1000)))
+    return added
 
 
 def record_grant(*, subject: str, asset: str, requested_by: str, granted_by: str, reason: str,
@@ -983,27 +1009,51 @@ def record_grant(*, subject: str, asset: str, requested_by: str, granted_by: str
                         ("granted_by", granted_by)):
         if not str(value or "").strip():
             raise ValueError(f"record_grant: {name} is required")
-    at = int(time.time() * 1000) if now_ms is None else int(now_ms)
-    with _pg_connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(_GRANT_INSERT_SQL, (subject, asset, kind, requested_by, granted_by,
-                                            reason or "", task_id or "", at))
-            added = cur.rowcount > 0
-        conn.commit()
-    if added:
-        _grant_audit_log.info(
-            "grant_recorded granted_by=%s requested_by=%s subject=%s asset=%s at=%s",
-            granted_by, requested_by, subject, asset,
-            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at / 1000)))
-    return added
+    return _append_entry("grant", subject=subject, asset=asset, requested_by=requested_by,
+                         granted_by=granted_by, reason=reason, task_id=task_id, kind=kind,
+                         now_ms=now_ms)
 
 
-def ledger_grants() -> list[dict[str, Any]]:
-    """Every approved grant on record, oldest first."""
+class NoSuchGrant(ValueError):
+    """A revocation names a grant that is not in effect (not in committed policy, not in the ledger)."""
+
+
+def record_revocation(*, subject: str, asset: str, revoked_by: str, reason: str,
+                      kind: str = "dataset", now_ms: Optional[int] = None) -> bool:
+    """Append one REVOCATION to the ledger: which grant, who revoked it, when, why. Nothing is
+    deleted: the grant row (if the grant was approved at runtime) and this row both stay. True when
+    a row was added; False when the grant was already revoked (the first revoker stays). A
+    revocation names a grant that is in effect, or raises `NoSuchGrant` and writes nothing; the
+    revoker and a reason are required (a revocation that cannot say who and why is not recorded).
+
+    This records the act. The directory loses the reader at the seed's next sync (the one pruner);
+    the BFF never prunes."""
+    for name, value in (("subject", subject), ("asset", asset), ("revoked_by", revoked_by),
+                        ("reason", reason)):
+        if not str(value or "").strip():
+            raise ValueError(f"record_revocation: {name} is required")
+    entries = ledger_entries()
+    key = (subject, asset, kind or "dataset")
+    if any(_grant_key(r) == key and r["entry"] == "revoke" for r in entries):
+        return False
+    if key not in {_grant_key(g) for g in desired_grants(entries)}:
+        raise NoSuchGrant(f"no grant of {asset} to {subject} is in effect")
+    return _append_entry("revoke", subject=subject, asset=asset, requested_by=revoked_by,
+                         granted_by=revoked_by, reason=reason, task_id="", kind=kind or "dataset",
+                         now_ms=now_ms)
+
+
+def ledger_entries() -> list[dict[str, Any]]:
+    """Every row on record, oldest first: grants and revocations."""
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(_GRANT_SELECT_SQL)
             return [dict(zip(_GRANT_FIELDS, row)) for row in cur.fetchall()]
+
+
+def ledger_grants() -> list[dict[str, Any]]:
+    """Every approved grant on record, oldest first (the revocation rows are `ledger_entries`)."""
+    return [r for r in ledger_entries() if r["entry"] == "grant"]
 
 
 def committed_grants() -> list[dict[str, Any]]:
@@ -1023,22 +1073,9 @@ def _grant_key(g: dict) -> tuple:
     return (g.get("subject"), g.get("asset"), g.get("kind") or "dataset")
 
 
-def desired_grants(ledger: Optional[list] = None) -> list[dict[str, Any]]:
-    """Committed policy plus the ledger: what the directory's readers must be. Committed policy
-    wins a duplicate (its git history is the stronger record). The sync PRUNES reader relations
-    outside this set, so a ledger grant must always travel with the committed ones."""
-    out = {_grant_key(g): g for g in committed_grants()}
-    for row in (ledger_grants() if ledger is None else ledger):
-        out.setdefault(_grant_key(row), {
-            "subject": row["subject"], "asset": row["asset"], "kind": row["kind"],
-            "granted_by": row["granted_by"], "reason": row["reason"]})
-    return list(out.values())
-
-
-def _grant_sync_run(raw: dict, *, prune: bool = False) -> int:
-    """The sealed `grant_sync.run` (validate, prove the negative, sync, readback), called in
-    process with a grants dict. ADD-ONLY by default: the BFF never prunes (one pruner, the seed).
-    The ONE seam a test replaces: no directory write in a unit test."""
+def _grant_sync_module():
+    """`policy/sync/grant_sync.py` loaded from its file: the ONE place the union, the dangling
+    rule and the apply live (the seed CLI runs the same module)."""
     import importlib.util
 
     sync_dir = os.path.dirname(_GRANT_SYNC)
@@ -1046,22 +1083,79 @@ def _grant_sync_run(raw: dict, *, prune: bool = False) -> int:
         sys.path.insert(0, sync_dir)
     spec = importlib.util.spec_from_file_location("_iagent_grant_sync", _GRANT_SYNC)
     mod = importlib.util.module_from_spec(spec)
+    # registered BEFORE it runs: the module defines a dataclass, and `dataclasses` looks its own
+    # module up in sys.modules while the class is being made (an unregistered load fails there)
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
-    return mod.run(raw, _TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393", prune=prune)
+    return mod
+
+
+def desired_grants(ledger: Optional[list] = None) -> list[dict[str, Any]]:
+    """Committed policy plus the ledger's grants minus the ledger's revocations: what the
+    directory's readers must be (`grant_sync.union_grants`, the function the seed also calls).
+    Committed policy wins a duplicate grant; a revocation removes the key whatever its source.
+    The sync PRUNES reader relations outside this set, so a ledger grant must always travel with
+    the committed ones."""
+    entries = ledger_entries() if ledger is None else ledger
+    return _grant_sync_module().union_grants(committed_grants(), entries)
+
+
+def _grant_sync_run(raw: dict, *, prune: bool = False, ledger_keys: frozenset = frozenset(),
+                    skipped: Optional[list] = None, out: Any = None, err: Any = None) -> int:
+    """The sealed `grant_sync.run` (validate, prove the negative, sync, readback), called in
+    process with a grants dict. ADD-ONLY by default: the BFF never prunes (one pruner, the seed).
+    The report goes to `out` / `err` (never the process streams, which are shared by every thread).
+    The ONE seam a test replaces: no directory write in a unit test."""
+    return _grant_sync_module().run(
+        raw, _TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393", prune=prune,
+        ledger_keys=ledger_keys, skipped=skipped, out=out, err=err)
+
+
+class DirectoryUnavailable(Exception):
+    """The directory could not be asked whether an asset exists (fail closed: nothing is recorded)."""
+
+
+class UnknownAsset(ValueError):
+    """An approval names an asset that is not in the directory: refused, nothing recorded."""
+
+
+def asset_exists(asset: str, kind: str = "dataset") -> bool:
+    """Is `asset` in the directory? The same point lookup the sync's dangling rule makes
+    (`TopazClient.object_exists`). A `document` is attested by the corpus, not the directory, so it
+    is not asked about (the same rule as `grant_sync.find_dangling`). The seam a test replaces."""
+    if (kind or "dataset") == "document":
+        return True
+    _grant_sync_module()
+    from topaz_sync import TopazClient
+    try:
+        with TopazClient(_TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393") as client:
+            return bool(client.object_exists("dataset", asset))
+    except Exception as exc:  # noqa: BLE001 -- unreachable or unreadable: say so, never "absent"
+        raise DirectoryUnavailable(type(exc).__name__) from exc
 
 
 def apply_ledger_to_directory() -> dict[str, Any]:
     """Apply committed policy plus the ledger to the directory, ADD-ONLY (`prune=False`): the BFF
     is never the pruner (one pruner, the seed), so it can never revoke a grant it did not see.
-    `{ok, exit_code, output, grants}`; 0 ok, 2 malformed, 3 dangling, 4 readback."""
-    import contextlib as _ctx
+    A ledger grant whose asset has since disappeared is skipped ALONE and reported in `skipped`;
+    every other grant applies. `{ok, exit_code, output, grants, skipped}`; 0 ok, 2 malformed,
+    3 dangling (a COMMITTED grant), 4 readback.
+
+    The report is collected in this call's own buffers: nothing here redirects the process
+    streams, so two approvals at once each keep their own output."""
     import io as _io
 
-    grants = desired_grants()
-    out, err = _io.StringIO(), _io.StringIO()
-    with _ctx.redirect_stdout(out), _ctx.redirect_stderr(err):
-        code = _grant_sync_run({"grants": grants}, prune=False)
+    entries = ledger_entries()
+    grants = desired_grants(entries)
+    keys = _grant_sync_module().ledger_grant_keys(entries)
+    out, err, skipped = _io.StringIO(), _io.StringIO(), []
+    code = _grant_sync_run({"grants": grants}, prune=False, ledger_keys=keys, skipped=skipped,
+                           out=out, err=err)
+    for g in skipped:
+        logger.warning("ledger grant skipped, asset not in directory: subject=%s asset=%s",
+                       g.subject, g.asset)
     return {"ok": code == 0, "exit_code": code, "grants": len(grants),
+            "skipped": [{"subject": g.subject, "asset": g.asset} for g in skipped],
             "output": out.getvalue()[-800:] + err.getvalue()[-400:]}
 
 
@@ -1073,13 +1167,18 @@ def write_grant_and_sync(*, subject: str, asset: str, granted_by: str, reason: s
 
     The record is made FIRST and stands whatever the apply does: a failed apply is repaired by
     the startup re-apply, never by asking the approver again. A store that cannot record the grant
-    raises, and nothing is applied: a grant with no record is not a grant.
+    raises, and nothing is applied: a grant with no record is not a grant. An asset that is not
+    in the directory raises `UnknownAsset` (or `DirectoryUnavailable` when the directory cannot be
+    asked) and nothing is recorded. `recorded` is True once the row stands, so a caller can tell
+    "recorded, apply failed (repaired at startup)" from "not recorded".
 
     AUDIT: the git-blame audit the grant core wants is ADR-0062 section 7's engine-r commit, not
     built yet. Until then the ledger row (and its audit line) is the record of who approved what."""
+    if not asset_exists(asset):
+        raise UnknownAsset(f"{asset} is not in the directory: no grant is recorded")
     record_grant(subject=subject, asset=asset, granted_by=granted_by, reason=reason,
                  requested_by=requested_by or subject, task_id=task_id)
-    return apply_ledger_to_directory()
+    return {**apply_ledger_to_directory(), "recorded": True}
 
 
 def reapply_ledger_grants() -> dict[str, Any]:
@@ -1087,7 +1186,7 @@ def reapply_ledger_grants() -> dict[str, Any]:
     (and nothing pruned) when the ledger is empty or no directory is configured."""
     if not _TOPAZ_DIRECTORY_URL:
         return {"ok": True, "skipped": "no directory"}
-    if not ledger_grants():
+    if not ledger_entries():
         return {"ok": True, "skipped": "empty ledger"}
     return apply_ledger_to_directory()
 
@@ -1098,8 +1197,12 @@ def grants_absent_from_policy(live: Optional[Any] = None) -> dict[str, list]:
     directory that neither committed policy nor the ledger names (a hand write), when `live`
     (an iterable of `(subject, asset, kind)`) is given."""
     committed = {_grant_key(g) for g in committed_grants()}
-    rows = ledger_grants()
-    report = {"ledger": [r for r in rows if _grant_key(r) not in committed], "directory": []}
+    entries = ledger_entries()
+    revoked = {_grant_key(r) for r in entries if r["entry"] == "revoke"}
+    rows = [r for r in entries if r["entry"] == "grant"]
+    # a revoked grant no longer enforces, so it is not "enforcing but absent from policy"
+    report = {"ledger": [r for r in rows if _grant_key(r) not in committed
+                         and _grant_key(r) not in revoked], "directory": []}
     if live is not None:
         known = committed | {_grant_key(r) for r in rows}
         report["directory"] = sorted(k for k in set(live) if k not in known)

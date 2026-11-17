@@ -160,6 +160,12 @@ groups:
   # change the workbench's deck template. Sandbox member = alice.
   training-admins: {}
 
+  # REVOKE-CAPABILITY GROUP ONLY (2026-11-16 ruling). Grants NO persona.domain cell; named in
+  # policy/capability_grants.yaml `grant_to_groups` for `mesh:revokeAccessGrant`. A member may revoke
+  # a reader grant (the revocation is recorded in the decision ledger). Sandbox member = alice
+  # (a fixture, as for the other capability-only groups); a deployment names its own in users.yaml.
+  access-revokers: {}
+
   # DECIDE-RAIL GROUP ONLY (2026-11-07 dispatch). Grants NO persona.domain cell; named in
   # policy/option_deciders.yaml `grant_to_groups` for every `obsolescence_resolution.<option>`. A member
   # may CHOOSE that option at the workflow's decide step; who APPROVES is task_grants' audience.
