@@ -5,6 +5,9 @@
 ### The 0.4.89 upgrade notes name the run-limit default change
 - 0.4.89's "Before the roll" note for #391 now says that the chart default for Dagster's run limit changed from 2 to 6. A user-values diff does not show this change. Docs only; the render is unchanged.
 
+### The 0.4.88 and 0.4.89 upgrade notes name tracing client 5 at work
+- Both notes now say that docs_agent carries the Langfuse client 5.2.0, which work's self-hosted Langfuse server (3.165.0) does not support. Client 5 needs a server on v4.59.0 or later. #425 caps the client below 5 in every lock for 0.4.90. Docs only; the render is unchanged.
+
 ### pub-tools gets the variable names its code reads
 - The pub-tools code location and broker set `PUBLOG_S3_BUCKET_URL: "s3://publog-lake"` instead of `PUBLOG_S3_BUCKET`, and the code location sets `DATAHUB_GMS_URL` instead of `DATAHUB_SERVER`. pub-tools reads only the new names, so the old ones were ignored, and pub-tools ran on code defaults equal to these values. Behaviour is unchanged; the two pub-tools pods restart because their env changed.
 - `tests/test_pub_tools_chart_env_is_read_by_its_code.py` renders the chart and fails on any variable set on pub-tools that its code does not read. It names each variable's reader by pub-tools or dag-tools commit.
@@ -56,6 +59,7 @@
 - #392: a deploy that never set `ENABLE_DISPOSITION_AUTHZ` now enforces the gate. Its `policy/capability_grants.yaml` must grant `mesh:startReview` to the review-starter service identity, or notices refuse `NOT_ENTITLED_TO_INITIATE`. After the grant is synced, bump `REVIEW_REQUEST_KEY_EPOCH` (runbook section B). Sandbox already runs the gate on, with the grant synced.
 - #391: **the chart default for Dagster's run limit changed from 2 to 6.** The global `max_concurrent_runs` is now 6, the sum of four per-location rows. A deploy that never set it gets 6 on this roll, and a user-values diff does not show it. Any code location the daemon loads needs its own row. List STARTED runs first (a dead worker holds a slot).
 - #395: the allow-list file reaches the BFF pod inside the BFF image (`/app/policy/electric_shapes.yaml`), not through a chart mount. A deployment with its own policy replaces it by pointing `ELECTRIC_SHAPES_FILE` at its own file. An absent or empty file serves no stream, and an unreadable one answers 503.
+- **At work: docs_agent carries tracing client 5, which work's tracing server does not support.** The docs engine image installs Langfuse client 5.2.0 (read from sandbox's 0.4.89 docs engine), as in 0.4.88. Client 5 needs a Langfuse server on v4.59.0 or later. Work's server is self-hosted 3.165.0. 0.4.90 caps the client below 5 in every lock (#425).
 
 **After the roll:**
 - #385: Chris hand-runs `topaz_sync` in the cortex-bff pod, `--dry-run` first. It deletes the retired seed twins `alice@company.com` and `bob@company.com`. `topazSeed` is off on sandbox and the roll hook does not run `topaz_sync`. Expect `retired_still_present=0`, then `SYNC OK`; a retired user still present exits 4.
@@ -218,6 +222,11 @@ nothing at runtime.
 to 0.4.89, one token change per roll.
 
 **After the roll:** dagster-user-code must be Ready (#327).
+
+**At work: docs_agent carries tracing client 5, which work's tracing server does not support.** #327 brings
+provenance-telemetry 0.2.1 into docs_agent, and docs_agent's lock resolves the Langfuse client 5.2.0 through it.
+Client 5 needs a Langfuse server on v4.59.0 or later. Work's server is self-hosted 3.165.0. 0.4.89 carries the same
+client. 0.4.90 caps the client below 5 in every lock (#425).
 
 **Grants for the export path.** The export grants go to the reviewing group. The Promote
 reviewers' group needs `ingest:exportBatch` and the work profile's `can_export`, or the button
