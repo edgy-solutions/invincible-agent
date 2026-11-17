@@ -67,6 +67,7 @@ class _Log:
 
 class _Ctx:
     log = _Log()
+    run_id = "run-1"  # 00dcf15e: the identity gate needs a run id
 
 
 class _Resp:
@@ -117,6 +118,8 @@ def _route(rig, sup, monkeypatch, query, pick):
                           "classify_called": True, "candidate_verb_iris": []})
         return _Resp({})
     monkeypatch.setattr(sup.requests, "post", _post)
+    # the person behind the run redeems from the vault (00dcf15e); a double here, not the subject
+    monkeypatch.setattr(sup, "_redeem_caller_token", lambda ctx, who, leg="call": "redeemed-token")
     _status, _pred, tele = sup._classify_route(
         _Ctx(), query, ["SUSTAINMENT"], routing_domain="SUSTAINMENT", user_email="bob@example.com")
     # None when the supervisor never searched verbs (an UNKNOWN subject is never searched).
