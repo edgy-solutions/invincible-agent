@@ -10056,11 +10056,13 @@ async def _generate_dagster_stream_inner(
                 if _decision == "busy":
                     _res["id"] = None       # a refusal holds nothing
                     yield _busy_error(_rv.get("queue_max"))
-                    yield _sse("stream_end", "{}")
-                    # What the run-level BUSY refusal writes: a failed artifact.
+                    # What the run-level BUSY refusal writes: a failed artifact. Written
+                    # BEFORE stream_end, so a client that closes on stream_end cannot
+                    # cancel the write.
                     await _dispatch_answer_artifact(_boundary_failure_bundle(
                         request, user_id, user_persona, entitled_domains, entitlement_source,
                         {"cause": "answer_busy_queue_full", "where": "admission"}))
+                    yield _sse("stream_end", "{}")
                     return
                 if _decision == "queued":
                     _res["queued"] = True
