@@ -126,3 +126,19 @@ repository_paths:
         granted_by: seed
         reason: >-
           ADR-0062 section 5: a release tag takes two approvers from repo_release:invincible-agent.
+
+  # The proving repository for the grant path (ADR-0062 section 7). One row, the grants file only:
+  # engine-r proposes, two people review, the merge applies the grant add-only. Nothing else in this
+  # repository is governed here, so check 6 refuses every other path.
+  invincible-agent-mirror:
+    paths:
+      policy/asset_grants.yaml:
+        review: access_grant:<DOMAIN>
+        unmatched_review: repo_review:POLICY
+        approvers: 2
+        granted_by: seed
+        reason: >-
+          ADR-0062 section 5: a grant row is reviewed by its domain's access-grant approvers, taken
+          from each row the diff changes, at two approvers: the person who approves the request and
+          a second person who reviews the change. Neither is the requester or the grantee. A row in
+          a domain with no access_grant audience is reviewed by repo_review:POLICY.
