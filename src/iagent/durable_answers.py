@@ -27,8 +27,37 @@ class DurableAnswers:
         self._ttl = snapshot_ttl_s
         self._cache: dict[str, tuple[float, dict]] = {}
 
-    async def launch(self, op_config: dict) -> str | None:
-        answer_id = str(uuid.uuid4())
+    async def reserve(self, answer_id: str) -> dict | None:
+        """Take a place in the admission gate under `answer_id` (before the first model call).
+        The decision dict, or None on any error."""
+        try:
+            async with self._client_factory() as client:
+                resp = await client.post(
+                    f"{self._ingress}/SupervisorAnswer/{answer_id}/reserve", json={})
+                resp.raise_for_status()
+                body = resp.json()
+            return body if isinstance(body, dict) and "decision" in body else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("durable answer reserve failed for %s: %s", answer_id, exc)
+            return None
+
+    async def release(self, answer_id: str) -> bool:
+        """Give back a reservation that was never launched. False on any error."""
+        try:
+            async with self._client_factory() as client:
+                resp = await client.post(
+                    f"{self._ingress}/SupervisorAnswer/{answer_id}/release", json={})
+                resp.raise_for_status()
+                body = resp.json()
+            return bool(isinstance(body, dict) and body.get("released"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("durable answer release failed for %s: %s", answer_id, exc)
+            return False
+        finally:
+            self._cache.pop(answer_id, None)
+
+    async def launch(self, op_config: dict, answer_id: str | None = None) -> str | None:
+        answer_id = answer_id or str(uuid.uuid4())
         try:
             async with self._client_factory() as client:
                 resp = await client.post(

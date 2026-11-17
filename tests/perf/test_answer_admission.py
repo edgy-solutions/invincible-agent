@@ -770,3 +770,435 @@ def test_the_queue_max_from_env(monkeypatch, caplog):
     monkeypatch.setenv("IAGENT_ANSWER_QUEUE_MAX", "5")
     assert adm.answer_queue_max_from_env() == 5
     assert adm.reset_gate_for_tests().state()["queue_max"] == 5
+
+
+# =====================================================================================
+# AMENDMENT 2 (ruled 2026-11-16): admission comes BEFORE intent extraction. A refused or
+# waiting request makes no model call. Driven through the real boundary
+# (`generate_dagster_stream`) on the NON-`_pre_resolved` path, the real `DurableAnswers`
+# client, the real gate and the real service handlers, with every POST stubbed at the httpx
+# level and COUNTED by URL.
+# =====================================================================================
+
+ADM_ROUTE = "route_intent"
+
+
+class _Resp:
+    def __init__(self, status, body):
+        self.status_code, self._body = status, body
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise httpx.HTTPStatusError("stub", request=None, response=self)
+
+
+class Mesh:
+    """Every POST of the stream, counted by tag, in order; the SupervisorAnswer handlers are the
+    REAL ones over the real gate (an in-process service double, never a mock of `release`)."""
+
+    def __init__(self, *, route_status=200, route_body=None):
+        self.route_status = route_status
+        self.route_body = {"mode": "ONE_SHOT"} if route_body is None else route_body
+        self.log: list = []          # ("post", tag, answer_id) and ("ev", event_name), in order
+        self.launched: dict = {}
+
+    def n(self, tag):
+        return sum(1 for e in self.log if e[0] == "post" and e[1] == tag)
+
+    def client(self, *a, **k):
+        return _MeshClient(self)
+
+    async def post(self, url, json=None, headers=None, **kw):
+        if "/SupervisorAnswer/" in url:
+            _, _, rest = url.partition("/SupervisorAnswer/")
+            aid, _, handler = rest.partition("/")
+            self.log.append(("post", handler, aid))
+            ctx = _Shared(FakeCtx(aid))
+            if handler == "run/send":
+                self.launched[aid] = json
+                return _Resp(200, {})
+            if handler == "snapshot" and aid in self.launched:
+                return _Resp(200, {"status": "CANCELED", "events": [], "steps": [], "result": None})
+            return _Resp(200, await getattr(svc, handler)(ctx))
+        if url.endswith("/route_intent"):
+            self.log.append(("post", ADM_ROUTE, None))
+            return _Resp(self.route_status, self.route_body)
+        if "/ProcessInterviewer/" in url:
+            self.log.append(("post", url.rsplit("/", 1)[-1], None))
+            return _Resp(200, {"is_active": False} if url.endswith("get_status") else {})
+        self.log.append(("post", "other:" + url, None))
+        return _Resp(200, {})
+
+
+class _MeshClient:
+    def __init__(self, mesh):
+        self.mesh = mesh
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def post(self, url, **kw):
+        return await self.mesh.post(url, **kw)
+
+
+@pytest.fixture
+def mesh_env(stubbed_stream, monkeypatch):  # noqa: F811
+    """The durable path against a Mesh; returns `new(**kw) -> Mesh`."""
+    monkeypatch.setattr(gw, "VAULT", IdentityVault())
+    monkeypatch.setenv("IAGENT_ANSWER_PATH", "durable")
+    real_sleep = asyncio.sleep
+
+    async def _nosleep(_s=0, *a, **k):
+        await real_sleep(0)
+
+    monkeypatch.setattr(gw.asyncio, "sleep", _nosleep)
+
+    def new(**kw):
+        m = Mesh(**kw)
+        monkeypatch.setattr(httpx, "AsyncClient", m.client)
+        monkeypatch.setattr(gw, "_DURABLE_ANSWERS",
+                            DurableAnswers("http://ingress", client_factory=m.client))
+        return m
+    new.calls = stubbed_stream
+    return new
+
+
+def _plain_req():
+    """No answering artifact, no seed panel: the branch that calls /route_intent."""
+    return gw.InterviewRequest(message="how is the pump doing", session_id="s-adm-2")
+
+
+async def _stream(mesh, *, stop=None):
+    """Drive the boundary; log every event beside the posts. `stop(ev, mesh)` closes the stream."""
+    out = []
+    agen = gw.generate_dagster_stream(_plain_req(), user_email="alice@example.com")
+    try:
+        async for ev in agen:
+            out.append(ev)
+            for line in ev.splitlines():
+                if line.startswith("event:"):
+                    mesh.log.append(("ev", line.split(":", 1)[1].strip()))
+            if stop is not None and stop(ev, mesh):
+                break
+    except Exception:  # noqa: BLE001 -- the post-loop tail is not this file's subject
+        pass
+    finally:
+        await agen.aclose()
+    for _ in range(10):
+        await asyncio.sleep(0)       # the fire-and-forget release / withdraw runs
+    return "".join(out)
+
+
+def _gate_full(holders=("h",), waiters=()):
+    gate = adm.get_gate()
+    for i, h in enumerate(holders):
+        assert gate.try_enter(h, 1.0 + i) == "admitted"
+    for i, w in enumerate(waiters):
+        assert gate.try_enter(w, 100.0 + i) == "queued"
+    return gate
+
+
+# 1. a refused request causes zero model calls ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_refused_request_causes_zero_model_calls(mesh_env):
+    adm.reset_gate_for_tests(1, 1)
+    gate = _gate_full(("h",), ("w",))           # K holders and M waiters: full
+    m = mesh_env()
+    blob = await _stream(m)
+    errs = _events(blob, "pipeline_error")
+    assert len(errs) == 1 and errs[0]["cause"] == "answer_busy_queue_full", errs
+    assert errs[0]["retryable"] is True and "queue is full" in errs[0]["message"]
+    assert m.n(ADM_ROUTE) == 0 and m.n("run/send") == 0
+    assert "stream_end" in blob
+    assert [b["status"] for b in mesh_env.calls["bundles"]] == ["failed"]   # what BUSY writes
+    assert gate.state()["running"] == 1 and gate.state()["waiting"] == 1   # nothing taken
+
+
+@pytest.mark.asyncio
+async def test_control_a_request_with_a_free_slot_makes_one_route_and_one_launch(mesh_env):
+    adm.reset_gate_for_tests(1, 1)
+    m = mesh_env()
+    blob = await _stream(m)
+    assert m.n("reserve") == 1 and m.n(ADM_ROUTE) == 1 and m.n("run/send") == 1
+    tags = [e[1] for e in m.log if e[0] == "post"]
+    assert tags.index("reserve") < tags.index(ADM_ROUTE) < tags.index("run/send")
+    assert "answer_queued" not in blob and "answer_admitted" not in blob
+    ((rid, body),) = m.launched.items()         # launched under the SAME id, with its arrival
+    assert body["reserved_arrived_at"] == adm.get_gate().arrived_at(rid)
+    assert m.n("release") == 0                  # launched: `run` owns it, nobody releases
+
+
+# 2. a waiting request makes no model call until admitted -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_waiting_request_makes_no_model_call_until_admitted(mesh_env):
+    adm.reset_gate_for_tests(1, 5)
+    gate = _gate_full(("h",))
+    m = mesh_env()
+    task = asyncio.ensure_future(_stream(m))
+    await _until(lambda: ("ev", "answer_queued") in m.log)
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert m.n(ADM_ROUTE) == 0 and m.n("run/send") == 0     # waiting: no model call
+    gate.release("h")
+    blob = await asyncio.wait_for(task, 10)
+    names = [(e[1] if e[0] == "ev" else "post:" + e[1]) for e in m.log]
+    assert names.index("answer_admitted") < names.index("post:" + ADM_ROUTE)
+    assert m.n(ADM_ROUTE) == 1 and m.n("run/send") == 1
+    # the run loop after the launch adds no second pair of queue events
+    assert len(_events(blob, "answer_queued")) == 1 and len(_events(blob, "answer_admitted")) == 1
+
+
+# 3. every non-launch exit releases ------------------------------------------------------
+
+
+def _assert_given_back(m, gate):
+    st = gate.state()
+    assert (st["running"], st["waiting"]) == (0, 0), st
+    assert m.n("run/send") == 0 and m.n("release") == 1
+
+
+@pytest.mark.asyncio
+async def test_route_intent_failing_releases_the_reservation(mesh_env):
+    adm.reset_gate_for_tests(1, 1)
+    m = mesh_env(route_status=500)
+    blob = await _stream(m)
+    assert "route_intent_failed" in blob
+    _assert_given_back(m, adm.get_gate())
+
+
+@pytest.mark.asyncio
+async def test_a_conversational_mode_releases_the_reservation(mesh_env):
+    adm.reset_gate_for_tests(1, 1)
+    m = mesh_env(route_body={"mode": "CONVERSATIONAL"})
+    await _stream(m)
+    assert m.n("process_message") == 1          # it really took the interview path
+    _assert_given_back(m, adm.get_gate())
+
+
+@pytest.mark.asyncio
+async def test_a_stream_closed_after_admission_before_launch_releases_once(mesh_env):
+    adm.reset_gate_for_tests(1, 1)
+    m = mesh_env()
+    await _stream(m, stop=lambda ev, mesh: mesh.n(ADM_ROUTE) == 1)
+    assert m.n("withdraw") == 0
+    _assert_given_back(m, adm.get_gate())
+
+
+# 8. closing the stream -------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_stream_closed_while_reserved_and_queued_withdraws_once(mesh_env):
+    adm.reset_gate_for_tests(1, 5)
+    gate = _gate_full(("h",))
+    m = mesh_env()
+    await _stream(m, stop=lambda ev, mesh: "event: answer_queued" in ev)
+    assert m.n("withdraw") == 1 and m.n("release") == 0 and m.n(ADM_ROUTE) == 0
+    assert gate.state()["waiting"] == 0 and gate.state()["running"] == 1
+
+
+# 7. the Dagster path never reserves ------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_dagster_path_makes_zero_reserve_and_zero_release_calls(mesh_env, monkeypatch):
+    monkeypatch.setenv("IAGENT_ANSWER_PATH", "dagster")
+    m = mesh_env()
+    await _stream(m)
+    assert m.n(ADM_ROUTE) == 1
+    assert not any("/SupervisorAnswer/" in str(e) for e in m.log)
+    assert [e for e in m.log if e[0] == "post" and e[1] in (
+        "reserve", "release", "snapshot", "withdraw", "run/send")] == []
+    ns = gw._answer_backend()
+    assert await ns.reserve("x") is None and await ns.release("x") is False
+
+
+# 4. the claim ----------------------------------------------------------------------------
+
+
+def test_run_claims_a_reservation_and_keeps_its_arrival(mem, rec):
+    client, exp = mem
+    adm.reset_gate_for_tests(1, 2)
+
+    async def go():
+        got = await svc.reserve(_Shared(FakeCtx("R1")))
+        assert got["decision"] == "admitted"
+        again = await svc.reserve(_Shared(FakeCtx("R1")))          # idempotent
+        assert again["decision"] == "admitted" and again["arrived_at"] == got["arrived_at"]
+        ctx = JCtx("R1")
+        task = asyncio.create_task(svc._run_impl(
+            ctx, _traced_cfg(reserved_arrived_at=got["arrived_at"]), ops=fake_ops()))
+        await _until(lambda: rec.starts == ["R1"])
+        gate = adm.get_gate()
+        st = (gate.state()["running"], gate.state()["waiting"])
+        released = await svc.release(_Shared(FakeCtx("R1")))
+        after = gate.state()["running"]
+        rec.event("R1").set()
+        await task
+        return got, ctx.journal["admission"], st, released, after
+
+    got, adj, st, released, after = _run(go())
+    assert adj["decision"] == "admitted" and adj["arrived_at"] == got["arrived_at"]
+    assert st == (1, 0)                         # no second entry
+    assert released == {"released": False} and after == 1      # a claimed place is `run`'s
+    (span,) = [s for s in spans_of(client, exp) if s.name == "supervisor.queue_wait"]
+    assert _meta(span, "reserved") is True
+
+
+def test_a_claimed_queued_reservation_waits_from_its_first_arrival(mem, rec):
+    client, exp = mem
+    adm.reset_gate_for_tests(1, 2)
+
+    async def go():
+        gate = adm.get_gate()
+        gate.try_enter("h", 1.0)
+        got = await svc.reserve(_Shared(FakeCtx("R2")))
+        assert got["decision"] == "queued"
+        await asyncio.sleep(0.05)               # time passes before `run` starts
+        task = asyncio.create_task(svc._run_impl(
+            JCtx("R2"), _traced_cfg(reserved_arrived_at=got["arrived_at"]), ops=fake_ops()))
+        await _spin()
+        assert gate.state()["waiting"] == 1     # still ONE entry: claimed, not re-queued
+        gate.release("h")
+        await _until(lambda: rec.starts == ["R2"])
+        rec.event("R2").set()
+        await task
+
+    _run(go())
+    (span,) = [s for s in spans_of(client, exp) if s.name == "supervisor.queue_wait"]
+    assert _meta(span, "reserved") is True and _meta(span, "waited_ms") >= 50
+
+
+# 5. the lost reservation -----------------------------------------------------------------
+
+
+def test_a_lost_reservation_is_never_busy_and_is_placed_by_its_arrival(rec):
+    adm.reset_gate_for_tests(1, 1)
+
+    async def go():
+        gate = adm.get_gate()
+        gate.try_enter("h", 1.0)
+        assert gate.try_enter("w1", 10.0) == "queued"          # the queue is FULL
+        ctx = JCtx("L")
+        task = asyncio.create_task(svc._run_impl(
+            ctx, {**CFG, "reserved_arrived_at": 5.0}, ops=fake_ops()))
+        await _until(lambda: gate.position("L") is not None)
+        placed = (gate.position("L"), gate.position("w1"))
+        gate.release("h")
+        await _until(lambda: rec.starts == ["L"])
+        rec.event("L").set()
+        out = await task
+        return ctx.journal["admission"], placed, out
+
+    adj, placed, out = _run(go())
+    assert adj["decision"] != "busy" and adj["arrived_at"] == 5.0 and "busy" not in out
+    assert placed == (1, 2)                     # ahead of the waiter that arrived later
+
+
+# 6. leases -------------------------------------------------------------------------------
+
+
+def _clocked(limit=1, queue_max=5):
+    t = [0.0]
+    return AdmissionGate(limit, queue_max, lease_s=300, waiter_idle_s=30,
+                         clock=lambda: t[0]), t
+
+
+def test_an_unclaimed_holder_expires_at_the_lease_and_its_slot_passes_to_the_head():
+    gate, t = _clocked()
+    gate.try_enter("h", 1.0)
+    gate.try_enter("w", 2.0)
+    for tick in range(10, 300, 10):             # a snapshot read keeps the waiter alive
+        t[0] = tick
+        gate.touch("w")
+    assert gate.state()["running"] == 1 and gate.position("w") == 1      # 290 s: still held
+    t[0] = 300
+    assert gate.state()["running"] == 1 and gate.position("w") is None   # w holds the slot now
+    assert gate.admitted_at("w") is not None and gate.arrived_at("w") == 2.0
+
+
+def test_an_untouched_unclaimed_waiter_leaves_the_queue_and_a_touched_one_stays():
+    gate, t = _clocked()
+    gate.try_enter("h", 1.0)
+    gate.claim("h")
+    gate.try_enter("idle", 2.0)
+    gate.try_enter("read", 3.0)
+    for tick in (10, 20, 29):
+        t[0] = tick
+        gate.touch("read")
+    assert gate.state()["waiting"] == 2
+    t[0] = 30
+    assert gate.position("idle") is None and gate.position("read") == 1
+    for tick in range(40, 400, 10):
+        t[0] = tick
+        gate.touch("read")
+    assert gate.position("read") == 1           # read every few seconds: never expires
+
+
+def test_a_claimed_holder_never_expires():
+    gate, t = _clocked()
+    gate.try_enter("h", 1.0)
+    gate.claim("h")
+    gate.try_enter("w", 2.0)
+    gate.claim("w")                             # claimed waiters never expire either
+    t[0] = 100_000
+    assert gate.state() == {"limit": 1, "queue_max": 5, "running": 1, "waiting": 1}
+    assert gate.release_unclaimed("h") is False
+
+
+def test_the_lease_values_come_from_the_environment(monkeypatch, caplog):
+    monkeypatch.delenv("IAGENT_ANSWER_RESERVATION_LEASE_S", raising=False)
+    monkeypatch.delenv("IAGENT_ANSWER_WAITER_IDLE_S", raising=False)
+    assert (adm.reservation_lease_from_env(), adm.waiter_idle_from_env()) == (300.0, 30.0)
+    monkeypatch.setenv("IAGENT_ANSWER_RESERVATION_LEASE_S", "12.5")
+    monkeypatch.setenv("IAGENT_ANSWER_WAITER_IDLE_S", "x")
+    with caplog.at_level(logging.WARNING, logger="iagent.answer_admission"):
+        assert adm.reservation_lease_from_env() == 12.5
+        assert adm.waiter_idle_from_env() == 30.0
+    assert [r for r in caplog.records if "IAGENT_ANSWER_WAITER_IDLE_S" in r.getMessage()]
+
+
+# 3b. the client ---------------------------------------------------------------------------
+
+
+def test_the_bff_client_reserves_releases_and_launches_under_a_given_id():
+    seen = []
+
+    class C:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None):
+            seen.append(url)
+            if url.endswith("/reserve"):
+                return _Resp(200, {"decision": "queued", "arrived_at": 7.0})
+            if url.endswith("/release"):
+                return _Resp(200, {"released": True})
+            return _Resp(200, {})
+
+    da = DurableAnswers("http://i/", client_factory=C)
+    assert _run(da.reserve("a1")) == {"decision": "queued", "arrived_at": 7.0}
+    assert _run(da.release("a1")) is True
+    assert _run(da.launch({}, answer_id="a1")) == "a1"
+    assert seen == ["http://i/SupervisorAnswer/a1/reserve", "http://i/SupervisorAnswer/a1/release",
+                    "http://i/SupervisorAnswer/a1/run/send"]
+
+    class Dead(C):
+        async def post(self, url, json=None):
+            raise RuntimeError("down")
+
+    dead = DurableAnswers("http://i", client_factory=Dead)
+    assert _run(dead.reserve("a")) is None and _run(dead.release("a")) is False

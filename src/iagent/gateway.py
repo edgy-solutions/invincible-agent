@@ -9495,6 +9495,9 @@ async def generate_dagster_stream(
     A richer one would need the body's state, and needing the body's state is what made the gap.
     """
     _wrote = False
+    # ONE holder per stream, ONE `finally` below: whatever the body reserved and did not launch
+    # is given back however the stream ends (an early return, an exception, a closed stream).
+    _res: dict = {"id": None, "claimed": False}
 
     try:
         async for _ev in _generate_dagster_stream_inner(
@@ -9506,6 +9509,7 @@ async def generate_dagster_stream(
             entitled_domains=entitled_domains,
             entitlement_source=entitlement_source,
             caller_token=caller_token,
+            _res=_res,
         ):
             _wrote = True
             yield _ev
@@ -9543,6 +9547,8 @@ async def generate_dagster_stream(
             )
             yield _sse("stream_end", "{}")
         return
+    finally:
+        _release_reservation_quietly(_res)
 
 
 def _boundary_failure_bundle(
@@ -9617,8 +9623,17 @@ def _answer_backend():
             from src.iagent.durable_answers import DurableAnswers
             _DURABLE_ANSWERS = DurableAnswers(_RESTATE_INGRESS_URL)
         client = _DURABLE_ANSWERS
+
+        def _launch(*a, answer_id=None, reserved_arrived_at=None, **kw):
+            cfg = _supervisor_op_config(*a, **kw)
+            if reserved_arrived_at is not None:
+                cfg["reserved_arrived_at"] = reserved_arrived_at
+            return client.launch(cfg, answer_id=answer_id)
+
         return SimpleNamespace(
-            launch=lambda *a, **kw: client.launch(_supervisor_op_config(*a, **kw)),
+            launch=_launch,
+            reserve=client.reserve,
+            release=client.release,
             status=client.get_run_status,
             events=client.get_run_events,
             steps=client.get_step_stats,
@@ -9635,9 +9650,17 @@ def _answer_backend():
     async def _no_withdraw(rid):
         return False
 
+    async def _no_reserve(rid):
+        return None
+
+    async def _no_release(rid):
+        return False
+
     return SimpleNamespace(
         queue=_no_queue,
         withdraw=_no_withdraw,
+        reserve=_no_reserve,
+        release=_no_release,
         launch=lambda *a, **kw: _launch_supervisor_job(*a, **kw),
         status=lambda rid: _get_run_status(rid),
         events=lambda rid: _get_run_events(rid),
@@ -9660,6 +9683,46 @@ def _withdraw_quietly(ab, run_id: str) -> None:
         asyncio.ensure_future(_go())
     except Exception as exc:  # noqa: BLE001 -- no running loop
         logger.warning("withdraw of queued answer %s not scheduled: %s", run_id, exc)
+
+
+def _release_reservation_quietly(res: dict) -> None:
+    """The ONE place a reservation the stream took and never launched is given back: it runs in
+    the `finally` of the boundary, so no exit of the stream can leak a place. A still-queued
+    reservation is withdrawn, one that was admitted is released; fire and forget, errors
+    swallowed. Claimed (launched) means `run` owns it, and nothing is done."""
+    rid, ab = res.get("id"), res.get("ab")
+    if not rid or res.get("claimed") or ab is None:
+        return
+    res["id"] = None
+    if res.get("queued"):
+        _withdraw_quietly(ab, rid)
+        return
+
+    async def _go() -> None:
+        try:
+            await ab.release(rid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("release of reservation %s failed: %s", rid, exc)
+    try:
+        asyncio.ensure_future(_go())
+    except Exception as exc:  # noqa: BLE001 -- no running loop
+        logger.warning("release of reservation %s not scheduled: %s", rid, exc)
+
+
+def _busy_message(queue_max) -> str:
+    return ("The answer service is busy: the queue is full "
+            f"({queue_max} waiting, the most allowed). Please ask again shortly.")
+
+
+def _busy_error(queue_max) -> str:
+    """The one refusal the admission gate gives a full queue (ruled 2026-11-16), whether the BFF
+    learns it at reserve time or from the run's own snapshot."""
+    return _perror(
+        _busy_message(queue_max),
+        kind="understanding",
+        retryable=True,
+        cause="answer_busy_queue_full",
+    )
 
 
 async def _generate_dagster_stream_inner(
@@ -9690,6 +9753,10 @@ async def _generate_dagster_stream_inner(
     # alice's credential exist in the same place; after this the boundary is crossed by a
     # reference alone.
     caller_token: str = "",
+    # The reservation holder of THIS stream, owned by the boundary (`generate_dagster_stream`),
+    # whose `finally` gives back anything this body reserved and did not launch. None (a direct
+    # call) means: no reservation is taken.
+    _res: dict | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Trigger Dagster job and stream step status as Holographic Thinking Cards.
@@ -9971,6 +10038,51 @@ async def _generate_dagster_stream_inner(
         # the caller's own ownership edge and needs nothing from the extraction.
         mode = "ONE_SHOT"
     else:
+        # ADMISSION COMES BEFORE INTENT EXTRACTION (ruled 2026-11-16). `/route_intent` is a model
+        # call; a request the gate would refuse or hold must not spend one. So the place is
+        # taken HERE, under the id the launch will use, and `run` claims it. Only the durable
+        # path, only the branch that makes the call (not an interview, not `_pre_resolved`).
+        if _res is not None and _answer_path() == "durable":
+            _rb = _answer_backend()
+            _rid = str(uuid.uuid4())
+            _rv = await _rb.reserve(_rid)
+            if _rv is None:
+                logger.warning(
+                    "admission reserve failed for %s: no reservation; `run`'s own admission "
+                    "gates this answer (it calls the model BEFORE admission)", _rid)
+            else:
+                _res.update(id=_rid, ab=_rb, arrived_at=_rv.get("arrived_at"), queued=False)
+                _decision = _rv.get("decision")
+                if _decision == "busy":
+                    _res["id"] = None       # a refusal holds nothing
+                    yield _busy_error(_rv.get("queue_max"))
+                    yield _sse("stream_end", "{}")
+                    # What the run-level BUSY refusal writes: a failed artifact.
+                    await _dispatch_answer_artifact(_boundary_failure_bundle(
+                        request, user_id, user_persona, entitled_domains, entitlement_source,
+                        {"cause": "answer_busy_queue_full", "where": "admission"}))
+                    return
+                if _decision == "queued":
+                    _res["queued"] = True
+                    _wq_t0 = time.monotonic()
+                    _wq_last = None
+                    while True:
+                        await asyncio.sleep(_rb.poll_s)
+                        _wst = (await _rb.status(_rid)).get("status")
+                        if _wst is None:
+                            continue        # the read failed: not an admission, look again
+                        _wq = await _rb.queue(_rid) if _wst == "QUEUED" else None
+                        if _wq is None:
+                            break
+                        if _wq.get("position") != _wq_last:
+                            _wq_last = _wq.get("position")
+                            yield _sse("answer_queued", json.dumps({
+                                "run_id": _rid, "position": _wq["position"],
+                                "ahead": _wq["ahead"]}))
+                    _res["queued"] = False
+                    yield _sse("answer_admitted", json.dumps({
+                        "run_id": _rid,
+                        "waited_ms": int((time.monotonic() - _wq_t0) * 1000)}))
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 resp = await client.post(
@@ -10434,9 +10546,14 @@ async def _generate_dagster_stream_inner(
             "extracted_concepts": [],
         })
     _ab = _answer_backend()
+    # A reserved answer launches under the id it reserved, carrying the reservation's arrival.
+    _reserved_kw = (
+        {"answer_id": _res["id"], "reserved_arrived_at": _res["arrived_at"]}
+        if _res is not None and _res.get("id") else {})
     run_id = await _ab.launch(
         user_query,
         session_id,
+        **_reserved_kw,
         domain=domain,
         task_plan_json=task_plan_json,
         user_id=user_id,
@@ -10457,6 +10574,8 @@ async def _generate_dagster_stream_inner(
         trace_id=trace_id,        # cortex-ui X-Trace-Id -> runConfig -> execute_subtask -> /analyze
         session_id=session_id,    # the conversation thread -> Langfuse session grouping
     )
+    if run_id and _res is not None:
+        _res["claimed"] = True      # `run` owns the place now, and releases it itself
     if not run_id:
         yield _perror(
             "Failed to trigger Dagster job.",
@@ -10553,13 +10672,7 @@ async def _generate_dagster_stream_inner(
                 # nobody waited. Never an answer_queued for it.
                 VAULT.close(run_id)
                 _qmax = (status_data.get("busy") or {}).get("queue_max")
-                yield _perror(
-                    "The answer service is busy: the queue is full "
-                    f"({_qmax} waiting, the most allowed). Please ask again shortly.",
-                    kind="understanding",
-                    retryable=True,
-                    cause="answer_busy_queue_full",
-                )
+                yield _busy_error(_qmax)
                 _artifact_bundle["status"] = "failed"
                 break
             if _last_status == "QUEUED":

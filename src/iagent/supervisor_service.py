@@ -12,6 +12,8 @@ The BFF reaches it through `src/iagent/durable_answers.py`:
   POST /SupervisorAnswer/{answer_id}/run/send   -> the workflow
   POST /SupervisorAnswer/{answer_id}/snapshot   -> the poll read
   POST /SupervisorAnswer/{answer_id}/withdraw   -> take a still-waiting answer out of the queue
+  POST /SupervisorAnswer/{answer_id}/reserve    -> take a place in the gate BEFORE the first model call
+  POST /SupervisorAnswer/{answer_id}/release    -> give an unclaimed reservation back
 
 At most IAGENT_ANSWER_LIMIT answers run at once (`answer_admission`, ADR-0072 5); the rest wait
 in arrival order, and their snapshot reads QUEUED with their place.
@@ -43,9 +45,25 @@ async def _gather_values(*futures: Any) -> list:
     return [await f for f in done]
 
 
-def _enter(answer_id: str) -> dict:
+def _enter(answer_id: str, reserved_arrived_at: float | None = None) -> dict:
+    """The admission step. Every entry `run` makes is CLAIMED (it never expires): a place the
+    BFF reserved comes back with its ORIGINAL arrived_at and its current decision, and the
+    queue is not re-checked; a reservation the gate lost (a pod restart) is re-entered by its
+    first arrival, never refused; anything else is a fresh arrival."""
+    gate = get_gate()
+    got = gate.claim(answer_id)
+    if got is not None:
+        return {**got, "reserved": True}
+    if reserved_arrived_at is not None:
+        gate.reenter(answer_id, float(reserved_arrived_at))
+        gate.claim(answer_id)
+        return {"arrived_at": float(reserved_arrived_at),
+                "decision": "admitted" if gate.position(answer_id) is None else "queued",
+                "reserved": True}
     now = time.time()
-    return {"arrived_at": now, "decision": get_gate().try_enter(answer_id, now)}
+    decision = gate.try_enter(answer_id, now)
+    gate.claim(answer_id)
+    return {"arrived_at": now, "decision": decision}
 
 
 async def _run_impl(ctx: WorkflowContext, op_config: dict, *, gather=_gather_values,
@@ -63,7 +81,9 @@ async def _run_impl(ctx: WorkflowContext, op_config: dict, *, gather=_gather_val
     # Admission (ADR-0072 5). The decision is JOURNALED first: on a replay the stored dict comes
     # back and `_enter` does not run, so a restarted answer keeps its first arrival time and its
     # "admitted"/"queued" decision, and is never re-checked against a full queue.
-    adm = await ctx.run_typed("admission", lambda: _enter(answer_id), RunOptions(max_attempts=1))
+    reserved_at = op_config.get("reserved_arrived_at")
+    adm = await ctx.run_typed("admission", lambda: _enter(answer_id, reserved_at),
+                              RunOptions(max_attempts=1))
     gate = get_gate()
     if adm["decision"] == "busy":
         refused = gate.refused(answer_id) or {"reason": "queue_full", **gate.state()}
@@ -74,9 +94,11 @@ async def _run_impl(ctx: WorkflowContext, op_config: dict, *, gather=_gather_val
 
     # The wait is its own span, emitted on every answer (even one admitted at once), metadata only.
     arrived_at = adm["arrived_at"]
+    reserved = bool(adm.get("reserved"))
     restarted = not gate.knows(answer_id)
     if restarted:
         gate.reenter(answer_id, arrived_at)
+    gate.claim(answer_id)
     position_at_entry = gate.position(answer_id) or 0
     limit = gate.state()["limit"]
     t0 = time.monotonic()
@@ -94,9 +116,16 @@ async def _run_impl(ctx: WorkflowContext, op_config: dict, *, gather=_gather_val
                 try:
                     await gate.acquire(answer_id, arrived_at)
                 finally:
+                    waited_ms = int((time.monotonic() - t0) * 1000)
+                    if reserved:
+                        # A reservation waited from its first arrival to the moment it became
+                        # a holder, on the wall clock: much of it passed before this step ran.
+                        held_at = gate.admitted_at(answer_id)
+                        if held_at is not None:
+                            waited_ms = max(0, int((held_at - arrived_at) * 1000))
                     ts.annotate_span(position_at_entry=position_at_entry, limit=limit,
-                                     waited_ms=int((time.monotonic() - t0) * 1000),
-                                     restarted=restarted)
+                                     waited_ms=waited_ms, restarted=restarted,
+                                     reserved=reserved)
         except AdmissionWithdrawn:
             persist({"status": "CANCELED", "events": [], "steps": [], "result": None,
                      "withdrawn": True})
@@ -142,6 +171,7 @@ def _merge_snapshot(durable: dict | None, live) -> dict:
 async def snapshot(ctx: WorkflowSharedContext) -> dict:
     gate = get_gate()
     pos = gate.position(ctx.key())
+    gate.touch(ctx.key())     # this read is the proof of life of an unclaimed waiter
     if pos is not None:
         return {"status": "QUEUED", "events": [], "steps": [], "result": None,
                 "queue": {"position": pos, "ahead": pos - 1, **gate.state()}}
@@ -156,6 +186,28 @@ async def snapshot(ctx: WorkflowSharedContext) -> dict:
 @supervisor_answer.handler()
 async def withdraw(ctx: WorkflowSharedContext) -> dict:
     return {"withdrawn": get_gate().withdraw(ctx.key())}
+
+
+@supervisor_answer.handler()
+async def reserve(ctx: WorkflowSharedContext) -> dict:
+    """The BFF takes a place BEFORE its first model call (ruled 2026-11-16: admission comes
+    before intent extraction). Idempotent: a retry for a known id returns its current decision
+    and its ORIGINAL arrived_at."""
+    gate = get_gate()
+    key = ctx.key()
+    now = time.time()
+    decision = gate.try_enter(key, now)
+    gate.touch(key)
+    arrived_at = gate.arrived_at(key)
+    return {"decision": decision, "arrived_at": now if arrived_at is None else arrived_at,
+            **gate.state()}
+
+
+@supervisor_answer.handler()
+async def release(ctx: WorkflowSharedContext) -> dict:
+    """Give back a reservation `run` has not claimed (a claimed entry is `run`'s own, released
+    by its `finally`)."""
+    return {"released": get_gate().release_unclaimed(ctx.key())}
 
 
 app = FastAPI(title="supervisor-answer")
