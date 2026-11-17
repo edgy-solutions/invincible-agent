@@ -95,6 +95,11 @@ async def _run_impl(ctx: WorkflowContext, op_config: dict, *, gather=_gather_val
     # The wait is its own span, emitted on every answer (even one admitted at once), metadata only.
     arrived_at = adm["arrived_at"]
     reserved = bool(adm.get("reserved"))
+    # The BFF's reserve failed, so this answer runs on `run`'s own admission (ruled 2026-11-16).
+    reserve_failed = bool(op_config.get("reserve_failed"))
+    if reserve_failed:
+        logger.warning("admission: answer %s runs on run's own admission (reserve failed at the BFF)",
+                       answer_id)
     restarted = not gate.knows(answer_id)
     if restarted:
         gate.reenter(answer_id, arrived_at)
@@ -125,7 +130,7 @@ async def _run_impl(ctx: WorkflowContext, op_config: dict, *, gather=_gather_val
                             waited_ms = max(0, int((held_at - arrived_at) * 1000))
                     ts.annotate_span(position_at_entry=position_at_entry, limit=limit,
                                      waited_ms=waited_ms, restarted=restarted,
-                                     reserved=reserved)
+                                     reserved=reserved, reserve_failed=reserve_failed)
         except AdmissionWithdrawn:
             persist({"status": "CANCELED", "events": [], "steps": [], "result": None,
                      "withdrawn": True})

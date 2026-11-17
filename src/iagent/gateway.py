@@ -9624,10 +9624,13 @@ def _answer_backend():
             _DURABLE_ANSWERS = DurableAnswers(_RESTATE_INGRESS_URL)
         client = _DURABLE_ANSWERS
 
-        def _launch(*a, answer_id=None, reserved_arrived_at=None, **kw):
+        def _launch(*a, answer_id=None, reserved_arrived_at=None, reserve_failed=False, **kw):
             cfg = _supervisor_op_config(*a, **kw)
             if reserved_arrived_at is not None:
                 cfg["reserved_arrived_at"] = reserved_arrived_at
+            if reserve_failed:
+                # Absent otherwise: `run` counts it on the queue-wait span (ruled 2026-11-16).
+                cfg["reserve_failed"] = True
             return client.launch(cfg, answer_id=answer_id)
 
         return SimpleNamespace(
@@ -10050,6 +10053,7 @@ async def _generate_dagster_stream_inner(
                 logger.warning(
                     "admission reserve failed for %s: no reservation; `run`'s own admission "
                     "gates this answer (it calls the model BEFORE admission)", _rid)
+                _res["reserve_failed"] = True     # carried to `run`, which counts it
             else:
                 _res.update(id=_rid, ab=_rb, arrived_at=_rv.get("arrived_at"), queued=False)
                 _decision = _rv.get("decision")
@@ -10551,7 +10555,8 @@ async def _generate_dagster_stream_inner(
     # A reserved answer launches under the id it reserved, carrying the reservation's arrival.
     _reserved_kw = (
         {"answer_id": _res["id"], "reserved_arrived_at": _res["arrived_at"]}
-        if _res is not None and _res.get("id") else {})
+        if _res is not None and _res.get("id")
+        else {"reserve_failed": True} if _res is not None and _res.get("reserve_failed") else {})
     run_id = await _ab.launch(
         user_query,
         session_id,

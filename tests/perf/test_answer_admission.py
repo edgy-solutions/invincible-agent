@@ -1202,3 +1202,146 @@ def test_the_bff_client_reserves_releases_and_launches_under_a_given_id():
 
     dead = DurableAnswers("http://i", client_factory=Dead)
     assert _run(dead.reserve("a")) is None and _run(dead.release("a")) is False
+
+
+# =====================================================================================
+# 9. the failed-reservation fallback is counted, and the limit holds on it (ruled 2026-11-16)
+#
+# `reserve` returns None on any error; the BFF then goes on with no reservation and `run`'s own
+# admission gates the answer. Accepted by the architect; this is its event and its seal.
+# =====================================================================================
+
+
+class RunMesh(Mesh):
+    """The Mesh, with `run/send` really running `svc._run_impl` (under a JCtx, with a trace id so
+    the queue-wait span is emitted) so `run`'s own admission is exercised, not stubbed."""
+
+    def __init__(self, *, reserve_ok=True, **kw):
+        super().__init__(**kw)
+        self.reserve_ok = reserve_ok
+        self.ctxs, self.tasks = {}, {}
+
+    async def post(self, url, json=None, headers=None, **kw):
+        if "/SupervisorAnswer/" in url:
+            _, _, rest = url.partition("/SupervisorAnswer/")
+            aid, _, handler = rest.partition("/")
+            if handler == "reserve" and not self.reserve_ok:
+                self.log.append(("post", handler, aid))
+                return _Resp(503, {})                 # the client turns this into None
+            if handler == "run/send":
+                self.log.append(("post", handler, aid))
+                self.launched[aid] = json
+                ctx = self.ctxs[aid] = JCtx(aid)
+                self.tasks[aid] = asyncio.ensure_future(svc._run_impl(
+                    ctx, {**CFG, **json, "trace_id": "t-adm-9", "parent_span_id": PARENT,
+                          "session_id": "s-adm-9"}, ops=fake_ops()))
+                return _Resp(200, {})
+            if handler == "snapshot" and aid in self.ctxs:
+                self.log.append(("post", handler, aid))
+                snap = await svc.snapshot(_Shared(self.ctxs[aid]))
+                if self.tasks[aid].done() and snap.get("status") != "BUSY":
+                    snap = {"status": "CANCELED", "events": [], "steps": [], "result": None}
+                return _Resp(200, snap)
+        return await super().post(url, json=json, headers=headers, **kw)
+
+
+@pytest.fixture
+def run_mesh(mesh_env, rec, monkeypatch):
+    def new(**kw):
+        m = RunMesh(**kw)
+        monkeypatch.setattr(httpx, "AsyncClient", m.client)
+        monkeypatch.setattr(gw, "_DURABLE_ANSWERS",
+                            DurableAnswers("http://ingress", client_factory=m.client))
+        # the ceiling is 900 s of ticks: make it unreachable while the holders are held
+        monkeypatch.setattr(gw._DURABLE_ANSWERS, "poll_interval_s", 1e-6)
+        return m
+    return new
+
+
+def _watch_gate(gate):
+    """Record every holder count and every arrival at the REAL gate, on each operation."""
+    seen = {"max_running": 0, "arrivals": []}
+    for name in ("_hold", "try_enter", "_release", "claim", "release", "leave"):
+        orig = getattr(gate, name)
+
+        def wrap(*a, _o=orig, _n=name, **k):
+            if _n == "try_enter":
+                seen["arrivals"].append(a[0])
+            out = _o(*a, **k)
+            seen["max_running"] = max(seen["max_running"], gate.state()["running"])
+            return out
+        setattr(gate, name, wrap)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_the_limit_holds_when_every_reserve_fails(run_mesh, rec):
+    K, M = 2, 2
+    adm.reset_gate_for_tests(K, M)
+    gate = adm.get_gate()
+    seen = _watch_gate(gate)
+    m = run_mesh(reserve_ok=False)
+    streams = [asyncio.ensure_future(_stream(m)) for _ in range(K + M + 1)]
+    await _until(lambda: len(rec.starts) == K and gate.state()["waiting"] == M
+                 and sum(t.done() for t in streams) == 1)
+    assert gate.state()["running"] == K
+    assert len(seen["arrivals"]) == K + M + 1
+    first, waiters, refused = seen["arrivals"][:K], seen["arrivals"][K:K + M], seen["arrivals"][-1]
+    assert rec.starts == first
+    # exactly M wait, and are admitted in arrival order as the holders release
+    for i, holder in enumerate(first):
+        rec.event(holder).set()
+        await _until(lambda i=i: len(rec.starts) == K + i + 1 or i >= M)
+        if i < M:
+            assert rec.starts[K + i] == waiters[i]
+    for aid in rec.starts:
+        rec.event(aid).set()
+    blobs = await asyncio.wait_for(asyncio.gather(*streams), 10)
+    assert rec.starts == first + waiters and refused not in rec.starts
+    # the (K+M+1)th is refused busy by `run`'s own admission, with the run-level cause
+    # (the admitted answers end on the double's empty payload, an unrelated pipeline_error)
+    busy = [e for b in blobs for e in _events(b, "pipeline_error")
+            if e["cause"] == "answer_busy_queue_full"]
+    assert len(busy) == 1, busy
+    assert gate.refused(refused) is not None
+    # never more than K holders, at any gate operation
+    assert seen["max_running"] <= K, seen
+    # the accepted cost of the fallback: every request, the refused one too, called the model
+    # BEFORE admission (ruled 2026-11-16), so the count is K+M+1, not K+M.
+    assert m.n(ADM_ROUTE) == K + M + 1 and m.n("reserve") == K + M + 1
+    assert gate.state()["running"] == 0 and gate.state()["waiting"] == 0
+
+
+def _queue_wait_flags(client, exp):
+    return [_meta(s, "reserve_failed") for s in spans_of(client, exp)
+            if s.name == "supervisor.queue_wait"]
+
+
+@pytest.mark.asyncio
+async def test_the_fallback_is_counted_on_the_launch_and_on_the_span(run_mesh, rec, mem):
+    client, exp = mem
+    adm.reset_gate_for_tests(2, 2)
+    m = run_mesh(reserve_ok=False)
+    streams = [asyncio.ensure_future(_stream(m)) for _ in range(2)]
+    await _until(lambda: len(rec.starts) == 2)
+    for aid in list(rec.starts):
+        rec.event(aid).set()
+    await asyncio.wait_for(asyncio.gather(*streams), 10)
+    assert len(m.launched) == 2
+    assert all(body.get("reserve_failed") is True for body in m.launched.values())
+    assert _queue_wait_flags(client, exp) == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_the_reserved_path_says_false_and_carries_no_flag(run_mesh, rec, mem):
+    client, exp = mem
+    adm.reset_gate_for_tests(2, 2)
+    m = run_mesh(reserve_ok=True)
+    streams = [asyncio.ensure_future(_stream(m)) for _ in range(2)]
+    await _until(lambda: len(rec.starts) == 2)
+    for aid in list(rec.starts):
+        rec.event(aid).set()
+    await asyncio.wait_for(asyncio.gather(*streams), 10)
+    assert len(m.launched) == 2
+    assert all("reserve_failed" not in body for body in m.launched.values())   # absent, not False
+    assert _queue_wait_flags(client, exp) == [False, False]
