@@ -71,12 +71,16 @@ except Exception:  # pragma: no cover — telemetry never load-bearing
     MAPPING = None
 
 # Initialize runtime BAML configuration logic
+def routing_call_options(call):  # fallback: no llm_utils, no per-call options
+    return {}
+
+
 try:
-    from llm_utils import init_baml_client
+    from llm_utils import init_baml_client, routing_call_options
     b = init_baml_client(b)
 except ImportError:
     try:
-        from agent_fleet.llm_utils import init_baml_client
+        from agent_fleet.llm_utils import init_baml_client, routing_call_options
         b = init_baml_client(b)
     except ImportError:
         pass
@@ -4028,7 +4032,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         result = await b.ClassifyDomainIntent(
             query=request.query,
             domain=request.domain,
-            baml_options={"tb": tb}
+            baml_options={"tb": tb, **routing_call_options("SUBJECT")},
         )
     except Exception as exc:
         raise HTTPException(
@@ -5007,11 +5011,15 @@ async def fill_slots(request: FillSlotsRequest):
         # "resolve no relative period" — so a verb with no period slot is unaffected and a
         # missing calendar degrades to the pre-anchor behaviour rather than to a guess.
         anchor = _anchor_period(declarations)
+        _slots_kw = {}
+        if _slots_opts := routing_call_options("SLOTS"):
+            _slots_kw["baml_options"] = _slots_opts
         filled = await b.FillVerbSlots(
             question=request.query,
             verb=request.verb_iri,
             slot_spec=spec,
             today=anchor or "unknown",
+            **_slots_kw,
         )
     except Exception as exc:  # noqa: BLE001 — degrade to defaults, never 500 the route
         _slots_logger.warning("fill_slots: model call failed for %s: %s", request.verb_iri, exc)
@@ -7116,7 +7124,7 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
             subject_uri=request.subject_uri or "UNKNOWN",
             subject_reasoning=request.subject_reasoning or "",
             domain=request.domain,
-            baml_options={"tb": tb},
+            baml_options={"tb": tb, **routing_call_options("VERB")},
         )
     except Exception as exc:
         raise HTTPException(
