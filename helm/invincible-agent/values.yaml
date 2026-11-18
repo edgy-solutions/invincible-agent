@@ -557,6 +557,16 @@ agentFleet:
     # OPENAI_API_KEY: "..."                       # for an OpenAI-compat
                                                   # backend (LiteLLM/vLLM)
     BAML_LOG_LEVEL: "info"
+    # Reasoning effort on the engine-o routing calls (OFF: none of these is set).
+    # Each is read per call from the environment: low | medium | high (anything
+    # else is a warning and OFF). SUBJECT = ClassifyDomainIntent, VERB =
+    # ClassifyPredicate, SLOTS = FillVerbSlots. Unset = off; requests are
+    # byte-identical to today's. Switching one on is a values change Chris
+    # approves, with the routing baseline's before-and-after per combination in
+    # hand.
+    # IAGENT_ROUTING_EFFORT_SUBJECT: "low"
+    # IAGENT_ROUTING_EFFORT_VERB: "low"
+    # IAGENT_ROUTING_EFFORT_SLOTS: "low"
 
     # --- Embedding gateway (agent_fleet/utils/embed.py) ---
     # All Weaviate vector writes + reads in iagent code go through this
