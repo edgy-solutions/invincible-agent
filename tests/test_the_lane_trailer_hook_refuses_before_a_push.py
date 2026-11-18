@@ -286,3 +286,82 @@ def test_GITATTRIBUTES_PINS_THE_HOOK_LINE_ENDINGS():
     ga = _REPO / ".gitattributes"
     assert ga.is_file(), ".gitattributes is gone; nothing keeps the hook LF across checkouts"
     assert ".githooks/* text eol=lf" in ga.read_text(encoding="utf-8")
+
+
+# ── THE TRAILER IS THE LAST PARAGRAPH, NOT A LINE ANYWHERE (Lane 1, 2026-11-16) ──────────────
+#
+# The hook grepped the whole message for `Lane:`, so a message that quoted a trailer in its prose
+# passed the hook while git (`interpret-trailers --parse`, `%(trailers)`) found no trailer. These
+# run the hook's OWN extraction, read from its source, against real commits in a scratch repo.
+
+_LANE = "Lane: ia-01/lane/01"
+
+
+def _hook_extraction() -> list[str]:
+    """The `git log` argv the hook uses to read a commit's trailers, from its source."""
+    line = next(ln for ln in _hook().splitlines() if ln.lstrip().startswith("trailers="))
+    m = re.search(r"git log -1 --format='([^']+)'", line)
+    assert m, f"the hook no longer reads trailers with `git log -1 --format=...`: {line.strip()}"
+    return ["git", "log", "-1", f"--format={m.group(1)}"]
+
+
+def _grep_e(text: str) -> list[str]:
+    """`grep -E "$TRAILER_RE"` over `text`: the hook's own pattern, applied line by line as grep
+    applies it. `[:space:]` is a POSIX class that Python's `re` does not know, so it is translated
+    inside whatever bracket holds it (`[[:space:]]`, `[^[:space:]/]`), never as a whole token."""
+    m = re.search(r"^TRAILER_RE='([^']+)'", _hook(), re.M)
+    assert m, "TRAILER_RE is gone from the hook"
+    rx = re.compile(m.group(1).replace("[:space:]", r"\s"))
+    return [ln for ln in text.splitlines() if rx.search(ln)]
+
+
+def test_control_the_translated_pattern_matches_a_trailer_line():
+    """Without this the two absence tests below pass on a pattern that matches nothing."""
+    assert _grep_e(f"x\n{_LANE}\ny") == [_LANE]
+    assert _grep_e("Lane: no-slash") == []
+
+
+def _commit(repo: Path, message: str) -> None:
+    (repo / "f").write_text(message, encoding="utf-8")
+    g = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.com",
+         "-c", "commit.gpgsign=false"]
+    subprocess.run(g + ["add", "f"], check=True, capture_output=True)
+    subprocess.run(g + ["commit", "-q", "-F", "-"], input=message.encode(), check=True,
+                   capture_output=True)
+
+
+def _hook_sees(repo: Path) -> list[str]:
+    out = subprocess.run(_hook_extraction(), cwd=repo, check=True, capture_output=True,
+                         text=True).stdout
+    return _grep_e(out)
+
+
+@pytest.fixture()
+def repo(tmp_path: Path) -> Path:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    return tmp_path
+
+
+_QUOTED_IN_PROSE = (
+    "Fix the thing\n\n"
+    f"The packet said to add\n{_LANE}\nto every commit.\n\n"
+    "Co-Authored-By: someone <x@example.com>\n"
+)
+
+
+def test_A_LANE_LINE_IN_THE_BODY_IS_NOT_A_TRAILER(repo: Path):
+    _commit(repo, _QUOTED_IN_PROSE)
+    assert _hook_sees(repo) == [], "the hook accepts a `Lane:` line that git does not parse as a trailer"
+
+
+def test_A_LANE_LINE_IN_THE_TRAILER_BLOCK_IS_SEEN(repo: Path):
+    _commit(repo, f"Fix the thing\n\nBody.\n\n{_LANE}\nCo-Authored-By: someone <x@example.com>\n")
+    assert _hook_sees(repo) == [_LANE]
+
+
+def test_CONTROL_THE_OLD_WHOLE_MESSAGE_GREP_ACCEPTED_THE_QUOTED_LINE(repo: Path):
+    """The fixture distinguishes the rejected rule: grepping `%B` finds the quoted line."""
+    _commit(repo, _QUOTED_IN_PROSE)
+    body = subprocess.run(["git", "log", "-1", "--format=%B"], cwd=repo, check=True,
+                          capture_output=True, text=True).stdout
+    assert _grep_e(body) == [_LANE]
