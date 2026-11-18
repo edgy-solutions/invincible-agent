@@ -2328,6 +2328,22 @@ services:
         class: releasable_by_design
         justification: "caller's own HITL queue (self-scoped filter)"
       - method: GET
+        path: /me/queue
+        identity: get_current_user
+        gate: "auth + self-scoped (the viewer's own tasks); with on_behalf_of, a live row of policy/queue_delegates.yaml, else a 403 policy refusal naming queue_delegates; every row passes _scope_to_viewer"
+        exposes: gated-content
+        consumers: [cortex-ui]
+        class: gated
+        justification: "the pending queue the caller may see, or a named person's under a live delegation (ADR-0068 s5, s6); the rows are GET /me/human_tasks's, scoped to the viewer's cells"
+      - method: GET
+        path: /me/needs_you
+        identity: get_current_user
+        gate: "auth + self-scoped; counted from the same _viewer_queue function that serves /me/queue, so count and list cannot disagree; with on_behalf_of, the same delegation check"
+        exposes: gated-content
+        consumers: [cortex-ui]
+        class: gated
+        justification: "counts by kind of the pending tasks the viewer may see (ADR-0068 s6); a count of rows already scoped to the viewer, never a row"
+      - method: GET
         path: /templates
         identity: get_current_user
         gate: "auth only — DELIBERATELY not entitlement-scoped"
