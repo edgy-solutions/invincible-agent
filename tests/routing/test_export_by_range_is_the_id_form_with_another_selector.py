@@ -61,14 +61,17 @@ def _range_world(monkeypatch, tmp_path, specs, *, extra="", grants=None, page=No
                  else {BATCH, "can_export:t"}, worlds=worlds,
                  profiles={"t": _yaml("t", version=7, extra=extra)})
     rows = [w[0] for w in worlds]
+    _range_world.rows = rows                 # the stored receipts, for a test that writes them
     calls: list = []
 
-    def list_by_created(start_ms, end_ms, limit, *, after=None):
+    def list_by_created(start_ms, end_ms, limit, *, after=None, domains=None):
         calls.append((start_ms, end_ms, limit, after))
         hit = sorted((r for r in rows if r["kind"] != ist.EVENT and start_ms <= r["created_at"] < end_ms
-                      and (after is None or (r["created_at"], r["id"]) > tuple(after))),
+                      and (after is None or (r["created_at"], r["id"]) > tuple(after))
+                      and (domains is None or r.get("domain") is None or r["domain"] in set(domains))),
                      key=lambda r: (r["created_at"], r["id"]))
-        return [{"id": r["id"], "review_generation": 0, "created_at": r["created_at"]}
+        return [{"id": r["id"], "review_generation": 0, "created_at": r["created_at"],
+                 "domain": r.get("domain")}
                 for r in hit[:limit]]
 
     monkeypatch.setattr(ist, "list_by_created", list_by_created)

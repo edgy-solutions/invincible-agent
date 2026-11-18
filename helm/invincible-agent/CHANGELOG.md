@@ -44,6 +44,34 @@
 - The pub-tools code location and broker set `PUBLOG_S3_BUCKET_URL: "s3://publog-lake"` instead of `PUBLOG_S3_BUCKET`, and the code location sets `DATAHUB_GMS_URL` instead of `DATAHUB_SERVER`. pub-tools reads only the new names, so the old ones were ignored, and pub-tools ran on code defaults equal to these values. Behaviour is unchanged; the two pub-tools pods restart because their env changed.
 - `tests/test_pub_tools_chart_env_is_read_by_its_code.py` renders the chart and fails on any variable set on pub-tools that its code does not read. It names each variable's reader by pub-tools or dag-tools commit.
 
+### The receipt carries its review domain (#407)
+- **The receipt carries its review domain, so a range export's scope sits in the query** (saf; the
+  architect, 11-15: "store the domain on the receipt so the scope sits in the query, with a bound on
+  pages read"). `ingest_status_projection` gains a nullable `domain TEXT` and the index
+  `idx_isp_domain_created (domain, created_at, id)`; the migration is `ADD COLUMN IF NOT EXISTS` /
+  `CREATE INDEX IF NOT EXISTS`, applied by the BFF at startup (log line
+  `ingest_status_projection migration applied`), so a re-run changes nothing. The column is written
+  when a document-promotion task is filed against `document_promotion:<DOMAIN>`, and back-written by
+  the first range that meets an old row. **Upgrade note for existing rows:** every row that exists
+  at the roll has a NULL `domain`. NULL means "no task has said", and the range query always returns
+  NULL rows, which are resolved the old way (decision record, else the open task's audience) and
+  written back. No backfill job is required, and no notice is dropped while rows are NULL; the first
+  range over old receipts is as slow as before, the second is not. **On the first wide range after the
+  roll, a 422 `export_range_scan_bound` is possible while old rows are being written back; a retry
+  makes progress** (each row read is written before the bound is checked). A receipt that resolves to
+  no domain (no decision record, no task) is marked `<none>`, a value that is not a domain: `set_domain`
+  refuses it and the query strips it from the caller's domains, so no cell can match it. Such a row
+  leaves every later scan, and a promotion task filed later overwrites the marker. The range derives
+  every receipt's domain with the one function the preflight uses and treats the stored column only as
+  a query filter, so a notice whose task was superseded or expired without a decision is dropped alone
+  and never fails the export. The filer retries a failed domain write three times, then repairs the
+  row to NULL (resolved again next time), and only then logs it: that write runs AFTER the task is filed and never fails the call. The strict step is the clear BEFORE filing: a stored domain that differs from the task's is cleared first, and if the clear cannot land nothing is filed and the call answers 503 `receipt_domain_unwritten`. The
+  page bound (40 pages) caps one range at about 20,000 receipts read. `POST /ingest/export/notices`
+  by `range` reads at most `_EXPORT_RANGE_MAX_PAGES` (40) pages of receipts, then answers 422
+  `export_range_scan_bound` stating the bound and no count. Chart values and endpoints are unchanged.
+  `ingest_status_projection`'s Electric shape serves the same rows (identity-scoped) and now carries
+  `domain` as one more field; its filter does not use it.
+
 ## 0.4.89 — 2026-11-16
 
 **0.4.89 is 0.4.88 (`4525a1cf`) plus the 11-15/11-16 train, `4525a1cf..36968d59`. The roll waits for Chris's approval of the values diff against the live release, after lane 74's hand-back.**
