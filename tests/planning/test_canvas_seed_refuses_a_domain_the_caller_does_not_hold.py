@@ -147,3 +147,47 @@ async def test_control_held_domains_still_seed(wire):
                                   bindings={"program": "NP-MERIDIAN"})
     assert status == 200
     assert wire["panels"] and all(p == ["PROGRAM_FINANCE"] for p in wire["panels"])
+
+
+@pytest.mark.asyncio
+async def test_the_dispatch_spelling_is_refused_too(wire):
+    """`user_persona`/`domain` fill the picker fields; the gate must sit AFTER that fill."""
+    status, detail = await _seed(user_persona=PERSONA, domain="DEFENSE")
+    assert status == 403, detail
+    assert detail["error"] == "cell_not_entitled"
+    assert wire == {"enumerator": [], "panels": []}
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_carries_what_an_access_request_needs(wire):
+    held, unheld = "PROGRAM_FINANCE", "DEFENSE"
+    status, detail = await _seed(active_persona=PERSONA, active_domains=[held, unheld])
+    assert status == 403, detail
+    assert detail["requested"] == {"persona": PERSONA, "domains": [held, unheld]}
+    assert detail["requested_missing"] == [unheld]
+    assert detail["entitled_cells"] == [
+        {"persona": c.persona, "domain": c.domain} for c in _user().entitlements.cells
+    ]
+
+
+def _refusal_records(caplog):
+    return [r for r in caplog.records
+            if r.levelname == "WARNING"
+            and r.getMessage().startswith("canvas_seed_cell_not_entitled:")]
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_is_logged_at_warn(wire, caplog):
+    with caplog.at_level("WARNING"):
+        status, detail = await _seed(active_persona=PERSONA, active_domains=["DEFENSE"])
+    assert status == 403, detail
+    assert len(_refusal_records(caplog)) == 1
+
+
+@pytest.mark.asyncio
+async def test_control_a_held_cell_logs_no_refusal(wire, caplog):
+    with caplog.at_level("WARNING"):
+        status, _detail = await _seed(active_persona=PERSONA, active_domains=["PROGRAM_FINANCE"],
+                                      bindings={"program": "NP-MERIDIAN"})
+    assert status == 200
+    assert _refusal_records(caplog) == []

@@ -5251,12 +5251,24 @@ async def canvas_seed(
                     if not current_user.entitlements.contains(request.active_persona, d)]
         if _missing:
             from .authz.refusal import policy_refusal as _policy_refusal
-            raise _policy_refusal(
+            # The body mirrors `/orchestrate`'s `cell_not_entitled` so an access request can be
+            # built from it; the WARN aggregates denials for ops as `/orchestrate`'s does.
+            _extra = {
+                "requested": {"persona": request.active_persona,
+                              "domains": list(request.active_domains)},
+                "requested_missing": _missing,
+                "entitled_cells": [{"persona": c.persona, "domain": c.domain}
+                                   for c in current_user.entitlements.cells],
+            }
+            _refusal_exc = _policy_refusal(
                 "cell_not_entitled", policy_id="groups",
                 missing_binding=f"a_group_granting({request.active_persona}, {_missing[0]})",
                 message=f"you hold no cell under persona {request.active_persona} "
                         f"for domains {_missing}",
+                extra=_extra,
             )
+            logger.warning("canvas_seed_cell_not_entitled: %s", _refusal_exc.detail)
+            raise _refusal_exc
 
     _requested = (request.template_id or "").strip()
     if not _requested:
