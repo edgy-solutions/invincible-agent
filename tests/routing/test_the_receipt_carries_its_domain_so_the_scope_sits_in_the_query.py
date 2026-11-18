@@ -256,7 +256,11 @@ def test_5_every_return_of_the_promotion_task_filer_notes_the_domain():
     body = src[i:j]
     returns = len(re.findall(r"^\s+return\b", body, re.M))
     assert body.count("await _note_receipt_domain(") >= 4 and returns >= 4
-    assert body.count("strict=True)") == body.count("await _note_receipt_domain(")
+    # the post-filing write is BEST EFFORT at every return: no strict flag anywhere, the helper
+    # cannot raise, and the strict step is the clear BEFORE filing
+    assert "strict" not in body
+    assert "strict" not in src[src.index("async def _note_receipt_domain"):src.index("async def _clear_stale_receipt_domain")].split('"""')[2]
+    assert body.index("_clear_stale_receipt_domain(") < body.index("_note_receipt_domain(")
 
 
 def test_5_the_column_and_its_index_are_in_the_migration_and_the_ddl():
@@ -358,11 +362,11 @@ def test_6_the_marker_is_not_a_domain_and_no_cell_can_match_it(monkeypatch):
     assert "IS DISTINCT FROM" in sqls[-1][0]                      # replaces the marker, not only NULL
 
 
-def test_6b_filing_replaces_the_marker_through_the_strict_writer(monkeypatch, tmp_path, built):
+def test_6b_filing_replaces_the_marker_through_the_best_effort_writer(monkeypatch, tmp_path, built):
     _no_domain_world(monkeypatch, tmp_path, junk=1)
     _range()
     assert _range_world.rows[0]["domain"] == ist.NO_DOMAIN                  # marked
-    _run(gateway._note_receipt_domain(_iid(1), DOM_A, strict=True))         # the filer files its task
+    _run(gateway._note_receipt_domain(_iid(1), DOM_A))         # the filer files its task
     assert _range_world.rows[0]["domain"] == DOM_A                          # no longer "no domain"
 
 
@@ -376,7 +380,7 @@ def test_6c_a_marked_row_whose_filing_write_fails_ends_at_NULL_not_at_the_marker
         raise RuntimeError("db down")
 
     monkeypatch.setattr(ist, "set_domain", down)
-    _run(gateway._note_receipt_domain(_iid(1), DOM_A, strict=True))         # retried, then repaired
+    _run(gateway._note_receipt_domain(_iid(1), DOM_A))         # retried, then repaired
     assert _range_world.rows[0]["domain"] is None                           # NULL: resolved again next time
 
 
@@ -450,7 +454,7 @@ def test_8_a_write_that_fails_twice_is_retried_and_lands(monkeypatch):
 
     monkeypatch.setattr(ist, "set_domain", flaky)
     monkeypatch.setattr(ist, "clear_domain", lambda i: pytest.fail("repaired though the retry landed"))
-    _run(gateway._note_receipt_domain("x", "B", strict=True))
+    _run(gateway._note_receipt_domain("x", "B"))
     assert calls == ["B", "B", "B"]
 
 
@@ -462,21 +466,18 @@ def test_8_a_write_that_never_lands_is_repaired_to_NULL_so_no_stale_domain_hides
 
     monkeypatch.setattr(ist, "set_domain", down)
     monkeypatch.setattr(ist, "clear_domain", lambda i: cleared.append(i) or True)
-    _run(gateway._note_receipt_domain("x", "B", strict=True))      # re-class A -> B: A must not stay
+    _run(gateway._note_receipt_domain("x", "B"))      # re-class A -> B: A must not stay
     assert cleared == ["x"]
 
 
-def test_8_when_neither_the_write_nor_the_repair_lands_the_filer_says_503(monkeypatch):
-    from fastapi import HTTPException
-
+def test_8_when_neither_the_write_nor_the_repair_lands_the_post_filing_write_only_logs(monkeypatch):
+    """The task is already filed: a 503 here would fail a call whose filing succeeded."""
     def down(*a):
         raise RuntimeError("db down")
 
     monkeypatch.setattr(ist, "set_domain", down)
     monkeypatch.setattr(ist, "clear_domain", down)
-    with pytest.raises(HTTPException) as e:
-        _run(gateway._note_receipt_domain("x", "B", strict=True))
-    assert e.value.status_code == 503 and e.value.detail["error"] == "receipt_domain_unwritten"
+    _run(gateway._note_receipt_domain("x", "B"))                    # no raise
 
 
 def test_8_control_a_reader_never_raises_on_the_same_failure(monkeypatch):
@@ -492,7 +493,7 @@ def test_8_control_a_clean_write_is_one_call_and_no_repair(monkeypatch):
     calls: list = []
     monkeypatch.setattr(ist, "set_domain", lambda i, d: calls.append((i, d)) or True)
     monkeypatch.setattr(ist, "clear_domain", lambda i: pytest.fail("repaired a clean write"))
-    _run(gateway._note_receipt_domain("x", "B", strict=True))
+    _run(gateway._note_receipt_domain("x", "B"))
     assert calls == [("x", "B")]
 
 
@@ -501,7 +502,7 @@ def test_8_the_repaired_row_is_then_found_by_the_new_domains_range(monkeypatch, 
     _writes(monkeypatch)
     r = _post({"range": RANGE, "profile": "t", "check_only": True})
     assert r.json()["notice_ids"] == []                                 # the stale value hides it
-    _run(gateway._note_receipt_domain(_iid(1), DOM_A, strict=True))     # the retry lands
+    _run(gateway._note_receipt_domain(_iid(1), DOM_A))     # the retry lands
     assert _range_world.rows[0]["domain"] == DOM_A
     r = _post({"range": RANGE, "profile": "t", "check_only": True})
     assert r.json()["notice_ids"] == [_iid(1)]
@@ -511,7 +512,7 @@ def test_8_no_domain_writes_nothing_at_all(monkeypatch):
     for blank in (None, "", "  "):
         monkeypatch.setattr(ist, "set_domain", lambda i, d: pytest.fail(f"wrote {d!r}"))
         monkeypatch.setattr(ist, "clear_domain", lambda i: pytest.fail("cleared"))
-        _run(gateway._note_receipt_domain("x", blank, strict=True))
+        _run(gateway._note_receipt_domain("x", blank))
 
 
 # ---------------------------------------------------------------------------
@@ -574,7 +575,7 @@ def test_9_re_class_whose_later_write_fails_leaves_NULL_never_the_old_domain(mon
 
     monkeypatch.setattr(ist, "set_domain", down)
     monkeypatch.setattr(ist, "clear_domain", lambda i: (_ for _ in ()).throw(RuntimeError("down")))
-    _run(gateway._note_receipt_domain(_iid(1), DOM_B, strict=False))     # the filing's write fails
+    _run(gateway._note_receipt_domain(_iid(1), DOM_B))     # the filing's write fails
     assert _range_world.rows[0]["domain"] is None
 
 
@@ -593,5 +594,5 @@ def test_9_with_no_projection_store_configured_the_filer_neither_writes_nor_refu
 
     monkeypatch.setattr(ist, "set_domain", unconfigured)
     monkeypatch.setattr(ist, "clear_domain", unconfigured)
-    _run(gateway._note_receipt_domain("x", "B", strict=True))
+    _run(gateway._note_receipt_domain("x", "B"))
     _run(gateway._clear_stale_receipt_domain("x", "A", "B"))

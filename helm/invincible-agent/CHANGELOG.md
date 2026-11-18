@@ -30,7 +30,7 @@
   every receipt's domain with the one function the preflight uses and treats the stored column only as
   a query filter, so a notice whose task was superseded or expired without a decision is dropped alone
   and never fails the export. The filer retries a failed domain write three times, then repairs the
-  row to NULL (resolved again next time), and only then answers 503 `receipt_domain_unwritten`. The
+  row to NULL (resolved again next time), and only then logs it: that write runs AFTER the task is filed and never fails the call. The strict step is the clear BEFORE filing: a stored domain that differs from the task's is cleared first, and if the clear cannot land nothing is filed and the call answers 503 `receipt_domain_unwritten`. The
   page bound (40 pages) caps one range at about 20,000 receipts read. `POST /ingest/export/notices`
   by `range` reads at most `_EXPORT_RANGE_MAX_PAGES` (40) pages of receipts, then answers 422
   `export_range_scan_bound` stating the bound and no count. Chart values and endpoints are unchanged.
