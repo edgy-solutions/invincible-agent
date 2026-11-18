@@ -1070,16 +1070,20 @@ try:
 except ImportError:
     from agent_fleet.utils.mesh_vectors import WeaviateVectors
 
-# Sibling module, the same dual layout as `mesh_ontology` above.
+# Sibling modules, PACKAGE-FIRST, as `read_outcome` above and for the same reason: where both
+# forms are importable, flat-first gave engine O a second module object. A seal that patches
+# `agent_fleet.ontology_service.notice_parts` then missed the code under test, and went red by
+# test order (Q8, 11-16). The container has no `agent_fleet` package, so it falls through to the
+# flat import exactly as before. Sealed by tests/security/test_engine_o_reads_one_sibling_module.py.
 try:
-    import notice_parts as _notice_parts  # type: ignore[no-redef]
-except ImportError:
     from agent_fleet.ontology_service import notice_parts as _notice_parts
+except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
+    import notice_parts as _notice_parts  # type: ignore[no-redef]
 
 try:
-    import where_used as _where_used  # type: ignore[no-redef]
-except ImportError:
     from agent_fleet.ontology_service import where_used as _where_used
+except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
+    import where_used as _where_used  # type: ignore[no-redef]
 
 try:
     from utils import origin_entitlement as _origin_entitlement  # type: ignore[no-redef]

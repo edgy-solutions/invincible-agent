@@ -326,7 +326,10 @@ def test_this_file_leaves_no_top_level_sibling_behind():
     show the pollution, so the probe is shown able to see it."""
     control = _probe("OLD_SPEC_LOAD")
     assert control["loaded"] is True, control
-    assert control["top_level_notice_parts"] and control["os_dir_on_path"], (
+    # The old loader still leaves the engine dir on sys.path. It no longer leaves a top-level
+    # `notice_parts`, because engine O now imports its siblings package-first; that is sealed,
+    # with its own control, by tests/security/test_engine_o_reads_one_sibling_module.py.
+    assert control["os_dir_on_path"], (
         f"the control no longer pollutes, so this probe proves nothing: {control}")
     mine = _probe(str(Path(__file__).resolve()))
     assert mine["loaded"] is True, mine
