@@ -15053,7 +15053,7 @@ async def _mark_receipt_no_domain(ingest_id: str) -> None:
     """A receipt whose resolution SUCCEEDED and found no domain (no decision record, no open task)
     is marked `NO_DOMAIN`, only from NULL, so it leaves every caller's scan and cannot spend
     another caller's page bound. NULL stays "not resolved / the write failed". The marker is never
-    permanent: a task filed for the receipt replaces it (`_note_receipt_domain`, strict, at filing).
+    permanent: a task filed for the receipt replaces it (`_note_receipt_domain`, best effort, after filing).
     Best effort: a failed mark costs a later range one more look at the row, never a notice."""
     from starlette.concurrency import run_in_threadpool
 
@@ -15065,15 +15065,15 @@ async def _mark_receipt_no_domain(ingest_id: str) -> None:
         logger.warning("receipt no-domain mark failed for %s: %s", ingest_id, type(exc).__name__)
 
 
-async def _note_receipt_domain(ingest_id: str, domain: Optional[str], *, strict: bool = False) -> None:
+async def _note_receipt_domain(ingest_id: str, domain: Optional[str]) -> None:
     """Write a receipt's review domain once a source has named it. No domain is no write
     here (`_mark_receipt_no_domain` is the marker's only writer, and filing replaces it).
 
     The write is RETRIED, and if it still fails the stored value is cleared (NULL is never
-    excluded by the range's query), so a stale domain cannot hide a notice. `strict` (the filer):
-    when neither the write nor the clear lands, 503 `receipt_domain_unwritten`; the task is
-    already filed and the call is find-or-file, so the caller's retry writes it. A non-strict
-    caller (the range's write-back, a reader) only logs: the range derives every domain itself."""
+    excluded by the range's query), so a stale domain cannot hide a notice. BEST EFFORT, always:
+    it runs AFTER the task is filed, so it never raises (a 503 there would fail a call whose
+    filing succeeded). The strict step is `_clear_stale_receipt_domain`, BEFORE filing. If both
+    the write and the clear fail it only logs: the range derives every domain itself."""
     from starlette.concurrency import run_in_threadpool
 
     from . import ingest_status
@@ -15097,11 +15097,6 @@ async def _note_receipt_domain(ingest_id: str, domain: Optional[str], *, strict:
         return                                       # repaired: NULL, so no stale domain excludes it
     except Exception as exc:  # noqa: BLE001
         logger.warning("receipt domain repair failed for %s: %s", ingest_id, type(exc).__name__)
-    if strict:
-        raise HTTPException(status_code=503, detail={
-            "error": "receipt_domain_unwritten",
-            "message": f"the review domain could not be recorded on the receipt: "
-                       f"{type(last).__name__}; retry"})
 
 
 async def _clear_stale_receipt_domain(ingest_id: str, stored: Optional[str], domain: str) -> None:
@@ -16279,11 +16274,11 @@ async def _file_or_find_document_promotion_task(
         # always. The audience must not move.
         existing = await run_in_threadpool(lambda: human_tasks.get_open_task_payload(task_id))
         if existing is None:
-            await _note_receipt_domain(ingest_id, domain, strict=True)
+            await _note_receipt_domain(ingest_id, domain)
             return task_id, "ALREADY_FILED"
         if (str(existing.get("content_kind") or "").strip().lower()
                 == str(row.get("content_kind") or "").strip().lower()):
-            await _note_receipt_domain(ingest_id, domain, strict=True)
+            await _note_receipt_domain(ingest_id, domain)
             return task_id, "ALREADY_FILED"
         state = await run_in_threadpool(lambda: human_tasks.get_task_open_state(task_id))
         if (state or {}).get("audience") != audience:
@@ -16358,7 +16353,7 @@ async def _file_or_find_document_promotion_task(
     if _refresh:
         await run_in_threadpool(lambda: human_tasks.refresh_open_task(
             task_id, payload=payload, title=_title, summary=_summary))
-        await _note_receipt_domain(ingest_id, domain, strict=True)
+        await _note_receipt_domain(ingest_id, domain)
         return task_id, "ALREADY_FILED"
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
@@ -16373,7 +16368,7 @@ async def _file_or_find_document_promotion_task(
         raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
     except human_tasks.NoRequester as exc:
         raise HTTPException(status_code=422, detail={"error": "no_requester", "message": str(exc)})
-    await _note_receipt_domain(ingest_id, domain, strict=True)
+    await _note_receipt_domain(ingest_id, domain)
     return task_id, "FILED"
 
 
