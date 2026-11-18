@@ -601,6 +601,23 @@ def _start_ingest_watchdog() -> "Optional[asyncio.Task]":
 async def lifespan(application: FastAPI):
     """Startup/shutdown lifecycle — verify DB connection on boot."""
     await init_db()
+    # A content kind's `on_promotion` row must name a workflow that declares a start this BFF can
+    # build; a misdeclared row refuses the start (rows without it are skipped).
+    from . import content_kinds as _ck, promotion_start as _ps
+
+    def _gwd(workflow_id: str):      # imported on first use: no row, no import
+        from agent_fleet.restate_analyst.workflow_definition import get_workflow_definition
+        return get_workflow_definition(workflow_id)
+    # Unreadable registrations are not this check's to refuse: they fail closed where they fail
+    # today (`/ingest`), and booting the BFF never depended on them. A READABLE row that is
+    # misdeclared does refuse the start.
+    try:
+        _regs = _ck.registrations()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("on_promotion check skipped: content-kind registrations unreadable: %s: %s",
+                       type(exc).__name__, exc)
+        _regs = ()
+    _ps.check_declared_starts(_regs, get_definition=_gwd, modes=_ps.MODES)
     # HITL substrate: ensure the human_task_projection table exists in the
     # Electric-replicated Postgres. Non-fatal when PROJECTOR_POSTGRES_DSN is
     # unset (local/dev boot) — the substrate is dormant, never a boot blocker.
@@ -2218,6 +2235,13 @@ async def start_review(
     is subject to the ingress idempotency key below: within its retention window a
     re-drive of an unchanged artifact REPLAYS the prior response rather than executing."""
     raw_token = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+    return await _start_review_core(req, current_user=current_user, raw_token=raw_token)
+
+
+async def _start_review_core(req: "ReviewStartRequest", *, current_user: "User",
+                             raw_token: str) -> dict:
+    """The body of `POST /reviews`, callable without a request: the route and a promotion's
+    declared start (`_start_declared_review`) send the start the same way."""
     body = {
         "notice_id": req.notice_id,
         "doc_type": req.doc_type,
@@ -2314,6 +2338,58 @@ async def start_review(
         # gets a clean 403. (Who may REVIEW is a separate gate, downstream at the task layer.)
         raise HTTPException(status_code=403, detail=out)
     return out
+
+
+async def _start_declared_review(subject, *, done: dict, applied_by: Optional[str],
+                                 current_user: "User", raw_token: str,
+                                 domain: str) -> Optional[dict]:
+    """The start the promoted record's content kind declares (`on_promotion`), or None when the
+    kind declares none (the route's response is then unchanged).
+
+    Runs after the decision record stands, on a fresh act AND on a replay (a retry finishes the
+    job; the start is idempotent on `promotion:{record}:{workflow}`). On a replay only the person
+    whose act the record stores re-sends it. The promotion is never rolled back: a failure is
+    reported in the result and logged, and acting again re-sends the start."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import content_kinds, promotion_start
+
+    def _definition(workflow_id: str):
+        from agent_fleet.restate_analyst.workflow_definition import (  # noqa: PLC0415
+            get_workflow_definition,
+        )
+        return get_workflow_definition(workflow_id)
+
+    ds = None
+    try:
+        ds = await run_in_threadpool(lambda: promotion_start.declared_start(
+            subject.content_kind, by_kind=content_kinds.by_kind, get_definition=_definition))
+        if ds is None:
+            return None
+        key = promotion_start.promotion_request_key(done["record_id"], ds.workflow_id)
+        replayed = bool(done.get("replayed"))
+        if replayed and applied_by != current_user.authz_id:
+            return {"status": "not_restarted",
+                    "reason": "only the promoter's retry re-sends the start"}
+        build = promotion_start.MODES.get(ds.mode)
+        if build is None:
+            raise promotion_start.PromotionStartUndeclared(
+                f"workflow {ds.workflow_id!r} declares start mode {ds.mode!r}")
+        payload = await run_in_threadpool(lambda: build(
+            subject, domain=domain, request_key=key, bucket=_ARTIFACT_BUCKET,
+            read_manifest=_read_extraction_manifest, review_key_of=_review_json_key,
+            read_review=_read_review_json))
+        out = await _start_review_core(
+            ReviewStartRequest(**payload), current_user=current_user, raw_token=raw_token)
+        return {"status": "retried" if replayed else "started", "workflow": ds.workflow_id,
+                "request_key": key, "outcome": out.get("status")}
+    except Exception as exc:  # noqa: BLE001 -- the promotion stands; the start is reported, not raised
+        detail = exc.detail if isinstance(exc, HTTPException) else None
+        reason = (detail.get("error") if isinstance(detail, dict) else None) or type(exc).__name__
+        logger.warning("promotion start failed: ingest_id=%s workflow=%s: %s: %s",
+                       getattr(subject, "ingest_id", None), getattr(ds, "workflow_id", None),
+                       type(exc).__name__, exc)
+        return {"status": "failed", "reason": reason}
 
 
 def _restate_key(k: str) -> str:
@@ -6142,6 +6218,7 @@ async def _stale_extraction(task_id: str, row: dict) -> "HTTPException":
 async def act_on_human_task(
     task_id: str,
     req: HumanTaskActRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
 ):
     """Approve/reject a task. Application-layer gate: RE-CHECK Topaz `can_act` for
@@ -6590,6 +6667,18 @@ async def act_on_human_task(
         except promotion.PromotionRefused as exc:
             raise HTTPException(status_code=exc.status, detail={
                 "error": exc.error, "task_id": task_id, "message": str(exc)})
+        # Who the act's effects were applied as: the caller on a fresh act, the STORED actor on a
+        # replay. Not part of the response.
+        _applied_by = done.pop("_effect_by", None)
+        # A kind's declared start (`on_promotion`) is an effect of the act, sent after the record
+        # stands. A kind without the row gets None here: no key in the response, no call.
+        _review = None
+        if req.decision == promotion.PROMOTED:
+            _review = await _start_declared_review(
+                subject, done=done, applied_by=_applied_by, current_user=current_user,
+                raw_token=(request.headers.get("authorization") or "")
+                .removeprefix("Bearer ").strip(),
+                domain=promotion.domain_of(audience))
         defect = None
         if edits is not None:
             # Filed AFTER the record stands and BEFORE the task resolves: a failure leaves the task
@@ -6656,6 +6745,8 @@ async def act_on_human_task(
         _body = {"task_id": task_id, "decision": req.decision, "rows_resolved": n, **done}
         if _reject_code is not None:
             _body["reject_code"] = _reject_code
+        if _review is not None:
+            _body["review"] = _review
         if defect is not None:
             _body["row_edits"] = {"corrected": len(edits.corrected), "added": len(edits.added),
                                   "deleted": len(edits.deleted), "header": len(edits.header)}
