@@ -48,10 +48,9 @@
   the grant, who revoked it, when and why; the grant's own row is untouched. Effective access is
   committed policy + ledger grants - ledger revocations, computed by one function
   (`grant_sync.union_grants`) that the BFF and the seed both call; a revocation removes a committed
-  grant too, and a revoked key stays revoked: approving an access request for a revoked grant answers 409
-  `grant_revoked` (a policy refusal naming `asset_grants`, with the reason) before anything is resolved
-  or recorded, so the task stays pending and the answer is never `grant_written: true`; a re-grant
-  becomes its own approved act in a follow-up. The route refuses 403 unless the caller holds `can_invoke(mesh:revokeAccessGrant)`: a
+  grant too. A revocation is in force until a re-grant act, not for ever: approving an access request
+  for a revoked grant is a new act and is recorded (the latest act on a key wins; see 0.4.90, which
+  replaces #412's 409 `grant_revoked` refusal). The route refuses 403 unless the caller holds `can_invoke(mesh:revokeAccessGrant)`: a
   new row in `capability_grants.yaml` granted to a new capability-only group, `access-revokers`
   (sandbox member: alice, as a fixture). **Upgrade note:** the membership is a `users.yaml` change, so
   it needs a hand-run `topaz_sync` before anyone can revoke; until then the route answers 403 to
