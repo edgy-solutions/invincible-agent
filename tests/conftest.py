@@ -332,6 +332,36 @@ def pytest_configure(config):  # noqa: D103
         "markers",
         "ingest_v1_unconformant(reason): skip the ingest-v1 response-conformance hook for a test that "
         "stubs a body builder with a deliberately non-production shape; a non-blank reason is required")
+    config.addinivalue_line(
+        "markers",
+        "live: calls a live cluster or a port-forwarded cluster service; deselected unless the -m "
+        "expression names live")
+    config.addinivalue_line(
+        "markers",
+        "requires_cluster: needs a live cluster; treated as live (deselected unless -m names live)")
+
+
+_LIVE_MARKS = ("live", "requires_engine_o", "requires_cluster")
+
+
+def pytest_collection_modifyitems(config, items):  # noqa: D103
+    """Tests that call a live cluster leave the default run (architect, 2026-11-17).
+
+    Selected only when the -m expression names `live`; the usual -m filtering still applies after.
+    """
+    import re  # noqa: PLC0415
+    expr = getattr(config.option, "markexpr", "") or ""
+    if re.search(r"\blive\b", expr):
+        return
+    kept, deselected = [], []
+    for item in items:
+        if any(item.get_closest_marker(m) for m in _LIVE_MARKS):
+            deselected.append(item)
+        else:
+            kept.append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = kept
 
 
 def _content_differs(path: str) -> bool:
