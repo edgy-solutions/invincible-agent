@@ -335,7 +335,7 @@ minutes on every commit or goes red for environment reasons and teaches people t
 the flaky-red trap `test_effect_write_gate.py`'s own skip-guard docstring warns about. Run it
 by hand, twice, before promoting it to a gate.
 
-## Red-test triage, 2026-11-16 — every red on `master` has an owner
+## Red-test triage, 2026-11-16 — the reds on `master` in routing, planning and security, each with an owner
 
 Measured by lane 74 on `02657a1e` (`tests/routing/`: 22 failed) and re-measured by Lane 1 on
 `74e26cce`. Each row is a red on `master`, the commit that made it red, and who fixes it.
@@ -348,5 +348,10 @@ Measured by lane 74 on `02657a1e` (`tests/routing/`: 22 failed) and re-measured 
 | D | `test_endpoint_gating_manifest.py[gateway-…]` | `GET /me/queue`, `GET /me/needs_you` undeclared (`581d5a60`, 11-14) | lane saf | add the two manifest rows |
 | D′ | the same test, `[ontology_service]` | `POST /where_used` undeclared | lane 74 | #427 (0.4.91) |
 | E | `test_networkpolicy_flows_survive.py`, 3 tests | the derived destinations of engine-o and cortex-bff differ from the recorded set | lane 74 | fails alone and in the suite alike |
+| F | `test_classify_route.py` (29) and `test_phrasing_independence.py` (7) | ENVIRONMENTAL, not the sha's: they POST `localhost:18084/resolve` and fail `400` whenever a local service answers on that port (a kubectl port-forward of the sandbox engine-o), and skip otherwise. Red or skipped depending on the box | Lane 1 | #442: tests that call a live cluster carry `live` and leave the default run |
+| G | `tests/security/test_steward_origin_case_end_to_end.py::test_arm2_ACCEPTED_on_awaiting_origin_files_the_promotion_and_promotion_opens_it`, 1 test | ORDER-DEPENDENT: fails with its file run alone (gov, on `f6653b00` and `22b3560f`), passes inside the full `tests/security` run. Cause not yet found | Lane 1 | open: find the state the full run supplies and the file does not |
 
-None of these is order-dependent: each red reproduces with its file run alone.
+A–E reproduce with their file run alone and are not order-dependent. F depends on the box, not
+the sha, and G on the order. So "every red has an owner" holds for these seven classes. It is a
+census of `tests/routing/`, `tests/planning/` and the reds measured in `tests/security/` this
+week, not of the whole suite.
