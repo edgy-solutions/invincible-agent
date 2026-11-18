@@ -274,7 +274,7 @@ def _fake_grant_sync(tmp, with_prune):
 
 
 def test_5_the_bound_sync_passes_prune_false(w):
-    run = gf.make_sync_run("topaz.invalid:1", _fake_grant_sync(w.tmp, True))
+    run = gf.make_sync_run("topaz.invalid:1", _fake_grant_sync(w.tmp, True), ledger=lambda: ())
     run({"grants": []})
     (call,) = sys.modules["_engine_r_grant_sync"].CALLS
     assert call == ({"grants": []}, "topaz.invalid:1", False)
@@ -282,14 +282,14 @@ def test_5_the_bound_sync_passes_prune_false(w):
 
 def test_5_a_grant_sync_with_no_prune_switch_is_refused_not_called(w):
     with pytest.raises(RuntimeError, match="prune"):
-        gf.make_sync_run("topaz.invalid:1", _fake_grant_sync(w.tmp, False))
+        gf.make_sync_run("topaz.invalid:1", _fake_grant_sync(w.tmp, False), ledger=lambda: ())
 
 
 def test_5_the_real_grant_sync_is_add_only_or_refused():
     p = ROOT / "policy/sync/grant_sync.py"
     text = p.read_text(encoding="utf-8")
     assert "prune" in text.split("def run(", 1)[1].split(")", 1)[0], "grant_sync.run must carry the prune switch"
-    gf.make_sync_run("topaz.invalid:1", p)                       # loads: it is not refused
+    gf.make_sync_run("topaz.invalid:1", p, ledger=lambda: ())                       # loads: it is not refused
 
 
 def test_5_a_merge_that_leaves_the_grants_file_alone_applies_nothing(w):
@@ -399,7 +399,7 @@ def test_8_a_grant_sync_without_union_is_refused_not_called(w):
     p = _fake_grant_sync(w.tmp, True)
     p.write_text(p.read_text(encoding="utf-8").replace("def union_grants", "def not_union"), encoding="utf-8")
     with pytest.raises(RuntimeError, match="union_grants"):
-        gf.make_sync_run("topaz.invalid:1", p)
+        gf.make_sync_run("topaz.invalid:1", p, ledger=lambda: ())
 
 
 def test_8_the_requester_on_the_ledger_row_is_excluded_not_only_the_subject(w):
@@ -444,3 +444,20 @@ def test_9_a_backfill_skips_a_ledger_grant_whose_asset_is_gone_and_proposes_the_
     gone = {**LEDGER[0], "subject": "erin", "asset": GONE}
     out = backfill(w, ledger=[gone, LEDGER[0]])
     assert len(out) == 1 and "ledger row alice" in out[0]["intent"]
+
+
+def test_9_the_ledger_is_a_required_keyword_so_no_caller_fails_open_by_omission(w):
+    """An empty-ledger default applied the committed rows alone and re-added every revoked grant."""
+    with pytest.raises(TypeError, match="ledger"):
+        gf.make_sync_run("topaz.invalid:1", _fake_grant_sync(w.tmp, True))
+    import inspect
+    p = inspect.signature(gf.make_sync_run).parameters["ledger"]
+    assert p.default is inspect.Parameter.empty and p.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_9_control_the_call_that_carries_a_ledger_builds_the_bound_sync(w):
+    run = gf.make_sync_run("topaz.invalid:1", _fake_grant_sync(w.tmp, True), ledger=lambda: ())
+    run({"grants": []})
+    (call,) = sys.modules["_engine_r_grant_sync"].CALLS
+    assert call[2] is False
+

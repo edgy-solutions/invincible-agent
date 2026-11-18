@@ -364,7 +364,7 @@ def grant_policy(
 
 
 def make_sync_run(
-    topaz_url: str, grant_sync_path: Path, *, ledger: Callable[[], Iterable[Mapping]] = lambda: ()
+    topaz_url: str, grant_sync_path: Path, *, ledger: Callable[[], Iterable[Mapping]]
 ) -> Callable[[dict], object]:
     """``policy/sync/grant_sync.run`` bound to the directory, ADD-ONLY (``prune=False``).
 
@@ -372,6 +372,9 @@ def make_sync_run(
     minus the ledger's revocations (``grant_sync.union_grants``), read through ``ledger()`` at each
     apply. A stale ledger grant is skipped alone (``ledger_keys``); a dangling committed row still
     refuses (exit 3), which ``grant_rows_appliable`` keeps from merging.
+
+    ``ledger`` is REQUIRED, with no default: an empty default would apply the committed rows alone and
+    re-add every revoked grant, silently. A caller with no ledger says so (``ledger=lambda: ()``).
 
     Fails closed (``load_grant_sync``): a grant_sync that cannot be told to stay add-only is refused
     rather than called (the seed CronJob is the one pruner).
