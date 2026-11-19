@@ -286,6 +286,7 @@ needs_graph = pytest.mark.skipif(
 
 
 @needs_graph
+@pytest.mark.live
 def test_every_explains_target_resolves_in_the_deployed_graph():
     """The invented-IRI rule, asked of the graph rather than of the text.
 
