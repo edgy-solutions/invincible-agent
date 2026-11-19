@@ -256,3 +256,44 @@ def _the_caller_is_verified(monkeypatch):
     from agent_fleet.ontology_service import main as _eo_main
     from tests._helpers.verified_caller import install as _install_caller
     return _install_caller(monkeypatch, _eo_main, "bob@example.com", {"bob@example.com": ["SUSTAINMENT"], "alice@example.com": ["SUSTAINMENT"]})
+
+
+# --- init_baml_client falls back to the unconfigured client when with_options fails ---------------
+# Before the effort refactor (97937ff8) `with_options` ran inside a try; a client object without it
+# (the tests' SimpleNamespace / object() stand-ins for `baml_client`) came back unconfigured.
+
+_SENTINEL_REGISTRY = object()
+
+
+def _patch_registry(monkeypatch, value):
+    from agent_fleet import llm_utils  # noqa: PLC0415  (the module init_baml_client reads it from)
+    monkeypatch.setattr(llm_utils, "build_client_registry", lambda *a, **k: value)
+
+
+@pytest.mark.parametrize("make", [object, __import__("types").SimpleNamespace], ids=["object", "namespace"])
+def test_a_client_without_with_options_comes_back_unconfigured(make, monkeypatch):
+    from agent_fleet.llm_utils import init_baml_client  # noqa: PLC0415
+    _patch_registry(monkeypatch, _SENTINEL_REGISTRY)
+    obj = make()
+    assert init_baml_client(obj) is obj
+
+
+def test_control_with_options_result_is_returned_with_the_registry(monkeypatch):
+    from agent_fleet.llm_utils import init_baml_client  # noqa: PLC0415
+    _patch_registry(monkeypatch, _SENTINEL_REGISTRY)
+    marker, seen = object(), []
+
+    class _Client:
+        def with_options(self, client_registry=None):
+            seen.append(client_registry)
+            return marker
+
+    assert init_baml_client(_Client()) is marker
+    assert seen == [_SENTINEL_REGISTRY]
+
+
+def test_control_no_registry_returns_the_instance(monkeypatch):
+    from agent_fleet.llm_utils import init_baml_client  # noqa: PLC0415
+    _patch_registry(monkeypatch, None)
+    obj = object()
+    assert init_baml_client(obj) is obj
