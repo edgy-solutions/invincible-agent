@@ -49,6 +49,7 @@ except IndexError:
     pass  # Running in CNB container — baml_client is already in /workspace/
 
 from baml_client import b  # noqa: E402  — BAML async client
+from baml_py.errors import BamlValidationError  # noqa: E402
 from baml_client.types import SemanticResolution as BamlSemanticResolution  # noqa: E402
 from baml_client.type_builder import TypeBuilder
 
@@ -4724,6 +4725,26 @@ async def classify_legacy_table(request: LegacyTableDossier) -> TableClassificat
 # ---------------------------------------------------------------------------
 # POST /plan
 # ---------------------------------------------------------------------------
+_plan_logger = logging.getLogger("iagent.plan")
+
+
+def _planner_unparseable_plan(request: PlanRequest) -> dict:
+    """The plan served when the planner's answer cannot be parsed: one task holding the person's
+    question, no persona (the zero-task passthrough's default awaits its own ruling), flagged."""
+    return {
+        "tasks": [{
+            "sub_query": request.query,
+            "target_persona": "",
+            "tools_needed": [],
+            "expected_output": "Direct response to the user's query.",
+        }],
+        "extracted_concepts": [],
+        "reasoning": "",
+        "domain": request.domain,
+        "degraded": "planner_unparseable",
+    }
+
+
 @app.post("/plan")
 async def plan_query(request: PlanRequest) -> dict:
     """
@@ -4874,10 +4895,18 @@ async def plan_query(request: PlanRequest) -> dict:
         # Pass through our deliberate 502 (silent-degrade detection)
         # without rewrapping it.
         raise
+    except BamlValidationError as exc:
+        # The planner answered in prose, not in the contract's shape: one degraded task holding
+        # the person's question, never a failed run. DecomposeQuery is the only BAML call in this
+        # try. The exception's str carries the system prompt, the persona roster and the raw
+        # output, so it is never interpolated or logged: the class name is the whole record.
+        _plan_logger.warning("plan: planner answer unparseable (%s)", type(exc).__name__)
+        return _planner_unparseable_plan(request)
     except Exception as exc:
+        # The class only, whatever the error: a BAML error's str carries the prompt and roster.
         raise HTTPException(
             status_code=502,
-            detail=f"BAML decomposition failed: {exc}",
+            detail=f"BAML decomposition failed: {type(exc).__name__}",
         ) from exc
 
 
