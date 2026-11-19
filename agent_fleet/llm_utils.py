@@ -213,10 +213,16 @@ def init_baml_client(baml_client_instance):
     Configures the global BAML client dynamically based on SMOLAGENTS_PROVIDER.
     Returns the newly configured BAML client object.
     """
+    import logging
+
     cr = build_client_registry()
     if cr is None:
         return baml_client_instance
-    return baml_client_instance.with_options(client_registry=cr)
+    try:
+        return baml_client_instance.with_options(client_registry=cr)
+    except Exception as e:
+        logging.error(f"Failed to configure BAML client: {e}")
+        return baml_client_instance
 
 
 _ROUTING_EFFORT_VALID = ("low", "medium", "high")

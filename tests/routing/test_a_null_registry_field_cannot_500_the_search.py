@@ -123,6 +123,9 @@ def test_search_predicates_answers_with_a_renderer_row_in_the_window(ontology_ma
     monkeypatch.setattr(ontology_main, "_WEAVIATE_CLIENT",
                         _Client([_FakeObject(_renders_as_row(), 0.7), _FakeObject(_engine_row(), 0.3)]))
     monkeypatch.setattr(ontology_main, "_emit_routing_decision", lambda **_kw: None)
+    # Engine O binds the VERIFIED caller, never the body (#458), so a direct handler call needs one.
+    from tests._helpers.verified_caller import install as _install_caller  # noqa: PLC0415
+    _install_caller(monkeypatch, ontology_main, "alice@example.com", ["DOCS"])
     # HARNESS, not production: the fixture loads main.py by path under a synthetic module name,
     # so pydantic cannot resolve the response model's forward reference on its own.
     ontology_main.SearchPredicatesResponse.model_rebuild(
