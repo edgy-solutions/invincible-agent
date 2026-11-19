@@ -10,6 +10,7 @@ Run:  python tests/test_cross_repo_contracts.py
 """
 from __future__ import annotations
 
+import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -218,7 +219,11 @@ def test_the_producer_still_emits_both_fields_separately() -> None:
 # Pinned in BOTH directions, so a rename on either side goes red HERE:
 #   producer — the SDK emits clientId/authzId/secretRef and an svc:<name> user id;
 #   consumer — the chart's realm-reconcile job and realm import read exactly those keys.
-_SDK = _REPO.parent / "iagent-mesh-sdk"
+#
+# The producer is the INSTALLED, pinned iagent_mesh (the SDK the fleet runs), never a sibling
+# checkout: a sibling is whatever branch it happens to be on, and a worktree has none.
+_SDK_SPEC = importlib.util.find_spec("iagent_mesh")
+_SDK_PKG = Path(_SDK_SPEC.origin).parent if _SDK_SPEC is not None and _SDK_SPEC.origin is not None else None
 _RECONCILE = _REPO / "helm" / "invincible-agent" / "templates" / "realm-reconcile-job.yaml"
 # the service-client create body moved to a helper shared with the bodies Secret (0.4.86), so the
 # reconcile path is now these two files
@@ -228,20 +233,21 @@ _KC_REALM = _REPO / "helm" / "invincible-agent" / "templates" / "keycloak-config
 
 def _sdk_stanzas(tool_name: str = "parts_lookup"):
     """Import the SDK's PURE stanza builder — the same function the scaffold writes from."""
-    sdk = str(_SDK)
-    if sdk not in sys.path:
-        sys.path.insert(0, sdk)
     from iagent_mesh.identity_stanzas import identity_stanzas  # type: ignore
     return identity_stanzas(tool_name)
 
 
 def test_sdk_is_present_for_this_contract() -> None:
-    """Positive control: without the SDK checked out beside this repo the assertions below
-    would vacuously pass. Skip-shaped failures are how a cross-repo pin quietly stops
-    pinning."""
-    assert (_SDK / "iagent_mesh" / "identity_stanzas.py").exists(), (
-        f"SDK not found at {_SDK} — this contract cannot be verified, and silently passing "
-        "would be worse than failing"
+    """Positive control: the contract is checked against the installed, pinned iagent_mesh (the
+    SDK the fleet runs), not a sibling checkout. Without it the assertions below would vacuously
+    pass. Skip-shaped failures are how a cross-repo pin quietly stops pinning."""
+    assert _SDK_PKG is not None, (
+        "iagent_mesh is not installed in this environment — this contract cannot be verified, "
+        "and silently passing would be worse than failing"
+    )
+    assert (_SDK_PKG / "identity_stanzas.py").exists(), (
+        f"installed iagent_mesh has no identity_stanzas.py at {_SDK_PKG / 'identity_stanzas.py'} — "
+        "this contract cannot be verified, and silently passing would be worse than failing"
     )
 
 
