@@ -189,16 +189,6 @@ def test_each_fleet_wrapper_is_ONE_call_to_the_SDK_guard(where: str) -> None:
 # -- the census: no copy anywhere, and no comparison in the denylist form --------------------
 
 
-def _kind_comparisons_in(tree: ast.AST) -> list[tuple[int, str, str]]:
-    out = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Compare):
-            for comparator in node.comparators:
-                if isinstance(comparator, ast.Constant) and comparator.value in DECLARED_KINDS:
-                    out.append((node.lineno, ast.unparse(node.left), comparator.value))
-    return out
-
-
 def _initiator_kind_readers_in(tree: ast.AST) -> dict[str, set[str]]:
     """Functions that read ``.kind`` off a parameter annotated ``Initiator`` -> the attributes they
     read off it. Keyed on the ANNOTATION, so a copy is found whatever it names its parameter and
@@ -249,7 +239,9 @@ def _require_person(initiator: Initiator, operation: str) -> None:
 
 def test_the_census_matchers_still_FIND_the_copy_they_exist_to_catch() -> None:
     tree = ast.parse(_THE_OLD_COPY)
-    assert _kind_comparisons_in(tree) == [(3, "initiator.kind", "service")]
+    # through the CENSUS's own path (sites finder + verdict, nothing declared), not a matcher nothing calls
+    assert _kind_verdict({"x.py": _kind_comparison_sites_in(tree)}, {}) == (
+        {"x.py": [("_require_person", 3)]}, [])
     assert _initiator_kind_readers_in(tree) == {"_require_person": {"kind"}}
 
 
@@ -269,7 +261,7 @@ DECLARED_KIND_COMPARISONS: dict[tuple[str, str], dict] = {
 
 
 def _kind_comparison_sites_in(tree: ast.AST) -> list[tuple[str, int]]:
-    """(enclosing function, line) for every comparison `_kind_comparisons_in` finds."""
+    """(enclosing function, line) for every comparison of anything against a declared kind (the ONE matcher)."""
     sites: list[tuple[str, int]] = []
 
     def visit(node: ast.AST, fn: str) -> None:
