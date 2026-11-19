@@ -141,6 +141,9 @@ dev = [
     #   pytest tests/ --random-order --random-order-bucket=module --random-order-seed=<N>
     # See docs/principles/a-stub-that-needs-another-test-is-not-a-stub.md
     "pytest-random-order",
+    # tests/perf/test_langfuse_client_below_5.py parses version specifiers with it. pytest
+    # installs it anyway, but the import census counts declarations, not installs.
+    "packaging",
     "weaviate-client>=4.4,<5.0",
     "lxml>=6.1.1",
     # Mesh membership package — owns transport auth (the app-factory dependency) and the
