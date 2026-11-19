@@ -79,6 +79,8 @@ def test_AS_BUILT_AND_AS_MAINTAINED_ARE_REFUSED_WITH_NO_ROWS(monkeypatch, config
     got = _answer(_fill(monkeypatch, reply))
     assert got["status"] == "refused" and got["reason"] == "configuration_not_available", got
     assert not got.get("where_used") and not got.get("rows"), got
+    # the plain-language message names the asked configuration and the one to ask for instead
+    assert configuration in got["message"] and w.DEFAULT_CONFIGURATION in got["message"], got
 
 
 @pytest.mark.parametrize("form", ["stringified", "json"])
