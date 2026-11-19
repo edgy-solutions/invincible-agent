@@ -3024,6 +3024,37 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             telemetry=telemetry,
         )
 
+    if not (predicate.get("endpoint") or "").strip():
+        # A renderer (a `mesh:rendersAs` row) has no endpoint: it is a display format, not a
+        # routable verb. Routing's candidate set excludes it; if one arrives anyway, abstain with
+        # no HTTP call and no generalist fallback.
+        _rendered_iri = str(predicate.get("verb_iri") or "")
+        _log_no_verb_decision(
+            context, disposition="abstain", no_verb_reason="no_endpoint",
+            telemetry=telemetry, rejected_verb_iri=_rendered_iri,
+        )
+        return {
+            "persona": config.user_persona,
+            "user_persona": config.user_persona,
+            "answerer_persona": config.user_persona,
+            "predicate_verb_iri": _rendered_iri,
+            "fallback_reason": "no_endpoint",
+            "fallback_score": None,
+            "sub_query": sub_query,
+            "route_status": "abstained",
+            "expert_response": {
+                "status": "no_endpoint",
+                "reason": "no_endpoint",
+                "message": (
+                    f"The matched capability ({_rendered_iri}) is a display format, "
+                    "not something that can answer a question."
+                ),
+                "candidates": [],
+                "data": "",
+                "sources": [],
+            },
+        }
+
     endpoint = predicate["endpoint"]
     answerer_persona = predicate.get("owner_persona") or config.user_persona
 
