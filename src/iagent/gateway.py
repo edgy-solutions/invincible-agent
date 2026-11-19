@@ -2588,9 +2588,14 @@ async def get_review_batch(
         raise HTTPException(status_code=502, detail={"error": "review_batch_unreachable", "message": str(exc)})
     b = rr.json()
     # Map engine-a state items -> the UI ReviewItem shape (mpn/subject/proposed_disposition/needs_review).
+    # proposal_outcome / candidate_dispositions / abstention_reason are served so the card says why a
+    # row has no proposal; absent on reviews composed before this field existed (None / []).
     items = [{"mpn": it.get("mpn"), "subject": it.get("subject"),
               "proposed_disposition": it.get("proposed_disposition"),
-              "needs_review": bool(it.get("needs_review", False))} for it in b.get("items", [])]
+              "needs_review": bool(it.get("needs_review", False)),
+              "proposal_outcome": it.get("proposal_outcome"),
+              "candidate_dispositions": list(it.get("candidate_dispositions") or []),
+              "abstention_reason": it.get("abstention_reason")} for it in b.get("items", [])]
     return {
         "batch_id": match["task_id"],        # the grouped HumanTask id — what /act is addressed on
         "notice_id": b.get("notice_id"),
