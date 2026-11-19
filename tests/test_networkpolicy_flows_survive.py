@@ -15,7 +15,8 @@ Deployments (direct env + every ConfigMap / Secret they pull in), plus kube-dns.
   d  the derived destination set equals a recorded set (a derivation that finds nothing, or
      silently loses a flow, cannot pass)
   e  the exclusion list is fresh: every excluded key still exists, and still means what its
-     reason says
+     reason says; every string-compared key (COMPARED) still exists on its workload, and every
+     in-cluster Service it names is also reached by a checked key, so it cannot hide a flow
 
 The off-cluster model endpoint, MinIO and DataHub GMS are not chart components, so no podSelector
 can name them; the overlay tests/fixtures/netpol/values-flows.yaml carries them as ipBlock rules
@@ -67,6 +68,15 @@ EXCLUDED = {
     "SUPERSET_URL": ("unrendered", "values.yaml default for a Superset no workload of this release provides"),
 }
 
+# Values that hold URLs but are only ever COMPARED as strings, per workload: an accepted-issuer list
+# is matched against a token's `iss` claim; no pod connects to it. Signing keys come from a JWKS URL,
+# which stays a destination. These are not destinations, so they are left out of the derived set
+# as well as the live flows (unlike EXCLUDED, whose values are destinations nobody calls here).
+COMPARED = {
+    BFF: {"BFF_JWT_ACCEPTED_ISSUERS": "accepted token issuers, compared with `iss` (src/iagent/auth.py)"},
+    ENGINE_O: {"MESH_JWT_ACCEPTED_ISSUERS": "accepted token issuers, compared with `iss`; keys come from MESH_JWT_JWKS_URL"},
+}
+
 # The destination set of both sources (host without the namespace suffix, port), printed once from
 # the render and recorded. cortex-bff additionally carries ELECTRIC_UPSTREAM_URL.
 _COMMON = {
@@ -107,7 +117,7 @@ def _short(host: str) -> str:
 
 
 def _live_flows(cluster: ne.Cluster, src: str) -> list[ne.Flow]:
-    return [f for f in ne.derive_flows(cluster, src) if f.key not in EXCLUDED]
+    return [f for f in ne.derive_flows(cluster, src) if f.key not in EXCLUDED and f.key not in COMPARED.get(src, {})]
 
 
 def _cut(cluster: ne.Cluster, src: str) -> list[str]:
@@ -181,7 +191,7 @@ def test_CONTROL_THE_NAMED_TARGET_PORT_IS_RESOLVED_NOT_THE_SERVICE_PORT(on):
 # ---------------------------------------------------------------------------------------------
 @pytest.mark.parametrize("src", [BFF, ENGINE_O])
 def test_THE_DERIVED_DESTINATION_SET_IS_THE_RECORDED_SET(on, src):
-    got = {(_short(f.host), f.port) for f in ne.derive_flows(on, src)}
+    got = {(_short(f.host), f.port) for f in ne.derive_flows(on, src) if f.key not in COMPARED.get(src, {})}
     assert got == EXPECTED[src], (
         f"derivation drifted for {src}: gained {sorted(got - EXPECTED[src])}, "
         f"lost {sorted(EXPECTED[src] - got)}"
@@ -202,6 +212,27 @@ def test_EVERY_EXCLUDED_KEY_STILL_EXISTS_AND_MEANS_WHAT_ITS_REASON_SAYS(on, src)
             assert on.service_for_host(host) is None, f"{key}: {host} IS a Service now; evaluate it"
         elif kind == "public":
             assert "." in host and not host.endswith(".local") and on.service_for_host(host) is None
+
+
+@pytest.mark.parametrize("src", [BFF, ENGINE_O])
+def test_EVERY_COMPARED_KEY_STILL_EXISTS_AND_HIDES_NO_IN_CLUSTER_FLOW(on, src):
+    # An issuer list may name an in-cluster issuer (tokens minted inside carry it). Leaving the key
+    # out hides nothing only if every in-cluster Service it names is ALSO reached by a key the seal
+    # does check on the same workload (the JWKS URL), so that flow is proved by the a/b tests anyway.
+    env = on.env_of(src)
+    checked = {f.host.split(".")[0] for f in _live_flows(on, src) if on.service_for_host(f.host) is not None}
+    for key, reason in COMPARED[src].items():
+        assert key in env, f"compared key {key} ({reason}) is gone from {src}'s env: delete the entry"
+        items = [i for i in env[key].split(",") if i.strip()]
+        assert items, f"{key} is empty on {src}"
+        for item in items:
+            dest = ne.parse_destination(item)
+            assert dest is not None, f"{key}: an item is not a URL; re-read what the key holds"
+            svc = dest[0].split(".")[0] if on.service_for_host(dest[0]) is not None else None
+            assert svc is None or svc in checked, (
+                f"{key} on {src} names an in-cluster Service no checked key reaches: "
+                "the exclusion would hide a real flow"
+            )
 
 
 def test_EVERY_EXTERNAL_HOST_IS_REALLY_NOT_A_SERVICE_AND_IS_REFERENCED(on):

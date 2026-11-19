@@ -28,7 +28,7 @@ from agent_fleet.finance_agent import asset_inputs, measure_verbs, seed  # noqa:
 from agent_fleet.finance_agent import main as engine  # noqa: E402
 from agent_fleet.finance_agent.entities import FISCAL_PERIODS  # noqa: E402
 from tests.finance.test_fin_inputs_resolver import (  # noqa: E402,F401
-    _clean_env, frame_of, token,
+    AS_OF, _clean_env, frame_of, token,
 )
 from tests.finance.test_variance_decomposition_over_the_ev_fixture import Gate  # noqa: E402
 
@@ -162,6 +162,8 @@ def test_the_envelope_names_the_series_the_reference_the_status_and_the_source(p
     assert env["status_period"] == STATUS
     assert env["data_source"] == {"kind": "asset", "urn": ROW_URN}
     assert env["data_provenance"].startswith("SYNTHETIC") and ROW_URN in env["data_provenance"]
+    assert len(gate.asked) == 1 and env["data_provenance"].endswith(
+        f"(as of {AS_OF}, ticket: tkt-0001) Source: {ROW_URN}"), "a series cites its read's ticket"
     assert env["measure"] == CUM and env["output_uri"].endswith("DeclaredMeasureSeries")
     assert env["artifact_id"].startswith(f"fin:{CUM}:")
     assert env["method"]["version"] == "1.0.0" and env["method"]["module_sha256"] == row.module_sha256

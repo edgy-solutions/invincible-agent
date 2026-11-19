@@ -2,6 +2,17 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.10.0 — 2026-11-17
+
+Behaviour and declaration, additive (architect, 2026-11-17). The shape hash moves.
+
+- **A promotion can start its kind's review workflow.** A content kind may declare, in the policy overlay that declares it, the review workflow its promotion starts. That workflow declares its start mode in its own yaml. When such a kind is promoted, the act starts that review once. The start is keyed on the promoted record and the workflow, so a second start returns the existing review and starts nothing. No kind declares one yet, so every act behaves as in 1.9.1 until those policy rows land.
+- **New optional `review` on a promotion's act response** (`PromotionReviewStart`). It is present only when the decision is `promoted` and the kind declares a review workflow. `status` is one of:
+  - `started` or `retried`, with `workflow`, `request_key` and `outcome` (the start's own status);
+  - `not_restarted`, with `reason`: a replayed act by someone other than the promoter re-sends nothing;
+  - `failed`, with `reason`: the promotion stands, and the start is reported, not raised.
+- Every body that validated against 1.9.1 still validates.
+
 ## 1.9.1 — 2026-11-10
 
 Declaration, additive (architect, 2026-11-09). The shape hash moves.
