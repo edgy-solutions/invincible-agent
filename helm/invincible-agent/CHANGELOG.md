@@ -1,6 +1,6 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.90 — not yet cut
+## 0.4.91 — not yet cut
 
 - **The topaz-seed CronJob reads the approved-grant ledger, so the one pruner keeps approved grants**
   (saf; the architect, 11-16: "one pruner, the seed"; ships with the access-ledger PR #408 in this
@@ -87,12 +87,77 @@
   `grant_sync.py` from its file without registering the module, which fails at the module's dataclass;
   the loader now registers it first.
 
+## 0.4.90 — 2026-11-18
+
+**0.4.90 is 0.4.89 (`029166db`) plus the ruled 11-17 train, `029166db..e6d0224a`, and the cortex re-pin to `be1d177` in this cut. The train is #415, #416, #417, #418, #419, #423, #424, #425 and #431, and nothing else; #421 and #429 are docs. The roll waits for Chris's approval of the values diff against the live release.**
+
+| order | PR | merge | what |
+| --- | --- | --- | --- |
+| 1 | #415 | `85a29b75` | perf: W3C Trace Context at the door, no model text in spans, provenance-telemetry 0.2.2 |
+| 2 | #421 | `02657a1e` | Lane 1: the 0.4.89 notes name the run-limit default change (docs only) |
+| 3 | #423 | `7d242b87` | Lane 1: pub-tools gets the variable names its code reads |
+| 4 | #424 | `f6653b00` | Lane 1: AGENTS.md, the sessions rule names pub-tools (docs only) |
+| 5 | #429 | `74e26cce` | Lane 1: the 0.4.88 and 0.4.89 notes name tracing client 5 at work (docs only) |
+| 6 | #416 | `9d8fb58d` | 74: `/fill_slots` reads a stringified slots reply, so an as-built where-used question is refused |
+| 7 | #417 | `39372e75` | 74: a probe that names any backend render row a served frontend menu lacks (no runtime change) |
+| 8 | #418 | `b7a7c512` | 74: a name known only in another domain abstains as `domain_scope_excluded`, named only to a caller entitled to that domain |
+| 9 | #419 | `e620f675` | 74: obsolescence deciders hold a SUSTAINMENT_ENGINEER cell in SUSTAINMENT (policy) |
+| 10 | #425 | `fe197c9b` | perf: the Langfuse client is capped below 5 in every lock |
+| 11 | #431 | `e6d0224a` | perf: reasoning effort on the subject, verb and slots calls, read from configuration and off by default |
+| — | this cut | — | cortex `52cc9a6` -> `be1d177`, frontend digest `d02e6481` (see `values.yaml`) |
+
+#418 rides at `1e3841b5`, not the `f1ab4744` first ruled. It carries the same code plus two commits: its seal imports engine O in the package form (`204a4599`), and engine O imports `notice_parts` and `where_used` package-first (`1e3841b5`). The second removed the two Q8 reds that `f1ab4744` added by test order. Chris's go of 11-18 took #418 once lane 74 reported it green with its entitlement guard. The merged tree is identical to the trial tree that failed only master's own 59 reds.
+
+**Before the roll:**
+- Show the values diff against the live release (the cortex digest, the pub-tools variable names from #423) and wait for Chris's approval. #431 adds a commented-out block only.
+- The chart version moves, so every pod template changes and every pod restarts. List STARTED Dagster runs first (a dead worker holds a slot).
+- #425: the docs engine image installs a Langfuse client below 5 again, which work's self-hosted server (3.165.0) accepts.
+- #418: engine O reads the caller's full entitlement from the directory (`TOPAZ_DIRECTORY_URL`, from the shared configmap) on the out-of-domain path only. A directory it cannot reach fails closed to a plain not-found. A deployment that turns on `networkPolicy` must give engine O egress to the directory port, or the out-of-domain answer never names a domain.
+
+**After the roll:**
+- #419 (ruled 11-17; this supersedes the PR body's "sync, then roll"): Chris hand-runs `topaz_sync` from the NEW cortex-bff pod, `--dry-run` first. The group `obsolescence-deciders` already exists and `task_grants` is unchanged, so no roll hook depends on the sync. Until it runs, the picker does not offer SUSTAINMENT_ENGINEER, and "Acting as" on a notice or where-used question reads SAFETY_ENGINEER, as on 0.4.89.
+- #417: run `scripts/probes/served_render_menus.py` inside the presentation engine's pod. Exit 0 is no gap, 1 a gap, 3 unreachable.
+- #415: perf checks that a `traceparent` sent at the door is the trace the BFF's spans join.
+- #431: every setting stays off. Switching one on is a separate values change, made with the routing baseline's before-and-after in hand.
+- Cortex: no question is sent until the entitlement list has loaded; the Tasks badge needs #386, which 0.4.89 carries.
+
 ### The 0.4.89 upgrade notes name the run-limit default change
 - 0.4.89's "Before the roll" note for #391 now says that the chart default for Dagster's run limit changed from 2 to 6. A user-values diff does not show this change. Docs only; the render is unchanged.
+
+### The 0.4.88 and 0.4.89 upgrade notes name tracing client 5 at work
+- Both notes now say that docs_agent carries the Langfuse client 5.2.0, which work's self-hosted Langfuse server (3.165.0) does not support. Client 5 needs a server on v4.59.0 or later. #425 caps the client below 5 in every lock for 0.4.90. Docs only; the render is unchanged.
 
 ### pub-tools gets the variable names its code reads
 - The pub-tools code location and broker set `PUBLOG_S3_BUCKET_URL: "s3://publog-lake"` instead of `PUBLOG_S3_BUCKET`, and the code location sets `DATAHUB_GMS_URL` instead of `DATAHUB_SERVER`. pub-tools reads only the new names, so the old ones were ignored, and pub-tools ran on code defaults equal to these values. Behaviour is unchanged; the two pub-tools pods restart because their env changed.
 - `tests/test_pub_tools_chart_env_is_read_by_its_code.py` renders the chart and fails on any variable set on pub-tools that its code does not read. It names each variable's reader by pub-tools or dag-tools commit.
+
+### The receipt carries its review domain (#407)
+- **The receipt carries its review domain, so a range export's scope sits in the query** (saf; the
+  architect, 11-15: "store the domain on the receipt so the scope sits in the query, with a bound on
+  pages read"). `ingest_status_projection` gains a nullable `domain TEXT` and the index
+  `idx_isp_domain_created (domain, created_at, id)`; the migration is `ADD COLUMN IF NOT EXISTS` /
+  `CREATE INDEX IF NOT EXISTS`, applied by the BFF at startup (log line
+  `ingest_status_projection migration applied`), so a re-run changes nothing. The column is written
+  when a document-promotion task is filed against `document_promotion:<DOMAIN>`, and back-written by
+  the first range that meets an old row. **Upgrade note for existing rows:** every row that exists
+  at the roll has a NULL `domain`. NULL means "no task has said", and the range query always returns
+  NULL rows, which are resolved the old way (decision record, else the open task's audience) and
+  written back. No backfill job is required, and no notice is dropped while rows are NULL; the first
+  range over old receipts is as slow as before, the second is not. **On the first wide range after the
+  roll, a 422 `export_range_scan_bound` is possible while old rows are being written back; a retry
+  makes progress** (each row read is written before the bound is checked). A receipt that resolves to
+  no domain (no decision record, no task) is marked `<none>`, a value that is not a domain: `set_domain`
+  refuses it and the query strips it from the caller's domains, so no cell can match it. Such a row
+  leaves every later scan, and a promotion task filed later overwrites the marker. The range derives
+  every receipt's domain with the one function the preflight uses and treats the stored column only as
+  a query filter, so a notice whose task was superseded or expired without a decision is dropped alone
+  and never fails the export. The filer retries a failed domain write three times, then repairs the
+  row to NULL (resolved again next time), and only then logs it: that write runs AFTER the task is filed and never fails the call. The strict step is the clear BEFORE filing: a stored domain that differs from the task's is cleared first, and if the clear cannot land nothing is filed and the call answers 503 `receipt_domain_unwritten`. The
+  page bound (40 pages) caps one range at about 20,000 receipts read. `POST /ingest/export/notices`
+  by `range` reads at most `_EXPORT_RANGE_MAX_PAGES` (40) pages of receipts, then answers 422
+  `export_range_scan_bound` stating the bound and no count. Chart values and endpoints are unchanged.
+  `ingest_status_projection`'s Electric shape serves the same rows (identity-scoped) and now carries
+  `domain` as one more field; its filter does not use it.
 
 ## 0.4.89 — 2026-11-16
 
@@ -141,6 +206,7 @@
 - #392: a deploy that never set `ENABLE_DISPOSITION_AUTHZ` now enforces the gate. Its `policy/capability_grants.yaml` must grant `mesh:startReview` to the review-starter service identity, or notices refuse `NOT_ENTITLED_TO_INITIATE`. After the grant is synced, bump `REVIEW_REQUEST_KEY_EPOCH` (runbook section B). Sandbox already runs the gate on, with the grant synced.
 - #391: **the chart default for Dagster's run limit changed from 2 to 6.** The global `max_concurrent_runs` is now 6, the sum of four per-location rows. A deploy that never set it gets 6 on this roll, and a user-values diff does not show it. Any code location the daemon loads needs its own row. List STARTED runs first (a dead worker holds a slot).
 - #395: the allow-list file reaches the BFF pod inside the BFF image (`/app/policy/electric_shapes.yaml`), not through a chart mount. A deployment with its own policy replaces it by pointing `ELECTRIC_SHAPES_FILE` at its own file. An absent or empty file serves no stream, and an unreadable one answers 503.
+- **At work: docs_agent carries tracing client 5, which work's tracing server does not support.** The docs engine image installs Langfuse client 5.2.0 (read from sandbox's 0.4.89 docs engine), as in 0.4.88. Client 5 needs a Langfuse server on v4.59.0 or later. Work's server is self-hosted 3.165.0. 0.4.90 caps the client below 5 in every lock (#425).
 
 **After the roll:**
 - #385: Chris hand-runs `topaz_sync` in the cortex-bff pod, `--dry-run` first. It deletes the retired seed twins `alice@company.com` and `bob@company.com`. `topazSeed` is off on sandbox and the roll hook does not run `topaz_sync`. Expect `retired_still_present=0`, then `SYNC OK`; a retired user still present exits 4.
@@ -303,6 +369,11 @@ nothing at runtime.
 to 0.4.89, one token change per roll.
 
 **After the roll:** dagster-user-code must be Ready (#327).
+
+**At work: docs_agent carries tracing client 5, which work's tracing server does not support.** #327 brings
+provenance-telemetry 0.2.1 into docs_agent, and docs_agent's lock resolves the Langfuse client 5.2.0 through it.
+Client 5 needs a Langfuse server on v4.59.0 or later. Work's server is self-hosted 3.165.0. 0.4.89 carries the same
+client. 0.4.90 caps the client below 5 in every lock (#425).
 
 **Grants for the export path.** The export grants go to the reviewing group. The Promote
 reviewers' group needs `ingest:exportBatch` and the work profile's `can_export`, or the button

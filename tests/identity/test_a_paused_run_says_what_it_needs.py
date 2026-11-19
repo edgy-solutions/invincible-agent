@@ -1,4 +1,4 @@
-"""WHAT A PAUSED RUN SAYS (cortex-ui docs/specs/run-reauth-card.md, names AGREED 2026-11-03).
+"""WHAT A PAUSED RUN SAYS (cortex-ui/docs/specs/run-reauth-card.md, names AGREED 2026-11-03).
 
 A run paused as ``awaiting_reauth`` carries ``paused_call`` and ``instruction`` beside
 ``run_id`` and ``reason``, in the ``run_awaiting_reauth`` event and in ``GET /me/paused-runs``.
