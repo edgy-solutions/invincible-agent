@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      # Local master ref: see suite-order-independence.yml for why.
+      # Local master ref: see suite-order-independence.yml for why. It also serves the stale-citation check.
       - name: a local master ref for the citation seal
         run: git show-ref --verify --quiet refs/heads/master || git branch master origin/master
       # Sibling SDK: see suite-order-independence.yml for why.
@@ -55,7 +55,7 @@ jobs:
           tail -n 40 suite-advisory.log
       - name: known vs new
         if: always()
-        run: uv run python scripts/suite_advisory.py suite-advisory.log tests/known_reds.txt --exit "${{ steps.suite.outputs.exit }}" >> "$GITHUB_STEP_SUMMARY"
+        run: uv run python scripts/suite_advisory.py suite-advisory.log tests/known_reds.txt --exit "${{ steps.suite.outputs.exit }}" --merged-ref master >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
