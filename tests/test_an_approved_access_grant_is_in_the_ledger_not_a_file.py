@@ -239,7 +239,7 @@ def test_7_the_cli_and_the_in_process_apply_are_one_function():
     sys.path.insert(0, str(ROOT / "policy" / "sync"))
     import grant_sync
     assert grant_sync.run({"grants": [{"subject": "a", "asset": "b"}]}, "http://x.invalid") == 2
-    assert "return run(raw, topaz_url)" in (ROOT / "policy" / "sync" / "grant_sync.py").read_text(
+    assert "return run(raw, topaz_url" in (ROOT / "policy" / "sync" / "grant_sync.py").read_text(
         encoding="utf-8")
 
 
@@ -407,8 +407,11 @@ def test_9_a_later_approval_does_not_revive_a_revoked_grant(world):
     _db, sent, _c, _p = world
     _approve()
     _revoke()
-    _approve(granted_by="someone-else")                       # same grant, approved again
-    assert ("alice", "asset-a") not in _keys(sent[-1]["grants"])
+    n_sent = len(sent)
+    with pytest.raises(ht.GrantRevoked):
+        _approve(granted_by="someone-else")                   # same grant, approved again: refused
+    assert len(sent) == n_sent                                 # nothing applied
+    assert ("alice", "asset-a") not in {(g["subject"], g["asset"]) for g in ht.desired_grants()}
     assert len([r for r in ht.ledger_entries() if r["entry"] == "grant"]) == 1   # no new row
 
 
@@ -762,3 +765,71 @@ def test_12_two_approvals_at_once_each_keep_their_own_output(world, monkeypatch)
 def test_12_the_apply_redirects_no_process_stream():
     src = (ROOT / "src" / "iagent" / "human_tasks.py").read_text(encoding="utf-8")
     assert "redirect_stdout" not in src and "redirect_stderr" not in src
+
+
+# 13. an approval of a revoked grant is refused, never "granted" -------------------------------
+
+def _revoked_route(world, monkeypatch, register_rail):
+    register_rail(["bob"])
+    _approve()                                                # the grant exists ...
+    _revoke()                                                 # ... and is revoked
+    return _act_world(monkeypatch, world, "asset-a")
+
+
+def _post_approve(client, gateway):
+    try:
+        with client as c:
+            return c.post("/human_tasks/access-1/act", json={"decision": "approved", "comment": "again"})
+    finally:
+        gateway.app.dependency_overrides.clear()
+
+
+def test_13_the_approval_route_refuses_a_revoked_grant_with_the_reason_and_writes_no_row(
+        world, monkeypatch, register_rail):
+    _db, sent, _c, _p = world
+    client, calls, gateway = _revoked_route(world, monkeypatch, register_rail)
+    r = _post_approve(client, gateway)
+    assert r.status_code == 409, r.text
+    d = r.json()["detail"]
+    assert d["error"] == "grant_revoked" and "revoked" in d["message"]
+    assert d["refusal"]["policy_id"] and d["refusal"]["missing_binding"]
+    assert "grant_written" not in r.json()                    # never answered as granted
+    assert calls["resolved"] == []                            # the task stays pending
+    assert [e["entry"] for e in ht.ledger_entries()].count("grant") == 1     # no new grant row
+    # (the startup re-apply may apply; the approval itself writes and resolves nothing)
+
+
+def test_13_control_a_never_revoked_grant_is_still_approved_and_written(
+        world, monkeypatch, register_rail):
+    register_rail(["bob"])
+    client, calls, gateway = _act_world(monkeypatch, world, "asset-a")
+    r = _post_approve(client, gateway)
+    assert r.status_code == 200 and r.json()["grant_written"] is True
+    assert [e["entry"] for e in ht.ledger_entries()] == ["grant"]
+
+
+def test_13_control_a_revocation_of_another_grant_does_not_block_this_one(
+        world, monkeypatch, register_rail):
+    register_rail(["bob"])
+    _approve(asset="asset-b")
+    _revoke(asset="asset-b")
+    client, calls, gateway = _act_world(monkeypatch, world, "asset-a")
+    r = _post_approve(client, gateway)
+    assert r.status_code == 200 and r.json()["grant_written"] is True
+
+
+def test_13_a_ledger_that_cannot_be_read_approves_nothing(world, monkeypatch, register_rail):
+    register_rail(["bob"])
+    client, calls, gateway = _act_world(monkeypatch, world, "asset-a")
+    monkeypatch.setattr(ht, "grant_is_revoked",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    r = _post_approve(client, gateway)
+    assert r.status_code == 503 and r.json()["detail"]["error"] == "ledger_unavailable"
+    assert calls["resolved"] == [] and ht.ledger_entries() == []
+
+
+def test_13_the_writer_itself_refuses_a_revoked_grant(world):
+    _approve()
+    _revoke()
+    with pytest.raises(ht.GrantRevoked):
+        _approve(granted_by="someone-else")

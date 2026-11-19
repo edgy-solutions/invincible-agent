@@ -7021,6 +7021,29 @@ async def act_on_human_task(
                     "message": "the asset named by this request is not in the directory; it "
                                "cannot be approved (reject it, or ask for the right asset)",
                 })
+            # A REVOKED GRANT IS NOT RE-GRANTED BY AN APPROVAL (architect, 2026-11-16): until the
+            # re-grant is its own approved act, the answer is a refusal with the reason, never
+            # `grant_written: true`. Before anything is resolved or recorded; the task stays pending.
+            _subject = (match.get("payload") or {}).get("subject")
+            try:
+                _revoked = await run_in_threadpool(
+                    lambda: human_tasks.grant_is_revoked(_subject, _asset))
+            except Exception as exc:  # noqa: BLE001 -- the ledger cannot say: approve nothing
+                logger.error("grant ledger unreadable at approval: task_id=%s %s",
+                             task_id, type(exc).__name__)
+                raise HTTPException(status_code=503, detail={
+                    "error": "ledger_unavailable", "task_id": task_id,
+                    "message": "the decision ledger could not be read; nothing was approved "
+                               "and the task stays pending"}) from exc
+            if _revoked:
+                from .authz.refusal import policy_refusal
+                raise policy_refusal(
+                    "grant_revoked", status_code=409,
+                    policy_id="asset_grants",
+                    missing_binding="a re-grant act (a revoked grant is not re-granted by an approval)",
+                    message="this grant was revoked; an approval does not revive it. Nothing was "
+                            "recorded and the task stays pending (reject it)",
+                    extra={"task_id": task_id, "asset": _asset, "subject": _subject})
 
     # FULFILLMENT (workflow_ack generalized, HAZ-1003): CONFIRM BEFORE RESOLVE, not the other
     # way around. The old order resolved the projection FIRST and treated the Restate resume as

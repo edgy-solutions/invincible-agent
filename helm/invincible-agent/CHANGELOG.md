@@ -2,6 +2,26 @@
 
 ## 0.4.91 — not yet cut
 
+- **The topaz-seed CronJob reads the approved-grant ledger, so the one pruner keeps approved grants**
+  (saf; the architect, 11-16: "one pruner, the seed"; ships with the access-ledger PR #408 in this
+  release, so no deployment gets one without the other). The seed's `grant_sync` input is now
+  committed policy UNION the `access_grant_ledger` rows that policy does not yet name; without it
+  every tick would revoke each grant approved at runtime. The seed reads `entry` and applies the
+  ledger's REVOCATION rows through the same `union_grants` as the BFF: a revoked grant (ledger or
+  committed) is absent from what the seed syncs and the seed prunes the reader; a ledger grant whose
+  asset has gone is skipped alone and reported. This PR must merge after #408 (its diff includes
+  #408 until then): a seed that read a revoke row as a grant would restore revoked access. The ledger read FAILS CLOSED: if the store
+  cannot be read grant_sync exits 5 having applied and pruned nothing; the other syncs still run that tick (they do not depend on the ledger) and the Job then exits 5 at the end, so it fails visibly.
+  A ledger table that does not exist yet is an empty ledger. **Chart change:** the Job gains
+  `PROJECTOR_POSTGRES_DSN` (host, port, db and user from the chart's pg helpers; the password by a
+  `secretKeyRef` to `BPMN_POSTGRES_PASSWORD`, never the whole secret) and the seed image, which is the
+  cortex-bff image, already carries `psycopg2-binary` (root `dependencies`). The seed is off by default
+  and in sandbox; at work (`policySource.type: git`) it is on, so this is the roll that matters there.
+  **Not rendered by this PR:** with `networkPolicy.enabled`, Postgres ingress admits only the
+  listed components; the seed would need a `directCallers` entry for `postgresql` (the gate is off
+  today).
+
+
 - **An approved access request no longer writes a file in the pod** (saf; the architect, 11-15).
   `POST /human_tasks/{id}/act` with `approved` on an `access_request` now records the grant in a new
   Postgres table `access_grant_ledger` (subject, asset, kind, entry, requested_by, granted_by,
@@ -28,8 +48,10 @@
   the grant, who revoked it, when and why; the grant's own row is untouched. Effective access is
   committed policy + ledger grants - ledger revocations, computed by one function
   (`grant_sync.union_grants`) that the BFF and the seed both call; a revocation removes a committed
-  grant too, and a revoked key stays revoked (a later approval of the same grant adds no row that
-  outranks it). The route refuses 403 unless the caller holds `can_invoke(mesh:revokeAccessGrant)`: a
+  grant too, and a revoked key stays revoked: approving an access request for a revoked grant answers 409
+  `grant_revoked` (a policy refusal naming `asset_grants`, with the reason) before anything is resolved
+  or recorded, so the task stays pending and the answer is never `grant_written: true`; a re-grant
+  becomes its own approved act in a follow-up. The route refuses 403 unless the caller holds `can_invoke(mesh:revokeAccessGrant)`: a
   new row in `capability_grants.yaml` granted to a new capability-only group, `access-revokers`
   (sandbox member: alice, as a fixture). **Upgrade note:** the membership is a `users.yaml` change, so
   it needs a hand-run `topaz_sync` before anyone can revoke; until then the route answers 403 to
