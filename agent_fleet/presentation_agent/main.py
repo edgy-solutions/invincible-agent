@@ -649,9 +649,10 @@ _ELICITATION_STATUS_BY_DISPOSITION: Dict[str, str] = {
 #: under REFUSAL_FIELD. ONE definition: producer (`_refusal_envelope`) and seal both read it.
 #: `refused`/`outcome`/`reason` are always present; the OPTIONAL keys travel only when the
 #: producer supplied them (absent means silent, same as the passthroughs).
+#: `message` is the producer's plain-language reason, drawn as the card's line; `reason` stays the code.
 REFUSAL_FIELD = "refusal"
 REFUSAL_ENVELOPE_REQUIRED: tuple = ("refused", "outcome", "reason")
-REFUSAL_ENVELOPE_OPTIONAL: tuple = ("connector", "fn", "hazard_id", "gap")
+REFUSAL_ENVELOPE_OPTIONAL: tuple = ("connector", "fn", "hazard_id", "gap", "message")
 
 
 def _refusal_envelope(resp: Dict[str, Any]) -> Dict[str, Any]:
