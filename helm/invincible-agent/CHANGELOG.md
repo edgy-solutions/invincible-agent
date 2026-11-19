@@ -1,6 +1,25 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.91 — not yet cut
+
+**What 0.4.91 owes so far:** the 11-18 drain, merged by sha after the 0.4.90 tag (`36393237`). The cut writes its table.
+
+| PR | merge |
+| --- | --- |
+| #430 | `638cdffc` |
+| #443 | `171e53ff` |
+| #400 | `03eb71db` |
+| #432 | `4b04940b` |
+| #441 | `147bda29` |
+| #375 | `136793de` |
+| #434 | `20a18158` |
+| #438 | `6b3e8efd` |
+
+#443 changed chart content after the 0.4.90 cut, with no pending entry, so master's chart seal refused it (build `171e53ff`, "Refuse to publish a chart whose version did not move"). This entry declares the owed bump.
+
 ## 0.4.90 — 2026-11-18
+
+**0.4.90 is sandbox only. Do not upgrade work to it** (the architect, 11-18). Work stays on the release it runs now until a later release is cleared for work.
 
 **0.4.90 is 0.4.89 (`029166db`) plus the ruled 11-17 train, `029166db..e6d0224a`, and the cortex re-pin to `be1d177` in this cut. The train is #415, #416, #417, #418, #419, #423, #424, #425 and #431, and nothing else; #421 and #429 are docs. The roll waits for Chris's approval of the values diff against the live release.**
 
@@ -22,6 +41,7 @@
 #418 rides at `1e3841b5`, not the `f1ab4744` first ruled. It carries the same code plus two commits: its seal imports engine O in the package form (`204a4599`), and engine O imports `notice_parts` and `where_used` package-first (`1e3841b5`). The second removed the two Q8 reds that `f1ab4744` added by test order. Chris's go of 11-18 took #418 once lane 74 reported it green with its entitlement guard. The merged tree is identical to the trial tree that failed only master's own 59 reds.
 
 **Before the roll:**
+- **At work: no roll.** 0.4.90 is sandbox only. The work notes below (#425's tracing client, #418's directory egress) describe what a later work release inherits from it; they are not a work upgrade plan for 0.4.90.
 - Show the values diff against the live release (the cortex digest, the pub-tools variable names from #423) and wait for Chris's approval. #431 adds a commented-out block only.
 - The chart version moves, so every pod template changes and every pod restarts. List STARTED Dagster runs first (a dead worker holds a slot).
 - #425: the docs engine image installs a Langfuse client below 5 again, which work's self-hosted server (3.165.0) accepts.
