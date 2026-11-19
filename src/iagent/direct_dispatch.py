@@ -191,6 +191,7 @@ def materialization(**metadata: Any) -> dict:
 
 def _verb_declared_outside_cell(
     subject: str, verb: str, entitled_domains: List[str], *, ontology_url: str, on_behalf_of: str,
+    headers: Optional[Dict[str, str]] = None,
 ) -> Tuple[str, ...]:
     """The verb's declared domains when the verifier knows the verb UNSCOPED and none of them is
     held by the caller's cell; `()` in every other case.
@@ -201,7 +202,7 @@ def _verb_declared_outside_cell(
     returns `()`, the caller keeps the old reason, and the failure is logged.
     """
     unscoped, err = find_compatible_verbs(
-        subject, [], ontology_url=ontology_url, on_behalf_of=on_behalf_of,
+        subject, [], ontology_url=ontology_url, on_behalf_of=on_behalf_of, headers=headers,
     )
     if err is not None:
         logger.warning(
@@ -277,6 +278,7 @@ def dispatch_pre_resolved(
     _stage(STAGE_VERIFYING, "started")
     verbs, err = find_compatible_verbs(
         subject, entitled_domains, ontology_url=ontology_url, on_behalf_of=on_behalf_of,
+        headers=headers,
     )
     if err is not None:
         # COULD NOT CHECK is not NOTHING IS COMPATIBLE. Falling back to the run means the
@@ -343,7 +345,7 @@ def dispatch_pre_resolved(
             if verb in _listed_iris or not entitled_domains
             else _verb_declared_outside_cell(
                 subject, verb, entitled_domains, ontology_url=ontology_url,
-                on_behalf_of=on_behalf_of,
+                on_behalf_of=on_behalf_of, headers=headers,
             )
         )
         if _not_in_cell:

@@ -77,3 +77,12 @@ def test_A_DEFECT_IN_THE_PROGRAM_CHECK_IS_A_500_NOT_AN_OUTAGE(monkeypatch):
     r = TestClient(eo.app, raise_server_exceptions=False).post("/where_used", json={
         "params": {"part": _PART}, "entitled_domains": [w.DOMAIN], "user_email": "alice@example.com"})
     assert r.status_code == 500
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name alice@example.com, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "alice@example.com", ["SUSTAINMENT"])

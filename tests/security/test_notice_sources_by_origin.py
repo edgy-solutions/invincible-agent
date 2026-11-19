@@ -122,6 +122,9 @@ def post(monkeypatch, tmp_path):
         body = {"entitled_domains": list(domains), "params": {"notice_id": notice}}
         if user is not None:
             body["user_email"] = user
+        # The caller is the VERIFIED token (lane 74), not the body: who `user` names, holding `domains`.
+        from tests._helpers.verified_caller import install
+        install(monkeypatch, eo, user or "", list(domains))
         r = TestClient(eo.app).post("/notice_parts", json=body)
         return r, g, prog
     return _post
@@ -211,8 +214,10 @@ def test_arm8_a_seeded_notice_is_unchanged(post):
     r, _, prog = post(seeded)
     assert r.json()["status"] == "ok" and len(r.json()["sources"]) == 2
     assert prog.calls == []
-    r, _, _ = post(seeded, user=None)
-    assert r.json()["status"] == "ok"
+    # A caller with no verified person holds NO grant (lane 74): the body's `entitled_domains` no
+    # longer admits it, so even a seeded notice is refused before the graph is read.
+    r, g, _ = post(seeded, user=None)
+    assert r.json()["status"] == "refused" and r.json()["sources"] == []
 
 
 # 9
@@ -231,7 +236,12 @@ def test_arm9_topaz_down_is_503_for_an_admitted_caller_and_unknown_for_a_refused
 def test_arm10_an_absent_caller_id_never_matches_the_dropper(post, dropped_by, user):
     r, _, _ = post(_row(promoted=False, owner=None, resolved_by=None, dropped_by=dropped_by),
                    user=user)
-    _same_as_unknown(post, r)
+    # No verified person holds no grant (lane 74): refused before the dropper is ever compared,
+    # and refused identically whether or not the notice exists.
+    again, _, _ = post(None, notice=UNKNOWN, user=user)
+    assert (r.status_code, r.json()) == (again.status_code,
+                                         json.loads(again.text.replace(UNKNOWN, NOTICE)))
+    assert r.json()["reason"] == "not_entitled" and r.json()["sources"] == []
 
 
 # 11

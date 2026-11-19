@@ -1100,6 +1100,41 @@ try:  # the caller's FULL entitlement, for naming another domain only to one ent
 except ImportError:
     from agent_fleet.utils.entitled_domains import entitled_domains as _held_domains_of
 
+# The caller's identity and grants come from the VERIFIED caller, never the body (order 11-19).
+# Package-first, as the siblings above, so a seal patching the package module reaches this code.
+try:
+    from agent_fleet.ontology_service import caller_binding as _caller_binding
+except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
+    import caller_binding as _caller_binding  # type: ignore[no-redef]
+from iagent_mesh.transport_auth import current_caller as _current_caller
+
+_bind_log = logging.getLogger("engine-o.caller_binding")
+
+
+async def _bound(request, *, route: str, email_field: str | None = "user_email",
+                 grant_field: str | None = "entitled_domains", asked=None):
+    """`(request, Binding)` with the body's identity and grant REPLACED by the verified caller's.
+
+    ``asked`` (default: the body's own grant field) can only NARROW the caller's held domains. An
+    unverified, forged, unsigned or absent token binds anonymous: subject "" and grant
+    ``(NO_GRANT,)``, never an empty list (several sites below read empty as unscoped). A route with
+    no grant field passes ``grant_field=None``, one with no identity field ``email_field=None``. The log line carries the route, kind, grant count
+    and body_identity label: no email, no domain."""
+    if asked is None and grant_field:
+        asked = getattr(request, grant_field, None)
+    binding = await asyncio.to_thread(
+        _caller_binding.bind, _current_caller(),
+        body_subject=str(getattr(request, email_field, "") or "") if email_field else "",
+        asked=asked, held_of=lambda s: _held_domains_of(s))
+    _bind_log.info("caller bound route=%s kind=%s grants=%d body_identity=%s",
+                   route, binding.kind, len(binding.grants), binding.body_identity)
+    update = {email_field: binding.subject} if email_field else {}
+    if grant_field:
+        grants = list(binding.grants)
+        update[grant_field] = tuple(grants) if isinstance(getattr(request, grant_field, None), tuple) else grants
+    return request.model_copy(update=update), binding
+
+
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
@@ -1221,8 +1256,8 @@ class ResolveRequest(BaseModel):
     # ADR-0025 ontology-IRI namespace (2026-07-08): the caller's ENTITLEMENT KEY
     # (email) — the subject of the per-IRI can_view gate that filters the
     # OntologyClass candidate pool BEFORE BAML classifies it (select-from-
-    # authorized-set: the LLM can't pick a class it was never shown). Threaded
-    # from the supervisor's JWT, same as the smolagents engines thread user_email.
+    # authorized-set: the LLM can't pick a class it was never shown). THE BODY VALUE IS
+    # IGNORED: `_bound` replaces it with the verified caller's (iagent_mesh current_caller()).
     # Empty when absent → the gate (when ENABLE_AGENTIC_AUTH is on) treats the
     # caller as ungranted → deny-by-default on compartmented classes. Identity
     # MUST reach this seam before the gate can discriminate on the subject.
@@ -1376,8 +1411,8 @@ class SearchPredicatesRequest(BaseModel):
 
     ``entitled_domains`` filters at the Weaviate layer: callers see
     predicates whose ``r.domains`` shares an entry with their scope OR is
-    empty (domain-agnostic). An empty entitled_domains list means "no
-    scope filter applied" (admin / system caller).
+    empty (domain-agnostic). The body's list is only an ASK that can narrow the verified
+    caller's grant (`_bound`); the engine never sees an empty one, so no body means "no scope".
     """
     query: str = Field(..., description="NL phrasing — drives Weaviate hybrid search")
     entitled_domains: list[str] = Field(default_factory=list, description="Caller's entitled domain scopes")
@@ -3000,11 +3035,14 @@ def _local_name(uri: str) -> str:
 async def _input_declared_pool(request, domains) -> tuple[list[dict], dict]:
     """Classes the question's top verb declares as input, or ([], trace). NEVER raises.
 
+    `domains` is the BOUND grant (the verified caller's, see `_bound`) and `request.user_email` the
+    bound subject; the verb recall and the served lookup are scoped by it, by keyword.
+
     Degrades to today's behaviour on any failure: a failure here must not fail /resolve.
     """
     try:
         rows = await predicate_hybrid_search(
-            request.query, list(domains), limit=10, user_email=request.user_email)
+            request.query, entitled_domains=list(domains), limit=10, user_email=request.user_email)
     except Exception as exc:
         print(f"[Engine O] input-declared verb recall failed ({type(exc).__name__}) - "
               "keeping the recalled pool")
@@ -3417,6 +3455,7 @@ async def enumerate_instances(request: EnumerateInstancesRequest):
     nothing of that kind exists, and an unreachable provider has not made a claim. That is why
     the two are counted apart below.
     """
+    request, _ = await _bound(request, route="enumerate_instances")
     # THIS VERB ANSWERS FOR A PERSON. Two rulings: Chris, 2026-10-10 (b) -- "scripts and
     # restate_analyst send a real test persona or get refused -- a domains list is never an
     # entitlement"; architect, 2026-10-14 -- "a svc: literal counts as absent in every arm, same
@@ -3736,6 +3775,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     2. Inject these candidates into BAML TypeBuilder as a dynamic enum.
     3. Call BAML ClassifyDomainIntent to strictly select the best match.
     """
+    request, _ = await _bound(request, route="resolve", grant_field="domains")
     # Step 0: a DOCS caller's subject is a page. None means "not a DOCS question, or no page
     # won", and the class contest below runs exactly as before.
     _docs_bound = await _resolve_docs_subject(request)
@@ -3882,8 +3922,10 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 # candidate and record it as "retained". What it retained is now REMOVED and
                 # recorded as such (admission rule, 2026-10-20), so the artifact shows the
                 # gate acted rather than stood down.
+                # THE BOUND GRANT (`_bound` above made `request.domains` the verified caller's),
+                # never the legacy `request.domain`, which defaults to a domain nobody granted.
                 _injected, _input_declared_trace = await _input_declared_pool(
-                    request, request.domains or ([request.domain] if request.domain else []))
+                    request, list(request.domains))
                 if _injected:
                     print("[Engine O] input-declared grounding: every recalled class is a dead end; "
                           f"offering the declared input(s) of {_input_declared_trace.get('verb_iri')}: "
@@ -4415,13 +4457,15 @@ async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicate
     "cold" is a brand-new-cluster transient that self-heals.
 
     Scope semantics:
-      * Empty entitled_domains → no scope filter (unscoped / admin).
+      * The scope is the verified caller's grant (`_bound`); no grant is `NO_GRANT`, which
+        matches no domain. An empty list is unscoped here but is never what arrives.
       * Domain-agnostic predicates (``r.domains == []``) are always kept.
       * Domain-scoped predicates require at least one shared entry.
 
     Exact ``(subject_uri, verb_label)`` lookups belong on ``/find_tool``;
     this endpoint is exclusively NL-driven.
     """
+    request, _ = await _bound(request, route="search_predicates")
     # ADR-0015 Phase 1: capture timings + decision context for the
     # routing-decision audit log emit at the end of the handler.
     _total_t0 = time.perf_counter()
@@ -5105,6 +5149,7 @@ async def fill_slots(request: FillSlotsRequest):
     on its defaults). This endpoint must never be able to make routing worse than it was
     before it existed, so it degrades to the old behaviour rather than to an exception.
     """
+    request, _ = await _bound(request, route="fill_slots", grant_field="acting_domains")
     # THIS VERB ANSWERS FOR A PERSON. Two rulings: Chris, 2026-10-10 (b) -- "scripts and
     # restate_analyst send a real test persona or get refused -- a domains list is never an
     # entitlement"; architect, 2026-10-14 -- "a svc: literal counts as absent in every arm, same
@@ -5448,6 +5493,7 @@ async def route_intent(request: RouteIntentRequest) -> RouteIntentResponse:
     Behavior is deliberately stateless and side-effect-free — the gateway
     can call this on every request without worrying about ordering.
     """
+    request, _ = await _bound(request, route="route_intent", email_field=None)
     try:
         intent = await b.ExtractIntent(user_query=request.query)
     except Exception as exc:
@@ -5563,6 +5609,7 @@ async def classes(request: ResolveRequest) -> dict:
     ``authorized_subjects``); empty caller → ungranted → deny-by-default on compartmented
     classes when the gate is on. [[feedback_identity_reaches_enforcement_point]].
     """
+    request, _ = await _bound(request, route="classes", grant_field="domains")
     rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES, domain=request.domain)
     results = []
     dropped = 0
@@ -5723,6 +5770,7 @@ async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubject
     carry at least one registered verb edge — domain-scoped and can_view-filtered
     (Decision D). The interview offers THESE for the operation-subject question, so
     every offered subject leads to >=1 compatible verb (no 94%-dead-end menu)."""
+    request, _ = await _bound(request, route="operable_subjects", grant_field=None)
     if not _NEO4J_DRIVER:
         raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
 
@@ -5853,6 +5901,7 @@ async def resolve_instance(request: ResolveInstanceRequest) -> dict:
     sustainment_instance_provider.py). Contract matches _call_resolver's expectation: returns
     ``{candidates: [{instance_id, class_uri, label, score}]}``; an empty list is a first-class
     ABSTAIN. The async Jena fetch lives here; the matching is the pure, unit-tested core."""
+    request, _ = await _bound(request, route="resolve_instance")
     try:
         rows = await execute_sparql(_SUSTAINMENT_INSTANCES_QUERY, domain="SUSTAINMENT")
     except SubstrateUnavailable as exc:  # execute_sparql's only outage; a defect answers 500
@@ -5913,6 +5962,7 @@ async def notice_parts_route(request: NoticePartsRequest) -> dict:
 
     DOMAIN-SCOPED, deny by default: a caller whose entitled domains do not include SUSTAINMENT is
     refused before the graph is read, so an empty scope can never read as "no parts"."""
+    request, _ = await _bound(request, route="notice_parts")
     if _notice_parts.DOMAIN not in (request.entitled_domains or []):
         return {
             "status": "refused",
@@ -5954,6 +6004,7 @@ async def where_used_route(request: WhereUsedRequest) -> dict:
 
     DOMAIN-SCOPED, deny by default: a caller whose entitled domains do not include SUSTAINMENT is
     refused before the dataset is read."""
+    request, _ = await _bound(request, route="where_used")
     if _where_used.DOMAIN not in (request.entitled_domains or []):
         return {
             "status": "refused",
@@ -6678,6 +6729,7 @@ async def find_compatible_verbs(
     fallback. Non-empty list → caller passes the verb_iris into
     /classify_predicate as compatible_verb_iris.
     """
+    request, _ = await _bound(request, route="find_compatible_verbs", email_field="on_behalf_of")
     if not _NEO4J_DRIVER:
         raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
 
@@ -6932,6 +6984,7 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
     Confidence is the LLM's own assessment; the supervisor thresholds
     against it the same way ADR-0008 thresholded against the BM25 score.
     """
+    request, _ = await _bound(request, route="classify_predicate")
     entitled = [d.upper() for d in (request.entitled_domains or [])]
     compatible = set(request.compatible_verb_iris or [])
 

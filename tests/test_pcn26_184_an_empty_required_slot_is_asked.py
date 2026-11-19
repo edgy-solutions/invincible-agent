@@ -274,3 +274,12 @@ def test_LIVE_THE_MODEL_FILLS_THE_NOTICE_THREE_TIMES_OF_THREE():
             baml_options={"client_registry": cr}))
         got.append(json.loads(filled.slots_json or "{}").get("notice_id"))
     assert got == [NOTICE] * 3, got
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name alice@example.com, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "alice@example.com", ["SUSTAINMENT"])
