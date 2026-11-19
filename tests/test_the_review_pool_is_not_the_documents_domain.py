@@ -235,3 +235,15 @@ def test_a_declared_function_with_fewer_reads_than_declared_is_stale():
     declared = {(path, fn): {"reads": 2, "why": "x"}}
     undeclared, stale = _verdict({path: [(fn, 10)]}, declared)
     assert undeclared == {} and stale == [((path, fn), 2, 1)]
+
+
+def test_the_census_message_names_a_stale_entry_its_declared_and_found_counts():
+    """`_census_failure` is the census test's only path to report a stale entry; feed it one."""
+    key = ("src/iagent/gone.py", "was_a_handler")
+    undeclared, stale = _verdict({}, {key: {"reads": 3, "why": "x"}})
+    msg = _census_failure(undeclared, stale)
+    assert msg is not None
+    assert "src/iagent/gone.py" in msg and "was_a_handler" in msg
+    assert "3" in msg and "0" in msg, msg           # declared 3, found 0
+    assert stale == [(key, 3, 0)] and "(entry, declared, found)" in msg
+    assert _census_failure({}, []) is None            # control: clean is silent
