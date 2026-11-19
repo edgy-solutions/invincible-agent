@@ -1181,9 +1181,10 @@ def _grant_sync_module():
 
 
 def desired_grants(ledger: Optional[list] = None) -> list[dict[str, Any]]:
-    """Committed policy plus the ledger's grants minus the ledger's revocations: what the
+    """Committed policy plus the ledger's grants, resolved by the latest act on each key: what the
     directory's readers must be (`grant_sync.union_grants`, the function the seed also calls).
-    Committed policy wins a duplicate grant; a revocation removes the key whatever its source.
+    Committed policy wins a duplicate grant; a key whose latest act is a revocation is out whatever
+    its source, and a later re-grant puts it back.
     The sync PRUNES reader relations outside this set, so a ledger grant must always travel with
     the committed ones."""
     entries = ledger_entries() if ledger is None else ledger

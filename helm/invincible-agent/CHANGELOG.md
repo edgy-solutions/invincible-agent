@@ -127,6 +127,13 @@
   `grant_sync.py` from its file without registering the module, which fails at the module's dataclass;
   the loader now registers it first.
 
+- **A backfill proposes the row of a key's latest act** (saf; #414's follow-up now that #439 is in).
+  `backfill_ledger` chose, for each key, the last grant row in the order the caller listed them, so a
+  re-grant after a revocation could be proposed under the earlier approver's name. It now takes each
+  key's latest act through `grant_sync.latest_acts` (the ledger's `seq` order, the function the seed and
+  the BFF already use). The `grant_flow` and `human_tasks.desired_grants` docstrings say "resolved by
+  the latest act" instead of "minus the ledger's revocations". Engine code only; no chart change.
+
 - **A call that finds a promotion task already open is no longer refused by the stale-domain clear**
   (saf; gov's should-fix on #443). The 0.4.90 entry says the clear runs before filing and a clear
   that cannot land answers 503 `receipt_domain_unwritten`. That held for a call that FILES a task,
