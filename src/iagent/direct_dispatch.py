@@ -193,11 +193,14 @@ def _verb_declared_outside_cell(
     subject: str, verb: str, entitled_domains: List[str], *, ontology_url: str, on_behalf_of: str,
     headers: Optional[Dict[str, str]] = None,
 ) -> Tuple[str, ...]:
-    """The verb's declared domains when the verifier knows the verb UNSCOPED and none of them is
-    held by the caller's cell; `()` in every other case.
+    """The verb's declared domains when the verifier knows the verb across EVERY domain the caller
+    holds, and none of them is held by the caller's cell; `()` in every other case.
 
-    ONE extra verifier call, on the failure path only. It separates "this cell cannot see the verb"
-    (a policy fact the caller can repair by switching persona or being granted) from "the verb is
+    ONE extra verifier call, on the failure path only, asking with no domains. Engine O binds an
+    empty ask to the verified caller's whole held grant, never to "no scope", so this finds a verb
+    only in a domain the caller already holds outside the active cell. It cannot name a domain the
+    caller does not hold, so it is no oracle on ungranted domains. It separates "this cell cannot
+    see the verb" (a policy fact the caller can repair by switching persona) from "the verb is
     retired / re-primed" (not a policy fact). **A lookup that failed is NOT a deny**: could-not-check
     returns `()`, the caller keeps the old reason, and the failure is logged.
     """

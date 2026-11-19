@@ -480,6 +480,36 @@ def test_the_grant_cache_hits_expires_and_never_caches_a_failure():
     assert len(calls) == 4, "ttl 0 disables the cache"
 
 
+def test_a_failed_grant_lookup_is_no_grant_whatever_the_body_asked():
+    """Fail CLOSED: a directory outage binds no grant. It never falls back to the body's ask.
+
+    Gov's mutant P (#452, comment 7001875325) replaced the empty held set with the ask on a
+    lookup failure, and it survived."""
+    def boom(subject):
+        raise RuntimeError("directory down")
+
+    c = CallerIdentity(BOB, True, "verified")
+    for asked in (["A"], ["SUSTAINMENT", "PLANNING"], ["a"], None, []):
+        b = cb.bind(c, asked=asked, held_of=boom, cache=cb.GrantCache(ttl_s=30))
+        assert b.grants == (cb.NO_GRANT,), f"a failed lookup granted {b.grants} for asked={asked!r}"
+        assert (b.subject, b.kind) == (BOB, cb.PERSON)
+
+
+def test_the_grant_cache_never_serves_one_subject_anothers_grant():
+    """The cache is keyed by SUBJECT. Within one TTL, on one cache, Bob binds Bob's grant and
+    Alice binds Alice's, in either order.
+
+    Gov's mutant Q (#452, comment 7001875325) keyed the cache on a constant, and it survived."""
+    held = {ALICE: ["A"], BOB: ["B"]}.__getitem__
+    alice = CallerIdentity(ALICE, True, "verified")
+    bob = CallerIdentity(BOB, True, "verified")
+    for first, second, want in ((alice, bob, ("B",)), (bob, alice, ("A",))):
+        cache = cb.GrantCache(ttl_s=30, clock=lambda: 100.0)
+        cb.bind(first, held_of=held, cache=cache)
+        assert cb.bind(second, held_of=held, cache=cache).grants == want
+        assert cb.bind(first, held_of=held, cache=cache).grants == (("A",) if first is alice else ("B",))
+
+
 def test_the_ttl_comes_from_the_environment(monkeypatch):
     monkeypatch.setenv("ENGINE_O_GRANT_TTL_S", "7")
     assert cb.GrantCache().ttl_s == 7.0
