@@ -16670,7 +16670,6 @@ async def _file_or_find_document_promotion_task(
     # new task is filed under the next id while the row still carries g.
     task_id = _promotion_task_id(
         ingest_id, int(row.get("review_generation") or 0) if generation is None else generation)
-    await _clear_stale_receipt_domain(ingest_id, row.get("domain"), domain)
     _refresh = False
     if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
         # LEGACY PATH (spec 204): since a leaf change at review files a NEW generation, this in-place
@@ -16763,6 +16762,11 @@ async def _file_or_find_document_promotion_task(
             task_id, payload=payload, title=_title, summary=_summary))
         await _note_receipt_domain(ingest_id, domain)
         return task_id, "ALREADY_FILED"
+    # THE CLEAR SITS HERE, immediately before a task would be filed, and nowhere earlier: a call
+    # that finds the task already open files nothing, so a clear that cannot land must not turn it
+    # into a 503 "nothing was filed" (it is repaired by `_note_receipt_domain` on that path). The
+    # clear still precedes the filing, so a failed write after it leaves NULL, never the old domain.
+    await _clear_stale_receipt_domain(ingest_id, row.get("domain"), domain)
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
             kind=promotion.KIND, task_id=task_id, audience=audience,

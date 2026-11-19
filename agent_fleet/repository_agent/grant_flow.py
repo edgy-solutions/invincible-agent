@@ -93,7 +93,8 @@ def load_grant_sync(path: Path):
     params = inspect.signature(run).parameters if run is not None else {}
     if "prune" not in params:
         raise RuntimeError("grant_sync.run has no prune switch: engine-r will not apply grants without it")
-    for need in ("union_grants", "find_dangling", "ledger_grant_keys", "load_grants"):
+    for need in ("union_grants", "find_dangling", "ledger_grant_keys", "load_grants",
+                 "latest_acts"):
         if not callable(getattr(mod, need, None)):
             raise RuntimeError(f"grant_sync has no {need}: engine-r will not apply grants without it")
     if "ledger_keys" not in params:

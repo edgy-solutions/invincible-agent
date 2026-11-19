@@ -269,6 +269,8 @@ def _fake_grant_sync(tmp, with_prune):
             return frozenset()
         def load_grants(raw):
             return [], []
+        def latest_acts(ledger):
+            return {{}}
     """), encoding="utf-8")
     return p
 
@@ -400,6 +402,17 @@ def test_8_a_grant_sync_without_union_is_refused_not_called(w):
     p.write_text(p.read_text(encoding="utf-8").replace("def union_grants", "def not_union"), encoding="utf-8")
     with pytest.raises(RuntimeError, match="union_grants"):
         gf.make_sync_run("topaz.invalid:1", p, ledger=lambda: ())
+
+
+def test_10_a_grant_sync_without_latest_acts_is_refused_not_called(w):
+    p = _fake_grant_sync(w.tmp, True)
+    p.write_text(p.read_text(encoding="utf-8").replace("def latest_acts", "def not_latest"), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="latest_acts"):
+        gf.make_sync_run("topaz.invalid:1", p, ledger=lambda: ())
+
+
+def test_10_control_a_grant_sync_with_latest_acts_loads(w):
+    gf.make_sync_run("topaz.invalid:1", _fake_grant_sync(w.tmp, True), ledger=lambda: ())
 
 
 def test_8_the_requester_on_the_ledger_row_is_excluded_not_only_the_subject(w):
