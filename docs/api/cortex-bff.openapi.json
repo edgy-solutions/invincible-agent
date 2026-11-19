@@ -10693,6 +10693,49 @@
         "summary": "Get Review Batch"
       }
     },
+    "/reviews/{workflow_id}/provenance": {
+      "get": {
+        "description": "The review card's evidence, resolved from the review's OWN source reference (the\n`artifact_uri` the workflow kept), never from a fixed prefix. Same gate as the batch route: the\ncaller must hold this grouped task in their own pending queue.",
+        "operationId": "review_provenance_reviews__workflow_id__provenance_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Review Provenance"
+      }
+    },
     "/seed/portfolio_canvas": {
       "post": {
         "description": "Ask the five, in slot order, and return their artifact ids.\n\nReturns `artifact_ids` ALIGNED TO SLOT INDEX. A question that fails yields\na null in its position rather than shifting the others up — a shifted list\nwould silently put the cost curve in the anchor slot and still look like a\nworking canvas.\n\nTHE CANVAS ITSELF IS NOT WRITTEN HERE. cortex's `seedPortfolioCanvas`\ncomposes it from these ids using its own template, which is what keeps a\nseeded canvas and a hand-built one the same object. Writing it server-side\nwould duplicate stageConstants' coordinates into Python, and the first\ndivergence would be invisible.",

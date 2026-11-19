@@ -2804,6 +2804,14 @@ services:
         consumers: [cortex-ui]
         class: gated
         justification: "gateway.py:639. Additionally filters on the CALLER'S OWN pending queue, so it is existence-oracle safe: a caller cannot learn that a review exists for someone else."
+      - method: GET
+        path: /reviews/{workflow_id}/provenance
+        identity: "current_user (verified JWT)"
+        gate: auth-only
+        exposes: gated-content
+        consumers: [cortex-ui]
+        class: gated
+        justification: "gateway.py:2906. The batch route's gate (_gated_grouped_batch: the caller's OWN pending queue), so equally existence-oracle safe. It then reads the review's own kept source, confined to the configured review bucket(s); a foreign or malformed reference is refused as review_source_unreadable, never a scan."
 
   domain_broker:
     file: helm/invincible-agent/files/domain-broker.py
