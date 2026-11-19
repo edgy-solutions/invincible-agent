@@ -5389,6 +5389,36 @@ async def canvas_seed(
                            "(or user_persona) too",
             },
         )
+    # THE SERVER OWNS THE DOMAIN LIST (Lane 1, 2026-11-16). A client-sent `active_domains` is a
+    # REQUEST for a cell, never a grant of one. Before this gate the 409 path's ask
+    # (`_canvas_seed_ask`) forwarded the client's list to engine-o's `/enumerate_instances` as
+    # `entitled_domains`, and engine-o decides origin visibility from that list
+    # (`origin_entitlement.can_consume`), so a domain the caller does not hold widened what the
+    # ask enumerated. Same rule as `/orchestrate`: every named domain must be entitled under the
+    # named persona, and one miss refuses the whole request; nothing is silently dropped.
+    if request.active_persona and request.active_domains:
+        _missing = [d for d in request.active_domains
+                    if not current_user.entitlements.contains(request.active_persona, d)]
+        if _missing:
+            from .authz.refusal import policy_refusal as _policy_refusal
+            # The body mirrors `/orchestrate`'s `cell_not_entitled` so an access request can be
+            # built from it; the WARN aggregates denials for ops as `/orchestrate`'s does.
+            _extra = {
+                "requested": {"persona": request.active_persona,
+                              "domains": list(request.active_domains)},
+                "requested_missing": _missing,
+                "entitled_cells": [{"persona": c.persona, "domain": c.domain}
+                                   for c in current_user.entitlements.cells],
+            }
+            _refusal_exc = _policy_refusal(
+                "cell_not_entitled", policy_id="groups",
+                missing_binding=f"a_group_granting({request.active_persona}, {_missing[0]})",
+                message=f"you hold no cell under persona {request.active_persona} "
+                        f"for domains {_missing}",
+                extra=_extra,
+            )
+            logger.warning("canvas_seed_cell_not_entitled: %s", _refusal_exc.detail)
+            raise _refusal_exc
 
     _requested = (request.template_id or "").strip()
     if not _requested:
