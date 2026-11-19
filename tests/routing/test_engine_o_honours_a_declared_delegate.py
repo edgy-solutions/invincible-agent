@@ -126,7 +126,7 @@ def test_a_statement_naming_a_service_or_the_caller_itself_is_ignored(stated):
 #: end the audit line and forge another (gov on #458 at 9b24eed4).
 NOT_A_PERSON = {
     "svc-upper": "SVC:OTHER",
-    "svc-mixed": "Svc:engine-b",
+    "svc-mixed": "Svc:Other-Engine",
     "pipeline": "pipeline:nightly",
     "pipeline-case": "PIPELINE:nightly",
     "newline": f"{ALICE}\ndelegation route=x service={SVC} person={ALICE} outcome=delegated",
