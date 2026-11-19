@@ -123,7 +123,8 @@ def test_the_scanner_detects_a_planted_read():
 # A read of "domain" in a promotion handler is DECLARED here, by (path, function) -- never by line --
 # with the NUMBER of reads it excuses and the reason none reads the pool as the document's domain.
 # The list is checked both ways: a function with more reads than declared fails (the extra read is
-# named by line), and one with fewer -- including none -- fails too (so it cannot go stale). This changes the census's rules at gov's request: gov reviews the mechanism too.
+# named by line), and one with fewer -- including none -- fails too (so it cannot go stale).
+# This changes the census's rules at gov's request: gov reviews the mechanism too.
 DECLARED_DOMAIN_READS = {
     ("src/iagent/gateway.py", "_file_or_find_document_promotion_task"): {
         "reads": 1,
@@ -156,7 +157,9 @@ def _verdict(found, declared):
     undeclared, stale = {}, []
     for f, hits in found.items():
         used = {}
-        for fn, line in hits:
+        # ast.walk is breadth-first: a deeper read that comes LATER in the file can be listed before an
+        # earlier one, and the census would then excuse the added line and name the declared one.
+        for fn, line in sorted(hits, key=lambda h: h[1]):
             used[fn] = used.get(fn, 0) + 1
             if used[fn] > declared.get((f, fn), {}).get("reads", 0):
                 undeclared.setdefault(f, []).append((fn, line))
@@ -167,10 +170,19 @@ def _verdict(found, declared):
     return undeclared, sorted(stale)
 
 
+def _census_failure(undeclared, stale):
+    """The census's own failure message (None when clean)."""
+    out = []
+    if undeclared:
+        out.append(f"undeclared domain reads (path: [(function, line)]): {undeclared}")
+    if stale:
+        out.append(f"declared reads that no longer exist (entry, declared, found): {stale}")
+    return "; ".join(out) or None
+
+
 def test_no_promotion_handler_reads_a_domain_key():
-    undeclared, stale = _verdict(_scan_tree(), DECLARED_DOMAIN_READS)
-    assert undeclared == {}, undeclared
-    assert stale == [], f"declared reads that no longer exist (entry, declared, found): {stale}"
+    failure = _census_failure(*_verdict(_scan_tree(), DECLARED_DOMAIN_READS))
+    assert failure is None, failure
 
 
 def test_an_undeclared_read_still_fails():
@@ -200,8 +212,22 @@ def test_a_second_read_in_the_declared_function_fails_and_names_its_line():
     found = {path: [(fn, 10), (fn, 42)]}
     undeclared, stale = _verdict(found, DECLARED_DOMAIN_READS)
     assert undeclared == {path: [(fn, 42)]} and stale == []
-    with pytest.raises(AssertionError, match="42"):
-        assert undeclared == {}, undeclared
+    assert "42" in _census_failure(undeclared, stale)      # the census's OWN message names the added line
+
+
+def test_the_added_read_is_named_even_when_the_walk_lists_it_first():
+    """ast.walk is breadth-first, so a deeper, later read can come BEFORE the declared (earlier) one."""
+    (path, fn), = DECLARED_DOMAIN_READS
+    undeclared, stale = _verdict({path: [(fn, 42), (fn, 10)]}, DECLARED_DOMAIN_READS)
+    assert undeclared == {path: [(fn, 42)]} and stale == []
+    assert "42" in _census_failure(undeclared, stale) and "10" not in _census_failure(undeclared, stale)
+
+
+def test_the_same_function_name_in_another_file_is_not_excused():
+    (path, fn), = DECLARED_DOMAIN_READS
+    other = "src/iagent/not_the_gateway.py"
+    undeclared, stale = _verdict({path: [(fn, 10)], other: [(fn, 5)]}, DECLARED_DOMAIN_READS)
+    assert undeclared == {other: [(fn, 5)]} and stale == []
 
 
 def test_a_declared_function_with_fewer_reads_than_declared_is_stale():
