@@ -130,7 +130,7 @@ review shapes. Neither is an OpenAPI enum.
   | `stock` | the part's stock on hand for that program |
   | `configuration` | the configuration the row was answered from |
   | `as_of` | when the data the row was answered from was current (ruling 3) |
-  | `data_provenance` | where the row came from: dataset URN, as-of and ticket id, as on every served table. **Unmet** (ruled 2026-11-08): the broker's ticket carries an id and an as-of from dag-tools 0.13.0, but engine-fin pins v0.10.0 and discards the ticket, so a served string carries the URN and `ticket: pending` |
+  | `data_provenance` | where the row came from: dataset URN, as-of and ticket id, as on every served table. **Met** in 0.4.88: engine-fin pins dag-tools 0.14.0 and reads through `get_dataframe_with_ticket`, so a served string carries the URN and that read's as-of and ticket id. A ticket that stamps neither still says `ticket: pending` and claims no as-of (ruled 2026-11-08). Until 0.4.88, engine-fin read through `get_dataframe`, which discards the ticket, so every string said pending |
 
 - **Absent is not zero.** `population` and `stock` have no source today. A row with no source for them says so, and
   is never served as 0.

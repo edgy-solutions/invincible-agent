@@ -66,6 +66,8 @@ GW = "src/iagent/gateway.py"
 PR = "src/iagent/promotion.py"
 DEBT = "a policy refusal on the ratchet's PENDING list"
 STRUCTURAL = "no grant lifts it (the ratchet's NOT_POLICY); declared as StructuralRefusalDetail, never an envelope"
+CAUGHT = ("reached only inside a handler that catches every exception and reports it in the 200 body; "
+          "the walk cannot see the catch, so the 403 is listed, never sent")
 
 #: Measured 2026-11-07 on lane/gov-mcp-refusal-responses. Keys are the ratchet's.
 ENVELOPELESS_403: dict[str, str] = {
@@ -82,6 +84,9 @@ ENVELOPELESS_403: dict[str, str] = {
     f"{GW}::_engine_failure::<relay_refusal>": DEBT,  # passes an engine body through when it has no refusal
     f"{PR}::act::not_authorized_to_act": DEBT,
     f"{PR}::act::dropper_cannot_attest_origin": STRUCTURAL,  # separation of duties
+    # The act reaches the review start through gateway._start_declared_review, which reports a
+    # failed start as review.status "failed"; the promotion stands (2026-11-17).
+    f"{GW}::_start_review_core::<out>": CAUGHT,
 }
 
 

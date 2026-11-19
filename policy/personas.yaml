@@ -65,3 +65,11 @@ personas:
   # enum there to update. `domains.yaml` carried the identical stale instruction and did not
   # carry the correction until 2026-09-14; it does now.
   - SAFETY_ENGINEER
+
+  # Engine-o's own answering persona: it registers its sustainment verbs and its notice providers
+  # with owner_persona=SUSTAINMENT_ENGINEER (agent_fleet/ontology_service/main.py). Added
+  # 2026-11-16 so that a cell can carry it: at the 2026-11-16 rehearsal every sustainment caller
+  # was "Acting as" SAFETY_ENGINEER, because the only SUSTAINMENT cell was the hazard plane's,
+  # while the answer's VOICE read SUSTAINMENT_ENGINEER. Same note as SAFETY_ENGINEER above: a
+  # label on the answer, not a filter on it; the DOMAIN half of the cell is what gates.
+  - SUSTAINMENT_ENGINEER

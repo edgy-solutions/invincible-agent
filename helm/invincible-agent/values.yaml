@@ -185,7 +185,19 @@ global:
     # arm64 (plus two attestation manifests); the abbreviated tag and this digest with its last hex
     # altered both answer 404. 312064b..52cc9a6 changes src/ and build.yml only: no Dockerfile or
     # package.json change, no import.meta.env read added, and no feature-flag change.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:be1360d7448baab07e3ee4d7a4215176301b7d76559c1cb702ddb22bf43ac324"
+    # RE-PINNED FOR 0.4.90 (ruled 2026-11-17: cortex rides at be1d177, not 2fd8711):
+    # 52cc9a6 -> be1d1778d08525a68e2bebb07819078b2cfbf16d, digest d02e6481. 52cc9a6 is its ancestor,
+    # so every 52cc9a6 line above still holds. It adds:
+    # - a task opened from the list is drawn whole and centred; the notice title wraps (ed6bfce);
+    # - promoted-by reads the person, and the routing panel shows one persona (f090d93);
+    # - a /me/queue row without task_id or kind is a refusal, not a skip (d713dd0);
+    # - where-used draws a table (2fd8711);
+    # - no question goes out until the entitlement list has loaded (be1d177).
+    # Measured before pinning: the full-sha tag resolves to this digest; the same read for 2fd8711
+    # returns 109cc351, the digest recorded on 2026-11-16 (the control). 52cc9a6..be1d177 changes no
+    # Dockerfile or package.json and adds no import.meta.env read. It needs a BFF that carries #386
+    # (per-viewer tasks), which is in 0.4.89.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:d02e6481dc7d031d78c5968e9d9caf610c57f3dede9cf66f8e0edf3da6f8cce2"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -557,6 +569,16 @@ agentFleet:
     # OPENAI_API_KEY: "..."                       # for an OpenAI-compat
                                                   # backend (LiteLLM/vLLM)
     BAML_LOG_LEVEL: "info"
+    # Reasoning effort on the engine-o routing calls (OFF: none of these is set).
+    # Each is read per call from the environment: low | medium | high (anything
+    # else is a warning and OFF). SUBJECT = ClassifyDomainIntent, VERB =
+    # ClassifyPredicate, SLOTS = FillVerbSlots. Unset = off; requests are
+    # byte-identical to today's. Switching one on is a values change Chris
+    # approves, with the routing baseline's before-and-after per combination in
+    # hand.
+    # IAGENT_ROUTING_EFFORT_SUBJECT: "low"
+    # IAGENT_ROUTING_EFFORT_VERB: "low"
+    # IAGENT_ROUTING_EFFORT_SLOTS: "low"
 
     # --- Embedding gateway (agent_fleet/utils/embed.py) ---
     # All Weaviate vector writes + reads in iagent code go through this

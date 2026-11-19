@@ -2001,7 +2001,7 @@ requires-dist = [
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "langchain-weaviate" },
-    { name = "langfuse" },
+    { name = "langfuse", specifier = "<5" },
     { name = "litellm" },
     { name = "mcp" },
     { name = "mem0ai", extras = ["nlp"] },

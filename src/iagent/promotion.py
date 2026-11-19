@@ -832,7 +832,10 @@ def act(payload: Any, *, decision: str, acted_by: str, audience: str, comment: s
         reconciliation = {"removed": [{"mpn": m} for m in rm]} if rm is not None else None
 
     out = {"decision": decision, "ingest_id": subject.ingest_id,
-           "record_id": record["record_id"], "replayed": replayed}
+           "record_id": record["record_id"], "replayed": replayed,
+           # Who the effects are applied as (the stored actor on a replay). A caller that returns
+           # `out` to a client pops it: it is for the caller's own checks, not a response field.
+           "_effect_by": effect_by}
     out.update(_apply(decision, subject, stores, acted_by=effect_by, acted_at=effect_at,
                       record_id=record["record_id"], domain=domain,
                       row_edits=row_edits,

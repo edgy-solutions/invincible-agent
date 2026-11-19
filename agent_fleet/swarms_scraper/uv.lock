@@ -1544,7 +1544,7 @@ requires-dist = [
     { name = "baml-py", specifier = "==0.219.0" },
     { name = "fastapi" },
     { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20" },
-    { name = "langfuse" },
+    { name = "langfuse", specifier = "<5" },
     { name = "litellm" },
     { name = "pydantic" },
     { name = "python-dotenv" },
