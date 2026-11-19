@@ -25,7 +25,6 @@ tests/routing/test_resolve_instance_hears_the_caller.py::test_THE_SUPERVISOR_SEN
 tests/routing/test_a_pick_gets_a_row.py::test_the_merge_happens_where_the_artifact_can_still_see_it  # B: false red, the seal reads the FIRST slot_resolution emit, an early exit added one before the merge (lane 01)
 tests/planning/test_fill_slots_seam.py::test_the_supervisor_degrades_to_defaults_on_every_failure_path  # C: not attributed (lane 01)
 tests/test_endpoint_gating_manifest.py::test_every_source_route_is_declared[gateway-src/iagent/gateway.py]  # D: GET /me/queue and GET /me/needs_you are not declared in the manifest (lane saf)
-tests/test_endpoint_gating_manifest.py::test_every_source_route_is_declared[ontology_service-agent_fleet/ontology_service/main.py]  # D': POST /where_used is not declared; fixed by PR 427, delete there (lane 74)
 tests/test_networkpolicy_flows_survive.py::test_EVERY_ENGINE_O_FLOW_SURVIVES_THE_GATE  # E: accepted-issuer lists were read as destinations; fixed by PR 434, delete there (lane 74)
 tests/test_networkpolicy_flows_survive.py::test_THE_DERIVED_DESTINATION_SET_IS_THE_RECORDED_SET[iagent-cortex-bff]  # E: accepted-issuer lists were read as destinations; fixed by PR 434, delete there (lane 74)
 tests/test_networkpolicy_flows_survive.py::test_THE_DERIVED_DESTINATION_SET_IS_THE_RECORDED_SET[iagent-engine-o]  # E: accepted-issuer lists were read as destinations; fixed by PR 434, delete there (lane 74)

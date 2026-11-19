@@ -632,6 +632,9 @@ async def lifespan(application: FastAPI):
             _re = await run_in_threadpool(human_tasks.reapply_ledger_grants)
             logger.info("access grants re-applied from the ledger: %s",
                         _re.get("skipped") or f"ok={_re.get('ok')} grants={_re.get('grants')}")
+            # a revocation whose reader was not removed (the directory was down) is retried here
+            _rv = await run_in_threadpool(human_tasks.retry_pending_revocations)
+            logger.info("pending revocations retried: %s", _rv)
         except Exception as exc:  # noqa: BLE001
             logger.warning("access grant re-apply failed (grants stay in the ledger): %s",
                            type(exc).__name__)
@@ -1664,10 +1667,13 @@ async def revoke_access_grant(
     effective set whichever it was. Who may revoke is a capability row (`mesh:revokeAccessGrant`
     in capability_grants.yaml), asked of the directory like every other effect.
 
-    The directory loses the reader at the seed's next sync (the one pruner); this route never
-    prunes, so the answer says `effective: at the next seed sync` rather than pretending the
-    reader is already gone. Idempotent: a grant already revoked answers 200 with
-    `already_revoked`, and the first revoker stays on record."""
+    The act is recorded first and stands. The route then removes that ONE reader from the
+    directory (never a listing, never a prune: the seed stays the one pruner). Removed: 200
+    `effective: now`. Not removed (the directory could not be reached): 202 `effective: not yet`
+    with `removed: false`, the act still recorded; it is retried at the next start, by repeating
+    this request, and by the seed's next sync. It is never shown as done. Idempotent: a grant
+    already revoked answers `already_revoked` (and retries the removal), and the first revoker
+    stays on record."""
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
     try:
@@ -1702,9 +1708,20 @@ async def revoke_access_grant(
             "error": "ledger_unavailable",
             "message": "the decision ledger could not record the revocation; nothing changed",
         }) from exc
-    return {"subject": req.subject, "asset": req.asset, "kind": req.kind,
-            "revoked": True, "already_revoked": not added,
-            "effective": "at the next seed sync"}
+    removal = await run_in_threadpool(
+        lambda: human_tasks.remove_revoked_reader(req.subject, req.asset, req.kind))
+    body = {"subject": req.subject, "asset": req.asset, "kind": req.kind,
+            "revoked": True, "already_revoked": not added, "removed": bool(removal.get("removed"))}
+    if removal.get("removed"):
+        return {**body, "effective": "now"}
+    if removal.get("superseded"):
+        extra = {"restored": removal["restored"]} if "restored" in removal else {}
+        return {**body, **extra, "effective": "superseded: a later grant of this key stands"}
+    return JSONResponse(status_code=202, content={
+        **body, "effective": "not yet",
+        "message": "the revocation is recorded, but the directory could not remove the reader yet; "
+                   "it is retried at the next start and at the seed's next sync, and repeating "
+                   "this request retries it now"})
 
 
 class TriageTaskRequest(_BaseModel):
@@ -2000,6 +2017,50 @@ async def get_my_needs_you(on_behalf_of: Optional[str] = None,
         counts[k] = counts.get(k, 0) + 1
     return {"email": current_user.email, "counts": counts, "total": len(tasks),
             "delegated": delegation}
+
+
+class MenuBlock(_BaseModel):
+    subject: str
+    archetype: str
+    persona_fit: list[str]
+    domain_fit: list[str]
+    declared_by: str
+
+
+class MenuBlockInvalid(_BaseModel):
+    source: str
+    reason: str
+
+
+class MenuBlocksResponse(_BaseModel):
+    composed: bool
+    blocks: list[MenuBlock]
+    invalid: list[MenuBlockInvalid]
+
+
+@app.get("/menu_blocks", response_model=MenuBlocksResponse)
+async def get_menu_blocks(current_user: User = Depends(get_current_user)):
+    """The menu placements the overlay rows declare (`<overlay>/menu_blocks/*.yaml`), sorted by
+    (subject, archetype). The 2026-11-07 ruling: the row declares its placement, the BFF serves
+    it, cortex reads it.
+
+    NOT GATED ON ENTITLEMENT, matching `/task_kinds`: this is the shape of the menu, not data,
+    and `persona_fit` / `domain_fit` only RANK, they never gate.
+
+    NOTHING DECLARED, three ways. `composed: false` means the registry was NOT READ (no overlay
+    dir configured, or one is unreadable); it never means "no blocks". `composed: true` with
+    `blocks: []` means this deployment declares none. A client replaces a hand-written row only
+    with a served block for the SAME subject. A row that does not validate, or that shares its
+    (subject, archetype) with another, is left out of `blocks`, named in `invalid`, and logged at
+    ERROR.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from . import menu_blocks
+
+    result = await run_in_threadpool(menu_blocks.compose)
+    for bad in result.invalid:
+        logger.error("menu block %s is invalid: %s", bad["source"], bad["reason"])
+    return {"composed": result.composed, "blocks": result.blocks, "invalid": result.invalid}
 
 
 @app.get("/task_kinds")
@@ -7051,29 +7112,6 @@ async def act_on_human_task(
                     "message": "the asset named by this request is not in the directory; it "
                                "cannot be approved (reject it, or ask for the right asset)",
                 })
-            # A REVOKED GRANT IS NOT RE-GRANTED BY AN APPROVAL (architect, 2026-11-16): until the
-            # re-grant is its own approved act, the answer is a refusal with the reason, never
-            # `grant_written: true`. Before anything is resolved or recorded; the task stays pending.
-            _subject = (match.get("payload") or {}).get("subject")
-            try:
-                _revoked = await run_in_threadpool(
-                    lambda: human_tasks.grant_is_revoked(_subject, _asset))
-            except Exception as exc:  # noqa: BLE001 -- the ledger cannot say: approve nothing
-                logger.error("grant ledger unreadable at approval: task_id=%s %s",
-                             task_id, type(exc).__name__)
-                raise HTTPException(status_code=503, detail={
-                    "error": "ledger_unavailable", "task_id": task_id,
-                    "message": "the decision ledger could not be read; nothing was approved "
-                               "and the task stays pending"}) from exc
-            if _revoked:
-                from .authz.refusal import policy_refusal
-                raise policy_refusal(
-                    "grant_revoked", status_code=409,
-                    policy_id="asset_grants",
-                    missing_binding="a re-grant act (a revoked grant is not re-granted by an approval)",
-                    message="this grant was revoked; an approval does not revive it. Nothing was "
-                            "recorded and the task stays pending (reject it)",
-                    extra={"task_id": task_id, "asset": _asset, "subject": _subject})
 
     # FULFILLMENT (workflow_ack generalized, HAZ-1003): CONFIRM BEFORE RESOLVE, not the other
     # way around. The old order resolved the projection FIRST and treated the Restate resume as
