@@ -269,6 +269,8 @@ def _fake_grant_sync(tmp, with_prune):
             return frozenset()
         def load_grants(raw):
             return [], []
+        def latest_acts(ledger):
+            return {{}}
     """), encoding="utf-8")
     return p
 
@@ -402,6 +404,17 @@ def test_8_a_grant_sync_without_union_is_refused_not_called(w):
         gf.make_sync_run("topaz.invalid:1", p, ledger=lambda: ())
 
 
+def test_10_a_grant_sync_without_latest_acts_is_refused_not_called(w):
+    p = _fake_grant_sync(w.tmp, True)
+    p.write_text(p.read_text(encoding="utf-8").replace("def latest_acts", "def not_latest"), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="latest_acts"):
+        gf.make_sync_run("topaz.invalid:1", p, ledger=lambda: ())
+
+
+def test_10_control_a_grant_sync_with_latest_acts_loads(w):
+    gf.make_sync_run("topaz.invalid:1", _fake_grant_sync(w.tmp, True), ledger=lambda: ())
+
+
 def test_8_the_requester_on_the_ledger_row_is_excluded_not_only_the_subject(w):
     row_ = {**LEDGER[0], "requested_by": "rita"}
     (m,) = backfill(w, ledger=[row_])
@@ -461,3 +474,31 @@ def test_9_control_the_call_that_carries_a_ledger_builds_the_bound_sync(w):
     (call,) = sys.modules["_engine_r_grant_sync"].CALLS
     assert call[2] is False
 
+
+
+# 10. the row a backfill proposes is the key's LATEST act --------------------------------------------------
+
+def _acts_for_alice():
+    """Grant (seq 1, dana), revoke (seq 2, rita), re-grant (seq 3, erin): the ledger's own order."""
+    g1 = {**LEDGER[0], "seq": 1, "granted_by": "dana"}
+    rv = {**revoke_row(), "seq": 2}
+    g3 = {**LEDGER[0], "seq": 3, "granted_by": "erin"}
+    return g1, rv, g3
+
+
+def test_10_a_re_grant_after_a_revocation_is_proposed_from_the_re_grants_row(w):
+    g1, rv, g3 = _acts_for_alice()
+    out = backfill(w, ledger=[g3, rv, g1])                  # listed out of order: `seq` decides
+    assert len(out) == 1
+    assert "approved by erin" in out[0]["intent"] and "approved by dana" not in out[0]["intent"]
+
+
+def test_10_control_in_ledger_order_the_same_row_is_chosen(w):
+    g1, rv, g3 = _acts_for_alice()
+    (m,) = backfill(w, ledger=[g1, rv, g3])
+    assert "approved by erin" in m["intent"]
+
+
+def test_10_control_a_key_whose_latest_act_is_a_revocation_is_not_proposed(w):
+    g1, rv, _ = _acts_for_alice()
+    assert backfill(w, ledger=[rv, g1]) == []               # revoke is seq 2, after the grant at seq 1
