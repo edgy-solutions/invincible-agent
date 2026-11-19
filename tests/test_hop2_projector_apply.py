@@ -50,6 +50,8 @@ from src.iagent.answer_artifact_writer import (
     DurabilityStatus,
 )
 
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
+
 
 # ── Substrate connection knobs ──
 

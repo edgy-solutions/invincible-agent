@@ -2148,6 +2148,7 @@ async def _run_grouped_human_await(
     ctx.set("doc_type", doc_type)
     ctx.set("pipeline_version", request.get("pipeline_version") or "")
     ctx.set("extraction_warnings", list(request.get("extraction_warnings") or []))
+    ctx.set("artifact_uri", str(request.get("artifact_uri") or ""))
     # AUTHORITY GATE INPUT — the audience that may settle this review, journalled at the
     # site that derived it from the definition. `submit_decision` reads it back to ask
     # Topaz `can_act`; see `_audience_key` for why it cannot come from the submission.

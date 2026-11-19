@@ -608,6 +608,8 @@ async def start_review(ctx: Context, request: dict) -> dict:
             # ATTACH to the invocation that just refused it and return that result — swallowed,
             # dropped, nothing red. See `escalation_request_key`.
             "request_key": request.get("request_key", ""),
+            # Carried so the review keeps its own source; the evidence lookup resolves from it.
+            "artifact_uri": _pointer,
         },
     )
     return {

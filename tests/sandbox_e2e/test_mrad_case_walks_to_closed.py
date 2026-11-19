@@ -52,6 +52,9 @@ import uuid
 from pathlib import Path
 
 import httpx
+import pytest
+
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
 
 FAULT = "MRAD-ARR-0417"
 PLATFORM = "dis:1:1:1008"

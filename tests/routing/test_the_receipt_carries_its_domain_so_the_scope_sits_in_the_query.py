@@ -260,7 +260,7 @@ def test_5_every_return_of_the_promotion_task_filer_notes_the_domain():
     # cannot raise, and the strict step is the clear BEFORE filing
     assert "strict" not in body
     assert "strict" not in src[src.index("async def _note_receipt_domain"):src.index("async def _clear_stale_receipt_domain")].split('"""')[2]
-    assert body.index("_clear_stale_receipt_domain(") < body.index("_note_receipt_domain(")
+    assert body.index("_clear_stale_receipt_domain(") < body.rindex("_note_receipt_domain(")   # the filing's own note follows the clear
 
 
 def test_5_the_column_and_its_index_are_in_the_migration_and_the_ddl():
@@ -480,7 +480,7 @@ def test_8_when_neither_the_write_nor_the_repair_lands_the_post_filing_write_onl
     _run(gateway._note_receipt_domain("x", "B"))                    # no raise
 
 
-def test_8_control_a_reader_never_raises_on_the_same_failure(monkeypatch):
+def test_8_a_reader_never_raises_on_the_same_failure(monkeypatch):
     def down(*a):
         raise RuntimeError("db down")
 
@@ -579,10 +579,10 @@ def test_9_re_class_whose_later_write_fails_leaves_NULL_never_the_old_domain(mon
     assert _range_world.rows[0]["domain"] is None
 
 
-def test_9_the_filer_clears_before_it_registers_the_task():
+def test_9_the_filer_clears_after_finding_and_before_it_registers_the_task():
     src = inspect.getsource(gateway._file_or_find_document_promotion_task)
     assert "_clear_stale_receipt_domain(" in src
-    assert src.index("_clear_stale_receipt_domain(") < src.index("human_tasks.task_exists(")
+    assert src.index("_clear_stale_receipt_domain(") > src.index("human_tasks.task_exists(")   # a find files nothing: #443 follow-up
     assert src.index("_clear_stale_receipt_domain(") < src.index("human_tasks.register_task(")
 
 

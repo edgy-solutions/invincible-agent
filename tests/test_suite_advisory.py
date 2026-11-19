@@ -1,6 +1,7 @@
 """Seal scripts/suite_advisory.py by running it as a subprocess on small files."""
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -83,3 +84,73 @@ def test_exit_zero_with_new_reds(tmp_path):
     p = _run(tmp_path, ["ERROR tests/z.py"], "")
     assert p.returncode == 0
     assert "`tests/z.py`" in _section(p.stdout, "### New reds")
+
+
+def _module():
+    spec = importlib.util.spec_from_file_location("suite_advisory_under_test", _SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_cited_fix_reads_only_a_fixed_by_citation():
+    cited_fix = _module().cited_fix
+    assert cited_fix("fixed by PR 434, delete there") == 434
+    assert cited_fix("fixed by #434") == 434
+    assert cited_fix("Fixed By pr 12") == 12
+    assert cited_fix("see PR 434") is None
+    assert cited_fix("") is None
+
+
+def test_merged_prs_counts_merge_commits_and_squash_subjects_only():
+    subjects = ["Merge pull request #434 from org/branch", "Some change (#99)",
+                "Revert part of #77 work", "Merge branch 'master' into x"]
+    assert _module().merged_prs(subjects) == {434, 99}
+
+
+_STALE_KNOWN = ("tests/a.py::test_a  # g: broken; fixed by PR 434, delete there (o)\n"
+                "tests/b.py::test_b  # g: broken; fixed by PR 444 (o)\n")
+
+
+def _repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for args in (["init", "-q"], ["config", "user.name", "t"], ["config", "user.email", "t@example.invalid"],
+                 ["commit", "-q", "--allow-empty", "-m", "Merge pull request #434 from org/branch"]):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    return repo
+
+
+def _main(tmp_path, monkeypatch, capsys, extra):
+    repo = _repo(tmp_path)
+    log = tmp_path / "log.txt"
+    log.write_text("", encoding="utf-8")
+    kf = tmp_path / "known.txt"
+    kf.write_text(_STALE_KNOWN, encoding="utf-8")
+    monkeypatch.chdir(repo)
+    rc = _module().main([str(log), str(kf), "--exit", "0", *extra])
+    cap = capsys.readouterr()
+    return rc, cap.out, cap.err
+
+
+def test_a_known_line_citing_a_merged_pr_is_reported_stale(tmp_path, monkeypatch, capsys):
+    rc, out, err = _main(tmp_path, monkeypatch, capsys, ["--merged-ref", "HEAD"])
+    assert rc == 0
+    sect = _section(out, "### Known entries whose cited fix is merged")
+    assert "`tests/a.py::test_a` - PR 434" in sect
+    assert "test_b" not in sect
+    warns = [ln for ln in err.splitlines() if "title=stale known red" in ln]
+    assert len(warns) == 1 and "tests/a.py::test_a" in warns[0]
+
+
+def test_control_without_merged_ref_the_citation_check_is_off(tmp_path, monkeypatch, capsys):
+    rc, out, err = _main(tmp_path, monkeypatch, capsys, [])
+    assert rc == 0
+    assert "not checked (no --merged-ref)" in out
+    assert "stale known red" not in err
+
+
+def test_an_unreadable_merged_ref_exits_2(tmp_path, monkeypatch, capsys):
+    rc, out, err = _main(tmp_path, monkeypatch, capsys, ["--merged-ref", "no-such-ref"])
+    assert rc == 2
+    assert err.startswith("suite_advisory:")

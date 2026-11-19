@@ -95,7 +95,8 @@ def test_text_off_by_default_and_the_ref_has_no_default():
         "engine-fin": [("measure_verbs", "MEASURE_VERB_OVERLAY_DIRS"),
                        ("fin_export_profiles", "FIN_EXPORT_PROFILE_OVERLAY_DIRS")],
         "cortex-bff": [("canvases", "CANVAS_OVERLAY_DIRS"),
-                       ("exports", "INGEST_EXPORT_PROFILE_OVERLAY_DIRS")],
+                       ("exports", "INGEST_EXPORT_PROFILE_OVERLAY_DIRS"),
+                       ("menu_blocks", "MENU_BLOCK_OVERLAY_DIRS")],
     }
 
 

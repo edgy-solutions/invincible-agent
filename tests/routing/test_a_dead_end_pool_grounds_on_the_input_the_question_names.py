@@ -158,7 +158,7 @@ def rig(monkeypatch):
         r.served_calls.append(include_referents)
         return r.served_for(include_referents)
 
-    async def _verbs(query, domains, limit=10, user_email="", verb_iris=None):
+    async def _verbs(query, entitled_domains, limit=10, user_email="", verb_iris=None):
         r.verb_calls.append(query)
         if r.verb_exc is not None:
             raise r.verb_exc
@@ -320,3 +320,12 @@ async def test_injected_classes_carry_label_description_and_the_trace(rig):
     assert all(c["label"] and c["description"] for c in resp.candidates)
     assert {c["label"] for c in resp.candidates} == {"SafetyCriticalItem", "Component"}
     assert resp.provenance["input_declared"]["reason"] == "declared_input"
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name bob@example.com, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "bob@example.com", ["SUSTAINMENT"])

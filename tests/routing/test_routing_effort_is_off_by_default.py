@@ -247,3 +247,12 @@ def test_init_baml_client_renders_what_it_rendered_before(provider, drive, real_
         a = asyncio.run(_await(getattr(old.request, fn)(**kw))).body.json()
         b = asyncio.run(_await(getattr(new.request, fn)(**kw))).body.json()
         assert a == b, fn
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name bob@example.com, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "bob@example.com", {"bob@example.com": ["SUSTAINMENT"], "alice@example.com": ["SUSTAINMENT"]})

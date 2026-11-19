@@ -386,6 +386,33 @@ def _provenance(dataset: Dataset) -> Tuple[Dict[str, Any], Optional[str]]:
     return {"inputs": inputs, "absent": absent}, as_of
 
 
+def _absent_reason(columns: List[Dict[str, Any]], table: List[Dict[str, Any]],
+                   rows: List[Any]) -> Tuple[Dict[str, str], List[Dict[str, str]]]:
+    """The served "no source" reason for each all-null column, derived from the provenance.
+
+    A column joins the card-level map iff every table row is None for it and every row's
+    `data_provenance.absent` names it with one and the same phrase. If the phrases differ by row,
+    the reason rides on each row instead (second element, one map per table row). A column with a
+    value in any row never gets a reason.
+    """
+    card: Dict[str, str] = {}
+    per_row: List[Dict[str, str]] = [{} for _ in table]
+    if not table:
+        return card, per_row
+    for key in (c["key"] for c in columns):
+        if any(t.get(key) is not None for t in table):
+            continue
+        phrases = [r.data_provenance.get("absent", {}).get(key) for r in rows]
+        if any(p is None for p in phrases):
+            continue
+        if len(set(phrases)) == 1:
+            card[key] = phrases[0]
+        else:
+            for slot, phrase in zip(per_row, phrases):
+                slot[key] = phrase
+    return card, per_row
+
+
 def _cell(value: Any) -> str:
     return NO_SOURCE if value is None else str(value)
 
@@ -472,6 +499,10 @@ def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None,
         }
         for r in rows
     ]
+    absent_reason, per_row = _absent_reason(columns, table, rows)
+    for row, own in zip(table, per_row):
+        if own:
+            row["absent_reason"] = own
     return {
         "status": "ok",
         "verb": VERB,
@@ -487,5 +518,6 @@ def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None,
         "columns": columns,
         "row_identity": dict(IBP_ROW_IDENTITY),
         "group_by": group_by,
+        "absent_reason": absent_reason,
         "rows": table,
     }
