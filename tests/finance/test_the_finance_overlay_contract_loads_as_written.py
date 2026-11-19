@@ -8,7 +8,7 @@ Arms:
 2. the keys the doc lists in its key tables are the code's: export profiles = `_TOP_KEYS`;
    measure rows = `measure_verbs._TOP_KEYS`;
 3. the doc's formats table names exactly `export_profiles.FORMATS`;
-4. the doc's variables table names every `*_OVERLAY_DIRS` variable the three loader modules read
+4. the doc's variables table names every `*_OVERLAY_DIRS` variable the loader modules read
    (found by grep over their source, so a new variable in code reds the doc).
 
 The doc's tables are parsed here; no list of keys is typed in this file.
@@ -30,7 +30,7 @@ for _p in (REPO, REPO / "src"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-from agent_fleet.finance_agent import export_profiles, measure_verbs  # noqa: E402
+from agent_fleet.finance_agent import export_profiles, instance_overlays, measure_verbs  # noqa: E402
 from agent_fleet.finance_agent import main as _engine  # noqa: E402,F401  (imported under the default env)
 
 DOC = REPO / "docs" / "contracts" / "finance-overlays.md"
@@ -121,6 +121,24 @@ def test_every_export_profile_example_loads_through_the_real_loader(tmp_path, mo
         assert [p.name for p in profiles] == [yaml.safe_load(body)["name"]]
 
 
+def test_every_instance_example_loads_through_the_real_loader(tmp_path, monkeypatch):
+    blocks = _blocks("instance")
+    assert blocks, "the doc has no `# loads-as: instance` example, so this arm checks nothing"
+    for i, body in enumerate(blocks):
+        d = tmp_path / f"i{i}"
+        d.mkdir()
+        (d / "instances.yaml").write_text(body, encoding="utf-8")
+        monkeypatch.setenv("FIN_INSTANCE_OVERLAY_DIRS", str(d))
+        rows = instance_overlays.load_instances({"Program": "fin#Program"})   # reads the env var
+        assert [r.instance_id for r in rows] == [x["instance_id"] for x in yaml.safe_load(body)["instances"]]
+
+
+def test_the_instance_key_table_is_the_loaders_keys():
+    listed = _column(_section(7), "key")
+    assert listed == set(instance_overlays._KEYS), (
+        f"doc lists {sorted(listed)}; the loader accepts {sorted(instance_overlays._KEYS)}")
+
+
 # -- arm 2: the key lists are the code's -------------------------------------------------------
 
 def test_the_export_profile_key_table_is_the_loaders_top_keys():
@@ -147,9 +165,9 @@ def test_the_formats_table_names_exactly_the_loaders_formats():
 
 def test_the_variables_table_names_every_overlay_variable_the_loaders_read():
     found: set[str] = set()
-    for module in ("measure_verbs.py", "method_registry.py", "export_profiles.py"):
+    for module in ("measure_verbs.py", "method_registry.py", "export_profiles.py", "instance_overlays.py"):
         found |= set(re.findall(r"\b[A-Z][A-Z_]*_OVERLAY_DIRS\b", (FIN / module).read_text(encoding="utf-8")))
-    assert len(found) >= 3, f"the grep found only {sorted(found)}; it is not looking where it should"
+    assert len(found) >= 4, f"the grep found only {sorted(found)}; it is not looking where it should"
     listed = _column(_section(1), "kind", col=2)
     missing = sorted(found - listed)
     assert not missing, f"the doc's variables table omits {missing}"
