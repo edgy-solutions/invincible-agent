@@ -2148,7 +2148,11 @@ async def _run_grouped_human_await(
     ctx.set("doc_type", doc_type)
     ctx.set("pipeline_version", request.get("pipeline_version") or "")
     ctx.set("extraction_warnings", list(request.get("extraction_warnings") or []))
-    ctx.set("artifact_uri", str(request.get("artifact_uri") or ""))
+    # REPLAY-SAFE: a review suspended before this key existed has no journaled write for it, and
+    # Restate replays the pre-await commands in order. Its journaled input lacks the key, so the
+    # write is skipped for it; the reader treats the absent state as "" (grouped_review_workflow.py).
+    if "artifact_uri" in request:
+        ctx.set("artifact_uri", str(request.get("artifact_uri") or ""))
     # AUTHORITY GATE INPUT — the audience that may settle this review, journalled at the
     # site that derived it from the definition. `submit_decision` reads it back to ask
     # Topaz `can_act`; see `_audience_key` for why it cannot come from the submission.
