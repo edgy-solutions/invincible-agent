@@ -2571,16 +2571,48 @@ def _resolve_notice_prefix(notice_id: str) -> "Optional[str]":
     return _NOTICE_PREFIX_INDEX.get(notice_id)
 
 
-def _review_source_prefix(artifact_uri: str) -> "Optional[tuple[str, str]]":
+def _review_source_buckets() -> "frozenset[str]":
+    """The buckets a review's source reference may name, read from CONFIG at call time.
+
+    The provenance route reads whatever bucket a review's stored `artifact_uri` names, with the BFF's
+    own store credentials; unconfined, a reference to a foreign bucket makes the BFF a confused
+    deputy. So the reference is confined to this set. `REVIEW_SOURCE_BUCKETS` (comma-separated)
+    wins when set and non-empty; otherwise `ARTIFACT_BUCKET` (the bucket the extraction sensor builds
+    every `artifact_uri` from) is the one member. With neither set the set is EMPTY and every
+    reference is refused (fail closed)."""
+    raw = os.environ.get("REVIEW_SOURCE_BUCKETS") or ""
+    names = frozenset(x.strip() for x in raw.split(",") if x.strip())
+    if names:
+        return names
+    one = (os.environ.get("ARTIFACT_BUCKET") or "").strip()
+    return frozenset({one}) if one else frozenset()
+
+
+def _review_source_prefix(
+    artifact_uri: str, allowed: "Optional[frozenset[str]]" = None
+) -> "Optional[tuple[str, str]]":
     """(bucket, prefix) of a review's own source from its `s3://<bucket>/<key>` reference, where the
-    key ends `/review.json` and the prefix is the key minus that suffix. None for anything else
-    (blank, another scheme, no key, another file, an empty prefix)."""
+    key ends `/review.json` and the prefix is the key minus that suffix. Judged on the PARSED parts.
+    None for anything else: a scheme other than `s3`; a bucket that is not an exact member of
+    `allowed` (None or empty `allowed` refuses everything: there is no unconfined mode); params,
+    query or fragment; a key with an empty, `.` or `..` segment, a backslash or a control character;
+    another file; an empty prefix."""
     from urllib.parse import urlparse
 
+    if not allowed:
+        return None
     u = urlparse(artifact_uri or "")
-    key = u.path.lstrip("/")
+    if u.scheme != "s3" or not str(artifact_uri).startswith("s3://") or u.netloc not in allowed:
+        return None
+    if u.params or u.query or u.fragment:
+        return None
+    key = u.path[1:] if u.path.startswith("/") else u.path
+    if "\\" in key or ";" in key or any(ord(c) < 32 or ord(c) == 127 for c in key):
+        return None
+    if any(seg in ("", ".", "..") for seg in key.split("/")):
+        return None
     suffix = "/review.json"
-    if u.scheme != "s3" or not u.netloc or not key.endswith(suffix):
+    if not key.endswith(suffix):
         return None
     prefix = key[: -len(suffix)]
     return (u.netloc, prefix) if prefix else None
@@ -2748,7 +2780,7 @@ async def review_provenance(
     prefix = None
     if artifact_uri:
         resolved_by = "review_source"
-        src = _review_source_prefix(artifact_uri)
+        src = _review_source_prefix(artifact_uri, _review_source_buckets())
         if src is None:
             # The review HAS a reference; a scan could find a different artifact, so never fall back.
             resolved_by = "review_source_unreadable"

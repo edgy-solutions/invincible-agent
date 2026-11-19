@@ -21,6 +21,10 @@ Arms:
   A7  the gate: a caller without the task gets 404 and get_batch is not called
   A8  the bucket parameter reaches every read in the store reader
   A9  no uri, bucket or prefix in the log
+  A10 the allowlist reads config, not code
+  A11 the parsed-key table
+  A12 the route refuses a foreign bucket and never scans
+  A13 the log names no bucket
 
 NO workflow, kind, domain or person name is in the code under test; the strings here are fixtures.
 
@@ -103,7 +107,7 @@ async def test_legacy_state_without_the_reference_serves_blank():
     ("s3:///a/review.json", None),
 ])
 def test_review_source_prefix_table(uri, expected):
-    assert gateway._review_source_prefix(uri) == expected
+    assert gateway._review_source_prefix(uri, frozenset({OWN_BUCKET, "b", "bucket"})) == expected
 
 
 # ── the route harness ───────────────────────────────────────────────────────────────────────────
@@ -145,6 +149,7 @@ def route(monkeypatch):
         st["reads"].append((prefix, kw))
         return [{"mpn": "X"}]
 
+    monkeypatch.setenv("REVIEW_SOURCE_BUCKETS", OWN_BUCKET)
     monkeypatch.setattr(gateway, "_pending_for_actor", _pending)
     monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
     monkeypatch.setattr(gateway, "_build_notice_prefix_index", _scan)
@@ -270,4 +275,87 @@ def test_no_uri_bucket_or_prefix_in_the_log(route, caplog, monkeypatch):
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert WF in text and "review_source" in text, "the route must log the workflow id and how it resolved"
     for secret in (OWN_URI, OWN_BUCKET, OWN_PREFIX):
+        assert secret not in text
+
+
+# ── A10 ─────────────────────────────────────────────────────────────────────────────────────────
+def test_the_allowlist_reads_config_not_code(monkeypatch):
+    import ast
+    import inspect
+    import textwrap
+
+    monkeypatch.delenv("REVIEW_SOURCE_BUCKETS", raising=False)
+    monkeypatch.delenv("ARTIFACT_BUCKET", raising=False)
+    assert gateway._review_source_buckets() == frozenset()
+    monkeypatch.setenv("ARTIFACT_BUCKET", "b3")
+    assert gateway._review_source_buckets() == frozenset({"b3"})
+    monkeypatch.setenv("REVIEW_SOURCE_BUCKETS", "b1, b2,")
+    assert gateway._review_source_buckets() == frozenset({"b1", "b2"})
+    monkeypatch.setenv("REVIEW_SOURCE_BUCKETS", " , ")
+    assert gateway._review_source_buckets() == frozenset({"b3"})
+
+    fn = ast.parse(textwrap.dedent(inspect.getsource(gateway._review_source_buckets))).body[0]
+    body = fn.body[1:] if isinstance(fn.body[0], ast.Expr) else fn.body   # drop the docstring
+    literals = {n.value for stmt in body for n in ast.walk(stmt)
+                if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+    assert literals - {"REVIEW_SOURCE_BUCKETS", "ARTIFACT_BUCKET", ",", ""} == set()
+
+
+# ── A11 ─────────────────────────────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize("uri", [
+    "s3://b2/p/review.json",
+    "s3://b1x/p/review.json",
+    "s3://b1.evil/p/review.json",
+    "s3://u@b1/p/review.json",
+    "s3://b1:9000/p/review.json",
+    "S3://b1/p/review.json",
+    "s3a://b1/p/review.json",
+    "s3://b1/p/../q/review.json",
+    "s3://b1/../review.json",
+    "s3://b1/./p/review.json",
+    "s3://b1//p/review.json",
+    "s3://b1/p//review.json",
+    "s3://b1/p\\q/review.json",
+    "s3://b1/p/review.json?x=1",
+    "s3://b1/p/review.json#f",
+    "s3://b1/p;x/review.json",
+    "s3://b1/p/review.json;x",
+    "s3://b1/p\x01q/review.json",
+])
+def test_the_parsed_key_table_refuses(uri):
+    assert gateway._review_source_prefix(uri, frozenset({"b1"})) is None
+
+
+def test_the_parsed_key_table_accepts_and_fails_closed():
+    ok = "s3://b1/a/b/review.json"
+    assert gateway._review_source_prefix(ok, frozenset({"b1"})) == ("b1", "a/b")
+    assert gateway._review_source_prefix("s3://b1/p/review.json", frozenset()) is None
+    assert gateway._review_source_prefix("s3://b1/p/review.json", None) is None
+    assert gateway._review_source_prefix("s3://b1/p/review.json") is None
+
+
+# ── A12 ─────────────────────────────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize("env", ["other-bucket", None])
+def test_the_route_refuses_a_foreign_bucket_and_never_scans(route, monkeypatch, env):
+    monkeypatch.delenv("ARTIFACT_BUCKET", raising=False)
+    if env is None:
+        monkeypatch.delenv("REVIEW_SOURCE_BUCKETS", raising=False)
+    else:
+        monkeypatch.setenv("REVIEW_SOURCE_BUCKETS", env)
+    r = _get()
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["resolved_by"] == "review_source_unreadable"
+    assert body["items"] == [] and body["source"] == "none"
+    assert route["reads"] == [] and route["scan_calls"] == []
+
+
+# ── A13 ─────────────────────────────────────────────────────────────────────────────────────────
+def test_the_log_names_no_bucket_on_a_refusal(route, caplog, monkeypatch):
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setenv("REVIEW_SOURCE_BUCKETS", "other-bucket")
+    _get()
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert WF in text and "review_source_unreadable" in text
+    for secret in (OWN_URI, OWN_BUCKET, OWN_PREFIX, "other-bucket"):
         assert secret not in text
