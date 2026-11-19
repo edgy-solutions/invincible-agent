@@ -81,8 +81,10 @@
   The directory could not remove it: **202** `effective: not yet`, `removed: false`, the act still
   recorded and never shown as done; the removal is retried three times in the call, again at every BFF
   start (for each key whose latest act is a revocation), whenever the request is repeated, and by the
-  seed's next sync. A re-grant that lands between the record and the removal is not undone (the latest
-  act is re-read before each attempt; the window is not closed, only narrowed to that read). The
+  seed's next sync. A re-grant that lands between the record and the removal keeps its reader (the latest
+  act is re-read before each attempt and again AFTER the delete; if it is now a grant, the one reader
+  is put back and the answer is `superseded` with `restored: true`; if the put-back fails the answer
+  says `restored: false` and the startup re-apply and the seed's next sync restore it). The
   response codes of the route change (202 is new); `cortex-bff.openapi.json` is regenerated (the
   description only). No schema change, no values change.
 - **Roll overlap: an access request approved on the old BFF pod after the migration is not recorded**

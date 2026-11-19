@@ -1295,13 +1295,24 @@ def _delete_reader(subject: str, asset: str, kind: str) -> None:
         client.delete_relation(DirRelation(kind, asset, "reader", "user", subject))
 
 
+def _restore_reader(subject: str, asset: str, kind: str) -> None:
+    """Put ONE reader relation back (a re-grant that landed while the removal was in flight).
+    The seam a test replaces; like `_delete_reader` it lists nothing and prunes nothing."""
+    _grant_sync_module()
+    from topaz_sync import DirRelation, TopazClient
+    with TopazClient(_TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393") as client:
+        client.set_relation(DirRelation(kind, asset, "reader", "user", subject))
+
+
 def remove_revoked_reader(subject: str, asset: str, kind: str = "dataset", *,
                           attempts: int = 3) -> dict[str, Any]:
     """The revocation, made effective now: remove the one reader a revocation names.
 
     Called AFTER the revocation is recorded; the record stands whatever this does. The ledger is
     re-read before every attempt, and the reader is removed only while the grant's LATEST act is
-    still a revocation (a re-grant that landed in between is not undone). Retries `attempts`
+    still a revocation, and AFTER the delete once more: a re-grant that landed between the read and the
+    delete has its reader put back (`restored`; if that fails the answer says `restored: False`, and the
+    startup re-apply and the seed's next sync restore it). Retries `attempts`
     times; returns `{"removed": True}`, `{"removed": False, "superseded": True}` (a later grant
     stands), or `{"removed": False, "error": <exception type>}` when every attempt failed: the
     caller must say "not yet", never "done". The failed ones are retried by
@@ -1317,11 +1328,27 @@ def remove_revoked_reader(subject: str, asset: str, kind: str = "dataset", *,
             if latest is None or latest["entry"] != "revoke":
                 return {"removed": False, "superseded": True}
             _delete_reader(subject, asset, key[2])
-            return {"removed": True}
         except Exception as exc:  # noqa: BLE001 -- recorded already; report, never claim done
             last = type(exc).__name__
             logger.warning("revoked reader not removed (attempt %d/%d): subject=%s asset=%s %s",
                            n + 1, attempts, subject, asset, last)
+            continue
+        # A re-grant can land between the read above and the delete. Re-read AFTER the delete: if the
+        # key's latest act is now a grant, its reader was just removed, so put it back.
+        try:
+            after = _latest_acts(ledger_entries()).get(key)
+        except Exception as exc:  # noqa: BLE001 -- cannot tell whether a grant landed: never say done
+            return {"removed": False, "error": type(exc).__name__}
+        if after is None or after["entry"] != "grant":
+            return {"removed": True}
+        try:
+            _restore_reader(subject, asset, key[2])
+        except Exception as exc:  # noqa: BLE001 -- the reader is gone and a grant stands: say so
+            logger.warning("re-granted reader not restored: subject=%s asset=%s %s",
+                           subject, asset, type(exc).__name__)
+            return {"removed": False, "superseded": True, "restored": False,
+                    "error": type(exc).__name__}
+        return {"removed": False, "superseded": True, "restored": True}
     return {"removed": False, "error": last}
 
 

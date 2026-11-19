@@ -1715,7 +1715,8 @@ async def revoke_access_grant(
     if removal.get("removed"):
         return {**body, "effective": "now"}
     if removal.get("superseded"):
-        return {**body, "effective": "superseded: a later grant of this key stands"}
+        extra = {"restored": removal["restored"]} if "restored" in removal else {}
+        return {**body, **extra, "effective": "superseded: a later grant of this key stands"}
     return JSONResponse(status_code=202, content={
         **body, "effective": "not yet",
         "message": "the revocation is recorded, but the directory could not remove the reader yet; "

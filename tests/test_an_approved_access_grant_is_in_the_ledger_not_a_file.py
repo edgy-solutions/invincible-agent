@@ -979,3 +979,64 @@ def test_15_startup_with_no_directory_removes_nothing(world, monkeypatch):
 def test_15_the_lifespan_retries_pending_revocations_after_the_reapply():
     src = (ROOT / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
     assert src.index("human_tasks.reapply_ledger_grants") < src.index("human_tasks.retry_pending_revocations")
+
+
+# gov's changes-requested on #440: a re-grant between the ledger read and the delete
+
+def _race_world(monkeypatch, *, regrant_during_delete):
+    """The remover reads the ledger (latest act: revoke), then the delete runs; the re-grant lands
+    INSIDE the delete when asked to. Returns what the directory holds for the one relation."""
+    _approve()
+    ht.record_revocation(subject="alice", asset="asset-a", revoked_by="r", reason="x")
+    reader = {"present": True}
+
+    def delete_reader(subject, asset, kind):
+        if regrant_during_delete:
+            ht.record_grant(subject=subject, asset=asset, requested_by=subject,
+                            granted_by="bob", reason="back")
+        reader["present"] = False
+
+    monkeypatch.setattr(ht, "_delete_reader", delete_reader)
+    monkeypatch.setattr(ht, "_restore_reader", lambda *a: reader.update(present=True))
+    return reader
+
+
+def test_16_a_regrant_that_lands_between_the_read_and_the_delete_keeps_its_reader(world, monkeypatch):
+    reader = _race_world(monkeypatch, regrant_during_delete=True)
+    out = ht.remove_revoked_reader("alice", "asset-a")
+    assert out["removed"] is False and out["superseded"] is True    # never "removed" over a standing grant
+    assert reader["present"] is True                                # the reader is back
+
+
+def test_16_control_with_no_regrant_the_reader_stays_removed(world, monkeypatch):
+    reader = _race_world(monkeypatch, regrant_during_delete=False)
+    assert ht.remove_revoked_reader("alice", "asset-a") == {"removed": True}
+    assert reader["present"] is False
+
+
+def test_16_a_restore_that_fails_is_reported_not_hidden(world, monkeypatch):
+    _race_world(monkeypatch, regrant_during_delete=True)
+
+    def boom(*a):
+        raise RuntimeError("directory down")
+    monkeypatch.setattr(ht, "_restore_reader", boom)
+    out = ht.remove_revoked_reader("alice", "asset-a")
+    assert out["removed"] is False and out["restored"] is False and out["error"] == "RuntimeError"
+
+
+def test_16_the_restore_names_one_relation_and_lists_nothing(monkeypatch, world):
+    import sys
+    sys.path.insert(0, str(ROOT / "policy" / "sync"))
+    import topaz_sync
+    calls = []
+
+    class Client:
+        def __init__(self, url, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def set_relation(self, rel): calls.append(rel)
+        def __getattr__(self, name): raise AssertionError(f"the restore called {name}")
+
+    monkeypatch.setattr(topaz_sync, "TopazClient", Client)
+    ht._restore_reader("alice", "asset-a", "dataset")
+    assert [str(r) for r in calls] == ["dataset:asset-a#reader@user:alice"]
