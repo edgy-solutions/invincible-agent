@@ -523,7 +523,7 @@ def test_the_ROUTES_upper_case_the_scope_which_is_what_makes_that_DIFF_unreachab
 
         callers[fn.name] = (expr, ok)
 
-    assert set(callers) == {"search_predicates", "classify_predicate"}, (
+    assert set(callers) == {"search_predicates", "classify_predicate", "_input_declared_pool"}, (
         f"the set of callers of predicate_hybrid_search changed: {sorted(callers)}. A new caller is "
         "a new place the case-fold difference could become reachable; normalise its scope the way "
         "the two existing routes do, then name it here."
@@ -630,6 +630,8 @@ def test_the_REQUEST_MODELS_BOTH_carry_the_person_and_BOTH_hand_it_on(main):
     assert passed == {
         "search_predicates": "request.user_email",
         "classify_predicate": "request.user_email",
+        # resolve's input-declared grounding (the bound subject, #452)
+        "_input_declared_pool": "request.user_email",
     }, (
         f"a caller of the migrated predicate search stopped handing the identity on: {passed}. "
         "Every parameter on this chain defaults to the empty string, so a dropped keyword is not a "
