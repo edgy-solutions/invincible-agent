@@ -302,7 +302,7 @@ EXCLUDED = {
         "the caller acts for: the actor is `current_user` (`revoked_by`), asked `can_invoke "
         "mesh:revokeAccessGrant`, and the capability goes to the `access-revokers` group, which no "
         "service identity is in; the case runner is refused at that gate (checked below). "
-        "EXCLUSION NOT YET AGREED by the architect or gov: needs their agreement."),
+        "EXCLUSION agreed by gov 11-19 (#461, comment 7014541192); architect's agreement pending."),
 }
 # Ruled IN as a SEPARATE defect (architect via Chris, 2026-11-03): not a case-runner route, so it has no
 # case-runner driver; its legs are the "register" section further down this module.
