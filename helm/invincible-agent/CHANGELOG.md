@@ -94,6 +94,19 @@
   refusal) until the BFF is up; roll the BFF first. Not run against a live Postgres in this PR
   (tests use a fake of the table); the upgrade block should be rehearsed on a copy first. Two
   concurrent approvals of one key can both append (harmless: the latest act is the same).
+- **A revocation is effective at once** (saf; the architect, 11-16; DRAFT, on top of the re-grant
+  PR). `POST /access_grants/revoke` records the act, then the BFF removes that ONE reader relation from
+  the directory (a single delete of `dataset:<asset>#reader@user:<subject>`; it lists nothing and
+  prunes nothing, the seed stays the one pruner of everything else). Removed: 200 `effective: now`.
+  The directory could not remove it: **202** `effective: not yet`, `removed: false`, the act still
+  recorded and never shown as done; the removal is retried three times in the call, again at every BFF
+  start (for each key whose latest act is a revocation), whenever the request is repeated, and by the
+  seed's next sync. A re-grant that lands between the record and the removal keeps its reader (the latest
+  act is re-read before each attempt and again AFTER the delete; if it is now a grant, the one reader
+  is put back and the answer is `superseded` with `restored: true`; if the put-back fails the answer
+  says `restored: false` and the startup re-apply and the seed's next sync restore it). The
+  response codes of the route change (202 is new); `cortex-bff.openapi.json` is regenerated (the
+  description only). No schema change, no values change.
 - **Roll overlap: an access request approved on the old BFF pod after the migration is not recorded**
   (saf; gov's review of #439). While the old and the new BFF pods both run, the new pod has migrated
   `access_grant_ledger` to the `seq` key; an approval that lands on the OLD pod after that finds a

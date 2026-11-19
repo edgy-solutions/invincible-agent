@@ -632,6 +632,9 @@ async def lifespan(application: FastAPI):
             _re = await run_in_threadpool(human_tasks.reapply_ledger_grants)
             logger.info("access grants re-applied from the ledger: %s",
                         _re.get("skipped") or f"ok={_re.get('ok')} grants={_re.get('grants')}")
+            # a revocation whose reader was not removed (the directory was down) is retried here
+            _rv = await run_in_threadpool(human_tasks.retry_pending_revocations)
+            logger.info("pending revocations retried: %s", _rv)
         except Exception as exc:  # noqa: BLE001
             logger.warning("access grant re-apply failed (grants stay in the ledger): %s",
                            type(exc).__name__)
@@ -1664,10 +1667,13 @@ async def revoke_access_grant(
     effective set whichever it was. Who may revoke is a capability row (`mesh:revokeAccessGrant`
     in capability_grants.yaml), asked of the directory like every other effect.
 
-    The directory loses the reader at the seed's next sync (the one pruner); this route never
-    prunes, so the answer says `effective: at the next seed sync` rather than pretending the
-    reader is already gone. Idempotent: a grant already revoked answers 200 with
-    `already_revoked`, and the first revoker stays on record."""
+    The act is recorded first and stands. The route then removes that ONE reader from the
+    directory (never a listing, never a prune: the seed stays the one pruner). Removed: 200
+    `effective: now`. Not removed (the directory could not be reached): 202 `effective: not yet`
+    with `removed: false`, the act still recorded; it is retried at the next start, by repeating
+    this request, and by the seed's next sync. It is never shown as done. Idempotent: a grant
+    already revoked answers `already_revoked` (and retries the removal), and the first revoker
+    stays on record."""
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
     try:
@@ -1702,9 +1708,20 @@ async def revoke_access_grant(
             "error": "ledger_unavailable",
             "message": "the decision ledger could not record the revocation; nothing changed",
         }) from exc
-    return {"subject": req.subject, "asset": req.asset, "kind": req.kind,
-            "revoked": True, "already_revoked": not added,
-            "effective": "at the next seed sync"}
+    removal = await run_in_threadpool(
+        lambda: human_tasks.remove_revoked_reader(req.subject, req.asset, req.kind))
+    body = {"subject": req.subject, "asset": req.asset, "kind": req.kind,
+            "revoked": True, "already_revoked": not added, "removed": bool(removal.get("removed"))}
+    if removal.get("removed"):
+        return {**body, "effective": "now"}
+    if removal.get("superseded"):
+        extra = {"restored": removal["restored"]} if "restored" in removal else {}
+        return {**body, **extra, "effective": "superseded: a later grant of this key stands"}
+    return JSONResponse(status_code=202, content={
+        **body, "effective": "not yet",
+        "message": "the revocation is recorded, but the directory could not remove the reader yet; "
+                   "it is retried at the next start and at the seed's next sync, and repeating "
+                   "this request retries it now"})
 
 
 class TriageTaskRequest(_BaseModel):
