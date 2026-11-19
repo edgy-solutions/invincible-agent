@@ -74,6 +74,13 @@
   refusal) until the BFF is up; roll the BFF first. Not run against a live Postgres in this PR
   (tests use a fake of the table); the upgrade block should be rehearsed on a copy first. Two
   concurrent approvals of one key can both append (harmless: the latest act is the same).
+- **Roll overlap: an access request approved on the old BFF pod after the migration is not recorded**
+  (saf; gov's review of #439). While the old and the new BFF pods both run, the new pod has migrated
+  `access_grant_ledger` to the `seq` key; an approval that lands on the OLD pod after that finds a
+  table its build cannot write, so the task is closed and the grant is NOT recorded
+  (`grant_written: false` in the answer). Nothing is applied for it. Re-approve any request whose
+  answer says `grant_written: false`; to avoid the window, roll the BFF in one step (scale the old
+  pod down before the new one migrates) or hold approvals during the roll.
 - **An approval names an asset that exists, and a stale ledger row stops nothing** (saf; the
   architect, 11-16). Approving an access request whose asset is not in the directory is refused 422
   `asset_not_in_directory` before the task is resolved or anything is recorded (503
