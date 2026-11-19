@@ -115,3 +115,20 @@ The shuffled and standalone jobs have each run green on a GitHub runner at least
 are then promoted from `workflow_dispatch` to `pull_request`. Until that happens the
 order-independence guard has no teeth, and `suite-signal`'s result is a one-time cleanup
 rather than a maintained property.
+
+## The advisory job (2026-11-17)
+
+`.github/workflows/suite-advisory.yml` runs the whole suite (`pytest tests/`) on every pull
+request against master. It never blocks: the pytest exit is captured, not propagated, and the
+job must never be made a required check. `scripts/suite_advisory.py` splits the reds into KNOWN
+(listed in `tests/known_reds.txt`, each with a cause and an owner) and NEW, and writes the
+split to the step summary, so an author sees what their PR added on a red master. A known entry
+is retired by deleting its line in the PR that fixes the test; entries that did not go red in a
+run are listed as candidates to delete. The definition of done above is unchanged: this job is
+a signal, not the gate.
+
+Its first run (2026-11-17, master 74e26cce) found 89 reds on the Linux runner. The box census
+had seen 28 of them. The other 61 are listed as group G (the runner's environment: no
+`sessions/` inbox, its own pytest process, a real `helm` on PATH) and group H (master reds whose
+cause is not yet read). An H entry quotes its assertion and names the lane that last touched the
+test file; that lane is a lead, not an assigned owner. Reading the H causes is the open triage.
