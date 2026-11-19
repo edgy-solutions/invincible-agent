@@ -120,17 +120,92 @@ def test_the_scanner_detects_a_planted_read():
     assert _domain_reads(control) == [], "a function that is not a promotion handler is out of scope"
 
 
-def test_no_promotion_handler_reads_a_domain_key():
+# A read of "domain" in a promotion handler is DECLARED here, by (path, function) -- never by line --
+# with the NUMBER of reads it excuses and the reason none reads the pool as the document's domain.
+# The list is checked both ways: a function with more reads than declared fails (the extra read is
+# named by line), and one with fewer -- including none -- fails too (so it cannot go stale). This changes the census's rules at gov's request: gov reviews the mechanism too.
+DECLARED_DOMAIN_READS = {
+    ("src/iagent/gateway.py", "_file_or_find_document_promotion_task"): {
+        "reads": 1,
+        "why": "reads the receipt's STORED domain (ingest_status row) only to clear it when it differs "
+               "from the task's routing domain (#443); it scopes, routes and files nothing from that value",
+    },
+}
+
+
+def _scan_tree():
     found = {}
     for top in ("src", "agent_fleet"):
         for path in sorted((ROOT / top).rglob("*.py")):
             if ".venv" in path.parts or "__pycache__" in path.parts:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-            if "document_promotion" not in text and "promotion.KIND" not in text \
-                    and path.name != "promotion.py":
+            if "document_promotion" not in text and "promotion.KIND" not in text                     and path.name != "promotion.py":
                 continue
             hits = _domain_reads(text, str(path))
             if hits:
-                found[str(path.relative_to(ROOT))] = hits
-    assert found == {}, found
+                found[path.relative_to(ROOT).as_posix()] = hits
+    return found
+
+
+def _verdict(found, declared):
+    """(undeclared reads, declared entries whose count is wrong).
+
+    Per (path, function) the first `reads` hits are excused; each further hit is undeclared and
+    keeps its line. A declared entry with fewer hits than `reads` is stale."""
+    undeclared, stale = {}, []
+    for f, hits in found.items():
+        used = {}
+        for fn, line in hits:
+            used[fn] = used.get(fn, 0) + 1
+            if used[fn] > declared.get((f, fn), {}).get("reads", 0):
+                undeclared.setdefault(f, []).append((fn, line))
+    seen = {(f, fn): sum(1 for h, _ in hits if h == fn) for f, hits in found.items() for fn, _ in hits}
+    for key, d in declared.items():
+        if seen.get(key, 0) < d["reads"]:
+            stale.append((key, d["reads"], seen.get(key, 0)))
+    return undeclared, sorted(stale)
+
+
+def test_no_promotion_handler_reads_a_domain_key():
+    undeclared, stale = _verdict(_scan_tree(), DECLARED_DOMAIN_READS)
+    assert undeclared == {}, undeclared
+    assert stale == [], f"declared reads that no longer exist (entry, declared, found): {stale}"
+
+
+def test_an_undeclared_read_still_fails():
+    found = {"src/iagent/x.py": [("act", 3)], "src/iagent/gateway.py":
+             [("_file_or_find_document_promotion_task", 9), ("other_handler", 20)]}
+    undeclared, _ = _verdict(found, DECLARED_DOMAIN_READS)
+    assert undeclared == {"src/iagent/x.py": [("act", 3)],
+                          "src/iagent/gateway.py": [("other_handler", 20)]}
+
+
+def test_a_declared_entry_that_matches_no_read_fails():
+    declared = {**DECLARED_DOMAIN_READS, ("src/iagent/gone.py", "was_a_handler"): {"reads": 1, "why": "x"}}
+    undeclared, stale = _verdict(_scan_tree(), declared)
+    assert stale == [(("src/iagent/gone.py", "was_a_handler"), 1, 0)]
+    assert undeclared == {}
+
+
+def test_control_the_real_tree_passes_with_exactly_the_one_declared_entry():
+    assert len(DECLARED_DOMAIN_READS) == 1
+    found = _scan_tree()
+    assert {(f, fn) for f, hits in found.items() for fn, _ in hits} == set(DECLARED_DOMAIN_READS)
+    assert all(d["reads"] == 1 and d["why"] for d in DECLARED_DOMAIN_READS.values())
+
+
+def test_a_second_read_in_the_declared_function_fails_and_names_its_line():
+    (path, fn), = DECLARED_DOMAIN_READS
+    found = {path: [(fn, 10), (fn, 42)]}
+    undeclared, stale = _verdict(found, DECLARED_DOMAIN_READS)
+    assert undeclared == {path: [(fn, 42)]} and stale == []
+    with pytest.raises(AssertionError, match="42"):
+        assert undeclared == {}, undeclared
+
+
+def test_a_declared_function_with_fewer_reads_than_declared_is_stale():
+    (path, fn), = DECLARED_DOMAIN_READS
+    declared = {(path, fn): {"reads": 2, "why": "x"}}
+    undeclared, stale = _verdict({path: [(fn, 10)]}, declared)
+    assert undeclared == {} and stale == [((path, fn), 2, 1)]
