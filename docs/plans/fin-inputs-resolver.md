@@ -67,14 +67,14 @@ A denial stays a 403 because the board's relay keeps it whole. On the chat path 
 
 **Provenance.** When the asset answers, `data_provenance` is the URN plus `FIN_DATASET_BANNER`, never the notional banner, and `data_source: {kind: "asset", urn}` is added. The banner is required so a synthetic asset can't read as real.
 
-**Dependency.** `polars` and `edgy-dag-tools@v0.10.0` in engine-fin's lock, as their own commit: +30 packages, about 242 MB of wheels, imported only when the flag is set. Memory under the 512Mi limit is unmeasured.
+**Dependency.** `polars` and `edgy-dag-tools@v0.10.0` (0.14.0 since `26817b82`) in engine-fin's lock, as their own commit: +30 packages, about 242 MB of wheels, imported only when the flag is set. Memory under the 512Mi limit is unmeasured.
 
 ## Before anyone sets the flag: all four hold (2026-11-05)
 
 - **#213** (a person's subtask carries that person's token) is merged as `bd351cce`, first in chart 0.4.78. Without it a chat verb arrives as `svc:` and gets the 401.
 - **The asset and its grant.** `ev_fixture` is materialized, and the grant held live: on the leg the allowed subject read it and the denied subject got 403 `access_denied` naming it.
 - **Egress** from the pod to the object store, measured on the live leg: `ticket_ms` 0.3 to 1.1 s, `scan_ms` 0.1 to 0.2 s.
-- **The broker mints the ticket's credential per request** (`broker-advertises-unminted-credential.md`, steps 1 and 3): dag-tools `c651fac`, first released in v0.3.0, and the minting identity in v0.3.1. Engine-fin pins v0.10.0.
+- **The broker mints the ticket's credential per request** (`broker-advertises-unminted-credential.md`, steps 1 and 3): dag-tools `c651fac`, first released in v0.3.0, and the minting identity in v0.3.1. Engine-fin pinned v0.10.0 then (0.14.0 since `26817b82`).
 
 ## Forks for the architect
 

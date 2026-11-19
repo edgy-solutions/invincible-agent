@@ -23,7 +23,7 @@ dependencies = [
     "langchain-openai",
     "ollama",
     "python-dotenv",
-    "langfuse>=3.0.0",
+    "langfuse>=3.0.0,<5",
     "provenance-telemetry==0.2.2",
     "litellm",
     "packaging",

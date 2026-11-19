@@ -271,6 +271,7 @@ def get_datahub_context(datahub_wrapper_url: str) -> str:
 _ENGINE_O_ABSTENTION_REASONS = frozenset({
     "instance_not_found",
     "no_compatible_verbs",
+    "domain_scope_excluded",
 })
 
 _ROUTING_MATCHED = "matched"
