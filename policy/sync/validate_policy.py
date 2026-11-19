@@ -744,11 +744,17 @@ def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> 
 #: central gateway's routes, so it does not retire this copy (01M6KF8279KZ843KG5MMM0R3YH).
 BFF_DELEGATE_ROUTES = ("human_tasks.register",)
 
+#: Engine O's route names a `door: engine-o` row may name (architect 11-19). Engine O owns the list
+#: (`agent_fleet/ontology_service/caller_binding.DELEGATE_ROUTES`) and this is a copy;
+#: tests/security/test_gateway_delegates_rail.py goes red when the two differ.
+ENGINE_O_DELEGATE_ROUTES = ("resolve_instance",)
+
 
 def _gd_doors() -> dict[str, tuple[str, ...]]:
     """A row's door is `row.get("door", "gateway")`; each door has its own route list."""
     from dag_tools.central_gateway.routes import delegatable_route_ids
-    return {"gateway": tuple(delegatable_route_ids()), "bff": BFF_DELEGATE_ROUTES}
+    return {"gateway": tuple(delegatable_route_ids()), "bff": BFF_DELEGATE_ROUTES,
+            "engine-o": ENGINE_O_DELEGATE_ROUTES}
 
 _GD_ROW_FIELDS = ("service", "door", "routes", "granted_by", "reason", "ratified_by")
 #: A run with no person behind it (architect 11-04). It acts as itself, so it is never a delegate.
@@ -765,7 +771,7 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
     ratified it (`ratified_by`, e.g. `owner`: a seat, never an identity). Unknown keys are refused
     by name, so a typo (`route:`) cannot pass silently.
 
-    A row's `door` is `gateway` (the default) or `bff`; its routes are checked against THAT door's
+    A row's `door` is `gateway` (the default), `bff` or `engine-o`; its routes are checked against THAT door's
     list, and an unknown door is one error with no route errors. A service is unique per
     `(service, door)`: it may hold one gateway row and one bff row."""
     pre = "gateway_delegates.yaml"

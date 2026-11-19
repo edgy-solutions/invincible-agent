@@ -15,6 +15,18 @@ The rule, in one place:
 * The grant is what the directory says the verified subject holds (``held_of``). The body may
   NARROW it (``asked``), never widen it: grants = held ∩ asked, or held when nothing was asked.
 * A body subject is never used for anything but a ``body_identity`` label (absent/same/ignored).
+
+A DECLARED DELEGATION (architect ruling 1b, 11-19): a service acts for a person only by declared
+delegation.
+
+* A policy row (``policy/gateway_delegates.yaml``, ``door: engine-o``) names the service and the
+  routes it may call on a person's behalf, and nothing else.
+* The service authenticates as itself and states whom it acts for (``on_behalf_of``).
+* Engine O honours the statement only when the row exists for that service on that route. It then
+  binds the PERSON's grants and NONE of the service's own (the service's grants are never looked
+  up on that path), and records the call as delegated with both identities (``Binding.via``).
+* Without a row the service acts as itself. A statement from a person, from an anonymous or
+  unverified caller, or one naming a ``svc:`` or the caller itself, is ignored.
 """
 from __future__ import annotations
 
@@ -22,7 +34,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Callable, Iterable, Optional
+from typing import Callable, Iterable, Mapping, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +55,11 @@ class Binding:
     kind: str                       # "person" | "service" | "anonymous"
     grants: tuple[str, ...]         # uppercase, never empty: (NO_GRANT,) when none
     body_identity: str              # "absent" | "same" | "ignored"
+    via: str = ""                   # the authenticated service when delegated, else ""
+    #: "absent" (no statement) | "delegated" | "not_declared" (a verified service stated a person
+    #: and no row covers it) | "ignored" (a statement from a person, an anonymous or unverified
+    #: caller, or one naming a svc: or the caller itself)
+    delegation: str = "absent"
 
 
 class GrantCache:
@@ -73,6 +90,46 @@ class GrantCache:
 
 _DEFAULT_CACHE = GrantCache()
 
+#: The routes a delegate row may name (architect 11-19). validate_policy.ENGINE_O_DELEGATE_ROUTES is
+#: a copy, sealed by tests/security/test_gateway_delegates_rail.py.
+DELEGATE_ROUTES = ("resolve_instance",)
+_DOOR = "engine-o"
+
+
+def load_delegates(path: Optional[str] = None) -> dict[str, frozenset[str]]:
+    """Service -> the routes it may call on a person's behalf: the rows with ``door: engine-o`` in
+    the delegates file. Read ON EVERY CALL from env ENGINE_O_DELEGATES_FILE, default
+    ``/app/policy/gateway_delegates.yaml``. Rows of any other door are ignored. An absent file is
+    ``{}`` and a warning; unreadable YAML, a wrong shape, a malformed row or a missing yaml module
+    is ``{}`` and an error: FAILS CLOSED, and never raises."""
+    path = path or os.environ.get("ENGINE_O_DELEGATES_FILE") or "/app/policy/gateway_delegates.yaml"
+    try:
+        import yaml  # noqa: PLC0415 -- lazy: the module stays stdlib-only
+        try:
+            with open(path, encoding="utf-8") as fh:
+                parsed = yaml.safe_load(fh)
+        except FileNotFoundError:
+            logger.warning("%s is absent: an absent file is an empty list (no delegate)", path)
+            return {}
+        rows = parsed.get("gateway_delegates") if isinstance(parsed, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("top level is not a mapping with a `gateway_delegates` list")
+        out: dict[str, set[str]] = {}
+        for i, row in enumerate(rows):
+            if not isinstance(row, dict):
+                raise ValueError(f"row {i} is not a mapping")
+            if row.get("door") != _DOOR:
+                continue
+            svc, routes = row.get("service"), row.get("routes")
+            if (not isinstance(svc, str) or not svc.strip() or not isinstance(routes, list)
+                    or not all(isinstance(r, str) for r in routes)):
+                raise ValueError(f"row {i}: `service` is not a non-empty string or `routes` is not a list of strings")
+            out.setdefault(svc.strip(), set()).update(r for r in routes if r in DELEGATE_ROUTES)
+        return {k: frozenset(v) for k, v in out.items()}
+    except Exception as exc:  # noqa: BLE001 -- fail closed
+        logger.error("%s unreadable, failing closed (no delegate): %s", path, exc)
+        return {}
+
 
 def _is_person(subject: str) -> bool:
     s = subject.strip()
@@ -92,20 +149,36 @@ def _body_identity(body_subject: str, subject: str) -> str:
 
 def bind(caller, *, body_subject: str = "", asked=None,
          held_of: Callable[[str], Iterable[str]],
-         cache: Optional[GrantCache] = None) -> Binding:
-    """The caller's binding. ``caller`` is a ``CallerIdentity`` or None; never the body."""
+         cache: Optional[GrantCache] = None,
+         on_behalf_of: str = "", route: str = "",
+         delegates: Callable[[], Mapping[str, Iterable[str]]] = load_delegates) -> Binding:
+    """The caller's binding. ``caller`` is a ``CallerIdentity`` or None; never the body.
+
+    ``on_behalf_of`` is a statement, honoured only for a verified service with a delegate row for
+    ``route`` (see the module docstring); ``delegates`` is called only then."""
+    stated = (on_behalf_of or "").strip()
     subject = (getattr(caller, "authz_id", None) or "").strip() if caller is not None else ""
     if caller is None or not getattr(caller, "verified", False) or not subject:
-        return _anonymous(body_subject)
+        return _with_delegation(_anonymous(body_subject), "ignored" if stated else "absent")
 
+    use_cache = cache or _DEFAULT_CACHE
+    wanted = [str(d).strip().upper() for d in (asked or ()) if str(d).strip()]
     kind = PERSON if _is_person(subject) else SERVICE
+    via, delegation, who = "", "absent", subject
+    if stated:
+        delegation = "ignored"
+        if kind == SERVICE and _is_person(stated) and stated.casefold() != subject.casefold():
+            if route in set(delegates().get(subject, ())):
+                who, kind, via, delegation = stated, PERSON, subject, "delegated"
+            else:
+                delegation = "not_declared"
+
     try:
-        held = set((cache or _DEFAULT_CACHE).get(subject, held_of))
+        held = set(use_cache.get(who, held_of))
     except Exception as exc:  # noqa: BLE001 -- fail closed; log the type only, no values
         logger.warning("grant lookup failed (%s); binding no grant", type(exc).__name__)
         held = set()
 
-    wanted = [str(d).strip().upper() for d in (asked or ()) if str(d).strip()]
     if wanted:
         seen: set[str] = set()
         grants = []
@@ -115,4 +188,9 @@ def bind(caller, *, body_subject: str = "", asked=None,
                 grants.append(d)
     else:
         grants = sorted(held)
-    return Binding(subject, kind, tuple(grants) or (NO_GRANT,), _body_identity(body_subject, subject))
+    return Binding(who, kind, tuple(grants) or (NO_GRANT,), _body_identity(body_subject, who),
+                   via, delegation)
+
+
+def _with_delegation(b: Binding, delegation: str) -> Binding:
+    return Binding(b.subject, b.kind, b.grants, b.body_identity, b.via, delegation)
