@@ -341,21 +341,30 @@ def pytest_configure(config):  # noqa: D103
         "requires_cluster: needs a live cluster; treated as live (deselected unless -m names live)")
 
 
-_LIVE_MARKS = ("live", "requires_engine_o", "requires_cluster")
+_REQUIRES_MARKS = ("requires_engine_o", "requires_cluster")
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):  # noqa: D103
     """Tests that call a live cluster leave the default run (architect, 2026-11-17).
+
+    Every `requires_*` item is first given the `live` mark, so `live` is the one mark the rest
+    decides on. Then `-m live`, `-m "not live"` and the default run all mean the same set. This
+    runs first (tryfirst), so pytest's own -m filter sees the added mark.
 
     Selected only when the -m expression names `live`; the usual -m filtering still applies after.
     """
     import re  # noqa: PLC0415
+    for item in items:
+        if not item.get_closest_marker("live") and any(
+                item.get_closest_marker(m) for m in _REQUIRES_MARKS):
+            item.add_marker(pytest.mark.live)
     expr = getattr(config.option, "markexpr", "") or ""
     if re.search(r"\blive\b", expr):
         return
     kept, deselected = [], []
     for item in items:
-        if any(item.get_closest_marker(m) for m in _LIVE_MARKS):
+        if item.get_closest_marker("live"):
             deselected.append(item)
         else:
             kept.append(item)

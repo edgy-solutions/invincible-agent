@@ -29,6 +29,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 _ROOT = Path(__file__).resolve().parents[1]
 _TESTS = _ROOT / "tests"
 
@@ -178,3 +180,29 @@ def test_control_a_plain_file_is_collected_and_nothing_is_deselected():
     out, n, deselected = _collect(_PLAIN_FILE)
     assert n > 0, out[-800:]
     assert deselected == 0, out[-800:]
+
+
+# --- behaviour, per test: a requires_* mark is a live mark under every -m -----------------------
+
+_PROBE = "tests/fixtures/live_marks/probe_live_marks.py"
+_PROBE_LIVE = {"test_live", "test_requires_cluster_only", "test_requires_engine_o_only"}
+
+
+def _ids(*extra: str) -> tuple[str, set[str]]:
+    cmd = [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
+           "-c", "pyproject.toml", "--rootdir=.", *extra, _PROBE]
+    r = subprocess.run(cmd, cwd=str(_ROOT), capture_output=True, text=True, timeout=300)
+    out = r.stdout + r.stderr
+    return out, {ln.split("::", 1)[1] for ln in out.splitlines() if ln.startswith(_PROBE + "::")}
+
+
+@pytest.mark.parametrize("extra", [(), ("-m", "not live")], ids=["default", "m-not-live"])
+def test_a_requires_only_test_leaves_the_run_under_the_default_and_not_live(extra):
+    """gov on #442: under `-m "not live"` a test marked only `requires_cluster` ran."""
+    out, ids = _ids(*extra)
+    assert ids == {"test_plain"}, f"{extra or 'default'} kept {sorted(ids)}:\n{out[-800:]}"
+
+
+def test_m_live_selects_every_live_and_requires_test_and_nothing_else():
+    out, ids = _ids("-m", "live")
+    assert ids == _PROBE_LIVE, f"-m live kept {sorted(ids)}:\n{out[-800:]}"
