@@ -131,10 +131,11 @@ spec:
                   key: BPMN_POSTGRES_PASSWORD
             # DataHub PAT for the code location's catalog emit, when the metadata
             # service runs with METADATA_SERVICE_AUTH_ENABLED=true (the correct
-            # posture). From dag-tools v0.17.0 that emit is the materialization
+            # posture). Since dag-tools v0.2.0 that emit is the materialization
             # sensor (gated on DATAHUB_SERVER; DATAHUB_SENSOR_STATUS picks whether
             # it is live on load). IO managers no longer emit to DataHub themselves:
-            # CortexPolarsIOManager._emit_to_datahub was removed in dag-tools 1301efe.
+            # CortexPolarsIOManager._emit_to_datahub was removed in dag-tools 1301efe,
+            # first released in v0.2.0.
             # optional:true → empty/absent secret key = no auth header, so a
             # cluster without the token (or an unauthenticated GMS) still boots.
             - name: DATAHUB_TOKEN
