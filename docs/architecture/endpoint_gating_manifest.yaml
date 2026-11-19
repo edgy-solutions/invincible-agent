@@ -2780,6 +2780,23 @@ services:
         consumers: [cortex-ui, dispatch_driver.py]
         class: gated
         justification: "gateway.py:332."
+      - method: POST
+        path: /access_grants/revoke
+        identity: get_current_user (authz_id)
+        gate: can_invoke(mesh:revokeAccessGrant)
+        exposes: action
+        consumers: [none-found]
+        class: gated
+        justification: >-
+          gateway.py:1659. INTEGRITY WRITE. Asks the directory can_invoke on mesh:revokeAccessGrant
+          for the caller BEFORE anything is recorded: unreachable is a 503 authorization_unavailable,
+          a refusal is a policy_refusal not_entitled_to_revoke_access naming the binding. It then
+          records the revocation in the decision ledger (a ledger failure is 503 ledger_unavailable
+          and nothing changes; a grant that does not exist is 404 no_such_grant), and removes that ONE
+          reader relation (never a listing, never a prune; a later re-grant of the same key restores
+          it). Who may revoke is the access-revokers group, via capability_grants.yaml. The caller is
+          taken from the token; the body names the grant, never the revoker. No caller found in
+          cortex-ui/src or scripts/.
       - method: GET
         path: /instances_by_property
         identity: "current_user (verified JWT)"
