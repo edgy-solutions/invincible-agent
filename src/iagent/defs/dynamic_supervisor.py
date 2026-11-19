@@ -570,9 +570,13 @@ def _find_compatible_verbs(
     # has a different reporting surface. The DECISION about what a failed check means stays
     # here too, because the two callers genuinely differ — this one falls through to
     # unconstrained classification, the direct path falls back to the full run.
+    # THE PERSON'S OWN TOKEN, redeemed for this leg like every other engine-O call: engine O binds
+    # the person and their grants from the verified token and ignores the body's, so a lookup
+    # without it is read as anonymous (no grant). "" for a service run, which then sends none.
+    _tok = _caller_token_for(context, user_email, "find_compatible_verbs")
     verbs, err = _lookup_compatible_verbs(
         subject_uri, list(entitled_domains or []), ontology_url=ONTOLOGY_SVC_URL,
-        on_behalf_of=user_email,
+        on_behalf_of=user_email, **({"headers": {"Authorization": f"Bearer {_tok}"}} if _tok else {}),
     )
     if err is not None:
         context.log.warning(

@@ -5392,12 +5392,16 @@ class CanvasSeedConflict(_BaseModel):
     detail: CanvasSeedConflictDetail
 
 
-def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list):
+def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list, bearer: str = ""):
     """A SYNC `(class_uri, bound_slots=) -> {outcome, members, ...}` against engine-o's
     `/enumerate_instances`, with the body `dynamic_supervisor._make_enumerator` sends. Sync
     because `decide_disposition` calls it synchronously; the caller runs the whole disposition
     in a threadpool so this never blocks the event loop. Raises on connect/timeout, which the
-    disposition files as `no_provider` rather than as a menu."""
+    disposition files as `no_provider` rather than as a menu.
+
+    `bearer` is the CALLER'S OWN token, forwarded as-is (never minted): engine O binds the person and
+    their grants from the verified token and ignores `user_email` / `entitled_domains` in the body,
+    so a call without it is read as anonymous."""
     def _enumerate(class_uri: str, *, bound_slots: dict | None = None) -> dict:
         _bound = {str(k): str(v) for k, v in (bound_slots or {}).items() if v not in (None, "")}
         with httpx.Client(timeout=5.0) as client:
@@ -5406,6 +5410,7 @@ def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list):
                 json={"class_uri": class_uri, "bound_slots": _bound,
                       "user_email": user_email,
                       "entitled_domains": list(entitled_domains or [])},
+                **({"headers": {"Authorization": f"Bearer {bearer}"}} if bearer else {}),
             )
         resp.raise_for_status()
         return resp.json() or {}
@@ -5423,7 +5428,8 @@ def _canvas_seed_domains(request, ent) -> list[str] | None:
     return None
 
 
-async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user: User):
+async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user: User,
+                           bearer: str = ""):
     """The ask for a 409'd seed, or None when no unbound slot is askable.
 
     Built by the SAME disposition the chat path uses (`decide_disposition` + `ask_card`) from
@@ -5450,7 +5456,10 @@ async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user:
 
     ent = current_user.entitlements
     domains = _canvas_seed_domains(request, ent) or sorted({c.domain for c in ent.cells})
-    enum = _canvas_seed_enumerator(user_email=current_user.authz_id, entitled_domains=domains)
+    enum = _canvas_seed_enumerator(
+        user_email=current_user.authz_id, entitled_domains=domains,
+        **({"bearer": bearer} if bearer else {}),
+    )
 
     def _build():
         disp = decide_disposition(accepted=accepted, declared=declared, enumerate_class=enum)
@@ -5653,7 +5662,8 @@ async def canvas_seed(
         # refusal. It is best-effort by construction: a failure here must never turn the
         # refusal into a 500.
         try:
-            _ask = await _canvas_seed_ask(_template, request, current_user)
+            _ask = await _canvas_seed_ask(
+                _template, request, current_user, bearer=_user_bearer(http_request))
             if _ask is not None:
                 _detail["ask"] = _ask
                 if _ask.get("policy"):
@@ -10343,7 +10353,9 @@ async def _generate_dagster_stream_inner(
                         "user_persona": user_persona,
                         "entitled_domains": entitled_domains,
                     },
-                    headers=_trace_headers(trace_id, session_id),
+                    # The caller's own token, so engine O binds the person (never the body).
+                    headers={**_trace_headers(trace_id, session_id),
+                             **({"Authorization": f"Bearer {caller_token}"} if caller_token else {})},
                 )
                 resp.raise_for_status()
                 intent_extraction = resp.json()
