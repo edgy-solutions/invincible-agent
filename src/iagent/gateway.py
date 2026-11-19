@@ -2423,20 +2423,11 @@ def _restate_refusal_message(resp) -> str:
     return str(body)[:500]
 
 
-@app.get("/reviews/{workflow_id}/batch")
-async def get_review_batch(
-    workflow_id: str,
-    current_user: User = Depends(get_current_user),
-):
-    """Fetch the reviewer's grouped-review batch (parts + proposed dispositions + needs_review flags) so
-    the UI can show it before deciding — a blind accept-all can't handle a needs_review row, which is a
-    mandatory per-item exception. EXISTENCE-ORACLE-SAFE: the caller must hold THIS grouped task in their
-    OWN pending queue (same authz_id filter as /act); a caller who isn't the approver gets 404, never a
-    peek at another approver's batch. engine-a's get_batch serves only the per-approver-authored state."""
-    from starlette.concurrency import run_in_threadpool
-    from . import human_tasks
-    rows = await _pending_for_actor(current_user, current_user.authz_id,
-                                    "GET /reviews/{workflow_id}/batch")
+async def _gated_grouped_batch(workflow_id: str, current_user: User, route: str):
+    """The batch routes' shared gate: the caller must hold THIS grouped task in their OWN pending
+    queue (404 `review_not_found` otherwise, before any workflow read), then the workflow's
+    get_batch is read. Returns (the caller's pending task row, get_batch's body)."""
+    rows = await _pending_for_actor(current_user, current_user.authz_id, route)
     match = next((t for t in rows
                   if t.get("workflow_id") == workflow_id and t.get("kind") == "grouped_review"), None)
     if match is None:
@@ -2451,7 +2442,23 @@ async def get_review_batch(
             rr.raise_for_status()
     except Exception as exc:
         raise HTTPException(status_code=502, detail={"error": "review_batch_unreachable", "message": str(exc)})
-    b = rr.json()
+    return match, rr.json()
+
+
+@app.get("/reviews/{workflow_id}/batch")
+async def get_review_batch(
+    workflow_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch the reviewer's grouped-review batch (parts + proposed dispositions + needs_review flags) so
+    the UI can show it before deciding — a blind accept-all can't handle a needs_review row, which is a
+    mandatory per-item exception. EXISTENCE-ORACLE-SAFE: the caller must hold THIS grouped task in their
+    OWN pending queue (same authz_id filter as /act); a caller who isn't the approver gets 404, never a
+    peek at another approver's batch. engine-a's get_batch serves only the per-approver-authored state."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    match, b = await _gated_grouped_batch(workflow_id, current_user,
+                                          "GET /reviews/{workflow_id}/batch")
     # Map engine-a state items -> the UI ReviewItem shape (mpn/subject/proposed_disposition/needs_review).
     items = [{"mpn": it.get("mpn"), "subject": it.get("subject"),
               "proposed_disposition": it.get("proposed_disposition"),
@@ -2564,7 +2571,22 @@ def _resolve_notice_prefix(notice_id: str) -> "Optional[str]":
     return _NOTICE_PREFIX_INDEX.get(notice_id)
 
 
-def _read_notice_provenance_from_store(prefix: str) -> list:
+def _review_source_prefix(artifact_uri: str) -> "Optional[tuple[str, str]]":
+    """(bucket, prefix) of a review's own source from its `s3://<bucket>/<key>` reference, where the
+    key ends `/review.json` and the prefix is the key minus that suffix. None for anything else
+    (blank, another scheme, no key, another file, an empty prefix)."""
+    from urllib.parse import urlparse
+
+    u = urlparse(artifact_uri or "")
+    key = u.path.lstrip("/")
+    suffix = "/review.json"
+    if u.scheme != "s3" or not u.netloc or not key.endswith(suffix):
+        return None
+    prefix = key[: -len(suffix)]
+    return (u.netloc, prefix) if prefix else None
+
+
+def _read_notice_provenance_from_store(prefix: str, *, bucket: str = _ARTIFACT_BUCKET) -> list:
     """Read a notice's REAL provenance from MinIO: review.json (the extracted
     values + bboxes + match metadata) joined to its table CROPS. No full-page
     render exists (doc-tools defers the page rasterizer), so the crop IS the
@@ -2582,7 +2604,7 @@ def _read_notice_provenance_from_store(prefix: str) -> list:
     )
 
     def _get_json(key: str):
-        return _json.loads(s3.get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"].read())
+        return _json.loads(s3.get_object(Bucket=bucket, Key=key)["Body"].read())
 
     review = _get_json(f"{prefix}/review.json")
     manifest = _get_json(f"{prefix}/manifest.json")
@@ -2707,6 +2729,56 @@ async def notice_provenance(
         # never fabricated placeholder evidence that masks the failure as green.
         logger.warning("notice provenance read failed for %s (prefix %s): %s", notice_id, prefix, exc)
         return {"notice_id": notice_id, "page_image_url": None, "items": [], "source": "error"}
+
+
+@app.get("/reviews/{workflow_id}/provenance")
+async def review_provenance(
+    workflow_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """The review card's evidence, resolved from the review's OWN source reference (the
+    `artifact_uri` the workflow kept), never from a fixed prefix. Same gate as the batch route: the
+    caller must hold this grouped task in their own pending queue."""
+    from starlette.concurrency import run_in_threadpool
+    _match, b = await _gated_grouped_batch(workflow_id, current_user,
+                                           "GET /reviews/{workflow_id}/provenance")
+    notice_id = b.get("notice_id")
+    artifact_uri = str(b.get("artifact_uri") or "")
+    bucket = None
+    prefix = None
+    if artifact_uri:
+        resolved_by = "review_source"
+        src = _review_source_prefix(artifact_uri)
+        if src is None:
+            # The review HAS a reference; a scan could find a different artifact, so never fall back.
+            resolved_by = "review_source_unreadable"
+            logger.info("review provenance for %s resolved_by=%s", workflow_id, resolved_by)
+            return {"notice_id": notice_id, "page_image_url": None, "items": [],
+                    "source": "none", "resolved_by": resolved_by}
+        bucket, prefix = src
+    else:
+        # Fallback only for reviews composed before the reference was kept; it scans the fixed
+        # root and is to be removed once those reviews are closed.
+        resolved_by = "notice_id_index"
+        prefix = await run_in_threadpool(lambda: _resolve_notice_prefix(notice_id))
+        if not prefix:
+            logger.info("review provenance for %s resolved_by=%s (no prefix)", workflow_id, resolved_by)
+            return {"notice_id": notice_id, "page_image_url": None, "items": [],
+                    "source": "none", "resolved_by": resolved_by}
+    logger.info("review provenance for %s resolved_by=%s", workflow_id, resolved_by)
+    try:
+        if bucket is None:
+            items = await run_in_threadpool(lambda: _read_notice_provenance_from_store(prefix))
+        else:
+            items = await run_in_threadpool(
+                lambda: _read_notice_provenance_from_store(prefix, bucket=bucket))
+        return {"notice_id": notice_id, "page_image_url": None, "items": items,
+                "source": "doc-tools", "resolved_by": resolved_by}
+    except Exception as exc:  # noqa: BLE001
+        # HONEST degrade, as the notice route: empty, reason logged without keys or credentials.
+        logger.warning("review provenance read failed for %s: %s", workflow_id, type(exc).__name__)
+        return {"notice_id": notice_id, "page_image_url": None, "items": [],
+                "source": "error", "resolved_by": resolved_by}
 
 
 # ── PCN parts-by-state dashboard FEEDER ───────────────────────────────────────

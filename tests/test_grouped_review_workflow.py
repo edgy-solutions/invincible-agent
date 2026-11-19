@@ -329,7 +329,7 @@ async def test_get_batch_serves_only_the_authored_batch():
     # decoy assertion below is unchanged, so the widening is one named field, not a loosening.
     assert set(out.keys()) == {"batch_id", "approver", "notice_id", "notice_type",
                                "notice_fingerprint", "items",
-                               "extraction_warnings"}, "batch-read leaked an extra field"
+                               "extraction_warnings", "artifact_uri"}, "batch-read leaked an extra field"
     assert out["extraction_warnings"] == ["PARTS MAY BE MISSING: 2/5 table crops failed"]
     assert "SECRET-OTHER-APPROVER" not in json.dumps(out), "decoy state leaked into the batch-read"
 

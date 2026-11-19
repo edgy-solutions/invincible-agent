@@ -340,7 +340,9 @@ async def get_batch(ctx: WorkflowSharedContext) -> dict:
     residue was ever authored into the workflow arg. So we return exactly that state and nothing else: no
     audit_withheld, no other-approver residue exists here to leak, so a batch-read can never become the
     existence oracle Slice 3 closed. The seal asserts the returned items are exactly the authored batch —
-    'safe by construction' is a claim until observed."""
+    'safe by construction' is a claim until observed.
+
+    ``artifact_uri`` is the review's source reference ("" for a review composed before it was kept); it is not per-approver content, so the two-object-at-birth argument is unchanged."""
     batch_items = await ctx.get("batch_items")
     if batch_items is None:
         raise restate.TerminalError("no active grouped review for this workflow", status_code=404)
@@ -359,4 +361,7 @@ async def get_batch(ctx: WorkflowSharedContext) -> dict:
         # table crops failed"). Not per-approver state and not redacted content — a statement
         # about how much to trust the list the reviewer is about to disposition.
         "extraction_warnings": list(await ctx.get("extraction_warnings") or []),
+        # The review's source reference, kept so its evidence resolves from it ("" for a review
+        # composed before it was kept). Not per-approver content, so two-object-at-birth holds.
+        "artifact_uri": (await ctx.get("artifact_uri")) or "",
     }

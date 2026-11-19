@@ -21,7 +21,7 @@ checklist. Values shown POST-M2 (branch `m2-extraction-sort`); the pre-M2 name i
 | engine-o `/instances_by_property` (was `/pcn_parts_by_state`) | ontology_service/main.py | cortex-bff dashboard feeder |
 | engine-o `/resolve_instance` (was `/resolve_pcn_instance`) | ontology_service/main.py + self-reg endpoint_url → Neo4j | restate_analyst/review_composer.py; the `/resolve` fan-out (via capability graph) |
 | engine-o `/policy_rules` | ontology_service/main.py | restate_analyst/policy_rules_client.py |
-| bff `/reviews` (was `/pcn/reviews`), `/reviews/{wf}/batch`, `/instances_by_property` (was `/pcn/parts_by_state`) | cortex-bff gateway.py | cortex-ui api/client.ts (`fetchReviewBatch` etc.) |
+| bff `/reviews` (was `/pcn/reviews`), `/reviews/{wf}/batch`, `/reviews/{wf}/provenance` (evidence, resolved from the review's kept `artifact_uri`), `/instances_by_property` (was `/pcn/parts_by_state`) | cortex-bff gateway.py | cortex-ui api/client.ts (`fetchReviewBatch` etc.) |
 | bff `/notices/{id}/provenance` | cortex-bff gateway.py | cortex-ui EvidencePane (`fetchNoticeProvenance`) — domain-named, behind evidence boundary (not renamed) |
 
 ## 3. Task KIND values (minted by engine-a, matched by BFF + UI)
