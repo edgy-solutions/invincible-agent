@@ -19,7 +19,11 @@
 
 ## 0.4.90 — 2026-11-18
 
-**0.4.90 is sandbox only. Do not upgrade work to it** (the architect, 11-18). Work stays on the release it runs now until a later release is cleared for work.
+**Who engine O believes (the architect, 11-19):**
+- Engine O trusts the identity named in a request that reaches it from inside the cluster.
+- The BFF always overwrites that identity from the verified token, both on its direct calls and in the supervisor run config it launches.
+- **A deployment must keep the Dagster web page behind sign-in**, since a run launched there names any identity it likes. It **should run with `networkPolicy` on**, so only the BFF and the supervisor reach the engines.
+- Lane 74's fix, which makes engine O take the identity from the verified caller, leads 0.4.91.
 
 **0.4.90 is 0.4.89 (`029166db`) plus the ruled 11-17 train, `029166db..e6d0224a`, and the cortex re-pin to `be1d177` in this cut. The train is #415, #416, #417, #418, #419, #423, #424, #425 and #431, and nothing else; #421 and #429 are docs. The roll waits for Chris's approval of the values diff against the live release.**
 
@@ -41,7 +45,7 @@
 #418 rides at `1e3841b5`, not the `f1ab4744` first ruled. It carries the same code plus two commits: its seal imports engine O in the package form (`204a4599`), and engine O imports `notice_parts` and `where_used` package-first (`1e3841b5`). The second removed the two Q8 reds that `f1ab4744` added by test order. Chris's go of 11-18 took #418 once lane 74 reported it green with its entitlement guard. The merged tree is identical to the trial tree that failed only master's own 59 reds.
 
 **Before the roll:**
-- **At work: no roll.** 0.4.90 is sandbox only. The work notes below (#425's tracing client, #418's directory egress) describe what a later work release inherits from it; they are not a work upgrade plan for 0.4.90.
+- **At work:** confirm that the Dagster web page is behind sign-in before upgrading, and prefer `networkPolicy` on (see "Who engine O believes" above). #418 adds one more identity-named lookup in engine O, so a request from inside the cluster that skips the BFF can learn which domains a named person holds.
 - Show the values diff against the live release (the cortex digest, the pub-tools variable names from #423) and wait for Chris's approval. #431 adds a commented-out block only.
 - The chart version moves, so every pod template changes and every pod restarts. List STARTED Dagster runs first (a dead worker holds a slot).
 - #425: the docs engine image installs a Langfuse client below 5 again, which work's self-hosted server (3.165.0) accepts.
