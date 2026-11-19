@@ -52,8 +52,8 @@ dependencies = [
     # `dag_tools`. 0.17.0 (PyPI, tag at a85c5f9) ships `central_gateway/gateway_routes.json`,
     # which policy/sync/validate_policy.py reads for the gateway door's delegatable routes
     # (01M6KF8279KZ843KG5MMM0R3YH).
-    # NOTE: agent_fleet/data_analyst pins the pre-rename SHA 61cbfa92, and agent_fleet/finance_agent
-    # pins tag v0.17.0 (the release the root takes from PyPI), each in its own project. See the two-dists-one-module hazard if both land in one env.
+    # NOTE: agent_fleet/data_analyst and agent_fleet/finance_agent each pin git tag v0.17.0 (the
+    # release the root takes from PyPI), each in its own project.
     "edgy-dag-tools==0.17.0",
     # PROMOTED from the dev group 2026-08-07. The projector and the sandbox domain broker are
     # mesh services that ship in the iagent image and now take the SDK's inbound transport-auth
