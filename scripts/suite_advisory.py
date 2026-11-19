@@ -1,6 +1,6 @@
 """Split a pytest log's reds into KNOWN (tests/known_reds.txt) and NEW. Advisory only.
 
-Usage: suite_advisory.py <pytest-log> <known-reds-file> --exit <int>
+Usage: suite_advisory.py <pytest-log> <known-reds-file> --exit <int> [--merged-ref REF]
 
 Markdown goes to stdout, workflow annotations to stderr. Always exits 0, except 2 for a
 malformed known file or unreadable inputs.
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 
 # A parametrized id can hold spaces ("test_x[how is it used]"), so the id runs to pytest's " - "
@@ -39,6 +40,26 @@ def parse_known(text: str) -> dict[str, str]:
         known[entry] = comment
     return known
 
+_FIX_CITE = re.compile(r"\bfixed by (?:PR\s*#?|#)(\d+)\b", re.IGNORECASE)
+_MERGE_COMMIT = re.compile(r"^Merge pull request #(\d+) ")
+_SQUASH = re.compile(r"\(#(\d+)\)\s*$")
+
+
+def cited_fix(comment: str) -> int | None:
+    """The PR a comment names as its fix ("fixed by PR 434"); a bare "PR 434" is not a citation."""
+    m = _FIX_CITE.search(comment)
+    return int(m.group(1)) if m else None
+
+
+def merged_prs(subjects) -> set[int]:
+    """PR numbers merged per commit subjects: a merge commit or a squash subject ending "(#n)"."""
+    merged: set[int] = set()
+    for subject in subjects:
+        m = _MERGE_COMMIT.match(subject) or _SQUASH.search(subject)
+        if m:
+            merged.add(int(m.group(1)))
+    return merged
+
 
 def matches(red: str, entry: str) -> bool:
     return red == entry or red.startswith(entry + "[") or red.startswith(entry + "::")
@@ -49,6 +70,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("log")
     ap.add_argument("known")
     ap.add_argument("--exit", dest="code", type=int, required=True)
+    ap.add_argument("--merged-ref", dest="merged_ref", default=None)
     args = ap.parse_args(argv)
     try:
         with open(args.log, encoding="utf-8", errors="replace") as f:
@@ -58,6 +80,16 @@ def main(argv: list[str]) -> int:
     except (OSError, ValueError) as exc:
         print(f"suite_advisory: {exc}", file=sys.stderr)
         return 2
+    merged: set[int] = set()
+    if args.merged_ref:
+        try:
+            log = subprocess.run(["git", "log", "--format=%s", args.merged_ref],
+                                 capture_output=True, text=True, check=True,
+                                 encoding="utf-8", errors="replace")
+        except (subprocess.CalledProcessError, OSError) as exc:
+            print(f"suite_advisory: {exc}", file=sys.stderr)
+            return 2
+        merged = merged_prs(log.stdout.splitlines())
 
     new, known_hits = [], []
     hit_entries: set[str] = set()
@@ -69,6 +101,7 @@ def main(argv: list[str]) -> int:
             known_hits.append((red, known[entry]))
             hit_entries.add(entry)
     stale = [e for e in known if e not in hit_entries]
+    cited = [(e, n) for e in known if (n := cited_fix(known[e])) is not None and n in merged]
 
     out: list[str] = []
     if args.code not in (0, 1):
@@ -85,12 +118,21 @@ def main(argv: list[str]) -> int:
     out.append("Each of these passed or was skipped in this run, so it is a candidate to delete. "
                "That is not proof it is fixed.\n")
     out.extend([f"- `{e}` - {known[e]}" for e in stale] or ["none"])
+    out.append("\n### Known entries whose cited fix is merged\n")
+    if args.merged_ref:
+        out.append(f"Each cites a PR merged on {args.merged_ref} as its fix. "
+                   "That PR should have deleted the line; delete it.\n")
+        out.extend([f"- `{e}` - PR {n}: {known[e]}" for e, n in cited] or ["none"])
+    else:
+        out.append("not checked (no --merged-ref)")
     print("\n".join(out))
 
     for r in new:
         print(f"::warning file={r.split('::', 1)[0]},title=new red::{r}", file=sys.stderr)
     for e in stale:
         print(f"::notice title=known red not seen::{e}", file=sys.stderr)
+    for e, n in cited:
+        print(f"::warning title=stale known red::{e} cites merged PR {n}", file=sys.stderr)
     return 0
 
 
