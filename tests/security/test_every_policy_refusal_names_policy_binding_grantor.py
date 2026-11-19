@@ -408,7 +408,7 @@ PENDING: dict[str, str] = {
     'src/iagent/gateway.py::export_package::recipient_required | name the recipient this package': 'code',
     'src/iagent/gateway.py::ingest_retry_route::awaiting_kind | pick a leaf: POST /ingest/{id}/l': 'config',
     'src/iagent/promotion.py::act::not_authorized_to_act': 'task_grants',
-    f"{GW}::start_review::<out>": RELAY,
+    f"{GW}::_start_review_core::<out>": RELAY,   # moved from start_review (the route calls the core)
     f"{GW}::act_on_human_task::not_authorized_to_act | <_restate_refusal_message>": RELAY,
     f"{GW}::answer_case_signal::not_authorized_to_act | <msg>": RELAY,
     f"{RA}::approve_task::not_authorized_to_act | <_restate_error_message>": RELAY,

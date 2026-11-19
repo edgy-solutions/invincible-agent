@@ -10,14 +10,16 @@ Two halves, measured separately because they belong to different lanes:
   - THE HOP (Lane 1's, green). Every fin verb bound to MULTI_SERIES answers through its real
     `/measure/<fn>` route, and the real projector function carries `data_provenance` verbatim.
     The control removes it from the tuple and watches it drop.
-  - THE CONTENT (fin's). An asset answer's string is the operator's banner, "(ticket: pending)"
-    and " Source: <urn>" (asset_inputs.provenance / dataset_provenance). It names the dataset URN.
-    ADR-0065:133's as-of and ticket id are UNMET, ruled 2026-11-08. The broker's ticket carries
-    both from dag-tools 0.13.0 (#31), but engine-fin pins v0.10.0 and its client discards the
-    ticket, so the string says the ticket is pending and claims no as-of (green). The full rule
-    stays a strict xfail. Its ticket pattern now refuses "pending", which a bare `ticket` word
-    would accept; when fin threads the ticket through, the xfail turns XPASS and fails, and the
-    marker is deleted in that PR.
+  - THE CONTENT (fin's). An asset answer's string is the operator's banner, the ticket clause and
+    " Source: <urn>" (asset_inputs.provenance / dataset_provenance), and it names the dataset URN.
+    ADR-0065:133 also rules an as-of and a ticket id. The broker's ticket has carried both since
+    dag-tools 0.13.0 (#31), and engine-fin pins 0.14.0. engine-fin read through `get_dataframe`,
+    which discards the ticket, so until this PR the string said "(ticket: pending)" (ruled
+    2026-11-08) and the full rule was a strict xfail. engine-fin now reads through
+    `get_dataframe_with_ticket`, and the string carries the receipt's as-of and ticket id. The
+    receipt here is the client's own (`ticket_receipt`), built from a ticket as the broker issues
+    one. The control is a ticket that stamps neither: its answer still says "(ticket: pending)"
+    and claims no as-of. Each half alone is claimed only as far as the receipt says it.
 
 Run: uv run --no-sync python -I -m pytest -c pyproject.toml --rootdir=. -p no:cacheprovider tests/finance/test_provenance_arrives_whole.py
 """
@@ -76,29 +78,60 @@ def test_WITHOUT_THE_TUPLE_ENTRY_IT_DROPS():
     assert got is not None and FIELD not in got
 
 
-def _asset_strings(monkeypatch) -> dict[str, str]:
+TICKET_ID_VALUE = "7f3a9c01-5b2e-4d6a-9e8f-0a1b2c3d4e5f"
+AS_OF_VALUE = "2026-11-08T00:00:00Z"
+#: A ticket as the broker issues one, credential included; the receipt must carry none of it.
+TICKET = {"ticket_id": TICKET_ID_VALUE, "issued_at": "2026-11-12T09:00:00Z", "as_of": AS_OF_VALUE,
+          "as_of_source": "snapshot", "access_token": "hunter2-not-a-real-token"}
+
+
+def _receipt(**over):
+    from dag_tools.cortex_data.client import ticket_receipt
+    return ticket_receipt(URN, {**TICKET, **over})
+
+
+def _asset_strings(monkeypatch, receipt) -> dict[str, str]:
     from agent_fleet.finance_agent import asset_inputs
     monkeypatch.setenv(asset_inputs.BANNER_ENV, "SYNTHETIC TEST ASSET.")
-    return {"provenance": asset_inputs.provenance(URN),
-            "dataset_provenance": asset_inputs.dataset_provenance("SYNTHETIC TEST ASSET.", URN)}
+    return {"provenance": asset_inputs.provenance(URN, receipt),
+            "dataset_provenance": asset_inputs.dataset_provenance("SYNTHETIC TEST ASSET.", URN, receipt)}
 
 
 def test_AN_ASSET_ANSWER_NAMES_ITS_DATASET_URN(monkeypatch):
-    for name, s in _asset_strings(monkeypatch).items():
-        assert URN in s, f"{name}: {s!r}"
+    for receipt in (_receipt(), _receipt(ticket_id=None, as_of=None)):
+        for name, s in _asset_strings(monkeypatch, receipt).items():
+            assert URN in s, f"{name}: {s!r}"
+            assert s.endswith(f"Source: {URN}"), f"{name}: the live leg reads the URN as the suffix: {s!r}"
 
 
 AS_OF = re.compile(r"\bas[- ]of\b", re.I)
 TICKET_ID = re.compile(r"\bticket\b[:\s]+(?!pending\b)\w", re.I)
 
 
-def test_AN_ASSET_ANSWER_SAYS_ITS_TICKET_IS_PENDING_AND_CLAIMS_NO_AS_OF(monkeypatch):
+def test_AN_ASSET_ANSWER_CARRIES_ITS_AS_OF_AND_TICKET_ID(monkeypatch):
+    """ADR-0065:133, whole: the receipt's own as-of and ticket id, not merely the words."""
+    for name, s in _asset_strings(monkeypatch, _receipt()).items():
+        assert AS_OF.search(s), f"{name} names no as-of: {s!r}"
+        assert TICKET_ID.search(s), f"{name} names no ticket id: {s!r}"
+        assert TICKET_ID_VALUE in s and AS_OF_VALUE in s, f"{name} is not this ticket's: {s!r}"
+        assert "hunter2" not in s, f"{name} carries the ticket's credential: {s!r}"
+
+
+def test_THE_CONTROL_A_TICKET_THAT_STAMPS_NEITHER_STAYS_PENDING_AND_CLAIMS_NO_AS_OF(monkeypatch):
     # The ruled text, not asset_inputs.TICKET_PENDING: a seal that read the constant would pass it blank.
-    for name, s in _asset_strings(monkeypatch).items():
-        assert "ticket: pending" in s, f"{name}: {s!r}"
-        assert s.endswith(f"Source: {URN}"), f"{name}: the live leg reads the URN as the suffix: {s!r}"
+    for name, s in _asset_strings(monkeypatch, _receipt(ticket_id=None, as_of=None)).items():
+        assert "(ticket: pending)" in s, f"{name}: {s!r}"
         assert not AS_OF.search(s), f"{name} claims an as-of nothing measured: {s!r}"
         assert not TICKET_ID.search(s), f"{name} claims a ticket id nothing minted: {s!r}"
+
+
+@pytest.mark.parametrize("missing", ["ticket_id", "as_of"])
+def test_A_RECEIPT_MISSING_ONE_HALF_CLAIMS_ONLY_THE_OTHER(monkeypatch, missing):
+    for name, s in _asset_strings(monkeypatch, _receipt(**{missing: None})).items():
+        if missing == "as_of":
+            assert not AS_OF.search(s) and TICKET_ID_VALUE in s, f"{name}: {s!r}"
+        else:
+            assert AS_OF_VALUE in s and "ticket: pending" in s and not TICKET_ID.search(s), f"{name}: {s!r}"
 
 
 def test_THE_TICKET_ID_PATTERN_TELLS_PENDING_FROM_AN_ID():
@@ -107,13 +140,3 @@ def test_THE_TICKET_ID_PATTERN_TELLS_PENDING_FROM_AN_ID():
     assert TICKET_ID.search("BANNER (as of 2026-11-08T00:00Z, ticket 7f3a) Source: u")
     assert TICKET_ID.search("ticket: 7f3a") and AS_OF.search("as-of 2026-11-08")
 
-
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "ADR-0065:133 unmet (ruled 2026-11-08): the broker's ticket carries an id and an as-of from "
-    "dag-tools 0.13.0, but engine-fin pins v0.10.0 and its client discards the ticket, so the "
-    "string says '(ticket: pending)'. Clears when fin threads them through "
-    "(owner: invincible-agent/lane/fin)"))
-def test_AN_ASSET_ANSWER_CARRIES_ITS_AS_OF_AND_TICKET_ID(monkeypatch):
-    for name, s in _asset_strings(monkeypatch).items():
-        assert AS_OF.search(s), f"{name} names no as-of: {s!r}"
-        assert TICKET_ID.search(s), f"{name} names no ticket id: {s!r}"

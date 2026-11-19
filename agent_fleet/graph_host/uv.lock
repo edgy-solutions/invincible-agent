@@ -488,7 +488,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20" },
     { name = "langchain-core" },
-    { name = "langfuse" },
+    { name = "langfuse", specifier = "<5" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-postgres" },
     { name = "psycopg", extras = ["binary"] },

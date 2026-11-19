@@ -150,7 +150,13 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
     while read -r sha; do
         [ -n "$sha" ] || continue
         git merge-base --is-ancestor "$RULE_COMMIT" "$sha" 2>/dev/null || continue
-        trailers="$(git log -1 --format='%B' "$sha" | grep -E "$TRAILER_RE" || true)"
+        # THE TRAILER BLOCK, NOT THE MESSAGE (Lane 1, 2026-11-16). This used to grep the whole
+        # body for a `Lane:` line, so a message that QUOTED a trailer in its prose passed while
+        # git itself (`interpret-trailers --parse`, `%(trailers)`) saw none. The format below is
+        # git's own parse of the last paragraph, so the hook and git agree on what a trailer is.
+        # Published history is not this hook's to check (`--not --remotes` below), so the
+        # commits on master that carry `Lane:` only in their body never reach this line.
+        trailers="$(git log -1 --format='%(trailers:key=Lane,unfold)' "$sha" | grep -E "$TRAILER_RE" || true)"
         if [ -z "$trailers" ]; then
             [ "$missing" -eq 0 ] && { echo "" >&2; echo "PUSH REFUSED: commit(s) with no 'Lane:' trailer." >&2; }
             echo "  $(git log -1 --format='%h %s' "$sha")" >&2

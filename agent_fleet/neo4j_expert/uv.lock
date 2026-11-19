@@ -1338,7 +1338,7 @@ requires-dist = [
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "langchain-weaviate" },
-    { name = "langfuse", specifier = ">=3.0.0" },
+    { name = "langfuse", specifier = ">=3.0.0,<5" },
     { name = "litellm" },
     { name = "mem0ai", extras = ["nlp"] },
     { name = "neo4j" },
