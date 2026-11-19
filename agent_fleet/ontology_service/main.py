@@ -1146,9 +1146,11 @@ async def _bound(request, *, route: str, email_field: str | None = "user_email",
                    route, binding.kind, len(binding.grants), binding.body_identity,
                    binding.delegation)
     if binding.delegation in ("delegated", "not_declared"):
-        # both identities on the record: the service that authenticated, the person it stated
+        # both identities on the record: the service that authenticated, the person it stated.
+        # `person` is %r: on not_declared it is an unverified statement, and quoting it means no
+        # value can end the line and forge another.
         _delegation_audit_logger.info(
-            "delegation route=%s service=%s person=%s outcome=%s", route,
+            "delegation route=%s service=%s person=%r outcome=%s", route,
             binding.via or binding.subject,
             binding.subject if binding.delegation == "delegated"
             else str(getattr(request, delegate_field, "") or ""),

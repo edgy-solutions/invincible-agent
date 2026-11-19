@@ -26,13 +26,16 @@ delegation.
   binds the PERSON's grants and NONE of the service's own (the service's grants are never looked
   up on that path), and records the call as delegated with both identities (``Binding.via``).
 * Without a row the service acts as itself. A statement from a person, from an anonymous or
-  unverified caller, or one naming a ``svc:`` or the caller itself, is ignored.
+  unverified caller, or one naming the caller itself, is ignored. So is a statement that is not a
+  person: one starting with a non-person prefix (``svc:``, ``pipeline:``, compared casefolded), or
+  one containing whitespace or a control character (it could forge an audit line).
 """
 from __future__ import annotations
 
 import logging
 import os
 import time
+import unicodedata
 from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping, Optional
 
@@ -136,6 +139,19 @@ def _is_person(subject: str) -> bool:
     return bool(s) and not s.startswith("svc:")
 
 
+#: Identity prefixes that name a non-person. A pipeline is not a delegate and acts as itself
+#: (policy/gateway_delegates.yaml), and a service is never a person, in any case.
+NON_PERSON_PREFIXES = ("svc:", "pipeline:")
+
+
+def _is_stated_person(raw: str) -> bool:
+    """Whether an UNVERIFIED statement may name a person: non-empty, no whitespace or control
+    character anywhere in the raw value, and no non-person prefix, compared casefolded."""
+    if not raw or any(c.isspace() or unicodedata.category(c).startswith("C") for c in raw):
+        return False
+    return not raw.casefold().startswith(NON_PERSON_PREFIXES)
+
+
 def _anonymous(body_subject: str) -> Binding:
     return Binding("", ANONYMOUS, (NO_GRANT,), _body_identity(body_subject, ""))
 
@@ -167,7 +183,8 @@ def bind(caller, *, body_subject: str = "", asked=None,
     via, delegation, who = "", "absent", subject
     if stated:
         delegation = "ignored"
-        if kind == SERVICE and _is_person(stated) and stated.casefold() != subject.casefold():
+        if (kind == SERVICE and _is_stated_person(on_behalf_of or "")
+                and stated.casefold() != subject.casefold()):
             if route in set(delegates().get(subject, ())):
                 who, kind, via, delegation = stated, PERSON, subject, "delegated"
             else:

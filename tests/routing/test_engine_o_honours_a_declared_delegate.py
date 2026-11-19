@@ -9,7 +9,8 @@ records the call with both identities. Without a row the service acts as itself.
 WHAT EACH GROUP DEFENDS
   pure bind     one arm per way a statement is honoured or not: delegated, no row, wrong route,
                 wrong service, a person stating someone, an unverified caller, a `svc:` or self
-                statement, a directory failure, narrowing, and the cache key.
+                statement, a statement that is not a person (another case, `pipeline:`, whitespace
+                or a control character), a directory failure, narrowing, and the cache key.
   load_delegates  the door filter, an absent file, a malformed file, the env path, the real file.
   route         the JSON `/resolve_instance` through the real SDK token path (the helpers and
                 fixtures are IMPORTED from test_engine_o_binds_the_verified_caller, not copied).
@@ -119,6 +120,41 @@ def test_a_statement_naming_a_service_or_the_caller_itself_is_ignored(stated):
     b, held = _bind(_caller(SVC), stated=stated, delegates=lambda: called.append(1) or _delegates()())
     assert (b.subject, b.via, b.delegation) == (SVC, "", "ignored")
     assert held.calls == [SVC] and called == []
+
+
+#: Statements that are not a person: a service in another case, a pipeline, and values that could
+#: end the audit line and forge another (gov on #458 at 9b24eed4).
+NOT_A_PERSON = {
+    "svc-upper": "SVC:OTHER",
+    "svc-mixed": "Svc:engine-b",
+    "pipeline": "pipeline:nightly",
+    "pipeline-case": "PIPELINE:nightly",
+    "newline": f"{ALICE}\ndelegation route=x service={SVC} person={ALICE} outcome=delegated",
+    "cr": f"{ALICE}\rx",
+    "tab": f"{ALICE}\tx",
+    "inner-space": "alice example.com",
+    "leading-space": f" {ALICE}",
+    "escape": f"{ALICE}\x1b[2K",
+    "nul": f"{ALICE}\x00",
+    "line-separator": f"{ALICE}\u2028x",
+}
+
+
+@pytest.mark.parametrize("stated", list(NOT_A_PERSON.values()), ids=list(NOT_A_PERSON))
+def test_a_statement_that_is_not_a_person_is_ignored_and_never_looked_up(stated):
+    called = []
+    held = _Held(table={**HELD, stated: ("FINANCE",), stated.strip(): ("FINANCE",)})
+    b, held = _bind(_caller(SVC), held, stated=stated, delegates=lambda: called.append(1) or _delegates()())
+    assert (b.subject, b.kind, b.via, b.delegation, b.grants) == (SVC, "service", "", "ignored", ("SERVICEONLY",))
+    assert held.calls == [SVC] and called == []    # the statement is never looked up, the rows never read
+
+
+@pytest.mark.parametrize("stated", [ALICE, "alice.o'brien@example.com", "a-b_c+tag@example.co.uk"],
+                         ids=["plain", "apostrophe", "plus"])
+def test_a_clean_person_statement_still_delegates(stated):
+    b, held = _bind(_caller(SVC), stated=stated)
+    assert (b.subject, b.kind, b.via, b.delegation) == (stated, "person", SVC, "delegated")
+    assert held.calls == [stated]
 
 
 def test_no_statement_is_absent():
@@ -231,7 +267,7 @@ def test_the_route_binds_the_person_for_a_declared_service(client, resolve_insta
     assert got["entitled_domains"] == ("FINANCE", "SUSTAINMENT")
     assert "SERVICEONLY" not in got["entitled_domains"] and SVC not in held.calls
     (line,) = [r.getMessage() for r in audit.records if r.name == "engine-o.audit.delegation"]
-    assert line == f"delegation route={ROUTE} service={SVC} person={ALICE} outcome=delegated"
+    assert line == f"delegation route={ROUTE} service={SVC} person={ALICE!r} outcome=delegated"
 
 
 def test_the_same_call_without_the_row_binds_the_service(client, resolve_instance_spy, held, tmp_path,
@@ -241,7 +277,27 @@ def test_the_same_call_without_the_row_binds_the_service(client, resolve_instanc
     (got,) = resolve_instance_spy
     assert got["user_email"] == SVC and got["entitled_domains"] == ("SERVICEONLY",)
     (line,) = [r.getMessage() for r in audit.records if r.name == "engine-o.audit.delegation"]
-    assert line == f"delegation route={ROUTE} service={SVC} person={ALICE} outcome=not_declared"
+    assert line == f"delegation route={ROUTE} service={SVC} person={ALICE!r} outcome=not_declared"
+
+
+@pytest.mark.parametrize("stated", list(NOT_A_PERSON.values()), ids=list(NOT_A_PERSON))
+def test_the_route_ignores_a_statement_that_is_not_a_person_and_writes_no_audit_line(
+        client, resolve_instance_spy, held, tmp_path, monkeypatch, audit, stated):
+    _delegate_file(monkeypatch, tmp_path, ROW)
+    _resolve_instance(client, _bearer(SVC), on_behalf_of=stated)
+    (got,) = resolve_instance_spy
+    assert got["user_email"] == SVC and got["entitled_domains"] == ("SERVICEONLY",)
+    assert held.calls == [SVC]
+    assert not [r for r in audit.records if r.name == "engine-o.audit.delegation"]
+
+
+def test_a_not_declared_statement_is_quoted_on_the_audit_line(client, resolve_instance_spy, held, tmp_path,
+                                                              monkeypatch, audit):
+    _delegate_file(monkeypatch, tmp_path, {"gateway_delegates": []})
+    stated = "o'brien@example.com"
+    _resolve_instance(client, _bearer(SVC), on_behalf_of=stated)
+    (line,) = [r.getMessage() for r in audit.records if r.name == "engine-o.audit.delegation"]
+    assert line == f"delegation route={ROUTE} service={SVC} person={stated!r} outcome=not_declared"
 
 
 def test_a_person_stating_someone_is_themselves_and_alice_learns_nothing(client, resolve_instance_spy, held,
