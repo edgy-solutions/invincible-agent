@@ -632,6 +632,9 @@ async def lifespan(application: FastAPI):
             _re = await run_in_threadpool(human_tasks.reapply_ledger_grants)
             logger.info("access grants re-applied from the ledger: %s",
                         _re.get("skipped") or f"ok={_re.get('ok')} grants={_re.get('grants')}")
+            # a revocation whose reader was not removed (the directory was down) is retried here
+            _rv = await run_in_threadpool(human_tasks.retry_pending_revocations)
+            logger.info("pending revocations retried: %s", _rv)
         except Exception as exc:  # noqa: BLE001
             logger.warning("access grant re-apply failed (grants stay in the ledger): %s",
                            type(exc).__name__)
@@ -1664,10 +1667,13 @@ async def revoke_access_grant(
     effective set whichever it was. Who may revoke is a capability row (`mesh:revokeAccessGrant`
     in capability_grants.yaml), asked of the directory like every other effect.
 
-    The directory loses the reader at the seed's next sync (the one pruner); this route never
-    prunes, so the answer says `effective: at the next seed sync` rather than pretending the
-    reader is already gone. Idempotent: a grant already revoked answers 200 with
-    `already_revoked`, and the first revoker stays on record."""
+    The act is recorded first and stands. The route then removes that ONE reader from the
+    directory (never a listing, never a prune: the seed stays the one pruner). Removed: 200
+    `effective: now`. Not removed (the directory could not be reached): 202 `effective: not yet`
+    with `removed: false`, the act still recorded; it is retried at the next start, by repeating
+    this request, and by the seed's next sync. It is never shown as done. Idempotent: a grant
+    already revoked answers `already_revoked` (and retries the removal), and the first revoker
+    stays on record."""
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
     try:
@@ -1702,9 +1708,20 @@ async def revoke_access_grant(
             "error": "ledger_unavailable",
             "message": "the decision ledger could not record the revocation; nothing changed",
         }) from exc
-    return {"subject": req.subject, "asset": req.asset, "kind": req.kind,
-            "revoked": True, "already_revoked": not added,
-            "effective": "at the next seed sync"}
+    removal = await run_in_threadpool(
+        lambda: human_tasks.remove_revoked_reader(req.subject, req.asset, req.kind))
+    body = {"subject": req.subject, "asset": req.asset, "kind": req.kind,
+            "revoked": True, "already_revoked": not added, "removed": bool(removal.get("removed"))}
+    if removal.get("removed"):
+        return {**body, "effective": "now"}
+    if removal.get("superseded"):
+        extra = {"restored": removal["restored"]} if "restored" in removal else {}
+        return {**body, **extra, "effective": "superseded: a later grant of this key stands"}
+    return JSONResponse(status_code=202, content={
+        **body, "effective": "not yet",
+        "message": "the revocation is recorded, but the directory could not remove the reader yet; "
+                   "it is retried at the next start and at the seed's next sync, and repeating "
+                   "this request retries it now"})
 
 
 class TriageTaskRequest(_BaseModel):
@@ -2000,6 +2017,50 @@ async def get_my_needs_you(on_behalf_of: Optional[str] = None,
         counts[k] = counts.get(k, 0) + 1
     return {"email": current_user.email, "counts": counts, "total": len(tasks),
             "delegated": delegation}
+
+
+class MenuBlock(_BaseModel):
+    subject: str
+    archetype: str
+    persona_fit: list[str]
+    domain_fit: list[str]
+    declared_by: str
+
+
+class MenuBlockInvalid(_BaseModel):
+    source: str
+    reason: str
+
+
+class MenuBlocksResponse(_BaseModel):
+    composed: bool
+    blocks: list[MenuBlock]
+    invalid: list[MenuBlockInvalid]
+
+
+@app.get("/menu_blocks", response_model=MenuBlocksResponse)
+async def get_menu_blocks(current_user: User = Depends(get_current_user)):
+    """The menu placements the overlay rows declare (`<overlay>/menu_blocks/*.yaml`), sorted by
+    (subject, archetype). The 2026-11-07 ruling: the row declares its placement, the BFF serves
+    it, cortex reads it.
+
+    NOT GATED ON ENTITLEMENT, matching `/task_kinds`: this is the shape of the menu, not data,
+    and `persona_fit` / `domain_fit` only RANK, they never gate.
+
+    NOTHING DECLARED, three ways. `composed: false` means the registry was NOT READ (no overlay
+    dir configured, or one is unreadable); it never means "no blocks". `composed: true` with
+    `blocks: []` means this deployment declares none. A client replaces a hand-written row only
+    with a served block for the SAME subject. A row that does not validate, or that shares its
+    (subject, archetype) with another, is left out of `blocks`, named in `invalid`, and logged at
+    ERROR.
+    """
+    from starlette.concurrency import run_in_threadpool
+    from . import menu_blocks
+
+    result = await run_in_threadpool(menu_blocks.compose)
+    for bad in result.invalid:
+        logger.error("menu block %s is invalid: %s", bad["source"], bad["reason"])
+    return {"composed": result.composed, "blocks": result.blocks, "invalid": result.invalid}
 
 
 @app.get("/task_kinds")
@@ -2497,20 +2558,11 @@ def _restate_refusal_message(resp) -> str:
     return str(body)[:500]
 
 
-@app.get("/reviews/{workflow_id}/batch")
-async def get_review_batch(
-    workflow_id: str,
-    current_user: User = Depends(get_current_user),
-):
-    """Fetch the reviewer's grouped-review batch (parts + proposed dispositions + needs_review flags) so
-    the UI can show it before deciding — a blind accept-all can't handle a needs_review row, which is a
-    mandatory per-item exception. EXISTENCE-ORACLE-SAFE: the caller must hold THIS grouped task in their
-    OWN pending queue (same authz_id filter as /act); a caller who isn't the approver gets 404, never a
-    peek at another approver's batch. engine-a's get_batch serves only the per-approver-authored state."""
-    from starlette.concurrency import run_in_threadpool
-    from . import human_tasks
-    rows = await _pending_for_actor(current_user, current_user.authz_id,
-                                    "GET /reviews/{workflow_id}/batch")
+async def _gated_grouped_batch(workflow_id: str, current_user: User, route: str):
+    """The batch routes' shared gate: the caller must hold THIS grouped task in their OWN pending
+    queue (404 `review_not_found` otherwise, before any workflow read), then the workflow's
+    get_batch is read. Returns (the caller's pending task row, get_batch's body)."""
+    rows = await _pending_for_actor(current_user, current_user.authz_id, route)
     match = next((t for t in rows
                   if t.get("workflow_id") == workflow_id and t.get("kind") == "grouped_review"), None)
     if match is None:
@@ -2525,11 +2577,32 @@ async def get_review_batch(
             rr.raise_for_status()
     except Exception as exc:
         raise HTTPException(status_code=502, detail={"error": "review_batch_unreachable", "message": str(exc)})
-    b = rr.json()
+    return match, rr.json()
+
+
+@app.get("/reviews/{workflow_id}/batch")
+async def get_review_batch(
+    workflow_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch the reviewer's grouped-review batch (parts + proposed dispositions + needs_review flags) so
+    the UI can show it before deciding — a blind accept-all can't handle a needs_review row, which is a
+    mandatory per-item exception. EXISTENCE-ORACLE-SAFE: the caller must hold THIS grouped task in their
+    OWN pending queue (same authz_id filter as /act); a caller who isn't the approver gets 404, never a
+    peek at another approver's batch. engine-a's get_batch serves only the per-approver-authored state."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    match, b = await _gated_grouped_batch(workflow_id, current_user,
+                                          "GET /reviews/{workflow_id}/batch")
     # Map engine-a state items -> the UI ReviewItem shape (mpn/subject/proposed_disposition/needs_review).
+    # proposal_outcome / candidate_dispositions / abstention_reason are served so the card says why a
+    # row has no proposal; absent on reviews composed before this field existed (None / []).
     items = [{"mpn": it.get("mpn"), "subject": it.get("subject"),
               "proposed_disposition": it.get("proposed_disposition"),
-              "needs_review": bool(it.get("needs_review", False))} for it in b.get("items", [])]
+              "needs_review": bool(it.get("needs_review", False)),
+              "proposal_outcome": it.get("proposal_outcome"),
+              "candidate_dispositions": list(it.get("candidate_dispositions") or []),
+              "abstention_reason": it.get("abstention_reason")} for it in b.get("items", [])]
     return {
         "batch_id": match["task_id"],        # the grouped HumanTask id — what /act is addressed on
         "notice_id": b.get("notice_id"),
@@ -2638,7 +2711,54 @@ def _resolve_notice_prefix(notice_id: str) -> "Optional[str]":
     return _NOTICE_PREFIX_INDEX.get(notice_id)
 
 
-def _read_notice_provenance_from_store(prefix: str) -> list:
+def _review_source_buckets() -> "frozenset[str]":
+    """The buckets a review's source reference may name, read from CONFIG at call time.
+
+    The provenance route reads whatever bucket a review's stored `artifact_uri` names, with the BFF's
+    own store credentials; unconfined, a reference to a foreign bucket makes the BFF a confused
+    deputy. So the reference is confined to this set. `REVIEW_SOURCE_BUCKETS` (comma-separated)
+    wins when set and non-empty; otherwise `ARTIFACT_BUCKET` (the bucket the extraction sensor builds
+    every `artifact_uri` from) is the one member. With neither set the set is EMPTY and every
+    reference is refused (fail closed)."""
+    raw = os.environ.get("REVIEW_SOURCE_BUCKETS") or ""
+    names = frozenset(x.strip() for x in raw.split(",") if x.strip())
+    if names:
+        return names
+    one = (os.environ.get("ARTIFACT_BUCKET") or "").strip()
+    return frozenset({one}) if one else frozenset()
+
+
+def _review_source_prefix(
+    artifact_uri: str, allowed: "Optional[frozenset[str]]" = None
+) -> "Optional[tuple[str, str]]":
+    """(bucket, prefix) of a review's own source from its `s3://<bucket>/<key>` reference, where the
+    key ends `/review.json` and the prefix is the key minus that suffix. Judged on the PARSED parts.
+    None for anything else: a scheme other than `s3`; a bucket that is not an exact member of
+    `allowed` (None or empty `allowed` refuses everything: there is no unconfined mode); params,
+    query or fragment; a key with an empty, `.` or `..` segment, a backslash or a control character;
+    another file; an empty prefix."""
+    from urllib.parse import urlparse
+
+    if not allowed:
+        return None
+    u = urlparse(artifact_uri or "")
+    if u.scheme != "s3" or not str(artifact_uri).startswith("s3://") or u.netloc not in allowed:
+        return None
+    if u.params or u.query or u.fragment:
+        return None
+    key = u.path[1:] if u.path.startswith("/") else u.path
+    if "\\" in key or ";" in key or any(ord(c) < 32 or ord(c) == 127 for c in key):
+        return None
+    if any(seg in ("", ".", "..") for seg in key.split("/")):
+        return None
+    suffix = "/review.json"
+    if not key.endswith(suffix):
+        return None
+    prefix = key[: -len(suffix)]
+    return (u.netloc, prefix) if prefix else None
+
+
+def _read_notice_provenance_from_store(prefix: str, *, bucket: str = _ARTIFACT_BUCKET) -> list:
     """Read a notice's REAL provenance from MinIO: review.json (the extracted
     values + bboxes + match metadata) joined to its table CROPS. No full-page
     render exists (doc-tools defers the page rasterizer), so the crop IS the
@@ -2656,7 +2776,7 @@ def _read_notice_provenance_from_store(prefix: str) -> list:
     )
 
     def _get_json(key: str):
-        return _json.loads(s3.get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"].read())
+        return _json.loads(s3.get_object(Bucket=bucket, Key=key)["Body"].read())
 
     review = _get_json(f"{prefix}/review.json")
     manifest = _get_json(f"{prefix}/manifest.json")
@@ -2781,6 +2901,56 @@ async def notice_provenance(
         # never fabricated placeholder evidence that masks the failure as green.
         logger.warning("notice provenance read failed for %s (prefix %s): %s", notice_id, prefix, exc)
         return {"notice_id": notice_id, "page_image_url": None, "items": [], "source": "error"}
+
+
+@app.get("/reviews/{workflow_id}/provenance")
+async def review_provenance(
+    workflow_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """The review card's evidence, resolved from the review's OWN source reference (the
+    `artifact_uri` the workflow kept), never from a fixed prefix. Same gate as the batch route: the
+    caller must hold this grouped task in their own pending queue."""
+    from starlette.concurrency import run_in_threadpool
+    _match, b = await _gated_grouped_batch(workflow_id, current_user,
+                                           "GET /reviews/{workflow_id}/provenance")
+    notice_id = b.get("notice_id")
+    artifact_uri = str(b.get("artifact_uri") or "")
+    bucket = None
+    prefix = None
+    if artifact_uri:
+        resolved_by = "review_source"
+        src = _review_source_prefix(artifact_uri, _review_source_buckets())
+        if src is None:
+            # The review HAS a reference; a scan could find a different artifact, so never fall back.
+            resolved_by = "review_source_unreadable"
+            logger.info("review provenance for %s resolved_by=%s", workflow_id, resolved_by)
+            return {"notice_id": notice_id, "page_image_url": None, "items": [],
+                    "source": "none", "resolved_by": resolved_by}
+        bucket, prefix = src
+    else:
+        # Fallback only for reviews composed before the reference was kept; it scans the fixed
+        # root and is to be removed once those reviews are closed.
+        resolved_by = "notice_id_index"
+        prefix = await run_in_threadpool(lambda: _resolve_notice_prefix(notice_id))
+        if not prefix:
+            logger.info("review provenance for %s resolved_by=%s (no prefix)", workflow_id, resolved_by)
+            return {"notice_id": notice_id, "page_image_url": None, "items": [],
+                    "source": "none", "resolved_by": resolved_by}
+    logger.info("review provenance for %s resolved_by=%s", workflow_id, resolved_by)
+    try:
+        if bucket is None:
+            items = await run_in_threadpool(lambda: _read_notice_provenance_from_store(prefix))
+        else:
+            items = await run_in_threadpool(
+                lambda: _read_notice_provenance_from_store(prefix, bucket=bucket))
+        return {"notice_id": notice_id, "page_image_url": None, "items": items,
+                "source": "doc-tools", "resolved_by": resolved_by}
+    except Exception as exc:  # noqa: BLE001
+        # HONEST degrade, as the notice route: empty, reason logged without keys or credentials.
+        logger.warning("review provenance read failed for %s: %s", workflow_id, type(exc).__name__)
+        return {"notice_id": notice_id, "page_image_url": None, "items": [],
+                "source": "error", "resolved_by": resolved_by}
 
 
 # ── PCN parts-by-state dashboard FEEDER ───────────────────────────────────────
@@ -5222,12 +5392,16 @@ class CanvasSeedConflict(_BaseModel):
     detail: CanvasSeedConflictDetail
 
 
-def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list):
+def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list, bearer: str = ""):
     """A SYNC `(class_uri, bound_slots=) -> {outcome, members, ...}` against engine-o's
     `/enumerate_instances`, with the body `dynamic_supervisor._make_enumerator` sends. Sync
     because `decide_disposition` calls it synchronously; the caller runs the whole disposition
     in a threadpool so this never blocks the event loop. Raises on connect/timeout, which the
-    disposition files as `no_provider` rather than as a menu."""
+    disposition files as `no_provider` rather than as a menu.
+
+    `bearer` is the CALLER'S OWN token, forwarded as-is (never minted): engine O binds the person and
+    their grants from the verified token and ignores `user_email` / `entitled_domains` in the body,
+    so a call without it is read as anonymous."""
     def _enumerate(class_uri: str, *, bound_slots: dict | None = None) -> dict:
         _bound = {str(k): str(v) for k, v in (bound_slots or {}).items() if v not in (None, "")}
         with httpx.Client(timeout=5.0) as client:
@@ -5236,6 +5410,7 @@ def _canvas_seed_enumerator(*, user_email: str, entitled_domains: list):
                 json={"class_uri": class_uri, "bound_slots": _bound,
                       "user_email": user_email,
                       "entitled_domains": list(entitled_domains or [])},
+                **({"headers": {"Authorization": f"Bearer {bearer}"}} if bearer else {}),
             )
         resp.raise_for_status()
         return resp.json() or {}
@@ -5253,7 +5428,8 @@ def _canvas_seed_domains(request, ent) -> list[str] | None:
     return None
 
 
-async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user: User):
+async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user: User,
+                           bearer: str = ""):
     """The ask for a 409'd seed, or None when no unbound slot is askable.
 
     Built by the SAME disposition the chat path uses (`decide_disposition` + `ask_card`) from
@@ -5280,7 +5456,10 @@ async def _canvas_seed_ask(template, request: "CanvasSeedRequest", current_user:
 
     ent = current_user.entitlements
     domains = _canvas_seed_domains(request, ent) or sorted({c.domain for c in ent.cells})
-    enum = _canvas_seed_enumerator(user_email=current_user.authz_id, entitled_domains=domains)
+    enum = _canvas_seed_enumerator(
+        user_email=current_user.authz_id, entitled_domains=domains,
+        **({"bearer": bearer} if bearer else {}),
+    )
 
     def _build():
         disp = decide_disposition(accepted=accepted, declared=declared, enumerate_class=enum)
@@ -5483,7 +5662,8 @@ async def canvas_seed(
         # refusal. It is best-effort by construction: a failure here must never turn the
         # refusal into a 500.
         try:
-            _ask = await _canvas_seed_ask(_template, request, current_user)
+            _ask = await _canvas_seed_ask(
+                _template, request, current_user, bearer=_user_bearer(http_request))
             if _ask is not None:
                 _detail["ask"] = _ask
                 if _ask.get("policy"):
@@ -7051,29 +7231,6 @@ async def act_on_human_task(
                     "message": "the asset named by this request is not in the directory; it "
                                "cannot be approved (reject it, or ask for the right asset)",
                 })
-            # A REVOKED GRANT IS NOT RE-GRANTED BY AN APPROVAL (architect, 2026-11-16): until the
-            # re-grant is its own approved act, the answer is a refusal with the reason, never
-            # `grant_written: true`. Before anything is resolved or recorded; the task stays pending.
-            _subject = (match.get("payload") or {}).get("subject")
-            try:
-                _revoked = await run_in_threadpool(
-                    lambda: human_tasks.grant_is_revoked(_subject, _asset))
-            except Exception as exc:  # noqa: BLE001 -- the ledger cannot say: approve nothing
-                logger.error("grant ledger unreadable at approval: task_id=%s %s",
-                             task_id, type(exc).__name__)
-                raise HTTPException(status_code=503, detail={
-                    "error": "ledger_unavailable", "task_id": task_id,
-                    "message": "the decision ledger could not be read; nothing was approved "
-                               "and the task stays pending"}) from exc
-            if _revoked:
-                from .authz.refusal import policy_refusal
-                raise policy_refusal(
-                    "grant_revoked", status_code=409,
-                    policy_id="asset_grants",
-                    missing_binding="a re-grant act (a revoked grant is not re-granted by an approval)",
-                    message="this grant was revoked; an approval does not revive it. Nothing was "
-                            "recorded and the task stays pending (reject it)",
-                    extra={"task_id": task_id, "asset": _asset, "subject": _subject})
 
     # FULFILLMENT (workflow_ack generalized, HAZ-1003): CONFIRM BEFORE RESOLVE, not the other
     # way around. The old order resolved the projection FIRST and treated the Restate resume as
@@ -10196,7 +10353,9 @@ async def _generate_dagster_stream_inner(
                         "user_persona": user_persona,
                         "entitled_domains": entitled_domains,
                     },
-                    headers=_trace_headers(trace_id, session_id),
+                    # The caller's own token, so engine O binds the person (never the body).
+                    headers={**_trace_headers(trace_id, session_id),
+                             **({"Authorization": f"Bearer {caller_token}"} if caller_token else {})},
                 )
                 resp.raise_for_status()
                 intent_extraction = resp.json()
@@ -16511,7 +16670,6 @@ async def _file_or_find_document_promotion_task(
     # new task is filed under the next id while the row still carries g.
     task_id = _promotion_task_id(
         ingest_id, int(row.get("review_generation") or 0) if generation is None else generation)
-    await _clear_stale_receipt_domain(ingest_id, row.get("domain"), domain)
     _refresh = False
     if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
         # LEGACY PATH (spec 204): since a leaf change at review files a NEW generation, this in-place
@@ -16604,6 +16762,11 @@ async def _file_or_find_document_promotion_task(
             task_id, payload=payload, title=_title, summary=_summary))
         await _note_receipt_domain(ingest_id, domain)
         return task_id, "ALREADY_FILED"
+    # THE CLEAR SITS HERE, immediately before a task would be filed, and nowhere earlier: a call
+    # that finds the task already open files nothing, so a clear that cannot land must not turn it
+    # into a 503 "nothing was filed" (it is repaired by `_note_receipt_domain` on that path). The
+    # clear still precedes the filing, so a failed write after it leaves NULL, never the old domain.
+    await _clear_stale_receipt_domain(ingest_id, row.get("domain"), domain)
     try:
         await run_in_threadpool(lambda: human_tasks.register_task(
             kind=promotion.KIND, task_id=task_id, audience=audience,

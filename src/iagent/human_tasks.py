@@ -194,6 +194,7 @@ def apply_migration() -> None:
         with conn.cursor() as cur:
             cur.execute(_MIGRATION_SQL)
             cur.execute(_GRANT_LEDGER_SQL)
+            cur.execute(_GRANT_LEDGER_SEQ_SQL)
         conn.commit()
 
 
@@ -1002,6 +1003,7 @@ def record_routing_fault(*, task_id: str, addressee: str, dimension: str, label:
 # why in `reason`; `task_id` is empty.
 _GRANT_LEDGER_SQL = """
 CREATE TABLE IF NOT EXISTS access_grant_ledger (
+    seq          BIGSERIAL PRIMARY KEY,
     subject      TEXT   NOT NULL,
     asset        TEXT   NOT NULL,
     kind         TEXT   NOT NULL DEFAULT 'dataset',
@@ -1010,24 +1012,54 @@ CREATE TABLE IF NOT EXISTS access_grant_ledger (
     granted_by   TEXT   NOT NULL,
     reason       TEXT   NOT NULL DEFAULT '',
     task_id      TEXT   NOT NULL DEFAULT '',
-    granted_at   BIGINT NOT NULL,
-    PRIMARY KEY (subject, asset, kind, entry)
+    granted_at   BIGINT NOT NULL
 );
+"""
+
+# A ledger made before `seq` had PRIMARY KEY (subject, asset, kind, entry): one act of each kind per
+# grant, so a re-grant could not be a row. Upgrade in place, idempotent, on the first BFF start:
+# every row gets a seq, grants BEFORE revokes (then by clock), so the old "a revocation is
+# permanent" reading is exactly the latest-act reading of the migrated rows; the old key is dropped.
+_GRANT_LEDGER_SEQ_SQL = """
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_name = 'access_grant_ledger' AND column_name = 'seq') THEN
+    ALTER TABLE access_grant_ledger ADD COLUMN seq BIGINT;
+    UPDATE access_grant_ledger l SET seq = o.n
+      FROM (SELECT ctid AS c, row_number() OVER (ORDER BY (entry = 'revoke'), granted_at, subject,
+                                                 asset) AS n FROM access_grant_ledger) o
+     WHERE l.ctid = o.c;
+    CREATE SEQUENCE IF NOT EXISTS access_grant_ledger_seq_seq OWNED BY access_grant_ledger.seq;
+    PERFORM setval('access_grant_ledger_seq_seq',
+                   COALESCE((SELECT max(seq) FROM access_grant_ledger), 0) + 1, false);
+    ALTER TABLE access_grant_ledger
+      ALTER COLUMN seq SET DEFAULT nextval('access_grant_ledger_seq_seq'),
+      ALTER COLUMN seq SET NOT NULL;
+    ALTER TABLE access_grant_ledger DROP CONSTRAINT IF EXISTS access_grant_ledger_pkey;
+    ALTER TABLE access_grant_ledger ADD PRIMARY KEY (seq);
+  END IF;
+END $$;
 """
 
 _GRANT_INSERT_SQL = """
 INSERT INTO access_grant_ledger (subject, asset, kind, entry, requested_by, granted_by, reason,
                                  task_id, granted_at)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-ON CONFLICT (subject, asset, kind, entry) DO NOTHING
+SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s
+ WHERE COALESCE((SELECT entry FROM access_grant_ledger
+                  WHERE subject = %s AND asset = %s AND kind = %s
+                  ORDER BY seq DESC LIMIT 1), '') <> %s
 """
+# One row per ACT. An act is appended only when it CHANGES the grant's latest state: a second grant
+# of a granted key, or a second revoke of a revoked one, adds nothing (the first approver stays).
+# Order is the server's `seq`, never `granted_at` (a clock; a skewed pod cannot reorder the acts).
 
 _GRANT_SELECT_SQL = """
-SELECT subject, asset, kind, entry, requested_by, granted_by, reason, task_id, granted_at
-  FROM access_grant_ledger ORDER BY granted_at, subject, asset
+SELECT seq, subject, asset, kind, entry, requested_by, granted_by, reason, task_id, granted_at
+  FROM access_grant_ledger ORDER BY seq
 """
 
-_GRANT_FIELDS = ("subject", "asset", "kind", "entry", "requested_by", "granted_by", "reason",
+_GRANT_FIELDS = ("seq", "subject", "asset", "kind", "entry", "requested_by", "granted_by", "reason",
                  "task_id", "granted_at")
 
 
@@ -1037,7 +1069,8 @@ def _append_entry(entry: str, *, subject: str, asset: str, requested_by: str, gr
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(_GRANT_INSERT_SQL, (subject, asset, kind, entry, requested_by, granted_by,
-                                            reason or "", task_id or "", at))
+                                            reason or "", task_id or "", at,
+                                            subject, asset, kind, entry))
             added = cur.rowcount > 0
         conn.commit()
     if added:
@@ -1062,16 +1095,12 @@ def record_grant(*, subject: str, asset: str, requested_by: str, granted_by: str
                          now_ms=now_ms)
 
 
-class GrantRevoked(ValueError):
-    """An approval names a grant that has been revoked. Until a re-grant is its own approved act
-    (the follow-up), a revocation is permanent for its (subject, asset, kind): nothing is recorded
-    and nothing is applied, and the answer is a refusal, never "granted"."""
-
-
-def grant_is_revoked(subject: str, asset: str, kind: str = "dataset") -> bool:
-    """True when the ledger holds a revocation row for this grant."""
-    key = (subject, asset, kind or "dataset")
-    return any(r["entry"] == "revoke" and _grant_key(r) == key for r in ledger_entries())
+def _latest_acts(entries: list) -> dict:
+    """The latest act per grant key, in the ledger's order (`seq`): the one state that counts."""
+    latest: dict = {}
+    for r in entries:
+        latest[_grant_key(r)] = r
+    return latest
 
 
 class NoSuchGrant(ValueError):
@@ -1094,7 +1123,8 @@ def record_revocation(*, subject: str, asset: str, revoked_by: str, reason: str,
             raise ValueError(f"record_revocation: {name} is required")
     entries = ledger_entries()
     key = (subject, asset, kind or "dataset")
-    if any(_grant_key(r) == key and r["entry"] == "revoke" for r in entries):
+    latest = _latest_acts(entries).get(key)
+    if latest is not None and latest["entry"] == "revoke":
         return False
     if key not in {_grant_key(g) for g in desired_grants(entries)}:
         raise NoSuchGrant(f"no grant of {asset} to {subject} is in effect")
@@ -1151,9 +1181,10 @@ def _grant_sync_module():
 
 
 def desired_grants(ledger: Optional[list] = None) -> list[dict[str, Any]]:
-    """Committed policy plus the ledger's grants minus the ledger's revocations: what the
+    """Committed policy plus the ledger's grants, resolved by the latest act on each key: what the
     directory's readers must be (`grant_sync.union_grants`, the function the seed also calls).
-    Committed policy wins a duplicate grant; a revocation removes the key whatever its source.
+    Committed policy wins a duplicate grant; a key whose latest act is a revocation is out whatever
+    its source, and a later re-grant puts it back.
     The sync PRUNES reader relations outside this set, so a ledger grant must always travel with
     the committed ones."""
     entries = ledger_entries() if ledger is None else ledger
@@ -1236,8 +1267,6 @@ def write_grant_and_sync(*, subject: str, asset: str, granted_by: str, reason: s
     built yet. Until then the ledger row (and its audit line) is the record of who approved what."""
     if not asset_exists(asset):
         raise UnknownAsset(f"{asset} is not in the directory: no grant is recorded")
-    if grant_is_revoked(subject, asset):
-        raise GrantRevoked(f"the grant of {asset} to {subject} was revoked; nothing is recorded")
     record_grant(subject=subject, asset=asset, granted_by=granted_by, reason=reason,
                  requested_by=requested_by or subject, task_id=task_id)
     return {**apply_ledger_to_directory(), "recorded": True}
@@ -1253,6 +1282,89 @@ def reapply_ledger_grants() -> dict[str, Any]:
     return apply_ledger_to_directory()
 
 
+#: Seconds before attempt n+1 of a reader removal (n * this). A seam: tests set it to 0.
+_REMOVE_BACKOFF = 0.5
+
+
+def _delete_reader(subject: str, asset: str, kind: str) -> None:
+    """Delete the ONE `reader` relation of one revoked grant from the directory (a 404 is already
+    gone). It lists nothing and prunes nothing: the seed stays the one pruner of everything else.
+    The seam a test replaces: no directory write in a unit test."""
+    _grant_sync_module()
+    from topaz_sync import DirRelation, TopazClient
+    with TopazClient(_TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393") as client:
+        client.delete_relation(DirRelation(kind, asset, "reader", "user", subject))
+
+
+def _restore_reader(subject: str, asset: str, kind: str) -> None:
+    """Put ONE reader relation back (a re-grant that landed while the removal was in flight).
+    The seam a test replaces; like `_delete_reader` it lists nothing and prunes nothing."""
+    _grant_sync_module()
+    from topaz_sync import DirRelation, TopazClient
+    with TopazClient(_TOPAZ_DIRECTORY_URL or "http://topaz-svc:9393") as client:
+        client.set_relation(DirRelation(kind, asset, "reader", "user", subject))
+
+
+def remove_revoked_reader(subject: str, asset: str, kind: str = "dataset", *,
+                          attempts: int = 3) -> dict[str, Any]:
+    """The revocation, made effective now: remove the one reader a revocation names.
+
+    Called AFTER the revocation is recorded; the record stands whatever this does. The ledger is
+    re-read before every attempt, and the reader is removed only while the grant's LATEST act is
+    still a revocation, and AFTER the delete once more: a re-grant that landed between the read and the
+    delete has its reader put back (`restored`; if that fails the answer says `restored: False`, and the
+    startup re-apply and the seed's next sync restore it). Retries `attempts`
+    times; returns `{"removed": True}`, `{"removed": False, "superseded": True}` (a later grant
+    stands), or `{"removed": False, "error": <exception type>}` when every attempt failed: the
+    caller must say "not yet", never "done". The failed ones are retried by
+    `retry_pending_revocations` (startup) and by repeating the revoke request; the seed's next
+    sync removes it regardless."""
+    key = (subject, asset, kind or "dataset")
+    last = "unknown"
+    for n in range(max(1, attempts)):
+        if n:
+            time.sleep(_REMOVE_BACKOFF * n)
+        try:
+            latest = _latest_acts(ledger_entries()).get(key)
+            if latest is None or latest["entry"] != "revoke":
+                return {"removed": False, "superseded": True}
+            _delete_reader(subject, asset, key[2])
+        except Exception as exc:  # noqa: BLE001 -- recorded already; report, never claim done
+            last = type(exc).__name__
+            logger.warning("revoked reader not removed (attempt %d/%d): subject=%s asset=%s %s",
+                           n + 1, attempts, subject, asset, last)
+            continue
+        # A re-grant can land between the read above and the delete. Re-read AFTER the delete: if the
+        # key's latest act is now a grant, its reader was just removed, so put it back.
+        try:
+            after = _latest_acts(ledger_entries()).get(key)
+        except Exception as exc:  # noqa: BLE001 -- cannot tell whether a grant landed: never say done
+            return {"removed": False, "error": type(exc).__name__}
+        if after is None or after["entry"] != "grant":
+            return {"removed": True}
+        try:
+            _restore_reader(subject, asset, key[2])
+        except Exception as exc:  # noqa: BLE001 -- the reader is gone and a grant stands: say so
+            logger.warning("re-granted reader not restored: subject=%s asset=%s %s",
+                           subject, asset, type(exc).__name__)
+            return {"removed": False, "superseded": True, "restored": False,
+                    "error": type(exc).__name__}
+        return {"removed": False, "superseded": True, "restored": True}
+    return {"removed": False, "error": last}
+
+
+def retry_pending_revocations() -> dict[str, Any]:
+    """Startup: remove the reader of every grant whose latest act is a revocation (idempotent: a
+    reader already gone is a no-op), so a revocation whose removal failed is retried without
+    anyone asking. Only keys the ledger itself revokes; nothing else is listed or pruned."""
+    if not _TOPAZ_DIRECTORY_URL:
+        return {"skipped": "no directory"}
+    pending = [k for k, r in _latest_acts(ledger_entries()).items() if r["entry"] == "revoke"]
+    results = [remove_revoked_reader(*k, attempts=1) for k in pending]
+    return {"revoked": len(pending), "removed": sum(1 for r in results if r.get("removed")),
+            "failed": sum(1 for r in results if r.get("error"))}
+
+
 def grants_absent_from_policy(live: Optional[Any] = None) -> dict[str, list]:
     """The report: grants that enforce but are not in committed policy. `ledger`: approved and
     recorded, awaiting the commit (ADR-0062 section 7). `directory`: reader relations live in the
@@ -1260,11 +1372,12 @@ def grants_absent_from_policy(live: Optional[Any] = None) -> dict[str, list]:
     (an iterable of `(subject, asset, kind)`) is given."""
     committed = {_grant_key(g) for g in committed_grants()}
     entries = ledger_entries()
-    revoked = {_grant_key(r) for r in entries if r["entry"] == "revoke"}
+    latest = _latest_acts(entries)
     rows = [r for r in entries if r["entry"] == "grant"]
-    # a revoked grant no longer enforces, so it is not "enforcing but absent from policy"
-    report = {"ledger": [r for r in rows if _grant_key(r) not in committed
-                         and _grant_key(r) not in revoked], "directory": []}
+    # a grant whose latest act is a revocation no longer enforces, so it is not "enforcing but
+    # absent from policy"; a re-granted one does again
+    report = {"ledger": [r for k, r in latest.items() if r["entry"] == "grant"
+                         and k not in committed], "directory": []}
     if live is not None:
         known = committed | {_grant_key(r) for r in rows}
         report["directory"] = sorted(k for k in set(live) if k not in known)

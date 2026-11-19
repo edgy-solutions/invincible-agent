@@ -74,14 +74,14 @@ def test_the_adapter_sends_the_person_as_the_caller_with_no_domains(monkeypatch)
         == "pcn:IPCN25300X#NSR01L30NXT5G"
     assert sent[0]["url"].endswith("/resolve_instance")
     assert sent[0]["json"] == {"identifier": "NSR01L30NXT5G", "user_email": DROPPER,
-                               "entitled_domains": []}
+                               "entitled_domains": [], "on_behalf_of": DROPPER}
 
 
 def test_no_person_is_sent_as_blank_never_omitted_and_never_a_domain(monkeypatch):
     sent = _capture_post(monkeypatch)
     composer.resolve_subject_via_engine_o("NSR01L30NXT5G")
     assert sent[0]["json"] == {"identifier": "NSR01L30NXT5G", "user_email": "",
-                               "entitled_domains": []}
+                               "entitled_domains": [], "on_behalf_of": ""}
 
 
 # ── hop 2: the starter binds the stamped person into the seam ───────────────────────────────

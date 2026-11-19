@@ -1047,8 +1047,11 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # `group_by` (mesh:WhereUsedSet, ADR-0065 section 4): the column key the rows group by,
     # named by the producer so the card never guesses one. Envelope-level, so it is carried
     # only because it is declared here (tests/finance/test_the_wire_carries_what_the_engine_declares.py).
+    #
+    # `absent_reason` ({column key: short phrase}): envelope-level, served so cortex draws the
+    # producer's words in a null cell instead of "-". Ruled by Chris 11-19; never a 0.
     "INSTANCES_BY_PROPERTY": ("rows", ("title", "target", "columns", "row_identity",
-                                       "state_vocabulary", "group_by")),
+                                       "state_vocabulary", "group_by", "absent_reason")),
 }
 
 

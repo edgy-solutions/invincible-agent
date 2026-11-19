@@ -113,11 +113,12 @@ def test_EVERY_ENUMERATE_PROVIDER_IS_TOLD_THE_PERSON_AND_THE_GRANT(eo):
             "the caller displaced the request it rides with", url, body)
 
 
-def test_CONTROL_NO_PERSON_IS_REFUSED_AND_NOTHING_IS_SENT(eo):
+def test_CONTROL_NO_PERSON_IS_REFUSED_AND_NOTHING_IS_SENT(eo, _the_caller_is_verified):
     """Differs from the arm above only in the caller. Was: "nobody" forwarded as an explicit
     empty. Now (2026-10-16) a caller with no person is refused 422 `no_person` before any
     provider is asked; the refusal shape is sealed in
     test_enumerate_instances_refuses_a_caller_who_is_not_a_person.py."""
+    _the_caller_is_verified.as_("")  # the VERIFIED caller carries no person
     resp = asyncio.run(eo.enumerate_instances(eo.EnumerateInstancesRequest(class_uri=CLASS)))
     assert resp.status_code == 422
     assert eo._test_posts == []
@@ -302,3 +303,12 @@ def test_THE_SDK_GAP_IS_REAL_AND_NAMED():
         assert model.model_config.get("extra") == "forbid", (
             "the SDK model neither declares the caller keys nor forbids extras — the keys would "
             "travel to an SDK-shaped provider with nothing checking their shape")
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name ann.analyst@example.test, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "ann.analyst@example.test", ["PRODUCTION_COST","SUSTAINMENT"])

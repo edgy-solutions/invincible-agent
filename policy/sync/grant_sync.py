@@ -235,8 +235,8 @@ def readback_grants(client, grants: list[GrantRecord]) -> tuple[int, int]:
 #: nothing is pruned: an unreachable store must never revoke a grant it holds.
 EXIT_LEDGER_UNREADABLE = 5
 
-_LEDGER_SELECT = ("SELECT subject, asset, kind, entry, granted_by, reason FROM access_grant_ledger "
-                  "ORDER BY granted_at, subject, asset")
+_LEDGER_SELECT = ("SELECT seq, subject, asset, kind, entry, granted_by, reason "
+                  "FROM access_grant_ledger ORDER BY seq")
 
 
 def read_ledger(dsn: str) -> list:
@@ -252,7 +252,7 @@ def read_ledger(dsn: str) -> list:
                 cur.execute(_LEDGER_SELECT)
             except psycopg2.errors.UndefinedTable:
                 return []
-            cols = ("subject", "asset", "kind", "entry", "granted_by", "reason")
+            cols = ("seq", "subject", "asset", "kind", "entry", "granted_by", "reason")
             return [dict(zip(cols, r)) for r in cur.fetchall()]
     finally:
         conn.close()
@@ -355,25 +355,36 @@ def _grant_key(g: dict) -> tuple:
     return (g.get("subject"), g.get("asset"), g.get("kind") or "dataset")
 
 
-def union_grants(committed: list, ledger: list) -> list:
-    """What the directory's readers must be: committed policy, plus the ledger's grants, minus the
-    ledger's revocations (a revocation row names the grant it revokes). Committed policy wins a
-    duplicate grant (its git history is the stronger record); a revocation removes the key
-    whatever its source, so a committed grant can be revoked without a commit. The ledger is
-    append-only and a revoked key stays revoked: a later approval of the same grant adds no row
-    that outranks the revocation.
+def latest_acts(ledger: list) -> dict:
+    """The latest act per grant key, in the ledger's order: by `seq` (the server's sequence) when
+    the rows carry one, else the order given. Never the clock: `granted_at` is not read."""
+    rows = sorted(enumerate(ledger), key=lambda p: (p[1].get("seq") is None, p[1].get("seq") or 0, p[0]))
+    latest: dict = {}
+    for _, r in rows:
+        latest[_grant_key(r)] = r
+    return latest
 
-    A ledger row has `entry` 'grant' (the default, for rows that carry none) or 'revoke'."""
-    revoked = {_grant_key(r) for r in ledger if (r.get("entry") or "grant") == "revoke"}
+
+def union_grants(committed: list, ledger: list) -> list:
+    """What the directory's readers must be: committed policy and the ledger, resolved by the
+    LATEST act on each grant. A grant whose latest act is a revocation is out, whatever its source
+    (a committed grant can be revoked without a commit); a grant whose latest act is a grant is
+    in, and a later re-grant after a revocation puts it back. Committed policy wins the row's
+    content when both name the key (its git history is the stronger record).
+
+    The ledger is append-only: acts are never edited, a re-grant is a later row. A ledger row has
+    `entry` 'grant' (the default, for rows that carry none) or 'revoke'."""
     out = {_grant_key(g): dict(g) for g in committed if isinstance(g, dict)}
     rest = [g for g in committed if not isinstance(g, dict)]    # kept: load_grants reports them
-    for row in ledger:
-        if (row.get("entry") or "grant") != "grant":
-            continue
-        out.setdefault(_grant_key(row), {
-            "subject": row["subject"], "asset": row["asset"], "kind": row.get("kind") or "dataset",
-            "granted_by": row["granted_by"], "reason": row.get("reason") or ""})
-    return [g for k, g in out.items() if k not in revoked] + rest
+    for key, row in latest_acts(ledger).items():
+        if (row.get("entry") or "grant") == "revoke":
+            out.pop(key, None)
+        else:
+            out.setdefault(key, {
+                "subject": row["subject"], "asset": row["asset"],
+                "kind": row.get("kind") or "dataset",
+                "granted_by": row["granted_by"], "reason": row.get("reason") or ""})
+    return list(out.values()) + rest
 
 
 def ledger_grant_keys(ledger: list) -> frozenset:

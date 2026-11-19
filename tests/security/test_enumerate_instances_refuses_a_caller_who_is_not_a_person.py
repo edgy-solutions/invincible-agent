@@ -43,7 +43,7 @@ MEMBERS = {"outcome": "members", "count": 1,
 
 
 @pytest.fixture
-def eo(monkeypatch):
+def eo(monkeypatch, _the_caller_is_verified):
     from agent_fleet.ontology_service import main as mod
     posts: list = []
     discovered: list = []
@@ -73,11 +73,15 @@ def eo(monkeypatch):
     monkeypatch.setattr(mod, "_discover_enumerate_providers", _discover)
     monkeypatch.setattr(mod, "_gate_enumerated_members", _passthrough)
     mod._test_posts, mod._test_discovered = posts, discovered
+    mod._test_caller = _the_caller_is_verified
     return mod
 
 
 def _post(eo, **body):
+    """The caller is the VERIFIED token, not the body (lane 74): the `user_email` a case names is
+    who the token says they are, and the body carries no identity at all."""
     from fastapi.testclient import TestClient
+    eo._test_caller.as_(str(body.pop("user_email", "")).strip())
     return TestClient(eo.app).post("/enumerate_instances", json={"class_uri": CLASS, **body})
 
 
@@ -108,6 +112,7 @@ def test_CONTROL_a_person_with_the_same_stubs_is_answered(eo):
 # --- the in-process caller -------------------------------------------------------------------
 
 def test_the_scoped_bind_with_no_person_returns_none_and_sends_nothing(eo):
+    eo._test_caller.as_("")
     got = asyncio.run(eo._bind_from_scope(CLASS, "2021-02-01", {}, [], user_email=""))
     assert got is None
     assert eo._test_posts == [] and eo._test_discovered == []
@@ -178,3 +183,12 @@ def test_the_ask_detail_reads_no_person_refused_not_http_error(monkeypatch):
 def test_a_capitalised_service_head_is_still_a_service():
     from agent_fleet.utils import origin_entitlement
     assert not origin_entitlement.is_person("SVC:x")
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name alice@example.com, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "alice@example.com", ["SUSTAINMENT"])

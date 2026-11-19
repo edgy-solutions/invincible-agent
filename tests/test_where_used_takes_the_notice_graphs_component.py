@@ -61,10 +61,12 @@ def _program_of(label: str) -> str:
 
 
 @pytest.fixture()
-def client(monkeypatch):
+def client(monkeypatch, _the_caller_is_verified):
     monkeypatch.setattr(eo, "_notice_parts_can_view_program",
                         lambda program, caller: caller in _grants().get(program, set()))
-    return TestClient(eo.app)  # no `with`: the lifespan (stores, registration) is not run
+    c = TestClient(eo.app)  # no `with`: the lifespan (stores, registration) is not run
+    c.verified = _the_caller_is_verified
+    return c
 
 
 def _from_the_graph(client, label: str, caller: str) -> dict:
@@ -72,6 +74,7 @@ def _from_the_graph(client, label: str, caller: str) -> dict:
     only the resolved instance."""
     iri = component_iri(_notice_numbers()[label])
     assert iri.startswith(np_.COMPONENT_IRI_PREFIX), "the IRI is the one the notice graph carries"
+    client.verified.as_(caller)  # the VERIFIED token says who is asking, not the body
     r = client.post("/where_used", json={
         "params": {}, "resolved_instance_id": iri,
         "entitled_domains": [w.DOMAIN], "user_email": caller})
@@ -158,3 +161,12 @@ def test_THE_LIFESPAN_REGISTERS_EVERY_ROW_UNDER_ITS_OWN_NAME_AND_INPUT():
     loop_vars = {name_var, input_var}
     shared = {k: v for k, v in kw.items() if k not in ("name", "input_uri")}
     assert not [k for k, v in shared.items() if loop_vars & set(re.findall(r"\w+", v))], shared
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name alice@example.com, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "alice@example.com", {"alice@example.com": ["SUSTAINMENT"], "bob@example.com": ["SUSTAINMENT"]})

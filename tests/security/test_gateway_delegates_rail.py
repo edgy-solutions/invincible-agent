@@ -269,7 +269,7 @@ def test_a_gateway_row_for_a_bff_route_is_refused_naming_the_door():
 @pytest.mark.parametrize("door", ["side", "", None, ["bff"]], ids=["unknown", "blank", "none", "list"])
 def test_an_unknown_door_is_one_error_and_no_route_error(door):
     errs = _b(_rows(_row(door=door, routes=[_ROUTE, "no.such.route"])))
-    assert len(errs) == 1 and "unknown door" in errs[0] and "gateway, bff" in errs[0], errs
+    assert len(errs) == 1 and "unknown door" in errs[0] and "gateway, bff, engine-o" in errs[0], errs
 
 
 def test_the_same_service_twice_on_one_door_is_refused():
@@ -291,3 +291,33 @@ def test_SEAL_the_bff_register_route_is_one_the_validator_admits_on_door_bff():
     pytest.importorskip("fastapi")
     from src.iagent import gateway
     assert gateway._REGISTER_DELEGATE_ROUTE in vp.BFF_DELEGATE_ROUTES
+
+
+# ---- door: engine-o (architect 11-19) -------------------------------------------------------------
+
+_O_ROUTE = "resolve_instance"
+_CHART_COPY = _REPO / "helm" / "invincible-agent" / "files" / "policy" / "gateway_delegates.yaml"
+
+
+def test_SEAL_the_engine_o_route_list_is_the_one_engine_o_owns():
+    from agent_fleet.ontology_service import caller_binding
+    assert vp.ENGINE_O_DELEGATE_ROUTES == caller_binding.DELEGATE_ROUTES
+
+
+def test_an_engine_o_row_for_its_route_is_clean():
+    assert _b(_rows(_row(door="engine-o", routes=[_O_ROUTE]))) == []
+
+
+def test_an_engine_o_row_for_a_route_outside_the_list_is_refused_naming_the_door():
+    _red(_rows(_row(door="engine-o", routes=["search_predicates"])),
+         "unknown route 'search_predicates' for door engine-o")
+
+
+def test_the_shipped_rail_has_the_engine_o_row_and_still_validates_clean():
+    rows = [r for r in _SEED["gateway_delegates"] if r.get("door") == "engine-o"]
+    assert [(r["service"], r["routes"]) for r in rows] == [("svc:engine-a", [_O_ROUTE])]   # control
+    assert vp.gateway_delegates_errors(_SEED, _USERS) == []
+
+
+def test_the_chart_copy_is_byte_equal_to_the_policy_file():
+    assert _CHART_COPY.read_bytes() == _RAIL.read_bytes()

@@ -35,6 +35,8 @@ class PartItem:
     proposed_disposition: Optional[str] = None  # system-proposed action, or None
     needs_review: bool = False             # doc-tools weak-extraction flag (provenance strength)
     proposed_by_ruleset: Optional[str] = None   # policy-artifact identity that proposed the disposition
+    proposal_outcome: Optional[str] = None      # matched / unclassifiable / conflict; None = built before this field
+    candidate_dispositions: tuple[str, ...] = ()  # the dispositions the matched rules named (why a row has none)
 
 
 @dataclass

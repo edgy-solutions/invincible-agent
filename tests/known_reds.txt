@@ -4,6 +4,7 @@
 # or "::" (a file- or class-level entry). A line with no "# " comment is refused.
 # Blank lines and lines starting with "#" are ignored.
 # Retire an entry by deleting its line in the PR that fixes the test.
+# The advisory job reports a line whose comment says "fixed by PR <n>" as stale once PR <n> is merged on master.
 
 # Measured 2026-11-16 on master 74e26cce (lane 74 triage).
 tests/routing/test_a_supervisor_resolution_is_never_re_derived.py::test_a_resolved_subject_sends_the_outcome_and_the_subject  # A: CallerIdentityUnavailable no_run_id, the run-bound vault routes every leg through the redeem (lane 01)
@@ -24,15 +25,6 @@ tests/routing/test_enumerate_instances_hears_the_caller.py::test_THE_SUPERVISORS
 tests/routing/test_resolve_instance_hears_the_caller.py::test_THE_SUPERVISOR_SENDS_THE_PERSON_TO_FILL_SLOTS  # A: CallerIdentityUnavailable no_run_id, the run-bound vault routes every leg through the redeem (lane 01)
 tests/routing/test_a_pick_gets_a_row.py::test_the_merge_happens_where_the_artifact_can_still_see_it  # B: false red, the seal reads the FIRST slot_resolution emit, an early exit added one before the merge (lane 01)
 tests/planning/test_fill_slots_seam.py::test_the_supervisor_degrades_to_defaults_on_every_failure_path  # C: not attributed (lane 01)
-tests/test_endpoint_gating_manifest.py::test_every_source_route_is_declared[gateway-src/iagent/gateway.py]  # D: GET /me/queue and GET /me/needs_you are not declared in the manifest (lane saf)
-tests/test_endpoint_gating_manifest.py::test_every_source_route_is_declared[ontology_service-agent_fleet/ontology_service/main.py]  # D': POST /where_used is not declared; fixed by PR 427, delete there (lane 74)
-tests/routing/test_classify_route.py::test_routing_decision  # F: calls a live engine resolve endpoint; red (400 or unreachable) wherever that engine is not served (environment, lane 01)
-tests/routing/test_phrasing_independence.py::test_verb_routing_phrasing_independence  # F: calls a live engine resolve endpoint; red (400 or unreachable) wherever that engine is not served (environment, lane 01)
-tests/routing/test_phrasing_independence.py::test_subject_resolution_phrasing_coverage  # F: calls a live engine resolve endpoint; red (400 or unreachable) wherever that engine is not served (environment, lane 01)
-tests/routing/test_phrasing_independence.py::test_storage_form_invariance_baseline_is_stable  # F: calls a live engine resolve endpoint; red (400 or unreachable) wherever that engine is not served (environment, lane 01)
-tests/test_networkpolicy_flows_survive.py::test_EVERY_ENGINE_O_FLOW_SURVIVES_THE_GATE  # E: accepted-issuer lists were read as destinations; fixed by PR 434, delete there (lane 74)
-tests/test_networkpolicy_flows_survive.py::test_THE_DERIVED_DESTINATION_SET_IS_THE_RECORDED_SET[iagent-cortex-bff]  # E: accepted-issuer lists were read as destinations; fixed by PR 434, delete there (lane 74)
-tests/test_networkpolicy_flows_survive.py::test_THE_DERIVED_DESTINATION_SET_IS_THE_RECORDED_SET[iagent-engine-o]  # E: accepted-issuer lists were read as destinations; fixed by PR 434, delete there (lane 74)
 
 # Measured 2026-11-17 by this job's first run (Actions run 44019118128, master 74e26cce on the Linux runner):
 # 61 reds the box census above never saw. G: the runner's environment, read from the assertion text.
@@ -72,7 +64,6 @@ tests/test_board_drift.py::test_the_check_can_actually_fail  # G: CI environment
 tests/test_case_projection.py::test_payload_keys_are_exactly_the_contract_fields  # H: the payload gained a top-level `stage` (99d4d7a1) that the contract field list does not name (lane 01)
 tests/test_citation_anchors_resolve.py::test_EVERY_CITED_ANCHOR_NAMES_A_HEADING_THAT_EXISTS  # H: board item 01M6FRZ49Q7ZPZKW56FD853GQR cites the template anchor #r-0NN--slug (4fd590e6) (lane 01)
 tests/test_citation_paths.py::test_every_cited_docs_path_resolves  # H: board item 01M6FRZ4EV6BYDQ7ZYVREC3T1F and others cite absent docs paths (4fd590e6), and the allowlist names a path that exists (f63f3b94) (lane 01)
-tests/test_citation_paths.py::test_phantom_allowlist_is_honest[docs/measurements/2026-09-29-the-acceptance-consumer-is-still-unreached-and-the-docs-pages-are-not-missing.md]  # H: board item 01M6FRZ4EV6BYDQ7ZYVREC3T1F and others cite absent docs paths (4fd590e6), and the allowlist names a path that exists (f63f3b94) (lane 01)
 tests/test_duckdb_is_declared_and_its_skips_are_loud.py::test_every_duckdb_importorskip_names_what_goes_unverified  # H: tests/finance/test_fin_inputs_resolver.py:762,789 importorskip duckdb with no reason (83f9bcf7, ab3fc16d) (lane fin)
 tests/test_engine_o_registers_when_its_stores_answer.py::test_STORES_UP_AT_BOOT_REGISTER_AT_BOOT  # J: stale assertion: where-used registers once per REGISTRATIONS row since ce414d05, the arms hard-coded one; fixed by PR 444, whichever lands second deletes this line (lane 74)
 tests/test_engine_o_registers_when_its_stores_answer.py::test_WEAVIATE_UNREACHABLE_AT_BOOT_IS_RECONNECTED_WHEN_IT_RETURNS  # J: stale assertion: where-used registers once per REGISTRATIONS row since ce414d05, the arms hard-coded one; fixed by PR 444, whichever lands second deletes this line (lane 74)

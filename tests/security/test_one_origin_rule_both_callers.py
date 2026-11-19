@@ -245,6 +245,8 @@ def test_engine_o_resolve_instance_agrees_with_notice_parts_on_the_same_table(ca
     monkeypatch.setattr(eo, "_NEO4J_DRIVER", _Driver(row))
     monkeypatch.setattr(eo, "_load_domain_consumption_for_notice_parts", lambda: TABLE)
     monkeypatch.setattr(eo, "_notice_parts_can_view_program", m_resolve)
+    from tests._helpers.verified_caller import install
+    install(monkeypatch, eo, CALLER, list(domains))  # the VERIFIED caller, not the body
     resp = TestClient(eo.app).post("/resolve_instance", json={
         "identifier": NOTICE, "user_email": CALLER, "entitled_domains": list(domains)})
     assert resp.status_code == 200, resp.text
