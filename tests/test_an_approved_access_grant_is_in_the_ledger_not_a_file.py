@@ -34,10 +34,11 @@ COMMITTED = "grants:\n- subject: carol\n  asset: asset-c\n  granted_by: cnogradi
 
 
 class FakeLedgerDb:
-    """Stands for the Postgres `access_grant_ledger`: the same keys, ON CONFLICT DO NOTHING."""
+    """Stands for the Postgres `access_grant_ledger`: one row per act, ordered by a server `seq`; an act
+    is appended only when it changes the grant's latest state (the conditional insert)."""
 
     def __init__(self):
-        self.rows: dict = {}
+        self.rows: list = []            # (seq, subject, asset, kind, entry, ..., granted_at)
         self.down = False
         self.prunes: list = []          # the `prune` each directory apply was called with
         self.missing: set = set()       # assets the directory does not have
@@ -63,14 +64,17 @@ class _Cur:
 
     def execute(self, sql, params=()):
         if "INSERT INTO access_grant_ledger" in sql:
-            key = tuple(params[:4])         # (subject, asset, kind, entry)
-            if key in self.db.rows:
-                self.rowcount = 0
+            assert "ORDER BY seq DESC" in sql, "the insert must read the latest act by seq"
+            key, entry = tuple(params[9:12]), params[12]
+            latest = [r[4] for r in self.db.rows if tuple(r[1:4]) == key]
+            if latest and latest[-1] == entry:
+                self.rowcount = 0           # not a change of state: no row
             else:
-                self.db.rows[key] = tuple(params)
+                self.db.rows.append((len(self.db.rows) + 1,) + tuple(params[:9]))
                 self.rowcount = 1
         elif "FROM access_grant_ledger" in sql:
-            self._out = sorted(self.db.rows.values(), key=lambda r: (r[8], r[0], r[1]))
+            assert "ORDER BY seq" in sql and "granted_at" not in sql.split("ORDER BY")[1]
+            self._out = sorted(self.db.rows, key=lambda r: r[0])
         # `CREATE TABLE` and anything else: nothing to do
 
     def fetchall(self): return list(self._out)
@@ -243,9 +247,10 @@ def test_7_the_cli_and_the_in_process_apply_are_one_function():
         encoding="utf-8")
 
 
-def test_4_the_insert_is_do_nothing_on_conflict_in_the_real_sql():
-    assert "ON CONFLICT (subject, asset, kind, entry) DO NOTHING" in ht._GRANT_INSERT_SQL
-    assert "PRIMARY KEY (subject, asset, kind, entry)" in ht._GRANT_LEDGER_SQL
+def test_4_the_insert_is_conditional_on_the_latest_act_in_the_real_sql():
+    sql = ht._GRANT_INSERT_SQL
+    assert "ORDER BY seq DESC LIMIT 1" in sql and "<> %s" in sql      # only a CHANGE of state is a row
+    assert "ON CONFLICT" not in sql
 
 
 def test_5_the_report_script_prints_both_people_and_exits_1_while_anything_is_absent(
@@ -403,16 +408,51 @@ def test_9_a_committed_grant_is_revoked_by_a_row_too(world):
     assert committed.read_bytes() == before                  # no file was changed to do it
 
 
-def test_9_a_later_approval_does_not_revive_a_revoked_grant(world):
+def test_9_a_later_approval_is_a_re_grant_and_puts_the_grant_back(world):
     _db, sent, _c, _p = world
     _approve()
     _revoke()
-    n_sent = len(sent)
-    with pytest.raises(ht.GrantRevoked):
-        _approve(granted_by="someone-else")                   # same grant, approved again: refused
-    assert len(sent) == n_sent                                 # nothing applied
     assert ("alice", "asset-a") not in {(g["subject"], g["asset"]) for g in ht.desired_grants()}
-    assert len([r for r in ht.ledger_entries() if r["entry"] == "grant"]) == 1   # no new row
+    _approve(granted_by="someone-else")                       # full approval: its own act
+    assert ("alice", "asset-a") in {(g["subject"], g["asset"]) for g in ht.desired_grants()}
+    assert [r["entry"] for r in ht.ledger_entries() if r["subject"] == "alice"] == [
+        "grant", "revoke", "grant"]                           # three acts, none rewritten
+    assert ("alice", "asset-a") in _keys(sent[-1]["grants"])  # and the directory is told
+
+
+def test_9_the_latest_act_wins_through_a_second_revoke_and_a_second_re_grant(world):
+    _approve()
+    _revoke(revoked_by="r1")
+    _approve(granted_by="g2")
+    assert _revoke(revoked_by="r2") is True                   # revoked AGAIN: a new act
+    assert ("alice", "asset-a") not in {(g["subject"], g["asset"]) for g in ht.desired_grants()}
+    assert len(ht.ledger_entries()) == 4
+
+
+def test_9_a_grant_of_a_granted_key_is_not_a_new_act(world):
+    _approve(granted_by="first")
+    assert ht.record_grant(subject="alice", asset="asset-a", requested_by="alice",
+                           granted_by="second", reason="x") is False
+    (row,) = ht.ledger_entries()
+    assert row["granted_by"] == "first"                       # the first approver stays
+
+
+def test_9_a_committed_grant_revoked_then_re_granted_is_in_effect_again(world):
+    _db, sent, _c, _p = world
+    _revoke(subject="carol", asset="asset-c")
+    assert ("carol", "asset-c") not in {(g["subject"], g["asset"]) for g in ht.desired_grants()}
+    ht.write_grant_and_sync(subject="carol", asset="asset-c", granted_by="bob", reason="back",
+                            requested_by="carol")
+    assert ("carol", "asset-c") in {(g["subject"], g["asset"]) for g in ht.desired_grants()}
+
+
+def test_9_the_order_is_the_servers_sequence_not_the_clock(world):
+    kw = dict(subject="alice", asset="asset-a", requested_by="alice", reason="x")
+    ht.record_grant(granted_by="bob", now_ms=5_000, **kw)
+    ht.record_revocation(subject="alice", asset="asset-a", revoked_by="r", reason="x", now_ms=9_000)
+    ht.record_grant(granted_by="g2", now_ms=1_000, **kw)       # a skewed clock: EARLIER than both
+    assert [r["entry"] for r in ht.ledger_entries()] == ["grant", "revoke", "grant"]
+    assert ("alice", "asset-a") in {(g["subject"], g["asset"]) for g in ht.desired_grants()}
 
 
 def test_9_a_second_revocation_keeps_the_first_revoker(world):
@@ -767,7 +807,7 @@ def test_12_the_apply_redirects_no_process_stream():
     assert "redirect_stdout" not in src and "redirect_stderr" not in src
 
 
-# 13. an approval of a revoked grant is refused, never "granted" -------------------------------
+# 13. an approval of a revoked grant is a re-grant: full approval, a new act ----------------------
 
 def _revoked_route(world, monkeypatch, register_rail):
     register_rail(["bob"])
@@ -784,19 +824,14 @@ def _post_approve(client, gateway):
         gateway.app.dependency_overrides.clear()
 
 
-def test_13_the_approval_route_refuses_a_revoked_grant_with_the_reason_and_writes_no_row(
+def test_13_the_approval_route_re_grants_a_revoked_grant_as_a_new_act(
         world, monkeypatch, register_rail):
-    _db, sent, _c, _p = world
     client, calls, gateway = _revoked_route(world, monkeypatch, register_rail)
     r = _post_approve(client, gateway)
-    assert r.status_code == 409, r.text
-    d = r.json()["detail"]
-    assert d["error"] == "grant_revoked" and "revoked" in d["message"]
-    assert d["refusal"]["policy_id"] and d["refusal"]["missing_binding"]
-    assert "grant_written" not in r.json()                    # never answered as granted
-    assert calls["resolved"] == []                            # the task stays pending
-    assert [e["entry"] for e in ht.ledger_entries()].count("grant") == 1     # no new grant row
-    # (the startup re-apply may apply; the approval itself writes and resolves nothing)
+    assert r.status_code == 200, r.text
+    assert r.json()["grant_written"] is True
+    assert [e["entry"] for e in ht.ledger_entries()] == ["grant", "revoke", "grant"]
+    assert ("alice", "asset-a") in {(g["subject"], g["asset"]) for g in ht.desired_grants()}
 
 
 def test_13_control_a_never_revoked_grant_is_still_approved_and_written(
@@ -808,28 +843,40 @@ def test_13_control_a_never_revoked_grant_is_still_approved_and_written(
     assert [e["entry"] for e in ht.ledger_entries()] == ["grant"]
 
 
-def test_13_control_a_revocation_of_another_grant_does_not_block_this_one(
-        world, monkeypatch, register_rail):
-    register_rail(["bob"])
-    _approve(asset="asset-b")
-    _revoke(asset="asset-b")
-    client, calls, gateway = _act_world(monkeypatch, world, "asset-a")
-    r = _post_approve(client, gateway)
-    assert r.status_code == 200 and r.json()["grant_written"] is True
+def test_13_the_route_no_longer_refuses_with_grant_revoked():
+    src = (ROOT / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
+    assert "grant_revoked" not in src
+    assert not hasattr(ht, "GrantRevoked")
 
 
-def test_13_a_ledger_that_cannot_be_read_approves_nothing(world, monkeypatch, register_rail):
-    register_rail(["bob"])
-    client, calls, gateway = _act_world(monkeypatch, world, "asset-a")
-    monkeypatch.setattr(ht, "grant_is_revoked",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
-    r = _post_approve(client, gateway)
-    assert r.status_code == 503 and r.json()["detail"]["error"] == "ledger_unavailable"
-    assert calls["resolved"] == [] and ht.ledger_entries() == []
+# 14. the migration and the SQL ---------------------------------------------------------------
+
+def test_14_a_new_table_is_keyed_by_seq_not_by_the_four_columns():
+    assert "seq          BIGSERIAL PRIMARY KEY" in ht._GRANT_LEDGER_SQL
+    assert "PRIMARY KEY (subject" not in ht._GRANT_LEDGER_SQL
+    assert "ON CONFLICT" not in ht._GRANT_INSERT_SQL
 
 
-def test_13_the_writer_itself_refuses_a_revoked_grant(world):
-    _approve()
-    _revoke()
-    with pytest.raises(ht.GrantRevoked):
-        _approve(granted_by="someone-else")
+def test_14_the_upgrade_of_an_old_table_orders_grants_before_revokes_and_drops_the_old_key():
+    sql = ht._GRANT_LEDGER_SEQ_SQL
+    assert "ORDER BY (entry = 'revoke'), granted_at" in sql           # old revoke-wins preserved
+    assert "DROP CONSTRAINT IF EXISTS access_grant_ledger_pkey" in sql
+    assert "ADD PRIMARY KEY (seq)" in sql
+    assert "IF NOT EXISTS (SELECT 1 FROM information_schema.columns" in sql   # idempotent
+
+
+def test_14_the_migration_runs_the_upgrade_after_the_create(world, monkeypatch):
+    ran = []
+
+    class Cur(_Cur):
+        def execute(self, sql, params=()):
+            ran.append(sql)
+
+    class Conn(_Conn):
+        def cursor(self, **k): return Cur(self.db)
+
+    monkeypatch.setattr(ht, "_pg_connect", lambda: Conn(world[0]))
+    ht.apply_migration()
+    i = [n for n, q in enumerate(ran) if "CREATE TABLE IF NOT EXISTS access_grant_ledger" in q]
+    j = [n for n, q in enumerate(ran) if "ADD PRIMARY KEY (seq)" in q]
+    assert i and j and i[0] < j[0]

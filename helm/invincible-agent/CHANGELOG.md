@@ -68,10 +68,9 @@
   the grant, who revoked it, when and why; the grant's own row is untouched. Effective access is
   committed policy + ledger grants - ledger revocations, computed by one function
   (`grant_sync.union_grants`) that the BFF and the seed both call; a revocation removes a committed
-  grant too, and a revoked key stays revoked: approving an access request for a revoked grant answers 409
-  `grant_revoked` (a policy refusal naming `asset_grants`, with the reason) before anything is resolved
-  or recorded, so the task stays pending and the answer is never `grant_written: true`; a re-grant
-  becomes its own approved act in a follow-up. The route refuses 403 unless the caller holds `can_invoke(mesh:revokeAccessGrant)`: a
+  grant too. A revocation is in force until a re-grant act, not for ever: approving an access request
+  for a revoked grant is a new act and is recorded (the latest act on a key wins; see 0.4.90, which
+  replaces #412's 409 `grant_revoked` refusal). The route refuses 403 unless the caller holds `can_invoke(mesh:revokeAccessGrant)`: a
   new row in `capability_grants.yaml` granted to a new capability-only group, `access-revokers`
   (sandbox member: alice, as a fixture). **Upgrade note:** the membership is a `users.yaml` change, so
   it needs a hand-run `topaz_sync` before anyone can revoke; until then the route answers 403 to
@@ -79,6 +78,29 @@
   route says so (`effective: at the next seed sync`). A database that already holds a
   `access_grant_ledger` from an earlier build of this PR (no `entry` column) needs the table
   dropped before the roll; no release carried it.
+- **A re-grant is its own approved act; the latest act on a grant wins** (saf; the architect, 11-16;
+  DRAFT, ships after #408 and #412 and replaces #412's 409 `grant_revoked`). Each grant and each
+  revocation is a row of its own in `access_grant_ledger`, ordered by a server sequence (`seq`), never
+  by clock time. The latest act per (subject, asset, kind) is the state: revoked then approved again is
+  in effect again, and the approval is the full approval (the same rail as any access request). A
+  second grant of a granted key, or a second revoke of a revoked one, adds no row (the first approver
+  stays). The seed and the BFF read the ledger through one `union_grants`. **Schema note and upgrade
+  path:** the table's key changes from (subject, asset, kind, entry) to `seq BIGSERIAL`. The BFF
+  migration upgrades an existing table in place, once and idempotently, at its first start: it adds
+  `seq`, numbers every existing row with grants BEFORE revokes (so every key a #408/#412 build had
+  revoked is still revoked), then drops the old key. No data is lost and nothing is applied by the
+  migration. **Order the roll:** the seed selects `seq`, so a seed that runs before the BFF has
+  migrated reads an unreadable ledger and exits 5 (nothing applied, nothing pruned: the safe
+  refusal) until the BFF is up; roll the BFF first. Not run against a live Postgres in this PR
+  (tests use a fake of the table); the upgrade block should be rehearsed on a copy first. Two
+  concurrent approvals of one key can both append (harmless: the latest act is the same).
+- **Roll overlap: an access request approved on the old BFF pod after the migration is not recorded**
+  (saf; gov's review of #439). While the old and the new BFF pods both run, the new pod has migrated
+  `access_grant_ledger` to the `seq` key; an approval that lands on the OLD pod after that finds a
+  table its build cannot write, so the task is closed and the grant is NOT recorded
+  (`grant_written: false` in the answer). Nothing is applied for it. Re-approve any request whose
+  answer says `grant_written: false`; to avoid the window, roll the BFF in one step (scale the old
+  pod down before the new one migrates) or hold approvals during the roll.
 - **An approval names an asset that exists, and a stale ledger row stops nothing** (saf; the
   architect, 11-16). Approving an access request whose asset is not in the directory is refused 422
   `asset_not_in_directory` before the task is resolved or anything is recorded (503
