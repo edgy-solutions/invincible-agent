@@ -41,6 +41,10 @@ class _User:
         default=None,
         domains_for=lambda persona: ["PROGRAM_FINANCE"],
     )
+    # `/canvas/seed` checks a picker cell with `contains` (Lane 1, 2026-11-16: the server owns
+    # the domain list), so the double answers it from its OWN cells, never a constant.
+    entitlements.contains = lambda p, d, _e=entitlements: any(
+        c.persona == p and c.domain == d for c in _e.cells)
 
 
 @pytest.fixture
@@ -147,9 +151,28 @@ _PORTFOLIO_ONLY = types.SimpleNamespace(
 )
 
 
+_PORTFOLIO_ONLY.contains = lambda p, d: any(
+    c.persona == p and c.domain == d for c in _PORTFOLIO_ONLY.cells)
+
+
 def _outsider():
     u = _User()
     u.entitlements = _PORTFOLIO_ONLY
+    return u
+
+
+def _holder_of_both():
+    """The finance cell AND the portfolio cell. A caller asks from a cell they HOLD (the server
+    refuses any other with 403 `cell_not_entitled`), so "asked from another cell" needs a
+    caller who holds that other cell too."""
+    cells = [types.SimpleNamespace(persona="PROGRAM_FINANCE_ANALYST", domain="PROGRAM_FINANCE"),
+             types.SimpleNamespace(persona="PORTFOLIO_LEAD", domain="PORTFOLIO_PLANNING")]
+    u = _User()
+    u.entitlements = types.SimpleNamespace(
+        cells=cells, default=None,
+        domains_for=lambda p: [c.domain for c in cells if c.persona == p],
+        contains=lambda p, d: any(c.persona == p and c.domain == d for c in cells),
+    )
     return u
 
 
@@ -170,6 +193,7 @@ def test_a_caller_who_holds_the_cell_but_asked_from_another_is_told_to_switch(ha
     """Holding the group already, the repair is to CHOOSE the cell, not to see an administrator.
     Same caller as the grant arm below; only the cell the ask was scoped to differs."""
     harness.members = []
+    harness.user = _holder_of_both()
     d = _detail(harness.client.post("/canvas/seed", json={
         "template_id": "program_finance",
         "active_persona": "PORTFOLIO_LEAD", "active_domains": ["PORTFOLIO_PLANNING"]}))
@@ -302,12 +326,13 @@ def test_the_dispatch_cell_reaches_the_seeder_when_the_picker_fields_are_unset(h
     assert harness.seeded[-1]["active_persona"] == "PROGRAM_FINANCE_ANALYST"
     assert harness.seeded[-1]["active_domains"] == ["PROGRAM_FINANCE"]
 
+    harness.user = _holder_of_both()  # the explicit cell must be one the caller holds
     harness.client.post("/canvas/seed", json={
         "params": {"program_id": "NP-MERIDIAN"},
         "user_persona": "PROGRAM_FINANCE_ANALYST", "domain": "PROGRAM_FINANCE",
-        "active_persona": "OTHER", "active_domains": ["OTHER_DOMAIN"]})
-    assert harness.seeded[-1]["active_persona"] == "OTHER"
-    assert harness.seeded[-1]["active_domains"] == ["OTHER_DOMAIN"]
+        "active_persona": "PORTFOLIO_LEAD", "active_domains": ["PORTFOLIO_PLANNING"]})
+    assert harness.seeded[-1]["active_persona"] == "PORTFOLIO_LEAD"
+    assert harness.seeded[-1]["active_domains"] == ["PORTFOLIO_PLANNING"]
 
 
 # ── 5. the second registration is derived ──────────────────────────────────────────────────

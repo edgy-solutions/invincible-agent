@@ -69,6 +69,10 @@ except ImportError:  # pragma: no cover - import path differs by runtime
         BulkDecision, Override, PartItem, ReviewBatch, resolve_batch,
     )
 try:
+    from policy_evaluator import ABSTENTION_REASON  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.restate_analyst.policy_evaluator import ABSTENTION_REASON
+try:
     import steward_correction as _sc  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst import steward_correction as _sc
@@ -86,6 +90,9 @@ def _partitem_to_dict(it: PartItem) -> dict:
         "mpn": it.mpn, "relevance": it.relevance, "subject": it.subject,
         "proposed_disposition": it.proposed_disposition, "needs_review": it.needs_review,
         "proposed_by_ruleset": it.proposed_by_ruleset,
+        "proposal_outcome": it.proposal_outcome,
+        "candidate_dispositions": list(it.candidate_dispositions),
+        "abstention_reason": ABSTENTION_REASON.get(it.proposal_outcome),
     }
 
 
@@ -94,6 +101,8 @@ def _partitem_from_dict(d: dict) -> PartItem:
         mpn=d["mpn"], relevance=d.get("relevance", 1.0), subject=d.get("subject"),
         proposed_disposition=d.get("proposed_disposition"), needs_review=d.get("needs_review", False),
         proposed_by_ruleset=d.get("proposed_by_ruleset"),
+        proposal_outcome=d.get("proposal_outcome"),
+        candidate_dispositions=tuple(d.get("candidate_dispositions") or ()),
     )
 
 
