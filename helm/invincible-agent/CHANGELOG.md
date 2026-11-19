@@ -1,38 +1,6 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.90 — 2026-11-18
-
-**0.4.90 is 0.4.89 (`029166db`) plus the ruled 11-17 train, `029166db..e6d0224a`, and the cortex re-pin to `be1d177` in this cut. The train is #415, #416, #417, #418, #419, #423, #424, #425 and #431, and nothing else; #421 and #429 are docs. The roll waits for Chris's approval of the values diff against the live release.**
-
-| order | PR | merge | what |
-| --- | --- | --- | --- |
-| 1 | #415 | `85a29b75` | perf: W3C Trace Context at the door, no model text in spans, provenance-telemetry 0.2.2 |
-| 2 | #421 | `02657a1e` | Lane 1: the 0.4.89 notes name the run-limit default change (docs only) |
-| 3 | #423 | `7d242b87` | Lane 1: pub-tools gets the variable names its code reads |
-| 4 | #424 | `f6653b00` | Lane 1: AGENTS.md, the sessions rule names pub-tools (docs only) |
-| 5 | #429 | `74e26cce` | Lane 1: the 0.4.88 and 0.4.89 notes name tracing client 5 at work (docs only) |
-| 6 | #416 | `9d8fb58d` | 74: `/fill_slots` reads a stringified slots reply, so an as-built where-used question is refused |
-| 7 | #417 | `39372e75` | 74: a probe that names any backend render row a served frontend menu lacks (no runtime change) |
-| 8 | #418 | `b7a7c512` | 74: a name known only in another domain abstains as `domain_scope_excluded`, named only to a caller entitled to that domain |
-| 9 | #419 | `e620f675` | 74: obsolescence deciders hold a SUSTAINMENT_ENGINEER cell in SUSTAINMENT (policy) |
-| 10 | #425 | `fe197c9b` | perf: the Langfuse client is capped below 5 in every lock |
-| 11 | #431 | `e6d0224a` | perf: reasoning effort on the subject, verb and slots calls, read from configuration and off by default |
-| — | this cut | — | cortex `52cc9a6` -> `be1d177`, frontend digest `d02e6481` (see `values.yaml`) |
-
-#418 rides at `1e3841b5`, not the `f1ab4744` first ruled. It carries the same code plus two commits: its seal imports engine O in the package form (`204a4599`), and engine O imports `notice_parts` and `where_used` package-first (`1e3841b5`). The second removed the two Q8 reds that `f1ab4744` added by test order. Chris's go of 11-18 took #418 once lane 74 reported it green with its entitlement guard. The merged tree is identical to the trial tree that failed only master's own 59 reds.
-
-**Before the roll:**
-- Show the values diff against the live release (the cortex digest, the pub-tools variable names from #423) and wait for Chris's approval. #431 adds a commented-out block only.
-- The chart version moves, so every pod template changes and every pod restarts. List STARTED Dagster runs first (a dead worker holds a slot).
-- #425: the docs engine image installs a Langfuse client below 5 again, which work's self-hosted server (3.165.0) accepts.
-- #418: engine O reads the caller's full entitlement from the directory (`TOPAZ_DIRECTORY_URL`, from the shared configmap) on the out-of-domain path only. A directory it cannot reach fails closed to a plain not-found. A deployment that turns on `networkPolicy` must give engine O egress to the directory port, or the out-of-domain answer never names a domain.
-
-**After the roll:**
-- #419 (ruled 11-17; this supersedes the PR body's "sync, then roll"): Chris hand-runs `topaz_sync` from the NEW cortex-bff pod, `--dry-run` first. The group `obsolescence-deciders` already exists and `task_grants` is unchanged, so no roll hook depends on the sync. Until it runs, the picker does not offer SUSTAINMENT_ENGINEER, and "Acting as" on a notice or where-used question reads SAFETY_ENGINEER, as on 0.4.89.
-- #417: run `scripts/probes/served_render_menus.py` inside the presentation engine's pod. Exit 0 is no gap, 1 a gap, 3 unreachable.
-- #415: perf checks that a `traceparent` sent at the door is the trace the BFF's spans join.
-- #431: every setting stays off. Switching one on is a separate values change, made with the routing baseline's before-and-after in hand.
-- Cortex: no question is sent until the entitlement list has loaded; the Tasks badge needs #386, which 0.4.89 carries.
+## 0.4.91 — not yet cut
 
 - **The topaz-seed CronJob reads the approved-grant ledger, so the one pruner keeps approved grants**
   (saf; the architect, 11-16: "one pruner, the seed"; ships with the access-ledger PR #408 in this
@@ -103,6 +71,40 @@
   redirect was process-global and gave one of them a dead buffer). Found on the way: the BFF loaded
   `grant_sync.py` from its file without registering the module, which fails at the module's dataclass;
   the loader now registers it first.
+
+## 0.4.90 — 2026-11-18
+
+**0.4.90 is 0.4.89 (`029166db`) plus the ruled 11-17 train, `029166db..e6d0224a`, and the cortex re-pin to `be1d177` in this cut. The train is #415, #416, #417, #418, #419, #423, #424, #425 and #431, and nothing else; #421 and #429 are docs. The roll waits for Chris's approval of the values diff against the live release.**
+
+| order | PR | merge | what |
+| --- | --- | --- | --- |
+| 1 | #415 | `85a29b75` | perf: W3C Trace Context at the door, no model text in spans, provenance-telemetry 0.2.2 |
+| 2 | #421 | `02657a1e` | Lane 1: the 0.4.89 notes name the run-limit default change (docs only) |
+| 3 | #423 | `7d242b87` | Lane 1: pub-tools gets the variable names its code reads |
+| 4 | #424 | `f6653b00` | Lane 1: AGENTS.md, the sessions rule names pub-tools (docs only) |
+| 5 | #429 | `74e26cce` | Lane 1: the 0.4.88 and 0.4.89 notes name tracing client 5 at work (docs only) |
+| 6 | #416 | `9d8fb58d` | 74: `/fill_slots` reads a stringified slots reply, so an as-built where-used question is refused |
+| 7 | #417 | `39372e75` | 74: a probe that names any backend render row a served frontend menu lacks (no runtime change) |
+| 8 | #418 | `b7a7c512` | 74: a name known only in another domain abstains as `domain_scope_excluded`, named only to a caller entitled to that domain |
+| 9 | #419 | `e620f675` | 74: obsolescence deciders hold a SUSTAINMENT_ENGINEER cell in SUSTAINMENT (policy) |
+| 10 | #425 | `fe197c9b` | perf: the Langfuse client is capped below 5 in every lock |
+| 11 | #431 | `e6d0224a` | perf: reasoning effort on the subject, verb and slots calls, read from configuration and off by default |
+| — | this cut | — | cortex `52cc9a6` -> `be1d177`, frontend digest `d02e6481` (see `values.yaml`) |
+
+#418 rides at `1e3841b5`, not the `f1ab4744` first ruled. It carries the same code plus two commits: its seal imports engine O in the package form (`204a4599`), and engine O imports `notice_parts` and `where_used` package-first (`1e3841b5`). The second removed the two Q8 reds that `f1ab4744` added by test order. Chris's go of 11-18 took #418 once lane 74 reported it green with its entitlement guard. The merged tree is identical to the trial tree that failed only master's own 59 reds.
+
+**Before the roll:**
+- Show the values diff against the live release (the cortex digest, the pub-tools variable names from #423) and wait for Chris's approval. #431 adds a commented-out block only.
+- The chart version moves, so every pod template changes and every pod restarts. List STARTED Dagster runs first (a dead worker holds a slot).
+- #425: the docs engine image installs a Langfuse client below 5 again, which work's self-hosted server (3.165.0) accepts.
+- #418: engine O reads the caller's full entitlement from the directory (`TOPAZ_DIRECTORY_URL`, from the shared configmap) on the out-of-domain path only. A directory it cannot reach fails closed to a plain not-found. A deployment that turns on `networkPolicy` must give engine O egress to the directory port, or the out-of-domain answer never names a domain.
+
+**After the roll:**
+- #419 (ruled 11-17; this supersedes the PR body's "sync, then roll"): Chris hand-runs `topaz_sync` from the NEW cortex-bff pod, `--dry-run` first. The group `obsolescence-deciders` already exists and `task_grants` is unchanged, so no roll hook depends on the sync. Until it runs, the picker does not offer SUSTAINMENT_ENGINEER, and "Acting as" on a notice or where-used question reads SAFETY_ENGINEER, as on 0.4.89.
+- #417: run `scripts/probes/served_render_menus.py` inside the presentation engine's pod. Exit 0 is no gap, 1 a gap, 3 unreachable.
+- #415: perf checks that a `traceparent` sent at the door is the trace the BFF's spans join.
+- #431: every setting stays off. Switching one on is a separate values change, made with the routing baseline's before-and-after in hand.
+- Cortex: no question is sent until the entitlement list has loaded; the Tasks badge needs #386, which 0.4.89 carries.
 
 ### The 0.4.89 upgrade notes name the run-limit default change
 - 0.4.89's "Before the roll" note for #391 now says that the chart default for Dagster's run limit changed from 2 to 6. A user-values diff does not show this change. Docs only; the render is unchanged.
