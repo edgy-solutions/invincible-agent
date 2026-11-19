@@ -1111,24 +1111,51 @@ from iagent_mesh.transport_auth import current_caller as _current_caller
 
 _bind_log = logging.getLogger("engine-o.caller_binding")
 
+# A declared delegation names BOTH identities on one line (architect 11-19). Its own handler, as
+# _routing_audit_logger above, so the line arrives whatever the root logger is set to.
+_delegation_audit_logger = logging.getLogger("engine-o.audit.delegation")
+if not _delegation_audit_logger.handlers:
+    _dh = logging.StreamHandler()
+    _dh.setFormatter(logging.Formatter("%(message)s"))
+    _delegation_audit_logger.addHandler(_dh)
+    _delegation_audit_logger.setLevel(logging.INFO)
+    _delegation_audit_logger.propagate = False
+
 
 async def _bound(request, *, route: str, email_field: str | None = "user_email",
-                 grant_field: str | None = "entitled_domains", asked=None):
+                 grant_field: str | None = "entitled_domains", asked=None,
+                 delegate_field: str | None = None):
     """`(request, Binding)` with the body's identity and grant REPLACED by the verified caller's.
 
     ``asked`` (default: the body's own grant field) can only NARROW the caller's held domains. An
     unverified, forged, unsigned or absent token binds anonymous: subject "" and grant
     ``(NO_GRANT,)``, never an empty list (several sites below read empty as unscoped). A route with
-    no grant field passes ``grant_field=None``, one with no identity field ``email_field=None``. The log line carries the route, kind, grant count
-    and body_identity label: no email, no domain."""
+    no grant field passes ``grant_field=None``, one with no identity field ``email_field=None``.
+    ``delegate_field`` names the body field in which a service states whom it acts for; it is
+    honoured only with a ``door: engine-o`` row (see caller_binding). The log line carries the
+    route, kind, grant count, body_identity and delegation labels: no email, no domain. A delegated
+    or not-declared call also writes one line to the audit logger naming both identities."""
     if asked is None and grant_field:
         asked = getattr(request, grant_field, None)
     binding = await asyncio.to_thread(
         _caller_binding.bind, _current_caller(),
         body_subject=str(getattr(request, email_field, "") or "") if email_field else "",
-        asked=asked, held_of=lambda s: _held_domains_of(s))
-    _bind_log.info("caller bound route=%s kind=%s grants=%d body_identity=%s",
-                   route, binding.kind, len(binding.grants), binding.body_identity)
+        asked=asked, held_of=lambda s: _held_domains_of(s),
+        on_behalf_of=str(getattr(request, delegate_field, "") or "") if delegate_field else "",
+        route=route)
+    _bind_log.info("caller bound route=%s kind=%s grants=%d body_identity=%s delegation=%s",
+                   route, binding.kind, len(binding.grants), binding.body_identity,
+                   binding.delegation)
+    if binding.delegation in ("delegated", "not_declared"):
+        # both identities on the record: the service that authenticated, the person it stated.
+        # `person` is %r: on not_declared it is an unverified statement, and quoting it means no
+        # value can end the line and forge another.
+        _delegation_audit_logger.info(
+            "delegation route=%s service=%s person=%r outcome=%s", route,
+            binding.via or binding.subject,
+            binding.subject if binding.delegation == "delegated"
+            else str(getattr(request, delegate_field, "") or ""),
+            binding.delegation)
     update = {email_field: binding.subject} if email_field else {}
     if grant_field:
         grants = list(binding.grants)
@@ -1140,7 +1167,7 @@ from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 from iagent_mesh import Initiator
-from iagent_mesh import ResolveInstanceRequest
+from iagent_mesh import ResolveInstanceRequest as _SdkResolveInstanceRequest
 _announce_transport_auth(component="engine-o")
 app = FastAPI(
     **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
@@ -5924,13 +5951,20 @@ async def _filter_sustainment_candidates(candidates: list[dict], *, user_email: 
     return out
 
 
+class ResolveInstanceRequest(_SdkResolveInstanceRequest):
+    """The SDK's wire shape plus one field (the SDK model forbids extras, so it is added here)."""
+    #: The person a declared service delegate acts for, honoured only with a `door: engine-o` row in
+    #: the delegates file (architect 11-19). Ignored from anyone else.
+    on_behalf_of: str = ""
+
+
 @app.post("/resolve_instance")
 async def resolve_instance(request: ResolveInstanceRequest) -> dict:
     """Resolve an identifier to pcn instance candidates (matcher: agent_fleet/ontology_service/
     sustainment_instance_provider.py). Contract matches _call_resolver's expectation: returns
     ``{candidates: [{instance_id, class_uri, label, score}]}``; an empty list is a first-class
     ABSTAIN. The async Jena fetch lives here; the matching is the pure, unit-tested core."""
-    request, _ = await _bound(request, route="resolve_instance")
+    request, _ = await _bound(request, route="resolve_instance", delegate_field="on_behalf_of")
     try:
         rows = await execute_sparql(_SUSTAINMENT_INSTANCES_QUERY, domain="SUSTAINMENT")
     except SubstrateUnavailable as exc:  # execute_sparql's only outage; a defect answers 500

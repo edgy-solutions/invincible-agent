@@ -297,6 +297,12 @@ EXCLUDED = {
     (AR, "record"): "the action record; the handler reads provenance.case_id only (a case id, not a person)",
     (_key("POST", "/internal/identity/redeem"), "claimed_launcher"): (
         "supervisor-only (403 not_the_redeemer for the case runner, checked below); not reachable"),
+    (_key("POST", "/access_grants/revoke"), "subject"): (
+        "the OWNER of the grant being revoked (the ledger key is (subject, asset, kind)), not a principal "
+        "the caller acts for: the actor is `current_user` (`revoked_by`), asked `can_invoke "
+        "mesh:revokeAccessGrant`, and the capability goes to the `access-revokers` group, which no "
+        "service identity is in; the case runner is refused at that gate (checked below). "
+        "EXCLUSION NOT YET AGREED by the architect or gov: needs their agreement."),
 }
 # Ruled IN as a SEPARATE defect (architect via Chris, 2026-11-03): not a case-runner route, so it has no
 # case-runner driver; its legs are the "register" section further down this module.
@@ -500,3 +506,40 @@ def test_the_excluded_dropper_is_verified_against_membership_not_acted_for(monke
     served = install_delegates(monkeypatch)
     r, fx = _drive_origin_dropper(monkeypatch, RUNNER, PERSON)
     assert r.status_code < 400 and fx.seen == [f'[["{PERSON}"], {{}}]'], (r.status_code, fx.seen)
+
+
+def _revokers_from_policy():
+    """Who may revoke, DERIVED from the policy rows: the members (users.yaml) of every group that
+    capability_grants.yaml names in `grant_to_groups` for `mesh:revokeAccessGrant`."""
+    import pathlib
+    import yaml
+    pol = pathlib.Path(__file__).resolve().parents[2] / "policy"
+    groups = set(yaml.safe_load((pol / "capability_grants.yaml").read_text(encoding="utf-8"))
+                 ["capabilities"]["mesh:revokeAccessGrant"]["grant_to_groups"])
+    users = yaml.safe_load((pol / "users.yaml").read_text(encoding="utf-8"))["users"]
+    return {u["id"] for u in users if groups & set(u.get("groups") or [])}
+
+
+def _revoke(monkeypatch, caller):
+    revokers = _revokers_from_policy()
+    recorded = []
+    monkeypatch.setattr(ht, "check_can_invoke", lambda cap, who: who in revokers)
+    monkeypatch.setattr(ht, "record_revocation", lambda **k: recorded.append(k) or True)
+    monkeypatch.setattr(ht, "remove_revoked_reader", lambda *a: {"removed": True})
+    _login(caller)
+    r = _client().post("/access_grants/revoke", json={"subject": PERSON, "asset": "a", "reason": "x"})
+    return r, recorded, revokers
+
+
+def test_the_excluded_revoke_route_refuses_the_case_runner_at_its_gate(monkeypatch):
+    """Backs the exclusion: the revoke gate is `can_invoke mesh:revokeAccessGrant` on the CALLER, the
+    case runner holds no such grant (it is in no revoker group), so it is refused before anything is
+    recorded. Control: a member of the revoker group, through the same gate, records the revocation."""
+    r, recorded, revokers = _revoke(monkeypatch, RUNNER)
+    assert RUNNER not in revokers and revokers, revokers
+    assert r.status_code == 403 and r.json()["detail"]["error"] == "not_entitled_to_revoke_access", r.text[:200]
+    assert recorded == []
+    member = sorted(revokers)[0]
+    r2, recorded2, _ = _revoke(monkeypatch, member)
+    assert r2.status_code == 200 and [k["revoked_by"] for k in recorded2] == [member], (r2.status_code, r2.text[:200])
+    assert [k["subject"] for k in recorded2] == [PERSON]      # subject is the grant's owner, recorded as named
