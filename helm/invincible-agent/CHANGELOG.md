@@ -1,13 +1,210 @@
 # invincible-agent helm chart — changelog
 
-## 0.4.90 — not yet cut
+## 0.4.91 — not yet cut
+
+**What 0.4.91 owes so far:** the 11-18 drain and the 11-19 merges, each merged by sha after the 0.4.90 tag (`36393237`). The cut writes its table.
+
+| PR | merge |
+| --- | --- |
+| #430 | `638cdffc` |
+| #443 | `171e53ff` |
+| #400 | `03eb71db` |
+| #432 | `4b04940b` |
+| #441 | `147bda29` |
+| #375 | `136793de` |
+| #434 | `20a18158` |
+| #438 | `6b3e8efd` |
+| #433 | `d3b4654a` |
+| #435 | `18b8ac46` |
+| #408 | `e7c79e73` |
+| #412 | `329a5533` |
+| #414 | `7f341e38` |
+
+#443 changed chart content after the 0.4.90 cut, with no pending entry, so master's chart seal refused it (build `171e53ff`, "Refuse to publish a chart whose version did not move"). This entry declares the owed bump.
+
+- **The topaz-seed CronJob reads the approved-grant ledger, so the one pruner keeps approved grants**
+  (saf; the architect, 11-16: "one pruner, the seed"; ships with the access-ledger PR #408 in this
+  release, so no deployment gets one without the other). The seed's `grant_sync` input is now
+  committed policy UNION the `access_grant_ledger` rows that policy does not yet name; without it
+  every tick would revoke each grant approved at runtime. The seed reads `entry` and applies the
+  ledger's REVOCATION rows through the same `union_grants` as the BFF: a revoked grant (ledger or
+  committed) is absent from what the seed syncs and the seed prunes the reader; a ledger grant whose
+  asset has gone is skipped alone and reported. This PR must merge after #408 (its diff includes
+  #408 until then): a seed that read a revoke row as a grant would restore revoked access. The ledger read FAILS CLOSED: if the store
+  cannot be read grant_sync exits 5 having applied and pruned nothing; the other syncs still run that tick (they do not depend on the ledger) and the Job then exits 5 at the end, so it fails visibly.
+  A ledger table that does not exist yet is an empty ledger. **Chart change:** the Job gains
+  `PROJECTOR_POSTGRES_DSN` (host, port, db and user from the chart's pg helpers; the password by a
+  `secretKeyRef` to `BPMN_POSTGRES_PASSWORD`, never the whole secret) and the seed image, which is the
+  cortex-bff image, already carries `psycopg2-binary` (root `dependencies`). The seed is off by default
+  and in sandbox; at work (`policySource.type: git`) it is on, so this is the roll that matters there.
+  **Not rendered by this PR:** with `networkPolicy.enabled`, Postgres ingress admits only the
+  listed components; the seed would need a `directCallers` entry for `postgresql` (the gate is off
+  today).
+
+
+- **An approved access request no longer writes a file in the pod** (saf; the architect, 11-15).
+  `POST /human_tasks/{id}/act` with `approved` on an `access_request` now records the grant in a new
+  Postgres table `access_grant_ledger` (subject, asset, kind, entry, requested_by, granted_by,
+  reason, task_id, granted_at; `entry` is `grant` or `revoke`; primary key subject+asset+kind+entry,
+  so a second approval keeps the first approver and a second revocation the first revoker),
+  then applies committed policy plus the ledger to the directory through the same `grant_sync`
+  (validate, prove the negative, sync, readback), called in process as `grant_sync.run`. The BFF
+  re-applies the ledger at startup, so a restarted pod keeps every approved grant. The table is created
+  by the BFF's existing startup migration (`CREATE TABLE IF NOT EXISTS`). **Upgrade note:** grants
+  written to a pod's `asset_grants.yaml` before this roll were lost with the pod (or live only in the
+  directory); they are not in the ledger. `scripts/report_access_grants.py` lists ledger grants and
+  directory `reader` relations that committed policy does not name; run it after the roll with the
+  directory URL set and decide each hand-written one (re-approve it, or commit it). Until ADR-0062's
+  engine-r path commits a grant, the ledger row and the `iagent.audit.grant_write` line are its record.
+  **The BFF only ADDS readers; the seed is the one pruner** (ruled 11-16): both the approval apply
+  and the startup re-apply call `grant_sync.run(..., prune=False)`, so a restart never revokes a reader
+  that the policy source asserts and the image copy lacks. **Removing a grant from committed policy
+  revokes a COMMITTED grant at the seed's next tick, and does NOT revoke a ledger grant: a ledger
+  grant is revoked by a revocation row** (below). **Ships with the seed-reads-the-ledger PR in the same release:**
+  the seed CronJob (the pruner) must read the ledger too, or it revokes an approved grant at its next
+  tick; no deployment gets one without the other. Chart values are unchanged here.
+- **Revocation is a row in the same ledger, never a deletion** (saf; the architect, 11-16). New
+  `POST /access_grants/revoke` `{subject, asset, kind, reason}` appends an `entry = revoke` row naming
+  the grant, who revoked it, when and why; the grant's own row is untouched. Effective access is
+  committed policy + ledger grants - ledger revocations, computed by one function
+  (`grant_sync.union_grants`) that the BFF and the seed both call; a revocation removes a committed
+  grant too. A revocation is in force until a re-grant act, not for ever: approving an access request
+  for a revoked grant is a new act and is recorded (the latest act on a key wins; see 0.4.90, which
+  replaces #412's 409 `grant_revoked` refusal). The route refuses 403 unless the caller holds `can_invoke(mesh:revokeAccessGrant)`: a
+  new row in `capability_grants.yaml` granted to a new capability-only group, `access-revokers`
+  (sandbox member: alice, as a fixture). **Upgrade note:** the membership is a `users.yaml` change, so
+  it needs a hand-run `topaz_sync` before anyone can revoke; until then the route answers 403 to
+  everyone. The directory loses the reader at the seed's next sync (the BFF never prunes), and the
+  route says so (`effective: at the next seed sync`). A database that already holds a
+  `access_grant_ledger` from an earlier build of this PR (no `entry` column) needs the table
+  dropped before the roll; no release carried it.
+- **A re-grant is its own approved act; the latest act on a grant wins** (saf; the architect, 11-16;
+  DRAFT, ships after #408 and #412 and replaces #412's 409 `grant_revoked`). Each grant and each
+  revocation is a row of its own in `access_grant_ledger`, ordered by a server sequence (`seq`), never
+  by clock time. The latest act per (subject, asset, kind) is the state: revoked then approved again is
+  in effect again, and the approval is the full approval (the same rail as any access request). A
+  second grant of a granted key, or a second revoke of a revoked one, adds no row (the first approver
+  stays). The seed and the BFF read the ledger through one `union_grants`. **Schema note and upgrade
+  path:** the table's key changes from (subject, asset, kind, entry) to `seq BIGSERIAL`. The BFF
+  migration upgrades an existing table in place, once and idempotently, at its first start: it adds
+  `seq`, numbers every existing row with grants BEFORE revokes (so every key a #408/#412 build had
+  revoked is still revoked), then drops the old key. No data is lost and nothing is applied by the
+  migration. **Order the roll:** the seed selects `seq`, so a seed that runs before the BFF has
+  migrated reads an unreadable ledger and exits 5 (nothing applied, nothing pruned: the safe
+  refusal) until the BFF is up; roll the BFF first. Not run against a live Postgres in this PR
+  (tests use a fake of the table); the upgrade block should be rehearsed on a copy first. Two
+  concurrent approvals of one key can both append (harmless: the latest act is the same).
+- **A revocation is effective at once** (saf; the architect, 11-16; DRAFT, on top of the re-grant
+  PR). `POST /access_grants/revoke` records the act, then the BFF removes that ONE reader relation from
+  the directory (a single delete of `dataset:<asset>#reader@user:<subject>`; it lists nothing and
+  prunes nothing, the seed stays the one pruner of everything else). Removed: 200 `effective: now`.
+  The directory could not remove it: **202** `effective: not yet`, `removed: false`, the act still
+  recorded and never shown as done; the removal is retried three times in the call, again at every BFF
+  start (for each key whose latest act is a revocation), whenever the request is repeated, and by the
+  seed's next sync. A re-grant that lands between the record and the removal keeps its reader (the latest
+  act is re-read before each attempt and again AFTER the delete; if it is now a grant, the one reader
+  is put back and the answer is `superseded` with `restored: true`; if the put-back fails the answer
+  says `restored: false` and the startup re-apply and the seed's next sync restore it). The
+  response codes of the route change (202 is new); `cortex-bff.openapi.json` is regenerated (the
+  description only). No schema change, no values change.
+- **Roll overlap: an access request approved on the old BFF pod after the migration is not recorded**
+  (saf; gov's review of #439). While the old and the new BFF pods both run, the new pod has migrated
+  `access_grant_ledger` to the `seq` key; an approval that lands on the OLD pod after that finds a
+  table its build cannot write, so the task is closed and the grant is NOT recorded
+  (`grant_written: false` in the answer). Nothing is applied for it. Re-approve any request whose
+  answer says `grant_written: false`; to avoid the window, roll the BFF in one step (scale the old
+  pod down before the new one migrates) or hold approvals during the roll.
+- **An approval names an asset that exists, and a stale ledger row stops nothing** (saf; the
+  architect, 11-16). Approving an access request whose asset is not in the directory is refused 422
+  `asset_not_in_directory` before the task is resolved or anything is recorded (503
+  `directory_unavailable` when the directory cannot be asked); the task stays pending, so it can be
+  rejected. A ledger grant whose asset has since disappeared is skipped alone and reported (a
+  `SKIPPED ledger grant` line, and a warning in the BFF log); every other grant, and every revocation,
+  still applies. A dangling COMMITTED grant still refuses the whole run (exit 3), as before.
+- **The BFF's grant-apply report no longer redirects the process streams** (saf; gov's finding).
+  `grant_sync.run` takes `out` / `err`, so two approvals at once each keep their own output (the
+  redirect was process-global and gave one of them a dead buffer). Found on the way: the BFF loaded
+  `grant_sync.py` from its file without registering the module, which fails at the module's dataclass;
+  the loader now registers it first.
+
+## 0.4.90 — 2026-11-18
+
+**Who engine O believes (the architect, 11-19):**
+- Engine O trusts the identity named in a request that reaches it from inside the cluster.
+- The BFF always overwrites that identity from the verified token, both on its direct calls and in the supervisor run config it launches.
+- **A deployment must keep the Dagster web page behind sign-in**, since a run launched there names any identity it likes. It **should run with `networkPolicy` on**, so only the BFF and the supervisor reach the engines.
+- Lane 74's fix, which makes engine O take the identity from the verified caller, leads 0.4.91.
+
+**0.4.90 is 0.4.89 (`029166db`) plus the ruled 11-17 train, `029166db..e6d0224a`, and the cortex re-pin to `be1d177` in this cut. The train is #415, #416, #417, #418, #419, #423, #424, #425 and #431, and nothing else; #421 and #429 are docs. The roll waits for Chris's approval of the values diff against the live release.**
+
+| order | PR | merge | what |
+| --- | --- | --- | --- |
+| 1 | #415 | `85a29b75` | perf: W3C Trace Context at the door, no model text in spans, provenance-telemetry 0.2.2 |
+| 2 | #421 | `02657a1e` | Lane 1: the 0.4.89 notes name the run-limit default change (docs only) |
+| 3 | #423 | `7d242b87` | Lane 1: pub-tools gets the variable names its code reads |
+| 4 | #424 | `f6653b00` | Lane 1: AGENTS.md, the sessions rule names pub-tools (docs only) |
+| 5 | #429 | `74e26cce` | Lane 1: the 0.4.88 and 0.4.89 notes name tracing client 5 at work (docs only) |
+| 6 | #416 | `9d8fb58d` | 74: `/fill_slots` reads a stringified slots reply, so an as-built where-used question is refused |
+| 7 | #417 | `39372e75` | 74: a probe that names any backend render row a served frontend menu lacks (no runtime change) |
+| 8 | #418 | `b7a7c512` | 74: a name known only in another domain abstains as `domain_scope_excluded`, named only to a caller entitled to that domain |
+| 9 | #419 | `e620f675` | 74: obsolescence deciders hold a SUSTAINMENT_ENGINEER cell in SUSTAINMENT (policy) |
+| 10 | #425 | `fe197c9b` | perf: the Langfuse client is capped below 5 in every lock |
+| 11 | #431 | `e6d0224a` | perf: reasoning effort on the subject, verb and slots calls, read from configuration and off by default |
+| — | this cut | — | cortex `52cc9a6` -> `be1d177`, frontend digest `d02e6481` (see `values.yaml`) |
+
+#418 rides at `1e3841b5`, not the `f1ab4744` first ruled. It carries the same code plus two commits: its seal imports engine O in the package form (`204a4599`), and engine O imports `notice_parts` and `where_used` package-first (`1e3841b5`). The second removed the two Q8 reds that `f1ab4744` added by test order. Chris's go of 11-18 took #418 once lane 74 reported it green with its entitlement guard. The merged tree is identical to the trial tree that failed only master's own 59 reds.
+
+**Before the roll:**
+- **At work:** confirm that the Dagster web page is behind sign-in before upgrading, and prefer `networkPolicy` on (see "Who engine O believes" above). #418 adds one more identity-named lookup in engine O, so a request from inside the cluster that skips the BFF can learn which domains a named person holds.
+- Show the values diff against the live release (the cortex digest, the pub-tools variable names from #423) and wait for Chris's approval. #431 adds a commented-out block only.
+- The chart version moves, so every pod template changes and every pod restarts. List STARTED Dagster runs first (a dead worker holds a slot).
+- #425: the docs engine image installs a Langfuse client below 5 again, which work's self-hosted server (3.165.0) accepts.
+- #418: engine O reads the caller's full entitlement from the directory (`TOPAZ_DIRECTORY_URL`, from the shared configmap) on the out-of-domain path only. A directory it cannot reach fails closed to a plain not-found. A deployment that turns on `networkPolicy` must give engine O egress to the directory port, or the out-of-domain answer never names a domain.
+
+**After the roll:**
+- #419 (ruled 11-17; this supersedes the PR body's "sync, then roll"): Chris hand-runs `topaz_sync` from the NEW cortex-bff pod, `--dry-run` first. The group `obsolescence-deciders` already exists and `task_grants` is unchanged, so no roll hook depends on the sync. Until it runs, the picker does not offer SUSTAINMENT_ENGINEER, and "Acting as" on a notice or where-used question reads SAFETY_ENGINEER, as on 0.4.89.
+- #417: run `scripts/probes/served_render_menus.py` inside the presentation engine's pod. Exit 0 is no gap, 1 a gap, 3 unreachable.
+- #415: perf checks that a `traceparent` sent at the door is the trace the BFF's spans join.
+- #431: every setting stays off. Switching one on is a separate values change, made with the routing baseline's before-and-after in hand.
+- Cortex: no question is sent until the entitlement list has loaded; the Tasks badge needs #386, which 0.4.89 carries.
 
 ### The 0.4.89 upgrade notes name the run-limit default change
 - 0.4.89's "Before the roll" note for #391 now says that the chart default for Dagster's run limit changed from 2 to 6. A user-values diff does not show this change. Docs only; the render is unchanged.
 
+### The 0.4.88 and 0.4.89 upgrade notes name tracing client 5 at work
+- Both notes now say that docs_agent carries the Langfuse client 5.2.0, which work's self-hosted Langfuse server (3.165.0) does not support. Client 5 needs a server on v4.59.0 or later. #425 caps the client below 5 in every lock for 0.4.90. Docs only; the render is unchanged.
+
 ### pub-tools gets the variable names its code reads
 - The pub-tools code location and broker set `PUBLOG_S3_BUCKET_URL: "s3://publog-lake"` instead of `PUBLOG_S3_BUCKET`, and the code location sets `DATAHUB_GMS_URL` instead of `DATAHUB_SERVER`. pub-tools reads only the new names, so the old ones were ignored, and pub-tools ran on code defaults equal to these values. Behaviour is unchanged; the two pub-tools pods restart because their env changed.
 - `tests/test_pub_tools_chart_env_is_read_by_its_code.py` renders the chart and fails on any variable set on pub-tools that its code does not read. It names each variable's reader by pub-tools or dag-tools commit.
+
+### The receipt carries its review domain (#407)
+- **The receipt carries its review domain, so a range export's scope sits in the query** (saf; the
+  architect, 11-15: "store the domain on the receipt so the scope sits in the query, with a bound on
+  pages read"). `ingest_status_projection` gains a nullable `domain TEXT` and the index
+  `idx_isp_domain_created (domain, created_at, id)`; the migration is `ADD COLUMN IF NOT EXISTS` /
+  `CREATE INDEX IF NOT EXISTS`, applied by the BFF at startup (log line
+  `ingest_status_projection migration applied`), so a re-run changes nothing. The column is written
+  when a document-promotion task is filed against `document_promotion:<DOMAIN>`, and back-written by
+  the first range that meets an old row. **Upgrade note for existing rows:** every row that exists
+  at the roll has a NULL `domain`. NULL means "no task has said", and the range query always returns
+  NULL rows, which are resolved the old way (decision record, else the open task's audience) and
+  written back. No backfill job is required, and no notice is dropped while rows are NULL; the first
+  range over old receipts is as slow as before, the second is not. **On the first wide range after the
+  roll, a 422 `export_range_scan_bound` is possible while old rows are being written back; a retry
+  makes progress** (each row read is written before the bound is checked). A receipt that resolves to
+  no domain (no decision record, no task) is marked `<none>`, a value that is not a domain: `set_domain`
+  refuses it and the query strips it from the caller's domains, so no cell can match it. Such a row
+  leaves every later scan, and a promotion task filed later overwrites the marker. The range derives
+  every receipt's domain with the one function the preflight uses and treats the stored column only as
+  a query filter, so a notice whose task was superseded or expired without a decision is dropped alone
+  and never fails the export. The filer retries a failed domain write three times, then repairs the
+  row to NULL (resolved again next time), and only then logs it: that write runs AFTER the task is filed and never fails the call. The strict step is the clear BEFORE filing: a stored domain that differs from the task's is cleared first, and if the clear cannot land nothing is filed and the call answers 503 `receipt_domain_unwritten`. The
+  page bound (40 pages) caps one range at about 20,000 receipts read. `POST /ingest/export/notices`
+  by `range` reads at most `_EXPORT_RANGE_MAX_PAGES` (40) pages of receipts, then answers 422
+  `export_range_scan_bound` stating the bound and no count. Chart values and endpoints are unchanged.
+  `ingest_status_projection`'s Electric shape serves the same rows (identity-scoped) and now carries
+  `domain` as one more field; its filter does not use it.
 
 ## 0.4.89 — 2026-11-16
 
@@ -56,6 +253,7 @@
 - #392: a deploy that never set `ENABLE_DISPOSITION_AUTHZ` now enforces the gate. Its `policy/capability_grants.yaml` must grant `mesh:startReview` to the review-starter service identity, or notices refuse `NOT_ENTITLED_TO_INITIATE`. After the grant is synced, bump `REVIEW_REQUEST_KEY_EPOCH` (runbook section B). Sandbox already runs the gate on, with the grant synced.
 - #391: **the chart default for Dagster's run limit changed from 2 to 6.** The global `max_concurrent_runs` is now 6, the sum of four per-location rows. A deploy that never set it gets 6 on this roll, and a user-values diff does not show it. Any code location the daemon loads needs its own row. List STARTED runs first (a dead worker holds a slot).
 - #395: the allow-list file reaches the BFF pod inside the BFF image (`/app/policy/electric_shapes.yaml`), not through a chart mount. A deployment with its own policy replaces it by pointing `ELECTRIC_SHAPES_FILE` at its own file. An absent or empty file serves no stream, and an unreadable one answers 503.
+- **At work: docs_agent carries tracing client 5, which work's tracing server does not support.** The docs engine image installs Langfuse client 5.2.0 (read from sandbox's 0.4.89 docs engine), as in 0.4.88. Client 5 needs a Langfuse server on v4.59.0 or later. Work's server is self-hosted 3.165.0. 0.4.90 caps the client below 5 in every lock (#425).
 
 **After the roll:**
 - #385: Chris hand-runs `topaz_sync` in the cortex-bff pod, `--dry-run` first. It deletes the retired seed twins `alice@company.com` and `bob@company.com`. `topazSeed` is off on sandbox and the roll hook does not run `topaz_sync`. Expect `retired_still_present=0`, then `SYNC OK`; a retired user still present exits 4.
@@ -218,6 +416,11 @@ nothing at runtime.
 to 0.4.89, one token change per roll.
 
 **After the roll:** dagster-user-code must be Ready (#327).
+
+**At work: docs_agent carries tracing client 5, which work's tracing server does not support.** #327 brings
+provenance-telemetry 0.2.1 into docs_agent, and docs_agent's lock resolves the Langfuse client 5.2.0 through it.
+Client 5 needs a Langfuse server on v4.59.0 or later. Work's server is self-hosted 3.165.0. 0.4.89 carries the same
+client. 0.4.90 caps the client below 5 in every lock (#425).
 
 **Grants for the export path.** The export grants go to the reviewing group. The Promote
 reviewers' group needs `ingest:exportBatch` and the work profile's `can_export`, or the button

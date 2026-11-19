@@ -102,10 +102,12 @@ def get_smolagent_model():
         # Default to Hugging Face
         return InferenceClientModel(model_id=model_id or "Qwen/Qwen2.5-Coder-32B-Instruct", temperature=0.0)
 
-def init_baml_client(baml_client_instance):
-    """
-    Configures the global BAML client dynamically based on SMOLAGENTS_PROVIDER.
-    Returns the newly configured BAML client object.
+def build_client_registry(reasoning_effort=None):
+    """Build the BAML ClientRegistry that init_baml_client applies.
+
+    ``reasoning_effort`` (low/medium/high), when set, is added to the options of the ACTIVE
+    client only (the one SMOLAGENTS_PROVIDER selects). Returns None when baml_py is missing
+    or the build fails (callers then run unconfigured, as before).
     """
     import logging
     import os
@@ -113,18 +115,30 @@ def init_baml_client(baml_client_instance):
         from baml_py import ClientRegistry
     except ImportError:
         logging.warning("baml_py not found; returning unconfigured BAML client.")
-        return baml_client_instance
+        return None
 
     provider = os.getenv("SMOLAGENTS_PROVIDER", "openrouter").lower()
-    
+
     mapping = {
         "openrouter": "OpenRouter",
         "ollama": "Ollama",
         "openai": "OpenAI"
     }
-    
+
     active_client = mapping.get(provider, "OpenRouter")
     logging.info(f"Configuring BAML client MainAgent to use: {active_client}")
+    if reasoning_effort and active_client not in ("Ollama", "OpenAI"):
+        logging.warning(
+            "reasoning effort %r is not applied: active client %s is not re-registered here",
+            reasoning_effort, active_client,
+        )
+        reasoning_effort = None
+
+    def _with_effort(name, options):
+        if reasoning_effort and name == active_client:
+            options = {**options, "reasoning_effort": reasoning_effort}
+        return options
+
     try:
         cr = ClientRegistry()
         cr.set_primary(active_client)
@@ -152,12 +166,12 @@ def init_baml_client(baml_client_instance):
         cr.add_llm_client(
             name="Ollama",
             provider="openai",
-            options={
+            options=_with_effort("Ollama", {
                 "base_url": ollama_url,
                 "api_key": "ollama",
                 "model": ollama_model,
                 "temperature": 0,
-            }
+            })
         )
 
         # Generic OpenAI-compatible client — covers LiteLLM, vLLM,
@@ -182,13 +196,61 @@ def init_baml_client(baml_client_instance):
         cr.add_llm_client(
             name="OpenAI",
             provider="openai",
-            options=openai_options,
+            options=_with_effort("OpenAI", openai_options),
         )
 
         # BAML functions explicitly request 'MainAgent', so we must overwrite it
         # to ensure it strictly respects the SMOLAGENTS_PROVIDER dynamic variable
         cr.add_llm_client(name="MainAgent", provider="fallback", options={"strategy": [active_client]})
-        return baml_client_instance.with_options(client_registry=cr)
+        return cr
     except Exception as e:
         logging.error(f"Failed to configure BAML client: {e}")
+        return None
+
+
+def init_baml_client(baml_client_instance):
+    """
+    Configures the global BAML client dynamically based on SMOLAGENTS_PROVIDER.
+    Returns the newly configured BAML client object.
+    """
+    cr = build_client_registry()
+    if cr is None:
         return baml_client_instance
+    return baml_client_instance.with_options(client_registry=cr)
+
+
+_ROUTING_EFFORT_VALID = ("low", "medium", "high")
+_routing_registry_cache: dict = {}
+
+
+def routing_effort(call: str):
+    """Reasoning effort for a routing call (SUBJECT, VERB, SLOTS) from
+    IAGENT_ROUTING_EFFORT_<call>. None = off (unset, empty, or invalid)."""
+    import logging
+    import os
+    name = f"IAGENT_ROUTING_EFFORT_{call}"
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return None
+    if raw not in _ROUTING_EFFORT_VALID:
+        logging.warning("%s=%r is not one of low/medium/high; reasoning effort is OFF", name, raw)
+        return None
+    return raw
+
+
+def routing_call_options(call: str) -> dict:
+    """Per-call BAML options carrying the reasoning effort. {} when off."""
+    import logging
+    import os
+    try:
+        effort = routing_effort(call)
+        if effort is None:
+            return {}
+        key = (effort, os.getenv("SMOLAGENTS_PROVIDER", "openrouter").lower())
+        if key not in _routing_registry_cache:
+            _routing_registry_cache[key] = build_client_registry(effort)
+        cr = _routing_registry_cache[key]
+        return {"client_registry": cr} if cr is not None else {}
+    except Exception as e:  # noqa: BLE001
+        logging.error(f"Failed to build routing call options for {call}: {e}")
+        return {}

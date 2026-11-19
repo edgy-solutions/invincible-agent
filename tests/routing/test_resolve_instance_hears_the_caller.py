@@ -190,13 +190,27 @@ def test_THE_PROVIDER_ROUTE_RECEIVES_BOTH_FIELDS():
 
 class _Ctx:
     log = SimpleNamespace(warning=lambda *a, **k: None, info=lambda *a, **k: None)
+    run_id = "run-1"  # 00dcf15e: a person behind the run redeems from the vault, keyed by run id
 
 
-def _posted(monkeypatch, **kw) -> dict:
+REDEEMED = "redeemed-token-for-the-person"
+
+
+def _posted(monkeypatch, seen: dict | None = None, **kw) -> dict:
+    """`seen`, when given, collects who the vault was asked to redeem for and the headers sent."""
     from iagent.defs import dynamic_supervisor as ds
     posted: dict = {}
+    seen = {} if seen is None else seen
 
-    def _fake_post(url, json=None, timeout=None):
+    def _redeem(ctx, who, leg="call"):
+        seen["redeemed_for"] = getattr(who, "user_email", who)
+        seen["leg"] = leg
+        return REDEEMED
+
+    monkeypatch.setattr(ds, "_redeem_caller_token", _redeem)
+
+    def _fake_post(url, json=None, timeout=None, headers=None, **_kw):
+        seen["headers"] = headers
         posted.update(json or {})
         return SimpleNamespace(status_code=200, json=lambda: {"slots": {}, "resolution": {}})
 
@@ -207,7 +221,10 @@ def _posted(monkeypatch, **kw) -> dict:
 
 
 def test_THE_SUPERVISOR_SENDS_THE_PERSON_TO_FILL_SLOTS(monkeypatch):
-    assert _posted(monkeypatch, user_email=PERSON).get("user_email") == PERSON
+    seen: dict = {}
+    assert _posted(monkeypatch, seen, user_email=PERSON).get("user_email") == PERSON
+    assert seen.get("redeemed_for") == PERSON, seen  # the person reaches the vault gate
+    assert seen.get("headers") == {"Authorization": f"Bearer {REDEEMED}"}, seen  # and the redeemed caller arrives
 
 
 def test_CONTROL_THE_SUPERVISOR_SENDS_AN_EXPLICIT_EMPTY(monkeypatch):

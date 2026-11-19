@@ -174,13 +174,27 @@ def test_THE_FILL_SLOTS_CALLER_IS_THE_REQUESTS_OWN():
 
 class _Ctx:
     log = SimpleNamespace(warning=lambda *a, **k: None, info=lambda *a, **k: None)
+    run_id = "run-1"  # 00dcf15e: a person behind the run redeems from the vault, keyed by run id
 
 
-def _enumerated(monkeypatch, **kw) -> dict:
+REDEEMED = "redeemed-token-for-the-person"
+
+
+def _enumerated(monkeypatch, seen: dict | None = None, **kw) -> dict:
+    """`seen`, when given, collects who the vault was asked to redeem for and the headers sent."""
     from iagent.defs import dynamic_supervisor as ds
     posted: dict = {}
+    seen = {} if seen is None else seen
 
-    def _fake_post(url, json=None, timeout=None):
+    def _redeem(ctx, who, leg="call"):
+        seen["redeemed_for"] = getattr(who, "user_email", who)
+        seen["leg"] = leg
+        return REDEEMED
+
+    monkeypatch.setattr(ds, "_redeem_caller_token", _redeem)
+
+    def _fake_post(url, json=None, timeout=None, headers=None, **_kw):
+        seen["headers"] = headers
         posted.update(json or {})
         return SimpleNamespace(status_code=200, raise_for_status=lambda: None,
                                json=lambda: {"outcome": "empty", "members": [], "count": 0})
@@ -192,7 +206,10 @@ def _enumerated(monkeypatch, **kw) -> dict:
 
 
 def test_THE_SUPERVISORS_ENUMERATOR_SENDS_THE_PERSON_AND_THE_GRANT(monkeypatch):
-    posted = _enumerated(monkeypatch, user_email=PERSON, entitled_domains=GRANT)
+    seen: dict = {}
+    posted = _enumerated(monkeypatch, seen, user_email=PERSON, entitled_domains=GRANT)
+    assert seen.get("redeemed_for") == PERSON, seen  # the person reaches the vault gate
+    assert seen.get("headers") == {"Authorization": f"Bearer {REDEEMED}"}, seen  # and the redeemed caller arrives
     assert (posted.get("user_email"), posted.get("entitled_domains")) == (PERSON, GRANT), posted
     assert posted.get("bound_slots") == {"lot": "3"}, posted
 

@@ -19,7 +19,7 @@ dependencies = [
     "langchain-core",
     "psycopg[binary]",
     "python-dotenv",
-    "langfuse",
+    "langfuse<5",
 ]
 
 [build-system]

@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
 import uuid
@@ -71,12 +72,16 @@ except Exception:  # pragma: no cover — telemetry never load-bearing
     MAPPING = None
 
 # Initialize runtime BAML configuration logic
+def routing_call_options(call):  # fallback: no llm_utils, no per-call options
+    return {}
+
+
 try:
-    from llm_utils import init_baml_client
+    from llm_utils import init_baml_client, routing_call_options
     b = init_baml_client(b)
 except ImportError:
     try:
-        from agent_fleet.llm_utils import init_baml_client
+        from agent_fleet.llm_utils import init_baml_client, routing_call_options
         b = init_baml_client(b)
     except ImportError:
         pass
@@ -1070,21 +1075,30 @@ try:
 except ImportError:
     from agent_fleet.utils.mesh_vectors import WeaviateVectors
 
-# Sibling module, the same dual layout as `mesh_ontology` above.
+# Sibling modules, PACKAGE-FIRST, as `read_outcome` above and for the same reason: where both
+# forms are importable, flat-first gave engine O a second module object. A seal that patches
+# `agent_fleet.ontology_service.notice_parts` then missed the code under test, and went red by
+# test order (Q8, 11-16). The container has no `agent_fleet` package, so it falls through to the
+# flat import exactly as before. Sealed by tests/security/test_engine_o_reads_one_sibling_module.py.
 try:
-    import notice_parts as _notice_parts  # type: ignore[no-redef]
-except ImportError:
     from agent_fleet.ontology_service import notice_parts as _notice_parts
+except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
+    import notice_parts as _notice_parts  # type: ignore[no-redef]
 
 try:
-    import where_used as _where_used  # type: ignore[no-redef]
-except ImportError:
     from agent_fleet.ontology_service import where_used as _where_used
+except ImportError:  # pragma: no cover - flattened runtime has no `agent_fleet` package
+    import where_used as _where_used  # type: ignore[no-redef]
 
 try:
     from utils import origin_entitlement as _origin_entitlement  # type: ignore[no-redef]
 except ImportError:
     from agent_fleet.utils import origin_entitlement as _origin_entitlement
+
+try:  # the caller's FULL entitlement, for naming another domain only to one entitled to it
+    from utils.entitled_domains import entitled_domains as _held_domains_of  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.utils.entitled_domains import entitled_domains as _held_domains_of
 
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
@@ -2273,6 +2287,8 @@ try:
         identifier_name_and_qualifiers as _ir_split_identifier,
         decide_instance_abstention as _ir_abstention,
         instance_not_found_message as _ir_not_found_msg,
+        instance_out_of_domain_message as _ir_out_of_domain_msg,
+        OUT_OF_DOMAIN_REASON as _IR_OUT_OF_DOMAIN,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
         declared_id_namespaces as _ir_declared_namespaces,
@@ -2286,6 +2302,8 @@ except ImportError:
         identifier_name_and_qualifiers as _ir_split_identifier,
         decide_instance_abstention as _ir_abstention,
         instance_not_found_message as _ir_not_found_msg,
+        instance_out_of_domain_message as _ir_out_of_domain_msg,
+        OUT_OF_DOMAIN_REASON as _IR_OUT_OF_DOMAIN,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
         declared_id_namespaces as _ir_declared_namespaces,
@@ -2734,6 +2752,9 @@ async def _resolve_instance(
                          for r in resolvers}
     candidates: list[_IRCandidate] = []
     demoted: list[dict] = []
+    #: the demoted providers' own claims, kept ONLY to tell "nobody knows this name" from
+    #: "it is known outside the asked domains". Never resolves the question.
+    demoted_candidates: list[_IRCandidate] = []
     for o in outcomes:
         owns = _provider_domains.get(o.provider) or set()
         # Empty `_asked` = the caller named no domain, so there is nothing to scope
@@ -2743,6 +2764,7 @@ async def _resolve_instance(
         if _asked and owns and not (owns & _asked):
             demoted.append({"provider": o.provider, "provider_domains": sorted(owns),
                             "n_candidates": len(o.candidates)})
+            demoted_candidates.extend(o.candidates)
             continue
         candidates.extend(o.candidates)
 
@@ -2880,6 +2902,50 @@ async def _resolve_instance(
         # another domain" are different answers and the trace must distinguish them.
         provenance["instance_out_of_domain_demoted"] = demoted
         provenance["instance_asked_domains"] = sorted(_asked)
+        # KNOWN, BUT NOT HERE (2026-11-16). When nothing in the asked domains resolves the name,
+        # ask the SAME decision table whether the demoted claims would have. If they would, the
+        # name is known outside the asked domains and the abstention must say so, rather than
+        # "no provider recognizes it". The shadow subject is recorded as a fact and never used:
+        # the question still does not resolve, because the caller did not ask in that domain.
+        if decision.subject_uri is None and demoted_candidates:
+            _shadow = _ir_decide(
+                demoted_candidates,
+                exact_threshold=_INSTANCE_RESOLVE_EXACT,
+                min_score=_INSTANCE_RESOLVE_MIN_SCORE,
+                identifier=identifier,
+                class_chains=None,
+            )
+            if _shadow.subject_uri is not None:
+                _winner = _shadow.provenance.get("instance_provider")
+                _where = (_provider_domains.get(_winner) if _winner
+                          else set().union(*(set(d["provider_domains"]) for d in demoted
+                                             if d["n_candidates"])))
+                # RULED 2026-11-16 (Chris): "The answer names the other domain only when the
+                # caller is entitled to that domain; otherwise it is a plain 'not found'."
+                # `_entitled` is the caller's ACTIVE domains, so it cannot answer that. The
+                # caller's FULL entitlement is read from the directory, and ONLY here (the shadow
+                # path), so no other resolution pays for it. Only the held domains are named,
+                # never the rest of the provider's set. A non-person, an empty answer, or a
+                # directory failure is not entitled (fail closed): no flag is set, the gate
+                # returns `instance_not_found`, and the answer is byte-identical to a name nobody
+                # knows. The trace key below is internal and carries no domain name.
+                _held: set[str] = set()
+                _unnamed = "not_entitled"
+                if not _origin_entitlement.is_person(user_email):
+                    _unnamed = "no_person"
+                else:
+                    try:
+                        _held = {str(d).upper() for d in
+                                 await asyncio.to_thread(_held_domains_of, user_email)}
+                    except Exception:  # noqa: BLE001 -- fail closed; nothing logged names a domain
+                        _held = set()
+                        _unnamed = "directory_unavailable"
+                _named = sorted(set(_where or ()) & _held)
+                if _named:
+                    provenance["instance_resolves_out_of_domain"] = True
+                    provenance["instance_out_of_domain_domains"] = _named
+                else:
+                    provenance["instance_out_of_domain_unnamed"] = _unnamed
 
     # Per-provider audit so the trace shows which phone book said what.
     provenance["instance_provider_outcomes"] = [
@@ -4028,7 +4094,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         result = await b.ClassifyDomainIntent(
             query=request.query,
             domain=request.domain,
-            baml_options={"tb": tb}
+            baml_options={"tb": tb, **routing_call_options("SUBJECT")},
         )
     except Exception as exc:
         raise HTTPException(
@@ -4111,16 +4177,24 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         # ``instance_match``. When it fires, we emit UNKNOWN (the router's
         # honest short-circuit) with an ACTIONABLE message — NOT another
         # LLM re-judgment. See [[project_abstention_gate_llm_mediated]].
-        if _ir_abstention(
+        _abstain = _ir_abstention(
             identifier=identifier,
             instance_subject=instance_subject,   # None on this branch
             instance_match=str(instance_provenance.get("instance_match") or ""),
-        ) == "instance_not_found":
-            instance_provenance["abstention_reason"] = "instance_not_found"
+            resolves_out_of_domain=bool(
+                instance_provenance.get("instance_resolves_out_of_domain")),
+        )
+        if _abstain in ("instance_not_found", _IR_OUT_OF_DOMAIN):
+            instance_provenance["abstention_reason"] = _abstain
             return SemanticResolutionResponse(
                 resolved_uri="UNKNOWN",
                 confidence_score=0.0,
-                reasoning=_ir_not_found_msg(identifier),
+                reasoning=(
+                    _ir_out_of_domain_msg(
+                        identifier,
+                        instance_provenance.get("instance_out_of_domain_domains"))
+                    if _abstain == _IR_OUT_OF_DOMAIN
+                    else _ir_not_found_msg(identifier)),
                 provenance=instance_provenance,
                 candidates=candidates,
                 excluded=_gate_excluded,
@@ -4970,6 +5044,58 @@ def _slot_spec(declarations: list[dict]) -> tuple[str, dict[str, dict]]:
     }
 
 
+#: One `key: value` pair of a flat map that was turned into a string: an identifier key, then the
+#: value up to the next pair or the end.
+_STRINGIFIED_PAIR = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*?)\s*$", re.DOTALL)
+
+
+def _parse_slots_reply(text: Any) -> Any:
+    """`slots_json` as JSON, or as the one other form measured on the wire. Raises ValueError otherwise.
+
+    MEASURED 2026-11-16 (rehearsal, "where is part 5530-182 used as built"): the model's reply
+    held `"slots_json": {"configuration": "as_built"}`, an OBJECT where the contract declares a
+    string. The parser turned that object into the string `{configuration: as_built}`. That
+    string is not JSON, so this endpoint returned no slots, the verb ran on its default
+    (`as_designed`), and an `as_built` question was answered with as-designed rows and no word
+    that it had been substituted.
+
+    The second form accepted here is exactly that: a FLAT map of identifier keys to scalar values.
+    Each value is read as JSON when it is valid JSON (a number, true/false, null or a quoted
+    string), and kept as the bare string otherwise. Anything nested, any piece without a key, or a
+    key named twice still raises, because the reader cannot tell where such a value ends. A slot
+    that arrives here still goes through the same acceptance checks below as a JSON one does.
+    """
+    if text is None or text == "":
+        return {}
+    if not isinstance(text, str):
+        raise TypeError(f"slots_json is a {type(text).__name__}, not a string")
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    body = text.strip()
+    if not (body.startswith("{") and body.endswith("}")):
+        raise ValueError("neither JSON nor a stringified flat map")
+    inner = body[1:-1].strip()
+    if not inner:
+        return {}
+    if any(ch in inner for ch in "{}[]\"'"):
+        raise ValueError("a stringified map with nested or quoted values is not read")
+    out: dict[str, Any] = {}
+    for piece in inner.split(","):
+        m = _STRINGIFIED_PAIR.match(piece)
+        if m is None or not m.group(2):
+            raise ValueError(f"not a key: value pair: {piece!r}")
+        key, value = m.group(1), m.group(2)
+        if key in out:
+            raise ValueError(f"key named twice: {key!r}")
+        try:
+            out[key] = json.loads(value)
+        except ValueError:
+            out[key] = value
+    return out
+
+
 @app.post("/fill_slots", response_model=FillSlotsResponse)
 async def fill_slots(request: FillSlotsRequest):
     """Extract the parameters the speaker named, for an already-routed verb.
@@ -5007,18 +5133,22 @@ async def fill_slots(request: FillSlotsRequest):
         # "resolve no relative period" — so a verb with no period slot is unaffected and a
         # missing calendar degrades to the pre-anchor behaviour rather than to a guess.
         anchor = _anchor_period(declarations)
+        _slots_kw = {}
+        if _slots_opts := routing_call_options("SLOTS"):
+            _slots_kw["baml_options"] = _slots_opts
         filled = await b.FillVerbSlots(
             question=request.query,
             verb=request.verb_iri,
             slot_spec=spec,
             today=anchor or "unknown",
+            **_slots_kw,
         )
     except Exception as exc:  # noqa: BLE001 — degrade to defaults, never 500 the route
         _slots_logger.warning("fill_slots: model call failed for %s: %s", request.verb_iri, exc)
         return FillSlotsResponse(reasoning=f"slot extraction unavailable: {exc}")
 
     try:
-        raw = json.loads(filled.slots_json or "{}")
+        raw = _parse_slots_reply(filled.slots_json)
     except (ValueError, TypeError):
         _slots_logger.warning(
             "fill_slots: %s returned unparseable slots_json %r",
@@ -7116,7 +7246,7 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
             subject_uri=request.subject_uri or "UNKNOWN",
             subject_reasoning=request.subject_reasoning or "",
             domain=request.domain,
-            baml_options={"tb": tb},
+            baml_options={"tb": tb, **routing_call_options("VERB")},
         )
     except Exception as exc:
         raise HTTPException(
