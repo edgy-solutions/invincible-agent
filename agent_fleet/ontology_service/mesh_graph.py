@@ -385,3 +385,20 @@ class Neo4jGraph:
         rows = [{"kind": "persona", **r} for r in personas.rows]
         rows += [{"kind": "domain", **r} for r in domains.rows]
         return MeshResult.answered(rows) if rows else MeshResult.empty()
+
+    def is_safety_critical(self, initiator: Initiator, *, mpn: str, domain: str) -> MeshResult:
+        """Declared, and DELIBERATELY NOT ANSWERED: always `unreachable`, never a verdict.
+
+        TYPE NOW, ROUTE LATER (architect ruling 2026-10-30, quoted in the SDK Protocol's
+        docstring). The one decision-maker is `agent_fleet/safety_agent/safety_critical.py`, and
+        `tests/safety/test_the_safety_critical_rule_is_the_only_decision.py` reds on a second one.
+        Answering here, from the graph or from that rule, would be that second decision or a
+        producer wiring that nobody has ruled. `unreachable` is the SDK's "not an answer", the
+        same refusal `registry` gives when it lacks its views, and the SDK's offline conformance
+        accepts it where it refuses `NotImplementedError`.
+        """
+        self._require_person(initiator, "is_safety_critical")
+        return MeshResult.unreachable(
+            "is_safety_critical: declared but not routed (type now, route later); "
+            "ask the safety engine's rule"
+        )
