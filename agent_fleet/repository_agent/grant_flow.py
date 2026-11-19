@@ -194,9 +194,11 @@ def backfill_ledger(
     not an approval of the proposal, which is reviewed like any other. The requester (the row's
     ``requested_by``) and the grantee are excluded.
 
-    The proposals are the EFFECTIVE set's ledger-only grants, by ``grant_sync.union_grants``: a
-    revocation row is never proposed as a grant, a grant its own ledger revokes is not proposed, and
-    a revoked committed grant is not re-proposed. A grant whose asset is not in the directory
+    The proposals are the EFFECTIVE set's ledger-only grants, by ``grant_sync.union_grants``, each
+    resolved by the LATEST act on its key (``grant_sync.latest_acts``): a revocation row is never
+    proposed as a grant, a grant whose latest act is a revocation is not proposed, a revoked
+    committed grant is not re-proposed, and a re-grant after a revocation is proposed from the
+    re-grant's row. A grant whose asset is not in the directory
     (``asset_exists``) is skipped, since the merge check would refuse it and it could never apply.
     """
     if service.auth_via != "service":
@@ -208,7 +210,10 @@ def backfill_ledger(
     committed_rows = _grants_of(_blob_text(repo, tip, GRANTS_PATH))
     committed = {_row_key(g) for g in committed_rows}
     effective = {_row_key(g) for g in grant_sync.union_grants(committed_rows, ledger)}
-    by_key = {_row_key(r): r for r in ledger if (r.get("entry") or "grant") == "grant"}
+    # The row proposed for a key is its LATEST act, in the ledger's own order (`seq`), never the last
+    # row the caller happened to list: a re-grant after a revocation proposes the re-grant's approver.
+    by_key = {k: r for k, r in grant_sync.latest_acts(ledger).items()
+              if (r.get("entry") or "grant") == "grant"}
     out = []
     for key, row in by_key.items():
         if key in committed or key not in effective:
@@ -369,7 +374,7 @@ def make_sync_run(
     """``policy/sync/grant_sync.run`` bound to the directory, ADD-ONLY (``prune=False``).
 
     The set it applies is the EFFECTIVE one: the committed rows it is handed plus the ledger's grants
-    minus the ledger's revocations (``grant_sync.union_grants``), read through ``ledger()`` at each
+    resolved by the latest act on each key (``grant_sync.union_grants``), read through ``ledger()`` at each
     apply. A stale ledger grant is skipped alone (``ledger_keys``); a dangling committed row still
     refuses (exit 3), which ``grant_rows_appliable`` keeps from merging.
 
