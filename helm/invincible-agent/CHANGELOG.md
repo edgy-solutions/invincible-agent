@@ -2,6 +2,8 @@
 
 ## 0.4.91 — not yet cut
 
+- **The person-guard census declares its one identity comparison** (saf; master was red since #414). `grant_flow.backfill_ledger` compares the repository identity's `Auth-Via` header with `"service"`; it is not an Initiator kind and is already allowlist-shaped. The matcher stays broad (a copy written as `initiator.role == "service"` is still caught); the row is declared by (path, function) with a count and a reason, checked both ways. Test only.
+
 - **The case-runner census decides `POST /access_grants/revoke`** (saf; master was red since #408 added the route). The census flagged `subject` as a person-shaped field. It is the OWNER of the grant being revoked, not a principal the caller acts for; the actor is the caller, asked `can_invoke mesh:revokeAccessGrant`, and no service identity is in the `access-revokers` group. The field is EXCLUDED with that reason, backed by a seal that the case runner is refused at the gate (403 `not_entitled_to_revoke_access`, nothing recorded) and a control that a revoker records. The exclusion is agreed by gov 11-19 (#461, comment 7014541192); architect's agreement pending. Test only; no chart change.
 
 **What 0.4.91 owes so far:** the 11-18 drain and the 11-19 merges, each merged by sha after the 0.4.90 tag (`36393237`). The cut writes its table.
