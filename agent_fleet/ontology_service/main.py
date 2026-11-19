@@ -3068,9 +3068,12 @@ async def _input_declared_pool(request, domains) -> tuple[list[dict], dict]:
 
     Degrades to today's behaviour on any failure: a failure here must not fail /resolve.
     """
+    # Upper-cased as /search_predicates and /classify_predicate do: the incumbent's domain filter is
+    # case-sensitive and the mesh arm's is not, so an un-normalised scope makes the two arms differ.
+    entitled = [str(d).upper() for d in domains]
     try:
         rows = await predicate_hybrid_search(
-            request.query, entitled_domains=list(domains), limit=10, user_email=request.user_email)
+            request.query, entitled_domains=entitled, limit=10, user_email=request.user_email)
     except Exception as exc:
         print(f"[Engine O] input-declared verb recall failed ({type(exc).__name__}) - "
               "keeping the recalled pool")
