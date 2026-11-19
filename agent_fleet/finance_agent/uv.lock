@@ -579,7 +579,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypercorn" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.25" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "polars", specifier = ">=1.20" },
     { name = "pydantic" },
@@ -743,8 +743,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.20"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20#1aa642393dedbc75741377042103a9def069ff6c" }
+version = "0.9.25"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.25#f1a941030bd68f1218ee6122750619ea08ee7276" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },

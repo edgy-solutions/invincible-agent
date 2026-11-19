@@ -1441,7 +1441,7 @@ requires-dist = [
     { name = "httpx" },
     { name = "httpx", marker = "extra == 'agent-fleet'" },
     { name = "hypercorn", marker = "extra == 'agent-fleet'" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.25" },
     { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "langchain-community", marker = "extra == 'agent-fleet'" },
     { name = "langchain-weaviate", marker = "extra == 'agent-fleet'" },
@@ -1485,7 +1485,7 @@ provides-extras = ["agent-fleet"]
 dev = [
     { name = "dagster-dg-cli" },
     { name = "dagster-webserver" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.25" },
     { name = "lxml", specifier = ">=6.1.1" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1495,8 +1495,8 @@ dev = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.20"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.20#1aa642393dedbc75741377042103a9def069ff6c" }
+version = "0.9.25"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.25#f1a941030bd68f1218ee6122750619ea08ee7276" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
