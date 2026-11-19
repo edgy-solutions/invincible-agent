@@ -235,6 +235,10 @@ def test_S4_a_normalised_tie_asks(eo, monkeypatch):
 
 
 def _fill(eo, monkeypatch, value):
+    # The identity comes from the verified caller (#452): tester, holding SUSTAINMENT.
+    monkeypatch.setattr(eo, "_current_caller",
+                        lambda: SimpleNamespace(authz_id="tester@example.com", verified=True))
+    monkeypatch.setattr(eo, "_held_domains_of", lambda _s: frozenset({"SUSTAINMENT"}), raising=False)
     filled = SimpleNamespace(slots_json=json.dumps({"part_number": value}), confidence=0.9, reasoning="stub")
 
     async def _fake(**kw):
