@@ -127,6 +127,15 @@
   `grant_sync.py` from its file without registering the module, which fails at the module's dataclass;
   the loader now registers it first.
 
+- **A call that finds a promotion task already open is no longer refused by the stale-domain clear**
+  (saf; gov's should-fix on #443). The 0.4.90 entry says the clear runs before filing and a clear
+  that cannot land answers 503 `receipt_domain_unwritten`. That held for a call that FILES a task,
+  but the clear also ran before the find, so a call for an already-open task could be refused
+  "nothing was filed" when it files nothing. The clear now runs immediately before the task is
+  registered: a find answers `ALREADY_FILED` (the post-filing note repairs the stored domain or
+  logs, and never refuses), and a filing still fails closed with the same 503 and nothing registered.
+  Behaviour change in the BFF only; no chart change.
+
 ## 0.4.90 — 2026-11-18
 
 **Who engine O believes (the architect, 11-19):**
