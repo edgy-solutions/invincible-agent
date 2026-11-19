@@ -10,6 +10,7 @@ Run:  python tests/test_cross_repo_contracts.py
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -177,11 +178,27 @@ def test_the_derive_reads_the_POINTER_field_not_the_IDENTITY_field() -> None:
 
 
 def test_the_producer_still_emits_both_fields_separately() -> None:
-    """Both jobs, both fields. If the sensor ever stops emitting one, the other silently absorbs its
-    role again — which is exactly how this bug was born."""
+    """Both jobs, both fields. If the producer ever stops emitting one, the other silently absorbs its
+    role again — which is exactly how this bug was born.
+
+    The emit moved out of the sensor into its one builder, `iagent.review_payload.
+    build_start_review_payload` (#441, de29e0c0), and a text pin on the sensor went stale while the
+    behaviour held. So the emit is asserted on the payload the builder BUILDS, and the sensor is held
+    only to its two jobs: building the full URI and handing the builder both fields. The builder is
+    pure (no dagster, no boto3), so this file still needs no deps beyond the repo."""
+    from iagent.review_payload import build_start_review_payload
+
+    identity, location = "IDENTITY-SENTINEL", "s3://bucket-sentinel/k/review.json"
+    payload = build_start_review_payload({"review_items": []},
+                                         request_key=identity, artifact_uri=location)
+    assert payload.get("artifact_uri") == location, "the builder stopped emitting the LOCATION field"
+    assert payload.get("request_key") == identity, "the builder stopped emitting the IDENTITY field"
+
     t = _txt(SENSOR)
-    assert '"artifact_uri": artifact_uri' in t, "the sensor stopped emitting the LOCATION field"
-    assert '"request_key": request_key' in t, "the sensor stopped emitting the IDENTITY field"
+    calls = re.findall(r"build_start_review_payload\(([^)]*)\)", t)
+    assert calls, "the sensor no longer builds its payload with the one builder"
+    assert any(re.search(r"\brequest_key=request_key\b", c) and re.search(r"\bartifact_uri=artifact_uri\b", c)
+               for c in calls), "the sensor stopped handing the builder BOTH fields"
     assert 'artifact_uri = f"s3://{bucket}/{key}"' in t, (
         "the sensor no longer builds a FULL s3:// URI — a bare key is refused by the consumer on "
         "purpose (bare-key tolerance was the coupling: it required both runtimes to agree on an "
