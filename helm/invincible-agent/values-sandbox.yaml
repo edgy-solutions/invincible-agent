@@ -126,6 +126,9 @@ agentFleet:
     # which exist only so the live leg can see each reader rule refuse. Nothing else names it.
     # The separator is the pod's os.pathsep (":").
     MEASURE_VERB_OVERLAY_DIRS: "/app/policy/overlays/sample/measure_verbs:/app/policy/overlays/sandbox/measure_verbs"
+    # A PROGRAM IS AN INSTANCE ROW (docs/contracts/finance-overlays.md section 7). SANDBOX ONLY: the
+    # three planted refusal programs, declared so a question can name them. engine-fin reads it.
+    FIN_INSTANCE_OVERLAY_DIRS: "/app/policy/overlays/sandbox/fin_instances"
     CANVAS_OVERLAY_DIRS: "/app/policy/overlays/sample/canvases"
     # A CDRL IS AN EXPORT PROFILE (same proposal, Part 2). SANDBOX ONLY: the sample A001 profile
     # and its template are invented. engine-fin reads it.
