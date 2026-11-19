@@ -345,7 +345,13 @@ NOT_POLICY: dict[str, str] = {
     'src/iagent/gateway.py::act_on_human_task::no_open_empty_task | the task names no ingest': CONFLICT,
     # -- engine-r (#133, ADR-0062 §2), classified 2026-10-28 --
     f"{ER}::Repo._check_approvals::proposer_cannot_approve": DUTIES,
+    f"{ER}::Repo._check_approvals::approver_is_excluded": DUTIES,
     f"{ER}::Repo._check_approvals::approval_of_another_sha": STATE,
+    # the grant checks (grant_flow), classified with #414: a quorum short of its count, and a row that could
+    # never apply, are the state of the proposal; a rail row with no count is the rail unconfigured.
+    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::too_few_approvers': STATE,
+    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::rail_row_without_approvers': REPO_UNCONFIGURED,
+    'agent_fleet/repository_agent/grant_flow.py::grant_rows_appliable.grant_rows_appliable_check::grant_row_unappliable': STATE,
     f"{ER}::Repo._check_approvals::no_approval": STATE,
     f"{ER}::Repo.proposal::unknown_proposal": CONFLICT,
     f"{ER}::Repo.merge::proposal_closed": CONFLICT,
@@ -408,7 +414,7 @@ PENDING: dict[str, str] = {
     'src/iagent/gateway.py::export_package::recipient_required | name the recipient this package': 'code',
     'src/iagent/gateway.py::ingest_retry_route::awaiting_kind | pick a leaf: POST /ingest/{id}/l': 'config',
     'src/iagent/promotion.py::act::not_authorized_to_act': 'task_grants',
-    f"{GW}::start_review::<out>": RELAY,
+    f"{GW}::_start_review_core::<out>": RELAY,   # moved from start_review (the route calls the core)
     f"{GW}::act_on_human_task::not_authorized_to_act | <_restate_refusal_message>": RELAY,
     f"{GW}::answer_case_signal::not_authorized_to_act | <msg>": RELAY,
     f"{RA}::approve_task::not_authorized_to_act | <_restate_error_message>": RELAY,
@@ -428,6 +434,10 @@ PENDING: dict[str, str] = {
     # and grantor row arrive with engine-r's engine PR; until then the governed rows are held in
     # code, which is what `code` names. That PR moves this row to `repository_paths` and builds it.
     f"{ER}::Repo.merge::path_not_governed": "code",
+    # the grant quorum (grant_flow.grant_quorum): each names policy_id repository_paths and its missing_binding
+    # in the RepoRefusal. engine-r has no service layer yet, so today the refusal reaches a caller as
+    # that RepoRefusal; the engine PR that builds the service carries both into the standard body.
+    'agent_fleet/repository_agent/grant_flow.py::grant_quorum.grant_quorum_check::no_approver_in_audience': "repository_paths",
 }
 
 

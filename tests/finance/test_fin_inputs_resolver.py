@@ -34,6 +34,7 @@ for _p in (REPO, REPO / "src", REPO / "scripts"):
 from agent_fleet.finance_agent import asset_inputs, measure_verbs, seed, state_codec  # noqa: E402
 from agent_fleet.finance_agent import main as engine  # noqa: E402
 from agent_fleet.finance_agent.entities import FISCAL_PERIODS, NotInModel  # noqa: E402
+from dag_tools.cortex_data.client import ticket_receipt  # noqa: E402
 
 SAMPLE = REPO / "policy" / "overlays" / "sample" / "measure_verbs"
 PROFILES_DIR = REPO / "policy" / "overlays" / "sample" / "fin_export_profiles"
@@ -45,6 +46,20 @@ BANNER = "SYNTHETIC TEST ASSET - not a real program."
 GATEWAY = "http://gateway.test"
 PREFIX = "a governed finance read requires the caller's id"
 SECRET = "hunter2-fake-credential"
+#: The as-of a test broker stamps on every ticket. Each read gets its own ticket id (`Seam`).
+AS_OF = "2026-11-01T00:00:00Z"
+
+
+def ticket(n: int, **over) -> dict:
+    """The broker ticket of the `n`th read: an id, an as-of, and a credential the receipt must not
+    carry (the client builds the receipt by allowlist; `ticket_receipt` is the client's own)."""
+    return {"ticket_id": f"tkt-{n:04d}", "issued_at": AS_OF, "as_of": AS_OF,
+            "access_token": SECRET, **over}
+
+
+def ticketed(frame, urn: str, n: int = 1, **over):
+    """What `get_dataframe_with_ticket` returns: the frame and the receipt of ticket `n`."""
+    return frame, ticket_receipt(urn, ticket(n, **over))
 
 
 class NotEntitled(Exception):
@@ -66,17 +81,21 @@ class Seam:
         self.urns: list[str] = []
         self.frame = None
         self.raises: Exception | None = None
+        self.ticket: dict = {}  # overrides on every ticket the seam issues
+        self.issued: list[dict] = []  # the receipt of each read, in order
         seam = self
 
         class Client:
             def __init__(self, **kw):
                 seam.kwargs.append(kw)
 
-            def get_dataframe(self, urn):
+            def get_dataframe_with_ticket(self, urn):
                 seam.urns.append(urn)
                 if seam.raises is not None:
                     raise seam.raises
-                return seam.frame
+                frame, receipt = ticketed(seam.frame, urn, len(seam.issued) + 1, **seam.ticket)
+                seam.issued.append(receipt)
+                return frame, receipt
 
         self.Client = Client
 
@@ -623,7 +642,8 @@ def test_under_the_flag_a_package_runs_as_the_caller_over_the_asset(client, seam
     assert {f.period: f.acwp for f in kw["state"].facts} == {f.period: f.acwp for f in expected.facts}
     assert kw["state"].facts != seed.build_seed().facts, "the control: the frame moves the facts"
     assert kw["program_source"] == {"kind": "asset", "urn": URN}
-    assert kw["data_provenance"] == asset_inputs.provenance(URN)
+    # Reads: the grant (refusal 7), the program state, then each panel. The page cites the state's.
+    assert kw["data_provenance"] == asset_inputs.provenance(URN, seam.issued[1])
 
 
 def test_a_package_without_the_grant_is_a_403_before_anything_is_read_measured_or_written(
@@ -670,7 +690,7 @@ def test_a_package_with_a_seed_sourced_funding_panel_builds_over_one_mixed_state
         "the uncarried collections are the seed's copy of THIS program")
     assert kw["program_source"] == {"kind": "asset", "urn": URN,
                                     "seeded": {"fin_funding_status": reason}}
-    assert kw["data_provenance"].startswith(asset_inputs.provenance(URN))
+    assert kw["data_provenance"].startswith(asset_inputs.provenance(URN, seam.issued[1]))
     assert "fin_funding_status" in kw["data_provenance"] and reason in kw["data_provenance"]
     assert seed.notional_banner() in kw["data_provenance"]
 
@@ -775,7 +795,7 @@ def test_the_real_build_over_the_asset_verifies_and_names_where_its_figures_came
     assert r.status_code == 200, r.text
     manifest = manifests[0]
     assert manifest["program_source"] == {"kind": "asset", "urn": URN}
-    assert manifest["data_provenance"] == asset_inputs.provenance(URN)
+    assert manifest["data_provenance"] == asset_inputs.provenance(URN, seam.issued[1])
     narrowed = state_codec.narrow(asset_inputs.state_from_rows(frame, PROGRAM), PROGRAM)
     assert manifest["state_sha256"] == export.content_hash(state_codec.state_to_dict(narrowed))
     page = (tmp_path / r.json()["artifact_filename"]).read_text(encoding="utf-8")
@@ -852,10 +872,12 @@ def test_a_cdrl_reads_the_asset_as_the_caller_and_each_source_says_where_its_fig
     env = r.json()["envelope"]
     by = {s["fn"]: s for s in env["sources"]}
     assert by["fin_tcpi"]["data_source"] == {"kind": "asset", "urn": URN}
-    assert by["fin_tcpi"]["data_provenance"] == asset_inputs.provenance(URN)
     # A BUILT-IN SOURCE READS THE SAME ASSET (ruled 2026-11-08), so the file joins one source.
     assert by["fin_performance_indices"]["data_source"] == {"kind": "asset", "urn": URN}
-    assert by["fin_performance_indices"]["data_provenance"] == asset_inputs.provenance(URN)
+    # Reads: the grant, the program facts, then one per source. Each source cites its own.
+    cited = [by[fn]["data_provenance"] for fn in ("fin_tcpi", "fin_performance_indices")]
+    panels = [asset_inputs.provenance(URN, r) for r in seam.issued[2:]]
+    assert len(panels) == 2 and sorted(cited) == sorted(panels), (cited, panels)
     assert env["program_source"] == {"kind": "asset", "urn": URN}
     assert seam.urns and set(seam.urns) == {URN}
     assert {kw["originator_email"] for kw in seam.kwargs} == {ALICE}
@@ -1030,6 +1052,46 @@ def test_an_asset_answer_carries_the_banner_and_the_urn_and_not_the_notional_tex
     assert env["data_source"] == {"kind": "asset", "urn": URN}
 
 
+_ONE_DECLARED_ONE_BUILT_IN = pytest.mark.parametrize(
+    "fn", ["fin_tcpi", "fin_performance_indices"], ids=["declared", "built-in"])
+
+
+@_ONE_DECLARED_ONE_BUILT_IN
+def test_an_asset_answer_cites_the_ticket_of_the_read_it_computed_over(client, seam, fn):
+    """ADR-0065:133 through the route: the id and the as-of of the ticket the broker issued for
+    THIS read, as text on the wire, and nothing else of the ticket (it carries a credential)."""
+    seam.frame = frame_of().lazy()
+    seam.ticket = {"ticket_id": "tkt-route-7f3a"}
+    r = measure(client, fn, params={"program_id": PROGRAM})
+    assert r.status_code == 200, r.text
+    env = r.json()
+    assert [t["ticket_id"] for t in seam.issued] == ["tkt-route-7f3a"]
+    assert env["data_provenance"] == f"{BANNER} (as of {AS_OF}, ticket: tkt-route-7f3a) Source: {URN}"
+    assert SECRET not in r.text
+    assert env["data_source"] == {"kind": "asset", "urn": URN}, "the receipt rides in the string only"
+
+
+@_ONE_DECLARED_ONE_BUILT_IN
+def test_the_control_a_ticket_that_stamps_neither_answers_pending_and_no_as_of(client, seam, fn):
+    """The same read, the broker stamping no id and no as-of: the ruled pending text, byte for byte."""
+    seam.frame = frame_of().lazy()
+    seam.ticket = {"ticket_id": None, "as_of": None}
+    r = measure(client, fn, params={"program_id": PROGRAM})
+    assert r.status_code == 200, r.text
+    assert r.json()["data_provenance"] == f"{BANNER} (ticket: pending) Source: {URN}"
+
+
+@pytest.mark.parametrize("receipts", [
+    [], [ticketed(None, URN, 1)[1], ticketed(None, URN, 2)[1]], [ticketed(None, "urn:li:dataset:other")[1]],
+], ids=["none", "two", "another-urn"])
+def test_an_answer_never_guesses_which_ticket_it_read_under(receipts):
+    """None, several, or another URN's receipt is a defect, raised; the control is the one receipt."""
+    with pytest.raises(RuntimeError):
+        engine._the_receipt(receipts, URN)
+    one = ticketed(None, URN)[1]
+    assert engine._the_receipt([one], URN) is one
+
+
 def test_a_built_in_with_the_flag_set_reads_the_asset_as_the_caller(client, seam):
     """RULED 2026-11-08: that is what the flag means. The frame doubles ACWP, so the seed's
     figures and the asset's differ and the artifact id says which the answer was computed over."""
@@ -1045,7 +1107,7 @@ def test_a_built_in_with_the_flag_set_reads_the_asset_as_the_caller(client, seam
     assert engine._artifact_id(fn, params, over_asset) != engine._artifact_id(fn, params, over_seed), (
         "the control: the frame must move the figures")
     assert env["artifact_id"] == engine._artifact_id(fn, params, over_asset)
-    assert env["data_provenance"] == asset_inputs.provenance(URN)
+    assert env["data_provenance"] == asset_inputs.provenance(URN, seam.issued[0])
     assert env["data_source"] == {"kind": "asset", "urn": URN}
     assert seam.urns == [URN] and {kw["originator_email"] for kw in seam.kwargs} == {ALICE}
 
@@ -1083,7 +1145,7 @@ def test_every_built_in_under_the_flag_answers_from_where_its_row_says(client, s
         assert env["rows"], "the seed carries funding lines; a seed answer is never 0 rows"
         assert seam.urns == []
     else:
-        assert env["data_provenance"] == asset_inputs.provenance(URN)
+        assert env["data_provenance"] == asset_inputs.provenance(URN, seam.issued[0])
         assert env["data_source"] == {"kind": "asset", "urn": URN}
         assert seam.urns == [URN]
 

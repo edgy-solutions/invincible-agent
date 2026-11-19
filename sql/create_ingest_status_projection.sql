@@ -155,3 +155,12 @@ ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS hold_reason TEXT;
 -- fallback. TRUE once a steward answered `has_parts` on a `document_empty_confirm`; doc-tools reads it
 -- from GET /ingest/retries. NOT NULL DEFAULT FALSE, IDEMPOTENT.
 ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS force_text_fallback BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- 2026-11-15 (the receipt carries its domain): `domain` -- NULLABLE. The review audience's domain
+-- (`document_promotion:<DOMAIN>`, upper case, as `promotion.domain_of` reads it), written when a
+-- promotion task is filed for the row, so an export range scopes IN THE QUERY. NULL until a task
+-- says one, and for every row written before this column existed: a NULL row is never dropped by
+-- the scope, it is resolved the old way (decision record, then the open task) and its answer
+-- written back. IDEMPOTENT.
+ALTER TABLE ingest_status_projection ADD COLUMN IF NOT EXISTS domain TEXT;
+CREATE INDEX IF NOT EXISTS idx_isp_domain_created ON ingest_status_projection (domain, created_at, id);
