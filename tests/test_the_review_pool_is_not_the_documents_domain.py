@@ -120,17 +120,62 @@ def test_the_scanner_detects_a_planted_read():
     assert _domain_reads(control) == [], "a function that is not a promotion handler is out of scope"
 
 
-def test_no_promotion_handler_reads_a_domain_key():
+# A read of "domain" in a promotion handler is DECLARED here, by (path, function) -- never by line --
+# with the reason it does not read the pool as the document's domain. The list is checked both
+# ways: an undeclared read fails, and a declared entry that matches no read fails (so it cannot
+# go stale). This changes the census's rules at gov's request: gov reviews the mechanism too.
+DECLARED_DOMAIN_READS = {
+    ("src/iagent/gateway.py", "_file_or_find_document_promotion_task"):
+        "reads the receipt's STORED domain (ingest_status row) only to clear it when it differs from "
+        "the task's routing domain (#443); it scopes, routes and files nothing from that value",
+}
+
+
+def _scan_tree():
     found = {}
     for top in ("src", "agent_fleet"):
         for path in sorted((ROOT / top).rglob("*.py")):
             if ".venv" in path.parts or "__pycache__" in path.parts:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-            if "document_promotion" not in text and "promotion.KIND" not in text \
-                    and path.name != "promotion.py":
+            if "document_promotion" not in text and "promotion.KIND" not in text                     and path.name != "promotion.py":
                 continue
             hits = _domain_reads(text, str(path))
             if hits:
-                found[str(path.relative_to(ROOT))] = hits
-    assert found == {}, found
+                found[path.relative_to(ROOT).as_posix()] = hits
+    return found
+
+
+def _verdict(found, declared):
+    """(undeclared reads, declared entries that match no read)."""
+    seen = {(f, fn) for f, hits in found.items() for fn, _ in hits}
+    undeclared = {f: [h for h in hits if (f, h[0]) not in declared] for f, hits in found.items()}
+    undeclared = {f: hs for f, hs in undeclared.items() if hs}
+    return undeclared, sorted(set(declared) - seen)
+
+
+def test_no_promotion_handler_reads_a_domain_key():
+    undeclared, stale = _verdict(_scan_tree(), DECLARED_DOMAIN_READS)
+    assert undeclared == {}, undeclared
+    assert stale == [], f"declared reads that no longer exist: {stale}"
+
+
+def test_an_undeclared_read_still_fails():
+    found = {"src/iagent/x.py": [("act", 3)], "src/iagent/gateway.py":
+             [("_file_or_find_document_promotion_task", 9), ("other_handler", 20)]}
+    undeclared, _ = _verdict(found, DECLARED_DOMAIN_READS)
+    assert undeclared == {"src/iagent/x.py": [("act", 3)],
+                          "src/iagent/gateway.py": [("other_handler", 20)]}
+
+
+def test_a_declared_entry_that_matches_no_read_fails():
+    declared = {**DECLARED_DOMAIN_READS, ("src/iagent/gone.py", "was_a_handler"): "stale"}
+    undeclared, stale = _verdict(_scan_tree(), declared)
+    assert stale == [("src/iagent/gone.py", "was_a_handler")]
+    assert undeclared == {}
+
+
+def test_control_the_real_tree_passes_with_exactly_the_one_declared_entry():
+    assert len(DECLARED_DOMAIN_READS) == 1
+    found = _scan_tree()
+    assert {(f, fn) for f, hits in found.items() for fn, _ in hits} == set(DECLARED_DOMAIN_READS)
