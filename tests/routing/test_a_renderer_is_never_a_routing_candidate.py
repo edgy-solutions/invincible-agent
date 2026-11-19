@@ -50,8 +50,8 @@ _HARNESS_PATH = _REPO / "tests" / "test_the_migrated_predicate_route_returns_the
 def harness():
     spec = importlib.util.spec_from_file_location("_renderer_seal_harness", str(_HARNESS_PATH))
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["_renderer_seal_harness"] = mod
     try:
+        sys.modules["_renderer_seal_harness"] = mod
         spec.loader.exec_module(mod)
         mod.MAIN = mod._load_main()
     finally:
