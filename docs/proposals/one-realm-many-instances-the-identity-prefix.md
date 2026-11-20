@@ -1,6 +1,7 @@
 # One realm, many instances: the identity prefix
 
-**Status: PROPOSED, 2026-11-20. Nothing is built.** This is for the architect to rule on. It is a
+**Status: PROPOSED, 2026-11-20; §6 Q1 RULED 2026-11-20. Nothing is built.** The rest is for the
+architect to rule on. It is a
 requirement for a later release, not for 0.4.91. The census in §4 was read from master `91305a37`.
 Revised after gov's review of #482, which found the census complete. Gov's four notes for the
 ruling are folded in where they apply: §1 (role stems), §2 (cutover and the central gateway's
@@ -52,10 +53,9 @@ identity:
   - the optional `azp`-prefix check (§2) admits a co-tenant that uses the empty prefix, because
     `iagent-engine-o` starts with `iagent-`.
 
-  **Proposed:** the chart and the composing function also refuse any prefix that is the start of a
-  role literal. That rule is checked against the role literals themselves, not against a typed
-  list of stems, so a new stem is covered when it is added. §6 Q1 settles this before anything is
-  built.
+  **RULED (architect, 2026-11-20, §6 Q1):** the chart and the composing function also refuse any
+  prefix that is the start of a role literal. That rule is checked against the role literals themselves, not against a typed
+  list of stems, so a new stem is covered when it is added.
 - **The chart refuses to render** a prefix that does not match the pattern or that fails the
   role-stem rule.
 - **The shared ConfigMap exports the prefix to every pod** as `IAGENT_IDENTITY_PREFIX`. One key
@@ -439,11 +439,14 @@ The mesh-mcp chart and doc-tools follow with the same value.
 
 ## 6. Questions for the ruling
 
-1. **The prefix shape:** `^[a-z][a-z0-9]{0,11}-$`, with the hyphen included in the value. The
-   alternative is a bare token with the chart adding the hyphen. **Either way, also refuse a prefix
-   that is the start of any role literal** (`iagent-`, `cortex-`; §1). Without that, the
-   double-prefix refusal and the `azp`-prefix check both fail. This must be settled before
-   anything is built.
+1. **RULED (architect, 2026-11-20): yes.** "A prefix that is the beginning of a role name is
+   refused at render, and so is one that does not end in the separator. An empty prefix stays the
+   default." So the separator is part of the value (`^[a-z][a-z0-9]{0,11}-$`), the bare-token
+   alternative is not taken, and the role-literal refusal (§1) holds. The architect rules the
+   rest after reading the proposal; nothing is built before that.
+   - *As proposed:* the prefix shape `^[a-z][a-z0-9]{0,11}-$`, with the hyphen included in the
+     value, or a bare token with the chart adding the hyphen; either way, also refuse a prefix
+     that is the start of any role literal (`iagent-`, `cortex-`).
 2. **In a shared realm, must every instance set a non-empty prefix?** Lane 1 recommends yes; §1
    gives the reason.
 3. **A transition audience:** none, or one dated, single-release key (§2)?
