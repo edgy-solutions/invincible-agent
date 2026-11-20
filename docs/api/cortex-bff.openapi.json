@@ -5516,6 +5516,17 @@
             "title": "Notice Id",
             "type": "string"
           },
+          "reissue_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reissue Of"
+          },
           "request_key": {
             "anyOf": [
               {
