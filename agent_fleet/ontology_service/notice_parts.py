@@ -268,9 +268,9 @@ def notice_parts(rows: Iterable[Dict[str, Any]], notice_id: str, offset: int = 0
     rng = f"parts {offset + 1}\u2013{end} of {total}"
     ibp = instances_by_property(notice_id, sources)
     if offset == 0 and not truncated:
-        message = f"{notice_id} affects {len(page)} part(s): " + ", ".join(page) + "."
+        message = f"{notice_id} affects {len(page)} part(s)."
     else:
-        message = f"{notice_id} affects {total} part(s); {rng}: " + ", ".join(page) + "."
+        message = f"{notice_id} affects {total} part(s); {rng}."
         ibp["title"] = f"Parts affected by {notice_id} ({rng})"
         if truncated:
             message += f" The next page is offset = {next_offset}."

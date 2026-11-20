@@ -34,6 +34,7 @@ SAF_REFUSAL = {
     "connector": "saf-sql", "fn": "incident_rate",
     "hazard_id": "HAZ-1003", "gap": "no incident-rate source is connected",
     "message": "No incident-rate source is connected for HAZ-1003.",
+    "end_items": ["EI-1", "EI-2"], "configurations": ["as_designed", "as_built"],
 }
 
 
@@ -81,6 +82,7 @@ def test_a_refused_saf_body_projects_an_empty_array_and_its_envelope(m):
         "connector": "saf-sql", "fn": "incident_rate",
         "hazard_id": "HAZ-1003", "gap": "no incident-rate source is connected",
         "message": "No incident-rate source is connected for HAZ-1003.",
+        "end_items": ["EI-1", "EI-2"], "configurations": ["as_designed", "as_built"],
     }
 
 

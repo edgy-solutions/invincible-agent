@@ -652,7 +652,8 @@ _ELICITATION_STATUS_BY_DISPOSITION: Dict[str, str] = {
 #: `message` is the producer's plain-language reason, drawn as the card's line; `reason` stays the code.
 REFUSAL_FIELD = "refusal"
 REFUSAL_ENVELOPE_REQUIRED: tuple = ("refused", "outcome", "reason")
-REFUSAL_ENVELOPE_OPTIONAL: tuple = ("connector", "fn", "hazard_id", "gap", "message")
+REFUSAL_ENVELOPE_OPTIONAL: tuple = ("connector", "fn", "hazard_id", "gap", "message",
+                                         "end_items", "configurations")
 
 
 def _refusal_envelope(resp: Dict[str, Any]) -> Dict[str, Any]:

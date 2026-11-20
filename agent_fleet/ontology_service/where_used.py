@@ -427,7 +427,8 @@ def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None,
     if configuration not in CONFIGURATIONS:
         return _refused(
             "unknown_configuration",
-            f"Configuration {configuration!r} is not one of: {', '.join(CONFIGURATIONS)}.")
+            "That configuration is not one held here; choose one of the listed configurations.",
+            configurations=list(CONFIGURATIONS))
     hits = resolve_part(dataset, part)
     if not hits:
         return _unknown_part()
@@ -456,12 +457,13 @@ def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None,
 
     lacking = [e for e in visible if configuration not in dataset.end_items[e]]
     if lacking:
-        names = ", ".join(sorted(dataset.identities[e]["label"] for e in lacking))
+        names = sorted(dataset.identities[e]["label"] for e in lacking)
         return _refused(
             "configuration_not_available",
-            f"No {configuration} data is held for end item(s): {names}. "
+            f"No {configuration} data is held for {len(lacking)} end item(s). "
             f"Ask for {DEFAULT_CONFIGURATION}, or wait for that configuration's data.",
-            configuration=configuration)
+            configuration=configuration,
+            end_items=names)
 
     provenance, as_of = _provenance(dataset)
     rows: List[ImpactRow] = []
@@ -476,14 +478,9 @@ def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None,
         return _refused("no_usage", f"{label} is known and is used in no end item for {configuration}.")
     rows.sort(key=lambda r: (dataset.identities[r.end_item]["label"], r.program))
 
-    lines = [
-        f"{dataset.identities[r.end_item]['label']} ({r.program}): {r.qty_per} per end item, "
-        f"population {_cell(r.population)}, stock {_cell(r.stock)} [{r.configuration}]"
-        for r in rows
-    ]
-    message = "\n".join(lines)
     notional = any(i["notional"] for i in provenance["inputs"])
     suffix = f"{configuration}, synthetic fixture" if notional else configuration
+    message = f"{label} is used in {len(rows)} end item(s) [{suffix}]."
     columns = [dict(c) for c in IBP_COLUMNS]
     group_by = next(c["key"] for c in columns if c["from"] == "ImpactRow.program")
     table = [
