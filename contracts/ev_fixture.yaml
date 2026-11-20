@@ -7,8 +7,9 @@
 # (`inputs.dataset.contract: ev_fixture`) and every read of the row's asset is held to it: the
 # required columns, each column's type, the key (`grain`) and the dependencies, by
 # agent_fleet/utils/dataset_contracts.py and its check_contract_*. The FIN_DATASET_URN read
-# (`asset_inputs.state_from_rows`) still holds its own constants, and
-# tests/finance/test_the_ev_contract_agrees_with_the_reader.py keeps those in agreement with this file.
+# (`asset_inputs.read_rows` and `state_from_rows`) is held to the contract its deployment names in
+# FIN_DATASET_CONTRACT, the sandbox's this one, by the same reader; engine-fin only checks, at boot,
+# that the contract carries the columns its state is built from (`asset_inputs.contract_problems`).
 # The sandbox's refusal probes read dag-tools' planted-refusal assets under this contract too: they
 # are built to its shape and to break it.
 #
@@ -93,18 +94,14 @@ columns:
 
 # Every rule the reader refuses on, by the id its 502 `asset_contract_violation` names. A broken
 # rule refuses the whole answer, and its message names the rule and the column, never a value.
-# The four naming a column are the FIN_DATASET_URN read's; a dataset row's read refuses the same
-# rows as `duplicate_key` and `not_determined_by`.
+# The key and the dependencies refuse as `duplicate_key` and `not_determined_by` on every read,
+# the FIN_DATASET_URN read's included.
 rules:
   missing_column: "a required column, or a column a measure row names, is absent"
   wrong_type: "a column is not of the type the contract declares"
   null_value: "a null in a column that is read"
   non_finite: "a NaN or infinity in a numeric column that is read"
   other_program_rows: "a read holds rows of another program (the asset may; a read that kept them forgot its filter)"
-  program_name_not_unique: "more than one program_name for the program"
-  program_bac_not_unique: "program_bac differs between the program's rows"
-  work_package_in_two_accounts: "a work_package appears under more than one control_account"
-  duplicate_work_package_period: "more than one row for a (work_package, period)"
   period_outside_calendar: "a period outside the vocabulary"
   varies_within_path: "under `per_path: once`, a path's rows carry different amounts"
   duplicate_key: "more than one row for one grain tuple"
