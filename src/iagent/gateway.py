@@ -114,6 +114,13 @@ logger = logging.getLogger("cortex")
 # fix, it carries the original measurement, and a second copy would drift.
 _ensure_the_audit_line_actually_ARRIVES(logger)
 
+# httpx logs "HTTP Request: GET <full url>" at INFO, and the shape proxy's upstream URL carries the
+# Electric API secret as `secret=`. Today nothing leaks only because the boot-time basicConfig() leaves the
+# root at WARNING, which is an accident and not a guard: pin both loggers here (sealed in
+# tests/test_the_shape_proxy_serves_only_its_allow_list.py).
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 # ── Env ───────────────────────────────────────────────────
 load_dotenv()
 
@@ -18881,7 +18888,8 @@ async def electric_shape_proxy(
         try:
             upstream_resp = await client.get(upstream_url, params=upstream_params)
         except httpx.HTTPError as exc:
-            logger.error("electric proxy upstream error: %s", exc)
+            # the exception class only: an httpx error's text may carry the upstream URL, which holds `secret=`
+            logger.error("electric proxy upstream error: %s", type(exc).__name__)
             raise HTTPException(
                 status_code=502, detail="electric upstream unavailable"
             ) from exc

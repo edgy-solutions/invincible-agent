@@ -263,6 +263,19 @@ _OFF_LIST = [("where", "1=1"), ("WHERE", "true"), ("replica", "full"), ("secret"
              ("subset__where", "true"), ("unknown_param", "x"), ("TABLE", "human_task_projection")]
 
 
+# The EXACT set the proxy may forward, stated here on purpose: the seals above read the live constant, so
+# widening the constant alone would pass them (the instrument would share a surface with its subject).
+# Widening the list is a change to THIS test too, on purpose.
+_PINNED_PARAMS = frozenset({
+    "table", "columns", "offset", "handle", "live", "cursor", "expired_handle", "log",
+    "live_sse", "experimental_live_sse", "cache-buster",
+})
+
+
+def test_the_forwarded_parameter_set_is_exactly_the_pinned_literal():
+    assert gw._ELECTRIC_FORWARD_PARAMS == _PINNED_PARAMS
+
+
 def _allowed_values():
     # one value per listed key, the key set READ from the proxy's own constant (never restated)
     vals = {"table": "answer_artifact_projection", "columns": "id", "offset": "-1"}
@@ -289,7 +302,8 @@ def test_no_off_list_parameter_reaches_upstream(upstream, monkeypatch, pair):
     _ask([("table", "answer_artifact_projection"), pair])
     sent = upstream[0]
     # every key sent upstream is a listed one, or the two the SERVER sets (`where`, `secret`)
-    assert set(sent) <= gw._ELECTRIC_FORWARD_PARAMS | {"where", "secret"}
+    assert set(sent) <= _PINNED_PARAMS | {"where", "secret"}      # a literal, not the live constant
+    assert pair not in sent.items()                                # the client's own pair never rides in
     assert sent["where"] == "produced_for_user_id = '11111111-1111-4111-8111-111111111111' AND archived_at IS NULL"
     assert sent["secret"] == _SERVER_SECRET            # never the client's
     assert sent["table"] == "answer_artifact_projection"
@@ -311,3 +325,38 @@ def test_the_table_is_forwarded_only_after_the_table_allow_list(upstream):
     # `table` is on the parameter list, and still refused when the table list does not name it
     e = _refusal([("table", "human_task_projection"), ("offset", "-1")])
     assert e.status_code == 403 and upstream == []
+
+
+# -- the secret must not reach a log line on the BFF side ------------------------------------------------
+# httpx logs "HTTP Request: GET <full url>" at INFO and the upstream URL carries `secret=`. Nothing leaked
+# only because boot-time basicConfig() leaves the root at WARNING; the loggers are now pinned explicitly.
+
+@pytest.mark.parametrize("name", ["httpx", "httpcore"])
+def test_the_http_client_loggers_are_pinned_to_warning_whatever_the_root_does(name, caplog):
+    import logging
+    assert logging.getLogger(name).level >= logging.WARNING        # the logger's OWN level, not inherited
+    with caplog.at_level(logging.DEBUG):                           # a root at DEBUG, the accident undone
+        logging.getLogger(name).info("HTTP Request: GET http://e/v1/shape?secret=abc")
+    assert "secret=abc" not in caplog.text
+
+
+def test_a_failed_upstream_call_logs_the_class_not_the_url(monkeypatch, caplog):
+    import logging
+    import httpx
+
+    class _Boom:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, params=None, **k):
+            raise httpx.ConnectError(f"failed to reach {url}?secret={params['secret']}")
+
+    monkeypatch.setattr(gw.httpx, "AsyncClient", _Boom)
+    monkeypatch.setenv(es.ELECTRIC_SHAPES_FILE_ENV, str(_SHIPPED))
+    monkeypatch.setenv(gw._ELECTRIC_SHAPE_SECRET_ENV, _SERVER_SECRET)
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(HTTPException) as e:
+            _ask([("table", "answer_artifact_projection")])
+    assert e.value.status_code == 502
+    assert "ConnectError" in caplog.text                           # control: the line arrived
+    assert _SERVER_SECRET not in caplog.text

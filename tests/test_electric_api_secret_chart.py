@@ -119,3 +119,41 @@ def test_the_sandbox_overlay_does_not_turn_insecure_back_on():
     sandbox = yaml.safe_load((_CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
     assert (sandbox.get("electric") or {}).get("insecure") is not True
     assert _electric_insecure(_render("-f", str(_CHART / "values-sandbox.yaml"))) == ["false"]
+
+
+def test_with_a_premade_secret_named_the_chart_renders_no_electric_api_secret_at_all():
+    # a GitOps/`helm template` deploy names its own Secret; the chart must then render NO Secret for it
+    # (neither the named one nor the generated `<release>-electric-api`): the Secret set is the default set
+    # minus the generated one, exactly.
+    def secrets(*extra):
+        return {d["metadata"]["name"] for d in _render(*extra) if d.get("kind") == "Secret"}
+    default = secrets()
+    assert "r-electric-api" in default                       # control: it is rendered without a name
+    assert secrets("--set", "electric.apiSecret.name=premade") == default - {"r-electric-api"}
+
+
+# -- Electric must not log the secret ----------------------------------------------------------------
+# Electric 1.0.13 takes the secret only as a query param and logs the query string at `info`
+# (serve_shape_plug.ex:27); its log level defaults to info. The chart sets ELECTRIC_LOG_LEVEL from values.
+
+def _electric_log_levels(docs: list[dict]) -> list[str]:
+    return [e["value"] for d in docs for c in _containers(d) for e in c.get("env") or []
+            if e.get("name") == "ELECTRIC_LOG_LEVEL"]
+
+
+def test_electric_logs_below_the_level_that_prints_the_query_string():
+    default = yaml.safe_load((_CHART / "values.yaml").read_text(encoding="utf-8"))["electric"]["logLevel"]
+    assert default not in ("info", "debug")
+    levels = _electric_log_levels(_render())
+    assert levels == [default]                                      # present, derived from the artifact
+    assert levels[0] not in ("info", "debug")
+    sandbox = yaml.safe_load((_CHART / "values-sandbox.yaml").read_text(encoding="utf-8"))
+    assert (sandbox.get("electric") or {}).get("logLevel") not in ("info", "debug")
+    assert _electric_log_levels(_render("-f", str(_CHART / "values-sandbox.yaml"))) == [default]
+
+
+def test_the_generated_secret_is_kept_when_the_release_forgets_it():
+    docs = _render()
+    (name, _key) = _refs(docs)["ELECTRIC_SECRET"]
+    (secret,) = [d for d in docs if d.get("kind") == "Secret" and d["metadata"]["name"] == name]
+    assert secret["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
