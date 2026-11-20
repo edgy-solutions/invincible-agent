@@ -393,7 +393,7 @@ def test_cropfail_fixture_still_evokes_the_failure_it_was_built_for():
     payload = ers.build_start_review_payload(fx)
     assert payload["impacted_parts"] == []
     assert payload["doc_needs_review"] is True
-    assert payload["extraction_warnings"] == ["PARTS MAY BE MISSING: 2/5 table crops failed"]
+    assert payload["extraction_warnings"] == [{"code": "extraction_warning", "message": "PARTS MAY BE MISSING: 2/5 table crops failed"}]
     # Non-part signals survive the mutation — the fixture keeps the producer's real shape.
     assert fx["categories"] == ["Material"] and fx["pages"] == [{"page": 1}]
 

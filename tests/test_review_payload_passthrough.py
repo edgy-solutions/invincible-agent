@@ -104,7 +104,8 @@ def test_attestation_is_actually_populated_by_the_sensor():
     of the contract, asserted together."""
     payload = ers.build_start_review_payload(_review_json())
     assert payload["review_state_source"] == "extraction"
-    assert payload["extraction_warnings"] == ["PARTS MAY BE MISSING: 2/5 table crops failed"]
+    # bounded (ruling 2026-11-19): a producer reason that fits survives as {code, message}
+    assert payload["extraction_warnings"] == [{"code": "extraction_warning", "message": "PARTS MAY BE MISSING: 2/5 table crops failed"}]
     assert payload["trace_id"] == "trace-abc-123"   # the extraction trace id, forwarded (ADR-0038)
 
 
@@ -121,10 +122,13 @@ def test_forwarded_body_carries_them_not_just_the_model():
     start = src.index("async def start_review(")
     end = src.index("\ndef ", start)             # first top-level def after the handler
     handler = src[start:end]
-    for field in ("review_state_source", "extraction_warnings"):
-        assert f'"{field}": req.{field}' in handler, (
-            f"{field} is declared on the model but never forwarded in the start_review body"
-        )
+    assert '"review_state_source": req.review_state_source' in handler, (
+        "review_state_source is declared on the model but never forwarded in the start_review body"
+    )
+    # extraction_warnings is forwarded BOUNDED (ruling 2026-11-19), never raw.
+    assert '"extraction_warnings": bound_warnings(req.extraction_warnings)' in handler, (
+        "extraction_warnings is declared on the model but never forwarded, bounded, in the body"
+    )
     # request_key joined them: review IDENTITY is derived from it downstream (the workflow key),
     # so dropping it here silently restores the single-use-key trap that made ten notices at
     # work permanently unable to produce a review.

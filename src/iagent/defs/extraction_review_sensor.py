@@ -74,6 +74,7 @@ _ARTIFACT_BUCKET = os.environ.get("ARTIFACT_BUCKET", "processing-artifacts")
 # endswith("/review.json") filter is what selects the "extraction done" artifact.
 _WATCH_PREFIX = os.environ.get("REVIEW_WATCH_PREFIX", "sustainment/")
 
+from iagent.extraction_warning import bound_warnings, bounded_detail
 from iagent.review_payload import build_start_review_payload  # noqa: F401  (one builder; the BFF imports it too)
 
 
@@ -195,7 +196,7 @@ def _label_from_key(source_key: str) -> str:
 
 
 def build_triage_payload(*, source_key: str, notice_id: Optional[str], reason_code: str,
-                         detail: str, warnings: Optional[List[str]] = None,
+                         detail: str, warnings: Optional[list] = None,
                          domain: str = "SUSTAINMENT", audience: Optional[str] = None,
                          pages: Optional[List[dict]] = None) -> dict:
     """Build the `/triage_tasks` body for a content-refused notice (PURE).
@@ -214,8 +215,10 @@ def build_triage_payload(*, source_key: str, notice_id: Optional[str], reason_co
     label = notice_id or _label_from_key(source_key)
     prose = _REFUSAL_PROSE.get(reason_code, "This notice could not be prepared for review.")
     lines = [f"Notice {label} could not be prepared for review.", prose]
-    for w in warnings or []:
-        lines.append(str(w))
+    # A reason that reaches a person is a code and a bounded message (ruling 2026-11-19).
+    ws = bound_warnings(warnings)
+    for w in ws:
+        lines.append(w["message"])
     lines.append(f"Extraction artifact: {source_key}")
     return {
         "task_id": "triage-" + hashlib.sha1(source_key.encode()).hexdigest()[:12],
@@ -235,7 +238,7 @@ def build_triage_payload(*, source_key: str, notice_id: Optional[str], reason_co
         # Clearance-safe: these are s3 URLs + page numbers, the same references the review
         # card already carries, never notice content.
         "payload": {"notice_id": notice_id, "source_key": source_key,
-                    "detail": detail[:500], "warnings": list(warnings or []),
+                    "detail": bounded_detail(detail, code=reason_code), "warnings": ws,
                     "pages": [{"page": p.get("page"), "s3_url": p.get("s3_url")}
                               for p in (pages or []) if p.get("s3_url")]},
     }
@@ -953,6 +956,8 @@ def start_review_op(context, config: StartReviewConfig) -> None:
         # to them and let the run COMPLETE: a content problem is not a pipeline failure, and
         # recording it as one both misaddresses the message and poisons the health signal.
         # The refusal is NOT swallowed — file_triage_task raises if it cannot deliver.
+        # The task carries a bounded detail only; the raw one is kept here, in the run log.
+        context.log.info(f"start_review refused_content raw detail for {src}: {detail}")
         triage = build_triage_payload(
             source_key=key, notice_id=payload.get("notice_id"),
             reason_code=_status_of(body) or "", detail=detail,

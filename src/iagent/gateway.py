@@ -59,6 +59,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_db, init_db
 from .models import BpmnCatalog
+from .extraction_warning import bound_warnings
 from .auth import get_current_user, oauth2_scheme, User
 from . import identity_exchange
 from .trace_spans import (
@@ -2415,7 +2416,8 @@ async def _start_review_core(req: "ReviewStartRequest", *, current_user: "User",
         "in_scope_mpns": req.in_scope_mpns,
         "doc_needs_review": req.doc_needs_review,
         "review_state_source": req.review_state_source,   # attestation — arms/disarms the tripwire
-        "extraction_warnings": req.extraction_warnings,   # degradation warnings -> the reviewer
+        # degradation warnings -> the reviewer, as {code, message} only (ingress: a caller may post raw strings)
+        "extraction_warnings": bound_warnings(req.extraction_warnings),
         "approver": current_user.authz_id,        # identity from the token — NOT client-supplied
         "audience": req.audience or f"disposition_review:{req.domain}",
         "user_jwt": raw_token,
@@ -2657,7 +2659,8 @@ async def get_review_batch(
         # parts list that is indistinguishable from a complete one; missing parts get
         # no disposition and nobody notices. Proceeding on degraded data is acceptable;
         # proceeding silently is not.
-        "extraction_warnings": list(b.get("extraction_warnings") or []),
+        # Egress bound: reviews suspended before the ingress bound hold raw strings in state.
+        "extraction_warnings": bound_warnings(b.get("extraction_warnings")),
     }
 
 
