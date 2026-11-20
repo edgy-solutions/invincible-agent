@@ -2,6 +2,21 @@
 
 ## Unreleased — after 0.4.91
 
+- The object-store pair is read from Secrets by reference; no store credential is a chart value any more. The
+  CONSUMER pair (what engines, Dagster, code locations, the broker, prime and the BFF read, as MINIO_*, S3_* and
+  AWS_* env by `secretKeyRef`) is the Secret named by `objectStore.consumerSecret`, or, when that is empty, a
+  `<release>-object-store` Secret that a pre-install/pre-upgrade hook generates ONCE IF ABSENT and never replaces
+  (`helm.sh/resource-policy: keep`; it refuses, and writes nothing, if the Secret exists with a key empty). The ROOT
+  pair is read only by bucket-init, from `objectStore.adminSecret`, which also creates the consumer MinIO user and a
+  `<release>-consumer` policy covering bucket-init's buckets plus `objectStore.consumerUser.buckets` (processing-artifacts, doc-pages, ontologies, doc-tools-*; read, not created) (`objectStore.consumerUser.create`, false for an external
+  store). A values file or overlay that still sets `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `S3_ACCESS_KEY` or
+  `S3_SECRET_KEY` in an env map (`agentFleet.env`, `cortexBff.env`, any component `.env`) is REFUSED at render, so
+  migrate those keys before upgrading. **Roll step:** the deployment creates the admin Secret first; with
+  `minioBucketInit.enabled` and no `objectStore.adminSecret.name` the render fails. Base `minioBucketInit.enabled` is now
+  `false` (the sandbox values turn it on and name `iagent-object-store-admin`); the consumer-pair hook renders only when
+  `objectStore.adminSecret.name` is set, and a generated pair without bucket-init creating its user is refused at render.
+  `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in an env map are refused too.
+
 - A top-level `tlsTrust` (`secretName`, `secretKey`, `mountPath`) gives every Python and dag-tools pod a
   CA bundle: the Secret's PEM is mounted and `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` point at it, so token
   verification and token minting can reach a private-CA issuer from values alone. Covers the engines, the central

@@ -1127,9 +1127,50 @@ domainBroker:
   # pgHost:            "iagent-postgresql"
   # chHost:            "iagent-clickhouse"
   # s3EndpointUrl:     "http://iagent-minio:9000"
-  # s3AccessKey:       "minio-sandbox"
-  # s3SecretKey:       "minio-sandbox-secret"
   pgPasswordSecretKey: "BPMN_POSTGRES_PASSWORD"
+
+# ==========================================================================
+# objectStore — the S3/MinIO credential pair, read by REFERENCE only.
+#
+# This chart does NOT deploy MinIO. The deployment owns MinIO's root pair; the
+# chart reads it by reference, ONLY in the admin job (minioBucketInit).
+# Every consumer (engines, Dagster, code locations, broker, BFF, prime) gets a
+# separate CONSUMER pair from a Secret. No credential is a value in this chart,
+# and nothing is generated at render time (no `lookup`, no `randAlphaNum`).
+#
+# An env map (agentFleet.env, cortexBff.env, a component .env) that sets
+# MINIO_ACCESS_KEY / MINIO_SECRET_KEY / S3_ACCESS_KEY / S3_SECRET_KEY is
+# REFUSED at render: migrate those keys here before upgrading.
+# ==========================================================================
+objectStore:
+  # MinIO's ROOT pair, created by whoever deploys MinIO. Used ONLY by
+  # minioBucketInit (to build MC_HOST). Required while minioBucketInit.enabled.
+  adminSecret:
+    name: ""
+    accessKeyKey: "root-user"
+    secretKeyKey: "root-password"
+  # The CONSUMER pair every chart workload reads. If `name` is empty, a
+  # pre-install/pre-upgrade hook job creates `<release>-object-store` IF IT IS
+  # ABSENT and never replaces it (annotated helm.sh/resource-policy: keep).
+  consumerSecret:
+    name: ""
+    accessKeyKey: "access-key"
+    secretKeyKey: "secret-key"
+  # minioBucketInit creates or updates the consumer user and its policy
+  # (limited to minioBucketInit.buckets plus consumerUser.buckets). Set false for an
+  # external store where the deployment supplies a working consumer pair.
+  consumerUser:
+    create: true
+    # EXTRA buckets the consumer may use that bucket-init does NOT create (it creates
+    # minioBucketInit.buckets, which the policy always covers). An entry ending in `*` is a prefix.
+    # This is the measured census of what consumers read (ARTIFACT_BUCKET, DOCS_BUCKET, ONTOLOGY_BUCKET,
+    # the per-domain doc-tools-* buckets); tests/test_object_store_pair_is_read_by_reference.py
+    # (test_every_bucket_a_consumer_reads_is_in_the_consumer_policy) keeps it complete.
+    buckets:
+      - processing-artifacts
+      - doc-pages
+      - ontologies
+      - doc-tools-*
 
 # ==========================================================================
 # minioBucketInit — Helm-hook bucket creation for MinIO.
@@ -1149,13 +1190,13 @@ domainBroker:
 # ==========================================================================
 
 minioBucketInit:
-  enabled: true
+  # OFF by default: this chart does not deploy MinIO. Enabling it requires objectStore.adminSecret.name
+  # (MinIO root pair, by reference). A deployment that enables it also gets the consumer user and policy.
+  enabled: false
   # `mc` (MinIO client) image is sourced from `utilImages.mc` at the
   # bottom of this file. Chart 0.3.0 retired the legacy
   # `global.images.mc` key + `minioBucketInit.image` string.
   endpoint: "http://iagent-minio:9000"
-  accessKey: "minio-sandbox"
-  secretKey: "minio-sandbox-secret"
   # Buckets to ensure exist. Order doesn't matter (each is mc-mb'd
   # idempotently). Add new entries when a new user-deployment needs
   # a bucket.
@@ -1213,8 +1254,6 @@ userDeployments:
       # relocated to the dag-tools user-deployment (2026-06-26); only
       # publog-relevant config stays here.
       env:
-        AWS_ACCESS_KEY_ID: "minio-sandbox"
-        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         # Every name here must be one pub-tools' code reads; the chart
@@ -1260,8 +1299,6 @@ userDeployments:
       # Defaults to http://<release>-central-gateway:8090 when unset.
       # centralGatewayUrl: ""
       env:
-        AWS_ACCESS_KEY_ID: "minio-sandbox"
-        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         # The broker loads the same Definitions, so it reads the same name.
@@ -1303,8 +1340,6 @@ userDeployments:
         # here matches the sandbox-friendly defaults pattern in this
         # file; production values files MUST override to "false".
         DAG_TOOLS_DEMO_MODE: "true"
-        AWS_ACCESS_KEY_ID: "minio-sandbox"
-        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         # New bucket for dag-tools-owned demo content. Replaces
@@ -1351,8 +1386,6 @@ userDeployments:
         # Broker reads the same demo flag so its physical_coordinates
         # advertisements match the code-location's writes.
         DAG_TOOLS_DEMO_MODE: "true"
-        AWS_ACCESS_KEY_ID: "minio-sandbox"
-        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         DAG_TOOLS_DEMO_S3_BUCKET: "dag-lake"

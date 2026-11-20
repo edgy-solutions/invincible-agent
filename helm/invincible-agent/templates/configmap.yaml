@@ -1,3 +1,6 @@
+{{- /* Object-store pair: refuse a MINIO_/S3_ key in any env map before anything renders (_helpers.tpl). */ -}}
+{{- include "iagent.objectStore.guard" . -}}
+{{- include "iagent.objectStore.generatedGuard" . -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

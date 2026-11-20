@@ -133,6 +133,7 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
+            {{- include "iagent.objectStore.env" . | nindent 12 }}
             # HITL substrate: cortex-bff writes the human_task_projection into the
             # SAME Electric-replicated Postgres the projector uses. Constructed from
             # the shared configmap's BPMN_POSTGRES_* + the secret's

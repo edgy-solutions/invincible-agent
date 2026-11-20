@@ -47,6 +47,7 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
+            {{- include "iagent.objectStore.env" . | nindent 12 }}
             {{- if .Values.tlsTrust.secretName }}
             {{- include "iagent.tlsTrust.env" . | nindent 12 }}
             {{- end }}

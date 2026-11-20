@@ -116,6 +116,7 @@ spec:
           # gets back as a success. Mirror of what the central
           # ``dagster-user-code.yaml`` template wires in.
           env:
+            {{- include "iagent.objectStore.env" $ | nindent 12 }}
             {{- if $.Values.tlsTrust.secretName }}
             {{- include "iagent.tlsTrust.env" $ | nindent 12 }}
             {{- end }}
@@ -253,6 +254,7 @@ spec:
             - "--bind"
             - "0.0.0.0:{{ $brokerPort }}"
           env:
+            {{- include "iagent.objectStore.env" $ | nindent 12 }}
             {{- if $.Values.tlsTrust.secretName }}
             {{- include "iagent.tlsTrust.env" $ | nindent 12 }}
             {{- end }}

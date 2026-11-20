@@ -22,6 +22,9 @@ an external MinIO that the helm-install host can't see) or when
 bucket creation is owned by a different ops process.
 */}}
 {{- if .Values.minioBucketInit.enabled }}
+{{- $admin := .Values.objectStore.adminSecret }}
+{{- $policyBuckets := concat .Values.minioBucketInit.buckets (.Values.objectStore.consumerUser.buckets | default list) }}
+{{- if not $admin.name }}{{ fail "objectStore.adminSecret.name is empty: minioBucketInit needs MinIO's root pair by reference (a Secret the deployment creates), or set minioBucketInit.enabled=false" }}{{ end }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -65,13 +68,42 @@ spec:
           image: {{ include "invincible-agent.image" (dict "name" "mc" "registry" .Values.utilImages.mc.registry "repository" .Values.utilImages.mc.repository "tag" .Values.utilImages.mc.tag "root" .) }}
           imagePullPolicy: IfNotPresent
           env:
-            - name: MC_HOST_iagent
-              value: "http://{{ .Values.minioBucketInit.accessKey }}:{{ .Values.minioBucketInit.secretKey }}@{{ trimPrefix "http://" (trimPrefix "https://" .Values.minioBucketInit.endpoint) }}"
+            # The ADMIN (root) pair, by reference. Only this job reads it; MC_HOST is assembled in the
+            # shell from these three so no credential is ever a rendered value.
+            - name: STORE_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $admin.name | quote }}
+                  key: {{ $admin.accessKeyKey | quote }}
+            - name: STORE_ADMIN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $admin.name | quote }}
+                  key: {{ $admin.secretKeyKey | quote }}
+            - name: STORE_ENDPOINT
+              value: {{ trimPrefix "http://" (trimPrefix "https://" .Values.minioBucketInit.endpoint) | quote }}
+            {{- if .Values.objectStore.consumerUser.create }}
+            # The CONSUMER pair every workload reads (created here as a MinIO user).
+            - name: CONSUMER_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "iagent.objectStore.secretName" . | quote }}
+                  key: {{ .Values.objectStore.consumerSecret.accessKeyKey | quote }}
+            - name: CONSUMER_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "iagent.objectStore.secretName" . | quote }}
+                  key: {{ .Values.objectStore.consumerSecret.secretKeyKey | quote }}
+            {{- end }}
           command:
             - /bin/sh
             - -c
             - |
               set -eu
+              # Never trace and never dump the environment: the pairs are in it.
+              set +x
+              MC_HOST_iagent="http://${STORE_ADMIN_KEY}:${STORE_ADMIN_SECRET}@${STORE_ENDPOINT}"
+              export MC_HOST_iagent
               echo "Initializing MinIO buckets at {{ .Values.minioBucketInit.endpoint }}"
               # Wait briefly for MinIO to be reachable. The hook runs
               # very early in install, so MinIO may still be coming
@@ -89,4 +121,29 @@ spec:
               mc mb --ignore-existing iagent/{{ $b }}
               {{- end }}
               echo "All buckets ensured."
+              {{- if .Values.objectStore.consumerUser.create }}
+              # Consumer user + policy, limited to the buckets above plus objectStore.consumerUser.buckets (read, not created; `*` = prefix). Idempotent on re-run:
+              #  * `mc admin user add` on an existing user sets its secret again (an update, no error);
+              #  * `mc admin policy create` fails when the policy already exists. That case is handled
+              #    EXPLICITLY: the policy must then be readable (`policy info`) and must still name every
+              #    bucket arn above, else the job fails and names the bucket; a policy that is already
+              #    right is kept. Any other create failure stops the job;
+              #  * attach runs only when `user info` does not already show the policy.
+              POLICY="{{ .Release.Name }}-consumer"
+              cat > /tmp/consumer-policy.json <<POLICY_EOF
+              {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:*"],"Resource":[{{ range $i, $b := $policyBuckets }}{{ if $i }},{{ end }}"arn:aws:s3:::{{ $b }}","arn:aws:s3:::{{ $b }}/*"{{ end }}]}]}
+              POLICY_EOF
+              mc admin user add iagent "$CONSUMER_ACCESS_KEY" "$CONSUMER_SECRET_KEY" >/dev/null
+              if ! mc admin policy create iagent "$POLICY" /tmp/consumer-policy.json >/dev/null 2>&1; then
+                mc admin policy info iagent "$POLICY" > /tmp/policy-info.json
+                {{- range $b := $policyBuckets }}
+                grep -qF 'arn:aws:s3:::{{ $b }}/*' /tmp/policy-info.json || { echo "policy ${POLICY} exists without bucket {{ $b }}; remove it and re-run"; exit 1; }
+                {{- end }}
+                echo "Policy ${POLICY} already exists and covers every bucket; kept."
+              fi
+              if ! mc admin user info iagent "$CONSUMER_ACCESS_KEY" 2>/dev/null | grep -qF "$POLICY"; then
+                mc admin policy attach iagent "$POLICY" --user "$CONSUMER_ACCESS_KEY" >/dev/null
+              fi
+              echo "Consumer user and policy ${POLICY} ensured."
+              {{- end }}
 {{- end }}

@@ -87,6 +87,7 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
+            {{- include "iagent.objectStore.env" . | nindent 12 }}
             {{- if .Values.tlsTrust.secretName }}
             {{- include "iagent.tlsTrust.env" . | nindent 12 }}
             {{- end }}
@@ -237,6 +238,7 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
+            {{- include "iagent.objectStore.env" . | nindent 12 }}
             {{- if .Values.tlsTrust.secretName }}
             {{- include "iagent.tlsTrust.env" . | nindent 12 }}
             {{- end }}
@@ -265,18 +267,6 @@ spec:
                 configMapKeyRef:
                   name: {{ .Release.Name }}-config
                   key: MINIO_ENDPOINT_URL
-                  optional: true
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Release.Name }}-config
-                  key: MINIO_ACCESS_KEY
-                  optional: true
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Release.Name }}-config
-                  key: MINIO_SECRET_KEY
                   optional: true
             # ONTOLOGY_BUCKET: where canonical TTLs go in MinIO. Defaults
             # to "ontologies" in the script; override here if your bucket

@@ -1021,3 +1021,102 @@ Keycloak already, and the reconcile must land BEFORE any workload changes (pre-u
   value: {{ .Values.tlsTrust.mountPath | quote }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+  Object-store pair (top-level `objectStore`). The chart never holds a store credential as a value:
+  consumers read a CONSUMER Secret by reference; only minioBucketInit reads the ADMIN (root) Secret.
+    iagent.objectStore.secretName   the consumer Secret's name (values, else `<release>-object-store`)
+    iagent.objectStore.env          six list items for a container's `env:` (every name a consumer reads:
+                                    MINIO_*, S3_*, AWS_*), each a secretKeyRef to the consumer Secret
+    iagent.objectStore.consumed     "true" when some enabled workload reads the pair, else empty
+    iagent.objectStore.guard        refuses (fail) an env map that sets a MINIO_/S3_/AWS_ credential key
+  Callers pass the ROOT context. Put the env AFTER any `.env` map range: the last duplicate wins.
+*/}}
+{{- define "iagent.objectStore.secretName" -}}
+{{- .Values.objectStore.consumerSecret.name | default (printf "%s-object-store" .Release.Name) -}}
+{{- end -}}
+
+{{- define "iagent.objectStore.env" -}}
+{{- $n := include "iagent.objectStore.secretName" . -}}
+{{- $a := .Values.objectStore.consumerSecret.accessKeyKey -}}
+{{- $s := .Values.objectStore.consumerSecret.secretKeyKey -}}
+{{- /* optional only when nothing names or creates the pair (no store): a pod then starts without the keys, as before */ -}}
+{{- $opt := and (not .Values.objectStore.consumerSecret.name) (not (include "iagent.objectStore.generated" .)) -}}
+{{- range $name := list "MINIO_ACCESS_KEY" "S3_ACCESS_KEY" "AWS_ACCESS_KEY_ID" }}
+- name: {{ $name }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $n | quote }}
+      key: {{ $a | quote }}
+      {{- if $opt }}
+      optional: true
+      {{- end }}
+{{- end }}
+{{- range $name := list "MINIO_SECRET_KEY" "S3_SECRET_KEY" "AWS_SECRET_ACCESS_KEY" }}
+- name: {{ $name }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ $n | quote }}
+      key: {{ $s | quote }}
+      {{- if $opt }}
+      optional: true
+      {{- end }}
+{{- end }}
+{{- end -}}
+
+{{- define "iagent.objectStore.consumed" -}}
+{{- $on := false -}}
+{{- range $k, $v := .Values -}}
+{{- if and (kindIs "map" $v) (hasKey $v "enabled") $v.enabled (or (hasPrefix "engine" $k) (has $k (list "domainBroker" "projector" "meshRegistrar" "primeSubstrate" "cortexUi" "demoSeed" "minioBucketInit"))) -}}
+{{- $on = true -}}
+{{- end -}}
+{{- end -}}
+{{- range $k, $v := .Values.userDeployments -}}
+{{- if and (kindIs "map" $v) $v.enabled -}}{{- $on = true -}}{{- end -}}
+{{- end -}}
+{{- if or $on .Values.dagster.webserver.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{- define "iagent.objectStore.guard" -}}
+{{- $refused := list "MINIO_ACCESS_KEY" "MINIO_SECRET_KEY" "S3_ACCESS_KEY" "S3_SECRET_KEY" "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" -}}
+{{- range $k, $v := .Values -}}
+{{- if kindIs "map" $v -}}
+{{- $maps := dict (printf "%s.env" $k) ($v.env | default dict) -}}
+{{- range $k2, $v2 := $v -}}
+{{- if kindIs "map" $v2 -}}
+{{- $_ := set $maps (printf "%s.%s.env" $k $k2) ($v2.env | default dict) -}}
+{{- range $k3, $v3 := $v2 -}}
+{{- if kindIs "map" $v3 -}}
+{{- $_ := set $maps (printf "%s.%s.%s.env" $k $k2 $k3) ($v3.env | default dict) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range $path, $m := $maps -}}
+{{- if kindIs "map" $m -}}
+{{- range $key := $refused -}}
+{{- if hasKey $m $key -}}
+{{- fail (printf "%s sets %s: the object-store pair is not a value. Set objectStore.consumerSecret (the chart reads it by secretKeyRef) and remove this key." $path $key) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+  iagent.objectStore.generated: "true" when the chart's hook owns the consumer pair: the consumer Secret is
+  unnamed, `objectStore.adminSecret.name` says a store is configured, and some workload reads the pair. A bare
+  render configures no store, so it renders neither the hook nor the refusal below.
+  iagent.objectStore.generatedGuard: a generated pair needs a store user, which only bucket-init creates.
+*/}}
+{{- define "iagent.objectStore.generated" -}}
+{{- if and (not .Values.objectStore.consumerSecret.name) .Values.objectStore.adminSecret.name (include "iagent.objectStore.consumed" .) -}}true{{- end -}}
+{{- end -}}
+
+{{- define "iagent.objectStore.generatedGuard" -}}
+{{- if and (include "iagent.objectStore.generated" .) (not (and .Values.minioBucketInit.enabled .Values.objectStore.consumerUser.create)) -}}
+{{- fail "objectStore.consumerSecret.name is empty, so the chart generates the consumer pair, but no MinIO user would be created for it (minioBucketInit.enabled and objectStore.consumerUser.create must both be true). Name an existing pair in objectStore.consumerSecret.name, or enable both." -}}
+{{- end -}}
+{{- end -}}
