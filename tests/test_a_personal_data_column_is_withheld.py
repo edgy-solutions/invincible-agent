@@ -15,6 +15,7 @@ from agent_fleet.utils import dataset_contracts as dc
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "tests" / "fixtures" / "dag_tools_mfg_trace" / "mfg_trace.yaml"
 RESULT = "mfg_trace.test_result"
+CONF_RESULT = "mfg_trace.conf_test_repo_result"
 DTYPES = {"string": pl.String, "numeric": pl.Float64, "integer": pl.Int64, "float": pl.Float64,
           "boolean": pl.Boolean, "date": pl.Date, "timestamp": pl.Datetime(time_zone="UTC"),
           "array<string>": pl.List(pl.String)}
@@ -50,10 +51,23 @@ def _schema(contract, **over):
 
 
 def test_the_template_marks_operator_ref_personal():
-    """The one personal column of the mfg_trace template is test_result.operator_ref."""
+    """The mfg_trace template's personal columns are `operator_ref` in test_result and in
+    conf_test_repo_result (dag-tools v0.17.0), and no other column of any contract."""
     got = dc.load_contracts(TEMPLATE)
-    assert got[RESULT].personal == {"operator_ref"}
-    assert all(c.personal == frozenset() for cid, c in got.items() if cid != RESULT)
+    assert {cid: set(c.personal) for cid, c in got.items() if c.personal} == {
+        RESULT: {"operator_ref"}, CONF_RESULT: {"operator_ref"}}
+
+
+def test_a_conf_test_repo_result_read_withholds_operator_ref():
+    """The second personal contract is held like the first: withheld by default, refused when a row
+    names it, and brought back only by a release (the control)."""
+    c = dc.load_contracts(TEMPLATE)[CONF_RESULT]
+    got = dc.check_contract_schema(_schema(c), c, ())
+    assert "operator_ref" in c.types and got == [col for col in c.types if col != "operator_ref"]
+    with pytest.raises(dc.ContractViolation) as exc:
+        dc.check_contract_schema(_schema(c), c, ("operator_ref",))
+    assert exc.value.rule == "personal_data"
+    assert "operator_ref" in dc.check_contract_schema(_schema(c), c, (), released={"operator_ref"})
 
 
 def test_a_read_withholds_a_personal_column_by_default():
