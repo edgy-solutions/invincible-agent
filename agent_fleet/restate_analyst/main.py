@@ -609,6 +609,25 @@ def _supplied_resolution(request: dict) -> dict | None:
     return None
 
 
+#: A provider refusing the person's own relayed token, in Engine O's `instance_match` vocabulary
+#: (Engine O holds the same tuple, `_PERSON_TOKEN_REFUSALS`; a seal keeps them equal). Both are
+#: terminal here.
+_PERSON_TOKEN_REFUSALS = ("session_expired", "caller_refused")
+
+
+def _person_token_refusal(reason: str) -> "restate.TerminalError":
+    """The terminal error for a refused person token. FIXED text: never the token, never a body."""
+    if reason == "session_expired":
+        return restate.TerminalError(
+            "session_expired: the person's session has expired; sign in again",
+            status_code=401,
+        )
+    return restate.TerminalError(
+        "caller_refused: Engine O refused the person's token; sign in again",
+        status_code=403,
+    )
+
+
 def _resolve_ontology(
     task_description: str,
     user_email: str = "",
@@ -647,6 +666,12 @@ def _resolve_ontology(
     A TIMED-OUT CALL REFUSES, IT IS NOT RETRIED. A read timeout raises a terminal 504
     ``resolution_timeout`` (see the comment at the post): inside ``ctx.run`` an ordinary
     exception is retried by Restate, and each retry is another full model call.
+
+    A REFUSED PERSON TOKEN IS TERMINAL, NEVER RETRIED (ruled 2026-11-19, Q2 condition 3). On a
+    relayed token a 401, or a 403 naming ``ExpiredSignatureError``, is a terminal 401
+    ``session_expired``; any other 403 is a terminal 403 ``caller_refused``. An Engine O answer
+    whose ``provenance.instance_match`` names either reason is raised the same way, on both
+    paths. The service-token path keeps ``raise_for_status`` (retryable), as before.
     """
     if not str(user_email or "").strip():
         raise restate.TerminalError(
@@ -717,8 +742,16 @@ def _resolve_ontology(
             f"the supervisor decides",
             status_code=504,
         ) from exc
+    if _relay_headers and resp.status_code in (401, 403):
+        if resp.status_code == 401 or "ExpiredSignatureError" in (resp.text or ""):
+            raise _person_token_refusal("session_expired")
+        raise _person_token_refusal("caller_refused")
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    _refusal = ((data or {}).get("provenance") or {}).get("instance_match")
+    if _refusal in _PERSON_TOKEN_REFUSALS:
+        raise _person_token_refusal(_refusal)
+    return data
 
 
 from orchestrator.auth import current_user_token, current_trace_id

@@ -432,3 +432,126 @@ def test_10_a_person_resolves_their_own_drop_and_a_service_claiming_them_does_no
     r = probe.post("/__probe_fanout", json={"identifier": DROP_ID, "user_email": DROPPER},
                    headers=_auth(DROPPER, exp_in=-30))
     assert r.json()["prov"]["instance_match"] == "session_expired" and len(world) == n
+
+
+# =========================================================================================
+# G1-G5. A PROVIDER'S 403 ON A RELAYED TOKEN (gov hold 2026-11-20, Q2 condition 3)
+# =========================================================================================
+
+EXPIRED_403 = {"detail": "transport auth failed: invalid: ExpiredSignatureError"}
+AUDIENCE_403 = {"detail": "transport auth failed: invalid: InvalidAudienceError"}
+
+
+def _x_refuses(body, status=403):
+    def handler(request):
+        if str(request.url) == URL_X:
+            return httpx.Response(status, json=body)
+        return httpx.Response(200, json={"candidates": [CAND]})
+    return handler
+
+
+def test_g1_a_provider_403_naming_expiry_is_session_expired_and_poisons_the_fanout(monkeypatch, net):
+    seen = net(_x_refuses(EXPIRED_403))
+    _caller(monkeypatch, PERSON)
+    assert _call(ROW_X).status == "session_expired"
+    subject, prov = _fanout([ROW_X, ROW_Y], monkeypatch)
+    assert {str(r.url) for r in seen} >= {URL_X, URL_Y}   # Y WAS asked and DID answer
+    assert subject is None
+    assert prov["instance_match"] == "session_expired" and prov["instance_resolved"] is False
+    assert "instance_id" not in prov
+
+
+def test_g2_any_other_relayed_403_is_caller_refused_and_halts_the_fanout(monkeypatch, net):
+    seen = net(_x_refuses(AUDIENCE_403))
+    _caller(monkeypatch, PERSON)
+    assert _call(ROW_X).status == "caller_refused"
+    subject, prov = _fanout([ROW_X, ROW_Y], monkeypatch)
+    assert {str(r.url) for r in seen} >= {URL_X, URL_Y}
+    assert subject is None and "instance_id" not in prov
+    assert prov["instance_match"] == "caller_refused"
+    assert prov["instance_detail"] == "a provider refused the person's token; sign in again"
+    assert prov["instance_resolved"] is False and prov["instance_n"] == 0
+
+
+def test_g2b_session_expired_wins_when_both_reasons_are_present(monkeypatch, net):
+    def handler(request):
+        if str(request.url) == URL_X:
+            return httpx.Response(403, json=AUDIENCE_403)
+        return httpx.Response(401, json={})
+    net(handler)
+    _caller(monkeypatch, PERSON)
+    _, prov = _fanout([ROW_X, ROW_Y], monkeypatch)
+    assert prov["instance_match"] == "session_expired"
+
+
+def test_g3_control_a_service_caller_403_is_an_error_and_the_fanout_resolves_from_y(monkeypatch, net):
+    seen = net(_x_refuses(EXPIRED_403))
+    _caller(monkeypatch, CallerIdentity(SVC, True, "verified", {"exp": time.time() + 600}))
+    assert _call(ROW_X, bearer="").status == "error"
+    subject, prov = _fanout([ROW_X, ROW_Y], monkeypatch, bearer="")
+    assert {str(r.url) for r in seen} >= {URL_X, URL_Y}
+    assert prov["instance_match"] not in eo._PERSON_TOKEN_REFUSALS
+    outcomes = {o["provider"]: o["status"] for o in prov["instance_provider_outcomes"]}
+    assert outcomes == {"provider_x": "error", "provider_y": "ok"}
+    assert prov["instance_n"] == 1, "Y's candidate is used, as for any error"
+
+
+def test_g4_both_reasons_are_unknown_on_resolve_and_a_401_on_fill_slots():
+    import ast
+    for reason in eo._PERSON_TOKEN_REFUSALS:
+        prov = eo._person_token_refusal_provenance(reason)
+        r = eo._session_expired_resolution(prov, None)
+        assert r.resolved_uri == "UNKNOWN" and r.provenance["instance_match"] == reason
+        assert r.reasoning == eo._PERSON_TOKEN_REFUSAL_DETAIL[reason]
+    assert (eo._session_expired_resolution(eo._person_token_refusal_provenance("caller_refused"), None).reasoning
+            != eo._session_expired_resolution(eo._person_token_refusal_provenance("session_expired"), None).reasoning)
+    # Driving /resolve and /fill_slots end to end needs the whole class-recall harness: the sites are
+    # read by AST instead. Every `instance_match` comparison in engine O is against the tuple.
+    src = open(eo.__file__, encoding="utf-8").read()
+    tree = ast.parse(src)
+    cmp_sites = [n for n in ast.walk(tree) if isinstance(n, ast.Compare)
+                 and any(isinstance(c, ast.Constant) and c.value == "session_expired" for c in n.comparators)
+                 and "instance_match" in ast.dump(n.left) + ast.dump(n)]
+    assert not cmp_sites, "a site compares instance_match to the single reason"
+    resolve_sites = src.count('instance_provenance.get("instance_match") in _PERSON_TOKEN_REFUSALS')
+    assert resolve_sites == 2, "both /resolve sites compare against the tuple"
+    fill = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "fill_slots")
+    seg = ast.get_source_segment(src, fill)
+    assert "if outcome in _PERSON_TOKEN_REFUSALS" in seg and '"reason": outcome' in seg
+    assert "status_code=401" in seg
+
+
+def test_g5_the_token_is_in_no_output_for_a_refused_relayed_call(monkeypatch, net, capsys, caplog):
+    caplog.set_level(0)
+    _caller(monkeypatch, PERSON)
+    for body in (EXPIRED_403, AUDIENCE_403):
+        # the provider's body echoes the token: it must be neither printed nor kept
+        net(lambda r, b=body: httpx.Response(403, json={**b, "echo": r.headers.get("authorization")}))
+        _call(ROW_X)
+        _fanout([ROW_X], monkeypatch)
+    out = capsys.readouterr()
+    assert TOKEN not in out.out and TOKEN not in out.err
+    assert all(TOKEN not in r.getMessage() and TOKEN not in str(r.__dict__) for r in caplog.records)
+
+
+def test_g11_sdk_tripwire_the_real_require_refusal_of_an_expired_token_is_classified_expired(monkeypatch):
+    # The SDK has no structured code: REQUIRE raises HTTPException(403, "transport auth failed:
+    # <reason>") with reason "invalid: <ExceptionName>". Engine O reads expiry from that text, so an
+    # SDK rewording must turn this red. The structured code belongs to a later SDK release.
+    from fastapi import Depends, FastAPI
+    monkeypatch.setenv("REQUIRE_TRANSPORT_AUTH", "true")
+    app = FastAPI()
+
+    @app.get("/x", dependencies=[Depends(ta.make_transport_auth_dependency("g11"))])
+    async def x():
+        return {"ok": True}
+
+    c = TestClient(app)
+    ok = c.get("/x", headers=_auth(ALICE))
+    assert ok.status_code == 200, "the control: a live signed token passes the same app"
+    r = c.get("/x", headers=_auth(ALICE, exp_in=-30))
+    assert r.status_code == 403
+    assert r.json() == {"detail": "transport auth failed: invalid: ExpiredSignatureError"}
+    assert eo._relayed_refusal_reason(r.status_code, r.text) == "session_expired"
+    assert eo._relayed_refusal_reason(403, '{"detail": "transport auth failed: invalid: InvalidAudienceError"}') \
+        == "caller_refused"

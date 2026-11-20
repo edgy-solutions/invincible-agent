@@ -2759,10 +2759,12 @@ async def _call_resolver(
                       "entitled_domains": list(entitled_domains or [])},
                 headers=_relay_authorization()[1],
             )
-            if resp.status_code == 401 and relay_mode == "relay":
-                # The provider refused the person's own token: an expired session, never an
-                # error to be folded and never an answer from the other providers.
-                return _outcome("session_expired")
+            if relay_mode == "relay" and resp.status_code in (401, 403):
+                # The provider refused the person's own token, never an error to be folded and
+                # never an answer from the other providers. Expired when it says so (401, or a
+                # 403 naming ExpiredSignatureError); any other refusal is `caller_refused`.
+                # Nothing of resp.text is printed or kept.
+                return _outcome(_relayed_refusal_reason(resp.status_code, resp.text))
             resp.raise_for_status()
             data = resp.json() or {}
     except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
@@ -2805,23 +2807,51 @@ def _parse_resolver_candidates(raw, provider: str) -> list:
     return out
 
 
+_PERSON_TOKEN_REFUSALS = ("session_expired", "caller_refused")
+
+
+def _relayed_refusal_reason(status: int, text: str) -> str:
+    """Why a provider refused the person's relayed token (status is 401 or 403).
+
+    The SDK has no structured code: REQUIRE answers 403 with the TEXT
+    ``transport auth failed: invalid: <ExceptionName>``, so expiry is read from the exception
+    name. The structured code belongs to a later SDK release; a seal (G11) turns red if the SDK's
+    wording moves. Leeway agrees with `_caller_session_expired`: the SDK's jwt.decode has none.
+    """
+    if status == 401 or "ExpiredSignatureError" in (text or ""):
+        return "session_expired"
+    return "caller_refused"
+# A provider refusing the person's own relayed token. Both halt the fan-out and both are terminal
+# in engine A (which holds the same tuple; a seal keeps them equal).
+_PERSON_TOKEN_REFUSAL_DETAIL = {
+    "session_expired": "the person's session has expired; sign in again",
+    "caller_refused": "a provider refused the person's token; sign in again",
+}
+
+
 def _session_expired_resolution(provenance: dict, mode):
-    """The /resolve answer for an expired session: UNKNOWN with the reason, never the LLM's class
-    guess (which would be an answer given to nobody in particular)."""
+    """The /resolve answer for a refused person token: UNKNOWN with the reason, never the LLM's
+    class guess (which would be an answer given to nobody in particular)."""
+    reason = provenance.get("instance_match")
     return SemanticResolutionResponse(
         resolved_uri="UNKNOWN", confidence_score=0.0,
-        reasoning="the person's session has expired; sign in again",
+        reasoning=_PERSON_TOKEN_REFUSAL_DETAIL.get(
+            reason, _PERSON_TOKEN_REFUSAL_DETAIL["session_expired"]),
         provenance=provenance, mode=mode,
     )
 
 
-def _session_expired_provenance() -> dict:
+def _person_token_refusal_provenance(reason: str = "session_expired") -> dict:
     return {
         "instance_resolved": False,
-        "instance_match": "session_expired",
+        "instance_match": reason,
         "instance_n": 0,
-        "instance_detail": "the person's session has expired; sign in again",
+        "instance_detail": _PERSON_TOKEN_REFUSAL_DETAIL[reason],
     }
+
+
+def _session_expired_provenance() -> dict:
+    return _person_token_refusal_provenance("session_expired")
 
 
 async def _resolve_instance(
@@ -2909,9 +2939,12 @@ async def _resolve_instance(
     outcomes: list[_ResolverOutcome] = await asyncio.gather(
         *tasks, return_exceptions=False
     )
-    if any(o.status == "session_expired" for o in outcomes):
+    if any(o.status in _PERSON_TOKEN_REFUSALS for o in outcomes):
         # A provider refused the person's own token. Do NOT resolve from the others' answers.
-        return None, _session_expired_provenance()
+        # session_expired wins when both reasons are present.
+        _reason = ("session_expired" if any(o.status == "session_expired" for o in outcomes)
+                   else "caller_refused")
+        return None, _person_token_refusal_provenance(_reason)
 
     # AN OUT-OF-DOMAIN HIT IS A CANDIDATE, NOT AN AUTHORITY. RULED 2026-09-11.
     #
@@ -4203,7 +4236,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             )
             instance_provenance["instance_identifier"] = entity_ref
             instance_provenance["llm_guess"] = None
-            if instance_provenance.get("instance_match") == "session_expired":
+            if instance_provenance.get("instance_match") in _PERSON_TOKEN_REFUSALS:
                 return _session_expired_resolution(instance_provenance, retrieval_mode)
             # THE LABEL NAMES WHICH CONDITION FIRED. It was hard-coded
             # `class_recall_empty_fallback`, which was true while the only condition was an
@@ -4320,7 +4353,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         )
         instance_provenance["instance_identifier"] = identifier
         instance_provenance["llm_guess"] = str(result.resolved_uri)
-        if instance_provenance.get("instance_match") == "session_expired":
+        if instance_provenance.get("instance_match") in _PERSON_TOKEN_REFUSALS:
             return _session_expired_resolution(instance_provenance, retrieval_mode)
         if _input_declared_trace is not None:
             instance_provenance["input_declared"] = _input_declared_trace
@@ -5501,12 +5534,12 @@ async def fill_slots(request: FillSlotsRequest):
             user_email=request.user_email, entitled_domains=list(request.acting_domains or []),
         )
         outcome = str(prov.get("instance_match") or "empty")
-        if outcome == "session_expired":
+        if outcome in _PERSON_TOKEN_REFUSALS:
             # NOT a slot outcome: `slot_disposition` knows neither ASK nor ABSTAIN for it and
             # would fall through to a menu built for nobody. The whole call is refused.
             raise HTTPException(status_code=401, detail={
-                "reason": "session_expired",
-                "message": "the person's session has expired; sign in again"})
+                "reason": outcome,
+                "message": _PERSON_TOKEN_REFUSAL_DETAIL[outcome]})
         # ALL candidates, UNFILTERED, and deliberately so. The first draft filtered them
         # by the slot's referent class — which would have emptied the list for exactly the
         # case that most needs a menu: "the ERP Modernization project" resolves to an
