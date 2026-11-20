@@ -96,7 +96,9 @@ def test_extraction_warnings_are_carried_to_the_reviewer() -> None:
         "extracted parts are likely INCOMPLETE"
     ]
     payload = ers.build_start_review_payload(rj)
-    assert payload["extraction_warnings"] == rj["doc_review_reasons"], payload
+    # bounded (ruling 2026-11-19): a producer reason that fits survives as {code, message}
+    assert payload["extraction_warnings"] == [
+        {"code": "extraction_warning", "message": rj["doc_review_reasons"][0]}], payload
 
 
 def test_no_warnings_on_a_clean_extraction() -> None:

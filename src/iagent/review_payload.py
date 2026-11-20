@@ -7,6 +7,8 @@ re-exports `build_start_review_payload`; there is one function.
 import logging
 import re
 
+from .extraction_warning import bound_warnings
+
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _log = logging.getLogger("iagent.defs.extraction_review_sensor")
 _PART_FIELD = re.compile(r"parts\[(\d+)\]\.(\w+)")
@@ -94,7 +96,12 @@ def build_start_review_payload(
         # nobody, because nothing downstream carried it. Proceeding on degraded data is fine;
         # proceeding SILENTLY is not. Falls back to [] for review.json written before the
         # field existed (older extractions simply carry no warnings).
-        "extraction_warnings": list(review_json.get("doc_review_reasons") or []),
+        #
+        # BOUNDED (architect ruling 2026-11-19: "a reason that reaches a person is a code and a
+        # bounded message"). A failed pass's reason can hold the whole exception text, prompt and
+        # raw model reply included. Each reason becomes {code, message}; the raw text stays in
+        # review.json and in telemetry, never on the card or the triage task.
+        "extraction_warnings": bound_warnings(review_json.get("doc_review_reasons")),
         "domain": domain,
         # THE ARTIFACT'S LOCATION — `s3://bucket/key`, the ONLY thing the admission posture is
         # derived from. Distinct from `request_key` below, which is this artifact's IDENTITY
