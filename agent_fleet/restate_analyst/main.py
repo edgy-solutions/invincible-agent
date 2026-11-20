@@ -613,8 +613,15 @@ def _resolve_ontology(
     task_description: str,
     user_email: str = "",
     entitled_domains: list | None = None,
+    *,
+    user_jwt: str = "",
 ) -> dict:
     """Call Engine O to resolve the task description into semantic context.
+
+    THE PERSON'S OWN BEARER TRAVELS (ruled 2026-11-19, Q2, part 3): when the task carries its
+    ``user_jwt`` it is relayed as the Authorization header, so Engine O binds the person from a
+    verified token; without one the call carries this engine's service token, as before. The
+    token is never printed and is in no error text.
 
     This function is executed inside ``ctx.run()`` for durable execution —
     if the pod crashes mid-flight, Restate will replay and skip this step
@@ -684,6 +691,12 @@ def _resolve_ontology(
     # ordinary exception is retried by Restate on every read timeout; one prompt was
     # re-resolved 4 and 8 times, each a full model call that Engine O completed. A ReadTimeout
     # therefore becomes a TERMINAL 504. ConnectionError and HTTPError stay retryable.
+    _token = str(user_jwt or "").strip()
+    if _token.lower() == "bearer":
+        _token = ""
+    elif _token.lower().startswith("bearer "):  # the gateway may store the header form
+        _token = _token[7:].strip()
+    _relay_headers = {"Authorization": f"Bearer {_token}"} if _token else {}
     try:
         resp = requests.post(
             ONTOLOGY_RESOLVE_URL,
@@ -693,7 +706,7 @@ def _resolve_ontology(
             # `user_email` in the payload above: this is the call whose dropped identity
             # [[identity-reaches-enforcement-point]] was written for, and the credential must not
             # be mistaken for the fix to that. Two identities, one request, on purpose.
-            headers=outbound_auth_headers(
+            headers=_relay_headers or outbound_auth_headers(
                 client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
             ),
         )
@@ -791,6 +804,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 task.task_description,
                 resolve_caller_email,
                 request.get("entitled_domains") or [],
+                user_jwt=auth_header or "",
             ),
         )
 
