@@ -2,7 +2,7 @@
 
 Ruled 2026-11-19 (architect, item 2d). The where-used and notice-parts answers used to splice end
 item labels and MPNs into their `message`. The list now rides in a structured field
-(`end_items`, `configurations`, `parts`, the table rows), which the card renders.
+(`lists`, `parts`, the table rows), which the card renders.
 """
 from __future__ import annotations
 
@@ -48,7 +48,9 @@ def test_d1_where_used_unknown_configuration():
     got = ask(ident("P"), ALICE, "as_imagined")
     assert got["reason"] == "unknown_configuration"
     _one_short_line(got["message"])
-    assert got["configurations"] == list(w.CONFIGURATIONS)
+    assert got["lists"][0]["items"] == list(w.CONFIGURATIONS)
+    assert got["lists"][0]["total"] == len(w.CONFIGURATIONS)
+    assert got["lists"][0]["label"] == "Configurations held here"
     assert "as_imagined" not in got["message"]
     for v in _list_values(got):
         assert v not in got["message"]
@@ -60,10 +62,14 @@ def test_d1_where_used_configuration_not_available():
     _one_short_line(got["message"])
     expected = sorted(DATASET.identities[e]["label"] for e, confs in DATASET.end_items.items()
                       if "as_built" not in confs and DATASET.sustained_under.get(e))
-    assert got["end_items"] == sorted(got["end_items"]) and got["end_items"]
-    assert set(got["end_items"]) <= set(expected)
+    items = got["lists"][0]["items"]
+    assert items == sorted(items) and items
+    assert got["lists"][0]["total"] == len(items)
+    assert "as_built" in got["lists"][0]["label"]
+    assert set(items) <= set(expected)
     assert got["configuration"] == "as_built"
-    for v in got["end_items"]:
+    assert "end_items" not in got and "configurations" not in got
+    for v in items:
         assert v not in got["message"]
 
 
@@ -95,10 +101,38 @@ def _refusal_env():
 def test_d3_the_card_envelope_carries_the_structured_lists():
     env = _refusal_env()
     lacking = ask(ident("P"), ALICE, "as_built")
-    assert env(lacking)["end_items"] == lacking["end_items"]
+    assert env(lacking)["lists"] == lacking["lists"]
     unknown = ask(ident("P"), ALICE, "as_imagined")
-    assert env(unknown)["configurations"] == list(w.CONFIGURATIONS)
+    assert env(unknown)["lists"] == unknown["lists"]
     assert env(lacking)["message"] == lacking["message"]
+
+
+def _both_refusals():
+    return [ask(ident("P"), ALICE, "as_imagined"), ask(ident("P"), ALICE, "as_built")]
+
+
+def _one_line_str(v):
+    return isinstance(v, str) and "\n" not in v and "\r" not in v and len(v) <= 160
+
+
+def test_d5_every_lists_the_producers_emit_has_the_proposed_shape():
+    for got in _both_refusals():
+        lists = got["lists"]
+        assert isinstance(lists, list) and lists, got
+        for entry in lists:
+            assert isinstance(entry, dict) and set(entry) == {"label", "items", "total"}, entry
+            assert _one_line_str(entry["label"]), entry["label"]
+            assert isinstance(entry["items"], list) and entry["items"]
+            assert all(_one_line_str(i) for i in entry["items"]), entry["items"]
+            assert isinstance(entry["total"], int) and entry["total"] >= len(entry["items"])
+
+
+def test_d6_the_presentation_envelope_carries_lists_unchanged_and_no_named_keys():
+    env = _refusal_env()
+    for got in _both_refusals():
+        out = env(got)
+        assert out["lists"] == got["lists"]
+        assert "end_items" not in out and "configurations" not in out
 
 
 def _join_in_message_position(source: str) -> list[int]:

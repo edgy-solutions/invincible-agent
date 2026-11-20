@@ -338,6 +338,12 @@ def _refused(reason: str, message: str, **extra: Any) -> Dict[str, Any]:
     }
 
 
+def _list(label: str, items: List[str]) -> Dict[str, Any]:
+    """One entry of a refusal's `lists` field: the card renders it, the message never carries it.
+    Nothing is truncated here, so `total` is the item count. Callers omit `lists` when empty."""
+    return {"label": label, "items": list(items), "total": len(items)}
+
+
 def _unknown_part() -> Dict[str, Any]:
     # No part text in the message: this envelope is also the all-withheld answer, and the two
     # must be byte-equal.
@@ -428,7 +434,7 @@ def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None,
         return _refused(
             "unknown_configuration",
             "That configuration is not one held here; choose one of the listed configurations.",
-            configurations=list(CONFIGURATIONS))
+            lists=[_list("Configurations held here", list(CONFIGURATIONS))])
     hits = resolve_part(dataset, part)
     if not hits:
         return _unknown_part()
@@ -463,7 +469,7 @@ def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None,
             f"No {configuration} data is held for {len(lacking)} end item(s). "
             f"Ask for {DEFAULT_CONFIGURATION}, or wait for that configuration's data.",
             configuration=configuration,
-            end_items=names)
+            lists=[_list(f"End items with no {configuration} data", names)])
 
     provenance, as_of = _provenance(dataset)
     rows: List[ImpactRow] = []
