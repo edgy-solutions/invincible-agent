@@ -2,6 +2,9 @@
 
 **Status: PROPOSED, 2026-11-20. Nothing is built.** This is for the architect to rule on. It is a
 requirement for a later release, not for 0.4.91. The census in §4 was read from master `91305a37`.
+Revised after gov's review of #482, which found the census complete. Gov's four notes for the
+ruling are folded in where they apply: §1 (role stems), §2 (cutover and the central gateway's
+posture), §5 (the base render) and §6 Q1.
 
 **The requirement.** A deployment runs one instance of this chart per use: development, test and
 production. All the instances use one shared identity provider (one realm). The chart has to support
@@ -42,7 +45,19 @@ identity:
 
 - **No hyphen inside the prefix.** Then no prefix is the start of another, and the `azp` check
   in (b) below cannot confuse one instance with another.
-- **The chart refuses to render** a prefix that does not match the pattern.
+- **The pattern alone is not enough (gov, on #482).** It admits the role stems `iagent-` and
+  `cortex-`, which begin every role literal. Such a prefix breaks two things:
+  - the double-prefix refusal below refuses every mint, because every role literal already
+    starts with that prefix;
+  - the optional `azp`-prefix check (§2) admits a co-tenant that uses the empty prefix, because
+    `iagent-engine-o` starts with `iagent-`.
+
+  **Proposed:** the chart and the composing function also refuse any prefix that is the start of a
+  role literal. That rule is checked against the role literals themselves, not against a typed
+  list of stems, so a new stem is covered when it is added. §6 Q1 settles this before anything is
+  built.
+- **The chart refuses to render** a prefix that does not match the pattern or that fails the
+  role-stem rule.
 - **The shared ConfigMap exports the prefix to every pod** as `IAGENT_IDENTITY_PREFIX`. One key
   reaches every workload that loads that ConfigMap, the BFF and Dagster included.
 
@@ -158,6 +173,14 @@ but the failure would read as the wrong instance's 401.
   the requirement forbids.
   - A cutover from today's names to prefixed ones is a single roll: access tokens are
     short-lived, and the mapper and the accepted list change in the same release.
+  - **A deployment's own private overlay can hit the retirement guard (gov, on #482).** An overlay
+    that sets `acceptedAudiences` or `realmAudience` to anything other than the derived `AUD`
+    fails to render on the release that adds the guard.
+    - The cutover note in the CHANGELOG tells such deployments to render with `--dry-run`
+      against their own overlay before they upgrade.
+    - A deployment whose audience today is not `<prefix>cortex-bff` cannot keep that audience.
+      Its tokens change audience in that release, and that is a consequence of the ruling, not a
+      side effect.
   - **For the ruling:** if a transition window is wanted, it should be a dated, single-release
     key that the render refuses after its date, not an open list.
 
@@ -165,8 +188,10 @@ but the failure would read as the wrong instance's 401.
 
 - **Today, an empty audience list refuses every token.** Under the proposal the audience list is
   never empty, because `AUD` is always derived. **Deny-by-default is kept by
-  `acceptedIssuers: []`, which still refuses every token** (`src/iagent/auth.py:248–257`). The base
-  chart is therefore still closed until a deployment names its issuer.
+  `acceptedIssuers: []`, which still refuses every token** (`src/iagent/auth.py:248–257`).
+  - Gov checked all three verifiers on #482: the BFF, the SDK and the central gateway.
+  - **"The base chart is closed" holds for the BFF and the engines only.** The central gateway's
+    base posture is `observe`, so in the base chart it does not refuse.
 - **Instances that share a realm share one issuer,** so the issuer no longer separates them.
   Separation rests on three things, in order:
   1. **The audience.** One instance's mapper never stamps another instance's `AUD`.
@@ -386,8 +411,15 @@ The mesh-mcp chart and doc-tools follow with the same value.
 
 **Seals.** Each one names the claim it defends.
 
-- **An empty prefix renders byte-identical to today,** for the base and for every overlay, except
-  the retired keys. This is the no-op, measured as one.
+- **An empty prefix renders byte-identical to today for every overlay that already sets
+  `cortex-bff`,** apart from the retired keys. This is the no-op, measured as one.
+  - **The base chart is not a no-op (gov, on #482),** and the seal states its diff exactly
+    instead of claiming none.
+  - Its accepted-audience variables go from empty to `cortex-bff`.
+  - Its `audience-bff` mapper is rendered where today none is, because `realmAudience: ""`
+    renders no mapper.
+  - The seal pins both differences and nothing else, and the base still refuses every token
+    through `acceptedIssuers: []` (§2).
 - With prefix `t-`:
   - every rendered client id starts with `t-`;
   - every accepted list is exactly `["t-cortex-bff"]`;
@@ -408,7 +440,10 @@ The mesh-mcp chart and doc-tools follow with the same value.
 ## 6. Questions for the ruling
 
 1. **The prefix shape:** `^[a-z][a-z0-9]{0,11}-$`, with the hyphen included in the value. The
-   alternative is a bare token with the chart adding the hyphen.
+   alternative is a bare token with the chart adding the hyphen. **Either way, also refuse a prefix
+   that is the start of any role literal** (`iagent-`, `cortex-`; §1). Without that, the
+   double-prefix refusal and the `azp`-prefix check both fail. This must be settled before
+   anything is built.
 2. **In a shared realm, must every instance set a non-empty prefix?** Lane 1 recommends yes; §1
    gives the reason.
 3. **A transition audience:** none, or one dated, single-release key (§2)?
