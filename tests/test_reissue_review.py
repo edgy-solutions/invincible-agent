@@ -109,8 +109,8 @@ def _req(**kw):
     return gateway.ReviewStartRequest(**base)
 
 
-def _run(req):
-    user = SimpleNamespace(authz_id=APPROVER)
+def _run(req, authz_id=APPROVER):
+    user = SimpleNamespace(authz_id=authz_id)
     return asyncio.run(gateway._start_review_core(req, current_user=user, raw_token="tok"))
 
 
@@ -142,6 +142,18 @@ def test_a_source_mismatch_is_422_with_no_call_and_no_supersede(monkeypatch):
     assert ei.value.detail["derived"] == review_keys.compose_workflow_id(
         NOTICE, APPROVER, "a-different-artifact")
     assert w.posts == [] and w.supersedes == []
+
+
+def test_another_identity_cannot_reissue_a_review_it_did_not_start(monkeypatch):
+    # Same notice, same artifact, same reissue_of: only the caller differs. The approver must come
+    # from the TOKEN, never be parsed back out of reissue_of; a foreign id never reaches the status read.
+    w = _World(monkeypatch, statuses=["pending"], restate_body=_started())
+    with pytest.raises(HTTPException) as ei:
+        _run(_req(reissue_of=OLD), authz_id="someone-else")
+    assert ei.value.status_code == 422
+    assert ei.value.detail["error"] == "reissue_source_mismatch"
+    assert ei.value.detail["derived"] == review_keys.compose_workflow_id(NOTICE, "someone-else", RK)
+    assert w.posts == [] and w.supersedes == [] and w.asked == []
 
 
 def test_a_decided_review_is_409_with_no_call(monkeypatch):
