@@ -119,9 +119,15 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
+                {{- if $.Values.dagster.webserver.signIn.enabled }}
+                name: {{ $.Release.Name }}-dagster-signin
+                port:
+                  number: {{ $.Values.dagster.webserver.signIn.port }}
+                {{- else }}
                 name: {{ $.Release.Name }}-dagster
                 port:
                   number: {{ $.Values.dagster.webserver.port }}
+                {{- end }}
           {{- end }}
     {{- end }}
 {{- end }}

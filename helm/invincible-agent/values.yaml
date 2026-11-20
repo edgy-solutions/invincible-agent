@@ -46,6 +46,8 @@ global:
   # rendered image that still carries only a tag. The map is keyed by repository, so a component
   # `image.tag` override on a row below is ignored; change the row instead.
   imageDigests:
+    # v7.15.6, an OCI index (amd64, arm, arm64, ppc64le, s390x), read from quay.io on 2026-11-20
+    "quay.io/oauth2-proxy/oauth2-proxy": "sha256:c3415e8660af553f5e18f5d90db050614c02493c0ac6260ac59442f6d9b12048"
     # 0.17.0 (read 2026-11-19 by Docker-Content-Digest; index incl. linux/arm64; = :sha-a85c5f9)
     "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:1dcf1229fcdd227773a22bd4edd3c57e9b295b68f991def0f30ccd015da71e83"
     # 0.17.0 (read 2026-11-19 by Docker-Content-Digest; index incl. linux/arm64; = :sha-a85c5f9)
@@ -458,6 +460,34 @@ dagster:
             - path: /
               pathType: ImplementationSpecific
       tls: []
+    # Optional sign-in (oauth2-proxy) in front of the webserver. OFF by default; when off nothing
+    # renders and the ingress is unchanged. When on, the Dagster ingress points at the proxy.
+    # The chart never creates or carries the Secret: create `existingSecret` out of band with the
+    # keys below. The Keycloak client `clientId` is NOT created by the chart yet.
+    # Enabling needs: existingSecret, a non-empty allowedRoles or allowedGroups (deny by default),
+    # a resolvable issuer, and the Dagster ingress enabled with a host.
+    signIn:
+      enabled: false
+      image:
+        repository: "quay.io/oauth2-proxy/oauth2-proxy"
+        tag: "v7.15.6"
+      # Browser-facing realm URL. Empty falls back to cortexUi.env.VITE_KEYCLOAK_REALM_URL,
+      # else the chart's keycloakRealmUrl helper.
+      issuerUrl: ""
+      clientId: "dagster-signin"
+      existingSecret: ""
+      clientSecretKey: "client-secret"
+      cookieSecretKey: "cookie-secret"
+      allowedRoles: []
+      allowedGroups: []
+      port: 4180
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
   daemon:
     enabled: true
     replicas: 1

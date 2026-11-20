@@ -1,5 +1,12 @@
 # invincible-agent helm chart — changelog
 
+## Unreleased — after 0.4.91
+
+- **The Dagster webserver can sit behind an oauth2-proxy sign-in** (`dagster.webserver.signIn`). Off by
+  default, and nothing renders or changes when it is off. Enabling it requires an existing Secret
+  (`existingSecret`, created outside the chart) and an allow-list (`allowedRoles` or `allowedGroups`);
+  the render refuses without either. Its Keycloak client is not created by the chart yet.
+
 ## 0.4.91 — not yet cut
 
 - **The person-guard census declares its one identity comparison** (saf; master was red since #414). `grant_flow.backfill_ledger` compares the repository identity's `Auth-Via` header with `"service"`; it is not an Initiator kind and is already allowlist-shaped. The matcher stays broad (a copy written as `initiator.role == "service"` is still caught); the row is declared by (path, function) with a count and a reason, checked both ways. Test only.
