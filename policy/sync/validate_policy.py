@@ -84,6 +84,7 @@ Exit: 0 valid · 2 any error (all errors listed, none silently dropped).
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -434,6 +435,71 @@ def unusable_group_audiences(audiences, groups: dict, users: list, *,
                 out.append(f"{file_label}: {noun} {a.key!r} grants group {g!r}, which has "
                            f"ZERO members in users.yaml - {nobody}")
     return out
+
+
+def disposition_audience_errors(queue_map: dict, audiences, groups: dict, users: list) -> list[str]:
+    """Every disposition's dispatch audience must be a task_grants audience with a HOLDER (ruled
+    2026-11-19, item 2b). A holder is a `grant_to` user present in users.yaml, or a
+    `grant_to_groups` group with at least one member in users.yaml. Otherwise the approved
+    disposition opens a task that routes to NOBODY. A None audience (archive) opens no task and
+    is never checked. PURE."""
+    known_users = {str(u.get("id", "")).strip() for u in users if isinstance(u, dict)}
+    known_users.discard("")
+    members: dict[str, int] = {}
+    for u in users:
+        if isinstance(u, dict):
+            for g in u.get("groups") or []:
+                members[g] = members.get(g, 0) + 1
+    by_key = {a.key: a for a in audiences}
+    out: list[str] = []
+    for disposition, aud in (queue_map or {}).items():
+        if aud is None:
+            continue
+        rec = by_key.get(aud)
+        if rec is None:
+            out.append(f"task_grants.yaml: disposition {disposition!r} dispatches to audience "
+                       f"{aud!r}, which is NOT an audience here - the task would route to NOBODY")
+            continue
+        held = any(u in known_users for u in rec.grant_to) or any(
+            members.get(g) for g in rec.grant_to_groups)
+        if not held:
+            out.append(f"task_grants.yaml: disposition {disposition!r} dispatches to audience "
+                       f"{aud!r}, which NO user or group holds - the task would route to NOBODY")
+    return out
+
+
+_DISPATCH_PLAN = Path(__file__).resolve().parents[2] / "agent_fleet" / "restate_analyst" / "dispatch_plan.py"
+
+
+def load_disposition_queue_map(path: Path | None = None) -> dict | None:
+    """Read the ONE declaration of disposition -> audience (`_DISPOSITION_QUEUE` in
+    dispatch_plan.py) by AST, never by import, never a copy.
+    File absent -> None: the caller says so visibly. File present but the assignment is missing
+    or not a literal dict -> ValueError (the caller reports it as an error): a guard that
+    silently stops checking is the failure to avoid."""
+    path = _DISPATCH_PLAN if path is None else Path(path)
+    if not path.is_file():
+        return None
+    cannot = f"validate_policy: cannot read _DISPOSITION_QUEUE from {path.name}"
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError) as exc:
+        raise ValueError(f"{cannot} ({type(exc).__name__}: {exc})") from exc
+    for node in tree.body:
+        target = value = None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            target, value = node.target, node.value
+        if isinstance(target, ast.Name) and target.id == "_DISPOSITION_QUEUE":
+            try:
+                m = ast.literal_eval(value)
+            except ValueError as exc:
+                raise ValueError(f"{cannot} (not a literal: {exc})") from exc
+            if not isinstance(m, dict):
+                raise ValueError(f"{cannot} (not a dict)")
+            return m
+    raise ValueError(f"{cannot} (no module-level assignment found)")
 
 
 def domain_consumption_required_fields(raw: dict, known_domains: set[str]) -> list[str]:
@@ -1946,6 +2012,19 @@ def validate(
     # grant_to_groups: the group must exist and have members (2026-10-10 ruling).
     errors.extend(unusable_group_audiences(
         audiences, groups_raw.get("groups") or {}, users_raw.get("users") or []))
+    try:
+        _queue_map = load_disposition_queue_map()
+    except ValueError as exc:
+        errors.append(str(exc))
+    else:
+        if _queue_map is None:
+            print("validate_policy: dispatch_plan.py not present; the disposition-audience check "
+                  "did not run", file=sys.stderr)
+        else:
+            errors.extend(disposition_audience_errors(
+                _queue_map, audiences, groups_raw.get("groups") or {},
+                users_raw.get("users") or []))
+
     errors.extend(unusable_group_audiences(
         caps, groups_raw.get("groups") or {}, users_raw.get("users") or [],
         file_label="capability_grants.yaml", noun="capability",

@@ -49,14 +49,15 @@ def test_A_CONFIGURATION_WITH_NO_DATA_IS_REFUSED_NAMING_THE_END_ITEMS_NEVER_AN_E
     got = ask(ident("P"), ALICE, "as_built")
     assert got["refused"] is True and got["reason"] == "configuration_not_available"
     assert "where_used" not in got and "rows" not in got
-    assert "E1" in got["message"] and "E2" in got["message"]
+    items = got["lists"][0]["items"]
+    assert "E1" in items and "E2" in items
 
 
 def test_AN_UNKNOWN_CONFIGURATION_LISTS_THE_VOCABULARY():
     vocabulary, _ = _ruling_two()
     got = ask(ident("P"), ALICE, "as_imagined")
     assert got["reason"] == "unknown_configuration"
-    assert all(v in got["message"] for v in vocabulary)
+    assert got["lists"][0]["items"] == list(vocabulary)
 
 
 def test_WHEN_ONLY_ONE_END_ITEM_LACKS_THE_CONFIGURATION_ONLY_THAT_ONE_IS_NAMED():
@@ -70,4 +71,5 @@ def test_WHEN_ONLY_ONE_END_ITEM_LACKS_THE_CONFIGURATION_ONLY_THAT_ONE_IS_NAMED()
     ds = w.build_dataset(raw)
     got = w.where_used(ds, ident("P"), "as_built", caller_id=ALICE, can_view_program=can_view)
     assert got["reason"] == "configuration_not_available"
-    assert "E1" in got["message"] and "E2" not in got["message"]
+    items = got["lists"][0]["items"]
+    assert "E1" in items and "E2" not in items

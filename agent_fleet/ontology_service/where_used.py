@@ -15,8 +15,9 @@ no row is withheld: deny by default.
 
 ABSENT IS NOT ZERO. `population` and `stock` have no source, so every row carries `None` for them
 and the row's own `absent_reason` says why. The table cell is `null` on the wire (a typed value,
-never 0, "" or a placeholder string), which is how cortex reads absence; the row text says "no
-source". Every `None` on a `data_provenance` entry also gets that entry's own `absent_reason`,
+never 0, "" or a placeholder string), which is how cortex reads absence; the served
+`absent_reason` says "no source" (the message carries no rows). Every `None` on a
+`data_provenance` entry also gets that entry's own `absent_reason`,
 so a missing label is stated rather than left to be read as "checked". Both levels are the SDK's
 (v0.9.26): a row reason explains the row's field, an entry reason explains its input's.
 
@@ -32,7 +33,7 @@ True`, `outcome: "refused"`, `reason`; `status: "refused"` stays for existing co
                                  the part is in is withheld from this caller, byte for byte, so the
                                  read is not an existence oracle.
   * `ambiguous_part`           - the text matches two identities.
-  * `unknown_configuration`    - the value is outside CONFIGURATIONS (the message lists them).
+  * `unknown_configuration`    - the value is outside CONFIGURATIONS (the `lists` field names them).
   * `configuration_not_available` - a visible end item the part is in lists no data for the asked
                                  configuration. Refused loudly, naming those end items: never an
                                  empty table and never a partial one.
@@ -83,7 +84,7 @@ DEFAULT_CONFIGURATION = "as_designed"
 SHIPPED_LOCATOR = "policy/overlays/sample/product_structure/where_used.yaml"
 DATASET_ENV = "WHERE_USED_DATASET"
 
-#: The text the answer's row lines read when a value has no source. Never 0 or "".
+#: The served `absent_reason` phrase for a value with no source. Never 0 or "".
 NO_SOURCE = "no source"
 
 
@@ -333,6 +334,12 @@ def _refused(reason: str, message: str, **extra: Any) -> Dict[str, Any]:
     }
 
 
+def _list(label: str, items: List[str]) -> Dict[str, Any]:
+    """One entry of a refusal's `lists` field: the card renders it, the message never carries it.
+    Nothing is truncated here, so `total` is the item count. Callers omit `lists` when empty."""
+    return {"label": label, "items": list(items), "total": len(items)}
+
+
 def _unknown_part() -> Dict[str, Any]:
     # No part text in the message: this envelope is also the all-withheld answer, and the two
     # must be byte-equal.
@@ -380,7 +387,7 @@ def _provenance(dataset: Dataset) -> Tuple[List[DataProvenance], Dict[str, str],
         inputs.append(DataProvenance(**entry, absent_reason=reasons or None))
     stamps = [i.as_of for i in inputs]
     as_of = None if (not stamps or any(s is None for s in stamps)) else min(str(s) for s in stamps)
-    absent: Dict[str, str] = {"population": "no source", "stock": "no source"}
+    absent: Dict[str, str] = {"population": NO_SOURCE, "stock": NO_SOURCE}
     if as_of is None:
         absent["as_of"] = "an input states no as_of"
     return inputs, absent, as_of
@@ -413,10 +420,6 @@ def _absent_reason(columns: List[Dict[str, Any]], table: List[Dict[str, Any]],
     return card, per_row
 
 
-def _cell(value: Any) -> str:
-    return NO_SOURCE if value is None else str(value)
-
-
 def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None, *,
                caller_id: str, can_view_program: Callable[[str, str], bool]) -> Dict[str, Any]:
     """The pure shaping: one answer envelope or one named refusal."""
@@ -427,7 +430,8 @@ def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None,
     if configuration not in CONFIGURATIONS:
         return _refused(
             "unknown_configuration",
-            f"Configuration {configuration!r} is not one of: {', '.join(CONFIGURATIONS)}.")
+            "That configuration is not one held here; choose one of the listed configurations.",
+            lists=[_list("Configurations held here", list(CONFIGURATIONS))])
     hits = resolve_part(dataset, part)
     if not hits:
         return _unknown_part()
@@ -456,12 +460,13 @@ def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None,
 
     lacking = [e for e in visible if configuration not in dataset.end_items[e]]
     if lacking:
-        names = ", ".join(sorted(dataset.identities[e]["label"] for e in lacking))
+        names = sorted(dataset.identities[e]["label"] for e in lacking)
         return _refused(
             "configuration_not_available",
-            f"No {configuration} data is held for end item(s): {names}. "
+            f"No {configuration} data is held for {len(lacking)} end item(s). "
             f"Ask for {DEFAULT_CONFIGURATION}, or wait for that configuration's data.",
-            configuration=configuration)
+            configuration=configuration,
+            lists=[_list(f"End items with no {configuration} data", names)])
 
     provenance, row_absent, as_of = _provenance(dataset)
     rows: List[ImpactRow] = []
@@ -476,14 +481,9 @@ def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None,
         return _refused("no_usage", f"{label} is known and is used in no end item for {configuration}.")
     rows.sort(key=lambda r: (dataset.identities[r.end_item]["label"], r.program))
 
-    lines = [
-        f"{dataset.identities[r.end_item]['label']} ({r.program}): {r.qty_per} per end item, "
-        f"population {_cell(r.population)}, stock {_cell(r.stock)} [{r.configuration}]"
-        for r in rows
-    ]
-    message = "\n".join(lines)
     notional = any(i.notional for i in provenance)
     suffix = f"{configuration}, synthetic fixture" if notional else configuration
+    message = f"{label} is used in {len(rows)} end item(s) [{suffix}]."
     columns = [dict(c) for c in IBP_COLUMNS]
     group_by = next(c["key"] for c in columns if c["from"] == "ImpactRow.program")
     table = [
