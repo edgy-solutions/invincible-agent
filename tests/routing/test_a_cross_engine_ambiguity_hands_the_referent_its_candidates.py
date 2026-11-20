@@ -71,7 +71,23 @@ def _wire_notices(eo, monkeypatch, rows=NOTICES):
     return drv
 
 
+TESTER = "tester@example.com"
+
+
+def _as_verified_tester(eo, monkeypatch):
+    """Since #452 engine O binds identity and grants from the VERIFIED caller, never the body: an
+    unverified call binds anonymous and `/fill_slots` refuses it. The sheet's caller (bob,
+    SUSTAINMENT) is a verified person holding SUSTAINMENT, the shape the identity seals use
+    (tests/routing/test_engine_o_binds_the_verified_caller.py). The nested `/resolve_instance` hop
+    reads the same caller, as a forwarded bearer would."""
+    monkeypatch.setattr(eo, "_current_caller",
+                        lambda: SimpleNamespace(authz_id=TESTER, verified=True))
+    monkeypatch.setattr(eo, "_held_domains_of", lambda _s: frozenset({"SUSTAINMENT"}),
+                        raising=False)
+
+
 def _fill(eo, monkeypatch, value, *, referent=None):
+    _as_verified_tester(eo, monkeypatch)
     filled = SimpleNamespace(slots_json=json.dumps({"part_number": value}), confidence=0.9, reasoning="stub")
 
     async def _fake(**kw):
@@ -84,7 +100,7 @@ def _fill(eo, monkeypatch, value, *, referent=None):
     req = eo.FillSlotsRequest(
         query=f"what failed on this part {value}", verb_iri="mesh:whatFailedOnThisPart",
         declarations=json.dumps(decls), acting_domains=["SUSTAINMENT"], subject_uri="",
-        user_email="tester@example.com")
+        user_email=TESTER)
     return asyncio.run(eo.fill_slots(req))
 
 

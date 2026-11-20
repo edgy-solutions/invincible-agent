@@ -1,6 +1,7 @@
 import logging
 import os
 import threading
+import time
 
 import jwt
 from jwt import PyJWKClient
@@ -163,7 +164,7 @@ def _get_entitlement_cache() -> Optional[EntitlementCache]:
         return _entitlement_cache
     with _topaz_init_lock:
         if _entitlement_cache is None:
-            _topaz_client = TopazDirectoryClient(TOPAZ_DIRECTORY_URL)
+            _topaz_client = TopazDirectoryClient(TOPAZ_DIRECTORY_URL, shared=True)
             _entitlement_cache = EntitlementCache(_topaz_client)
     return _entitlement_cache
 
@@ -205,12 +206,48 @@ def _accepted(env_name: str) -> List[str]:
     return [v.strip() for v in (os.getenv(env_name) or "").split(",") if v.strip()]
 
 
+class SigningKeysUnavailable(Exception):
+    """The realm's signing keys could not be fetched: an outage, never a verdict on the token.
+
+    Deliberately NOT a `jwt.PyJWTError`, so `get_current_user`'s 401 arms cannot catch it.
+    """
+
+
+#: One retry. A key fetch that fails to connect is usually the realm restarting under a roll;
+#: the second try either succeeds or the caller gets a retryable 503, never a 401.
+KEY_FETCH_ATTEMPTS = 2
+KEY_FETCH_BACKOFF_S = 0.5
+
+
+def _signing_key(token: str):
+    """The signing key for `token`, retrying a key fetch that could not CONNECT.
+
+    Only `jwt.PyJWKClientConnectionError` is retried. PyJWT 2.12 raises it when `urlopen` fails
+    with a `URLError` (which includes an HTTP error status such as a 5xx from the realm) or times
+    out. A token whose `kid` the realm does not hold raises `PyJWKClientError`, which is a verdict
+    on the token (401) and is not retried. An endpoint that answers with something other than a
+    key set is not an outage this retry covers: it still falls to the 401 catch-all.
+    """
+    last: Exception | None = None
+    for attempt in range(KEY_FETCH_ATTEMPTS):
+        try:
+            return jwks_client.get_signing_key_from_jwt(token)
+        except jwt.PyJWKClientConnectionError as exc:
+            last = exc
+            logger.warning("JWKS fetch failed (attempt %d of %d): %s",
+                            attempt + 1, KEY_FETCH_ATTEMPTS, exc)
+            if attempt + 1 < KEY_FETCH_ATTEMPTS:
+                time.sleep(KEY_FETCH_BACKOFF_S)
+    raise SigningKeysUnavailable(str(last)) from last
+
+
 def verified_claims(token: str) -> dict:
     """Verify the token against Keycloak's JWKS and return its payload.
 
     The RS256 signature, `exp`, `iss` and `aud` are all checked: `iss` must be one of the served
     accepted issuers and `aud` must name one of the served accepted audiences. Either list empty
-    refuses the token before it is decoded. Raises jwt errors unchanged.
+    refuses the token before it is decoded. Raises jwt errors unchanged, and
+    `SigningKeysUnavailable` when the realm's keys cannot be fetched (see `_signing_key`).
     """
     issuers = _accepted(ACCEPTED_ISSUERS_ENV)
     audiences = _accepted(ACCEPTED_AUDIENCES_ENV)
@@ -218,7 +255,7 @@ def verified_claims(token: str) -> dict:
         raise jwt.InvalidIssuerError(f"no accepted issuer is configured ({ACCEPTED_ISSUERS_ENV} is empty)")
     if not audiences:
         raise jwt.InvalidAudienceError(f"no accepted audience is configured ({ACCEPTED_AUDIENCES_ENV} is empty)")
-    signing_key = jwks_client.get_signing_key_from_jwt(token)
+    signing_key = _signing_key(token)
     return jwt.decode(
         token,
         signing_key.key,
@@ -331,6 +368,21 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         # A refusal raised above (503 authorization_unavailable, 401 no identity) is already
         # the answer; the catch-all below would re-wrap it as a 401 and hide the outage.
         raise
+    except SigningKeysUnavailable as e:
+        # The realm's keys could not be fetched, after one retry. That says nothing about the
+        # token, so it is the outage class (ADR-0026): the same retryable 503 the directory
+        # outage answers, never a 401 that tells the client to sign in again.
+        # `logger`, not `logging`: the arms below import logging locally, which makes the bare
+        # name an unbound local everywhere in this function.
+        logger.error("JWKS unavailable after %d attempts: %s", KEY_FETCH_ATTEMPTS, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "authorization_unavailable",
+                "retryable": True,
+                "message": "The realm's signing keys could not be fetched. Retry shortly.",
+            },
+        )
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

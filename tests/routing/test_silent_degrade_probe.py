@@ -58,6 +58,8 @@ import httpx
 import pytest
 
 
+
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
 _ENGINE_O_BASE = os.getenv(
     "ROUTING_TEST_ENGINE_O_URL", "http://iagent-ontology-service:8084"
 )

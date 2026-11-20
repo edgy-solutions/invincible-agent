@@ -2,6 +2,9 @@ version = 1
 revision = 3
 requires-python = "==3.12.*"
 
+[manifest]
+constraints = [{ name = "langfuse", specifier = "<5" }]
+
 [[package]]
 name = "acryl-datahub"
 version = "1.7.0.10"
@@ -442,8 +445,8 @@ requires-dist = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypercorn" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.19" },
-    { name = "provenance-telemetry", specifier = "==0.2.1" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.25" },
+    { name = "provenance-telemetry", specifier = "==0.2.2" },
     { name = "pydantic" },
 ]
 
@@ -615,8 +618,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.19"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.19#ef7a6f358c981adf7eedf7cb773f98250ecb7177" }
+version = "0.9.25"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.25#f1a941030bd68f1218ee6122750619ea08ee7276" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
@@ -624,7 +627,7 @@ dependencies = [
     { name = "nest-asyncio" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pyjwt" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pyyaml" },
 ]
 
@@ -704,7 +707,7 @@ wheels = [
 
 [[package]]
 name = "langfuse"
-version = "5.2.0"
+version = "4.18.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "backoff" },
@@ -717,9 +720,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/37/b3/65dbc94d809676053b65e89fda729ef7d8a1d13bbb89f2ab407639f631f2/langfuse-5.2.0.tar.gz", hash = "sha256:8cde9e91b44b53444906af9b37efa9c29c647a9f45f9f8435a638026cb3d4693", size = 383092, upload-time = "2026-11-05T09:53:48.439Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/32/cfa4cfa87a73d5e9bc527e568d9eaad171ad8d3ff3ec8a796247b4a577c4/langfuse-4.18.0.tar.gz", hash = "sha256:fd529365207ecdefd778ad1a35056a2acee032ff0d75e18368c106fbc3cd865c", size = 395814, upload-time = "2026-10-14T08:40:45.485Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f0/48/715e2b612d5d20989e4a338c27d78bef43de327f2192c9b20421f5648868/langfuse-5.2.0-py3-none-any.whl", hash = "sha256:4763cbad358960f1036078a4c6e9f86f04690ea566541709c2c40aa1998e2b0f", size = 660151, upload-time = "2026-11-05T09:53:49.817Z" },
+    { url = "https://files.pythonhosted.org/packages/49/49/2569267383ee0d0afeaab904aefaf77eb69fed023354e833fb49ebe7411e/langfuse-4.18.0-py3-none-any.whl", hash = "sha256:b0f14f30f9f147ca662eaa9998af374fc57b9e8a894f0ae86789cbbd96448289", size = 709950, upload-time = "2026-10-14T08:40:47.196Z" },
 ]
 
 [[package]]
@@ -1016,7 +1019,7 @@ wheels = [
 
 [[package]]
 name = "provenance-telemetry"
-version = "0.2.1"
+version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langfuse" },
@@ -1024,9 +1027,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/60/1f/d864432ecaaf5e93641c4174817c2f3aa6f1d0aa95b4be7bcf96ab857643/provenance_telemetry-0.2.1.tar.gz", hash = "sha256:98989c66e0fecd99e0ac0bd8a7d5c977d64045ef7e6c061d184cdc878ecf6979", size = 30572, upload-time = "2026-11-11T03:12:54.179Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/c4/28f7eedbda6ad53c018eddb50b4b7bfe2c406b45511b467683dfe7ef83e2/provenance_telemetry-0.2.2.tar.gz", hash = "sha256:f9aff5a5f27736a90e6b9bcd821de8bcfa3fce4710fcc90f083856d2ed31aa20", size = 34330, upload-time = "2026-11-16T17:32:54.21Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/32/e6/6aff57a31d6f6dade4ee853a95d6208727db878dd7a5da9623b352b53ca3/provenance_telemetry-0.2.1-py3-none-any.whl", hash = "sha256:95690eee381b2fc48aeb60c17e49c335a1e046ae48322cb070aadb4f92167086", size = 21112, upload-time = "2026-11-11T03:12:52.794Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/91/8f025721d7e15c71717cd1f402da25bd4c4528c7dff69e152032156c96af/provenance_telemetry-0.2.2-py3-none-any.whl", hash = "sha256:4feac328c7d517441377544505392753dc320b78d2523ac87b539a8642c876c2", size = 23621, upload-time = "2026-11-16T17:32:52.979Z" },
 ]
 
 [[package]]

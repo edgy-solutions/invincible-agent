@@ -271,6 +271,7 @@ def get_datahub_context(datahub_wrapper_url: str) -> str:
 _ENGINE_O_ABSTENTION_REASONS = frozenset({
     "instance_not_found",
     "no_compatible_verbs",
+    "domain_scope_excluded",
 })
 
 _ROUTING_MATCHED = "matched"
@@ -569,9 +570,13 @@ def _find_compatible_verbs(
     # has a different reporting surface. The DECISION about what a failed check means stays
     # here too, because the two callers genuinely differ — this one falls through to
     # unconstrained classification, the direct path falls back to the full run.
+    # THE PERSON'S OWN TOKEN, redeemed for this leg like every other engine-O call: engine O binds
+    # the person and their grants from the verified token and ignores the body's, so a lookup
+    # without it is read as anonymous (no grant). "" for a service run, which then sends none.
+    _tok = _caller_token_for(context, user_email, "find_compatible_verbs")
     verbs, err = _lookup_compatible_verbs(
         subject_uri, list(entitled_domains or []), ontology_url=ONTOLOGY_SVC_URL,
-        on_behalf_of=user_email,
+        on_behalf_of=user_email, **({"headers": {"Authorization": f"Bearer {_tok}"}} if _tok else {}),
     )
     if err is not None:
         context.log.warning(
@@ -3018,6 +3023,37 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             rejected_predicate=predicate,
             telemetry=telemetry,
         )
+
+    if not (predicate.get("endpoint") or "").strip():
+        # A renderer (a `mesh:rendersAs` row) has no endpoint: it is a display format, not a
+        # routable verb. Routing's candidate set excludes it; if one arrives anyway, abstain with
+        # no HTTP call and no generalist fallback.
+        _rendered_iri = str(predicate.get("verb_iri") or "")
+        _log_no_verb_decision(
+            context, disposition="abstain", no_verb_reason="no_endpoint",
+            telemetry=telemetry, rejected_verb_iri=_rendered_iri,
+        )
+        return {
+            "persona": config.user_persona,
+            "user_persona": config.user_persona,
+            "answerer_persona": config.user_persona,
+            "predicate_verb_iri": _rendered_iri,
+            "fallback_reason": "no_endpoint",
+            "fallback_score": None,
+            "sub_query": sub_query,
+            "route_status": "abstained",
+            "expert_response": {
+                "status": "no_endpoint",
+                "reason": "no_endpoint",
+                "message": (
+                    f"The matched capability ({_rendered_iri}) is a display format, "
+                    "not something that can answer a question."
+                ),
+                "candidates": [],
+                "data": "",
+                "sources": [],
+            },
+        }
 
     endpoint = predicate["endpoint"]
     answerer_persona = predicate.get("owner_persona") or config.user_persona

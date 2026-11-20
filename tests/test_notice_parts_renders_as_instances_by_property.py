@@ -93,8 +93,10 @@ def test_A_REFUSAL_PROJECTS_A_REFUSAL_CARD_NOT_NO_CARD(m, answer, reason):
     got = m._project_planning_archetype(ARCH, _wrapped(answer), "SAFETY_ENGINEER", None)
     assert got is not None
     assert got["archetype"] == ARCH and got["rows"] == []
-    assert got["refusal"] == {"refused": True, "outcome": "refused", "reason": reason}
+    # #470: the envelope forwards the producer's plain-language `message` beside the code.
     assert answer["message"]
+    assert got["refusal"] == {"refused": True, "outcome": "refused", "reason": reason,
+                              "message": answer["message"]}
 
 
 def test_CONTROL_THE_SAME_EMPTY_ANSWER_UNREFUSED_PROJECTS_NOTHING(m):

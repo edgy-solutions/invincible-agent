@@ -19,9 +19,12 @@ reads is still refused, by the generic rule that enforces the contract's declara
 * `non_finite`: a NaN or infinity in a column the contract declares numeric refuses the same way.
 * `duplicate_work_package_period`: two rows for one (work_package, period), the contract's grain,
   refuse `duplicate_key`.
-* `program_name_not_unique`, `program_bac_not_unique`, `work_package_in_two_accounts`: one
-  determining value carrying two values of a column the contract declares it determines refuses
-  `not_determined_by`, naming both columns. `varies_within_scope` was a case of this rule.
+* `program_name_not_unique`, `program_bac_not_unique`, `work_package_in_two_accounts`,
+  `varies_within_scope`: one determining value carrying two values of a column the contract
+  declares it determines refuses `not_determined_by`, naming both columns. `varies_within_scope`
+  (planted since dag-tools 0.15.0) varies `status_period` within one program, which the contract
+  declares determined by `program_id` (ruled 2026-11-11); the path probe never reads that column
+  and is refused all the same.
 
 Run: .venv/Scripts/python -I -m pytest -c pyproject.toml --rootdir=. -p no:cacheprovider tests/finance/test_the_refusal_probes_refuse_as_derived.py
 """
@@ -61,6 +64,7 @@ EXPECTED = {
     "varies_within_path": {SERIES: None, PATH: "varies_within_path"},
     "program_name_not_unique": {SERIES: "not_determined_by", PATH: "not_determined_by"},
     "work_package_in_two_accounts": {SERIES: "not_determined_by", PATH: "not_determined_by"},
+    "varies_within_scope": {SERIES: "not_determined_by", PATH: "not_determined_by"},
     "duplicate_work_package_period": {SERIES: "duplicate_key", PATH: "duplicate_key"},
     "missing_column": {MISSING: "missing_column"},
     "wrong_type": {WRONG: "wrong_type"},

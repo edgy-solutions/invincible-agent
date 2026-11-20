@@ -149,10 +149,13 @@ if not _weaviate_running_on_network(_weaviate_container, _WEAVIATE_NETWORK):
         f"Weaviate container '{_weaviate_container}' not running on '{_WEAVIATE_NETWORK}'"
     )
 
-pytestmark = pytest.mark.skipif(
-    bool(_skip_reasons),
-    reason="mem0 round-trip prerequisites missing: " + "; ".join(_skip_reasons),
-)
+pytestmark = [
+    pytest.mark.live,
+    pytest.mark.skipif(
+        bool(_skip_reasons),
+        reason="mem0 round-trip prerequisites missing: " + "; ".join(_skip_reasons),
+    ),
+]
 
 
 # ---------------------------------------------------------------------------

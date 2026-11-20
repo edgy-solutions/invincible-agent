@@ -7,9 +7,10 @@
 #   * A ROW GRANTS NO READ. The person it names is the one the read is checked against, so a
 #     delegate reaches nothing that person cannot. It is not `asset_grants.yaml`, which refuses a
 #     `svc:` grantee (validate_policy.service_identity_recipients).
-#   * ONE LIST, TWO READERS (architect 11-04). The BFF, the second internal door, reads the rows
-#     with `door: bff` (today only for `human_tasks.register`). A row without `door` is the central
-#     gateway's (`door: gateway`). R-089's `DELEGATE_ON_BEHALF_OF` (per-principal) still comes from
+#   * ONE LIST, THREE READERS (architect 11-04, 11-19). The BFF, the second internal door, reads the
+#     rows with `door: bff` (today only for `human_tasks.register`). Engine O, the third, reads the
+#     rows with `door: engine-o` on every call, from env `ENGINE_O_DELEGATES_FILE` (the chart mounts
+#     the chart copy there). A row without `door` is the central gateway's (`door: gateway`). R-089's `DELEGATE_ON_BEHALF_OF` (per-principal) still comes from
 #     the chart's values until lane/01 item 01M6KF81WMJJXVKQAP12M0QTMY.
 #   * A PIPELINE IS NOT A DELEGATE. A run with no person is `pipeline:<name>` and acts as itself.
 #   * THE GATEWAY'S ROWS ARE STILL INERT; THE BFF'S `door: bff` ROWS ARE LIVE. The gateway's
@@ -20,8 +21,8 @@
 #
 # Validated by validate_policy.gateway_delegates_errors: `service` is a seeded `svc:` identity in
 # users.yaml, and each route is one of the row's door's routes. For the gateway, those are the routes
-# dag-tools' `gateway_routes.json` marks `delegate_rows_may_name: true`; for the BFF, they are
-# BFF_DELEGATE_ROUTES. A row states its grantor, its reason and the seat that ratified it
+# dag-tools' `gateway_routes.json` marks `delegate_rows_may_name: true`; for the BFF and engine O, they are
+# BFF_DELEGATE_ROUTES and ENGINE_O_DELEGATE_ROUTES. A row states its grantor, its reason and the seat that ratified it
 # (`ratified_by`: a seat such as `owner`, never a person). Every row carries all three.
 #
 # Grantor row: policy/grantors/gateway_delegates.yaml.
@@ -49,3 +50,13 @@ gateway_delegates:
     ratified_by: owner
     reason: >-
       The case runner registers a case's HumanTask for the person the case is for.
+  - service: svc:engine-a
+    door: engine-o
+    routes: [resolve_instance]
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Engine A's review composer resolves a dropped notice's parts for the person recorded as the
+      dropper at admission (architect, 11-19). Engine O binds that person's grants and none of
+      engine A's. Without this row the lookup binds as engine A, which holds no grants, and a
+      user drop's subjects stay unresolved.

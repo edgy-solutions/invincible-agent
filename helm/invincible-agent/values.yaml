@@ -46,10 +46,10 @@ global:
   # rendered image that still carries only a tag. The map is keyed by repository, so a component
   # `image.tag` override on a row below is ignored; change the row instead.
   imageDigests:
-    # 0.14.0 (read 2026-11-11 by Docker-Content-Digest; index incl. linux/arm64; = :sha-33a0262)
-    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:deedd6c91aba8e91c3ae1b03bc9ce2bc9140a07fd920f30eb2e6de57cde787fe"
-    # 0.14.0 (read 2026-11-11 by Docker-Content-Digest; index incl. linux/arm64; = :sha-33a0262)
-    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:f8cbcad8769c42db89a7219ebb843c7b6b657ef1fb3ccfb105088491dccd9a34"
+    # 0.17.0 (read 2026-11-19 by Docker-Content-Digest; index incl. linux/arm64; = :sha-a85c5f9)
+    "ghcr.io/edgy-solutions/dag-tools/central-gateway": "sha256:1dcf1229fcdd227773a22bd4edd3c57e9b295b68f991def0f30ccd015da71e83"
+    # 0.17.0 (read 2026-11-19 by Docker-Content-Digest; index incl. linux/arm64; = :sha-a85c5f9)
+    "ghcr.io/edgy-solutions/dag-tools/user-deployment": "sha256:a5bc71a89083556c8ad9daf32f1e5d7d18918eb8d4f52c07e7484ac9f074c989"
     # Kept over 1555b341 (source e5612fa: the CP1252 repair AND the V_CHARACTERISTICS fold, not reviewed),
     # architect 11-05; board 01M6P5ZAJ382FBHEQDA23941EA carries both forward on a reviewed build.
     # reviewed 09-23 (`master` build of 1aa2cbe) (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -161,7 +161,43 @@ global:
     # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
     # fb3162a..6a441d9 changes src/ (and sessions/) only: no Dockerfile, package.json or build.yml
     # change, and no import.meta.env read added. 0d5a59d is sessions-only and builds no image.
-    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:c40487815f41132292043077d431cc25d13d1f24df9572e2d6a004f868abf2ab"
+    # RE-PINNED FOR 0.4.89 (dispatch 2026-11-14: "0.4.89 train: ... cortex's image"; cortex-ui/master's
+    # packet names this build): cortex-ui 6a441d9 -> 312064b65b15d7b2a11ff5084ebbfd764955c8ff, digest
+    # cf5596bb, built with PRODUCER_REF 581d5a60 (#386's head, which merged unchanged). It adds:
+    # - tasks read ONLY from GET /me/queue (the list) and GET /me/needs_you (the counts); the Electric
+    #   `human_task_projection` subscription is gone (4000d92). NEEDS a BFF carrying #386: behind an
+    #   older one both routes 404 and every viewer's Tasks badge reads "unavailable";
+    # - entitlements read once per session, refreshed on a timer or after a 403 (e24e21e);
+    # - "Select by range" in the Export as... dialog, behind `exportRange` (7d31ed7; see VITE_FEATURES
+    #   in values-sandbox.yaml);
+    # - the /task/{task_id} deep link (312064b).
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64; the abbreviated tag and this digest with its last hex altered both answer 404.
+    # 6a441d9..312064b changes src/, e2e/, fixtures/, docs/, scripts/, sessions/ and build.yml's
+    # PRODUCER_REF only: no Dockerfile or package.json change, and no import.meta.env read added.
+    # RE-PINNED AGAIN FOR 0.4.89 (dispatch 2026-11-15: "Re-pin cortex to 52cc9a6 ... it supersedes
+    # 312064b and includes it"): 312064b -> 52cc9a68372dcd44ecd38503b4e355f084a72ec4, digest be1360d7.
+    # 312064b is its ancestor, so every 312064b line above still holds. It adds:
+    # - multi-select in the answers list (fb8f58f);
+    # - a zoom floor on the canvas stage, with Zoom in / Zoom out / Fit (fb8f58f);
+    # - build.yml's PRODUCER_REF re-pinned to 2c69d256, master's merge of #386 (second parent 581d5a60).
+    # Measured before pinning: the full tag resolves to this digest, an OCI index with amd64 and
+    # arm64 (plus two attestation manifests); the abbreviated tag and this digest with its last hex
+    # altered both answer 404. 312064b..52cc9a6 changes src/ and build.yml only: no Dockerfile or
+    # package.json change, no import.meta.env read added, and no feature-flag change.
+    # RE-PINNED FOR 0.4.90 (ruled 2026-11-17: cortex rides at be1d177, not 2fd8711):
+    # 52cc9a6 -> be1d1778d08525a68e2bebb07819078b2cfbf16d, digest d02e6481. 52cc9a6 is its ancestor,
+    # so every 52cc9a6 line above still holds. It adds:
+    # - a task opened from the list is drawn whole and centred; the notice title wraps (ed6bfce);
+    # - promoted-by reads the person, and the routing panel shows one persona (f090d93);
+    # - a /me/queue row without task_id or kind is a refusal, not a skip (d713dd0);
+    # - where-used draws a table (2fd8711);
+    # - no question goes out until the entitlement list has loaded (be1d177).
+    # Measured before pinning: the full-sha tag resolves to this digest; the same read for 2fd8711
+    # returns 109cc351, the digest recorded on 2026-11-16 (the control). 52cc9a6..be1d177 changes no
+    # Dockerfile or package.json and adds no import.meta.env read. It needs a BFF that carries #386
+    # (per-viewer tasks), which is in 0.4.89.
+    "ghcr.io/edgy-solutions/cortex-ui/frontend": "sha256:d02e6481dc7d031d78c5968e9d9caf610c57f3dede9cf66f8e0edf3da6f8cce2"
     # v2.45.2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
     "docker.io/alpine/git": "sha256:16ad8e788e1d3b0c30f18da8dde5c0ace3b187445a62d8af893b003ca1e70592"
     # 17.5.0-debian-12-r2 (read 2026-11-04 by Docker-Content-Digest; index incl. linux/arm64)
@@ -373,7 +409,20 @@ externalRestate:
 dagster:
   # Instance config, rendered into the `<release>-dagster-home` ConfigMap (templates/
   # dagster-instance.yaml) and mounted as dagster.yaml.
-  maxConcurrentRuns: 2
+  #
+  # RUN SLOTS BY CODE LOCATION (architect, 2026-11-14; numbers from lane/perf's run census of
+  # 4,244 runs). A tag limit can only cap runs below the global limit; it cannot reserve one.
+  # So answers get slots of their own only when the global limit is the SUM of the rows and
+  # every location that launches runs has a row. Every run already carries the system tag
+  # `dagster/code_location`. Answers (`supervisor_query_job`) run in `iagent`; prime's
+  # ontology ingests run in `doc-tools`, so ingest concurrency is that row's limit.
+  # Adding a code location without a row lets it take any free slot of the global limit.
+  maxConcurrentRuns: 6
+  runTagConcurrencyLimits:
+    - {key: dagster/code_location, value: iagent, limit: 2}
+    - {key: dagster/code_location, value: doc-tools, limit: 2}
+    - {key: dagster/code_location, value: pub-tools, limit: 1}
+    - {key: dagster/code_location, value: dag-tools, limit: 1}
   runMonitoring:
     enabled: true
     startTimeoutSeconds: 600
@@ -520,6 +569,16 @@ agentFleet:
     # OPENAI_API_KEY: "..."                       # for an OpenAI-compat
                                                   # backend (LiteLLM/vLLM)
     BAML_LOG_LEVEL: "info"
+    # Reasoning effort on the engine-o routing calls (OFF: none of these is set).
+    # Each is read per call from the environment: low | medium | high (anything
+    # else is a warning and OFF). SUBJECT = ClassifyDomainIntent, VERB =
+    # ClassifyPredicate, SLOTS = FillVerbSlots. Unset = off; requests are
+    # byte-identical to today's. Switching one on is a values change Chris
+    # approves, with the routing baseline's before-and-after per combination in
+    # hand.
+    # IAGENT_ROUTING_EFFORT_SUBJECT: "low"
+    # IAGENT_ROUTING_EFFORT_VERB: "low"
+    # IAGENT_ROUTING_EFFORT_SLOTS: "low"
 
     # --- Embedding gateway (agent_fleet/utils/embed.py) ---
     # All Weaviate vector writes + reads in iagent code go through this
@@ -1022,7 +1081,7 @@ domainBroker:
   # the same inbound transport-auth dependency as the fleet, and a version skew here
   # means it authenticates by different rules than the services around it. Asserted
   # equal by tests/test_lock_coherence.py.
-  meshSdkVersion: "v0.9.19"
+  meshSdkVersion: "v0.9.25"
   # CLOSED NETWORK (no route to github.com / pypi.org): point the install at a mirror.
   # The SDK is fetched from <meshSdkBaseUrl>/<meshSdkVersion>.tar.gz, so the mirror holds the
   # GitHub tag tarball under that same file name (e.g. an Artifactory generic repo holding
@@ -1032,7 +1091,7 @@ domainBroker:
   #   meshSdkSource: index  -> "iagent-mesh==<meshSdkVersion without the v>" from pip.indexUrl,
   #                            for an internal PyPI that holds the SDK (upload the sdist or a
   #                            wheel built from the tag; the package's version equals the tag's:
-  #                            v0.9.19 builds as 0.9.19, so `index` serves this pin).
+  #                            v0.9.20 builds as 0.9.20, so `index` serves this pin).
   meshSdkSource: "url"
   meshSdkBaseUrl: "https://github.com/edgy-solutions/iagent-mesh-sdk/archive/refs/tags"
   pip:
@@ -1158,13 +1217,17 @@ userDeployments:
         AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
-        PUBLOG_S3_BUCKET: "publog-lake"
-        # DataHub GMS base URL (NOT the GraphQL endpoint). Used by
-        # any IO manager that emits the URN of materialized assets
-        # directly to DataHub via the REST API. Service name is
-        # "datahub-datahub-gms" — the prefix comes from the acryl
-        # helm chart's release name.
-        DATAHUB_SERVER: "http://datahub-datahub-gms:8080"
+        # Every name here must be one pub-tools' code reads; the chart
+        # once set PUBLOG_S3_BUCKET and DATAHUB_SERVER, which nothing
+        # read. tests/test_pub_tools_chart_env_is_read_by_its_code.py
+        # holds the reader of each name.
+        # Read by pub-tools publog_instance/component.yaml (lake root).
+        PUBLOG_S3_BUCKET_URL: "s3://publog-lake"
+        # DataHub GMS base URL (NOT the GraphQL endpoint), read by
+        # pub-tools datahub_lineage/component.yaml for the lineage
+        # sensor. Service name is "datahub-datahub-gms" — the prefix
+        # comes from the acryl helm chart's release name.
+        DATAHUB_GMS_URL: "http://datahub-datahub-gms:8080"
         # Cap DuckDB's memory. Its default budget is a fraction of
         # DETECTED SYSTEM RAM, not the pod's cgroup limit, so on a large
         # PUB LOG CSV it exceeds the limit and the pod is OOMKilled
@@ -1201,7 +1264,8 @@ userDeployments:
         AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
-        PUBLOG_S3_BUCKET: "publog-lake"
+        # The broker loads the same Definitions, so it reads the same name.
+        PUBLOG_S3_BUCKET_URL: "s3://publog-lake"
       # resources:
       #   requests: { cpu: 50m, memory: 128Mi }
       #   limits:   { cpu: 500m, memory: 512Mi }
@@ -1404,7 +1468,7 @@ primeSubstrate:
   # work it waited on, so a prime timed out on a queue that had not failed.
   #
   #   ingests launched per prime      15   (prime_databases.py partition set)
-  #   dagster max_concurrent_runs      2   (.Values.dagster.maxConcurrentRuns)
+  #   doc-tools run slots              2   (.Values.dagster.runTagConcurrencyLimits)
   #   => serialised batches            8
   #   observed throughput   10 runs / 1800s  ~= 6 min per run-slot   (measured, this cluster)
   #   => all 15                     ~45 min = 2700s
@@ -2610,9 +2674,11 @@ policyOverlay:
     engine-fin:
       - {dir: measure_verbs, env: MEASURE_VERB_OVERLAY_DIRS}
       - {dir: fin_export_profiles, env: FIN_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
+      - {dir: fin_instances, env: FIN_INSTANCE_OVERLAY_DIRS, optional: true}
     cortex-bff:
       - {dir: canvases, env: CANVAS_OVERLAY_DIRS, optional: true}
       - {dir: exports, env: INGEST_EXPORT_PROFILE_OVERLAY_DIRS, optional: true}
+      - {dir: menu_blocks, env: MENU_BLOCK_OVERLAY_DIRS, optional: true}
 
 # STARTUP sync for task_grant_sync ONLY (task_audience `actor` relations —
 # policy/sync/task_grant_sync.py), as a post-install/post-upgrade helm hook Job. Narrower than

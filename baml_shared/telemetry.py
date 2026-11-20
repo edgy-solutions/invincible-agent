@@ -23,6 +23,12 @@ from typing import Any, Callable, Optional
 
 LANGFUSE_ENABLED = bool(os.getenv("LANGFUSE_SECRET_KEY") and os.getenv("LANGFUSE_PUBLIC_KEY"))
 
+# No model or retrieval text in any span (perf ruling 2026-11-15, "dropped"). Langfuse's
+# decorator captures arguments and return values unless this is "false". Plain assignment,
+# not setdefault: nothing in the environment may turn it back on. Backstop for a direct
+# ``observe``; ``safe_observe`` below also passes the capture flags explicitly.
+os.environ["LANGFUSE_OBSERVE_DECORATOR_IO_CAPTURE_ENABLED"] = "false"
+
 # --- The leaf: the real implementation (optional per service venv) ------------
 try:
     from provenance_telemetry import (  # noqa: F401
@@ -38,13 +44,17 @@ try:
         mint_boundary_ids,
         boundary_parent,
         emit_boundary,
+        trace_id_for,
+        parse_traceparent,
+        parse_tracestate,
+        format_traceparent,
     )
 
     _LEAF_AVAILABLE = True
 except Exception:  # leaf not installed here -> pure no-ops, old surface still works
     _LEAF_AVAILABLE = False
 
-    def traced(name=None, as_type=None):  # type: ignore[misc]
+    def traced(name=None, as_type=None, **_k):  # type: ignore[misc]
         def _deco(fn):
             return fn
         return _deco
@@ -91,6 +101,18 @@ except Exception:  # leaf not installed here -> pure no-ops, old surface still w
 
     def emit_boundary(mapping, values, *, ids, name, timing):  # type: ignore[misc]
         return None
+
+    def trace_id_for(seed):  # type: ignore[misc]
+        return None
+
+    def parse_traceparent(value):  # type: ignore[misc]
+        return None
+
+    def parse_tracestate(value):  # type: ignore[misc]
+        return None
+
+    def format_traceparent(trace_id, span_id, flags="01"):  # type: ignore[misc]
+        return f"00-{trace_id}-{span_id}-{flags}"
 
 
 # --- The mesh mapping (doc-tools ships its own; this is iagent's vocabulary) ---
@@ -174,26 +196,40 @@ def build_trace_values(*, trace_id=None, authz_id=None, session_id=None, engine=
 # --- Backward-compat surface: the mesh's existing `from telemetry import ...` ---
 def safe_observe(**kwargs) -> Callable:
     """DEPRECATED alias for ``traced`` — kept so the mesh's existing decorators keep
-    working during the migration (see REMOVAL MARKER). Passes through when disabled."""
-    return traced(**kwargs)
+    working during the migration (see REMOVAL MARKER). Passes through when disabled.
+
+    Never records the function's arguments or return value: a caller cannot turn capture
+    back on (the capture kwargs are set after, and win over, anything passed)."""
+    kwargs.pop("capture_input", None)
+    kwargs.pop("capture_output", None)
+    return traced(**kwargs, capture_input=False, capture_output=False)
+
+
+def _size_of(value: Any) -> int:
+    try:
+        return len(value)
+    except Exception:  # noqa: BLE001
+        return len(str(value))
 
 
 def safe_update_observation(input_data: Any = None, output_data: Any = None):
+    """Records SIZES only (a character or item count), never the text: no input, no output,
+    no hash of either. ``None`` stays absent."""
     if LANGFUSE_ENABLED:
         try:
+            sizes = {}
+            if input_data is not None:
+                sizes["input_size"] = _size_of(input_data)
+            if output_data is not None:
+                sizes["output_size"] = _size_of(output_data)
             from langfuse import get_client   # v4: update the current OTel span
-            get_client().update_current_span(input=input_data, output=output_data)
+            get_client().update_current_span(metadata=sizes)
         except Exception:  # noqa: BLE001 — telemetry never breaks the work
             pass
 
 
 def get_langgraph_callbacks() -> list:
-    if LANGFUSE_ENABLED:
-        try:
-            from langfuse.langchain import CallbackHandler   # v4 moved it here from langfuse.callback
-            return [CallbackHandler()]
-        except Exception:  # noqa: BLE001
-            pass
+    """Always empty: Langfuse's LangChain handler records messages and tool I/O as text."""
     return []
 
 

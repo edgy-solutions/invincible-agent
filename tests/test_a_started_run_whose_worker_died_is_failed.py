@@ -1,6 +1,6 @@
 """A STARTED RUN WHOSE WORKER DIED MUST BE ENDED BY A BOUND, NOT HOLD A QUEUE SLOT FOR EVER.
 
-The sandbox runs Dagster with DefaultRunLauncher and QueuedRunCoordinator(max_concurrent_runs: 2).
+The sandbox runs Dagster with DefaultRunLauncher and QueuedRunCoordinator (run slots per code location).
 When a run's code-location pod dies the run stays STARTED, and two of those hang every question.
 DefaultRunLauncher does not support worker health checks, so `monitor_started_run` skips the
 health check and FALLS THROUGH to `check_run_timeout(.., run_monitoring_max_runtime_seconds)`,
@@ -72,13 +72,41 @@ def test_THE_RENDERED_INSTANCE_BOUNDS_A_STARTED_RUN(instance_config):
     cfg = instance_config
     assert cfg["run_launcher"]["class"] == "DefaultRunLauncher"
     assert cfg["run_coordinator"]["class"] == "QueuedRunCoordinator"
-    assert cfg["run_coordinator"]["config"]["max_concurrent_runs"] == 2
+    assert cfg["run_coordinator"]["config"]["max_concurrent_runs"] > 0
     mon = cfg["run_monitoring"]
     assert mon["enabled"] is True
     bound = mon["max_runtime_seconds"]
     assert bound > 0
     assert bound > LONGEST_MEASURED_RUN_S, (
         f"max_runtime_seconds {bound} would fail a legitimate {LONGEST_MEASURED_RUN_S}s run"
+    )
+
+
+def _workspace_locations(docs) -> set[str]:
+    cm = _find(docs, "ConfigMap", f"{_RELEASE}-dagster-workspace")
+    ws = yaml.safe_load(cm["data"]["workspace.yaml"])
+    return {e["grpc_server"]["location_name"] for e in ws["load_from"]}
+
+
+def test_EVERY_RENDERED_CODE_LOCATION_HAS_ITS_OWN_RUN_SLOTS(docs, instance_config):
+    """Defends the run split (architect 2026-11-14, from lane/perf's census): a tag limit only
+    CAPS, it cannot reserve. Answers keep slots of their own only when every code location the
+    daemon loads has a `dagster/code_location` row and the global limit is the SUM of the rows.
+    A location without a row could take any free slot; a global above the sum lets one location
+    run past its share; a global below it starves the last row to fill."""
+    coord = instance_config["run_coordinator"]["config"]
+    rows = coord.get("tag_concurrency_limits") or []
+    assert rows, "tag_concurrency_limits did not render: every location shares one global pool"
+    by_loc: dict[str, int] = {}
+    for r in rows:
+        assert r["key"] == "dagster/code_location", r
+        assert r["value"] not in by_loc, f"two rows for {r['value']}"
+        assert isinstance(r["limit"], int) and r["limit"] > 0, r
+        by_loc[r["value"]] = r["limit"]
+    missing = _workspace_locations(docs) - set(by_loc)
+    assert not missing, f"code locations with no run-slot row: {sorted(missing)}"
+    assert coord["max_concurrent_runs"] == sum(by_loc.values()), (
+        f"max_concurrent_runs {coord['max_concurrent_runs']} != sum of rows {sum(by_loc.values())}"
     )
 
 

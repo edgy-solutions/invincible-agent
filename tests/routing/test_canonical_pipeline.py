@@ -46,6 +46,8 @@ import urllib.request
 
 import pytest
 
+
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
 # Skip the whole module if integration mode isn't enabled.
 if not os.environ.get("CANONICAL_PIPELINE_TEST_ENABLED"):
     pytest.skip(

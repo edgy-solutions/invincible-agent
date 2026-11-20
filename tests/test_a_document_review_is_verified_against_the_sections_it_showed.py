@@ -162,7 +162,7 @@ def test_the_served_payload_satisfies_cortexs_reader(monkeypatch):
 
 
 def test_ids_follow_contract_v3_parent_id_s_i_with_the_ingest_id_as_the_course_id():
-    # docs/contracts/training-workbench.md (lane/tr-g): `{parent.id}_s{i}`, nested `{Course.id}_s1_s0`.
+    # doc-tools/docs/contracts/training-workbench.md (lane/tr-g): `{parent.id}_s{i}`, nested `{Course.id}_s1_s0`.
     out = rcov.sections_from_extraction(json.loads(_extraction(OUTLINE)), "C")
     assert [s["section_id"] for s in out] == ["C_s0", "C_s0_s0", "C_s0_s1", "C_s1", "C_s1_s0"]
 
