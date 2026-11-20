@@ -2738,6 +2738,12 @@ async def _call_resolver(
                 entitled_domains=tuple(entitled_domains or ()),
             ))
         except HTTPException as exc:
+            # AN OUTAGE IS NOT A PROVIDER'S MISS. A 5xx here is engine O's own store or PDP
+            # failing; folding it into "error" would resolve from the other providers and serve
+            # an answer missing this one's rows as though it were whole. It escapes the fan-out
+            # (gather does not return exceptions) and the route answers it as the outage it is.
+            if exc.status_code >= 500:
+                raise
             print(f"mesh:resolveInstance provider {provider!r} (in-process) REFUSED on "
                   f"identifier={identifier!r}: HTTP {exc.status_code}")
             return _outcome("session_expired" if exc.status_code == 401 else "error")

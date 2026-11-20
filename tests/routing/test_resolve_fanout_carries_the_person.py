@@ -228,12 +228,12 @@ def test_6_the_self_provider_is_called_in_process_with_the_person_bound(monkeypa
 
 
 @pytest.mark.parametrize("exc, status", [
-    (HTTPException(status_code=502, detail="store down"), "error"),
-    (HTTPException(status_code=503, detail="visibility down"), "error"),
+    (HTTPException(status_code=403, detail="not yours"), "error"),
+    (HTTPException(status_code=404, detail="no such row"), "error"),
     (RuntimeError("boom"), "error"),
     (HTTPException(status_code=401, detail="expired"), "session_expired"),
 ])
-def test_6b_an_exception_from_the_in_process_handler_never_escapes(monkeypatch, net, exc, status):
+def test_6b_a_miss_from_the_in_process_handler_never_escapes(monkeypatch, net, exc, status):
     seen = net()
 
     async def _boom(request):
@@ -243,6 +243,34 @@ def test_6b_an_exception_from_the_in_process_handler_never_escapes(monkeypatch, 
     _caller(monkeypatch, PERSON)
     assert _call(ROW_SELF).status == status
     assert not seen
+
+
+@pytest.mark.parametrize("code", [502, 503])
+def test_6c_an_outage_in_the_in_process_handler_escapes_and_is_never_answered_from_the_others(
+        monkeypatch, net, code):
+    """The PDP-503 census's arm: engine O's own store or PDP failing is an outage, not a miss.
+    Folded into "error", Y's candidate would be served as the whole answer."""
+    seen = net()
+
+    async def _down(request):
+        raise HTTPException(status_code=code, detail="down")
+
+    monkeypatch.setattr(eo, "resolve_instance", _down)
+    _caller(monkeypatch, PERSON)
+    with pytest.raises(HTTPException) as one:
+        _call(ROW_SELF)
+    assert one.value.status_code == code
+    with pytest.raises(HTTPException) as fan:
+        _fanout([ROW_SELF, ROW_Y], monkeypatch)
+    assert fan.value.status_code == code, "no answer assembled from Y"
+    # Control on the same fan-out: a 4xx from self is a miss, and Y still answers.
+    async def _miss(request):
+        raise HTTPException(status_code=404, detail="no such row")
+
+    monkeypatch.setattr(eo, "resolve_instance", _miss)
+    subject, prov = _fanout([ROW_SELF, ROW_Y], monkeypatch)
+    assert URL_Y in {str(r.url) for r in seen}
+    assert prov["instance_n"] == 1
 
 
 # =========================================================================================
