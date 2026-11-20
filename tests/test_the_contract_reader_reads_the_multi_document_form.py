@@ -22,7 +22,8 @@ from agent_fleet.utils import dataset_contracts as dc
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "tests" / "fixtures" / "dag_tools_mfg_trace" / "mfg_trace.yaml"
 IDS = ["dim_part", "bom_edge", "bom_closure", "serial_unit", "as_built_edge", "as_built_closure",
-       "test_result", "test_measurement", "test_catalog", "ingest_status"]
+       "conf_test_repo_result", "conf_test_repo_step_parameter", "test_result", "test_measurement",
+       "test_catalog", "ingest_status"]
 
 
 def _doc(cid, **over):
@@ -45,18 +46,31 @@ def _load(tmp_path, doc, cid="demo"):
 
 
 def test_the_template_parses_whole():
-    """A copy for the parser's seal (dag-tools commit 398d82d); Lane 1's CI check pins the live template."""
+    """A verbatim copy for the parser's seal (dag-tools v0.17.0, commit a85c5f99, unchanged since
+    v0.16.1); Lane 1's CI check pins the live template."""
     got = dc.load_contracts(TEMPLATE)
     assert list(got) == [f"mfg_trace.{i}" for i in IDS]
     assert {k for c in got.values() for k in c.types.values()} <= dc.TYPES
 
 
-def test_TRIPWIRE_THE_TEMPLATE_NAMES_RULES_NO_READER_RAISES():
-    """`key_not_unique` is this reader's `duplicate_key` under dag-tools' name, which dag-tools
-    renames (ruled 2026-11-14). When the rename lands, this goes red: re-vendor the template, and
-    this set becomes empty."""
+def test_every_rule_the_template_names_is_the_readers_or_the_producers():
+    """dag-tools renamed `key_not_unique` to `duplicate_key` (ruled 2026-11-14) and v0.16 names
+    `null_value`, `wrong_type` and `non_finite`, which this reader raises (ruled 2026-11-16). So no
+    rule the template names is unknown. The control: the template does name the new three."""
     got = dc.load_contracts(TEMPLATE)
-    assert {r for c in got.values() for r in dc.unknown_rules(c)} == {"key_not_unique"}
+    assert {r for c in got.values() for r in dc.unknown_rules(c)} == set()
+    named = {r for c in got.values() for r in c.rules}
+    assert {"null_value", "wrong_type", "non_finite"} <= named <= set(dc.RULES) | dc.PRODUCER_CHECKED
+
+
+def test_the_template_declares_non_nullable_columns_the_reader_holds():
+    """The template's `nullable: false` reaches the reader: every document that names `null_value`
+    declares at least one non-nullable column, and each is a column it declares."""
+    got = dc.load_contracts(TEMPLATE)
+    naming = [c for c in got.values() if "null_value" in c.rules]
+    assert naming
+    for c in naming:
+        assert c.non_nullable and set(c.non_nullable) <= set(c.types), c.contract_id
 
 
 def test_the_template_names_the_producer_checked_rules_and_a_block_may():

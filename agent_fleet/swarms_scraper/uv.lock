@@ -620,8 +620,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.25"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.25#f1a941030bd68f1218ee6122750619ea08ee7276" }
+version = "0.9.26"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.26#b9560dcf3965b8620f0cc342986cb5df5488f06b" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
@@ -1543,7 +1543,7 @@ dependencies = [
 requires-dist = [
     { name = "baml-py", specifier = "==0.219.0" },
     { name = "fastapi" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.25" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.26" },
     { name = "langfuse", specifier = "<5" },
     { name = "litellm" },
     { name = "pydantic" },
