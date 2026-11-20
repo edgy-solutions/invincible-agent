@@ -1,0 +1,50 @@
+{{/*
+  NetworkPolicy — only the BFF reaches Electric (ingress-only, port electric.port).
+
+  Electric (the sync service) is read through cortex-bff's /electric/shape proxy and nowhere else:
+  the only template that points at it is frontend.yaml (ELECTRIC_UPSTREAM_URL on cortex-bff). Before
+  this policy, what kept a stranger out was the absence of an Ingress; any pod in the namespace could
+  call `http://<release>-electric:<port>/v1/shape`.
+
+  OWN SWITCH. `electric.networkPolicy.enabled` (default true), NOT the fleet gate
+  `networkPolicy.enabled`, which stays off on sandbox: under the fleet gate this step would change
+  nothing there.
+
+  THE ADMITTED COMPONENT IS READ FROM THE BFF'S OWN TEMPLATE, not typed a second time here: the
+  `invincible-agent.cortexBffComponent` define is what frontend.yaml's cortex-bff Deployment labels
+  itself with, and a seal (tests/test_electric_network_policy_chart.py) renders both and compares.
+  Electric's own component is the same pair: `invincible-agent.electricComponent`.
+
+  A POLICY THE CNI IGNORES CANNOT FIRE. Rendering it proves nothing about enforcement; the roll has
+  two legs (a call to electric from a non-BFF pod must fail; the BFF's shape read must answer).
+  If the direct ingress is enabled (`electric.ingress.enabled`), the ingress controller's namespace
+  (`networkPolicy.ingressControllerNamespaceSelector`) is admitted too, or that route is cut.
+*/}}
+{{- if and .Values.electric.enabled .Values.electric.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-electric-ingress
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.electricComponent" .) "root" .) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.electricComponent" .) "root" .) | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "invincible-agent.selectorLabels" (dict "component" (include "invincible-agent.cortexBffComponent" .) "root" .) | nindent 14 }}
+        {{- if and .Values.electric.ingress.enabled .Values.networkPolicy.ingressControllerNamespaceSelector }}
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.ingressControllerNamespaceSelector | nindent 14 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.electric.port }}
+{{- end }}
