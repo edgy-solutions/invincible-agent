@@ -857,6 +857,9 @@ class StartReviewConfig(Config):
     review_json_url: str  # s3://bucket/.../review.json
     doc_type: str = "PCN"
     domain: str = "SUSTAINMENT"   # selects both the review audience and the triage audience
+    # RE-ISSUE (hand launch only; the sensor never sets it): the workflow id of the grouped review
+    # this run re-issues. Forwarded to /reviews only when non-empty.
+    reissue_of: str = ""
 
 
 @op
@@ -889,6 +892,8 @@ def start_review_op(context, config: StartReviewConfig) -> None:
                                          request_key=request_key, artifact_uri=artifact_uri)
     if not payload["notice_id"]:
         raise Failure(description=f"review.json {key} has no doc_id (notice_id)")
+    if config.reissue_of.strip():
+        payload["reissue_of"] = config.reissue_of.strip()
     bff_url = os.environ["CORTEX_BFF_URL"]
     token = mint_service_token()   # per-run client-credentials; RAISES loudly on mint failure (failed run)
     if not payload["impacted_parts"]:

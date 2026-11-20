@@ -645,19 +645,35 @@ def inbox_where_literal(escaped_caller_id: str) -> str:
     return f"{INBOX_RECIPIENT_COLUMN} = '{escaped_caller_id}' AND status = '{PENDING}'"
 
 
-def supersede_open_task(task_id: str) -> int:
-    """Mark every `pending` row of a logical task `superseded` (`updated_at` set); returns the
-    rowcount. Touches only `pending` rows -- a resolved row keeps its resolution. Not a resolution:
-    `decision`/`acted_by` are left as they were, and :func:`mark_task_resolved` refuses the status."""
-    now = int(time.time() * 1000)
+def task_row_statuses(task_id: str) -> list[str]:
+    """The `status` of every row of a logical task (empty when it has none). Read-only."""
     with _pg_connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                """UPDATE human_task_projection
+            cur.execute("SELECT status FROM human_task_projection WHERE task_id = %s", (task_id,))
+            rows = cur.fetchall()
+    return [r[0] for r in rows]
+
+
+def supersede_open_task(task_id: str, superseded_by: Optional[str] = None) -> int:
+    """Mark every `pending` row of a logical task `superseded` (`updated_at` set); returns the
+    rowcount. Touches only `pending` rows -- a resolved row keeps its resolution. Not a resolution:
+    `decision`/`acted_by` are left as they were, and :func:`mark_task_resolved` refuses the status.
+    When `superseded_by` is given the same UPDATE records it on the row's `payload`."""
+    now = int(time.time() * 1000)
+    if superseded_by is None:
+        sql = """UPDATE human_task_projection
                       SET status = 'superseded', updated_at = %s
-                    WHERE task_id = %s AND status = 'pending'""",
-                (now, task_id),
-            )
+                    WHERE task_id = %s AND status = 'pending'"""
+        params: tuple = (now, task_id)
+    else:
+        sql = """UPDATE human_task_projection
+                      SET status = 'superseded', updated_at = %s,
+                          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('superseded_by', %s::text)
+                    WHERE task_id = %s AND status = 'pending'"""
+        params = (now, superseded_by, task_id)
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
             n = cur.rowcount
         conn.commit()
     return n

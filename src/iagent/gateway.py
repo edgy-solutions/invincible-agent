@@ -2214,6 +2214,10 @@ class ReviewStartRequest(_BaseModel):
     # NOT the notice id — see _ingress_idempotency_key. Absent for hand-driven ops calls,
     # which are then honestly non-idempotent rather than falsely deduplicated.
     request_key: Optional[str] = None
+    # RE-ISSUE: the workflow id of the grouped review this request re-issues. Restate workflow keys
+    # are single-use, so a review whose run can no longer be woken is re-issued under a DERIVED
+    # request key that points back (`review_keys.reissue_request_key`). Absent = a normal start.
+    reissue_of: Optional[str] = None
     # ARTIFACT LOCATION — a full `s3://bucket/key`, and the ONE client-suppliable input to the
     # admission posture. A SEPARATE field from `request_key` on purpose: that one is the artifact's
     # IDENTITY (`{epoch}{ETag}-{key}`) and exists for ingress idempotency. They were conflated for a
@@ -2377,6 +2381,32 @@ async def _start_review_core(req: "ReviewStartRequest", *, current_user: "User",
                              raw_token: str) -> dict:
     """The body of `POST /reviews`, callable without a request: the route and a promotion's
     declared start (`_start_declared_review`) send the start the same way."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    _reissue_of = (req.reissue_of or "").strip()
+    _forwarded_key = req.request_key
+    if _reissue_of:
+        from agent_fleet.restate_analyst.review_keys import (  # noqa: PLC0415
+            compose_workflow_id, reissue_request_key,
+        )
+        # Same source, same approver: the BFF stamps the approver from the token, so only the
+        # identity that started a review can re-issue it, and only from the same artifact.
+        _derived = compose_workflow_id(req.notice_id, current_user.authz_id, req.request_key)
+        if _derived != _reissue_of:
+            raise HTTPException(status_code=422, detail={
+                "error": "reissue_source_mismatch", "reissue_of": _reissue_of, "derived": _derived})
+        # Never re-issue a decided review. `superseded` is allowed so a retry after a partial
+        # success can complete.
+        _statuses = await run_in_threadpool(human_tasks.task_row_statuses, "grouped:" + _reissue_of)
+        if not _statuses:
+            raise HTTPException(status_code=409, detail={
+                "error": "reissue_nothing_to_supersede", "reissue_of": _reissue_of})
+        if any(st not in ("pending", "superseded") for st in _statuses):
+            raise HTTPException(status_code=409, detail={
+                "error": "reissue_of_a_resolved_review", "statuses": list(_statuses)})
+        _forwarded_key = reissue_request_key(req.request_key or "", _reissue_of)
     body = {
         "notice_id": req.notice_id,
         "doc_type": req.doc_type,
@@ -2398,6 +2428,8 @@ async def _start_review_core(req: "ReviewStartRequest", *, current_user: "User",
     # attempt died unable to ever produce a review again. Live at work 2026-07-31: eleven
     # notices, eleven `STARTED` logs, one review.
     body["request_key"] = req.request_key or ""
+    if _reissue_of:
+        body["request_key"] = _forwarded_key   # the DERIVED key: a new workflow key, pointing back
     body["ingest_id"] = req.ingest_id or ""   # rebuilding hop: absent here = absent downstream
     body["trace_id"] = req.trace_id or ""       # extraction trace id -> ReviewStarter adopts it (ADR-0038)
     # THE ARTIFACT'S LOCATION — a DIFFERENT field from the identity above, and the entire admission
@@ -2408,7 +2440,6 @@ async def _start_review_core(req: "ReviewStartRequest", *, current_user: "User",
     body["artifact_uri"] = req.artifact_uri or ""
     # THE PERSON the composition's lookups run for: derived from the artifact above, never from the
     # body (ruling (a)). ReviewStartRequest declares no such field, so a caller cannot assert one.
-    from starlette.concurrency import run_in_threadpool
     body["on_behalf_of"] = await run_in_threadpool(_review_on_behalf_of, body["artifact_uri"])
     # ADMISSION FACTS ARE NO LONGER FORWARDED (ADR-0034 phase 1.3, consumer half). ReviewStarter
     # DERIVES `format_fingerprint` and `pipeline_version` from the artifact `artifact_uri` points at,
@@ -2424,7 +2455,7 @@ async def _start_review_core(req: "ReviewStartRequest", *, current_user: "User",
         # Idempotency at the FRONT DOOR: a retry after a client timeout attaches to the
         # in-flight composition instead of racing a second one against it. Absent when the
         # caller named no artifact — no header, honestly non-idempotent.
-        _idem = _ingress_idempotency_key(req.request_key, current_user.authz_id)
+        _idem = _ingress_idempotency_key(_forwarded_key, current_user.authz_id)
         _headers = {"idempotency-key": _idem} if _idem else {}
         async with httpx.AsyncClient(timeout=_start_timeout) as client:
             rr = await client.post(
@@ -2472,6 +2503,16 @@ async def _start_review_core(req: "ReviewStartRequest", *, current_user: "User",
         # request (422). The auto-starter service surfaces this as a failed Dagster run; a human caller
         # gets a clean 403. (Who may REVIEW is a separate gate, downstream at the task layer.)
         raise HTTPException(status_code=403, detail=out)
+    if _reissue_of and out.get("status") == "STARTED":
+        _new_id = out.get("workflow_id")
+        if _new_id == _reissue_of:
+            raise HTTPException(status_code=500, detail={
+                "error": "reissue_collided", "reissue_of": _reissue_of})
+        _n = await run_in_threadpool(lambda: human_tasks.supersede_open_task(
+            "grouped:" + _reissue_of, superseded_by=_new_id))
+        out["reissue"] = {"superseded_workflow_id": _reissue_of,
+                          "superseded_task_id": "grouped:" + _reissue_of,
+                          "rows_superseded": _n}
     return out
 
 
