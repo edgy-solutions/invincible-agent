@@ -53,9 +53,10 @@ identity:
   - the optional `azp`-prefix check (§2) admits a co-tenant that uses the empty prefix, because
     `iagent-engine-o` starts with `iagent-`.
 
-  **RULED (architect, 2026-11-20, §6 Q1):** the chart and the composing function also refuse any
-  prefix that is the start of a role literal. That rule is checked against the role literals themselves, not against a typed
-  list of stems, so a new stem is covered when it is added.
+  **RULED (architect, 2026-11-20, §6 Q1):** the render refuses any prefix that is the start of a
+  role literal. The rule is checked against the role literals themselves, not against a typed list
+  of stems, so a new stem is covered when it is added. *As proposed, not yet ruled:* the composing
+  function refuses the same.
 - **The chart refuses to render** a prefix that does not match the pattern or that fails the
   role-stem rule.
 - **The shared ConfigMap exports the prefix to every pod** as `IAGENT_IDENTITY_PREFIX`. One key
@@ -441,9 +442,10 @@ The mesh-mcp chart and doc-tools follow with the same value.
 
 1. **RULED (architect, 2026-11-20): yes.** "A prefix that is the beginning of a role name is
    refused at render, and so is one that does not end in the separator. An empty prefix stays the
-   default." So the separator is part of the value (`^[a-z][a-z0-9]{0,11}-$`), the bare-token
-   alternative is not taken, and the role-literal refusal (§1) holds. The architect rules the
-   rest after reading the proposal; nothing is built before that.
+   default." So the separator is part of the value and the bare-token alternative is not taken,
+   and the render refuses a prefix that begins a role literal (§1). The rest of the pattern
+   (`[a-z][a-z0-9]{0,11}`, which also means no hyphen inside) is as proposed and still open. The
+   architect rules the rest after reading the proposal; nothing is built before that.
    - *As proposed:* the prefix shape `^[a-z][a-z0-9]{0,11}-$`, with the hyphen included in the
      value, or a bare token with the chart adding the hyphen; either way, also refuse a prefix
      that is the start of any role literal (`iagent-`, `cortex-`).
