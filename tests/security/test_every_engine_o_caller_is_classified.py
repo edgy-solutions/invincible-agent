@@ -13,8 +13,8 @@ class. WHAT IS DERIVED FROM THE CODE is the split this ruling turns on, PERSON v
 the payload the site sends carry `user_email` with a value that is not a literal naming nobody --
 `carries_person`; architect, 2026-10-12: a blank `""`, whitespace or `None` names nobody and counts
 as ABSENT in every arm; architect, 2026-10-14: so does a `svc:` literal, "a service identity is
-never a person"). The split of PERSON into TOKEN, FORWARD, INGEST_RECORD and TEST_PERSONA is
-DECLARED, checked only as far as stated below (TOKEN/FORWARD: "`config.user_email` or a parameter
+never a person"). The split of PERSON into TOKEN, RELAY, IN_PROCESS, INGEST_RECORD and TEST_PERSONA is
+DECLARED, checked only as far as stated below (TOKEN: "`config.user_email` or a parameter
 named user_email appears in the function"). The blank and `svc:` rules read the PAYLOAD's literal
 only: a blank or a service handed in by a caller of the function (mutant X below) is an argument,
 not a literal here, and so is a `svc:` fallback inside an expression (`u or "svc:x"`), exactly as
@@ -28,7 +28,17 @@ subject. MEASURED 2026-10-11: `execute_subtask` handing `_classify_route`
 
   TOKEN       the payload carries `user_email`, fed by the supervisor config (set by cortex-bff from
               the token) -- directly (`config.user_email`) or through a parameter named user_email.
-  FORWARD     the payload carries `user_email` relayed from the site's own caller.
+  RELAY       the payload carries `user_email` AND the `.post(...)` call has a `headers=` keyword whose
+              expression reaches the relay source: the person's own verified bearer (engine O:
+              `_relay_authorization`; engine A: the `user_jwt` parameter, followed through the local
+              assignments that build the header). The check reads the call's `headers` keyword, not
+              merely the function body: a call that drops `headers=` is a red.
+  IN_PROCESS  the site calls the route's handler directly (row 6b: `resolve_instance`; row 7:
+              `enumerate_instances`), the handler re-binding the person from the same request's
+              verified caller. The payload still carries `user_email` as a `user_email` parameter.
+  (FORWARD, "`user_email` relayed from the site's own caller" with no credential, is RETIRED for every
+  BOUND route -- ruled 2026-11-19, Q2: a body-asserted identity is not a person. Bound routes are
+  DERIVED from engine O's `@app.post` handlers that await `_bound(`; no row on one may be FORWARD.)
   INGEST_RECORD  the payload's `user_email` is the artifact's ingest record's on_behalf_of (the
               dropper), passed in as the `on_behalf_of` parameter. This file checks only that the
               value uses that parameter. That the BFF fills it from the ingest record is lane/74's
@@ -41,7 +51,7 @@ subject. MEASURED 2026-10-11: `execute_subtask` handing `_classify_route`
   NO_PERSON   the payload has no `user_email` key, or some value found for it is a literal naming
               nobody: a blank, or a `svc:` service identity.
   UNDECIDED   no payload keys could be derived; never a member of NO_PERSON, always a red.
-INGEST_RECORD and TEST_PERSONA, like TOKEN and FORWARD, are DECLARED splits of PERSON checked only
+INGEST_RECORD and TEST_PERSONA, like TOKEN, RELAY and IN_PROCESS, are DECLARED splits of PERSON checked only
 as far as stated; the PERSON vs NO_PERSON split is derived.
 
 DOMAINS_WITHOUT_PERSON is a sub-shape of NO_PERSON: the payload has `domains` (or
@@ -103,6 +113,7 @@ class Row:
     cls: str
     count: int = 1
     found_by: str = "url"  # "url" | "registry" | "inprocess"
+    handler: str = ""  # found_by == "inprocess": the handler the site calls directly
 
 
 ROWS = [
@@ -112,9 +123,19 @@ ROWS = [
     # bound in the outer one (`_caller = {"user_email": user_email, ...}`, spread into the body).
     Row("3", DS, "_enumerate", "/enumerate_instances", "TOKEN"),
     Row("4", DS, "_call_engine_a_fallback", "/analyze", "TOKEN"),
-    Row("5", RA, "_resolve_ontology", "/resolve", "FORWARD"),
-    Row("6", OS_, "_call_resolver", "/resolve_instance", "FORWARD", found_by="registry"),
-    Row("7", OS_, "_bind_from_scope", "/enumerate_instances", "FORWARD", found_by="inprocess"),
+    # MOVED by lane/74 (Q2 ruled 2026-11-19): FORWARD -> RELAY. `_resolve_ontology` relays the task's own
+    # `user_jwt` as the Authorization header instead of only the service token.
+    Row("5", RA, "_resolve_ontology", "/resolve", "RELAY"),
+    # MOVED by lane/74 (Q2 ruled 2026-11-19): FORWARD -> RELAY. The registry fan-out posts with
+    # `headers=_relay_authorization()[1]` (the person's own verified bearer, else nothing).
+    Row("6", OS_, "_call_resolver", "/resolve_instance", "RELAY", found_by="registry"),
+    # ADDED by lane/74 (Q2 ruled 2026-11-19): "Engine O answers its own provider in-process". The self row
+    # of the registry fan-out calls the `resolve_instance` handler directly; no HTTP call, no bearer.
+    Row("6b", OS_, "_call_resolver", "/resolve_instance", "IN_PROCESS", found_by="inprocess",
+        handler="resolve_instance"),
+    # MOVED by lane/74 (Q2 ruled 2026-11-19): FORWARD -> IN_PROCESS (the class names what the site is).
+    Row("7", OS_, "_bind_from_scope", "/enumerate_instances", "IN_PROCESS", found_by="inprocess",
+        handler="enumerate_instances"),
     # MOVED by lane/74 #48 (16a08947, ruling (a)): the BFF passes the ingest record's dropper as on_behalf_of.
     Row("8", RC, "resolve_subject_via_engine_o", "/resolve_instance", "INGEST_RECORD"),
     # MOVED by lane/74 #48 (342fc3b5, ruling (b)): _person() reads IA_CORPUS_ON_BEHALF_OF and refuses to run without it.
@@ -524,14 +545,14 @@ def registry_site(row: Row) -> Site | None:
 
 
 def inprocess_site(row: Row) -> Site | None:
-    """`_bind_from_scope`: a direct call of the `enumerate_instances` handler; the request's
-    keyword arguments are the payload."""
+    """A direct call of the row's own handler (`row.handler`); the request's keyword arguments are
+    the payload."""
     tree, parents = _parse(row.file)
     fn = _func(tree, row.function)
     if fn is None:
         return None
     for n in ast.walk(fn):
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "enumerate_instances":
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == row.handler:
             return Site(row.file, fn.name, row.route, n.lineno, (), n, _scopes_of(n, parents), tree)
     return None
 
@@ -594,15 +615,15 @@ def test_POPULATION_found_by_detector_equals_the_declared_set():
 
 
 def test_UNDETECTABLE_ROWS_exist_where_they_are_declared():
-    r6 = next(r for r in ROWS if r.n == "6")
-    r7 = next(r for r in ROWS if r.n == "7")
-    s6, s7 = registry_site(r6), inprocess_site(r7)
-    assert s6 is not None, (
-        "row 6 (_call_resolver): no `.post(endpoint_url, ...)` with endpoint_url taken from the "
-        "registry row's `endpoint_url` -- the registry fan-out moved; re-derive the row")
-    assert s7 is not None, (
-        "row 7 (_bind_from_scope): no direct call of the `enumerate_instances` handler -- the "
-        "in-process call moved; re-derive the row")
+    for r in ROWS:
+        if r.found_by == "registry":
+            assert registry_site(r) is not None, (
+                f"row {r.n} ({r.function}): no `.post(endpoint_url, ...)` with endpoint_url taken from the "
+                f"registry row's `endpoint_url` -- the registry fan-out moved; re-derive the row")
+        elif r.found_by == "inprocess":
+            assert inprocess_site(r) is not None, (
+                f"row {r.n} ({r.function}): no direct call of the `{r.handler}` handler -- the "
+                f"in-process call moved; re-derive the row")
 
 
 def test_the_scripts_directory_sh_scan_sees_the_curl_line():
@@ -773,10 +794,16 @@ def test_CLASS_of_each_site_is_the_class_its_payload_has(row):
             fed = fed or "config.user_email" in fn_text
             assert fed, (f"row {row.n} TOKEN: neither `config.user_email` nor a `user_email` "
                          f"parameter feeds the payload in {row.function}")
-        elif row.cls == "FORWARD":
+        elif row.cls == "IN_PROCESS":
+            assert row.found_by == "inprocess" and row.handler, (
+                f"row {row.n} IN_PROCESS: a row of this class names the handler it calls directly")
             assert _has_param(s, "user_email"), (
-                f"row {row.n} FORWARD: no `user_email` parameter relays the caller's "
-                f"identity in {row.function}")
+                f"row {row.n} IN_PROCESS: no `user_email` parameter feeds the handler's request "
+                f"in {row.function}")
+        elif row.cls == "RELAY":
+            assert relay_headers_ok(s, RELAY_SOURCES[row.file]), (
+                f"{where} RELAY: the post carries no `headers=` that reaches the relay source "
+                f"{sorted(RELAY_SOURCES[row.file])} -- the person's bearer is dropped here")
         elif row.cls == "INGEST_RECORD":
             val = _user_email_value(s)
             assert val is not None, f"{where} INGEST_RECORD: no `user_email` value expression found in the payload"
@@ -858,3 +885,114 @@ def test_NO_PERSON_class_has_exactly_the_declared_population():
         f"or each member has been re-pointed to a person (lane/74 owns the caller-side changes). "
         f"A site that moved from NO_PERSON to a person-carrying class is EXPECTED: move its row "
         f"and say why; do not loosen the predicate.")
+
+
+# --------------------------------------------------------------------------------------
+# Arm F: FORWARD is retired for bound routes; the header-drop seal (lane/74, Q2 ruled 2026-11-19)
+# --------------------------------------------------------------------------------------
+#: Where each RELAY file takes the person's bearer from, DECLARED per file. The check below reads the
+#: post call's `headers=` keyword and follows its names through the local assignments that build it.
+RELAY_SOURCES = {OS_: {"_relay_authorization"}, RA: {"user_jwt"}}
+
+
+def _names_in(expr) -> set:
+    return {n.id for n in ast.walk(expr) if isinstance(n, ast.Name)}
+
+
+def _assignments_before(scope, name, line) -> list:
+    out = []
+    for n in ast.walk(scope):
+        if isinstance(n, ast.Assign):
+            tgts, val = n.targets, n.value
+        elif isinstance(n, ast.AnnAssign) and n.value is not None:
+            tgts, val = [n.target], n.value
+        else:
+            continue
+        if n.lineno < line and any(isinstance(t, ast.Name) and t.id == name for t in tgts):
+            out.append(val)
+    return out
+
+
+def relay_headers_ok(site: Site, sources: set) -> bool:
+    """The site's `.post(...)` has a `headers=` keyword whose expression reaches one of `sources`
+    (directly, or through the local assignments that build it). No `headers=` keyword: False."""
+    call = site.node
+    headers = next((k.value for k in call.keywords if k.arg == "headers"), None)
+    if headers is None:
+        return False
+    frontier, seen = list(_names_in(headers)), set()
+    while frontier:
+        name = frontier.pop()
+        if name in sources:
+            return True
+        if name in seen:
+            continue
+        seen.add(name)
+        for sc in site.scopes:
+            for val in _assignments_before(sc, name, call.lineno):
+                frontier.extend(_names_in(val))
+    return False
+
+
+def bound_routes() -> set:
+    """Engine O's BOUND routes, derived: each `@app.post("/x")` handler whose body awaits `_bound(`."""
+    tree, _ = _parse(OS_)
+    out = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.AsyncFunctionDef):
+            continue
+        route = next((d.args[0].value for d in fn.decorator_list
+                      if isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+                      and d.func.attr == "post" and isinstance(d.func.value, ast.Name)
+                      and d.func.value.id == "app" and d.args and isinstance(d.args[0], ast.Constant)),
+                     None)
+        if route and any(isinstance(n, ast.Await) and isinstance(n.value, ast.Call)
+                         and isinstance(n.value.func, ast.Name) and n.value.func.id == "_bound"
+                         for n in ast.walk(fn)):
+            out.add(route)
+    return out
+
+
+def test_the_bound_routes_are_derived_and_include_the_census_routes():
+    bound = bound_routes()
+    assert bound, "no engine O handler awaits `_bound(`: the derivation is blind"
+    assert {"/resolve_instance", "/enumerate_instances"} <= bound, (
+        f"derived bound routes {sorted(bound)} miss a route the census classifies")
+
+
+def test_no_row_on_a_bound_route_is_FORWARD():
+    bound = bound_routes()
+    forward = [r.n for r in ROWS if r.route in bound and r.cls == "FORWARD"]
+    assert not forward, (
+        f"rows {forward} are FORWARD on a bound route. FORWARD is retired there (ruled 2026-11-19, Q2): "
+        f"the person's own verified bearer travels (RELAY), or the handler is called in-process "
+        f"(IN_PROCESS). A body-asserted identity is not a person.")
+    assert all(r.cls != "FORWARD" for r in ROWS), "FORWARD has no members: the class is retired"
+
+
+def test_every_RELAY_row_posts_with_headers_that_reach_the_relay_source():
+    relay_rows = [r for r in ROWS if r.cls == "RELAY"]
+    assert relay_rows, "no RELAY rows: the seal is vacuous"
+    for r in relay_rows:
+        sites = _sites_for(r)
+        assert sites, f"row {r.n}: no site found"
+        for s in sites:
+            assert relay_headers_ok(s, RELAY_SOURCES[r.file]), (
+                f"row {r.n} ({r.file}:{s.line} {r.function}): the `.post(...)` has no `headers=` keyword "
+                f"reaching {sorted(RELAY_SOURCES[r.file])}: the person's bearer is dropped (header-drop seal)")
+
+
+def test_CONTROL_the_header_drop_seal_sees_the_keyword():
+    def ok(src, sources):
+        (s,) = find_py_sites(src, "x.py")
+        return relay_headers_ok(s, sources)
+
+    src = 'def f(b):\n    requests.post(f"{b}/resolve_instance", json={}%s)\n'
+    assert ok(src % ", headers=_relay_authorization()[1]", {"_relay_authorization"})
+    assert not ok(src % "", {"_relay_authorization"})                      # dropped
+    assert not ok(src % ", headers={'X': '1'}", {"_relay_authorization"})  # a headers= that is not the relay
+    # built in two steps from the declared source, as engine A does
+    via = ('def f(b, user_jwt):\n    t = str(user_jwt)\n    t = t.strip()\n    h = {"A": t}\n'
+           '    requests.post(f"{b}/resolve", json={}, headers=h or {})\n')
+    assert ok(via, {"user_jwt"})
+    assert not ok(via.replace("str(user_jwt)", "str(other)"), {"user_jwt"})
