@@ -34,6 +34,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -294,6 +295,13 @@ def _mesh_explain_row() -> dict:
     }
 
 
+def _as_verified(mod, monkeypatch, person, domains) -> None:
+    # The identity comes from the verified caller (#452), never the body.
+    monkeypatch.setattr(mod, "_current_caller",
+                        lambda: SimpleNamespace(authz_id=person, verified=True))
+    monkeypatch.setattr(mod, "_held_domains_of", lambda _s: frozenset(domains), raising=False)
+
+
 @pytest.fixture
 def client(engine_o_module):
     return TestClient(engine_o_module.app)
@@ -342,6 +350,7 @@ def test_THE_FLAG_ON_ROUTE_SENDS_THE_SAME_TEXT_AND_NO_PARAMETER_AND_JENA_IS_NOT_
         def verbs_for(self, *a, **kw):
             return _Coverage()
 
+    _as_verified(engine_o_module, monkeypatch, "lane-seal@example.com", {"COST"})
     monkeypatch.setattr(engine_o_module, "COMPATIBLE_VERBS_VIA_MESH", True)
     monkeypatch.setattr(engine_o_module, "Neo4jGraph", _Graph)
     jena = _JenaMustNotBeCalled()
@@ -467,6 +476,7 @@ class _LegAwareSession(_FakeCompatSession):
 
 def _cost_pool(engine_o_module, client, monkeypatch, *, flagged: bool,
                universal_rows: list[dict]) -> set[str]:
+    _as_verified(engine_o_module, monkeypatch, "lane-seal@example.com", {"COST"})
     monkeypatch.setattr(engine_o_module, "COMPATIBLE_VERBS_VIA_MESH", False)
     monkeypatch.setattr(engine_o_module, "_JENA_ONTOLOGY", _JenaMustNotBeCalled())
     driver = _FakeCompatDriver(rows=[])

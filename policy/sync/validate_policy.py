@@ -744,11 +744,17 @@ def repository_paths_errors(raw: dict, audiences, groups: dict, users: list) -> 
 #: central gateway's routes, so it does not retire this copy (01M6KF8279KZ843KG5MMM0R3YH).
 BFF_DELEGATE_ROUTES = ("human_tasks.register",)
 
+#: Engine O's route names a `door: engine-o` row may name (architect 11-19). Engine O owns the list
+#: (`agent_fleet/ontology_service/caller_binding.DELEGATE_ROUTES`) and this is a copy;
+#: tests/security/test_gateway_delegates_rail.py goes red when the two differ.
+ENGINE_O_DELEGATE_ROUTES = ("resolve_instance",)
+
 
 def _gd_doors() -> dict[str, tuple[str, ...]]:
     """A row's door is `row.get("door", "gateway")`; each door has its own route list."""
     from dag_tools.central_gateway.routes import delegatable_route_ids
-    return {"gateway": tuple(delegatable_route_ids()), "bff": BFF_DELEGATE_ROUTES}
+    return {"gateway": tuple(delegatable_route_ids()), "bff": BFF_DELEGATE_ROUTES,
+            "engine-o": ENGINE_O_DELEGATE_ROUTES}
 
 _GD_ROW_FIELDS = ("service", "door", "routes", "granted_by", "reason", "ratified_by")
 #: A run with no person behind it (architect 11-04). It acts as itself, so it is never a delegate.
@@ -765,7 +771,7 @@ def gateway_delegates_errors(raw: dict, users: list) -> list[str]:
     ratified it (`ratified_by`, e.g. `owner`: a seat, never an identity). Unknown keys are refused
     by name, so a typo (`route:`) cannot pass silently.
 
-    A row's `door` is `gateway` (the default) or `bff`; its routes are checked against THAT door's
+    A row's `door` is `gateway` (the default), `bff` or `engine-o`; its routes are checked against THAT door's
     list, and an unknown door is one error with no route errors. A service is unique per
     `(service, door)`: it may hold one gateway row and one bff row."""
     pre = "gateway_delegates.yaml"
@@ -928,6 +934,53 @@ def queue_delegates_errors(raw: dict, users: list) -> list[str]:
                 out.append(f"{where}: `expires_at` must be an ISO-8601 time")
             elif d.tzinfo is None:
                 out.append(f"{where}: `expires_at` must carry a zone (e.g. a trailing Z)")
+        for k in ("granted_by", "reason", "ratified_by"):
+            v = row.get(k)
+            if not isinstance(v, str) or not v.strip():
+                out.append(f"{where}: `{k}` must be a non-empty string")
+            elif k == "ratified_by" and v.strip() in seeded:
+                out.append(f"{where}: `ratified_by` names a seat (e.g. `owner`), not an identity "
+                           "in users.yaml")
+    return out
+
+
+#: The row fields of policy/electric_shapes.yaml (ADR-0068 s8): an allow-list of streamable tables.
+_ES_ROW_FIELDS = ("table", "granted_by", "reason", "ratified_by")
+
+
+def electric_shapes_errors(raw: dict, users: list) -> list[str]:
+    """Validate policy/electric_shapes.yaml. PURE. A row names one `table` (a bare identifier:
+    letters, digits and underscore, no schema prefix, quote or space), once; and states its
+    grantor, reason and the ratifying seat (a seat such as `owner`, never an identity in users.yaml).
+    Unknown keys are refused by name."""
+    import re as _re
+
+    pre = "electric_shapes.yaml"
+    if not isinstance(raw, dict) or set(raw) != {"electric_shapes"}:
+        extra = sorted(map(str, set(raw) - {"electric_shapes"})) if isinstance(raw, dict) else []
+        return [f"{pre}: top level must be a mapping with exactly one key, `electric_shapes`"
+                + (f" (unknown key(s): {', '.join(extra)})" if extra else "")]
+    rows = raw["electric_shapes"]
+    if not isinstance(rows, list):
+        return [f"{pre}: `electric_shapes` must be a list of rows (an empty list serves no table)"]
+    seeded = {str(u["id"]).strip() for u in users or [] if isinstance(u, dict) and u.get("id")}
+    out: list[str] = []
+    seen: set[str] = set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            out.append(f"{pre}: row {i}: must be a mapping")
+            continue
+        t = row.get("table")
+        where = f"{pre}: {t if isinstance(t, str) and t.strip() else f'row {i}'}"
+        for k in row:
+            if k not in _ES_ROW_FIELDS:
+                out.append(f"{where}: unknown key {k!r} (allowed: {', '.join(_ES_ROW_FIELDS)})")
+        if not isinstance(t, str) or not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
+            out.append(f"{where}: `table` must be a bare table name (letters, digits, underscore)")
+        elif t in seen:
+            out.append(f"{where}: table is listed more than once")
+        else:
+            seen.add(t)
         for k in ("granted_by", "reason", "ratified_by"):
             v = row.get(k)
             if not isinstance(v, str) or not v.strip():
@@ -1758,6 +1811,14 @@ def validate(
         errors.extend(queue_delegates_errors(qd_raw, users_raw.get("users") or []))
         _qd_rows = qd_raw.get("queue_delegates")
         print(f"  queue_delegates.yaml: {len(_qd_rows) if isinstance(_qd_rows, list) else 0} row(s)")
+
+    # electric_shapes.yaml: validated WHEN PRESENT only, like gateway_delegates.yaml above.
+    _es_path = policy_dir / "electric_shapes.yaml"
+    if _es_path.is_file():
+        es_raw = _read_yaml(_es_path, errors)
+        errors.extend(electric_shapes_errors(es_raw, users_raw.get("users") or []))
+        _es_rows = es_raw.get("electric_shapes")
+        print(f"  electric_shapes.yaml: {len(_es_rows) if isinstance(_es_rows, list) else 0} row(s)")
 
     # classification/dimensions.yaml + level_readers.yaml + dimension_holders.yaml (ADR-0064 item B,
     # Proposed, #266; 2026-11-06 ruling): validated WHEN PRESENT only (not in DATA_FILES -- see the

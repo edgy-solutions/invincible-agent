@@ -91,6 +91,7 @@ def _ollama_reachable() -> bool:
 
 
 pytestmark = [
+    pytest.mark.live,
     pytest.mark.skipif(
         not _docker_available(),
         reason="Docker not available — LLM connectivity smoke test skipped.",

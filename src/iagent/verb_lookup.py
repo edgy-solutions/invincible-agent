@@ -51,6 +51,7 @@ def find_compatible_verbs(
     max_hops: int = DEFAULT_MAX_HOPS,
     timeout: float = DEFAULT_TIMEOUT_S,
     on_behalf_of: str = "",
+    headers: Optional[Dict[str, str]] = None,
 ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
     """Ask Engine O which predicates can operate on this subject, per Neo4j.
 
@@ -62,6 +63,10 @@ def find_compatible_verbs(
     ``on_behalf_of`` is the person the ask is for. Engine O reads as that person when
     ``COMPATIBLE_VERBS_VIA_MESH`` is on and refuses a request without one; it is sent only when
     set, so a caller with no person sends exactly the body it always did.
+
+    ``headers`` carries the caller's OWN bearer (never a minted one): engine O binds identity and
+    grants from the verified token, not from the body, so a call without one is read as anonymous
+    (no grant). Sent only when set.
     """
     if not subject_uri or subject_uri == "UNKNOWN":
         return [], None
@@ -77,6 +82,7 @@ def find_compatible_verbs(
             f"{ontology_url}/find_compatible_verbs",
             json=body,
             timeout=timeout,
+            **({"headers": dict(headers)} if headers else {}),
         )
         resp.raise_for_status()
         return list(resp.json().get("verbs") or []), None

@@ -189,16 +189,6 @@ def test_each_fleet_wrapper_is_ONE_call_to_the_SDK_guard(where: str) -> None:
 # -- the census: no copy anywhere, and no comparison in the denylist form --------------------
 
 
-def _kind_comparisons_in(tree: ast.AST) -> list[tuple[int, str, str]]:
-    out = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Compare):
-            for comparator in node.comparators:
-                if isinstance(comparator, ast.Constant) and comparator.value in DECLARED_KINDS:
-                    out.append((node.lineno, ast.unparse(node.left), comparator.value))
-    return out
-
-
 def _initiator_kind_readers_in(tree: ast.AST) -> dict[str, set[str]]:
     """Functions that read ``.kind`` off a parameter annotated ``Initiator`` -> the attributes they
     read off it. Keyed on the ANNOTATION, so a copy is found whatever it names its parameter and
@@ -249,8 +239,82 @@ def _require_person(initiator: Initiator, operation: str) -> None:
 
 def test_the_census_matchers_still_FIND_the_copy_they_exist_to_catch() -> None:
     tree = ast.parse(_THE_OLD_COPY)
-    assert _kind_comparisons_in(tree) == [(3, "initiator.kind", "service")]
+    # through the CENSUS's own path (sites finder + verdict, nothing declared), not a matcher nothing calls
+    assert _kind_verdict({"x.py": _kind_comparison_sites_in(tree)}, {}) == (
+        {"x.py": [("_require_person", 3)]}, [])
     assert _initiator_kind_readers_in(tree) == {"_require_person": {"kind"}}
+
+
+#: A comparison against a declared kind that is NOT an Initiator's kind, declared by (path, function)
+#: -- never by line -- with the NUMBER of comparisons it excuses and the reason. The matcher stays
+#: broad on purpose (a copy written as `initiator.role == "service"` must still be caught); an
+#: exemption is the only way past it. Checked both ways: more comparisons than declared fail (the
+#: extra line is named), fewer, or none, fail as stale. Every row needs a non-blank reason.
+DECLARED_KIND_COMPARISONS: dict[tuple[str, str], dict] = {
+    ("agent_fleet/repository_agent/grant_flow.py", "backfill_ledger"): {
+        "comparisons": 1,
+        "why": "identity, not an Initiator kind: the left side is the repository identity's `Auth-Via` "
+               "header (`service.auth_via != \"service\"`), already allowlist-shaped (refuses anything "
+               "but a service), and the 10-30 rule keeps an engine's own identity in code",
+    },
+}
+
+
+def _kind_comparison_sites_in(tree: ast.AST) -> list[tuple[str, int]]:
+    """(enclosing function, line) for every comparison of anything against a declared kind (the ONE matcher)."""
+    sites: list[tuple[str, int]] = []
+
+    def visit(node: ast.AST, fn: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            name = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else fn
+            if isinstance(child, ast.Compare):
+                for comparator in child.comparators:
+                    if isinstance(comparator, ast.Constant) and comparator.value in DECLARED_KINDS:
+                        sites.append((fn, child.lineno))
+            visit(child, name)
+
+    visit(tree, "<module>")
+    return sites
+
+
+def _kind_verdict(found: dict[str, list[tuple[str, int]]], declared: dict):
+    """(undeclared sites {path: [(function, line)]}, stale [(entry, declared, found)]).
+
+    Per (path, function) the first N comparisons BY LINE are excused; each further one is undeclared
+    and keeps its line. Sorted first: a walk can list a later, deeper line before an earlier one."""
+    undeclared: dict[str, list[tuple[str, int]]] = {}
+    for path, hits in found.items():
+        used: dict[str, int] = {}
+        for fn, line in sorted(hits, key=lambda h: h[1]):
+            used[fn] = used.get(fn, 0) + 1
+            if used[fn] > declared.get((path, fn), {}).get("comparisons", 0):
+                undeclared.setdefault(path, []).append((fn, line))
+    stale = []
+    for key, row in declared.items():
+        n = sum(1 for fn, _ in found.get(key[0], []) if fn == key[1])
+        if n < row["comparisons"]:
+            stale.append((key, row["comparisons"], n))
+    return undeclared, sorted(stale)
+
+
+def _blank_reasons(declared: dict) -> list[tuple[str, str]]:
+    return sorted(k for k, row in declared.items() if not str(row.get("why", "")).strip())
+
+
+def _kind_census_failure(undeclared, stale, blank=()):
+    out = []
+    if undeclared:
+        out.append(f"shipped code compares against a declared kind (path: [(function, line)]): {undeclared!r}")
+    if stale:
+        out.append(f"declared comparisons that no longer exist (entry, declared, found): {stale!r}")
+    if blank:
+        out.append(f"exemption rows with no reason: {list(blank)!r}")
+    return "; ".join(out) or None
+
+
+def _shipped_sites(trees) -> dict[str, list[tuple[str, int]]]:
+    found = {rel: _kind_comparison_sites_in(t) for rel, t in trees}
+    return {rel: hits for rel, hits in found.items() if hits}
 
 
 def test_no_shipped_code_compares_a_kind_or_reads_an_Initiators_kind() -> None:
@@ -261,13 +325,83 @@ def test_no_shipped_code_compares_a_kind_or_reads_an_Initiators_kind() -> None:
     assert any(rel == "agent_fleet/ontology_service/mesh_graph.py" for rel, _ in trees), (
         "the walk no longer reaches the module that held a copy"
     )
-    comparisons = [(rel, *c) for rel, t in trees for c in _kind_comparisons_in(t)]
+    failure = _kind_census_failure(
+        *_kind_verdict(_shipped_sites(trees), DECLARED_KIND_COMPARISONS),
+        _blank_reasons(DECLARED_KIND_COMPARISONS))
     readers = [f"{rel}::{name}" for rel, t in trees for name in _initiator_kind_readers_in(t)]
-    assert not comparisons, f"shipped code compares against a declared kind: {comparisons!r}"
+    assert failure is None, failure
     assert not readers, (
         f"shipped code reads an Initiator's kind: {readers!r}. Call Initiator.require_person "
         "instead, so the allowlist stays written once."
     )
+
+
+_ONE = ("agent_fleet/repository_agent/grant_flow.py", "backfill_ledger")
+
+
+def test_control_the_real_tree_has_exactly_the_one_declared_comparison_site() -> None:
+    found = _shipped_sites(list(_shipped_trees()))
+    assert {(p, fn) for p, hits in found.items() for fn, _ in hits} == set(DECLARED_KIND_COMPARISONS) == {_ONE}
+    assert DECLARED_KIND_COMPARISONS[_ONE]["comparisons"] == 1
+
+
+def test_the_site_finder_names_the_enclosing_function_and_still_finds_a_renamed_attribute() -> None:
+    tree = ast.parse('def act(i):\n    if i.role == "service":\n        raise X\n')
+    assert _kind_comparison_sites_in(tree) == [("act", 2)]
+    assert _kind_comparison_sites_in(ast.parse('x = 1 if y == "service" else 2')) == [("<module>", 1)]
+
+
+def test_an_undeclared_comparison_still_fails() -> None:
+    path, fn = _ONE
+    found = {"agent_fleet/x.py": [("act", 3)], path: [(fn, 205), ("other", 300)]}
+    undeclared, stale = _kind_verdict(found, DECLARED_KIND_COMPARISONS)
+    assert undeclared == {"agent_fleet/x.py": [("act", 3)], path: [("other", 300)]} and stale == []
+
+
+def test_a_second_comparison_in_the_declared_function_fails_and_names_its_line() -> None:
+    path, fn = _ONE
+    undeclared, stale = _kind_verdict({path: [(fn, 205), (fn, 242)]}, DECLARED_KIND_COMPARISONS)
+    assert undeclared == {path: [(fn, 242)]} and stale == []
+    assert "242" in _kind_census_failure(undeclared, stale)
+
+
+def test_the_added_comparison_is_named_even_when_the_walk_lists_it_first() -> None:
+    path, fn = _ONE
+    undeclared, stale = _kind_verdict({path: [(fn, 242), (fn, 205)]}, DECLARED_KIND_COMPARISONS)
+    msg = _kind_census_failure(undeclared, stale)
+    assert undeclared == {path: [(fn, 242)]} and "242" in msg and "205" not in msg
+
+
+def test_the_same_function_name_in_another_file_is_not_excused() -> None:
+    path, fn = _ONE
+    other = "agent_fleet/not_grant_flow.py"
+    undeclared, stale = _kind_verdict({path: [(fn, 205)], other: [(fn, 5)]}, DECLARED_KIND_COMPARISONS)
+    assert undeclared == {other: [(fn, 5)]} and stale == []
+
+
+def test_a_declared_entry_that_matches_no_comparison_is_stale_and_the_message_orders_the_counts() -> None:
+    key = ("agent_fleet/gone.py", "was_a_guard")
+    undeclared, stale = _kind_verdict({}, {key: {"comparisons": 3, "why": "x"}})
+    msg = _kind_census_failure(undeclared, stale)
+    assert stale == [(key, 3, 0)] and "gone.py" in msg and "was_a_guard" in msg
+    assert "3, 0)" in msg                      # declared then found, in that order
+    assert _kind_census_failure({}, []) is None
+
+
+def test_a_declared_count_higher_than_the_actual_is_stale() -> None:
+    path, fn = _ONE
+    undeclared, stale = _kind_verdict({path: [(fn, 205)]}, {_ONE: {"comparisons": 2, "why": "x"}})
+    assert undeclared == {} and stale == [(_ONE, 2, 1)]
+    assert "2, 1)" in _kind_census_failure(undeclared, stale)
+
+
+def test_every_exemption_row_states_a_non_blank_reason() -> None:
+    assert _blank_reasons(DECLARED_KIND_COMPARISONS) == []
+    rows = {**DECLARED_KIND_COMPARISONS, ("a.py", "f"): {"comparisons": 1, "why": ""},
+            ("b.py", "g"): {"comparisons": 1, "why": "   \t"}, ("c.py", "h"): {"comparisons": 1}}
+    blank = _blank_reasons(rows)
+    assert blank == [("a.py", "f"), ("b.py", "g"), ("c.py", "h")]
+    assert "no reason" in _kind_census_failure({}, [], blank)
 
 
 def test_the_walk_skips_a_VENV_by_its_pyvenv_cfg_and_keeps_its_sibling(tmp_path: Path) -> None:

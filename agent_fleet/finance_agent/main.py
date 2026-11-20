@@ -47,6 +47,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     import cdrl
     import export
     import export_profiles
+    import instance_overlays
     import measure_verbs
     import measures
     import state_codec
@@ -60,6 +61,7 @@ except ImportError:
     from agent_fleet.finance_agent import cdrl
     from agent_fleet.finance_agent import export
     from agent_fleet.finance_agent import export_profiles
+    from agent_fleet.finance_agent import instance_overlays
     from agent_fleet.finance_agent import measure_verbs
     from agent_fleet.finance_agent import measures
     from agent_fleet.finance_agent import state_codec
@@ -1836,12 +1838,31 @@ _RESOLVABLE: dict[str, tuple[str, str, str]] = {
 _NOT_ENUMERABLE = {FIN + "PerformanceMeasurementBaseline"}
 
 
+def _load_instances() -> tuple["instance_overlays.InstanceRow", ...]:
+    """The instances a deployment DECLARED as overlay rows (`FIN_INSTANCE_OVERLAY_DIRS`).
+
+    None declared is the default and the empty tuple. A malformed set RAISES. The seed's ids and
+    labels are passed in so a row cannot collide with them.
+    """
+    names = [getattr(i, f) for attr, idf, lf in _RESOLVABLE.values()
+             for i in getattr(STATE, attr) for f in (idf, lf)]
+    return instance_overlays.load_instances({u[len(FIN):]: u for u in _RESOLVABLE}, names)
+
+
+#: Declared instances. Loaded ONCE, here (it needs `_RESOLVABLE` and `STATE`, so it sits beside the
+#: map, not beside `DECLARED`). The routes read this name at call time, so a test that replaces it
+#: replaces what the engine serves. NEVER added to STATE or to any figure: a name, nothing more.
+INSTANCES: tuple["instance_overlays.InstanceRow", ...] = _load_instances()
+
+
 def _members_of(class_uri: str) -> list[dict[str, Any]]:
     """The distinct members of one class, deduped by identity, in a stable order.
 
     ONE IMPLEMENTATION FOR BOTH PROVIDERS. The resolver scores against these and the
     enumerator lists them; two separate walks of the same collections is how one of them
     ends up holding a stale idea of what this engine offers.
+
+    Plus the instances a deployment declared of this class (`INSTANCES`); the seed wins an id.
     """
     spec = _RESOLVABLE.get(class_uri)
     if spec is None:
@@ -1861,6 +1882,11 @@ def _members_of(class_uri: str) -> list[dict[str, Any]]:
                 "instance_id": ident,
                 "label": getattr(item, label_field),
                 "class_uri": class_uri,
+            }
+    for row in INSTANCES:
+        if row.class_uri == class_uri and row.instance_id not in seen:
+            seen[row.instance_id] = {
+                "instance_id": row.instance_id, "label": row.label, "class_uri": class_uri,
             }
     return [seen[k] for k in sorted(seen)]
 
@@ -1970,6 +1996,12 @@ def _program_of(class_uri: str, instance_id: str) -> str | None:
     attr, id_field, _label = spec
     item = next((i for i in getattr(STATE, attr) if getattr(i, id_field) == instance_id), None)
     if item is None:
+        # A DECLARED Program is its own program: its id IS the `program_members` key, so the
+        # membership check decides it like the seed program's. Any other declared class has
+        # no program here and stays withheld (deny by default).
+        if class_uri == FIN + "Program" and any(
+                r.class_uri == class_uri and r.instance_id == instance_id for r in INSTANCES):
+            return instance_id
         return None
     if class_uri == FIN + "Program":
         return item.program_id or None

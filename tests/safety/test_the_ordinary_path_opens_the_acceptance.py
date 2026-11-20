@@ -281,6 +281,13 @@ def _calls(node, name):
             if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == name]
 
 
+def _backend_status_calls(node):
+    """The poll loop's status read: `_ab.status(...)`, the per-stream backend's."""
+    return [c for c in ast.walk(node)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+            and c.func.attr == "status" and ast.unparse(c.func.value) == "_ab"]
+
+
 def test_the_stream_awaits_the_consumer_after_the_poll_and_before_the_success_branch():
     fn = _fn(_GATEWAY_SRC, "_generate_dagster_stream_inner")
     body = fn.body
@@ -303,7 +310,7 @@ def test_the_stream_awaits_the_consumer_after_the_poll_and_before_the_success_br
     assert yields and ast.unparse(yields[0].value) == body[i].target.id
 
     polls = [j for j, s in enumerate(body)
-             if isinstance(s, (ast.For, ast.While)) and _calls(s, "_get_run_status")]
+             if isinstance(s, (ast.For, ast.While)) and _backend_status_calls(s)]
     assert len(polls) == 1, "the poll loop is not identifiable by the status call it makes"
     success = [j for j, s in enumerate(body)
                if isinstance(s, ast.If) and ast.unparse(s.test) == "is_success"]

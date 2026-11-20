@@ -504,8 +504,8 @@ wheels = [
 
 [[package]]
 name = "edgy-dag-tools"
-version = "0.14.0"
-source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.14.0#33a026285672e167212c0919d944537f8cb55723" }
+version = "0.17.0"
+source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.17.0#a85c5f99233962a8c34e6eb0f399c23030865ee4" }
 dependencies = [
     { name = "clickhouse-connect" },
     { name = "connectorx" },
@@ -575,11 +575,11 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "edgy-dag-tools", git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.14.0" },
+    { name = "edgy-dag-tools", git = "https://github.com/edgy-solutions/dag-tools.git?rev=v0.17.0" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypercorn" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.19" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.25" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "polars", specifier = ">=1.20" },
     { name = "pydantic" },
@@ -743,8 +743,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.9.19"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.19#ef7a6f358c981adf7eedf7cb773f98250ecb7177" }
+version = "0.9.25"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.9.25#f1a941030bd68f1218ee6122750619ea08ee7276" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "httpx" },
@@ -752,7 +752,7 @@ dependencies = [
     { name = "nest-asyncio" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pyjwt" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pyyaml" },
 ]
 

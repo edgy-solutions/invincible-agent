@@ -39,6 +39,7 @@ The rules, the same for every kind:
 | measure row | `policy/measure_verbs/` (ships none) | `MEASURE_VERB_OVERLAY_DIRS` | `measure_id` |
 | method row | `policy/measures/` (three EAC rows) | `MEASURE_OVERLAY_DIRS` | `method_id` |
 | export profile | `policy/fin_export_profiles/` (ships none) | `FIN_EXPORT_PROFILE_OVERLAY_DIRS` | `name` |
+| declared instance | none (the seed holds one program) | `FIN_INSTANCE_OVERLAY_DIRS` | `class` and `instance_id` (section 7) |
 
 **Two variables with "measure" in the name.** `MEASURE_VERB_OVERLAY_DIRS` carries measure rows: the
 measures people can ask for and see charted (section 2). `MEASURE_OVERLAY_DIRS` carries method rows:
@@ -679,3 +680,44 @@ A package page names each seed-sourced panel, with its reason, beside the asset.
 - **Answer exports** (plan and review exports under `policy/exports/`). They are a separate kind of
   row, with their own variable, and are not documented here.
 - **Boards.** A measure can also be a panel on a board; boards are a separate overlay kind.
+
+## 7. Declared instances: a name the question can use
+
+The finance service resolves a spoken name to an instance, and only knows the invented seed
+(`NP-MERIDIAN` and its accounts). A deployment adds a name the seed lacks as a row, and the service
+needs no code change to answer it. A declared instance is a NAME ONLY: it is listed and resolved, it
+is never added to the seed's figures, and no measure computes over it.
+
+The variable is `FIN_INSTANCE_OVERLAY_DIRS` (unset means none). A file holds one top key,
+`instances`, a list of rows. Unlike the other kinds, a file may hold several rows and there is no
+tombstone: delete the row.
+
+```yaml
+# loads-as: instance
+instances:
+  - class: Program
+    instance_id: NP-EXAMPLE-ONE
+    label: "Example program one"
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Invented example showing the row shape. Not a real program.
+```
+
+| key | what it holds |
+|---|---|
+| `class` | The local name of a class the service resolves, for example `Program`. |
+| `instance_id` | The id a question can name. |
+| `label` | The name shown in a menu. |
+| `granted_by` | Who declared the row (`seed` for a platform-shipped one). |
+| `ratified_by` | The seat that ratified it. |
+| `reason` | One or two sentences saying why the row exists. |
+
+Every key is required, none may be empty, and a key not in this table is refused. The service refuses
+to start, naming the file, when: a key is missing, unknown or empty; `class` is not one the service
+resolves; the same `class` and `instance_id` appear twice; or an `instance_id` or `label` equals,
+ignoring case, the id or label of a seed entity or of another declared row. The last rule is because
+the resolver scores an exact match 1.0 across every class and the router abstains on a tie.
+
+A declared `Program` is visible only to the callers its `program_id` lists in
+`policy/program_members.yaml` (`grant_to`). A program with no row there is listed to no one.
