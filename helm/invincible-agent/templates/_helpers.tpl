@@ -1009,3 +1009,30 @@ role cannot be given different passwords. Override the name to use a pre-made Se
 {{- define "invincible-agent.electricDbSecretKey" -}}
 {{- default "password" .Values.electric.db.secret.key -}}
 {{- end }}
+
+{{/*
+DATABASE SPLIT (databaseSplit.enabled, default off). A role with REPLICATION can open its own slot on a database and
+decode every table in it whatever its SELECT grants say, so Electric's database must hold only what Electric may
+stream. When the split is on AND Electric is on, Dagster's tables and the LangGraph checkpoint tables live in their
+own databases. `electric.enabled` gates it: a deployment without Electric keeps one database.
+Returns "true" or "".
+*/}}
+{{- define "invincible-agent.databaseSplit" -}}
+{{- if and .Values.databaseSplit.enabled .Values.electric.enabled -}}true{{- end -}}
+{{- end }}
+
+{{/*
+The database a concern lives in: pass (dict "concern" "dagster" "root" .). Shared database when the split is off.
+The projections (and everything not named here) stay in the shared database, `invincible-agent.pgDatabase`.
+*/}}
+{{- define "invincible-agent.pgDatabaseFor" -}}
+{{- if include "invincible-agent.databaseSplit" .root -}}
+{{- index .root.Values.databaseSplit.databases .concern -}}
+{{- else -}}
+{{- include "invincible-agent.pgDatabase" .root -}}
+{{- end -}}
+{{- end }}
+
+{{- define "invincible-agent.pgUriFor" -}}
+postgresql://{{ include "invincible-agent.pgUser" .root }}:{{ include "invincible-agent.pgPassword" .root }}@{{ include "invincible-agent.pgHost" .root }}:{{ include "invincible-agent.pgPort" .root }}/{{ include "invincible-agent.pgDatabaseFor" . }}
+{{- end }}
