@@ -1806,12 +1806,16 @@ def validate_decision(kind: str, decision: str, comment: str = "") -> None:
 
 
 def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
-                       comment: str = "", workflow_id: Optional[str] = None) -> int:
+                       comment: str = "", workflow_id: Optional[str] = None,
+                       fields: Optional[dict] = None) -> int:
     """Mark ALL recipient rows of a logical task resolved (one human acted for the
     audience). `caller_id` (authz_id) recorded as acted_by. Returns rows updated.
     Caller MUST have passed check_can_act first (and validate_decision).
 
     `workflow_id`, if given, scopes the update (HAZ-1003).
+
+    `fields`, if given, is merged into the row's payload under `fields` in the same UPDATE (what
+    a follow-on task was completed with). Absent, the statement is exactly what it always was.
 
     `status` carries the DECISION's own vocabulary rather than being coerced into
     approved/rejected: an acknowledged triage task was not "rejected", and a projection that
@@ -1855,18 +1859,25 @@ def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
         # A timeout is the await expiring, not a person's decision: it has no acted_by.
         raise ValueError("'timed_out' cannot be a resolution: use expire_open_task")
     status = decision
+    set_extra = ""
+    params_extra: tuple = ()
+    if fields is not None:
+        set_extra = (", payload = COALESCE(payload,'{}'::jsonb) || "
+                     "jsonb_build_object('fields', %s::jsonb)")
+        params_extra = (json.dumps(fields),)
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """UPDATE human_task_projection
                       SET status = %s, decision = %s, acted_by = %s, acted_at = %s,
-                          comment = %s, updated_at = %s
+                          comment = %s, updated_at = %s""" + set_extra + """
                     WHERE task_id = %s AND status = 'pending'
                       -- IS NOT DISTINCT FROM, not `=`: a legacy row's workflow_id is NULL and
                       -- `NULL = NULL` is never true, so omitting this call's workflow_id must
                       -- still match those rows.
                       AND workflow_id IS NOT DISTINCT FROM %s""",
-                (status, decision, caller_id, now, comment, now, task_id, workflow_id),
+                (status, decision, caller_id, now, comment, now, *params_extra,
+                 task_id, workflow_id),
             )
             n = cur.rowcount
         conn.commit()
@@ -1917,7 +1928,7 @@ def declaration_for(kind: str) -> "dict[str, Any]":
             return renders.get(field)
         return getattr(renders, field, None)
 
-    return {
+    out = {
         "kind": kind,
         "declared": row is not None,
         "archetype": _r("archetype"),
@@ -1938,6 +1949,13 @@ def declaration_for(kind: str) -> "dict[str, Any]":
         # true of the data and false of what is served.
         "reason_required": sorted(reason_required_for(kind) & set(verbs)),
     }
+    # WHAT COMPLETING IT REQUIRES, from the sibling `task_completion` family (see that module).
+    # Only a kind with a row gains the key: every other kind's shape is unchanged.
+    from . import task_completion  # noqa: PLC0415
+    cdecl = task_completion.declaration_for_kind(kind)
+    if cdecl is not None:
+        out["completion_fields"] = task_completion.as_wire(cdecl)
+    return out
 
 
 def decorate_with_declarations(tasks: "list[dict[str, Any]]") -> "list[dict[str, Any]]":

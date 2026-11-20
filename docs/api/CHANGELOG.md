@@ -2,6 +2,14 @@
 
 Every change to the ingest-v1 surface gets an entry here, and a version bump when the shape hash moves (see scripts/generate_ingest_openapi.py). Wording-only changes do not move the hash.
 
+## 1.11.0 — 2026-11-20
+
+Declaration, additive (architect, 2026-11-19). The shape hash moves.
+
+- **New optional `fields` on the act request** (`{name: value}`). A follow-on task cannot complete without what it exists to settle: when the task's kind declares completion fields and the decision is one that completes the task, the act is refused with 422 `completion_fields_missing` (a field is absent, blank or the blank text) or `completion_fields_invalid` (a value fails its type). Both carry the names in a structured `fields` list; the `message` carries no list. A decision that does not complete the task needs none. Sent for a kind that declares none, `fields` is ignored.
+- **New optional `completion_fields` on a task kind's declaration**, present only for a kind that declares it: `{by, required_on, blank, fields}`, so a client can render the inputs.
+- Every body that validated against 1.10.0 still validates.
+
 ## 1.10.0 — 2026-11-17
 
 Behaviour and declaration, additive (architect, 2026-11-17). The shape hash moves.

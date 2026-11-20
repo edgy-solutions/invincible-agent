@@ -1688,6 +1688,18 @@
             "title": "Decision",
             "type": "string"
           },
+          "fields": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fields"
+          },
           "header_edits": {
             "anyOf": [
               {

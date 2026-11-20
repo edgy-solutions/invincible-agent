@@ -73,6 +73,7 @@ class HumanTaskSpec:
     needs_review: bool
     proposed_by_ruleset: Optional[str]
     subject_unresolved: bool = False   # explicit re-link marker (subject_ref is None)
+    fields: dict = field(default_factory=dict)   # what the reviewer already recorded for this task
 
 
 @dataclass
@@ -122,6 +123,7 @@ def plan_dispatch(resolution: ItemResolution, *, notice_fingerprint: str, notice
             needs_review=resolution.needs_review,
             proposed_by_ruleset=resolution.proposed_by_ruleset,
             subject_unresolved=subject is None,
+            fields=dict(resolution.fields),
         )
 
     return DispatchPlan(resolution=resolution, graph_write=graph_write, human_task=human_task)

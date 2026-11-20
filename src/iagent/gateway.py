@@ -1468,6 +1468,10 @@ class HumanTaskActRequest(_BaseModel):
         default=None, union_mode="left_to_right")
     # document_empty_confirm `has_parts` only (spec 208): the page the steward points at.
     page: Optional[_StrictInt] = None
+    # A follow-on task's completion fields ({name: value}), required by the verbs its kind's
+    # `task_completion` declaration names. Names and types are judged at the route, where the
+    # declaration is read; sent for a kind that declares none, it is ignored.
+    fields: Optional[dict] = None
 
     @model_validator(mode="after")
     def _verb_fields(self):
@@ -1548,13 +1552,19 @@ async def register_human_task(
             _audit_delegate_named(route, caller, req.requested_by, f"refused:{code}")
             raise
         _audit_delegate_named(route, caller, req.requested_by, "admitted:delegate")
+    # A follow-on task's `payload.fields` holds EVERY name its kind's completion declaration lists
+    # for this payload, a blank written as the declaration's blank text and never left empty;
+    # undeclared supplied names are dropped. A kind without a declaration is unchanged.
+    from . import task_completion as _tc
+    _cdecl = _tc.declaration_for_kind(req.kind)
+    _payload = _tc.written_at_register(_cdecl, req.payload) if _cdecl is not None else req.payload
     try:
         result = await run_in_threadpool(
             lambda: human_tasks.register_task(
                 kind=req.kind, task_id=req.task_id, audience=req.audience,
                 title=req.title, summary=req.summary, requested_by=req.requested_by,
                 workflow_id=req.workflow_id, subject_ref=req.subject_ref,
-                payload=req.payload, workflow_service=req.workflow_service,
+                payload=_payload, workflow_service=req.workflow_service,
                 promise_name=req.promise_name, excludes=req.excludes,
                 case_id=req.case_id,
             )
@@ -6747,6 +6757,28 @@ async def act_on_human_task(
             "message": str(exc),
         })
 
+    # COMPLETION FIELDS. After the audience gate and the verb check, so a caller who may not act
+    # is never told what the task needs. A kind whose `task_completion` row names this verb
+    # cannot complete without the fields it exists to settle; the names live in the structured
+    # `fields` list, never in the message. Another verb (a rejection) needs none.
+    from . import task_completion as _tc
+    _final_fields = None
+    _cdecl = _tc.declaration_for_kind(match.get("kind") or "")
+    if _cdecl is not None and req.decision in _cdecl.required_on:
+        _finals, _missing, _invalid = _tc.finals_at_act(_cdecl, match.get("payload"), req.fields)
+        if _missing:
+            raise HTTPException(status_code=422, detail={
+                "error": "completion_fields_missing", "kind": match.get("kind"),
+                "message": "this task cannot be completed until its required fields are recorded",
+                "fields": _missing})
+        if _invalid:
+            raise HTTPException(status_code=422, detail={
+                "error": "completion_fields_invalid", "kind": match.get("kind"),
+                "message": "this task cannot be completed until its fields are valid",
+                "fields": _invalid})
+        _final_fields = _finals
+    _fields_kw = {} if _final_fields is None else {"fields": _final_fields}
+
     # FULFILLMENT (document_empty_confirm, spec 208): the SAME writer as POST /ingest/{id}/empty. The
     # audience gate and the verb validation above have passed; `_decide_empty` closes the task.
     if match.get("kind") == EMPTY_CONFIRM_KIND:
@@ -7398,7 +7430,7 @@ async def act_on_human_task(
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
                 task_id, caller_id=actor, decision=req.decision,
-                comment=req.comment, workflow_id=match["workflow_id"],
+                comment=req.comment, workflow_id=match["workflow_id"], **_fields_kw,
             )
         )
     else:
@@ -7407,7 +7439,8 @@ async def act_on_human_task(
         # requires a workflow_id.)
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
-                task_id, caller_id=actor, decision=req.decision, comment=req.comment
+                task_id, caller_id=actor, decision=req.decision, comment=req.comment,
+                **_fields_kw
             )
         )
     logger.info("human_task acted: task_id=%s by=%s decision=%s rows=%d",
