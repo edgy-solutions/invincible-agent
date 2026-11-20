@@ -1,5 +1,9 @@
 # invincible-agent helm chart — changelog
 
+## Unreleased — after 0.4.91
+
+- **Electric can run as its own database role, reading only the tables the shapes policy names** (saf; step 3 of the sync-service exposure plan). New switch `electric.db.enabled`, **default off**: a bare render is unchanged. When on, a hook Job (as `postgres`, idempotent) creates `electric.db.role` with a password from the generated-and-kept Secret `<release>-electric-db`, grants `SELECT` on exactly the tables in `policy/electric_shapes.yaml` (the chart carries a byte-equal copy, `files/policy/electric_shapes.yaml`, read at render time: an empty list fails the render), makes the publication over them with `REPLICA IDENTITY FULL`, and can revoke `REPLICATION` from the main user (`electric.db.revokeReplicationFromMainUser`, off). The Electric pod then has no `envFrom` and no init container. **Roll blockers, unanswered:** step-0 item 2 (does 1.0.13 have a manual-publishing mode) and item 3 (what else relies on the main user's `REPLICATION`). Turning it on resets Electric's slot and publication, so clients refetch once. Not in the ruled 0.4.91 list; rides the release after unless ruled.
+
 ## 0.4.91 — not yet cut
 
 - **Electric answers only a request that carries its API secret, and the BFF proxy forwards an allow-list of parameters** (saf; step 1 of the sync-service exposure plan). `electric.insecure` now defaults `false`; Electric reads `ELECTRIC_SECRET` and the BFF reads `ELECTRIC_SHAPE_SECRET` from ONE Secret (`<release>-electric-api`, key `secret`, generated on first install and kept on upgrade by `lookup`; `electric.apiSecret.name` names a pre-made one instead), both by `secretKeyRef`, never a literal. `/electric/shape` forwards only the parameters in `_ELECTRIC_FORWARD_PARAMS` (what `@electric-sql/client` sends); `where`, `replica`, `secret`, `api_secret` and any unknown key are dropped, and the BFF's own `secret=` is added. Roll note: the BFF and Electric must roll together (the chart bump restarts both); between the two, a shape read answers 401/502. Not in the ruled 0.4.91 list; rides the release after unless ruled.
@@ -152,8 +156,6 @@
   registered: a find answers `ALREADY_FILED` (the post-filing note repairs the stored domain or
   logs, and never refuses), and a filing still fails closed with the same 503 and nothing registered.
   Behaviour change in the BFF only; no chart change.
-
-- **Electric can run as its own database role, reading only the tables the shapes policy names** (saf; step 3 of the sync-service exposure plan). New switch `electric.db.enabled`, **default off**: a bare render is unchanged. When on, a hook Job (as `postgres`, idempotent) creates `electric.db.role` with a password from the generated-and-kept Secret `<release>-electric-db`, grants `SELECT` on exactly the tables in `policy/electric_shapes.yaml` (the chart carries a byte-equal copy, `files/policy/electric_shapes.yaml`, read at render time: an empty list fails the render), makes the publication over them with `REPLICA IDENTITY FULL`, and can revoke `REPLICATION` from the main user (`electric.db.revokeReplicationFromMainUser`, off). The Electric pod then has no `envFrom` and no init container. **Roll blockers, unanswered:** step-0 item 2 (does 1.0.13 have a manual-publishing mode) and item 3 (what else relies on the main user's `REPLICATION`). Turning it on resets Electric's slot and publication, so clients refetch once. Not in the ruled 0.4.91 list; rides the release after unless ruled.
 
 ## 0.4.90 — 2026-11-18
 
