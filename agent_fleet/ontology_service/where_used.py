@@ -15,7 +15,7 @@ no row is withheld: deny by default.
 
 ABSENT IS NOT ZERO. `population` and `stock` have no source, so every row carries `None` for them
 and `data_provenance.absent` says why. The table cell is `null` on the wire (a typed value, never
-0, "" or a placeholder string), which is how cortex reads absence; the row text says "no source".
+0, "" or a placeholder string), which is how cortex reads absence; the served `absent_reason` says "no source".
 Every `None` inside `data_provenance.inputs` also gets an `absent` entry naming the input and
 the reason, so a missing label is stated rather than left to be read as "checked".
 
@@ -31,7 +31,7 @@ True`, `outcome: "refused"`, `reason`; `status: "refused"` stays for existing co
                                  the part is in is withheld from this caller, byte for byte, so the
                                  read is not an existence oracle.
   * `ambiguous_part`           - the text matches two identities.
-  * `unknown_configuration`    - the value is outside CONFIGURATIONS (the message lists them).
+  * `unknown_configuration`    - the value is outside CONFIGURATIONS (the `lists` field names them).
   * `configuration_not_available` - a visible end item the part is in lists no data for the asked
                                  configuration. Refused loudly, naming those end items: never an
                                  empty table and never a partial one.

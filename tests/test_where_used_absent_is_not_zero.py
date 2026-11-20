@@ -26,7 +26,10 @@ def test_THE_TABLE_CELL_IS_NULL_PRESENT_NEVER_ZERO_EMPTY_OR_A_PLACEHOLDER():
         for key in ("population", "stock"):
             assert key in r and r[key] is None, (key, r.get(key))
         assert isinstance(r["qty_per"], (int, float)) and r["qty_per"] > 0
-    assert all("no source" in line for line in got["message"].splitlines())
+    # The words a person reads for the absence are SERVED beside the table (`absent_reason`), not
+    # spliced into the message: since ruling 2d the message is one line and carries no rows.
+    assert len(got["message"].splitlines()) == 1
+    assert got["absent_reason"] == {"population": "no source", "stock": "no source"}
 
 
 def test_THE_PROVENANCE_NAMES_BOTH_ABSENCES_AND_EVERY_NONE_INPUT():
