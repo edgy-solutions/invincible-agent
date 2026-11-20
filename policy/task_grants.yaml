@@ -208,17 +208,18 @@ audiences:
     grant_to:
       - bob@example.com
 
-  # KNOWN GAP, DELIBERATELY NOT GRANTED — `sourcing` (dispatch_plan maps `dispatchAltSourcing`
-  # -> `sourcing`) is asserted in NEITHER git nor live Topaz. It is the same latent defect as
-  # `procurement` was, one disposition to the left: the first reviewer to choose alternate
-  # sourcing gets a dispatch that routes to NOBODY.
-  #
-  # Not granted here because WHO buys alternate sourcing is a policy ruling, and policy does not
-  # grow to pre-empt a demo path — the same posture that priced Carol rather than seeding her.
-  # What closed the gap structurally instead is `_probe_disposition_audiences.py`, which walks
-  # the WHOLE _DISPOSITION_QUEUE map and fails on any queue that resolves to zero actors. The
-  # probe converts this from a defect that waits for a reviewer into one that is visible now.
-  # Grant it when a ruling names the buyer.
+  # The gap this block used to record (`sourcing` granted to nobody) is CLOSED by the row below.
+  # validate_policy.disposition_audience_errors now fails validation on any disposition whose
+  # dispatch audience has no holder, so a future gap cannot wait for a reviewer to find it.
+  sourcing:
+    granted_by: seed
+    reason: >-
+      FIXTURE for the sandbox. dispatch_plan routes `dispatchAltSourcing` -> `sourcing`; on
+      approval the review fans out one sourcing task per affected part and these actors act it.
+      Ruled 2026-11-19 (architect, item 2b): "add a seed row so 'alternate sourcing' has holders
+      in the sample policy". Sandbox = bob; bind to the real buyer's employee-id at work.
+    grant_to:
+      - bob@example.com
 
   # ─────────────────────────────────────────────────────────────────────────────
   # ADR-0051 — SUSTAINMENT SAFETY. Risk acceptance, ONE AUDIENCE PER AUTHORITY LEVEL.
