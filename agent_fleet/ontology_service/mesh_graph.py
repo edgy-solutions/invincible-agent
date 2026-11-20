@@ -66,6 +66,7 @@ WITH start, collect(DISTINCT scope) AS scopes
 UNWIND scopes AS scope
 MATCH (scope)-[r]->(o:OntologyClass)
 WHERE r.iri IS NOT NULL
+  AND coalesce(r.endpoint_url, '') <> ''
 RETURN DISTINCT
     r.iri                         AS verb_iri,
     type(r)                       AS verb_local,
@@ -86,6 +87,7 @@ RETURN DISTINCT
 OPERABLE_SUBJECTS_CYPHER = """
 MATCH (s:OntologyClass)-[r]->()
 WHERE r.iri IS NOT NULL
+  AND coalesce(r.endpoint_url, '') <> ''
   AND ($domain IS NULL OR s.domain = $domain)
 RETURN DISTINCT s.uri AS uri, s.label AS label
 ORDER BY label
@@ -99,6 +101,7 @@ CLASSES_WITH_A_VERB_CYPHER = """
 MATCH (c:OntologyClass)-[:subClassOf*0..5]->(anc:OntologyClass)
 MATCH (anc)-[r]->(:OntologyClass)
 WHERE r.iri IS NOT NULL
+  AND coalesce(r.endpoint_url, '') <> ''
   AND (
     size($domains) = 0
     OR coalesce(r.domains, []) = []

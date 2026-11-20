@@ -2158,7 +2158,10 @@ def _predicate_hybrid_search_sync(
             # concept and the mesh arm never sees one, so sharing the unwrap would have made the
             # shared function take a driver object from one caller and a plain float from the other.
             # What both arms genuinely have in common is (properties, score) and nothing above it.
-            out.append(_predicate_row(query, obj.properties, score))
+            row = _predicate_row(query, obj.properties, score)
+            # A renderer (a `mesh:rendersAs` row) has no endpoint and is not a routable verb.
+            if row["endpoint"]:
+                out.append(row)
         return _predicate_ranked(out)
     except Exception as e:
         # RULED 2026-09-14, same rule as the OntologyClass search above.
@@ -2286,7 +2289,12 @@ def _predicate_pool_via_mesh_sync(
         )
 
     return _predicate_ranked(
-        [_predicate_row(query, r, r.get("score")) for r in (result.rows or ())]
+        [
+            row
+            for row in (_predicate_row(query, r, r.get("score")) for r in (result.rows or ()))
+            # A renderer has no endpoint and is not a routable verb.
+            if row["endpoint"]
+        ]
     )
 
 
@@ -3176,6 +3184,7 @@ _SERVED_CLASSES_CYPHER = """
 MATCH (c:OntologyClass)-[:subClassOf*0..5]->(anc:OntologyClass)
 MATCH (anc)-[r]->(:OntologyClass)
 WHERE r.iri IS NOT NULL
+  AND coalesce(r.endpoint_url, '') <> ''
   AND (
     size($domains) = 0
     OR coalesce(r.domains, []) = []
@@ -5817,6 +5826,7 @@ class OperableSubjectsResponse(BaseModel):
 _OPERABLE_SUBJECTS_CYPHER = """
 MATCH (s:OntologyClass)-[r]->()
 WHERE r.iri IS NOT NULL
+  AND coalesce(r.endpoint_url, '') <> ''
   AND ($domain IS NULL OR s.domain = $domain)
 RETURN DISTINCT s.uri AS uri, s.label AS label
 ORDER BY label
@@ -6544,6 +6554,7 @@ WITH start, collect(DISTINCT scope) AS scopes
 UNWIND scopes AS scope
 MATCH (scope)-[r]->(o:OntologyClass)
 WHERE r.iri IS NOT NULL
+  AND coalesce(r.endpoint_url, '') <> ''
 RETURN DISTINCT
     r.iri                         AS verb_iri,
     type(r)                       AS verb_local,
@@ -6607,6 +6618,7 @@ MATCH (vsubj)-[r]->(o:OntologyClass)
 // "without _tool_urn in the match-key, N providers offering the same predicate collapse
 // into one edge with last-write-wins".
 WHERE r.iri = p.verb_iri AND r._tool_urn = p._tool_urn
+  AND coalesce(r.endpoint_url, '') <> ''
 RETURN DISTINCT
     r.iri                         AS verb_iri,
     type(r)                       AS verb_local,
@@ -6666,6 +6678,7 @@ WHERE coalesce(p.required, false) = true
 // arithmetic applies here.
 MATCH (vsubj)-[r]->(o:OntologyClass)
 WHERE r.iri = p.verb_iri AND r._tool_urn = p._tool_urn
+  AND coalesce(r.endpoint_url, '') <> ''
 RETURN DISTINCT
     r.iri                         AS verb_iri,
     type(r)                       AS verb_local,
