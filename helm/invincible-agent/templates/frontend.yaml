@@ -63,6 +63,8 @@ spec:
 ---
 {{- if .Values.cortexBff.enabled }}
 {{- $ov := include "invincible-agent.policyOverlayActive" (dict "root" . "component" "cortex-bff") }}
+{{- /* The fleet-wide `tlsTrust` serves the BFF only when its own block is empty; never both. */ -}}
+{{- $fleetTrust := and (not .Values.cortexBff.tlsTrust.secretName) .Values.tlsTrust.secretName }}
 {{- $bffAuthGuard := (.Values.cortexBff.auth | default dict) }}
 {{- if and $bffAuthGuard.realmAudience (not (has $bffAuthGuard.realmAudience ($bffAuthGuard.acceptedAudiences | default list))) }}
 {{- fail (printf "cortexBff.auth.realmAudience (%q) must be one of cortexBff.auth.acceptedAudiences, or the realm stamps an audience the BFF refuses" $bffAuthGuard.realmAudience) }}
@@ -94,7 +96,7 @@ spec:
       initContainers:
         {{- include "invincible-agent.policyOverlayInit" (dict "root" . "component" "cortex-bff") | nindent 8 }}
       {{- end }}
-      {{- if or .Values.cortexBff.tlsTrust.secretName $ov }}
+      {{- if or .Values.cortexBff.tlsTrust.secretName $fleetTrust $ov }}
       volumes:
       {{- if .Values.cortexBff.tlsTrust.secretName }}
       # Cluster-specific TLS trust override — mount a combined PEM
@@ -110,6 +112,9 @@ spec:
             items:
               - key: {{ .Values.cortexBff.tlsTrust.secretKey | quote }}
                 path: ca.pem
+      {{- end }}
+      {{- if $fleetTrust }}
+        {{- include "iagent.tlsTrust.volume" . | nindent 8 }}
       {{- end }}
       {{- if $ov }}
         {{- include "invincible-agent.policyOverlayVolumes" (dict "root" . "component" "cortex-bff") | nindent 8 }}
@@ -166,6 +171,9 @@ spec:
             - name: REQUESTS_CA_BUNDLE
               value: {{ .Values.cortexBff.tlsTrust.mountPath | quote }}
             {{- end }}
+            {{- if $fleetTrust }}
+            {{- include "iagent.tlsTrust.env" . | nindent 12 }}
+            {{- end }}
             {{- if .Values.cortexBff.env }}
             {{- range $k, $v := .Values.cortexBff.env }}
             - name: {{ $k }}
@@ -184,13 +192,16 @@ spec:
             # cannot disagree with what the init container delivered.
             {{- include "invincible-agent.policyOverlayEnv" (dict "root" . "component" "cortex-bff") | nindent 12 }}
             {{- end }}
-          {{- if or .Values.cortexBff.tlsTrust.secretName $ov }}
+          {{- if or .Values.cortexBff.tlsTrust.secretName $fleetTrust $ov }}
           volumeMounts:
           {{- if .Values.cortexBff.tlsTrust.secretName }}
             - name: work-ca-bundle
               mountPath: {{ .Values.cortexBff.tlsTrust.mountPath | quote }}
               subPath: ca.pem
               readOnly: true
+          {{- end }}
+          {{- if $fleetTrust }}
+            {{- include "iagent.tlsTrust.volumeMount" . | nindent 12 }}
           {{- end }}
           {{- if $ov }}
             {{- include "invincible-agent.policyOverlayMounts" (dict "root" . "component" "cortex-bff") | nindent 12 }}

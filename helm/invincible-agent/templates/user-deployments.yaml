@@ -116,6 +116,9 @@ spec:
           # gets back as a success. Mirror of what the central
           # ``dagster-user-code.yaml`` template wires in.
           env:
+            {{- if $.Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.env" $ | nindent 12 }}
+            {{- end }}
             - name: DAGSTER_POSTGRES_HOST
               value: {{ include "invincible-agent.pgHost" $ | quote }}
             - name: DAGSTER_POSTGRES_PORT
@@ -169,17 +172,27 @@ spec:
             {{- end }}
           resources:
             {{- toYaml (default (dict "requests" (dict "cpu" "100m" "memory" "256Mi") "limits" (dict "cpu" "500m" "memory" "1Gi")) $deploy.codeLocation.resources) | nindent 12 }}
-          {{- if and $deploy.grist $deploy.grist.enabled }}
+          {{- if or (and $deploy.grist $deploy.grist.enabled) $.Values.tlsTrust.secretName }}
           volumeMounts:
+          {{- if $.Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.volumeMount" $ | nindent 12 }}
+          {{- end }}
+          {{- if and $deploy.grist $deploy.grist.enabled }}
             - name: grist-config
               mountPath: /etc/dag-tools/grist
               readOnly: true
           {{- end }}
-      {{- if and $deploy.grist $deploy.grist.enabled }}
+          {{- end }}
+      {{- if or (and $deploy.grist $deploy.grist.enabled) $.Values.tlsTrust.secretName }}
       volumes:
+        {{- if and $deploy.grist $deploy.grist.enabled }}
         - name: grist-config
           configMap:
             name: {{ $fullName }}-grist
+        {{- end }}
+        {{- if $.Values.tlsTrust.secretName }}
+        {{- include "iagent.tlsTrust.volume" $ | nindent 8 }}
+        {{- end }}
       {{- end }}
 ---
 apiVersion: v1
@@ -240,6 +253,9 @@ spec:
             - "--bind"
             - "0.0.0.0:{{ $brokerPort }}"
           env:
+            {{- if $.Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.env" $ | nindent 12 }}
+            {{- end }}
             - name: DAGSTER_DEFS_MODULE
               value: {{ printf "%s:defs" $deploy.dagsterModule | quote }}
             - name: CENTRAL_GATEWAY_URL
@@ -273,6 +289,12 @@ spec:
             failureThreshold: 5
           resources:
             {{- toYaml (default (dict "requests" (dict "cpu" "100m" "memory" "1Gi") "limits" (dict "cpu" "1000m" "memory" "2Gi")) $deploy.broker.resources) | nindent 12 }}
+          {{- if $.Values.tlsTrust.secretName }}
+          volumeMounts:
+            {{- include "iagent.tlsTrust.volumeMount" $ | nindent 12 }}
+      volumes:
+        {{- include "iagent.tlsTrust.volume" $ | nindent 8 }}
+          {{- end }}
 ---
 apiVersion: v1
 kind: Service

@@ -64,10 +64,16 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: BPMN_POSTGRES_PASSWORD
+            {{- if .Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.env" . | nindent 12 }}
+            {{- end }}
           volumeMounts:
             - name: dagster-instance
               mountPath: /opt/dagster/dagster_home/dagster.yaml
               subPath: dagster.yaml
+            {{- if .Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.volumeMount" . | nindent 12 }}
+            {{- end }}
           resources:
             {{- toYaml .Values.dagster.userCode.resources | nindent 12 }}
           # Probe timings have to accommodate the dagster CLI cold-start
@@ -98,6 +104,9 @@ spec:
         - name: dagster-instance
           configMap:
             name: {{ .Release.Name }}-dagster-home
+        {{- if .Values.tlsTrust.secretName }}
+        {{- include "iagent.tlsTrust.volume" . | nindent 8 }}
+        {{- end }}
 ---
 # User Code Service (gRPC)
 apiVersion: v1

@@ -87,6 +87,9 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
+            {{- if .Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.env" . | nindent 12 }}
+            {{- end }}
             - name: NEO4J_USER
               valueFrom:
                 configMapKeyRef:
@@ -163,6 +166,10 @@ spec:
                       raise RuntimeError("Neo4j never accepted configured password")
 
               print("[OK] all prerequisites ready", flush=True)
+          {{- if .Values.tlsTrust.secretName }}
+          volumeMounts:
+            {{- include "iagent.tlsTrust.volumeMount" . | nindent 12 }}
+          {{- end }}
       containers:
         - name: prime-substrate
           image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "registry" .Values.primeSubstrate.image.registry "repository" .Values.primeSubstrate.image.repository "tag" .Values.primeSubstrate.image.tag "root" .) }}
@@ -230,6 +237,9 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
+            {{- if .Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.env" . | nindent 12 }}
+            {{- end }}
             # ------------------------------------------------------------
             # Env-var name bridges. The chart's ConfigMap publishes some
             # values under names the script doesn't read by default;
@@ -382,21 +392,31 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
-          {{- if .Values.primeSubstrate.caBundle.enabled }}
+          {{- if or .Values.primeSubstrate.caBundle.enabled .Values.tlsTrust.secretName }}
           volumeMounts:
+          {{- if .Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.volumeMount" . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.primeSubstrate.caBundle.enabled }}
             - name: ca-bundle
               mountPath: {{ .Values.primeSubstrate.caBundle.mountPath }}
               readOnly: true
           {{- end }}
+          {{- end }}
           resources:
             {{- toYaml .Values.primeSubstrate.resources | nindent 12 }}
-      {{- if .Values.primeSubstrate.caBundle.enabled }}
+      {{- if or .Values.primeSubstrate.caBundle.enabled .Values.tlsTrust.secretName }}
       volumes:
+        {{- if .Values.primeSubstrate.caBundle.enabled }}
         - name: ca-bundle
           secret:
             secretName: {{ .Values.primeSubstrate.caBundle.existingSecret }}
             items:
               - key: {{ .Values.primeSubstrate.caBundle.secretKey }}
                 path: {{ .Values.primeSubstrate.caBundle.secretKey }}
+        {{- end }}
+        {{- if .Values.tlsTrust.secretName }}
+        {{- include "iagent.tlsTrust.volume" . | nindent 8 }}
+        {{- end }}
       {{- end }}
 {{- end }}

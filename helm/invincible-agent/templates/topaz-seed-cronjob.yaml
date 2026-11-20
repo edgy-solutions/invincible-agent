@@ -181,6 +181,9 @@ spec:
               image: {{ $seedImg }}
               imagePullPolicy: {{ .Values.topazSeed.imagePullPolicy }}
               env:
+                {{- if .Values.tlsTrust.secretName }}
+                {{- include "iagent.tlsTrust.env" . | nindent 16 }}
+                {{- end }}
                 - name: TOPAZ_DIRECTORY_URL
                   value: {{ .Values.topazSeed.topazDirectoryUrl | quote }}
                 - name: DATAHUB_GMS_URL
@@ -328,8 +331,11 @@ spec:
                     exit "$GRANT_SYNC_RC"
                   fi
                   echo "===== SEED COMPLETE — six syncs applied + readbacks passed ====="
-              {{- if or (ne $mode "image") .Values.topazSeed.loadManifest }}
+              {{- if or (ne $mode "image") .Values.topazSeed.loadManifest .Values.tlsTrust.secretName }}
               volumeMounts:
+                {{- if .Values.tlsTrust.secretName }}
+                {{- include "iagent.tlsTrust.volumeMount" . | nindent 16 }}
+                {{- end }}
                 {{- if eq $mode "git" }}
                 - name: overlay-src
                   mountPath: /overlay-src
@@ -350,7 +356,7 @@ spec:
                   readOnly: true
                 {{- end }}
               {{- end }}
-          {{- if or (ne $mode "image") .Values.topazSeed.loadManifest }}
+          {{- if or (ne $mode "image") .Values.topazSeed.loadManifest .Values.tlsTrust.secretName }}
           volumes:
             {{- if eq $mode "git" }}
             - name: overlay-src
@@ -380,6 +386,9 @@ spec:
                 items:
                   - key: manifest.yaml
                     path: manifest.yaml
+            {{- end }}
+            {{- if .Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.volume" . | nindent 12 }}
             {{- end }}
           {{- end }}
 {{- end }}

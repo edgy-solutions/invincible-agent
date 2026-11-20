@@ -47,6 +47,9 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
+            {{- if .Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.env" . | nindent 12 }}
+            {{- end }}
             # A1 (2026-09-30): whom the registrar's graph writes are on behalf of. Derived from
             # the declared non-interactive user, never typed twice.
             {{- $owner := required "meshRegistrar.onBehalfOfUser is required: the registrar refuses every graph write without a named owner (A1)" .Values.meshRegistrar.onBehalfOfUser }}
@@ -138,6 +141,14 @@ spec:
             failureThreshold: 5
           resources:
             {{- toYaml .Values.meshRegistrar.resources | nindent 12 }}
+          {{- if .Values.tlsTrust.secretName }}
+          volumeMounts:
+            {{- include "iagent.tlsTrust.volumeMount" . | nindent 12 }}
+          {{- end }}
+      {{- if .Values.tlsTrust.secretName }}
+      volumes:
+        {{- include "iagent.tlsTrust.volume" . | nindent 8 }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

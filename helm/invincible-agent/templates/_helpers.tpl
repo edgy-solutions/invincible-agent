@@ -983,3 +983,41 @@ Keycloak already, and the reconcile must land BEFORE any workload changes (pre-u
 {{- define "invincible-agent.realmReconcileHookPhase" -}}
 {{- if .Release.IsInstall }}post-install{{- else }}pre-upgrade{{- end }}
 {{- end }}
+
+{{/*
+  Fleet CA trust (top-level `tlsTrust`). Three helpers, each takes the ROOT context and renders
+  NOTHING while `.Values.tlsTrust.secretName` is empty, so a default render is byte-identical.
+  Callers indent with nindent and wrap the list key in their own `if .Values.tlsTrust.secretName`.
+    iagent.tlsTrust.volume       a list item for `volumes:`
+    iagent.tlsTrust.volumeMount  a list item for a container's `volumeMounts:`
+    iagent.tlsTrust.env          two list items for a container's `env:`
+  The PEM must be a COMBINED bundle: SSL_CERT_FILE REPLACES the store (values.yaml `tlsTrust`).
+*/}}
+{{- define "iagent.tlsTrust.volume" -}}
+{{- if .Values.tlsTrust.secretName -}}
+- name: fleet-ca-bundle
+  secret:
+    secretName: {{ .Values.tlsTrust.secretName | quote }}
+    items:
+      - key: {{ .Values.tlsTrust.secretKey | quote }}
+        path: ca.pem
+{{- end -}}
+{{- end -}}
+
+{{- define "iagent.tlsTrust.volumeMount" -}}
+{{- if .Values.tlsTrust.secretName -}}
+- name: fleet-ca-bundle
+  mountPath: {{ .Values.tlsTrust.mountPath | quote }}
+  subPath: ca.pem
+  readOnly: true
+{{- end -}}
+{{- end -}}
+
+{{- define "iagent.tlsTrust.env" -}}
+{{- if .Values.tlsTrust.secretName -}}
+- name: SSL_CERT_FILE
+  value: {{ .Values.tlsTrust.mountPath | quote }}
+- name: REQUESTS_CA_BUNDLE
+  value: {{ .Values.tlsTrust.mountPath | quote }}
+{{- end -}}
+{{- end -}}

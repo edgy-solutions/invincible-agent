@@ -62,6 +62,9 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
+            {{- if .Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.env" . | nindent 12 }}
+            {{- end }}
             - name: PROJECTOR_PORT
               value: {{ .Values.projector.port | quote }}
             - name: PROJECTOR_HOST
@@ -120,6 +123,14 @@ spec:
             # The projector's apply loop can be mid-batch when the kubelet knocks.
             timeoutSeconds: 5
             failureThreshold: 5
+          {{- if .Values.tlsTrust.secretName }}
+          volumeMounts:
+            {{- include "iagent.tlsTrust.volumeMount" . | nindent 12 }}
+          {{- end }}
+      {{- if .Values.tlsTrust.secretName }}
+      volumes:
+        {{- include "iagent.tlsTrust.volume" . | nindent 8 }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

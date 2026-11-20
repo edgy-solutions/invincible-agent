@@ -71,7 +71,7 @@ spec:
       initContainers:
         {{- include "invincible-agent.policyOverlayInit" (dict "root" $ "component" .component) | nindent 8 }}
       {{- end }}
-      {{- if or $ov $isO }}
+      {{- if or $ov $isO $.Values.tlsTrust.secretName }}
       volumes:
         {{- if $ov }}
         {{- include "invincible-agent.policyOverlayVolumes" (dict "root" $ "component" .component) | nindent 8 }}
@@ -80,6 +80,9 @@ spec:
         - name: engine-o-delegates
           configMap:
             name: {{ $.Release.Name }}-engine-o-delegates
+        {{- end }}
+        {{- if $.Values.tlsTrust.secretName }}
+        {{- include "iagent.tlsTrust.volume" $ | nindent 8 }}
         {{- end }}
       {{- end }}
       containers:
@@ -102,6 +105,9 @@ spec:
             - secretRef:
                 name: {{ $.Release.Name }}-secrets
           env:
+            {{- if $.Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.env" $ | nindent 12 }}
+            {{- end }}
             {{- range $k, $v := $eng.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
@@ -129,8 +135,11 @@ spec:
             # The gateway's own token lists (dag-tools v0.14.0+): the BFF's, rendered after everything.
             {{- include "invincible-agent.gatewayTokenEnv" $ | nindent 12 }}
             {{- end }}
-          {{- if or $ov $isO }}
+          {{- if or $ov $isO $.Values.tlsTrust.secretName }}
           volumeMounts:
+            {{- if $.Values.tlsTrust.secretName }}
+            {{- include "iagent.tlsTrust.volumeMount" $ | nindent 12 }}
+            {{- end }}
             {{- if $ov }}
             {{- include "invincible-agent.policyOverlayMounts" (dict "root" $ "component" .component) | nindent 12 }}
             {{- end }}

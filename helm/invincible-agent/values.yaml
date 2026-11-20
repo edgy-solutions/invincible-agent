@@ -1883,6 +1883,24 @@ cortexUi:
             pathType: ImplementationSpecific
     tls: []
 
+# Fleet-wide TLS trust for a private CA. Every pod that runs this repo's Python images or a
+# dag-tools image (engines, central gateway, registrar, broker, projector, Dagster, user code,
+# the seed/prime/sync jobs) mounts the PEM from the named Secret and sets SSL_CERT_FILE and
+# REQUESTS_CA_BUNDLE to it, so token verification and token minting can reach a private-CA issuer.
+# Third-party images (keycloak, restate, topaz, electric, litellm, mc, postgres, curl, git) are not touched.
+#
+# **CRITICAL** -- the Secret must contain a COMBINED bundle (system roots + the private CA):
+#     cat /etc/ssl/certs/ca-certificates.crt corporate-ca.pem > combined.pem
+# SSL_CERT_FILE REPLACES the default store rather than appending to it; a PEM holding only the
+# private CA breaks every public-CA HTTPS call from these pods.
+#
+# Empty ``secretName`` (the default): nothing renders, behaviour unchanged. ``cortexBff.tlsTrust``
+# still wins for the BFF when it is set; the BFF never mounts both.
+tlsTrust:
+  secretName: ""      # Secret containing the combined PEM bundle.
+  secretKey: "ca.pem" # Key within the Secret.
+  mountPath: "/etc/ssl/work-ca-bundle.pem"
+
 cortexBff:
   enabled: true
   # SINGLE REPLICA IS LOAD-BEARING, not a sizing default.

@@ -1,5 +1,14 @@
 # invincible-agent helm chart — changelog
 
+## Unreleased — after 0.4.91
+
+- A top-level `tlsTrust` (`secretName`, `secretKey`, `mountPath`) gives every Python and dag-tools pod a
+  CA bundle: the Secret's PEM is mounted and `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` point at it, so token
+  verification and token minting can reach a private-CA issuer from values alone. Covers the engines, the central
+  gateway, registrar, broker, projector, Dagster, user code and the seed/prime/sync jobs; third-party images are
+  untouched. The BFF's own `cortexBff.tlsTrust` still wins (the BFF never mounts both). The PEM must be a COMBINED
+  bundle, since `SSL_CERT_FILE` replaces the store. Default empty means no change: the default render is identical.
+
 ## 0.4.91 — not yet cut
 
 - **The person-guard census declares its one identity comparison** (saf; master was red since #414). `grant_flow.backfill_ledger` compares the repository identity's `Auth-Via` header with `"service"`; it is not an Initiator kind and is already allowlist-shaped. The matcher stays broad (a copy written as `initiator.role == "service"` is still caught); the row is declared by (path, function) with a count and a reason, checked both ways. Test only.
