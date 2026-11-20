@@ -274,6 +274,10 @@ NOT_POLICY: dict[str, str] = {
     f"{FIN}::mesh_ticketed_read::a governed finance read requires the caller's id": AUTHN,
     "agent_fleet/graph_host/main.py::run_graph::{} runs as the INITIATOR and this request carrie": AUTHN,
     f"{GRW}::submit_decision::submit_decision requires `acted_by` (the caller'": AUTHN,
+    # lane/74 (item 2c, ruled 2026-11-19): one open review per notice
+    f"{GRW}::supersede::supersede requires `acted_by` — an end with no a": AUTHN,
+    f"{GRW}::supersede::not_the_same_artifact: this review was not start": CONFLICT,
+    f"{GW}::act_on_human_task::review_superseded | <?>": CONFLICT,
     f"{RA}::_authorize_resolution::approve requires `acted_by` (the caller's authz_": AUTHN,
     f"{RA}::approve_task::identity_required | approving a task requires a veri": AUTHN,
     f"{SPO}::execute_direct_call::direct_call {{}}: no acting identity for capabilit": AUTHN,

@@ -230,7 +230,13 @@ def _mint_dispatch_task(task: dict) -> dict:
         #
         # Rides in `payload` (a pass-through jsonb) rather than as a new column: additive, no
         # migration, and nothing existing changes shape.
-        "payload": {**(task.get("payload") or {}), "approved_by": task.get("acted_by") or ""},
+        "payload": {
+            **(task.get("payload") or {}), "approved_by": task.get("acted_by") or "",
+            # lane/74 (item 2c, ruled 2026-11-19): the artifact's location, ONLY when the task names
+            # one (a grouped review's task does; a dispatch task does not), so a newer review of the
+            # same artifact can find this row's open review.
+            **({"artifact_uri": task["artifact_uri"]} if task.get("artifact_uri") else {}),
+        },
     }
     # MINT AT USE — fresh service-identity token, never a stored one. A ServiceTokenError propagates
     # (retryable): a Keycloak blip is transient INFRA, not an authorization denial, so it must NOT

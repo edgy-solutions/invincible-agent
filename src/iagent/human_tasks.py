@@ -679,6 +679,29 @@ def supersede_open_task(task_id: str, superseded_by: Optional[str] = None) -> in
     return n
 
 
+def pending_reviews_for_artifact(kind: str, artifact_uri: str, *, excluding_task_id: str) -> list[dict]:
+    """The logical tasks of `kind` still `pending` whose payload names the same `artifact_uri`
+    (lane/74 item 2c, ruled 2026-11-19: one open review per notice), as `{task_id, workflow_id}`.
+
+    "The same notice" is the artifact's LOCATION, never `notice_id` (LLM-derived, collides when
+    extraction degrades). An empty `artifact_uri` returns `[]` without querying. DISTINCT on
+    `task_id`: a task has one row per recipient. A row registered before the payload carried
+    `artifact_uri` is never matched. Parameterised; read-only."""
+    if not (artifact_uri or "").strip():
+        return []
+    sql = """SELECT DISTINCT ON (task_id) task_id, workflow_id
+               FROM human_task_projection
+              WHERE kind = %s AND status = 'pending'
+                AND payload->>'artifact_uri' = %s
+                AND task_id <> %s
+              ORDER BY task_id"""
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (kind, artifact_uri, excluding_task_id))
+            rows = cur.fetchall()
+    return [{"task_id": r[0], "workflow_id": r[1]} for r in rows]
+
+
 def expire_open_task(task_id: str, workflow_id: "str | None") -> int:
     """Mark the `pending` rows of a task whose await TIMED OUT `timed_out` (`updated_at` set);
     returns the rowcount. Touches only `pending` rows -- a resolved row keeps its resolution. When

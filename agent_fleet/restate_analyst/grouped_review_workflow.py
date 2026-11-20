@@ -35,6 +35,11 @@ import restate
 from restate import Workflow, WorkflowContext, WorkflowSharedContext
 
 
+#: lane/74 (item 2c, ruled 2026-11-19). The ONE reserved key under which `supersede` resolves the
+#: decision promise; `submit_decision` refuses any reviewer decision that carries it.
+SUPERSEDED_KEY = "__superseded__"
+
+
 def _gate_helpers():
     """The authority gate's two collaborators, from the leaf module that owns them.
     Dual-path because the import root differs between the Restate service and the test
@@ -266,6 +271,8 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
         "dispatch_enqueued": grouped.get("dispatch_enqueued", grouped["count"]),
         # steward-correction: a REJECTED review's record (code, comment, actor); absent otherwise.
         **({"decision_record": grouped["decision_record"]} if grouped.get("decision_record") else {}),
+        # lane/74 (item 2c): a SUPERSEDED review names the review that replaced it.
+        **({"superseded_by": grouped["superseded_by"]} if grouped.get("superseded_by") else {}),
     }
 
 
@@ -321,8 +328,21 @@ async def submit_decision(ctx: WorkflowSharedContext, request: dict) -> dict:
     # cortex-bff maps it to 409 and joins the projection's acted_by/acted_at so the
     # reviewer is told WHO settled it (state here stays a deterministic boolean).
     if await ctx.get("decision_consumed"):
+        # lane/74 (item 2c, ruled 2026-11-19): a review ended by a newer review of the same artifact
+        # says so, rather than reading as a teammate's decision. Read in a SHARED handler, so replay-safe.
+        _sup_by = await ctx.get("superseded_by")
+        if _sup_by:
+            return {"status": "superseded", "accepted": False,
+                    "reason": "this review was superseded by a newer review of the same artifact",
+                    "superseded_by": _sup_by}
         return {"status": "already_resolved", "accepted": False,
                 "reason": "this review was already resolved by a member of its audience"}
+    # lane/74 (item 2c, ruled 2026-11-19): FORGERY GUARD. `supersede` ends a review by resolving the
+    # decision promise under this one reserved key; a reviewer's decision may never carry it, or it
+    # would be read after the wake as a supersession (no dispatch, no actor check).
+    _decision_in = request.get("decision", {})
+    if isinstance(_decision_in, dict) and SUPERSEDED_KEY in _decision_in:
+        return {"status": "still_pending", "accepted": False, "reason": "reserved_key"}
     approver = await ctx.get("approver")
     notice_fingerprint = await ctx.get("notice_fingerprint")
     ingest_id = await ctx.get("ingest_id") or ""
@@ -337,6 +357,41 @@ async def submit_decision(ctx: WorkflowSharedContext, request: dict) -> dict:
     return {"status": "accepted", "accepted": True, "resolved_count": len(submission.resolutions),
             "rejected": submission.rejected, "reason_code": submission.reason_code,
             "notice_fingerprint": notice_fingerprint, "ingest_id": ingest_id}
+
+
+@grouped_review.handler()
+async def supersede(ctx: WorkflowSharedContext, request: dict) -> dict:
+    """End this review because a NEWER review of the SAME artifact has started (lane/74 item 2c,
+    architect ruling 2026-11-19: "One open review per notice: a newer review supersedes an older
+    pending one, which is cancelled and recorded as superseded").
+
+    ``request`` is ``{superseded_by, acted_by, artifact_uri}``. "The same notice" means the same
+    artifact LOCATION, never ``notice_id`` (LLM-derived; it collides when extraction degrades), so a
+    caller must name the artifact this review was started from. A decided review is never superseded.
+    Resolves the ``decision`` promise under the one reserved key; the run, on waking, returns
+    SUPERSEDED without dispatching."""
+    batch_items = await ctx.get("batch_items")
+    if batch_items is None:
+        raise restate.TerminalError("no active grouped review for this workflow", status_code=404)
+    acted_by = (request.get("acted_by") or "").strip()
+    if not acted_by:
+        raise restate.TerminalError(
+            "supersede requires `acted_by` — an end with no actor is unauditable", status_code=401)
+    superseded_by = (request.get("superseded_by") or "").strip()
+    if not superseded_by or superseded_by == ctx.key():
+        raise restate.TerminalError(
+            "supersede requires `superseded_by`, naming a DIFFERENT review", status_code=422)
+    held = (await ctx.get("artifact_uri")) or ""
+    named = (request.get("artifact_uri") or "").strip()
+    if not held or held != named:
+        raise restate.TerminalError(
+            "not_the_same_artifact: this review was not started from the artifact named",
+            status_code=409)
+    if await ctx.get("decision_consumed"):
+        return {"status": "already_resolved", "superseded": False}
+    await ctx.promise("decision", type_hint=dict).resolve({SUPERSEDED_KEY: {
+        "superseded_by": superseded_by, "acted_by": acted_by, "kind": "superseded"}})
+    return {"status": "superseded", "superseded": True}
 
 
 @grouped_review.handler()

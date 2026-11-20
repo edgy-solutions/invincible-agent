@@ -1295,6 +1295,9 @@ class HumanTaskRegisterRequest(_BaseModel):
 #: The grouped review's reject codes ARE the promotion's (architect ruling 2026-10-19: "the
 #: four-code ruling applies to every reject surface"), in `PROMOTION_REJECT_CODES`'s order --
 #: cortex's parity seal reads this literal and the Literal below, in order.
+#: The grouped review's task `kind` (lane/74 item 2c). The workflow registers its task under this
+#: name (`_run_grouped_human_await`); the other gateway sites compare the same literal inline.
+_GROUPED_REVIEW_KIND = "grouped_review"
 _GROUPED_REJECT_CODES = ("not_a_notice", "unreadable", "parts_unusable", "duplicate")
 #: The pre-ruling names (`parts_list_unusable`, `superseded_or_duplicate`) were aliased onto these
 #: for the transition and are REFUSED since 199 (architect 2026-10-20: "drop the reject-code
@@ -2513,7 +2516,54 @@ async def _start_review_core(req: "ReviewStartRequest", *, current_user: "User",
         out["reissue"] = {"superseded_workflow_id": _reissue_of,
                           "superseded_task_id": "grouped:" + _reissue_of,
                           "rows_superseded": _n}
+    if out.get("status") == "STARTED" and (req.artifact_uri or "").strip():
+        out["superseded"] = await _supersede_older_reviews(
+            req.artifact_uri, new_id=out.get("workflow_id") or "",
+            actor=current_user.authz_id)
     return out
+
+
+async def _supersede_older_reviews(artifact_uri: str, *, new_id: str, actor: str) -> list[dict]:
+    """lane/74 (item 2c, ruled 2026-11-19): one open review per notice. A newer review supersedes
+    every older PENDING review of the same artifact LOCATION (never `notice_id`): the older run is
+    ended through its `supersede` handler and its rows recorded `superseded`. A failure here never
+    fails the start, which succeeded: the rows are still marked (`ended: False`) and one line names
+    the workflow and the error CLASS, never a body."""
+    from starlette.concurrency import run_in_threadpool
+
+    from . import human_tasks
+
+    try:
+        older = await run_in_threadpool(lambda: human_tasks.pending_reviews_for_artifact(
+            _GROUPED_REVIEW_KIND, artifact_uri, excluding_task_id="grouped:" + new_id))
+    except Exception as exc:  # noqa: BLE001 -- the start succeeded; a failed lookup supersedes nothing
+        logger.warning("review supersede lookup failed: new=%s class=%s", new_id, type(exc).__name__)
+        return []
+    done: list[dict] = []
+    for o in older:
+        old_task, old_wf = o["task_id"], o.get("workflow_id") or ""
+        ended = False
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                rr = await client.post(
+                    f"{_RESTATE_INGRESS_URL}/GroupedReview/{_restate_key(old_wf)}/supersede",
+                    json={"superseded_by": new_id, "acted_by": actor, "artifact_uri": artifact_uri})
+            if rr.status_code != 200:
+                raise RuntimeError(f"supersede answered {rr.status_code}")
+            ended = rr.json().get("status") == "superseded"
+        except Exception as exc:  # noqa: BLE001 -- ruling still holds: record it superseded
+            logger.warning("review supersede call failed: workflow=%s class=%s",
+                           old_wf, type(exc).__name__)
+        try:
+            n = await run_in_threadpool(lambda t=old_task: human_tasks.supersede_open_task(
+                t, superseded_by=new_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("review supersede row mark failed: workflow=%s class=%s",
+                           old_wf, type(exc).__name__)
+            n = 0
+        done.append({"workflow_id": old_wf, "task_id": old_task, "ended": ended,
+                     "rows_superseded": n})
+    return done
 
 
 async def _start_declared_review(subject, *, done: dict, applied_by: Optional[str],
@@ -7202,6 +7252,15 @@ async def act_on_human_task(
                 "acted_by": settled.get("acted_by"),
                 "acted_at": settled.get("acted_at"),
                 "message": "This review was already resolved by a member of its audience.",
+            })
+        if sub.get("status") == "superseded":
+            # lane/74 (item 2c, ruled 2026-11-19): the review was ended by a newer review of the same
+            # artifact. A conflict, like the already-resolved race, not a hollow success.
+            raise HTTPException(status_code=409, detail={
+                "error": "review_superseded",
+                "task_id": task_id,
+                "superseded_by": sub.get("superseded_by"),
+                "message": sub.get("reason") or "This review was superseded by a newer review.",
             })
         if not sub.get("accepted"):
             # POLICY refusal — the review stays PENDING (projection NOT marked). Surface the reason.

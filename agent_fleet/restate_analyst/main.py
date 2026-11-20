@@ -2120,12 +2120,12 @@ async def _run_grouped_human_await(
     """
     try:  # same lazy-import dance as _run_definition
         from grouped_review_workflow import (  # type: ignore[no-redef]
-            _reviewbatch_from_state, evaluate_submission,
+            _reviewbatch_from_state, evaluate_submission, SUPERSEDED_KEY,
         )
         from dispatch_driver import _mint_dispatch_task, fan_out_dispatch  # type: ignore[no-redef]
     except ImportError:
         from agent_fleet.restate_analyst.grouped_review_workflow import (
-            _reviewbatch_from_state, evaluate_submission,
+            _reviewbatch_from_state, evaluate_submission, SUPERSEDED_KEY,
         )
         from agent_fleet.restate_analyst.dispatch_driver import (
             _mint_dispatch_task, fan_out_dispatch,
@@ -2177,6 +2177,12 @@ async def _run_grouped_human_await(
         "requested_by": step.requested_by or approver,
         # The step's declared claiming policy travels to the UI as process content.
         "claiming": step.completion.claiming,
+        # lane/74 (item 2c, ruled 2026-11-19): one open review per notice. The artifact's LOCATION
+        # rides on the task row's payload so a newer review of the same artifact can find this one.
+        # A row registered before this key existed has no `artifact_uri` and is never matched; the
+        # explicit `reissue_of` path still covers it. This is the CONTENT of a dict handed to the
+        # existing `register_grouped_task` step (its result is journaled): no new journal command.
+        "artifact_uri": str(request.get("artifact_uri") or ""),
     }
     # Mints its own service-identity token at use (2026-08-04) — the stored user_jwt is no longer
     # threaded into task registration. Fresh here too, not only at dispatch: the same helper serves
@@ -2187,6 +2193,20 @@ async def _run_grouped_human_await(
     raw_decision = await ctx.promise(promise_name, type_hint=dict).value()
     # 4. Settled — a second submission gets the truth, not a hollow accept.
     ctx.set("decision_consumed", True)
+
+    # 4b. SUPERSEDED (lane/74 item 2c, ruled 2026-11-19: one open review per notice). The shared
+    #     `supersede` handler resolves this same promise under one reserved key; a reviewer's own
+    #     decision can never carry it (`submit_decision` refuses it). Runs AFTER the await, so it
+    #     adds no journal command a suspended review would have to replay. No dispatch, no fan-out.
+    if isinstance(raw_decision, dict) and SUPERSEDED_KEY in raw_decision:
+        _sup = raw_decision.get(SUPERSEDED_KEY)
+        _sup_by = str((_sup or {}).get("superseded_by") or "") if isinstance(_sup, dict) else ""
+        ctx.set("superseded_by", _sup_by)
+        return {
+            "step_id": step.id, "kind": "human_await", "completion": "grouped",
+            "status": "SUPERSEDED", "superseded_by": _sup_by,
+            "dispatch_enqueued": 0, "count": 0, "dispatched_keys": [],
+        }
 
     # 5. Re-derive server-side; authority never moves to the client.
     batch = _reviewbatch_from_state(approver, batch_items)
