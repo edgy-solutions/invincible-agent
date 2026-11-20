@@ -22,7 +22,8 @@ from agent_fleet.utils import dataset_contracts as dc
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "tests" / "fixtures" / "dag_tools_mfg_trace" / "mfg_trace.yaml"
 IDS = ["dim_part", "bom_edge", "bom_closure", "serial_unit", "as_built_edge", "as_built_closure",
-       "test_result", "test_measurement", "test_catalog", "ingest_status"]
+       "conf_test_repo_result", "conf_test_repo_step_parameter", "test_result", "test_measurement",
+       "test_catalog", "ingest_status"]
 
 
 def _doc(cid, **over):
@@ -45,18 +46,22 @@ def _load(tmp_path, doc, cid="demo"):
 
 
 def test_the_template_parses_whole():
-    """A copy for the parser's seal (dag-tools commit 398d82d); Lane 1's CI check pins the live template."""
+    """A verbatim copy for the parser's seal (dag-tools v0.17.0, commit a85c5f99, unchanged since
+    v0.16.1); Lane 1's CI check pins the live template."""
     got = dc.load_contracts(TEMPLATE)
     assert list(got) == [f"mfg_trace.{i}" for i in IDS]
     assert {k for c in got.values() for k in c.types.values()} <= dc.TYPES
 
 
 def test_TRIPWIRE_THE_TEMPLATE_NAMES_RULES_NO_READER_RAISES():
-    """`key_not_unique` is this reader's `duplicate_key` under dag-tools' name, which dag-tools
-    renames (ruled 2026-11-14). When the rename lands, this goes red: re-vendor the template, and
-    this set becomes empty."""
+    """dag-tools renamed `key_not_unique` to `duplicate_key` (ruled 2026-11-14), so that name is gone.
+    The template now names `null_value` and `non_finite` (ruled 2026-11-16), which this reader does
+    not raise yet. When the reader learns them (#426), this goes red, and this set becomes empty.
+    The control: the renamed rule is one the reader raises."""
     got = dc.load_contracts(TEMPLATE)
-    assert {r for c in got.values() for r in dc.unknown_rules(c)} == {"key_not_unique"}
+    assert {r for c in got.values() for r in dc.unknown_rules(c)} == {"null_value", "non_finite"}
+    named = {r for c in got.values() for r in c.rules}
+    assert "duplicate_key" in named & set(dc.RULES) and "key_not_unique" not in named
 
 
 def test_the_template_names_the_producer_checked_rules_and_a_block_may():

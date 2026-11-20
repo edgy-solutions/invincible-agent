@@ -14,12 +14,14 @@ PROGRAM COMES FROM THE SUSTAINED-UNDER ROWS, NEVER THE BOM (ADR-0056 section 8).
 no row is withheld: deny by default.
 
 ABSENT IS NOT ZERO. `population` and `stock` have no source, so every row carries `None` for them
-and `data_provenance.absent` says why. The table cell is `null` on the wire (a typed value, never
-0, "" or a placeholder string), which is how cortex reads absence; the served `absent_reason` says "no source".
-Every `None` inside `data_provenance.inputs` also gets an `absent` entry naming the input and
-the reason, so a missing label is stated rather than left to be read as "checked".
+and the row's own `absent_reason` says why. The table cell is `null` on the wire (a typed value,
+never 0, "" or a placeholder string), which is how cortex reads absence; the served
+`absent_reason` says "no source" (the message carries no rows). Every `None` on a
+`data_provenance` entry also gets that entry's own `absent_reason`,
+so a missing label is stated rather than left to be read as "checked". Both levels are the SDK's
+(v0.9.26): a row reason explains the row's field, an entry reason explains its input's.
 
-CLASSIFICATION IS CARRIED, NOT COMPOSED. Each input's label rides inside `data_provenance.inputs`.
+CLASSIFICATION IS CARRIED, NOT COMPOSED. Each input's label rides on its `data_provenance` entry.
 ADR-0064 is Proposed and `policy/classification/dimensions.yaml` ships empty ("No code reads this
 file yet"), so no rule exists to combine labels and none is invented here: an unlabelled input
 gives an unlabelled row.
@@ -47,7 +49,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict
+from iagent_mesh import DataProvenance
+from iagent_mesh import ImpactRow as _SdkImpactRow
 
 try:  # engine image: flat layout (agent_fleet/ on sys.path as the root)
     from utils.slot_declarations import derive_slots
@@ -81,26 +84,19 @@ DEFAULT_CONFIGURATION = "as_designed"
 SHIPPED_LOCATOR = "policy/overlays/sample/product_structure/where_used.yaml"
 DATASET_ENV = "WHERE_USED_DATASET"
 
-#: The text the answer's row lines read when a value has no source. Never 0 or "".
+#: The served `absent_reason` phrase for a value with no source. Never 0 or "".
 NO_SOURCE = "no source"
 
 
-class ImpactRow(BaseModel):
-    """ADR-0065 ruling 4's row. LOCAL until the SDK's `ImpactRow` can carry a served row, then
-    re-exported from the SDK the way `workflow_definition.py` re-exports the DSL. v0.9.17 has the
-    ruled nine fields, but its `data_provenance` is one triple of required strings: it cannot say
-    "no catalogue entry" or "no broker read", and it holds one input where a row is built from two."""
-    model_config = ConfigDict(extra="forbid", frozen=True)
+class ImpactRow(_SdkImpactRow):
+    """ADR-0065 ruling 4's row: the SDK's own (v0.9.26), its fields, its `DataProvenance` entries
+    and its validators, with ONE difference. `qty_per` is `float | int` here and `int` in the SDK.
+    The dataset loader accepts any positive number as a usage quantity (`_positive_number`), so a
+    part used by length or weight rolls up to a fraction, and the SDK row would refuse that served
+    row. When the SDK's `qty_per` takes a fraction, or the loader is ruled to whole numbers, this
+    class becomes a plain re-export (tests/test_impact_row_is_the_ruled_row.py trips on either)."""
 
-    end_item: str
-    program: str
-    component: str
     qty_per: float | int
-    population: int | None = None
-    stock: int | None = None
-    configuration: str
-    as_of: str | None
-    data_provenance: dict
 
 
 # ── the dataset ─────────────────────────────────────────────────────────────────────────────────
@@ -364,12 +360,21 @@ IBP_COLUMNS = [{"key": k, "label": label, "from": f"ImpactRow.{k}"} for k, label
 IBP_ROW_IDENTITY = {"key": "instance"}
 
 
-def _provenance(dataset: Dataset) -> Tuple[Dict[str, Any], Optional[str]]:
-    """The row's `data_provenance` and its `as_of` (the earliest input's)."""
-    inputs: List[Dict[str, Any]] = []
-    absent: Dict[str, str] = {"population": "no source", "stock": "no source"}
+#: Why an input's field is absent, by field: the phrase rides on that input's entry.
+_INPUT_ABSENT = {
+    "dataset_urn": "repository fixture: no catalogue entry",
+    "ticket_id": "no broker read",
+    "classification": "unlabelled",
+    "as_of": "the input states no as_of",
+}
+
+
+def _provenance(dataset: Dataset) -> Tuple[List[DataProvenance], Dict[str, str], Optional[str]]:
+    """The row's `data_provenance` entries, the row's own `absent_reason`, and its `as_of` (the
+    earliest input's). An entry names each of its own absent fields in its `absent_reason`."""
+    inputs: List[DataProvenance] = []
     for name, meta in dataset.inputs.items():
-        inputs.append({
+        entry = {
             "name": name,
             "dataset_urn": meta.get("dataset_urn"),
             "locator": dataset.locator,
@@ -377,27 +382,23 @@ def _provenance(dataset: Dataset) -> Tuple[Dict[str, Any], Optional[str]]:
             "ticket_id": None,
             "classification": meta.get("classification"),
             "notional": bool(meta.get("notional")),
-        })
-        if meta.get("dataset_urn") is None:
-            absent[f"{name}.dataset_urn"] = "repository fixture: no catalogue entry"
-        absent[f"{name}.ticket_id"] = "no broker read"
-        if meta.get("classification") is None:
-            absent[f"{name}.classification"] = "unlabelled"
-        if meta.get("as_of") is None:
-            absent[f"{name}.as_of"] = "the input states no as_of"
-    stamps = [i["as_of"] for i in inputs]
+        }
+        reasons = {k: phrase for k, phrase in _INPUT_ABSENT.items() if entry[k] is None}
+        inputs.append(DataProvenance(**entry, absent_reason=reasons or None))
+    stamps = [i.as_of for i in inputs]
     as_of = None if (not stamps or any(s is None for s in stamps)) else min(str(s) for s in stamps)
+    absent: Dict[str, str] = {"population": NO_SOURCE, "stock": NO_SOURCE}
     if as_of is None:
         absent["as_of"] = "an input states no as_of"
-    return {"inputs": inputs, "absent": absent}, as_of
+    return inputs, absent, as_of
 
 
 def _absent_reason(columns: List[Dict[str, Any]], table: List[Dict[str, Any]],
                    rows: List[Any]) -> Tuple[Dict[str, str], List[Dict[str, str]]]:
     """The served "no source" reason for each all-null column, derived from the provenance.
 
-    A column joins the card-level map iff every table row is None for it and every row's
-    `data_provenance.absent` names it with one and the same phrase. If the phrases differ by row,
+    A column joins the card-level map iff every table row is None for it and every row's own
+    `absent_reason` names it with one and the same phrase. If the phrases differ by row,
     the reason rides on each row instead (second element, one map per table row). A column with a
     value in any row never gets a reason.
     """
@@ -408,7 +409,7 @@ def _absent_reason(columns: List[Dict[str, Any]], table: List[Dict[str, Any]],
     for key in (c["key"] for c in columns):
         if any(t.get(key) is not None for t in table):
             continue
-        phrases = [r.data_provenance.get("absent", {}).get(key) for r in rows]
+        phrases = [(r.absent_reason or {}).get(key) for r in rows]
         if any(p is None for p in phrases):
             continue
         if len(set(phrases)) == 1:
@@ -417,10 +418,6 @@ def _absent_reason(columns: List[Dict[str, Any]], table: List[Dict[str, Any]],
             for slot, phrase in zip(per_row, phrases):
                 slot[key] = phrase
     return card, per_row
-
-
-def _cell(value: Any) -> str:
-    return NO_SOURCE if value is None else str(value)
 
 
 def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None, *,
@@ -471,7 +468,7 @@ def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None,
             configuration=configuration,
             lists=[_list(f"End items with no {configuration} data", names)])
 
-    provenance, as_of = _provenance(dataset)
+    provenance, row_absent, as_of = _provenance(dataset)
     rows: List[ImpactRow] = []
     for e in visible:
         qty = _qty_per(dataset, e, ident, (configuration,))
@@ -479,12 +476,12 @@ def where_used(dataset: Dataset, part: str, configuration: Optional[str] = None,
             rows.append(ImpactRow(
                 end_item=e, program=dataset.sustained_under[e], component=ident, qty_per=qty,
                 configuration=configuration, as_of=as_of,
-                data_provenance=copy.deepcopy(provenance)))
+                data_provenance=list(provenance), absent_reason=dict(row_absent)))
     if not rows:
         return _refused("no_usage", f"{label} is known and is used in no end item for {configuration}.")
     rows.sort(key=lambda r: (dataset.identities[r.end_item]["label"], r.program))
 
-    notional = any(i["notional"] for i in provenance["inputs"])
+    notional = any(i.notional for i in provenance)
     suffix = f"{configuration}, synthetic fixture" if notional else configuration
     message = f"{label} is used in {len(rows)} end item(s) [{suffix}]."
     columns = [dict(c) for c in IBP_COLUMNS]
