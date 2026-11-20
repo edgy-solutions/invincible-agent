@@ -243,3 +243,71 @@ def test_validator_refuses_a_duplicate_table_and_a_non_mapping_row():
 def test_validator_refuses_an_identity_as_ratifier_and_a_bad_top_level():
     assert any("seat" in m for m in _v([_row(ratified_by="a@b.c")], users=[{"id": "a@b.c"}]))
     assert _v(raw={"other": []}) and _v(raw={"electric_shapes": "x"}) and _v(raw=[])
+
+
+# -- the PARAMETERS: an allow-list, not a deny-list (the Electric secret, 0.4.91) --------------------
+#
+# Off-list keys are DROPPED, not answered 400 (decision recorded in the PR body, "Open questions"):
+# @electric-sql/client's ShapeStream adds protocol params across versions (`cache-buster`,
+# `expired_handle`, `log`, `live_sse`), and a 400 on a new one would break the UI's real request.
+# Dropping loses nothing: the dropped key never reaches Electric, which is what these seals assert,
+# on the RECORDED upstream request.
+
+_SERVER_SECRET = "server-side-secret-for-the-test"
+# What @electric-sql/client's ShapeStream really sends (cortex-ui src/lib/electric.ts: `table`, and
+# `columns` in summaries mode; the rest are the client's protocol params).
+_UI_REQUEST = [("table", "answer_artifact_projection"), ("columns", "id,created_at"),
+               ("offset", "-1"), ("handle", "h-1"), ("live", "true"), ("cursor", "7")]
+_OFF_LIST = [("where", "1=1"), ("WHERE", "true"), ("replica", "full"), ("secret", "client-secret"),
+             ("api_secret", "client-secret"), ("SECRET", "client-secret"), ("params", "{}"),
+             ("subset__where", "true"), ("unknown_param", "x"), ("TABLE", "human_task_projection")]
+
+
+def _allowed_values():
+    # one value per listed key, the key set READ from the proxy's own constant (never restated)
+    vals = {"table": "answer_artifact_projection", "columns": "id", "offset": "-1"}
+    return [(k, vals.get(k, "v")) for k in sorted(gw._ELECTRIC_FORWARD_PARAMS)]
+
+
+def test_control_every_listed_parameter_reaches_upstream_with_its_value(upstream):
+    _ask(_allowed_values())
+    sent = upstream[0]
+    for k, v in _allowed_values():
+        assert sent[k] == v, k
+
+
+def test_control_the_uis_real_request_is_served_unchanged(upstream, monkeypatch):
+    monkeypatch.setenv(gw._ELECTRIC_SHAPE_SECRET_ENV, _SERVER_SECRET)
+    _ask(_UI_REQUEST)
+    sent = upstream[0]
+    assert {k: sent[k] for k, _ in _UI_REQUEST} == dict(_UI_REQUEST)
+
+
+@pytest.mark.parametrize("pair", _OFF_LIST)
+def test_no_off_list_parameter_reaches_upstream(upstream, monkeypatch, pair):
+    monkeypatch.setenv(gw._ELECTRIC_SHAPE_SECRET_ENV, _SERVER_SECRET)
+    _ask([("table", "answer_artifact_projection"), pair])
+    sent = upstream[0]
+    # every key sent upstream is a listed one, or the two the SERVER sets (`where`, `secret`)
+    assert set(sent) <= gw._ELECTRIC_FORWARD_PARAMS | {"where", "secret"}
+    assert sent["where"] == "produced_for_user_id = '11111111-1111-4111-8111-111111111111' AND archived_at IS NULL"
+    assert sent["secret"] == _SERVER_SECRET            # never the client's
+    assert sent["table"] == "answer_artifact_projection"
+
+
+def test_a_client_secret_never_reaches_upstream_whether_or_not_the_server_has_one(upstream, monkeypatch):
+    monkeypatch.delenv(gw._ELECTRIC_SHAPE_SECRET_ENV, raising=False)
+    _ask([("secret", "client-secret"), ("api_secret", "client-secret")])
+    assert "secret" not in upstream[0] and "api_secret" not in upstream[0]
+
+
+def test_control_the_servers_own_secret_reaches_upstream(upstream, monkeypatch):
+    monkeypatch.setenv(gw._ELECTRIC_SHAPE_SECRET_ENV, _SERVER_SECRET)
+    _ask([("table", "ingest_status_projection")])
+    assert upstream[0]["secret"] == _SERVER_SECRET
+
+
+def test_the_table_is_forwarded_only_after_the_table_allow_list(upstream):
+    # `table` is on the parameter list, and still refused when the table list does not name it
+    e = _refusal([("table", "human_task_projection"), ("offset", "-1")])
+    assert e.status_code == 403 and upstream == []

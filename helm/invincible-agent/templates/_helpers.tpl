@@ -983,3 +983,16 @@ Keycloak already, and the reconcile must land BEFORE any workload changes (pre-u
 {{- define "invincible-agent.realmReconcileHookPhase" -}}
 {{- if .Release.IsInstall }}post-install{{- else }}pre-upgrade{{- end }}
 {{- end }}
+
+{{/*
+The Secret that holds Electric's API secret, and the key in it. ONE definition: electric.yaml (the
+server's ELECTRIC_SECRET) and frontend.yaml (the BFF's ELECTRIC_SHAPE_SECRET) both read these two
+helpers, so the pair cannot name different objects. Override the name to use a pre-made Secret.
+*/}}
+{{- define "invincible-agent.electricApiSecretName" -}}
+{{- default (printf "%s-electric-api" .Release.Name) .Values.electric.apiSecret.name -}}
+{{- end }}
+
+{{- define "invincible-agent.electricApiSecretKey" -}}
+{{- default "secret" .Values.electric.apiSecret.key -}}
+{{- end }}

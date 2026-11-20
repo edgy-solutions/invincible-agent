@@ -2047,7 +2047,13 @@ electric:
     repository: "electricsql/electric"
     tag: "1.0.13"
   port: 3000
-  insecure: true
+  # false: Electric requires `secret=` on every request (ELECTRIC_SECRET). Never default true.
+  insecure: false
+  # Electric API secret lives in a Secret, never in values. Empty name = the chart generates
+  # `<release>-electric-api` on first install and keeps it on upgrade; name a pre-made Secret to use it.
+  apiSecret:
+    name: ""
+    key: secret
   resources:
     requests:
       cpu: 100m

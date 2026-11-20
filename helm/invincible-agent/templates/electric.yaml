@@ -115,9 +115,15 @@ spec:
             # on every pod boot as an idempotent ALTER ROLE.
             - name: DATABASE_URL
               value: "postgresql://$(BPMN_POSTGRES_USER):$(BPMN_POSTGRES_PASSWORD)@$(BPMN_POSTGRES_HOST):$(BPMN_POSTGRES_PORT)/$(BPMN_POSTGRES_DB)?sslmode=disable"
-            # Disable insecure mode in prod; sandbox/dev can flip on.
+            # `insecure` defaults false: Electric answers only a request carrying `secret=`, which only
+            # the BFF holds. The secret is read by reference (never a literal, never in values).
             - name: ELECTRIC_INSECURE
               value: {{ .Values.electric.insecure | quote }}
+            - name: ELECTRIC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "invincible-agent.electricApiSecretName" . }}
+                  key: {{ include "invincible-agent.electricApiSecretKey" . }}
           envFrom:
             - configMapRef:
                 name: {{ .Release.Name }}-config
