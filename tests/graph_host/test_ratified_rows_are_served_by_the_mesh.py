@@ -108,11 +108,13 @@ def ratified_population() -> list[tuple[str, str, str]]:
 # ── CONTROLS, ONE PER STORE, EACH SHARING ITS SUBJECT'S GATE ────────────────────────────────
 
 @needs_neo4j
+@pytest.mark.live
 def test_the_neo4j_checker_can_say_no():
     assert_checkers_can_say_no(neo4j=True, weaviate=False)
 
 
 @needs_weaviate
+@pytest.mark.live
 def test_the_weaviate_checker_can_say_no():
     assert_checkers_can_say_no(neo4j=False, weaviate=True)
 
@@ -126,6 +128,7 @@ def test_the_population_is_not_empty():
 
 @needs_engine_lg
 @needs_neo4j
+@pytest.mark.live
 def test_every_ratified_row_is_a_verb_in_neo4j():
     missing = missing_from_neo4j(ratified_population())
     assert not missing, (
@@ -137,6 +140,7 @@ def test_every_ratified_row_is_a_verb_in_neo4j():
 
 @needs_engine_lg
 @needs_weaviate
+@pytest.mark.live
 def test_every_ratified_row_is_eligible_in_weaviate():
     missing = not_eligible_in_weaviate(ratified_population())
     assert not missing, (
@@ -149,6 +153,7 @@ def test_every_ratified_row_is_eligible_in_weaviate():
 @needs_engine_lg
 @needs_neo4j
 @needs_weaviate
+@pytest.mark.live
 def test_no_ratified_row_is_one_sided():
     """The hardest of the three to diagnose from a symptom, which is why it is its own test."""
     sided = one_sided(ratified_population())
@@ -163,6 +168,7 @@ def test_no_ratified_row_is_one_sided():
 
 @needs_engine_lg
 @needs_weaviate
+@pytest.mark.live
 def test_nothing_engine_lg_serves_is_unratified():
     """ADR-0046 §2, asserted where it matters: from what is REACHABLE.
 

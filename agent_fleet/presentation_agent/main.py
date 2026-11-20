@@ -649,9 +649,10 @@ _ELICITATION_STATUS_BY_DISPOSITION: Dict[str, str] = {
 #: under REFUSAL_FIELD. ONE definition: producer (`_refusal_envelope`) and seal both read it.
 #: `refused`/`outcome`/`reason` are always present; the OPTIONAL keys travel only when the
 #: producer supplied them (absent means silent, same as the passthroughs).
+#: `message` is the producer's plain-language reason, drawn as the card's line; `reason` stays the code.
 REFUSAL_FIELD = "refusal"
 REFUSAL_ENVELOPE_REQUIRED: tuple = ("refused", "outcome", "reason")
-REFUSAL_ENVELOPE_OPTIONAL: tuple = ("connector", "fn", "hazard_id", "gap")
+REFUSAL_ENVELOPE_OPTIONAL: tuple = ("connector", "fn", "hazard_id", "gap", "message")
 
 
 def _refusal_envelope(resp: Dict[str, Any]) -> Dict[str, Any]:
@@ -1047,8 +1048,11 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # `group_by` (mesh:WhereUsedSet, ADR-0065 section 4): the column key the rows group by,
     # named by the producer so the card never guesses one. Envelope-level, so it is carried
     # only because it is declared here (tests/finance/test_the_wire_carries_what_the_engine_declares.py).
+    #
+    # `absent_reason` ({column key: short phrase}): envelope-level, served so cortex draws the
+    # producer's words in a null cell instead of "-". Ruled by Chris 11-19; never a 0.
     "INSTANCES_BY_PROPERTY": ("rows", ("title", "target", "columns", "row_identity",
-                                       "state_vocabulary", "group_by")),
+                                       "state_vocabulary", "group_by", "absent_reason")),
 }
 
 

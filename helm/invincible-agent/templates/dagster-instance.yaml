@@ -52,6 +52,10 @@ data:
       class: QueuedRunCoordinator
       config:
         max_concurrent_runs: {{ .Values.dagster.maxConcurrentRuns }}
+        {{- with .Values.dagster.runTagConcurrencyLimits }}
+        tag_concurrency_limits:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
 
     telemetry:
       enabled: false

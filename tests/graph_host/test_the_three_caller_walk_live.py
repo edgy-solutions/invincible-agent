@@ -37,6 +37,8 @@ import os
 
 import pytest
 
+
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
 _HOST = os.environ.get("GRAPH_HOST_URL")
 _FULL = os.environ.get("LG_CALLER_FULL")
 _PARTIAL = os.environ.get("LG_CALLER_PARTIAL")

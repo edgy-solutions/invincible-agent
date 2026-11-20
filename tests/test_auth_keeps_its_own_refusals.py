@@ -84,8 +84,66 @@ def test_a_token_with_no_identity_is_its_own_401_not_a_wrapped_one(auth_mod, mon
     assert str(e.detail).startswith("Invalid token payload"), e.detail
 
 
+class _FlakyJwks:
+    """A JWKS client that raises `errors` in turn, then returns a key."""
+
+    def __init__(self, *errors):
+        self.errors = list(errors)
+        self.calls = 0
+
+    def get_signing_key_from_jwt(self, token):
+        self.calls += 1
+        if self.errors:
+            raise self.errors.pop(0)
+
+        class _K:
+            key = "fake-key"
+        return _K()
+
+
+def test_a_key_fetch_that_cannot_connect_is_retried_then_a_retryable_503(auth_mod, monkeypatch):
+    """THE SEAL. The realm's keys unreachable on every attempt: retried, then the outage 503
+    (ADR-0026), never a 401 that tells a signed-in client its token is bad."""
+    import jwt
+
+    down = _FlakyJwks(*[jwt.PyJWKClientConnectionError("realm restarting")] * 5)
+    monkeypatch.setattr(auth_mod, "jwks_client", down)
+    monkeypatch.setattr(auth_mod.time, "sleep", lambda _s: None)
+    e = _refusal(auth_mod)
+    assert down.calls == auth_mod.KEY_FETCH_ATTEMPTS >= 2, down.calls
+    assert e.status_code == 503, (e.status_code, e.detail)
+    assert e.detail["error"] == "authorization_unavailable"
+    assert e.detail["retryable"] is True
+
+
+def test_a_key_fetch_that_fails_once_is_retried_and_the_token_is_verified(auth_mod, monkeypatch):
+    """The retry is not decoration: one failed connect, then the key, verifies the token."""
+    import jwt
+
+    flaky = _FlakyJwks(jwt.PyJWKClientConnectionError("realm restarting"))
+    monkeypatch.setattr(auth_mod, "jwks_client", flaky)
+    monkeypatch.setattr(auth_mod.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(jwt, "decode", _decode_returning({"sub": "u-1"}))
+    assert auth_mod.verified_claims("fake-token") == {"sub": "u-1"}
+    assert flaky.calls == 2
+
+
+def test_CONTROL_a_key_the_realm_does_not_hold_is_a_401_and_not_retried(auth_mod, monkeypatch):
+    """Control, differing only in the error: an unknown `kid` is a verdict on the token
+    (`PyJWKClientError`, not its connection subclass), so one attempt and a 401."""
+    import jwt
+
+    unknown = _FlakyJwks(jwt.PyJWKClientError("Unable to find a signing key that matches"))
+    monkeypatch.setattr(auth_mod, "jwks_client", unknown)
+    monkeypatch.setattr(auth_mod.time, "sleep", lambda _s: None)
+    e = _refusal(auth_mod)
+    assert unknown.calls == 1
+    assert e.status_code == 401, (e.status_code, e.detail)
+
+
 def test_a_failure_that_is_not_a_refusal_still_answers_401(auth_mod, monkeypatch):
-    """Control: the catch-all is intact for what it was written for (a JWKS fetch failure)."""
+    """Control: the catch-all is intact for an unexpected error that is neither a JWT verdict nor
+    a key fetch that could not connect (that one is the 503 above)."""
     class _BrokenJwks:
         def get_signing_key_from_jwt(self, token):
             raise RuntimeError("jwks unreachable")

@@ -93,9 +93,11 @@ def test_text_off_by_default_and_the_ref_has_no_default():
     rows = {c: [(r["dir"], r["env"]) for r in rows] for c, rows in po["components"].items()}
     assert rows == {
         "engine-fin": [("measure_verbs", "MEASURE_VERB_OVERLAY_DIRS"),
-                       ("fin_export_profiles", "FIN_EXPORT_PROFILE_OVERLAY_DIRS")],
+                       ("fin_export_profiles", "FIN_EXPORT_PROFILE_OVERLAY_DIRS"),
+                       ("fin_instances", "FIN_INSTANCE_OVERLAY_DIRS")],
         "cortex-bff": [("canvases", "CANVAS_OVERLAY_DIRS"),
-                       ("exports", "INGEST_EXPORT_PROFILE_OVERLAY_DIRS")],
+                       ("exports", "INGEST_EXPORT_PROFILE_OVERLAY_DIRS"),
+                       ("menu_blocks", "MENU_BLOCK_OVERLAY_DIRS")],
     }
 
 

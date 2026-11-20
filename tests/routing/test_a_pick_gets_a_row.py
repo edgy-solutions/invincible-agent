@@ -150,9 +150,48 @@ def test_the_supervisor_merges_bound_rows_into_the_artifact():
     assert "resolution = {**resolution, **bound_resolution}" in _SUP
 
 
+_MERGE = "resolution = {**resolution, **bound_resolution}"
+_EMIT_KEY = '"slot_resolution": MetadataValue.text('
+
+
+def _disposition_emits(src: str) -> list[int]:
+    """Offsets of the disposition-point emit(s). The early exit also emits `slot_resolution`,
+    but as the empty object `"{}"` (before any slot is resolved); the emit that carries the
+    resolution is the one whose payload is not that literal."""
+    out, at = [], src.find(_EMIT_KEY)
+    while at != -1:
+        payload = src[at + len(_EMIT_KEY):].lstrip()
+        if not payload.startswith('"{}"'):
+            out.append(at)
+        at = src.find(_EMIT_KEY, at + 1)
+    return out
+
+
+def _merge_violation(src: str) -> str | None:
+    """None when the merge precedes the disposition emit; else the reason."""
+    emits = _disposition_emits(src)
+    assert len(emits) == 1, f"expected exactly one disposition-point emit, found {len(emits)}"
+    merge = src.index(_MERGE)
+    if merge > emits[0]:
+        return "the bound rows are merged after the artifact is written"
+    return None
+
+
 def test_the_merge_happens_where_the_artifact_can_still_see_it():
     """`slot_resolution` is emitted at the disposition point. A merge after that emission
-    would be correct code writing to a record already sent."""
-    merge = _SUP.index("resolution = {**resolution, **bound_resolution}")
-    emit = _SUP.index('"slot_resolution": MetadataValue.text(')
-    assert merge < emit, "the bound rows are merged after the artifact is written"
+    would be correct code writing to a record already sent. The anchor is the emit that is
+    not the `"{}"` early exit, which sits earlier in the file and is not this seal's subject."""
+    assert _merge_violation(_SUP) is None
+
+
+def test_control_a_merge_below_the_disposition_emit_is_reported():
+    """The instrument must fire: move the merge below the emit, in memory only."""
+    mutated = _SUP.replace(_MERGE, "pass", 1)
+    tail_at = _disposition_emits(mutated)[0] + len(_EMIT_KEY)  # offsets of the MUTATED text
+    mutated = mutated[:tail_at] + _MERGE + mutated[tail_at:]
+    assert _merge_violation(mutated) == "the bound rows are merged after the artifact is written"
+
+
+def test_the_anchor_finds_exactly_one_disposition_emit():
+    """A third emit must fail loudly rather than be silently skipped or silently picked."""
+    assert len(_disposition_emits(_SUP)) == 1

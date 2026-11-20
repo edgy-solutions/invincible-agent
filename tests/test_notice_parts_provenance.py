@@ -244,7 +244,10 @@ def test_THE_NOTICE_ID_COMES_FROM_THE_SLOT_OR_THE_RESOLVED_NOTICE_IRI_NEVER_PROS
 def _route(monkeypatch, driver, body):
     from fastapi.testclient import TestClient
     from agent_fleet.ontology_service import main as eo
+    from tests._helpers.verified_caller import install
     monkeypatch.setattr(eo, "_NEO4J_DRIVER", driver)
+    # The caller is the VERIFIED token (lane 74): the body's person, holding the body's domains.
+    install(monkeypatch, eo, body.get("user_email", DROPPED_BY), list(body.get("entitled_domains") or []))
     return TestClient(eo.app).post("/notice_parts", json=body)
 
 

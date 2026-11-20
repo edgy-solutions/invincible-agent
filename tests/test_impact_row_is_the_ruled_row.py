@@ -5,6 +5,7 @@ Run: uv run pytest tests/test_impact_row_is_the_ruled_row.py -q
 from __future__ import annotations
 
 import re
+import typing
 from pathlib import Path
 
 import pytest
@@ -74,11 +75,12 @@ def test_THE_SDKS_IMPACT_ROW_HAS_THE_RULED_FIELDS():
 
 
 def test_TRIPWIRE_THE_SDKS_ROW_CANNOT_CARRY_A_SERVED_ROW_AND_ONLY_ITS_PROVENANCE_IS_WHY():
-    """v0.9.19's `DataProvenance` is one `{dataset_urn, as_of, ticket_id}` triple; the URN and the
-    ticket may now be absent. A served row has one provenance entry per input, so one triple still
-    cannot carry it, and the local row stays. Ruled 11-11: the re-export waits on v0.9.21, where
-    the provenance becomes a list. When the SDK's row accepts a served row as it is, this fails:
-    re-export it then. A refusal outside `data_provenance` fails too."""
+    """v0.9.25's provenance is the list ruled on 11-11: one `{name, dataset_urn, as_of, ticket_id}`
+    entry per input, closed (`extra="forbid"`), with `as_of` required. A served row's provenance is
+    `{inputs, absent}`. Its entries also carry `locator`, `classification` and `notional`, an input
+    may state no `as_of`, and the `absent` reasons have no slot. So the list still cannot carry a
+    served row, and the local row stays. When the SDK's row accepts a served row as it is, this
+    fails: re-export it then. A refusal outside `data_provenance` fails too."""
     sdk = _sdk_impact_row()
     if sdk is None:
         pytest.skip("the SDK has no ImpactRow")
@@ -94,27 +96,37 @@ def test_TRIPWIRE_THE_SDKS_ROW_CANNOT_CARRY_A_SERVED_ROW_AND_ONLY_ITS_PROVENANCE
             pytest.fail("the SDK's ImpactRow now carries a served row: re-export it")
 
 
-#: v0.9.19's `DataProvenance`, as read from the tag: (field, annotation, required). The URN and the
-#: ticket can say absent; it is still one triple.
-_V0919_PROVENANCE = [("dataset_urn", "typing.Optional[str]", False), ("as_of", "str", True),
-                     ("ticket_id", "typing.Optional[str]", False)]
+#: v0.9.25's provenance, as read from the installed tag: the container, each entry's
+#: (field, annotation, required), and whether an entry refuses unknown keys.
+_V0925_PROVENANCE = {
+    "container": "list",
+    "entry": [("name", "typing.Optional[str]", False), ("dataset_urn", "typing.Optional[str]", False),
+              ("as_of", "str", True), ("ticket_id", "typing.Optional[str]", False)],
+    "extra": "forbid",
+}
 
 
 def _annotation(a) -> str:
     return a.__name__ if isinstance(a, type) else str(a)
 
 
-def test_TRIPWIRE_THE_SDKS_PROVENANCE_IS_STILL_ONE_TRIPLE():
-    """Ruled 11-10: the SDK's provenance says a value is absent; v0.9.19 shipped that, and this
-    tripwire fired on it. Ruled 11-11: the re-export waits on v0.9.21, where the provenance becomes a
-    list (one entry per input, the served shape). Until then the local row stays. This fails on ANY
-    change to v0.9.19's `DataProvenance`, a list included: read the new shape, map the served
-    provenance onto it, re-export."""
+def test_TRIPWIRE_THE_SDKS_PROVENANCE_IS_STILL_V0925S_LIST():
+    """Ruled 11-11: the re-export waited on v0.9.21's list. The list shipped, and v0.9.25 fired the
+    v0.9.19 tripwire as written. It does not carry the served shape (see the tripwire above), so
+    this re-pins to v0.9.25 and the local row stays. Whether the SDK's entry gains the served fields,
+    or the served row narrows to the entry, is not this file's call. It fails on ANY change to
+    v0.9.25's provenance: read the new shape, see whether a served row fits, re-export if it does."""
     sdk = _sdk_impact_row()
     if sdk is None:
         pytest.skip("the SDK has no ImpactRow")
-    dp = sdk.model_fields["data_provenance"].annotation
-    got = [(n, _annotation(f.annotation), f.is_required())
-           for n, f in getattr(dp, "model_fields", {}).items()]
-    assert got == _V0919_PROVENANCE, (
-        f"the SDK's DataProvenance changed ({got}); if it is a list, re-export the SDK's ImpactRow")
+    ann = sdk.model_fields["data_provenance"].annotation
+    origin, args = typing.get_origin(ann), typing.get_args(ann)
+    entry = args[0] if len(args) == 1 else ann
+    got = {
+        "container": _annotation(origin) if origin is not None else _annotation(ann),
+        "entry": [(n, _annotation(f.annotation), f.is_required())
+                  for n, f in getattr(entry, "model_fields", {}).items()],
+        "extra": getattr(entry, "model_config", {}).get("extra"),
+    }
+    assert got == _V0925_PROVENANCE, (
+        f"the SDK's provenance changed ({got}); see whether a served row fits it, and re-export if so")

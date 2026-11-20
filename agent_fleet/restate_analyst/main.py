@@ -49,7 +49,7 @@ except IndexError:
 try:
     from telemetry import (safe_observe, safe_update_observation,
                            set_trace_standard, observed_trace, build_trace_values, MAPPING,
-                           litellm_metadata,
+                           litellm_metadata, trace_id_for,
                            mint_boundary_ids, boundary_parent, emit_boundary, emit_misses,
                            instrument_model_calls)
 except ImportError:
@@ -69,6 +69,8 @@ except ImportError:
         return {}
     def litellm_metadata(operation, **_k):
         return {}
+    def trace_id_for(seed):
+        return None
     def mint_boundary_ids(_seed=None):
         return {"trace_id": None, "span_id": None}
     @_cm
@@ -1230,16 +1232,16 @@ to decide the next call. Use only what the tools return — never invent data.
                 # Generation->trace linking (ADR-0038, v4): the replay-safe boundary at the
                 # run-smolagent call below opens + JOINS + enriches the analyst trace on a
                 # JOURNALED trace id (same seed, so the join is unchanged). Here, stamp the SAME
-                # joined id (create_trace_id(seed=request trace id)) onto the model's LiteLLM
+                # joined id (trace_id_for(request trace id): a 32-hex id is used verbatim, anything else is
+                # hashed) onto the model's LiteLLM
                 # metadata so smolagents' generations attach to that trace — they also nest via
                 # the active OTel span. Per-request model -> request-scoped; fail-soft.
                 try:
                     _tid = current_trace_id.get()
                     if _tid and isinstance(getattr(model, "kwargs", None), dict):
-                        from langfuse import get_client as _get_client
                         model.kwargs.setdefault("metadata", litellm_metadata(
                             "analyst generation",
-                            trace_id=_get_client().create_trace_id(seed=_tid),
+                            trace_id=trace_id_for(_tid),
                             user_id=user_id,
                             session_id=request.get("session_id"),
                             tags=[t for t in ("restate_analyst", routed_verb_iri) if t],
@@ -1440,7 +1442,8 @@ to decide the next call. Use only what the tools return — never invent data.
                 )
         else:
             # v4 analyst-trace JOIN (ADR-0038): open the trace on the request's id
-            # (create_trace_id(seed=X-Trace-Id)) + enrich, so cortex-ui's trace id unifies the
+            # (X-Trace-Id seeds trace_id_for: a 32-hex id is used verbatim, anything else is hashed)
+            # + enrich, so cortex-ui's trace id unifies the
             # analyst trace, its run_smolagent child span, and the LLM generations. Fail-soft.
             # REPLAY-SAFE boundary (ADR-0038). The previous shape wrapped this ctx.run in
             # `observed_trace`, which opens a RECORDING span with a fresh id on every entry
@@ -2145,6 +2148,11 @@ async def _run_grouped_human_await(
     ctx.set("doc_type", doc_type)
     ctx.set("pipeline_version", request.get("pipeline_version") or "")
     ctx.set("extraction_warnings", list(request.get("extraction_warnings") or []))
+    # REPLAY-SAFE: a review suspended before this key existed has no journaled write for it, and
+    # Restate replays the pre-await commands in order. Its journaled input lacks the key, so the
+    # write is skipped for it; the reader treats the absent state as "" (grouped_review_workflow.py).
+    if "artifact_uri" in request:
+        ctx.set("artifact_uri", str(request.get("artifact_uri") or ""))
     # AUTHORITY GATE INPUT — the audience that may settle this review, journalled at the
     # site that derived it from the definition. `submit_decision` reads it back to ask
     # Topaz `can_act`; see `_audience_key` for why it cannot come from the submission.

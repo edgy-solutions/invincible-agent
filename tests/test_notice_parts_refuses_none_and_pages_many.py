@@ -218,3 +218,12 @@ def test_THE_PAGED_ANSWER_STILL_PROJECTS_TO_INSTANCES_BY_PROPERTY_ROWS():
     assert got is not None, ARCH
     assert len(got["rows"]) == 100
     assert "parts 1–100 of 250" in got["title"]
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name alice@example.com, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "alice@example.com", ["SUSTAINMENT"])
