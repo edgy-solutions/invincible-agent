@@ -267,6 +267,9 @@ NOT_POLICY: dict[str, str] = {
     "src/iagent/auth.py::get_current_user::Authentication failed: {}": AUTHN,
     "src/iagent/auth.py::get_current_user::Invalid token payload: {}": AUTHN,
     "src/iagent/auth.py::get_current_user::Token has expired": AUTHN,
+    # lane/74 (Q2 ruled 2026-11-19): the person's own token expired; signing in again lifts it, no grant does.
+    "agent_fleet/ontology_service/main.py::_session_expired_response::session_expired | the person's session has expired": AUTHN,
+    "agent_fleet/ontology_service/main.py::fill_slots::session_expired | the person's session has expired": AUTHN,
     "src/iagent/auth.py::get_current_user::Token validation failed: {}": AUTHN,
     f"{GW}::_answers_scope_id::no usable caller identity on this request": AUTHN,
     f"{GW}::_entitled_artifact_rec::no caller identity on this request": AUTHN,
