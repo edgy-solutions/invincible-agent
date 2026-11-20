@@ -206,6 +206,12 @@ def _clean(v: Any) -> Any:
     return v
 
 
+def _is_the_blank(decl: CompletionDeclaration, value: Any) -> bool:
+    """Whether a CLEANED value is the declaration's blank text, in any capitalisation: the blank
+    typed in another case still says nothing was settled, so it never stands in for a value."""
+    return isinstance(value, str) and value.casefold() == decl.blank.strip().casefold()
+
+
 def value_ok(type_: str, value: Any) -> bool:
     """Whether a CLEANED value satisfies a generic type."""
     if type_ == "text":
@@ -237,7 +243,7 @@ def written_at_register(decl: CompletionDeclaration, payload: Optional[dict]) ->
     out = {}
     for f in declared:
         v = _clean(supplied.get(f.name))
-        out[f.name] = v if isinstance(v, str) and v else decl.blank
+        out[f.name] = v if isinstance(v, str) and v and not _is_the_blank(decl, v) else decl.blank
     return {**base, "fields": out}
 
 
@@ -257,7 +263,7 @@ def finals_at_act(decl: CompletionDeclaration, payload: Any, supplied: Optional[
         v = _clean(sup.get(f.name))
         if v is None or v == "":
             v = _clean(base.get(f.name))
-        if v is None or v == "" or v == decl.blank:
+        if v is None or v == "" or _is_the_blank(decl, v):
             missing.append(f.name)
             continue
         if not value_ok(f.type, v):

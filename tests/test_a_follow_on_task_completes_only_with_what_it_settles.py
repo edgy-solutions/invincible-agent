@@ -211,6 +211,16 @@ def test_F2_a_supplied_value_is_kept_stripped_and_an_undeclared_key_is_dropped(w
     assert p["fields"] == {"replacement_part": "AB-1"}
 
 
+@pytest.mark.parametrize("spell", [str.upper, str.title, lambda s: "  " + s.capitalize() + " "])
+def test_F2_the_blank_text_in_another_case_is_written_as_the_declared_blank(world, spell):
+    """What cortex draws as 'not identified' is the SERVED blank: a reviewer's own capitalisation of
+    it is written as the declared text, so it is never drawn as if it were a value."""
+    typed = spell(_blank())
+    assert typed != _blank(), "the spelling under test must differ from the declared text"
+    p = _register(world, _QUAL, {"replacement_part": typed})
+    assert p["fields"] == {"replacement_part": _blank()}
+
+
 def test_F2_every_declared_name_is_written_a_partial_set_is_filled(world):
     p = _register(world, _LTB, {"ltb_quantity": "500"})
     assert p["fields"] == {"ltb_quantity": "500", "ltb_date": _blank()}
@@ -237,6 +247,23 @@ def test_F3_approving_with_the_blank_text_is_refused(world):
     world["task"] = _task(_QUAL, {"replacement_part": _blank()})
     r = _act(world, fields={"replacement_part": _blank()})
     assert r.status_code == 422 and _detail(r)["error"] == "completion_fields_missing"
+
+
+@pytest.mark.parametrize("where", ["act", "review"])
+@pytest.mark.parametrize("spell", [str.upper, str.title, lambda s: "  " + s.capitalize() + " "])
+def test_F3_the_blank_text_in_another_case_is_still_the_blank(world, where, spell):
+    """The blank SAYS nothing was identified, however it is capitalised: typed at review or at act
+    as "Not yet identified", it must not stand in for the replacement part the task exists to name."""
+    typed = spell(_blank())
+    assert typed != _blank(), "the spelling under test must differ from the declared text"
+    if where == "act":
+        world["task"] = _task(_QUAL, {"replacement_part": _blank()})
+        r = _act(world, fields={"replacement_part": typed})
+    else:
+        world["task"] = _task(_QUAL, {"replacement_part": typed})
+        r = _act(world)
+    assert r.status_code == 422 and _detail(r)["error"] == "completion_fields_missing", r.text
+    assert _detail(r)["fields"] == ["replacement_part"]
 
 
 def test_F3_approving_with_a_value_records_it(world):
