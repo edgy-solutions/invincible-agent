@@ -5,7 +5,7 @@
   (ghcr.io / Docker Hub / Quay / Redpanda registry) into a single
   Artifactory (or any other) registry under one base path.
 
-  Hash-aware: each image is checked against the destination first. If
+  Release-pinned (-Release) and hash-aware: each image is checked against the destination first. If
   the destination tag already points at the source's desired digest, the
   image is logged as UNCHANGED and no bytes are transferred. Saves
   bandwidth and gives a clear "what changed since last run" report at
@@ -27,6 +27,10 @@
        on a regular cadence.
 
 .DESCRIPTION
+  Release-only: -Release is mandatory and every iagent image is copied by
+  its release digest and tagged with the chart version; :latest is never
+  copied or written.
+
   Two copy engines, selectable with -Method:
 
     buildx  (DEFAULT) -- uses 'docker buildx imagetools', which ships
@@ -60,8 +64,8 @@
 
   Destination naming: registry host stripped, rest of the path
   preserved under -RepoBase:
-    ghcr.io/edgy-solutions/invincible-agent/cortex-bff:latest
-      -> <RepoBase>/edgy-solutions/invincible-agent/cortex-bff:latest
+    ghcr.io/edgy-solutions/invincible-agent/cortex-bff@sha256:<release digest>
+      -> <RepoBase>/edgy-solutions/invincible-agent/cortex-bff:<Release>
     docker.io/acryldata/datahub-gms:v1.6.0
       -> <RepoBase>/acryldata/datahub-gms:v1.6.0
     postgres:16  (= docker.io/library/postgres:16)
@@ -70,7 +74,7 @@
 .PARAMETER RepoBase
   Destination registry + path prefix. Examples:
     artifactory.mycorp.com/docker-cortex
-    cbm-containers-dev-and.artifactory-and.rmd.ray.com
+    registry.example.com
   Trailing slashes get trimmed.
 
 .PARAMETER Method
@@ -91,22 +95,22 @@
   iagent-owned images (the things that change every CI build).
 
 .PARAMETER Release
-  Mirror one chart release's images BY DIGEST instead of by tag, e.g.
-  -Release 0.4.80. The artifact of record is that release's
+  MANDATORY. Mirror one chart release's images BY DIGEST, e.g.
+  -Release 0.4.80. The script never copies or writes a :latest tag. The artifact of record is that release's
   values-release-<version>.yaml (downloaded from the GitHub release over HTTPS,
   no login needed,
   unless -ReleaseValues names a local copy). For every image in it:
     - the source is <repository>@<release digest>, never a tag, so a
       newer :latest build cannot slip in;
-    - the destination tag is the row's tag below, with :latest replaced
-      by :<version> (so the release's images stay tagged in Artifactory
-      after the next :latest mirror);
+    - the destination tag is :<version> (the chart version);
     - after the copy the destination digest is read back and must equal
       the <Platform> child of the release digest.
   A release image with no row below is mirrored to its path minus the
-  registry host, and named in the output. Rows below that the release
-  does not carry (doc-tools, the DataHub chart, ...) mirror by tag as
-  usual, external ones only with -IncludeExternal.
+  registry host, and named in the output. An iagent row the release does
+  not carry (doc-tools today) is REFUSED: the script names every such row
+  and exits 1 before any copy, unless -SkipUnpinned drops them with a
+  warning. External rows (-IncludeExternal) mirror by their pinned tag;
+  a tag of latest on one is refused.
 
   Writes values-artifactory-digests-<version>.yaml: global.imageDigests
   keyed <RepoBase>/<destination repository> with the CHILD digests.
@@ -128,6 +132,15 @@
   values-artifactory-digests-<version>.yaml in the current directory
   (.dry-run.yaml with -DryRun: nothing was copied or read back).
 
+.PARAMETER SkipUnpinned
+  Drop iagent rows the release has no digest for (warning, no copy)
+  instead of refusing the run.
+
+.PARAMETER PlanOnly
+  Build and check the plan, print one JSON line per planned image
+  ({"src":...,"dst":...,"release":true|false}) and exit 0 before any
+  docker/crane call. With -ReleaseValues there is no network call at all.
+
 .PARAMETER DryRun
   Print the commands without executing.
 
@@ -136,16 +149,16 @@
   .\mirror-to-artifactory.ps1 -RepoBase artifactory.mycorp.com/docker-cortex -Release 0.4.80
 
 .EXAMPLE
-  # Default: mirror only iagent-owned images (15 engines + cortex-ui + central-gateway = 17)
-  .\mirror-to-artifactory.ps1 -RepoBase cbm-containers-dev-and.artifactory-and.rmd.ray.com
+  # Mirror only iagent-owned images (by release digest), skipping rows the release lacks
+  .\mirror-to-artifactory.ps1 -RepoBase artifactory.mycorp.com/docker-cortex -Release 0.4.80 -SkipUnpinned
 
 .EXAMPLE
   # First-time seed of a fresh Artifactory: include the external deps too
-  .\mirror-to-artifactory.ps1 -RepoBase artifactory.mycorp.com/docker-cortex -IncludeExternal
+  .\mirror-to-artifactory.ps1 -RepoBase artifactory.mycorp.com/docker-cortex -Release 0.4.80 -IncludeExternal
 
 .EXAMPLE
   # Test the inventory + naming without transferring bytes
-  .\mirror-to-artifactory.ps1 -RepoBase artifactory.mycorp.com/docker-cortex -IncludeExternal -DryRun
+  .\mirror-to-artifactory.ps1 -RepoBase artifactory.mycorp.com/docker-cortex -Release 0.4.80 -IncludeExternal -DryRun
 #>
 [CmdletBinding()]
 param(
@@ -159,11 +172,16 @@ param(
 
     [switch]$IncludeExternal,
 
-    [string]$Release = '',
+    [Parameter(Mandatory=$true)]
+    [string]$Release,
 
     [string]$ReleaseValues = '',
 
     [string]$DigestsOut = '',
+
+    [switch]$SkipUnpinned,
+
+    [switch]$PlanOnly,
 
     [switch]$DryRun
 )
@@ -174,7 +192,9 @@ $RepoBase = $RepoBase.TrimEnd('/')
 # -----------------------------------------------------------------------
 # Prereq check for the selected engine.
 # -----------------------------------------------------------------------
-if ($Method -eq 'crane') {
+if ($PlanOnly) {
+    # no engine needed: the plan is printed before any copy
+} elseif ($Method -eq 'crane') {
     if (-not (Get-Command crane -ErrorAction SilentlyContinue)) {
         Write-Host "ERROR: -Method crane selected but 'crane' is not on PATH." -ForegroundColor Red
         Write-Host "Install crane, or use the default -Method buildx (no install)." -ForegroundColor Yellow
@@ -192,31 +212,32 @@ if ($Method -eq 'crane') {
 # -----------------------------------------------------------------------
 # Image inventory — iagent-owned (always mirrored).
 #
-# All :latest because CI rebuilds these on every push. If you want a
-# specific SHA pinned, switch the tag in this script and in
-# values-artifactory.yaml together.
+# Rows carry NO tag: src is a bare repo, dst a bare path. iagent images come
+# only from a release's digests (-Release), are tagged with the chart version,
+# and a row the release lacks is refused (-SkipUnpinned drops it). This script
+# never copies or writes :latest.
 # -----------------------------------------------------------------------
 $IagentImages = @(
     # Engine fleet (16) + cortex-bff + 2 dagster runtimes — built by
     # invincible-agent's build-containers.yml matrix.
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/cortex-bff:latest';            dst='edgy-solutions/invincible-agent/cortex-bff:latest' },
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/dagster-server:latest';        dst='edgy-solutions/invincible-agent/dagster-server:latest' },
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/dagster-control-plane:latest'; dst='edgy-solutions/invincible-agent/dagster-control-plane:latest' },
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/ontology-service:latest';      dst='edgy-solutions/invincible-agent/ontology-service:latest' },
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/restate-analyst:latest';       dst='edgy-solutions/invincible-agent/restate-analyst:latest' },
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/langgraph-support:latest';     dst='edgy-solutions/invincible-agent/langgraph-support:latest' },
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/swarms-scraper:latest';        dst='edgy-solutions/invincible-agent/swarms-scraper:latest' },
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/datahub-wrapper:latest';       dst='edgy-solutions/invincible-agent/datahub-wrapper:latest' },
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/neo4j-expert:latest';          dst='edgy-solutions/invincible-agent/neo4j-expert:latest' },
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/presentation-agent:latest';    dst='edgy-solutions/invincible-agent/presentation-agent:latest' },
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/weaviate-expert:latest';       dst='edgy-solutions/invincible-agent/weaviate-expert:latest' },
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/data-analyst:latest';          dst='edgy-solutions/invincible-agent/data-analyst:latest' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/cortex-bff';            dst='edgy-solutions/invincible-agent/cortex-bff' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/dagster-server';        dst='edgy-solutions/invincible-agent/dagster-server' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/dagster-control-plane'; dst='edgy-solutions/invincible-agent/dagster-control-plane' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/ontology-service';      dst='edgy-solutions/invincible-agent/ontology-service' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/restate-analyst';       dst='edgy-solutions/invincible-agent/restate-analyst' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/langgraph-support';     dst='edgy-solutions/invincible-agent/langgraph-support' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/swarms-scraper';        dst='edgy-solutions/invincible-agent/swarms-scraper' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/datahub-wrapper';       dst='edgy-solutions/invincible-agent/datahub-wrapper' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/neo4j-expert';          dst='edgy-solutions/invincible-agent/neo4j-expert' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/presentation-agent';    dst='edgy-solutions/invincible-agent/presentation-agent' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/weaviate-expert';       dst='edgy-solutions/invincible-agent/weaviate-expert' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/data-analyst';          dst='edgy-solutions/invincible-agent/data-analyst' },
     # engine-p (planning). DEFAULT-OFF in the chart (enginePlanning.enabled=false), so a
     # cluster that turns it on needs the image mirrored FIRST — an air-gapped work cluster
     # cannot fall back to ghcr. Note the image is `planning-agent` while the SERVICE is
     # `iagent-engine-p`; those differ for this engine and only for this engine, which is
     # exactly why it was missed here.
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/planning-agent:latest';        dst='edgy-solutions/invincible-agent/planning-agent:latest' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/planning-agent';        dst='edgy-solutions/invincible-agent/planning-agent' },
 
     # engine-fin (finance, ADR-0045). SAME SHAPE AS engine-p ABOVE, AND MISSED FOR THE SAME
     # REASON — the comment above already records it and the list was still not updated when
@@ -233,7 +254,7 @@ $IagentImages = @(
     #
     # tests/test_mirror_covers_the_build_matrix.py now derives the required set from
     # build-containers.yml, so a THIRD omission fails CI instead of a work deploy.
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/finance-agent:latest';         dst='edgy-solutions/invincible-agent/finance-agent:latest' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/finance-agent';         dst='edgy-solutions/invincible-agent/finance-agent' },
     # engine-cost — production cost accounting. DEFAULT-OFF in the chart
     # (engineCost.enabled=false; only values-sandbox.yaml turns it on), mirrored anyway for
     # the reason the finance entry above states: default-off is a DEFAULT, not a guarantee.
@@ -246,7 +267,7 @@ $IagentImages = @(
     # row and appendix item 17c both told the lane to do this and it was skipped anyway —
     # which is the row's own point, that a lesson written beside a list does not maintain
     # the list. What maintained it was the derived check.
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/cost-agent:latest';            dst='edgy-solutions/invincible-agent/cost-agent:latest' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/cost-agent';            dst='edgy-solutions/invincible-agent/cost-agent' },
     # engine-safety — sustainment safety assessment (ADR-0051). DEFAULT-OFF in the chart and
     # mirrored anyway, for the reason the two entries above both state: default-off is a DEFAULT,
     # not a guarantee, and the moment someone flips engineSafety.enabled on a work cluster an
@@ -258,13 +279,13 @@ $IagentImages = @(
     # `safety-agent`. That is the comment four entries up proving itself again from the other
     # side: a lesson written beside a list does not maintain the list, and this time the lesson
     # was being read by the person who skipped the entry.
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/safety-agent:latest';          dst='edgy-solutions/invincible-agent/safety-agent:latest' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/safety-agent';          dst='edgy-solutions/invincible-agent/safety-agent' },
     # engine-docs (ADR-0037). Added in the SAME commit as the build-containers entry, on
     # purpose: the seal that catches this one is
     # test_every_image_ci_builds_can_be_mirrored_to_artifactory, which can only go red AFTER
     # the build entry exists — so doing the build half alone creates the window the five
     # omissions above all happened in.
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/docs-agent:latest';            dst='edgy-solutions/invincible-agent/docs-agent:latest' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/docs-agent';            dst='edgy-solutions/invincible-agent/docs-agent' },
     # FIFTH OMISSION OF THIS EXACT ENTRY (graph-host, engine-lg), and the comment four lines
     # up already drew the conclusion: A LESSON WRITTEN BESIDE A LIST DOES NOT MAINTAIN THE
     # LIST.
@@ -300,16 +321,16 @@ $IagentImages = @(
     # AND THE CORRECTION IS ITSELF THE ROW'S LESSON ONE LEVEL UP: a decision recorded in a
     # conversation does not correct a comment. 5f found this by reading the file rather than
     # the thread.
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/graph-host:latest';            dst='edgy-solutions/invincible-agent/graph-host:latest' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/graph-host';            dst='edgy-solutions/invincible-agent/graph-host' },
     # Gateway v0.2 — sole writer of Predicate edges into Neo4j + Weaviate
     # per ADR-0006 §Addendum. The chart's meshRegistrar.enabled=true
     # (work overlay) requires this image.
-    @{ src='ghcr.io/edgy-solutions/invincible-agent/mesh-registrar:latest';        dst='edgy-solutions/invincible-agent/mesh-registrar:latest' },
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/mesh-registrar';        dst='edgy-solutions/invincible-agent/mesh-registrar' },
 
     # doc-tools — Dagster code location for canonical TTL ingest +
     # document parsing pipelines. Deployed by the doc-tools helm chart
     # in the same namespace as iagent. Single image, all of doc_tools/.
-    @{ src='ghcr.io/edgy-solutions/doc-tools:latest';                              dst='edgy-solutions/doc-tools:latest' },
+    @{ src='ghcr.io/edgy-solutions/doc-tools';                              dst='edgy-solutions/doc-tools' },
 
     # pub-tools — first canonical Dagster user-deployment in the mesh
     # (sidecar-registry pattern, 2026-06-24). Same image runs as BOTH
@@ -320,13 +341,13 @@ $IagentImages = @(
     # Required when ``userDeployments.pub-tools.enabled=true`` in
     # iagent helm values. Future user-deployments (other Dagster repos
     # following the same pattern) will each need their own entry here.
-    @{ src='ghcr.io/edgy-solutions/pub-tools:latest';                              dst='edgy-solutions/pub-tools:latest' },
+    @{ src='ghcr.io/edgy-solutions/pub-tools';                              dst='edgy-solutions/pub-tools' },
 
     # cortex-ui (multi-arch as of cortex-ui commit 6312f31)
-    @{ src='ghcr.io/edgy-solutions/cortex-ui/frontend:latest';                     dst='edgy-solutions/cortex-ui/frontend:latest' },
+    @{ src='ghcr.io/edgy-solutions/cortex-ui/frontend';                     dst='edgy-solutions/cortex-ui/frontend' },
 
     # dag-tools — central gateway / aitool registration sensor
-    @{ src='ghcr.io/edgy-solutions/dag-tools/central-gateway:latest';              dst='edgy-solutions/dag-tools/central-gateway:latest' },
+    @{ src='ghcr.io/edgy-solutions/dag-tools/central-gateway';              dst='edgy-solutions/dag-tools/central-gateway' },
 
     # dag-tools/user-deployment — generic / source-singleton Dagster
     # user-deployment (2026-06-26). Same image runs as TWO pods:
@@ -337,7 +358,7 @@ $IagentImages = @(
     # source-singleton surfaces (when off; future code). The
     # mesh_demo_customers asset originally lived in pub-tools; relocated
     # here so pub-tools stays a customer-domain pipeline example.
-    @{ src='ghcr.io/edgy-solutions/dag-tools/user-deployment:latest';              dst='edgy-solutions/dag-tools/user-deployment:latest' }
+    @{ src='ghcr.io/edgy-solutions/dag-tools/user-deployment';              dst='edgy-solutions/dag-tools/user-deployment' }
 )
 
 # -----------------------------------------------------------------------
@@ -469,6 +490,14 @@ function Get-RepoOnly {
     return (($Ref -replace '@.*$', '') -replace ':[^:/]+$', '')
 }
 
+# The tag of a reference, or '' if it has none (bare repo or @digest).
+function Get-TagOf {
+    param([string]$Ref)
+    if ($Ref -match '@') { return '' }
+    if ($Ref -match ':([^:/]+)$') { return $Matches[1] }
+    return ''
+}
+
 # -----------------------------------------------------------------------
 # The repository as the release file keys it: registry host included,
 # Docker Hub's implicit docker.io/ and library/ written out.
@@ -518,18 +547,45 @@ if ($Release) {
 
     $byDigest = @()
     $byTag    = @()
+    $unpinned = @()
     $taken    = @{}
-    foreach ($group in @(@{ rows = $IagentImages; on = $true }, @{ rows = $ExternalImages; on = [bool]$IncludeExternal })) {
+    foreach ($group in @(@{ rows = $IagentImages; on = $true; iagent = $true }, @{ rows = $ExternalImages; on = [bool]$IncludeExternal; iagent = $false })) {
         foreach ($img in $group.rows) {
             $repo = Get-CanonicalRepo $img.src
             if ($relDigests.Contains($repo) -and -not $taken[$repo]) {
                 $taken[$repo] = $true
                 $dstRepo = Get-RepoOnly $img.dst
-                $dstTag  = $img.dst.Substring($dstRepo.Length + 1)
-                if ($dstTag -eq 'latest') { $dstTag = $Release }
+                if ($group.iagent) {
+                    $dstTag = $Release
+                } else {
+                    $dstTag = $img.dst.Substring($dstRepo.Length + 1)
+                }
                 $byDigest += @{ src = "$repo@$($relDigests[$repo])"; dst = "${dstRepo}:$dstTag"; release = $true }
+            } elseif ($group.iagent) {
+                $unpinned += $repo
             } elseif ($group.on) {
                 $byTag += $img
+            }
+        }
+    }
+    if ($unpinned.Count -gt 0) {
+        if ($SkipUnpinned) {
+            foreach ($u in $unpinned) {
+                Write-Host "WARNING: $u has no digest in release $Release; skipped (-SkipUnpinned), nothing copied for it" -ForegroundColor Yellow
+            }
+        } else {
+            foreach ($u in $unpinned) {
+                Write-Host "ERROR: $u has no digest in release $Release; refusing to copy it by tag" -ForegroundColor Red
+            }
+            Write-Host "Nothing was copied. Remove the row, or pass -SkipUnpinned to drop it." -ForegroundColor Yellow
+            exit 1
+        }
+    }
+    if ($IncludeExternal) {
+        foreach ($img in $ExternalImages) {
+            if ((Get-TagOf $img.src) -eq 'latest' -or (Get-TagOf $img.dst) -eq 'latest') {
+                Write-Host "ERROR: external row $($img.src) -> $($img.dst) uses the latest tag; pin it" -ForegroundColor Red
+                exit 1
             }
         }
     }
@@ -541,6 +597,27 @@ if ($Release) {
     }
     Write-Host "Release ${Release}: $($byDigest.Count) images by digest from $ReleaseValues, $($byTag.Count) more by tag" -ForegroundColor Cyan
     $Images = $byDigest + $byTag
+}
+
+# Final guard: no planned image may be written to, or read from, :latest.
+$latestHits = @()
+foreach ($img in $Images) {
+    if ((Get-TagOf $img.dst) -eq 'latest') { $latestHits += "dst $($img.dst)" }
+    if ((Get-TagOf $img.src) -eq 'latest') { $latestHits += "src $($img.src)" }
+}
+if ($latestHits.Count -gt 0) {
+    foreach ($h in $latestHits) { Write-Host "ERROR: planned image uses latest: $h" -ForegroundColor Red }
+    Write-Host "Nothing was copied." -ForegroundColor Yellow
+    exit 1
+}
+
+if ($PlanOnly) {
+    foreach ($img in $Images) {
+        $isRel = [bool]$img.release
+        $o = [ordered]@{ src = $img.src; dst = $img.dst; release = $isRel }
+        Write-Output (ConvertTo-Json -InputObject $o -Compress)
+    }
+    exit 0
 }
 
 # -----------------------------------------------------------------------
