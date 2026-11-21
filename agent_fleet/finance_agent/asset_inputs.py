@@ -137,19 +137,40 @@ def max_rows() -> int:
 #: The broker's ticket carries `ticket_id`, `issued_at` and `as_of` (dag-tools 0.13.0, #31), and
 #: `get_dataframe_with_ticket` hands back its receipt beside the frame. `main.mesh_ticketed_read`
 #: returns that pair, and every asset answer cites the receipt of the read it computed over. A
-#: receipt that names neither (a broker that stamps no as-of and issues no id) still says the
-#: ticket is pending rather than inventing one (ruled 2026-11-08), byte for byte this text. The
-#: URN stays last: the live leg reads `Source: <urn>` as the suffix.
+#: receipt that names no ticket id (a broker that issues none) still says the ticket is pending
+#: rather than inventing one (ruled 2026-11-08), byte for byte this text. The URN stays last: the
+#: live leg reads `Source: <urn>` as the suffix.
 TICKET_PENDING = "(ticket: pending)"
+
+#: Ruled 2026-11-20 (architect, via Chris): "when an as-of is unavailable, say so; never show a
+#: blank or a stale date as current." A receipt without an as-of says this, never nothing, with
+#: the broker's reason when the receipt carries one (`as_of_unavailable`: dag-tools' client
+#: allowlists it, and the broker sets one of four constant tokens, e.g.
+#: `no_reader_for_source_type`). The broker never fills a missing as-of with the issue time, and
+#: neither does this clause.
+AS_OF_UNAVAILABLE = "as-of unavailable"
+
+#: The broker's `as_of_source` for a version the producer advertised when the broker LOADED, not
+#: one read when this ticket was issued: it may be stale, so the clause labels it rather than
+#: showing it as current. `read_at_authorize`, and a receipt with no source (a broker before
+#: dag-tools 0.13.0 stamped none), cite the as-of bare.
+AS_OF_ADVERTISED_AT_LOAD = "advertised_at_load"
 
 
 def ticket_clause(receipt: Mapping[str, Any]) -> str:
-    """The receipt as the provenance clause: its as-of and its ticket id, each only if the receipt
-    carries it. Nothing is claimed that the receipt does not say: no as-of without one, and an
-    absent id is `pending`. A receipt with neither is exactly `TICKET_PENDING`."""
+    """The receipt as the provenance clause: its as-of and its ticket id. Nothing is claimed that
+    the receipt does not say, and nothing it lacks is left blank: an absent as-of is said to be
+    unavailable (with the broker's reason, if given), an as-of advertised at load is labelled so,
+    and an absent id is `pending`. A receipt with neither ends in exactly `TICKET_PENDING`."""
     as_of, ticket_id = receipt.get("as_of"), receipt.get("ticket_id")
     ticket = f"ticket: {ticket_id}" if ticket_id else "ticket: pending"
-    return f"(as of {as_of}, {ticket})" if as_of else f"({ticket})"
+    if not as_of:
+        reason = receipt.get("as_of_unavailable")
+        said = f"{AS_OF_UNAVAILABLE}: {reason}" if reason else AS_OF_UNAVAILABLE
+        return f"({said}) ({ticket})"
+    if receipt.get("as_of_source") == AS_OF_ADVERTISED_AT_LOAD:
+        return f"(as of {as_of}, advertised at load, not read for this ticket; {ticket})"
+    return f"(as of {as_of}, {ticket})"
 
 
 def provenance(urn: str, receipt: Mapping[str, Any]) -> str:
