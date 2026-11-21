@@ -87,7 +87,7 @@ def built(monkeypatch):
         @staticmethod
         def build(**kw):
             out.append(kw)
-            return {"manifest": {"panels": kw["panels"], "as_of": "2026-01-01",
+            return {"manifest": {"panels": kw["panels"], "generated_on": "2026-01-01",
                                  "recipient_scope": kw["recipient_scope"],
                                  "algorithm_sha": kw["sha"],
                                  "template_id": kw["template_id"],

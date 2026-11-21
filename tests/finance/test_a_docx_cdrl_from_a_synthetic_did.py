@@ -47,6 +47,8 @@ NAME = "cdrl_a002_cost_performance_docx"
 ROW = SAMPLE / f"{NAME}.yaml"
 TEMPLATE = SAMPLE / "cdrl_a002_cost_performance.docx"
 AS_OF = "2026-10-28"
+DATA_AS_OF = "2026-09-30"  # the source's own as-of, distinct from the generation date
+NO_SOURCE_AS_OF = "as-of unavailable: the notional seed carries no as-of"  # via the route: a seed export
 MEDIA = dict(EXPECT.values())["docx"]
 IDX = "fin_performance_indices"
 FILE = f"fin-cdrl-{NAME}-{PROGRAM}.docx"
@@ -129,7 +131,7 @@ def test_3_the_delivered_file_holds_each_fact_the_header_row_and_one_row_per_per
     program = next(p for p in engine.STATE.programs if p.program_id == PROGRAM)
     raw = _raw()
     t1 = _cells(doc.tables[0])
-    assert [row[1] for row in t1] == [program.name, PROGRAM, AS_OF, raw["cdrl"]["item"],
+    assert [row[1] for row in t1] == [program.name, PROGRAM, NO_SOURCE_AS_OF, raw["cdrl"]["item"],
                                       raw["cdrl"]["data_item"]]
     assert [row[0] for row in t1] == ["Program", "Program id", "As of", "CDRL item", "Data item"]
 
@@ -148,7 +150,7 @@ def test_3_the_delivered_file_holds_each_fact_the_header_row_and_one_row_per_per
 def test_3_an_undefined_period_shows_the_reason_string(profiles, tmp_path, monkeypatch):
     state = _spent_state(monkeypatch)
     path, _ = cdrl.build_cdrl(
-        state, profiles[NAME], program_id=PROGRAM, as_of=AS_OF, out_dir=tmp_path,
+        state, profiles[NAME], program_id=PROGRAM, data_as_of=DATA_AS_OF, generated_on=AS_OF, out_dir=tmp_path,
         run_source=lambda fn, params: engine._cdrl_source(fn, params, caller="alice@example.com"))
     t2 = _cells(docx.Document(str(path)).tables[1])
     assert t2[1:] and {row[4] for row in t2[1:]} == {"undefined: budget_spent"}
@@ -163,7 +165,7 @@ def test_3_an_absent_value_is_an_empty_cell_and_no_template_text_survives(profil
             env = {**env, "rows": list(env["rows"])[1:]}
         return env, method
 
-    path, _ = cdrl.build_cdrl(engine.STATE, profiles[NAME], program_id=PROGRAM, as_of=AS_OF,
+    path, _ = cdrl.build_cdrl(engine.STATE, profiles[NAME], program_id=PROGRAM, data_as_of=DATA_AS_OF, generated_on=AS_OF,
                               out_dir=tmp_path, run_source=source)
     t2 = _cells(docx.Document(str(path)).tables[1])
     tpl2 = _cells(docx.Document(str(TEMPLATE)).tables[1])
