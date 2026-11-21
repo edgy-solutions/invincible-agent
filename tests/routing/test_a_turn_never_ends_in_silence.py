@@ -36,6 +36,7 @@ Run: uv run --frozen pytest tests/routing/test_a_turn_never_ends_in_silence.py -
 """
 from __future__ import annotations
 
+import re
 import inspect
 from pathlib import Path
 
@@ -52,6 +53,19 @@ def _src() -> str:
         ln for ln in _GW.read_text(encoding="utf-8").splitlines()
         if not ln.lstrip().startswith("#")
     )
+
+
+def _dispatch_fn(src: str) -> str:
+    """`_dispatch_answer_artifact`, from its `def` to the next top-level statement.
+
+    The two seals below used to read a fixed 4000 characters from the `def`. On master that
+    window ended 6 characters after `_writer = get_writer()`, so one added field in the
+    function's dict broke a seal that had nothing to do with the field. The function's own
+    extent is the anchor these seals mean: inside the function, and nowhere else.
+    """
+    i = src.index("async def _dispatch_answer_artifact(")
+    m = re.compile(r"^(?:async def |def |class |@)", re.M).search(src, i + 1)
+    return src[i:m.start() if m else len(src)]
 
 
 # ── THE BOUNDARY EXISTS AND WRAPS THE WHOLE BODY ────────────────────────────────────────────
@@ -143,8 +157,7 @@ def test_A_PENDING_BUNDLE_IS_WRITTEN_AS_FAILED_not_skipped():
     """The dispatch site used to log and RETURN. The log was the only trace, in a pod whose logs
     rotate — which is the same silence by a slower route."""
     src = _src()
-    i = src.index("async def _dispatch_answer_artifact(")
-    block = src[i:i + 4000]
+    block = _dispatch_fn(src)
     assert 'bundle["status"] = "failed"' in block, (
         "a bundle still 'pending' at stream_end is not written, so an exit path that forgets to "
         "flip status produces no artifact at all"
@@ -176,8 +189,7 @@ def test_THE_SKIP_RETURN_IS_GONE():
     # substring that is correct everywhere and identifying nowhere, which is the same shape as
     # reading a grep COUNT for a grep RESULT.
     src = _src()
-    fn = src.index("async def _dispatch_answer_artifact(")
-    block = src[fn:fn + 4000]
+    block = _dispatch_fn(src)
     i = block.index('bundle["status"] = "failed"')
     j = block.index("_writer = get_writer()", i)
     between = block[i:j]
