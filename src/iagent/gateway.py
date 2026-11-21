@@ -13038,6 +13038,8 @@ async def health():
 
 # Set once the task completion declarations have been read cleanly; never cleared in-process.
 _COMPLETION_DECLARATIONS_READ_ONCE = False
+# Set while a break on disk after that read has been logged; cleared when the files compose again.
+_COMPLETION_BREAK_LOGGED = False
 
 
 @app.get("/ready")
@@ -13048,15 +13050,29 @@ async def ready():
     completion declarations cannot be read AT START (architect ruling 2026-11-21): a deploy fault,
     made visible before anyone acts. Until the first clean read, every call re-reads (so a repaired
     file clears it without a restart). After it, readiness no longer depends on them: a later
-    unreadable file is the act-time rule's (refuse only decisions that complete a task and could
-    require fields), never a reason to pull every pod out of the load balancer at once."""
-    global _COMPLETION_DECLARATIONS_READ_ONCE
+    unreadable file is never a reason to pull every pod out of the load balancer at once.
+
+    A break on disk after that read is LOGGED ONCE at error level with its reason (architect
+    2026-11-21), and logged again only after the files have composed in between. The process
+    keeps the declarations it read (they are cached for its life), so nothing else would show
+    the break before a restart, and a restarted pod will start not ready."""
+    global _COMPLETION_DECLARATIONS_READ_ONCE, _COMPLETION_BREAK_LOGGED
     from . import task_completion as _tc_ready
     faults: dict = {}
     reasons: list = []
     if _UNDECLARED_SERVICE_URLS:
         reasons.append("service URL(s) undeclared — deploy fault, not a runtime fault")
         faults["undeclared"] = dict(sorted(_UNDECLARED_SERVICE_URLS.items()))
+    if _COMPLETION_DECLARATIONS_READ_ONCE:
+        broke = _tc_ready.files_compose_error()
+        if broke is None:
+            _COMPLETION_BREAK_LOGGED = False
+        elif not _COMPLETION_BREAK_LOGGED:
+            _COMPLETION_BREAK_LOGGED = True
+            logger.error(
+                "task completion declarations on disk no longer compose (%s): this BFF keeps "
+                "the declarations it read at start until it restarts, and a restarted BFF will "
+                "report not ready. Fix the files.", broke)
     unreadable = None if _COMPLETION_DECLARATIONS_READ_ONCE else (
         _tc_ready.declarations_unreadable_reason())
     if unreadable is None:

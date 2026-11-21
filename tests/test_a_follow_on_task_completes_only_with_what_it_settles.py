@@ -77,6 +77,7 @@ def overlay_env(monkeypatch):
     monkeypatch.setattr(ht, "_SEED_ROWS_CACHE", None, raising=False)
     monkeypatch.setattr(gateway, "_COMPLETION_DECLARATIONS_READ_ONCE", False,
                         raising=False)  # a fresh process
+    monkeypatch.setattr(gateway, "_COMPLETION_BREAK_LOGGED", False, raising=False)
     _reset_caches()
     yield
     _reset_caches()
@@ -710,7 +711,11 @@ def test_F10f_a_later_break_leaves_readiness_alone_and_the_act_time_rule_refuses
     """gov's question on #494 (08:00 report): readiness read on EVERY probe turns one bad runtime
     refresh of a mounted overlay into every pod not ready at once, a full outage, against the
     act-time clause. The ruling's two clauses: at start, not ready; later, refuse only decisions
-    that complete a task and could require fields, and a rejection goes through."""
+    that complete a task and could require fields, and a rejection goes through.
+
+    `_broken_overlay` resets the composed cache, so the act-time half here is a process with no
+    clean read in its cache. A process that HAS read keeps those declarations for its life and is
+    not refused (F10g pins that, and the one error line that reports the break)."""
     monkeypatch.setattr(gateway, "_UNDECLARED_SERVICE_URLS", {})
     c = world["client"]
     r = c.get("/ready")  # the first clean read
@@ -736,6 +741,47 @@ def test_F10e_health_stays_200_while_the_declarations_are_unreadable(world, monk
     # the same fault that makes /ready 503 leaves liveness alone: a config fault never restarts the pod
     assert world["client"].get("/ready").status_code == 503
     assert world["client"].get("/health").status_code == 200
+
+
+def test_F10g_a_break_on_disk_after_the_latch_is_logged_once_with_its_reason(
+        world, monkeypatch, tmp_path, caplog):
+    """Architect 2026-11-21: "when the declarations become unreadable after the latch, log it once
+    at error level with the reason." As in production, the cache is NOT reset between the clean
+    read and the break: the process keeps what it read, so this log is the only sign of the break
+    before a restart."""
+    import shutil
+    monkeypatch.setattr(gateway, "_UNDECLARED_SERVICE_URLS", {})
+    shutil.copytree(_OVERLAY / "task_kinds", tmp_path / "task_kinds")
+    (tmp_path / "task_completion").mkdir()
+    row = tmp_path / "task_completion" / _ROW.name
+    good = _ROW.read_text(encoding="utf-8")
+    assert "type: positive_integer" in good, "the row under test changed: pick another field"
+    bad = good.replace("type: positive_integer", "type: float", 1)
+    row.write_text(good, encoding="utf-8")
+    monkeypatch.setenv("TASK_KIND_OVERLAY_DIRS", str(tmp_path / "task_kinds"))
+    _reset_caches()
+    c = world["client"]
+
+    def _breaks() -> list:
+        return [r for r in caplog.records if r.levelno == logging.ERROR
+                and r.name == "cortex" and "no longer compose" in r.getMessage()]
+
+    with caplog.at_level(logging.ERROR, logger="cortex"):
+        assert c.get("/ready").status_code == 200  # the first clean read: latched
+        assert c.get("/ready").status_code == 200
+        assert _breaks() == []  # the control: files that compose log nothing
+        row.write_text(bad, encoding="utf-8")  # the overlay breaks after start; no cache reset
+        assert tc.declarations_unreadable_reason() is None  # the process keeps what it read
+        for _ in range(3):
+            assert c.get("/ready").status_code == 200
+        logged = _breaks()
+        assert len(logged) == 1, [r.getMessage() for r in logged]
+        assert "float" in logged[0].getMessage()  # the reason travels in the log
+        row.write_text(good, encoding="utf-8")  # repaired: re-armed, and nothing new is logged
+        assert c.get("/ready").status_code == 200 and len(_breaks()) == 1
+        row.write_text(bad, encoding="utf-8")  # a second break is a second line
+        assert c.get("/ready").status_code == 200 and c.get("/ready").status_code == 200
+        assert len(_breaks()) == 2
 
 
 def _scan(tmp_path, monkeypatch, seed_files=None, overlay_files=None):

@@ -201,6 +201,21 @@ def declarations_unreadable_reason() -> Optional[str]:
     return None
 
 
+def files_compose_error() -> Optional[str]:
+    """None when the files on disk compose NOW; otherwise `<class>: <message>` of the failure.
+
+    Uncached, and it neither reads nor fills the cache: `get_declarations` caches a clean read for
+    the life of the process, so once it has read, a later break on disk changes nothing this
+    process uses and nothing it reports. This is the only way to see such a break before a
+    restart. Silent itself (the caller decides what to log), and quiet about an unset overlay
+    variable, which `get_declarations` already warns about once."""
+    try:
+        compose_completion(SEED_DIR, overlay_dirs_from_env() or [])
+    except Exception as exc:  # noqa: BLE001 -- every failure to compose is the same break
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
 def _verbs_attributable(verbs: object, *, tombstone: bool) -> bool:
     """Can this row's `required_on` be read as the verbs it names?
 
