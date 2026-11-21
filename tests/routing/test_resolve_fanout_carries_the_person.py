@@ -555,8 +555,12 @@ def test_g5_the_token_is_in_no_output_for_a_refused_relayed_call(monkeypatch, ne
     for body in (EXPIRED_403, AUDIENCE_403):
         # the provider's body echoes the token: it must be neither printed nor kept
         net(lambda r, b=body: httpx.Response(403, json={**b, "echo": r.headers.get("authorization")}))
-        _call(ROW_X)
-        _fanout([ROW_X], monkeypatch)
+        r = _call(ROW_X)
+        subject, prov = _fanout([ROW_X], monkeypatch)
+        # ...nor KEPT: the refusal provenance travels into engine A's answer path and traces.
+        assert TOKEN not in repr(r) and TOKEN not in repr(prov) and TOKEN not in repr(subject), (
+            "the relayed bearer is in what a refused call or fan-out returns"
+        )
     out = capsys.readouterr()
     assert TOKEN not in out.out and TOKEN not in out.err
     assert all(TOKEN not in r.getMessage() and TOKEN not in str(r.__dict__) for r in caplog.records)
