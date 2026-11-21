@@ -28,7 +28,9 @@ Discipline this module enforces:
     failure, constraint violation) gets logged AND inserted into
     `projector_skip_log` with structured detail; the cursor advances
     past it (the loop survives). Silent drops are the trap; observable
-    skips with a queryable surface are the right shape.
+    skips with a queryable surface are the right shape. A schema-lag error
+    (undefined column or table) is NOT a bad artifact: it retries the batch
+    and is never skipped.
 
 5.  **Liveness is structural advance** per
     [[liveness-probe-watches-advance-not-just-correctness]]. The
@@ -54,6 +56,23 @@ import psycopg2.extras
 from neo4j import GraphDatabase
 
 logger = logging.getLogger(__name__)
+
+try:
+    from psycopg2.errorcodes import UNDEFINED_COLUMN as _PG_UNDEFINED_COLUMN
+    from psycopg2.errorcodes import UNDEFINED_TABLE as _PG_UNDEFINED_TABLE
+except ImportError:  # literal SQLSTATEs 42703 / 42P01
+    _PG_UNDEFINED_COLUMN, _PG_UNDEFINED_TABLE = "42703", "42P01"
+
+
+def _is_schema_lag(exc: BaseException) -> bool:
+    """True when Postgres says the schema is behind this code: an undefined column or table.
+
+    The db-init hook that applies the SQL is post-upgrade, so it runs AFTER the projector
+    Deployment has rolled; in that window every upsert names a column that does not exist
+    yet. That is not a bad artifact and must not be skipped. Non-psycopg2 errors have no
+    `pgcode` and are False.
+    """
+    return getattr(exc, "pgcode", None) in (_PG_UNDEFINED_COLUMN, _PG_UNDEFINED_TABLE)
 
 
 # Tunable knobs — defaults match the planning doc's §5 Phase A wait
@@ -375,6 +394,19 @@ class ApplyLoop:
                 self._apply_one(art)
                 applied += 1
             except Exception as exc:
+                if _is_schema_lag(exc):
+                    # Fail the BATCH, before the skip record and before the cursor moves:
+                    # run_forever catches this, backs off and retries the same rows once
+                    # db-init has applied the column. The kubelet liveness probe is /health
+                    # (a shape check, projector.yaml), not cursor advance, so the pod is
+                    # not restarted while it waits.
+                    logger.error(
+                        "schema is behind the code (pgcode %s) at artifact %s watermark %s: "
+                        "the batch is retried and nothing is skipped: %s",
+                        getattr(exc, "pgcode", None), art.get("id"),
+                        art.get("watermark"), exc,
+                    )
+                    raise
                 # Per [[feedback-trailing-steps-nonfatal]]: log + skip +
                 # advance cursor past the offending artifact. The skip
                 # is observable — projector_skip_log row inserted so
