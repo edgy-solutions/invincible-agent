@@ -36,7 +36,8 @@ fields. A rejection goes through.").
     decision)`: a TOLERANT scan of the same files (no model validation) that is True when the
     decision is named in a `required_on` of any row of that kind (deleted or not: conservative),
     and True for every decision when a row cannot be attributed (unparseable file, not a mapping,
-    no usable `kind`, a `required_on` that is not a list of strings). True refuses with 409
+    no usable `kind`, a `required_on` that is not a list of non-empty strings, or a live row
+    whose `required_on` is absent or empty). True refuses with 409
     `completion_declaration_unreadable`; False lets the act proceed with no fields required.
 A malformed row is caught before deploy by `policy/sync/validate_policy.py`, which composes this
 family with `compose_completion` directly.
@@ -200,6 +201,21 @@ def declarations_unreadable_reason() -> Optional[str]:
     return None
 
 
+def _verbs_attributable(verbs: object, *, tombstone: bool) -> bool:
+    """Can this row's `required_on` be read as the verbs it names?
+
+    A live row needs a non-empty list of non-empty strings: the strict model refuses an absent,
+    misspelled (so absent), empty or `['']` value, so a live row without one is a row whose
+    verbs were MEANT and cannot be read; reading it as naming no verb would let a decision it
+    names complete with no fields. A tombstone (`deleted: true`) may omit the key. A list
+    holding an empty or non-string entry is unreadable on any row."""
+    if verbs is None:
+        return tombstone
+    if not isinstance(verbs, list) or not all(isinstance(v, str) and v for v in verbs):
+        return False
+    return bool(verbs) or tombstone
+
+
 def fields_could_be_required(kind: str, decision: str) -> bool:
     """For use ONLY when the strict compose failed: could `decision` on `kind` require fields?
 
@@ -222,9 +238,9 @@ def fields_could_be_required(kind: str, decision: str) -> bool:
                 raw = _UNREADABLE
             row_kind = raw.get("kind") if isinstance(raw, dict) else None
             verbs = raw.get("required_on") if isinstance(raw, dict) else None
+            tombstone = isinstance(raw, dict) and raw.get("deleted") is True
             if (not isinstance(raw, dict) or not isinstance(row_kind, str) or not row_kind
-                    or (verbs is not None and not (isinstance(verbs, list)
-                                                   and all(isinstance(v, str) for v in verbs)))):
+                    or not _verbs_attributable(verbs, tombstone=tombstone)):
                 logger.warning("task completion row %s cannot be attributed to a kind: every "
                                "decision is treated as one that may need fields", f.name)
                 return True

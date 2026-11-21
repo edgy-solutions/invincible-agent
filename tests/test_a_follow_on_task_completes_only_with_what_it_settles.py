@@ -755,6 +755,14 @@ def test_F10_scan_treats_a_row_with_no_required_on_as_naming_nothing(tmp_path, m
     "kind: ''\nrequired_on: [v1]\n",            # kind empty
     "kind: ka\nrequired_on: v1\n",              # required_on not a list
     "kind: ka\nrequired_on: [v1, 2]\n",         # required_on not strings
+    # gov's hold on 54476658: the strict model refuses each of these, so the tolerant scan must
+    # not read them as naming no verb (a typo would 503 /ready AND let the verb complete
+    # with no fields)
+    "kind: ka\n",                               # live row, required_on absent
+    "kind: ka\nrequired_onn: [v1]\n",           # live row, required_on misspelled
+    "kind: ka\nrequired_on: []\n",              # live row, required_on empty
+    "kind: ka\nrequired_on: ['']\n",            # an empty verb
+    "kind: ka\ndeleted: true\nrequired_on: ['']\n",  # an empty verb, even on a tombstone
 ])
 def test_F10_scan_refuses_every_decision_for_an_unattributable_row(tmp_path, monkeypatch, caplog,
                                                                   text):
