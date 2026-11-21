@@ -280,7 +280,7 @@ def engine(monkeypatch):
         @staticmethod
         def build(**kw):
             built.append(kw)
-            return {"manifest": {"panels": kw["panels"], "as_of": "2026-01-01",
+            return {"manifest": {"panels": kw["panels"], "generated_on": "2026-01-01",
                                  "recipient_scope": kw["recipient_scope"],
                                  "algorithm_sha": kw["sha"],
                                  "template_id": kw["template_id"],
@@ -582,7 +582,8 @@ def test_the_html_half_alone_parses_without_duckdb():
         pytest.skip("no .pyodide-cache in this checkout")
     html = b.build_html(SCOPE, "NP-MERIDIAN", ROOT / ".pyodide-cache", _narrowed_dict(),
                         _served_panels(),
-                        template_id="program_finance", as_of="2026-01-01", sha="0" * 40)
+                        template_id="program_finance", data_as_of="2026-01-01",
+                        generated_on="2026-01-01", sha="0" * 40)
     assert check_javascript(html) == []
     assert "cdn.jsdelivr.net" not in html
 
@@ -618,7 +619,7 @@ def test_engine_as_of_in_the_body_reaches_the_builder(engine):
     r = client.post("/package_export", json={
         "user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas(), "as_of": "2026-02-03"})
     assert r.status_code == 200, r.text
-    assert built[0]["as_of"] == "2026-02-03"
+    assert built[0]["generated_on"] == "2026-02-03"
 
 
 def test_engine_as_of_absent_is_the_request_date_resolved_once(engine, monkeypatch):
@@ -629,7 +630,7 @@ def test_engine_as_of_absent_is_the_request_date_resolved_once(engine, monkeypat
     monkeypatch.setattr(fmain, "_request_date", lambda: calls.append(1) or "2031-03-04")
     r = client.post("/package_export", json={"user_email": CALLER, "recipient_scope": SCOPE, "canvas": _canvas()})
     assert r.status_code == 200, r.text
-    assert len(calls) == 1 and built[0]["as_of"] == "2031-03-04"
+    assert len(calls) == 1 and built[0]["generated_on"] == "2031-03-04"
 
 
 @pytest.mark.parametrize("bad", ["2026-13-01", "yesterday"])
@@ -673,5 +674,9 @@ def test_the_real_build_carries_as_of_in_the_page_and_the_manifest_and_is_byte_s
                 pages.append((dist / html_name).read_bytes())
     assert pages[0] == pages[1]
     html = pages[0].decode("utf-8")
-    assert "as of 2026-02-03" in html
-    assert [m["as_of"] for m in manifests] == ["2026-02-03", "2026-02-03"]
+    assert "generated 2026-02-03" in html
+    assert "data as of as-of unavailable: the notional seed carries no as-of" in html
+    assert "as of 2026-02-03" not in html
+    assert [m["generated_on"] for m in manifests] == ["2026-02-03", "2026-02-03"]
+    assert [m["data_as_of"] for m in manifests] == [
+        "as-of unavailable: the notional seed carries no as-of"] * 2

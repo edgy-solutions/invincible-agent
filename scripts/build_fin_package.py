@@ -47,6 +47,7 @@ from build_cost_package import (  # noqa: E402  (same repo root; see module docs
 )
 
 from agent_fleet.finance_agent import export as fin_export                     # noqa: E402
+from agent_fleet.finance_agent import export_dates as fin_export_dates         # noqa: E402
 from agent_fleet.finance_agent import page as fin_page                         # noqa: E402
 from agent_fleet.finance_agent import state_codec                              # noqa: E402
 from agent_fleet.finance_agent.entities import FinanceState, SourceUnavailable  # noqa: E402
@@ -282,7 +283,7 @@ _TEMPLATE = """<!doctype html>
 </style></head><body>
 <header>
  <h1>Program finance validation package - {recipient}</h1>
- <div class="meta">algorithm {sha} &middot; template {template_id} &middot; as of {as_of}</div>{source_note}
+ <div class="meta">algorithm {sha} &middot; template {template_id} &middot; data as of {data_as_of} &middot; generated {generated_on}</div>{source_note}
 </header>
 <main>
  <div id="status" class="checking">Verifying against the producing engine...</div>
@@ -416,7 +417,7 @@ function render(pkg, results) {{
 
 def build_html(recipient_scope: str, program_id: str, runtime_dir: pathlib.Path,
                state_dict: dict[str, Any], panels: list[dict[str, Any]], *,
-               template_id: str, as_of: str, sha: str,
+               template_id: str, data_as_of: str, generated_on: str, sha: str,
                data_provenance: Optional[str] = None) -> str:
     """Build the page. `panels` carries the SERVED rows (`_measure_envelope`'s output),
     never recomputed here — recomputation is `page.verify`'s job, inside the browser."""
@@ -424,7 +425,8 @@ def build_html(recipient_scope: str, program_id: str, runtime_dir: pathlib.Path,
     package_json = json.dumps({"state": state_dict, "panels": panels}, default=str)
     return _TEMPLATE.format(
         recipient=recipient_scope, program_id=program_id, sha=sha,
-        template_id=template_id, as_of=as_of,
+        template_id=template_id, data_as_of=html_lib.escape(data_as_of),
+        generated_on=html_lib.escape(generated_on),
         source_note=(f'\n <div class="meta">{html_lib.escape(data_provenance)}</div>'
                      if data_provenance else ""),
         embedded_json=json.dumps(embedded),
@@ -437,14 +439,18 @@ def build_html(recipient_scope: str, program_id: str, runtime_dir: pathlib.Path,
 def build(*, recipient_scope: str, program_id: str, state: FinanceState,
          template_id: str, template_hash: str, panels: list[dict[str, Any]],
          runtime_dir: pathlib.Path, sha: str, html_path: pathlib.Path,
-         duckdb_path: pathlib.Path, as_of: str | None = None,
+         duckdb_path: pathlib.Path, data_as_of: str | None = None,
+         generated_on: str | None = None,
          program_source: dict[str, Any] | None = None,
          data_provenance: str | None = None) -> dict[str, Any]:
     """Produce one recipient's package. Three named refusals, each before anything after it
-    is built — see the module docstring. `as_of` is resolved ONCE (UTC today when absent) and
-    reaches both the manifest and the page."""
-    if as_of is None:
-        as_of = datetime.now(timezone.utc).date().isoformat()
+    is built — see the module docstring. `generated_on` is resolved ONCE (UTC today when
+    absent) and reaches both the manifest and the page. `data_as_of` is the source's own as-of;
+    a caller that has none gets the labelled "unavailable", never the generation date."""
+    if generated_on is None:
+        generated_on = datetime.now(timezone.utc).date().isoformat()
+    if data_as_of is None:
+        data_as_of = fin_export_dates.data_as_of(None)
     narrowed = state_codec.narrow(state, program_id)
     state_dict = state_codec.state_to_dict(narrowed)
 
@@ -475,13 +481,15 @@ def build(*, recipient_scope: str, program_id: str, state: FinanceState,
     manifest = fin_export.build_manifest(
         narrowed, recipient_scope=recipient_scope, program_id=program_id,
         algorithm_sha=sha, template_id=template_id, template_hash=template_hash,
-        panels=panels, duckdb_sha256=duckdb_sha256, as_of=as_of,
+        panels=panels, duckdb_sha256=duckdb_sha256,
+        data_as_of=data_as_of, generated_on=generated_on,
         program_source=program_source, data_provenance=data_provenance,
     )
 
     html = build_html(
         recipient_scope, program_id, runtime_dir, state_dict, panels,
-        template_id=template_id, as_of=manifest["as_of"], sha=sha,
+        template_id=template_id, data_as_of=manifest["data_as_of"],
+        generated_on=manifest["generated_on"], sha=sha,
         data_provenance=data_provenance,
     )
 

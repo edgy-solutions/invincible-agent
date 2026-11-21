@@ -610,7 +610,7 @@ def built(monkeypatch):
 
     def fake_build(**kw):
         calls.append(kw)
-        return {"manifest": {"recipient_scope": f"program_office.{PROGRAM}", "as_of": "t",
+        return {"manifest": {"recipient_scope": f"program_office.{PROGRAM}", "generated_on": "t",
                              "algorithm_sha": "0" * 40, "template_id": "program_finance",
                              "template_hash": "h", "panels": [{"artifact_id": "a"}]},
                 "html_sha256": "sha256:" + "a" * 64, "html_bytes": 1,

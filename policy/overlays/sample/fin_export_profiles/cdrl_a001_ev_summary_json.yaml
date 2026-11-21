@@ -10,6 +10,7 @@ cells:                               # /a/b pointers, object keys only; written 
   /header/program_name: program.name
   /header/program_id: program.id
   /header/as_of: as_of
+  /header/generated_on: generated_on
   /header/cdrl_item: cdrl.item
 sources:
   - fn: fin_performance_indices

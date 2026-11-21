@@ -46,6 +46,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
     import asset_inputs
     import cdrl
     import export
+    import export_dates
     import export_profiles
     import instance_overlays
     import measure_verbs
@@ -60,6 +61,7 @@ except ImportError:
     from agent_fleet.finance_agent import asset_inputs
     from agent_fleet.finance_agent import cdrl
     from agent_fleet.finance_agent import export
+    from agent_fleet.finance_agent import export_dates
     from agent_fleet.finance_agent import export_profiles
     from agent_fleet.finance_agent import instance_overlays
     from agent_fleet.finance_agent import measure_verbs
@@ -1352,7 +1354,9 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     `scripts.build_fin_package.build` to write the artifact. Nothing here recomputes a row a
     second way.
     """
-    as_of = body.as_of or _request_date()  # RESOLVED ONCE; the manifest and page share it
+    # The request's `as_of` feeds `generated_on` ONLY (the BFF fills it with its own request
+    # date); it never feeds the data's as-of, which comes from the source's receipt.
+    generated_on = body.as_of or _request_date()  # RESOLVED ONCE; the manifest and page share it
     try:
         program_id = export.program_for_recipient(body.recipient_scope)
     except Unentitled as exc:
@@ -1387,6 +1391,8 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
     program_receipts: list[dict[str, Any]] = []
     package_state, program_source = _export_program_state(
         reads, program_id, [fn for _p, fn in resolved], program_receipts)
+    data_as_of = export_dates.data_as_of(
+        _the_receipt(program_receipts, program_source["urn"]) if program_source else None)
 
     panels: list[dict[str, Any]] = []
     for p, fn in resolved:
@@ -1433,7 +1439,7 @@ def package_export(body: PackageExportRequest) -> dict[str, Any]:
             template_id=body.canvas.template_id, template_hash=body.canvas.template_hash,
             panels=panels, runtime_dir=root / _RUNTIME_DIR, sha=sha,
             html_path=dist / html_name, duckdb_path=dist / duckdb_name,
-            as_of=as_of, program_source=program_source,
+            data_as_of=data_as_of, generated_on=generated_on, program_source=program_source,
             data_provenance=_package_provenance(program_source, program_receipts),
         )
     except SourceUnavailable as exc:
@@ -1599,14 +1605,20 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
     reads = _asset_reads(profile.sources)
     _require_asset_grants(reads.values())
     # The program facts' read; each source cites its own read's ticket in its own envelope.
-    program_state, program_source = _export_program_state(reads, body.program_id, profile.sources, [])
-    as_of = body.as_of or _request_date()
+    program_receipts: list[dict[str, Any]] = []
+    program_state, program_source = _export_program_state(
+        reads, body.program_id, profile.sources, program_receipts)
+    # The request's `as_of` feeds `generated_on` ONLY; it never feeds the data's as-of.
+    generated_on = body.as_of or _request_date()
+    data_as_of = export_dates.data_as_of(
+        _the_receipt(program_receipts, program_source["urn"]) if program_source else None)
 
     out_dir = _cdrl_out_dir()
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         path, envelope = cdrl.build_cdrl(
-            program_state, profile, program_id=body.program_id, as_of=as_of,
+            program_state, profile, program_id=body.program_id,
+            data_as_of=data_as_of, generated_on=generated_on,
             out_dir=out_dir, run_source=lambda fn, params: _cdrl_source(fn, params, caller=caller),
             program_source=program_source,
         )
@@ -1628,7 +1640,8 @@ def cdrl_export(body: CdrlExportRequest) -> dict[str, Any]:
         "artifact_uri": _artifact_uri(path.name),
         "profile": profile.name,
         "program_id": body.program_id,
-        "as_of": as_of,
+        "data_as_of": data_as_of,
+        "generated_on": generated_on,
         "envelope": envelope,
     }
 
