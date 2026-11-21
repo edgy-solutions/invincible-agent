@@ -20,7 +20,7 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","CapabilityPath","ChartUI","CompareScenarios","CoverageGap","DashboardUI","DataStewardResponse","DeltaEffect","DeltaSetUI","DigitalTwinUI","DocumentUI","DownstreamOf","ExtractedIntent","FilledSlots","FinalSynthesis","GraphExpertResponse","HazardUI","IntervalRow","KnowledgeResponse","LogisticsResponse","MatrixCell","MatrixGridUI","MaturityGrid","MechanicResponse","MeshRoutingDecision","MetricUI","MoveProject","NoIntentMatch","NotComputableInFamily","PeriodSeriesRow","PeriodSeriesUI","PlatformScope","PredicateClassification","ProcessEvolution","ProjectsIn","SPOInterviewTurn","SPOPick","SeedPortfolioCanvas","SemanticResolution","SetCost","ShortfallGridUI","ShortfallRow","ShowCostCurve","ShowFundingGap","ShowSiteLoad","SiteSchedule","SummarizeSession","SupervisorTaskPlan","TableClassificationResult","TechFootprint","ThresholdCell","ThresholdGridUI","TimelineUI","TopologyUI","UIEntity","UIRelation","WhatBlocks",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","CapabilityPath","ChartUI","CompareScenarios","CoverageGap","DashboardUI","DataStewardResponse","DeltaEffect","DeltaSetUI","DigitalTwinUI","DocumentUI","DownstreamOf","ExtractedIntent","FilledSlots","FinalSynthesis","GraphExpertResponse","HazardUI","IntervalRow","KnowledgeResponse","LogisticsResponse","MatrixCell","MatrixGridUI","MaturityGrid","MechanicResponse","MeshRoutingDecision","MetricUI","MoveProject","NoIntentMatch","NotComputableInFamily","PeriodSeriesRow","PeriodSeriesUI","PlatformScope","PredicateClassification","ProcessEvolution","ProjectsIn","ResultConstraint","SPOInterviewTurn","SPOPick","SeedPortfolioCanvas","SemanticResolution","SetCost","ShortfallGridUI","ShortfallRow","ShowCostCurve","ShowFundingGap","ShowSiteLoad","SiteSchedule","SummarizeSession","SupervisorTaskPlan","TableClassificationResult","TechFootprint","ThresholdCell","ThresholdGridUI","TimelineUI","TopologyUI","UIEntity","UIRelation","WhatBlocks",]
         ), enums=set(
           ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","IntentFamily","Mode","MoodType","OntologyClass","PersonaTarget","Predicate","SPOPickAction","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
@@ -87,7 +87,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 65
+    # Generated classes 66
     # #########################################################################
 
     @property
@@ -261,6 +261,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def ProjectsIn(self) -> "ProjectsInViewer":
         return ProjectsInViewer(self)
+
+    @property
+    def ResultConstraint(self) -> "ResultConstraintViewer":
+        return ResultConstraintViewer(self)
 
     @property
     def SPOInterviewTurn(self) -> "SPOInterviewTurnViewer":
@@ -1056,7 +1060,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 65
+# Generated classes 66
 # #########################################################################
 
 class AgentResponseAst:
@@ -3236,6 +3240,49 @@ class ProjectsInProperties:
     
 
 
+class ResultConstraintAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("ResultConstraint")
+        self._properties: typing.Set[str] = set([  "kind",  "qualifiers",  ])
+        self._props = ResultConstraintProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "ResultConstraintProperties":
+        return self._props
+
+
+class ResultConstraintViewer(ResultConstraintAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class ResultConstraintProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def kind(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("kind"))
+    
+    @property
+    def qualifiers(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("qualifiers"))
+    
+    
+
+
 class SPOInterviewTurnAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -3405,7 +3452,7 @@ class SemanticResolutionAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("SemanticResolution")
-        self._properties: typing.Set[str] = set([  "resolved_uri",  "confidence_score",  "reasoning",  "instance_identifier",  ])
+        self._properties: typing.Set[str] = set([  "resolved_uri",  "confidence_score",  "reasoning",  "instance_identifier",  "result",  ])
         self._props = SemanticResolutionProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -3448,6 +3495,10 @@ class SemanticResolutionProperties:
     @property
     def instance_identifier(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("instance_identifier"))
+    
+    @property
+    def result(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("result"))
     
     
 
@@ -4361,4 +4412,3 @@ class WhatBlocksProperties:
     
     
 
-

@@ -32,18 +32,29 @@ enum OntologyClass {
 // Semantic Resolution
 // -----------------------------------------------------------------------------
 
+/// The kind of thing the person wants back, when it differs from the subject. Recorded only:
+/// nothing routes on it yet (the architect's four-step path is a proposal).
+class ResultConstraint {
+  kind OntologyClass?
+    @description("The KIND of thing the person wants back, ONLY when it differs from the subject's kind. Must be one of the permitted ontology URIs. Null when the answer is about the subject itself.")
+  qualifiers string[]
+    @description("Words from the query that narrow the result, copied verbatim: a platform, a time range, a status. Empty when none.")
+}
+
 /// Result of mapping free-text input to a canonical sustainment concept.
 /// The resolved_uri is a dynamic ontology URI (not a hardcoded enum) that
 /// comes from the RDF graph at runtime.
 class SemanticResolution {
   resolved_uri OntologyClass
-    @description("The ontology URI that best matches the input query. Must be one of the URIs provided in active_ontology_classes.")
+    @description("The ontology URI of the SUBJECT's kind: the thing the question starts from and asks about. When the question names one thing and asks for a different kind of thing related to it, this is the named thing's kind, never the kind being asked for. Must be one of the URIs provided in active_ontology_classes.")
   confidence_score float
     @description("Model confidence in the match, between 0.0 and 1.0.")
   reasoning string?
     @description("1-2 sentence explanation of why this class was chosen.")
   instance_identifier string?
     @description("If the query refers to a SPECIFIC NAMED INDIVIDUAL — a catalog asset, a procedure or work-order code, a data module code (DMC), a tail number, an equipment serial, or a quoted or titled name — copy that exact token here verbatim, INCLUDING any qualifier the user gave it (schema, dataset or path prefix). The phone book normalizes qualifiers and matches on the asset's own name, so a qualified token is safer than a guessed bare one. Do NOT extract a word that merely APPEARS NEAR the asset name — a token lifted from the surrounding sentence rather than naming the thing will be refused as non-specific, and that refusal costs the whole answer. Otherwise leave null. This field gates the router's instance-resolution pre-step (Recipe v2): when set, the router fans the token out to registered providers and lets the authoritative phone-book class override resolved_uri. Still always resolve resolved_uri as your best guess either way — the phone book may miss.")
+  result ResultConstraint?
+    @description("Only when the question asks for things of a DIFFERENT kind than the subject. Null otherwise. Never replaces resolved_uri.")
 }
 
 // -----------------------------------------------------------------------------
@@ -95,12 +106,17 @@ function ClassifyDomainIntent(query: string, domain: string) -> SemanticResoluti
   prompt #"
     You are a semantic classifier for the {{ domain }} domain.
 
-    You do two jobs in one pass:
+    You do three jobs in one pass:
 
-    JOB A — Classify the KIND.
-    Map the user's query to exactly ONE ontology URI from the permitted
-    values defined in the output format. Pick the single best-matching
-    URI and assign a confidence score between 0.0 and 1.0.
+    JOB A — Classify the SUBJECT'S KIND.
+    The subject is the thing the question starts from: the asset, record
+    or concept the person names or describes and asks ABOUT. Map the
+    SUBJECT to exactly ONE ontology URI from the permitted values defined
+    in the output format, and assign a confidence score between 0.0 and
+    1.0. When a question names one thing and asks for a different kind of
+    thing related to it ("which tables feed the X dashboard", "what parts
+    does work order Y use"), the subject is the NAMED thing (the
+    dashboard, the work order), never the kind being asked for.
 
     JOB B — Extract any NAMED INDIVIDUAL.
     If the query refers to a specific named individual — a catalog asset,
@@ -115,6 +131,13 @@ function ClassifyDomainIntent(query: string, domain: string) -> SemanticResoluti
     but it cannot recover from an extraction the model never made. Even
     in awkward conversational prose ("so yesterday someone mentioned
     customers_gold or something"), pull the name out.
+
+    JOB C — The RESULT, when it differs from the subject.
+    If the question asks for things of a different kind than the
+    subject, put that kind in result.kind, and copy any words that
+    narrow it (a platform, a time range, a status) into
+    result.qualifiers verbatim. The result never replaces the subject.
+    Leave result null when the answer is about the subject itself.
 
     CRITICAL: The shape of an identifier (dots, dashes, capitalization)
     is NOT evidence about its kind. Resolve resolved_uri from the
