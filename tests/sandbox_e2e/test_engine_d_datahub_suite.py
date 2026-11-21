@@ -26,6 +26,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mesh_client import run  # noqa: E402

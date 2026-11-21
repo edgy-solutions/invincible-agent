@@ -23,7 +23,7 @@ INGEST_V1_TAG = "ingest-v1"
 # (sections 1, 2, 5). Tagged ADDITIVELY on the routes (existing tags kept); /interview/stream shares
 # the /orchestrate handler but is NOT in this set.
 MCP_TAG = "mcp"
-INGEST_API_VERSION = "1.9.2"
+INGEST_API_VERSION = "1.10.0"
 
 V1_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/me/entitlements"),
@@ -494,7 +494,7 @@ class HumanTask(_Strict):
     """One pending task row of the caller's queue, with its kind's declaration."""
     id: Any
     kind: str | None
-    task_id: str
+    task_id: str | None
     workflow_id: str | None
     audience: str | None
     status: str
@@ -533,9 +533,21 @@ class RowEditCounts(_Strict):
     header: int
 
 
+class PromotionReviewStart(_Strict):
+    """What a promotion did about its kind's declared review workflow: started or retried (with the
+    workflow, its request key and the start's own status), not_restarted or failed (with a reason).
+    Absent when the kind declares no such workflow."""
+    status: Literal["started", "retried", "not_restarted", "failed"]
+    workflow: str | None = None
+    request_key: str | None = None
+    outcome: str | None = None
+    reason: str | None = None
+
+
 class ActPromotion(_Strict):
     """POST /human_tasks/{id}/act on a document_promotion; fact/origin only when promoted, swept only
-    when rejected, the row_edits..extraction_defect keys only when the steward corrected."""
+    when rejected, the row_edits..extraction_defect keys only when the steward corrected, review
+    only when promoted and the kind declares a review workflow."""
     task_id: str
     decision: str
     rows_resolved: int
@@ -552,6 +564,7 @@ class ActPromotion(_Strict):
     row_edits: RowEditCounts | None = None
     corrections: list[Any] | None = None
     extraction_defect: str | None = None
+    review: PromotionReviewStart | None = None
 
 
 class ActGroupedPending(_Strict):

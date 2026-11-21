@@ -516,3 +516,12 @@ def test_the_HUD_names_the_engine_that_answered():
     for base in ("http://iagent-engine-docs:8100",
                  "http://invincible-agent-engine-docs.prod-ns.svc.cluster.local:8100"):
         assert handler_name_from_endpoint(f"{base}/{explain['fn']}") == "Engine Docs"
+
+
+@pytest.fixture(autouse=True)
+def _the_caller_is_verified(monkeypatch):
+    """The engine binds the VERIFIED caller, never the body's identity (lane 74); this file's
+    requests name u@x, so that is who the token says they are."""
+    from agent_fleet.ontology_service import main as _eo_main
+    from tests._helpers.verified_caller import install as _install_caller
+    return _install_caller(monkeypatch, _eo_main, "u@x", {"u@x": ["DOCS","MAINTENANCE","MESH"], "tester@example.com": ["DOCS","MAINTENANCE","MESH"]})

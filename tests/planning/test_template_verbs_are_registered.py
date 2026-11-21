@@ -63,6 +63,8 @@ from tests._mesh_verbs import (
     unreachable_from_subject,
 )
 
+pytestmark = pytest.mark.live  # calls a live cluster service; see tests/test_live_tests_leave_the_default_run.py
+
 _ROOT = Path(__file__).resolve().parents[2]
 _CANVAS_DIR = _ROOT / "policy" / "canvases"
 

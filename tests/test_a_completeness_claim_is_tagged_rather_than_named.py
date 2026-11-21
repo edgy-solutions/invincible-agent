@@ -33,6 +33,7 @@ Run: uv run --frozen pytest tests/test_a_completeness_claim_is_tagged_rather_tha
 from __future__ import annotations
 
 import ast
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -50,7 +51,13 @@ PROVENANCE_KEYWORD = BLOCK_FIELDS_IN_THE_UI[0]
 
 PROJECTOR = ROOT / "agent_fleet" / "presentation_agent" / "main.py"
 PRODUCERS = sorted(ROOT.glob("agent_fleet/*/measures.py"))
-SDK_ENUMERATION = ROOT.parent / "iagent-mesh-sdk" / "iagent_mesh" / "enumeration.py"
+# the INSTALLED, pinned iagent_mesh (the SDK the fleet runs), never a sibling checkout
+_SDK_SPEC = importlib.util.find_spec("iagent_mesh")
+SDK_ENUMERATION = (
+    Path(_SDK_SPEC.origin).parent / "enumeration.py"
+    if _SDK_SPEC is not None and _SDK_SPEC.origin is not None
+    else None
+)
 CORTEX_DIR = ROOT.parent / "cortex-ui"
 
 
@@ -229,7 +236,8 @@ def test_EVERY_TAG_NAMES_A_REAL_SDK_FIELD():
     """The tag's vocabulary is the SDK's, READ from it rather than restated here. Ruling 2 exists
     so this fleet has one vocabulary for the fact; a tag naming a field the SDK does not have would
     be a second vocabulary wearing the first one's clothes."""
-    assert SDK_ENUMERATION.exists(), f"the SDK is not checked out beside this repo at {SDK_ENUMERATION}"
+    assert SDK_ENUMERATION is not None, "iagent_mesh is not installed in this environment"
+    assert SDK_ENUMERATION.exists(), f"the installed iagent_mesh has no enumeration.py at {SDK_ENUMERATION}"
     legal: set[str] = set()
     for node in ast.walk(ast.parse(SDK_ENUMERATION.read_bytes().decode("utf-8"))):
         if isinstance(node, ast.ClassDef) and node.name == "EnumerateInstancesResponse":

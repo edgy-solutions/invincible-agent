@@ -1,0 +1,33 @@
+# SANDBOX ONLY -- instances engine-fin's resolver can name, not seed data and not a measure. These
+# three programs are the ones dag-tools' planted-refusal assets (dag-tools 0.13.0, group
+# mesh_demo_refusal) are built around, declared here so the refusal probes can be ASKED BY NAME;
+# the seed holds one program and a question naming a planted one otherwise ends instance_not_found.
+# A declared instance is a name only: it is never added to the engine's state or to any figure.
+# Each id needs a row in policy/program_members.yaml, or can_view_program refuses it for everyone
+# (sealed in tests/finance/test_a_program_is_an_instance_row.py). Only values-sandbox.yaml names
+# this directory. Contract: docs/contracts/finance-overlays.md section 7.
+instances:
+  - class: Program
+    instance_id: NP-PLANT-MISSING-COLUMN
+    label: "Planted refusal program: missing column"
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture for dag-tools' planted refusal assets, so the refusal probes can be asked by
+      name. Not a claim about any real program.
+  - class: Program
+    instance_id: NP-PLANT-NULL-VALUE
+    label: "Planted refusal program: null value"
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture for dag-tools' planted refusal assets, so the refusal probes can be asked by
+      name. Not a claim about any real program.
+  - class: Program
+    instance_id: NP-PLANT-WRONG-TYPE
+    label: "Planted refusal program: wrong type"
+    granted_by: seed
+    ratified_by: owner
+    reason: >-
+      Sandbox fixture for dag-tools' planted refusal assets, so the refusal probes can be asked by
+      name. Not a claim about any real program.

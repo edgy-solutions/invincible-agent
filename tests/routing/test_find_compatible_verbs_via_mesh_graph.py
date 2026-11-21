@@ -33,6 +33,7 @@ import importlib.util
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -232,9 +233,18 @@ class _JenaSpy:
     ask = construct
 
 
+def _as_verified_person(mod, monkeypatch) -> None:
+    # The identity comes from the verified caller (#452), never the body: PERSON, holding COST.
+    monkeypatch.setattr(mod, "_current_caller",
+                        lambda: SimpleNamespace(authz_id=PERSON, verified=True))
+    monkeypatch.setattr(mod, "_held_domains_of", lambda _s: frozenset({"COST"}), raising=False)
+
+
 class _Stage:
     def __init__(self, mod, monkeypatch, *, flag: bool, flagged: bool = True,
-                 raise_on: tuple[str, ...] = ()) -> None:
+                 raise_on: tuple[str, ...] = (), verified: bool = True) -> None:
+        if verified:
+            _as_verified_person(mod, monkeypatch)
         self.driver = _LegDriver(raise_on, flagged)
         self.jena = _JenaSpy()
         self.graph_initiators: list[Initiator] = []
@@ -393,7 +403,7 @@ def test_FLAG_ON_THE_EXPLAIN_LEG_IS_THE_NODE_FLAG_AND_READS_NO_JENA(engine_o, mo
 @pytest.mark.parametrize("body", [{}, {"on_behalf_of": ""}, {"on_behalf_of": "   "}],
                          ids=["missing", "blank", "whitespace"])
 def test_FLAG_ON_WITHOUT_A_PERSON_IS_A_400_AND_READS_NOTHING(engine_o, monkeypatch, body):
-    s = _Stage(engine_o, monkeypatch, flag=True)
+    s = _Stage(engine_o, monkeypatch, flag=True, verified=False)  # anonymous: the refusal under test
     r = s.ask(**body)
     assert r.status_code == 400 and "on_behalf_of" in r.json()["detail"], r.text
     assert s.driver.statements == [] and s.jena.initiators == [] and s.graph_initiators == []

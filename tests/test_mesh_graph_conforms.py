@@ -97,7 +97,19 @@ def _operations(g: Neo4jGraph):
         ("providers_for", lambda i: g.providers_for(i, "mesh:queryKnowledgeGraph")),
         ("data_assets_for", lambda i: g.data_assets_for(i, "idp:Table")),
         ("registry", lambda i: g.registry(i)),
+        ("is_safety_critical", lambda i: g.is_safety_critical(i, mpn="P-1", domain="SAFETY")),
     ]
+
+
+def test_is_safety_critical_never_answers_even_when_the_graph_would():
+    """TYPE NOW, ROUTE LATER (ruled 2026-10-30): declared, never a verdict. The control is the
+    graph holding a row that would say yes; an implementation that read it would answer, and the
+    one decision would have a second home (tests/safety/test_the_safety_critical_rule_is_the_only_decision.py)."""
+    g = _graph(rows=[{"mpn": "P-1", "safety_critical": True}])
+    assert g.ancestors(PERSON, "idp:Table", max_hops=5).outcome == "answered", "control: the stub graph answers"
+    out = g.is_safety_critical(PERSON, mpn="P-1", domain="SAFETY")
+    assert out.outcome == "unreachable", out
+    assert not out.rows
 
 
 # ── the contract ────────────────────────────────────────────────────────────────────────────

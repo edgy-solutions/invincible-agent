@@ -1090,6 +1090,7 @@ def _live_writer(driver: Any, label: str, family: dict) -> Neo4jGraphWriter:
 
 
 @pytest.mark.skipif(not _LIVE_GRAPH, reason="IAGENT_WRITER_SCRATCH + NEO4J_URI unset")
+@pytest.mark.live
 def test_LIVE_the_sdk_graph_arms_hold_on_the_predicate_family(scratch_graph):
     from agent_fleet.mesh_registrar.v2_substrate import PREDICATE_EDGE_FAMILY
 
@@ -1164,6 +1165,7 @@ def _drive_write_node_contract(driver: Any, label: str) -> None:
 
 
 @pytest.mark.skipif(not _LIVE_GRAPH, reason="IAGENT_WRITER_SCRATCH + NEO4J_URI unset")
+@pytest.mark.live
 def test_LIVE_the_sdk_write_node_arm_holds_on_the_ingest_family(scratch_graph):
     """SDK 0.9.6's gate: the fleet's real writer passes `check_graph_writer_write_node_contract`
     against a real store, at the SDK sha the caller ships."""
@@ -1183,6 +1185,7 @@ _NON_UPSERTS = {
 
 @pytest.mark.skipif(not _LIVE_GRAPH, reason="IAGENT_WRITER_SCRATCH + NEO4J_URI unset")
 @pytest.mark.parametrize("name", sorted(_NON_UPSERTS))
+@pytest.mark.live
 def test_LIVE_the_write_node_arm_reds_on_each_non_upsert(scratch_graph, monkeypatch, name):
     """The control: the arm above is worth only what it refuses. Each template is a store
     behaviour the SDK contract names as the defect, and the live arm must red on both -- at
@@ -1198,6 +1201,7 @@ def test_LIVE_the_write_node_arm_reds_on_each_non_upsert(scratch_graph, monkeypa
 
 
 @pytest.mark.skipif(not _LIVE_GRAPH, reason="IAGENT_WRITER_SCRATCH + NEO4J_URI unset")
+@pytest.mark.live
 def test_LIVE_a_key_only_sweep_cannot_cross_families(scratch_graph):
     """Two families, same endpoints, same key. A key-only delete through one leaves the other's
     edge standing — the discriminator, proven against a store rather than read off a string."""
@@ -1221,6 +1225,7 @@ def test_LIVE_a_key_only_sweep_cannot_cross_families(scratch_graph):
 
 
 @pytest.mark.skipif(not _LIVE_GRAPH, reason="IAGENT_WRITER_SCRATCH + NEO4J_URI unset")
+@pytest.mark.live
 def test_LIVE_an_absent_endpoint_is_named_and_NO_node_is_created(scratch_graph):
     from agent_fleet.mesh_registrar.v2_substrate import PREDICATE_EDGE_FAMILY
 
@@ -1236,6 +1241,7 @@ def test_LIVE_an_absent_endpoint_is_named_and_NO_node_is_created(scratch_graph):
 
 
 @pytest.mark.skipif(not _LIVE_GRAPH, reason="IAGENT_WRITER_SCRATCH + NEO4J_URI unset")
+@pytest.mark.live
 def test_LIVE_the_registrars_payload_shape_round_trips_with_its_types(scratch_graph):
     from agent_fleet.mesh_registrar.v2_substrate import PREDICATE_EDGE_FAMILY
 
@@ -1254,6 +1260,7 @@ def test_LIVE_the_registrars_payload_shape_round_trips_with_its_types(scratch_gr
 
 
 @pytest.mark.skipif(not _LIVE_VECTORS, reason="IAGENT_WRITER_SCRATCH + WEAVIATE_HTTP_HOST unset")
+@pytest.mark.live
 def test_LIVE_the_sdk_vectors_arms_hold_and_a_written_row_is_retrievable_by_name():
     """Does the client ACCEPT the call the writer makes, and is the space it wrote the space a
     search reaches. Both collections are scratch; the shared marker carrier is never touched."""

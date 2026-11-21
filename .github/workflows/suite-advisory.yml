@@ -1,0 +1,64 @@
+# ADVISORY: this job never fails the check and must never be made a required check.
+#
+# It differs from suite-order-independence.yml. That file is the order-independence gate
+# and stays workflow_dispatch until it is green twice. This one is a regression signal on
+# a red master: it runs the whole suite on every PR and splits the reds into KNOWN
+# (tests/known_reds.txt, each with a cause and an owner) and NEW (everything else).
+#
+# To retire an entry from tests/known_reds.txt: delete its line in the PR that fixes the
+# test.
+name: suite advisory
+
+on:
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: suite-advisory-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  advisory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # Full history: see suite-order-independence.yml for why.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Local master ref: see suite-order-independence.yml for why. It also serves the stale-citation check.
+      - name: a local master ref for the citation seal
+        run: git show-ref --verify --quiet refs/heads/master || git branch master origin/master
+      # Sibling SDK: see suite-order-independence.yml for why.
+      - uses: actions/checkout@v4
+        with:
+          repository: edgy-solutions/iagent-mesh-sdk
+          path: _sibling-sdk
+      # Move of the SDK: see suite-order-independence.yml for why.
+      - name: place the SDK where the cross-repo contract looks for it
+        run: mv _sibling-sdk "$(dirname "$GITHUB_WORKSPACE")/iagent-mesh-sdk"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      # --extra agent-fleet: see suite-order-independence.yml for why.
+      - run: uv sync --locked --extra agent-fleet
+      - name: suite
+        id: suite
+        run: |
+          set +e
+          uv run pytest tests/ -q -p no:cacheprovider -rfE > suite-advisory.log 2>&1
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          tail -n 40 suite-advisory.log
+      - name: known vs new
+        if: always()
+        run: uv run python scripts/suite_advisory.py suite-advisory.log tests/known_reds.txt --exit "${{ steps.suite.outputs.exit }}" --merged-ref master >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: suite-advisory-log
+          path: suite-advisory.log
+          retention-days: 7

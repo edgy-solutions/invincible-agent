@@ -117,6 +117,7 @@ _SAFETY_VERB_MARKERS = ("Hazard", "Deferral", "RiskAssessment", "WriteUp", "Mish
 
 
 @_mesh_verbs.needs_neo4j
+@pytest.mark.live
 def test_mesh_registers_no_safety_verb_this_engine_did_not_declare():
     """PART B. Nothing safety-shaped is registered that VERBS does not declare.
 

@@ -13,6 +13,7 @@ holds-double answers carry the asked case_id, so the label gate runs on them lik
 """
 from __future__ import annotations
 
+import importlib
 import sys
 
 
@@ -53,9 +54,14 @@ def _a_case_that_carries_no_label(monkeypatch) -> None:
     behind `gateway.httpx`) leaves it off and keeps its own."""
     for gname, cname in (("iagent.gateway", "iagent.case_projection"),
                          ("src.iagent.gateway", "src.iagent.case_projection")):
-        gw, cp = sys.modules.get(gname), sys.modules.get(cname)
-        if gw is None or cp is None or getattr(gw._case_state, "__module__", None) != gw.__name__:
+        gw = sys.modules.get(gname)
+        if gw is None or getattr(gw._case_state, "__module__", None) != gw.__name__:
             continue
+        # IMPORT the projection, never look it up in sys.modules: the gateway imports it lazily, at the
+        # first label read, so on a process that has not made one yet it is not loaded. A lookup then
+        # skipped this whole double without a word and the real `_case_state` ran (a 503
+        # `runner_unavailable`), so a test passed or failed by which tests ran before it.
+        cp = importlib.import_module(cname)
 
         async def _state(case_id):
             return {"case_id": case_id}, None, {}

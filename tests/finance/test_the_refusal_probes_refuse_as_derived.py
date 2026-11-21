@@ -15,9 +15,12 @@ reads is still refused, by the generic rule that enforces the contract's declara
 * `wrong_type`: `control_account` arriving as Float64 is not the string the contract declares.
 * `duplicate_work_package_period`: two rows for one (work_package, period), the contract's grain,
   refuse `duplicate_key`.
-* `program_name_not_unique`, `program_bac_not_unique`, `work_package_in_two_accounts`: one
-  determining value carrying two values of a column the contract declares it determines refuses
-  `not_determined_by`, naming both columns. `varies_within_scope` was a case of this rule.
+* `program_name_not_unique`, `program_bac_not_unique`, `work_package_in_two_accounts`,
+  `varies_within_scope`: one determining value carrying two values of a column the contract
+  declares it determines refuses `not_determined_by`, naming both columns. `varies_within_scope`
+  (planted since dag-tools 0.15.0) varies `status_period` within one program, which the contract
+  declares determined by `program_id` (ruled 2026-11-11); the path probe never reads that column
+  and is refused all the same.
 
 Run: .venv/Scripts/python -I -m pytest -c pyproject.toml --rootdir=. -p no:cacheprovider tests/finance/test_the_refusal_probes_refuse_as_derived.py
 """
@@ -36,7 +39,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from agent_fleet.finance_agent import main as engine  # noqa: E402
 from tests.finance.test_fin_inputs_resolver import (  # noqa: E402,F401
-    MeshUnavailable, NotEntitled, _clean_env, token,
+    MeshUnavailable, NotEntitled, _clean_env, ticketed, token,
 )
 
 REPO = Path(__file__).resolve().parents[2]
@@ -57,6 +60,7 @@ EXPECTED = {
     "varies_within_path": {SERIES: None, PATH: "varies_within_path"},
     "program_name_not_unique": {SERIES: "not_determined_by", PATH: "not_determined_by"},
     "work_package_in_two_accounts": {SERIES: "not_determined_by", PATH: "not_determined_by"},
+    "varies_within_scope": {SERIES: "not_determined_by", PATH: "not_determined_by"},
     "duplicate_work_package_period": {SERIES: "duplicate_key", PATH: "duplicate_key"},
     "missing_column": {MISSING: "missing_column"},
     "wrong_type": {WRONG: "wrong_type"},
@@ -174,11 +178,11 @@ def post(probes, monkeypatch):
         def __init__(self, **kw):
             self.who = kw["originator_email"]
 
-        def get_dataframe(self, urn):
+        def get_dataframe_with_ticket(self, urn):
             asked.append((self.who, urn))
             if urn not in frames or (self.who, urn) not in _grants():
                 raise NotEntitled("refused")
-            return frames[urn]
+            return ticketed(frames[urn], urn, len(asked))
 
     monkeypatch.setattr(engine.asset_inputs, "_load_client", lambda: (Client, NotEntitled, MeshUnavailable))
     monkeypatch.setattr(engine, "can_view_program",

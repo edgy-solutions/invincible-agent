@@ -31,12 +31,15 @@ def test_THE_TABLE_CELL_IS_NULL_PRESENT_NEVER_ZERO_EMPTY_OR_A_PLACEHOLDER():
 
 def test_THE_PROVENANCE_NAMES_BOTH_ABSENCES_AND_EVERY_NONE_INPUT():
     for r in _ok()["where_used"]:
-        absent = r["data_provenance"]["absent"]
+        absent = r["absent_reason"]
         assert absent["population"] and absent["stock"]
-        for inp in r["data_provenance"]["inputs"]:
-            for k in ("dataset_urn", "ticket_id", "classification"):
+        assert r["data_provenance"], "a row is answered from at least one input"
+        for inp in r["data_provenance"]:
+            for k in ("dataset_urn", "ticket_id", "classification", "as_of"):
                 if inp[k] is None:
-                    assert f"{inp['name']}.{k}" in absent, (inp["name"], k)
+                    assert (inp["absent_reason"] or {}).get(k), (inp["name"], k)
+                else:
+                    assert k not in (inp["absent_reason"] or {}), (inp["name"], k)
             assert inp["ticket_id"] is None
             assert inp["locator"].endswith("where_used.yaml")
         assert r["as_of"] == "2026-11-07"
