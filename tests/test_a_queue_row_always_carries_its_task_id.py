@@ -1,4 +1,4 @@
-"""A queue row served by `GET /me/human_tasks` always carries its `task_id` (ingest-v1 1.9.2).
+"""A queue row served by `GET /me/human_tasks` always carries its `task_id` (ingest-v1 1.10.1).
 
 The column is NOT NULL, the writer and the register body require it, and every producer supplies it
 (docs/measurements/2026-11-16-humantask-task-id-census.md), so the response model says so: a row with
