@@ -193,6 +193,10 @@ class AnswerArtifactBundle:
     # and it would make the persisted field start going absent whenever the SSE
     # path changes. Compute this from `valid_as_of`, never from the wire.
     duration_ms: Optional[int] = None
+    # The `/route_intent` call's own time. None when the turn ran none (an interview turn, or
+    # a pick after an ask card); 0 is a legal measurement and is not None. Never derived from
+    # `valid_as_of` or the wire, and NOT part of `duration_ms`.
+    intent_ms: Optional[int] = None
 
 
 # ── Result of a write attempt ──
@@ -501,6 +505,7 @@ class AnswerArtifactWriter:
               a.rendered_output = $rendered_output,
               a.graph_trace_json = $graph_trace_json,
               a.duration_ms = $duration_ms,
+              a.intent_ms = $intent_ms,
               a.kind = $kind,
               a.durability_status = $durability_status,
               a.watermark = $watermark
@@ -531,6 +536,8 @@ class AnswerArtifactWriter:
                 bundle.duration_ms if bundle.duration_ms is not None
                 else max(0, now_ms - bundle.valid_as_of)
             ),
+            # Passed through as is: None stays None (never `or`), 0 stays 0.
+            intent_ms=bundle.intent_ms,
             kind=bundle.kind,
             message_id=bundle.message_id,
             # Neo4j properties can't be nested dicts — serialize the

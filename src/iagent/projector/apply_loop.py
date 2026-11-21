@@ -434,6 +434,7 @@ class ApplyLoop:
                   .question_text,
                   .summary,
                   .duration_ms,
+                  .intent_ms,
                   .resolved_intent,
                   .routing_inline,
                   .rendered_output,
@@ -535,7 +536,7 @@ class ApplyLoop:
                     INSERT INTO answer_artifact_projection (
                         id, kind, watermark, created_at, updated_at,
                         valid_as_of, valid_until, status, durability_status,
-                        message_id, question_text, summary, duration_ms,
+                        message_id, question_text, summary, duration_ms, intent_ms,
                         resolved_intent,
                         routing, sources, graph_trace, rendered_output,
                         produced_by, produced_for, derived_from_artifact_id,
@@ -545,7 +546,7 @@ class ApplyLoop:
                         %(id)s, %(kind)s, %(watermark)s, %(created_at)s,
                         %(updated_at)s, %(valid_as_of)s, %(valid_until)s,
                         %(status)s, %(durability_status)s, %(message_id)s,
-                        %(question_text)s, %(summary)s, %(duration_ms)s,
+                        %(question_text)s, %(summary)s, %(duration_ms)s, %(intent_ms)s,
                         %(resolved_intent)s,
                         %(routing)s,
                         %(sources)s, %(graph_trace)s, %(rendered_output)s,
@@ -573,6 +574,7 @@ class ApplyLoop:
                         question_text = EXCLUDED.question_text,
                         summary = EXCLUDED.summary,
                         duration_ms = EXCLUDED.duration_ms,
+                        intent_ms = EXCLUDED.intent_ms,
                         resolved_intent = EXCLUDED.resolved_intent,
                         routing = EXCLUDED.routing,
                         sources = EXCLUDED.sources,
@@ -625,6 +627,7 @@ class ApplyLoop:
                         # Zero is a legal VALUE (a cache hit), so absence and
                         # zero stay distinct rather than collapsing on falsy.
                         "duration_ms": art.get("duration_ms"),
+                        "intent_ms": art.get("intent_ms"),
                         "resolved_intent": json.dumps(resolved_intent),
                         "routing": (
                             json.dumps(routing)

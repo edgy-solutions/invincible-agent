@@ -124,6 +124,13 @@ ALTER TABLE answer_artifact_projection
 ALTER TABLE answer_artifact_projection
     ADD COLUMN IF NOT EXISTS duration_ms BIGINT;
 
+-- intent_ms: the `/route_intent` call's own time for this artifact's turn, in ms.
+-- NULL when the turn made no intent call (a pick after an ask card, or an interview
+-- turn). 0 and NULL are distinct: 0 is a call that took under half a millisecond.
+-- It is NOT part of duration_ms; a reader who wants both adds them.
+ALTER TABLE answer_artifact_projection
+    ADD COLUMN IF NOT EXISTS intent_ms BIGINT;
+
 -- ── Projector cursor (internal resumable state, NOT synced) ──
 --
 -- Decision 4 (Option C revised): the `GET /projector/watermark` HTTP
