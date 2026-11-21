@@ -49,7 +49,7 @@ def _built() -> set[str]:
 
 def _mirrored() -> set[str]:
     """The invincible-agent images the mirror script pulls from ghcr."""
-    return set(re.findall(r"src='ghcr\.io/edgy-solutions/invincible-agent/([^:']+):",
+    return set(re.findall(r"src='ghcr\.io/edgy-solutions/invincible-agent/([^:']+)'",
                           _MIRROR.read_text(encoding="utf-8")))
 
 
