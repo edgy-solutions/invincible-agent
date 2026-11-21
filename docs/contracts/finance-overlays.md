@@ -713,3 +713,6 @@ the resolver scores an exact match 1.0 across every class and the router abstain
 
 A declared `Program` is visible only to the callers its `program_id` lists in
 `policy/program_members.yaml` (`grant_to`). A program with no row there is listed to no one.
+A declared row of any other class (a `ControlAccount`, say) loads, but no row can yet name the program
+it belongs to, so there is no program to check: it is listed and resolved to no one, not even a caller
+who may view every program.
