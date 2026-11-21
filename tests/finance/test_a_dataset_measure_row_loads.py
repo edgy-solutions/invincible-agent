@@ -201,3 +201,24 @@ def test_a_minus_value_and_a_per_path_of_once_or_sum_are_accepted(tmp_path):
     for word in ("once", "sum"):
         (row,) = load(mutated(set_("inputs.dataset.per_path", word)), tmp_path)
         assert row.per_path == word and row.value_op == "column"
+
+
+def test_a_column_the_row_reads_must_be_declared_nullable_false(tmp_path, monkeypatch):
+    """A null in a column a row reads is refused only when the contract declares it non-nullable
+    (ruled 2026-11-16), and the engine computes on every named column, so the declaration is held
+    at load."""
+    doc = yaml.safe_load((REPO / "contracts" / "ev_fixture.yaml").read_text(encoding="utf-8"))
+    (acwp,) = [c for c in doc["columns"] if c["name"] == "acwp"]
+    assert acwp["nullable"] is False
+    del acwp["nullable"]
+    loose = tmp_path / "loose"
+    loose.mkdir()
+    (loose / "ev_fixture.yaml").write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+    monkeypatch.setenv("DATASET_CONTRACT_DIR", str(loose))
+    with pytest.raises(measure_verbs.MeasureVerbError) as e:
+        load(RAW, tmp_path)
+    assert "acwp" in str(e.value) and "nullable: false" in str(e.value), str(e.value)
+    # the control: the same row under the unmodified contract loads
+    monkeypatch.setenv("DATASET_CONTRACT_DIR", str(REPO / "contracts"))
+    (row,) = load(RAW, tmp_path)
+    assert row
