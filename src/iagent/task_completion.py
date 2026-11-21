@@ -21,11 +21,18 @@ is a cross-repo release. The family is composed by the SDK's own generic compose
              new environment variable and no chart change: the overlay's task_kinds directory
              already names the overlay's root.
 
-UNREADABLE MEANS NOTHING IS REQUIRED. `TASK_KIND_OVERLAY_DIRS` unset, or a row that does not
-compose, logs a loud warning and returns None; callers then require nothing, which is today's
-behaviour. This is the asymmetry `_declared_kinds` documents: a configuration accident must not
-refuse every completion in the fleet. A malformed row is caught before deploy by
+AN UNREADABLE DECLARATION REFUSES COMPLETION (architect ruling 2026-11-20: "an unreadable
+completion declaration refuses completion with a clear error. It does not warn and pass"). When
+the family does not compose, `get_declarations` raises `CompletionDeclarationUnreadable` and the act
+route refuses with 503 `completion_declaration_unreadable`: this process cannot tell which
+completions need fields, so it completes none. It retries the compose on the next call, so a
+fixed row takes effect without a restart. A malformed row is caught before deploy by
 `policy/sync/validate_policy.py`, which composes this family with `compose_completion` directly.
+
+`TASK_KIND_OVERLAY_DIRS` UNSET IS NOT UNREADABLE: it composes the SEED ALONE, after a loud warning.
+That is `human_tasks._declared_kinds`'s reading of the same variable: seeded species answer from
+their own rows, and a domain species the seed does not carry is refused at the kind gate before
+it reaches this module. So no domain task completes unchecked through an unset variable.
 """
 from __future__ import annotations
 
@@ -141,32 +148,38 @@ def reset_cache() -> None:
     _CACHE = None
 
 
-def get_declarations() -> Optional[dict[str, CompletionDeclaration]]:
-    """The composed declarations, cached; None (after a loud warning) when unreadable. Never raises."""
+class CompletionDeclarationUnreadable(RuntimeError):
+    """The completion declarations did not compose. Completion is refused until they do."""
+
+
+def get_declarations() -> dict[str, CompletionDeclaration]:
+    """The composed declarations, cached. Raises `CompletionDeclarationUnreadable` (after a loud
+    error log, and without caching) when they do not compose."""
     global _CACHE
     if _CACHE is not None:
         return _CACHE
     overlays = overlay_dirs_from_env()
     if overlays is None:
         logger.warning(
-            "%s is unset, so no task completion declaration can be composed: NO follow-on task "
-            "will require fields to complete. Set it to the deployment's overlay task_kinds "
+            "%s is unset, so task completion declarations are the SEED HALF ONLY: a domain "
+            "species is refused at the kind gate. Set it to the deployment's overlay task_kinds "
             "directory.", OVERLAY_DIRS_ENV)
-        return None
+        overlays = []
     try:
         _CACHE = compose_completion(SEED_DIR, overlays)
-    except Exception as exc:  # noqa: BLE001 -- never raise into /act
-        logger.warning(
-            "could not compose task completion declarations from %s + %s (%s: %s): NO follow-on "
-            "task will require fields to complete until this is fixed.",
+    except Exception as exc:  # noqa: BLE001 -- every failure to compose is the same refusal
+        logger.error(
+            "could not compose task completion declarations from %s + %s (%s: %s): NO task "
+            "can be completed until this is fixed.",
             SEED_DIR, overlays, type(exc).__name__, exc)
-        return None
+        raise CompletionDeclarationUnreadable(f"{type(exc).__name__}: {exc}") from exc
     return _CACHE
 
 
 def declaration_for_kind(kind: str) -> Optional[CompletionDeclaration]:
-    decls = get_declarations()
-    return decls.get(kind) if decls else None
+    """The kind's declaration, or None when it declares none. Raises
+    `CompletionDeclarationUnreadable` when the family does not compose."""
+    return get_declarations().get(kind)
 
 
 def as_wire(decl: CompletionDeclaration) -> dict:

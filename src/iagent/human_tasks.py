@@ -1952,7 +1952,10 @@ def declaration_for(kind: str) -> "dict[str, Any]":
     # WHAT COMPLETING IT REQUIRES, from the sibling `task_completion` family (see that module).
     # Only a kind with a row gains the key: every other kind's shape is unchanged.
     from . import task_completion  # noqa: PLC0415
-    cdecl = task_completion.declaration_for_kind(kind)
+    try:
+        cdecl = task_completion.declaration_for_kind(kind)
+    except task_completion.CompletionDeclarationUnreadable:
+        cdecl = None  # logged by the composer; the act refuses with the reason
     if cdecl is not None:
         out["completion_fields"] = task_completion.as_wire(cdecl)
     return out

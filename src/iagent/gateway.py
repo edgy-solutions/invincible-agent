@@ -1556,7 +1556,13 @@ async def register_human_task(
     # for this payload, a blank written as the declaration's blank text and never left empty;
     # undeclared supplied names are dropped. A kind without a declaration is unchanged.
     from . import task_completion as _tc
-    _cdecl = _tc.declaration_for_kind(req.kind)
+    try:
+        _cdecl = _tc.declaration_for_kind(req.kind)
+    except _tc.CompletionDeclarationUnreadable:
+        # Registered as supplied: refusing would drop the follow-on task itself. It cannot be
+        # completed while the declarations are unreadable (the act refuses), and once they read,
+        # an absent field is MISSING at the act, exactly as a blank is.
+        _cdecl = None
     _payload = _tc.written_at_register(_cdecl, req.payload) if _cdecl is not None else req.payload
     try:
         result = await run_in_threadpool(
@@ -6763,7 +6769,17 @@ async def act_on_human_task(
     # `fields` list, never in the message. Another verb (a rejection) needs none.
     from . import task_completion as _tc
     _final_fields = None
-    _cdecl = _tc.declaration_for_kind(match.get("kind") or "")
+    try:
+        _cdecl = _tc.declaration_for_kind(match.get("kind") or "")
+    except _tc.CompletionDeclarationUnreadable:
+        # AN UNREADABLE DECLARATION REFUSES COMPLETION (ruled 2026-11-20). This process cannot
+        # tell which completions need fields, so it completes none, and says why. A 409 for
+        # `task_kind_set_unknown`'s reason: the caller did nothing wrong; this deployment cannot
+        # currently answer. The paths and the parse error are in the log, never in the message.
+        raise HTTPException(status_code=409, detail={
+            "error": "completion_declaration_unreadable", "kind": match.get("kind"),
+            "message": "this task cannot be completed: the deployment's task completion "
+                       "declarations could not be read, and an operator must fix them"})
     if _cdecl is not None and req.decision in _cdecl.required_on:
         _finals, _missing, _invalid = _tc.finals_at_act(_cdecl, match.get("payload"), req.fields)
         if _missing:

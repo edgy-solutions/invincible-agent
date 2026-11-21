@@ -10,7 +10,7 @@ by `src/iagent/task_completion.py`. Product code names no case: F1 censuses that
 
   F1 config + census      F2 register writes the blank      F3 act: required      F4 act: types, merge
   F5 authority first      F6 review pass-through            F7 mark_task_resolved SQL
-  F8 the validator        F9 the pre-await journal shape    F10 unreadable means nothing required
+  F8 the validator        F9 the pre-await journal shape    F10 unreadable refuses completion
 
 Run: uv run pytest tests/test_a_follow_on_task_completes_only_with_what_it_settles.py -q
 """
@@ -586,41 +586,83 @@ def test_F9_the_pin_sees_a_new_journal_command_above_the_await():
     assert _shape(mutated) != _MASTER_CTX_SEQUENCE
 
 
-# ── F10: unreadable means nothing is required, loudly, and never raises ───────────────────────
+# ── F10: an unreadable declaration refuses completion (ruled 2026-11-20) ─────────────────────
+#
+# "an unreadable completion declaration refuses completion with a clear error. It does not warn
+# and pass." An UNSET variable is not unreadable: it composes the seed alone, the reading
+# `human_tasks._declared_kinds` gives the same variable (a domain species is refused at the kind
+# gate).
 
-def test_F10_an_unset_variable_returns_none_and_warns(monkeypatch, caplog):
+def _broken_overlay(tmp_path, monkeypatch):
+    """The real overlay's task kinds (so the kind gate passes) beside the real completion row with
+    one field's type made unknown: the family no longer composes."""
+    import shutil
+    shutil.copytree(_OVERLAY / "task_kinds", tmp_path / "task_kinds")
+    (tmp_path / "task_completion").mkdir()
+    text = _ROW.read_text(encoding="utf-8")
+    assert "type: positive_integer" in text, "the row under test changed: pick another field"
+    (tmp_path / "task_completion" / _ROW.name).write_text(
+        text.replace("type: positive_integer", "type: float", 1), encoding="utf-8")
+    monkeypatch.setenv("TASK_KIND_OVERLAY_DIRS", str(tmp_path / "task_kinds"))
+    _reset_caches()
+    return tmp_path
+
+
+def test_F10_an_unset_variable_composes_the_seed_alone_and_warns(monkeypatch, caplog):
     monkeypatch.delenv("TASK_KIND_OVERLAY_DIRS")
     _reset_caches()
     with caplog.at_level(logging.WARNING, logger=tc.logger.name):
-        assert tc.get_declarations() is None
+        got = tc.get_declarations()
+    assert got == tc.compose_completion(tc.SEED_DIR, [])
+    assert _KIND not in got
     assert any("unset" in r.getMessage() for r in caplog.records)
 
 
-def test_F10_a_malformed_overlay_row_returns_none_and_warns(monkeypatch, tmp_path, caplog):
-    (tmp_path / "task_kinds").mkdir()
-    (tmp_path / "task_completion").mkdir()
-    (tmp_path / "task_completion" / "k.yaml").write_text(
-        _GOOD.replace("type: text", "type: float"), encoding="utf-8")
-    monkeypatch.setenv("TASK_KIND_OVERLAY_DIRS", str(tmp_path / "task_kinds"))
-    _reset_caches()
-    with caplog.at_level(logging.WARNING, logger=tc.logger.name):
-        assert tc.get_declarations() is None
+def test_F10_a_malformed_overlay_row_raises_logs_and_is_not_cached(monkeypatch, tmp_path, caplog):
+    root = _broken_overlay(tmp_path, monkeypatch)
+    with caplog.at_level(logging.ERROR, logger=tc.logger.name):
+        with pytest.raises(tc.CompletionDeclarationUnreadable):
+            tc.get_declarations()
+        with pytest.raises(tc.CompletionDeclarationUnreadable):
+            tc.declaration_for_kind(_KIND)
     assert any("could not compose" in r.getMessage() for r in caplog.records)
+    # fixed on disk, the next call reads it: nothing unreadable was cached
+    (root / "task_completion" / _ROW.name).write_text(_ROW.read_text(encoding="utf-8"),
+                                                      encoding="utf-8")
+    assert tc.declaration_for_kind(_KIND).blank == _yaml_row()["blank"]
 
 
-def test_F10_the_act_requires_nothing_when_the_declarations_are_unreadable(world, monkeypatch):
-    monkeypatch.delenv("TASK_KIND_OVERLAY_DIRS")
-    _reset_caches()
-    monkeypatch.setattr(ht, "verbs_for_kind", lambda kind: ("approved", "rejected"))
-    monkeypatch.setattr(ht, "reason_required_for", lambda kind: frozenset())
-    world["task"] = _task(_QUAL, {"replacement_part": _blank_unavailable()})
-    r = _act(world)
+@pytest.mark.parametrize("decision", ["approved", "rejected"])
+def test_F10_the_act_is_refused_with_a_clear_error_when_the_declarations_are_unreadable(
+        world, monkeypatch, tmp_path, decision):
+    """Every decision, not only the one the row names: with the row unreadable, this process
+    cannot tell which decisions complete the task. The refusal says why, and the message carries
+    no path and no parse error (those are in the log)."""
+    _broken_overlay(tmp_path, monkeypatch)
+    world["task"] = _task(_QUAL, {"replacement_part": "AB-1"})
+    r = _act(world, decision, {"replacement_part": "AB-1"})
+    d = _detail(r)
+    assert r.status_code == 409 and d["error"] == "completion_declaration_unreadable", r.text
+    assert d["kind"] == _KIND and "completed" in d["message"]
+    assert str(tmp_path) not in d["message"] and "float" not in d["message"]
+    assert world["resolved"] == []
+
+
+def test_F10_CONTROL_the_same_act_completes_when_the_row_reads(world):
+    """The subject above, differing only in the row: readable, the same act completes."""
+    world["task"] = _task(_QUAL, {"replacement_part": "AB-1"})
+    r = _act(world, "approved", {"replacement_part": "AB-1"})
     assert r.status_code == 200, r.text
-    assert "fields" not in world["resolved"][0][1]
+    assert world["resolved"][0][1]["fields"] == {"replacement_part": "AB-1"}
 
 
-def _blank_unavailable() -> str:
-    return _yaml_row()["blank"]
+def test_F10_register_and_the_read_path_do_not_raise_when_unreadable(world, monkeypatch, tmp_path):
+    """Refusing registration would drop the follow-on task itself: it registers as supplied, and
+    the act refuses until the declarations read. The read path omits the key."""
+    _broken_overlay(tmp_path, monkeypatch)
+    assert _register(world, _QUAL, {"replacement_part": "AB-1"}) == {
+        "disposition": _QUAL, "fields": {"replacement_part": "AB-1"}}
+    assert "completion_fields" not in ht.declaration_for(_KIND)
 
 
 def test_F10_a_sibling_is_derived_from_each_overlay_entry_and_a_missing_one_declares_nothing(tmp_path):
