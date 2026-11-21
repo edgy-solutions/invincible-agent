@@ -319,6 +319,10 @@ NOT_POLICY: dict[str, str] = {
     'src/iagent/gateway.py::act_on_human_task::task_already_resolved | This review was already resolved': CONFLICT,
     'src/iagent/gateway.py::act_on_human_task::task_already_resolved | This task was already resolved b': CONFLICT,
     'src/iagent/gateway.py::act_on_human_task::task_unresumable | workflow_service {} is not a res': CONFLICT,
+    # ruled 2026-11-20: the deployment's task completion declarations do not compose, so no task
+    # completes until an operator fixes them; no grant lifts it (#494)
+    'src/iagent/gateway.py::act_on_human_task::completion_declaration_unreadable | this task cannot be completed: t':
+        "integrity: the deployment's task completion declarations do not compose; the act fails closed and no grant lifts it",
     "src/iagent/gateway.py::_ingest_event_body::delegate_not_seeder | this episode's open case was not": SEEDER,
     'src/iagent/gateway.py::_ingest_event_body::revision_not_kept | <_restate_refusal_message>': CONFLICT,
     'src/iagent/gateway.py::ingest_leaf_route._moved::leaf_not_changeable | the document moved on while the': CONFLICT,

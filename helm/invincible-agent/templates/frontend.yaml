@@ -200,7 +200,8 @@ spec:
             {{- toYaml .Values.cortexBff.resources | nindent 12 }}
           readinessProbe:
             httpGet:
-              path: /health
+              # /ready, not /health: liveness stays on /health, so a config fault never restarts the pod.
+              path: /ready
               port: http
             initialDelaySeconds: 10
             # THE HALF THE 2026-08-22 SWEEP MISSED, and it was the half that mattered.

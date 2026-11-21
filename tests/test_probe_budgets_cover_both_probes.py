@@ -122,3 +122,34 @@ def test_readiness_is_never_tighter_than_liveness_in_one_container():
             f"{path.name}: readiness timeout {r}s is tighter than liveness {lv}s — the pod "
             f"leaves the load balancer before anything restarts it"
         )
+
+
+def _cortex_bff_probe_paths() -> dict[str, str]:
+    text = (_TEMPLATES / "frontend.yaml").read_text(encoding="utf-8")
+    start = re.search(r"^\s*- name: cortex-bff\s*$", text, re.MULTILINE)
+    assert start, "frontend.yaml has no cortex-bff container: the shape moved"
+    end = re.search(r"^---\s*$", text[start.end():], re.MULTILINE)
+    container = text[start.end():start.end() + end.start()] if end else text[start.end():]
+    paths = {}
+    for kind, body in _probe_blocks(container):
+        m = re.search(r"^\s*path:\s*(\S+)\s*$", body, re.MULTILINE)  # the key, not a comment
+        if m:
+            paths[kind] = m.group(1)
+    return paths
+
+
+def test_cortex_bff_readiness_is_ready_and_liveness_stays_health():
+    """gov's survivor on #494: reverting the readiness probe to /health left every test green.
+
+    /ready answers 503 while the completion declarations cannot be read, so a broken deployment
+    is visible BEFORE anyone acts; /health stays the liveness probe, so that config fault takes
+    the pod out of the load balancer and never restart-loops it."""
+    paths = _cortex_bff_probe_paths()
+    assert paths.get("readinessProbe") == "/ready", (
+        f"cortex-bff readiness probes {paths.get('readinessProbe')!r}, not /ready: a deployment "
+        "whose completion declarations cannot be read would report ready"
+    )
+    assert paths.get("livenessProbe") == "/health", (
+        f"cortex-bff liveness probes {paths.get('livenessProbe')!r}, not /health: a config "
+        "fault would restart-loop the pod instead of only marking it not ready"
+    )

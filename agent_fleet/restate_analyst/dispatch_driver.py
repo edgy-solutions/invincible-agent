@@ -129,6 +129,9 @@ def plan_to_payload(plan, *, requested_by: str, acted_by: str = "",
             "needs_review": ht.needs_review,
             "proposed_by_ruleset": ht.proposed_by_ruleset,
             "subject_unresolved": ht.subject_unresolved,
+            # Present only when the reviewer recorded some; absent otherwise, so an unedited
+            # task's payload is byte-identical to before.
+            **({"fields": dict(ht.fields)} if ht.fields else {}),
             # WHO REQUESTED THE WORK (the review's initiator). cortex-bff REQUIRES it — a 422
             # without it. Its meaning is unchanged; see the note on the payload-level twin.
             "requested_by": requested_by,
@@ -230,7 +233,13 @@ def _mint_dispatch_task(task: dict) -> dict:
         #
         # Rides in `payload` (a pass-through jsonb) rather than as a new column: additive, no
         # migration, and nothing existing changes shape.
-        "payload": {**(task.get("payload") or {}), "approved_by": task.get("acted_by") or ""},
+        #
+        # `disposition` rides the payload too: it is the key a task's completion declaration
+        # selects its field list by, and the register route reads the payload, not the body's
+        # top level. `fields` is what the reviewer recorded (empty when none).
+        "payload": {**(task.get("payload") or {}), "approved_by": task.get("acted_by") or "",
+                    "disposition": task.get("disposition"),
+                    **({"fields": dict(task["fields"])} if task.get("fields") else {})},
     }
     # MINT AT USE — fresh service-identity token, never a stored one. A ServiceTokenError propagates
     # (retryable): a Keycloak blip is transient INFRA, not an authorization denial, so it must NOT

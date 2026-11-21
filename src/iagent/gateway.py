@@ -618,6 +618,16 @@ async def lifespan(application: FastAPI):
                        type(exc).__name__, exc)
         _regs = ()
     _ps.check_declared_starts(_regs, get_definition=_gwd, modes=_ps.MODES)
+    # Task completion declarations are read now so a broken deployment is visible before anyone
+    # acts (`/ready` reports it). Never raised: boot does not depend on it.
+    try:
+        from . import task_completion as _tc_boot
+        _tc_reason = _tc_boot.declarations_unreadable_reason()
+    except Exception as exc:  # noqa: BLE001
+        _tc_reason = type(exc).__name__
+    if _tc_reason is not None:
+        logger.error("task completion declarations are unreadable (%s): this BFF will report not "
+                     "ready and refuse decisions that may need recorded fields.", _tc_reason)
     # HITL substrate: ensure the human_task_projection table exists in the
     # Electric-replicated Postgres. Non-fatal when PROJECTOR_POSTGRES_DSN is
     # unset (local/dev boot) — the substrate is dormant, never a boot blocker.
@@ -1468,6 +1478,10 @@ class HumanTaskActRequest(_BaseModel):
         default=None, union_mode="left_to_right")
     # document_empty_confirm `has_parts` only (spec 208): the page the steward points at.
     page: Optional[_StrictInt] = None
+    # A follow-on task's completion fields ({name: value}), required by the verbs its kind's
+    # `task_completion` declaration names. Names and types are judged at the route, where the
+    # declaration is read; sent for a kind that declares none, it is ignored.
+    fields: Optional[dict] = None
 
     @model_validator(mode="after")
     def _verb_fields(self):
@@ -1548,13 +1562,25 @@ async def register_human_task(
             _audit_delegate_named(route, caller, req.requested_by, f"refused:{code}")
             raise
         _audit_delegate_named(route, caller, req.requested_by, "admitted:delegate")
+    # A follow-on task's `payload.fields` holds EVERY name its kind's completion declaration lists
+    # for this payload, a blank written as the declaration's blank text and never left empty;
+    # undeclared supplied names are dropped. A kind without a declaration is unchanged.
+    from . import task_completion as _tc
+    try:
+        _cdecl = _tc.declaration_for_kind(req.kind)
+    except _tc.CompletionDeclarationUnreadable:
+        # Registered as supplied: refusing would drop the follow-on task itself. It cannot be
+        # completed while the declarations are unreadable (the act refuses), and once they read,
+        # an absent field is MISSING at the act, exactly as a blank is.
+        _cdecl = None
+    _payload = _tc.written_at_register(_cdecl, req.payload) if _cdecl is not None else req.payload
     try:
         result = await run_in_threadpool(
             lambda: human_tasks.register_task(
                 kind=req.kind, task_id=req.task_id, audience=req.audience,
                 title=req.title, summary=req.summary, requested_by=req.requested_by,
                 workflow_id=req.workflow_id, subject_ref=req.subject_ref,
-                payload=req.payload, workflow_service=req.workflow_service,
+                payload=_payload, workflow_service=req.workflow_service,
                 promise_name=req.promise_name, excludes=req.excludes,
                 case_id=req.case_id,
             )
@@ -6747,6 +6773,45 @@ async def act_on_human_task(
             "message": str(exc),
         })
 
+    # COMPLETION FIELDS. After the audience gate and the verb check, so a caller who may not act
+    # is never told what the task needs. A kind whose `task_completion` row names this verb
+    # cannot complete without the fields it exists to settle; the names live in the structured
+    # `fields` list, never in the message. Another verb (a rejection) needs none.
+    from . import task_completion as _tc
+    _final_fields = None
+    try:
+        _cdecl = _tc.declaration_for_kind(match.get("kind") or "")
+    except _tc.CompletionDeclarationUnreadable:
+        # AN UNREADABLE DECLARATION REFUSES ONLY WHAT IT MUST (ruled 2026-11-21: "if they become
+        # unreadable later, refuse only decisions that complete a task and could require fields.
+        # A rejection goes through."). `fields_could_be_required` scans the files tolerantly: a
+        # decision some row of this kind names in `required_on`, or any decision when a row cannot
+        # be attributed, is refused; any other proceeds with no fields required. A 409 for
+        # `task_kind_set_unknown`'s reason: the caller did nothing wrong; this deployment cannot
+        # currently answer. The paths and the parse error are in the log, never in the message.
+        if not _tc.fields_could_be_required(match.get("kind") or "", req.decision):
+            _cdecl = None
+        else:
+            raise HTTPException(status_code=409, detail={
+                "error": "completion_declaration_unreadable", "kind": match.get("kind"),
+                "message": "this task cannot be completed: the deployment's task completion "
+                           "declarations could not be read, so a decision that may need recorded "
+                           "fields is refused until an operator fixes them"})
+    if _cdecl is not None and req.decision in _cdecl.required_on:
+        _finals, _missing, _invalid = _tc.finals_at_act(_cdecl, match.get("payload"), req.fields)
+        if _missing:
+            raise HTTPException(status_code=422, detail={
+                "error": "completion_fields_missing", "kind": match.get("kind"),
+                "message": "this task cannot be completed until its required fields are recorded",
+                "fields": _missing})
+        if _invalid:
+            raise HTTPException(status_code=422, detail={
+                "error": "completion_fields_invalid", "kind": match.get("kind"),
+                "message": "this task cannot be completed until its fields are valid",
+                "fields": _invalid})
+        _final_fields = _finals
+    _fields_kw = {} if _final_fields is None else {"fields": _final_fields}
+
     # FULFILLMENT (document_empty_confirm, spec 208): the SAME writer as POST /ingest/{id}/empty. The
     # audience gate and the verb validation above have passed; `_decide_empty` closes the task.
     if match.get("kind") == EMPTY_CONFIRM_KIND:
@@ -7398,7 +7463,7 @@ async def act_on_human_task(
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
                 task_id, caller_id=actor, decision=req.decision,
-                comment=req.comment, workflow_id=match["workflow_id"],
+                comment=req.comment, workflow_id=match["workflow_id"], **_fields_kw,
             )
         )
     else:
@@ -7407,7 +7472,8 @@ async def act_on_human_task(
         # requires a workflow_id.)
         n = await run_in_threadpool(
             lambda: human_tasks.mark_task_resolved(
-                task_id, caller_id=actor, decision=req.decision, comment=req.comment
+                task_id, caller_id=actor, decision=req.decision, comment=req.comment,
+                **_fields_kw
             )
         )
     logger.info("human_task acted: task_id=%s by=%s decision=%s rows=%d",
@@ -12968,6 +13034,58 @@ async def health():
         "service": "cortex-orchestrator-proxy",
         "telemetry_misses": emit_misses(),
     }
+
+
+# Set once the task completion declarations have been read cleanly; never cleared in-process.
+_COMPLETION_DECLARATIONS_READ_ONCE = False
+# Set while a break on disk after that read has been logged; cleared when the files compose again.
+_COMPLETION_BREAK_LOGGED = False
+
+
+@app.get("/ready")
+async def ready():
+    """READINESS ONLY (the liveness probe stays on /health, so a config fault never restarts the pod).
+
+    Not ready when a service URL was never declared (the content /health gives), or when the task
+    completion declarations cannot be read AT START (architect ruling 2026-11-21): a deploy fault,
+    made visible before anyone acts. Until the first clean read, every call re-reads (so a repaired
+    file clears it without a restart). After it, readiness no longer depends on them: a later
+    unreadable file is never a reason to pull every pod out of the load balancer at once.
+
+    A break on disk after that read is LOGGED ONCE at error level with its reason (architect
+    2026-11-21), and logged again only after the files have composed in between. The process
+    keeps the declarations it read (they are cached for its life), so nothing else would show
+    the break before a restart, and a restarted pod will start not ready."""
+    global _COMPLETION_DECLARATIONS_READ_ONCE, _COMPLETION_BREAK_LOGGED
+    from . import task_completion as _tc_ready
+    faults: dict = {}
+    reasons: list = []
+    if _UNDECLARED_SERVICE_URLS:
+        reasons.append("service URL(s) undeclared — deploy fault, not a runtime fault")
+        faults["undeclared"] = dict(sorted(_UNDECLARED_SERVICE_URLS.items()))
+    if _COMPLETION_DECLARATIONS_READ_ONCE:
+        broke = _tc_ready.files_compose_error()
+        if broke is None:
+            _COMPLETION_BREAK_LOGGED = False
+        elif not _COMPLETION_BREAK_LOGGED:
+            _COMPLETION_BREAK_LOGGED = True
+            logger.error(
+                "task completion declarations on disk no longer compose (%s): this BFF keeps "
+                "the declarations it read at start until it restarts, and a restarted BFF will "
+                "report not ready. Fix the files.", broke)
+    unreadable = None if _COMPLETION_DECLARATIONS_READ_ONCE else (
+        _tc_ready.declarations_unreadable_reason())
+    if unreadable is None:
+        _COMPLETION_DECLARATIONS_READ_ONCE = True
+    else:
+        reasons.append("task completion declarations could not be read: a deploy fault; "
+                       "decisions that may need recorded fields are refused")
+        faults["completion_declarations"] = unreadable
+    if faults:
+        return JSONResponse(status_code=503, content={
+            "status": "not_ready", "service": "cortex-orchestrator-proxy",
+            "reason": "; ".join(reasons), **faults})
+    return {"status": "ok", "service": "cortex-orchestrator-proxy"}
 
 
 # ══════════════════════════════════════════════════════════

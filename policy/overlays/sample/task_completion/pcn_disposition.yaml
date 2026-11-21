@@ -1,0 +1,15 @@
+# SAMPLE — OVERLAY layer (ADR-0036). A follow-on task cannot complete without what it exists to
+# settle (architect ruling 2026-11-19): a qualification task names the replacement part; a
+# last-time-buy task records quantity and date. At review these are optional, and a blank is
+# written as `blank`, never left empty. A sibling of `task_kinds/`, never inside it: the SDK's
+# TaskKind row forbids extra keys. The row's kind must exist in the same overlay's task_kinds.
+kind: pcn_disposition
+by: disposition                 # the task payload key whose value selects the field list
+required_on: [approved]         # verbs that complete the task; a subset of the kind's accepts
+blank: "not yet identified"     # the ruled text a blank is written as
+fields:
+  dispatchQualification:
+    - {name: replacement_part, label: "Replacement part", type: text}
+  dispatchLTB:
+    - {name: ltb_quantity, label: "Last-time-buy quantity", type: positive_integer}
+    - {name: ltb_date, label: "Last-time-buy date", type: date}

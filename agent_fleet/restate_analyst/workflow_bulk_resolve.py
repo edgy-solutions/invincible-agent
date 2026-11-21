@@ -77,6 +77,9 @@ class Override:
     observer-facing, when a resolution is later projected for observation/reporting."""
     disposition: str
     reason: str
+    # What the follow-on task this disposition opens is to settle, optional at review ({name: text}).
+    # Names and types are judged by the BFF, which holds the declaration; this carries them.
+    fields: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not (self.reason or "").strip():
@@ -127,6 +130,7 @@ class ItemResolution:
     # unedited path is unchanged. Stored beside the identity -- `mpn`/`idempotency_key` stay the
     # EXTRACTED values (a correction never re-keys).
     provenance: Optional[dict] = None
+    fields: dict = field(default_factory=dict)   # the override's `fields`, empty on every other row
 
 
 def run_funnel(
@@ -215,5 +219,6 @@ def resolve_batch(
             needs_review=it.needs_review,               # carried forward, visible — never laundered
             override_reason=(ov.reason if ov is not None else None),
             proposed_by_ruleset=it.proposed_by_ruleset,  # which policy proposed it — audit survives ruleset change
+            fields=(dict(ov.fields) if ov is not None else {}),
         ))
     return out

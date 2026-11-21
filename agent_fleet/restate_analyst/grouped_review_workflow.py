@@ -120,7 +120,18 @@ def _build_bulk_decision(raw: dict) -> BulkDecision:
     refusal by ``evaluate_submission``, never a silent accept."""
     overrides: dict = {}
     for mpn, ov in (raw.get("overrides") or {}).items():
-        overrides[mpn] = Override(disposition=ov["disposition"], reason=ov.get("reason", ""))
+        fields = ov.get("fields")
+        # A refusal, never a KeyError or TypeError. Names and types are NOT judged here: this
+        # runtime does not hold the declaration; the BFF does.
+        if fields is not None:
+            if not isinstance(fields, dict) or len(fields) > 10 or any(
+                    not isinstance(k, str) or not isinstance(v, str)
+                    or len(v) > 120 or "\n" in v or "\r" in v
+                    for k, v in fields.items()):
+                raise ValueError(f"override for part {mpn!r} carries fields that are not a small "
+                                 f"object of one-line text values")
+        overrides[mpn] = Override(disposition=ov["disposition"], reason=ov.get("reason", ""),
+                                  fields=dict(fields or {}))
     return BulkDecision(overrides=overrides)
 
 

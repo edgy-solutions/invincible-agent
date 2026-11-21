@@ -568,6 +568,67 @@ def review_shape_errors(policy_dir: Path, enums_dir: Path) -> tuple[list[str], i
     return errors, total
 
 
+def task_completion_errors(policy_dir: Path) -> tuple[list[str], int]:
+    """Leaves sys.path and sys.modules as it found them (the repository agent runs this in its own
+    process, and `tests/repository_agent` seals that nothing leaks): see `_task_completion_errors`."""
+    import sys as _sys
+    saved_path, saved_mods = list(_sys.path), set(_sys.modules)
+    try:
+        return _task_completion_errors(policy_dir)
+    finally:
+        _sys.path[:] = saved_path
+        for k in set(_sys.modules) - saved_mods:
+            _sys.modules.pop(k, None)
+
+
+def _task_completion_errors(policy_dir: Path) -> tuple[list[str], int]:
+    """(errors, n_rows). The `task_completion` family (the seed, and each `overlays/*/task_completion`)
+    composes with the SDK's generic composer, each row passes `CompletionDeclaration`'s own checks,
+    its `kind` exists among the task kinds composed for THE SAME overlay, and its `required_on`
+    is a subset of THAT kind's `accepts`. A message names the kind and the key and carries no list
+    of values."""
+    import sys as _sys
+    _root = Path(__file__).resolve().parents[2]
+    for _p in (_root, _root / "src"):
+        if str(_p) not in _sys.path:
+            _sys.path.insert(0, str(_p))
+    from iagent.task_completion import compose_completion  # noqa: PLC0415
+    from iagent_mesh.task_kinds import compose as compose_kinds  # noqa: PLC0415
+
+    errors: list[str] = []
+    total = 0
+    seed = policy_dir / "task_completion"
+    layers: list[tuple[Path, Path | None]] = [(seed, None)]
+    overlays = policy_dir / "overlays"
+    for o in sorted(overlays.iterdir()) if overlays.is_dir() else []:
+        if (o / "task_completion").is_dir():
+            layers.append((o / "task_completion", o))
+    for comp_dir, overlay in layers:
+        label = comp_dir.as_posix()
+        try:
+            rows = compose_completion(seed, [comp_dir] if overlay is not None else [])
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{label}: {exc}")
+            continue
+        total += len(rows)
+        try:
+            kinds = {k.kind: k for k in compose_kinds(
+                policy_dir / "task_kinds",
+                [overlay / "task_kinds"] if overlay is not None and (overlay / "task_kinds").is_dir()
+                else [])}
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{label}: the task kinds could not be composed ({exc})")
+            continue
+        for kind, row in sorted(rows.items()):
+            k = kinds.get(kind)
+            if k is None:
+                errors.append(f"{label}: kind {kind!r} names no task kind composed for this overlay")
+            elif not set(row.required_on) <= set(k.accepts):
+                errors.append(f"{label}: kind {kind!r}: key 'required_on' is not a subset of "
+                              f"the kind's accepts")
+    return errors, total
+
+
 #: Mirrors `agent_fleet.repository_agent.repo_core.GOVERNED_ROOTS` (ADR-0062 section 1). Restated, not
 #: imported: pygit2 is not in every image this gate runs in. tests/security/test_repository_paths_rail.py
 #: asserts the two are equal.
@@ -1956,6 +2017,11 @@ def validate(
     _shape_errors, _n_shapes = review_shape_errors(policy_dir, enums_dir)
     errors.extend(_shape_errors)
     print(f"  review_shapes: {_n_shapes} shape(s)")
+
+    # task_completion: what a follow-on task must record before it completes (ruled 2026-11-19).
+    _tc_errors, _n_tc = task_completion_errors(policy_dir)
+    errors.extend(_tc_errors)
+    print(f"  task_completion: {_n_tc} row(s)")
 
     # ── NO SERVICE IDENTITY AS A DISCLOSURE RECIPIENT ───────────────────────────────────────
     #
