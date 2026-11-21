@@ -13036,21 +13036,32 @@ async def health():
     }
 
 
+# Set once the task completion declarations have been read cleanly; never cleared in-process.
+_COMPLETION_DECLARATIONS_READ_ONCE = False
+
+
 @app.get("/ready")
 async def ready():
     """READINESS ONLY (the liveness probe stays on /health, so a config fault never restarts the pod).
 
     Not ready when a service URL was never declared (the content /health gives), or when the task
-    completion declarations cannot be read (architect ruling 2026-11-21): a deploy fault, made
-    visible before anyone acts. Read on every call, never cached, so a repaired file clears it."""
+    completion declarations cannot be read AT START (architect ruling 2026-11-21): a deploy fault,
+    made visible before anyone acts. Until the first clean read, every call re-reads (so a repaired
+    file clears it without a restart). After it, readiness no longer depends on them: a later
+    unreadable file is the act-time rule's (refuse only decisions that complete a task and could
+    require fields), never a reason to pull every pod out of the load balancer at once."""
+    global _COMPLETION_DECLARATIONS_READ_ONCE
     from . import task_completion as _tc_ready
     faults: dict = {}
     reasons: list = []
     if _UNDECLARED_SERVICE_URLS:
         reasons.append("service URL(s) undeclared — deploy fault, not a runtime fault")
         faults["undeclared"] = dict(sorted(_UNDECLARED_SERVICE_URLS.items()))
-    unreadable = _tc_ready.declarations_unreadable_reason()
-    if unreadable is not None:
+    unreadable = None if _COMPLETION_DECLARATIONS_READ_ONCE else (
+        _tc_ready.declarations_unreadable_reason())
+    if unreadable is None:
+        _COMPLETION_DECLARATIONS_READ_ONCE = True
+    else:
         reasons.append("task completion declarations could not be read: a deploy fault; "
                        "decisions that may need recorded fields are refused")
         faults["completion_declarations"] = unreadable

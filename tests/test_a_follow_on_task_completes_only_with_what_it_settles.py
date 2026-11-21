@@ -75,6 +75,8 @@ def _reset_caches(mp=None):
 def overlay_env(monkeypatch):
     monkeypatch.setenv("TASK_KIND_OVERLAY_DIRS", str(_OVERLAY / "task_kinds"))
     monkeypatch.setattr(ht, "_SEED_ROWS_CACHE", None, raising=False)
+    monkeypatch.setattr(gateway, "_COMPLETION_DECLARATIONS_READ_ONCE", False,
+                        raising=False)  # a fresh process
     _reset_caches()
     yield
     _reset_caches()
@@ -686,21 +688,46 @@ def test_F10c_an_unattributable_row_refuses_every_decision(world, monkeypatch, t
     assert world["resolved"] == []
 
 
-def test_F10d_ready_is_503_while_broken_200_when_readable_and_200_once_repaired(
+def test_F10d_ready_is_503_while_broken_at_start_and_200_once_repaired(
         world, monkeypatch, tmp_path):
     monkeypatch.setattr(gateway, "_UNDECLARED_SERVICE_URLS", {})  # the test env declares no URLs
     c = world["client"]
-    r = c.get("/ready")  # the control: readable
-    assert r.status_code == 200 and r.json()["status"] == "ok", r.text
-    root = _broken_overlay(tmp_path, monkeypatch)
+    root = _broken_overlay(tmp_path, monkeypatch)  # broken before the first clean read: at start
     r = c.get("/ready")
     body = r.json()
     assert r.status_code == 503 and body["status"] == "not_ready", r.text
     assert body["completion_declarations"] and str(tmp_path) not in r.text
+    r = c.get("/ready")  # still broken: every probe before the first clean read re-reads
+    assert r.status_code == 503, r.text
     (root / "task_completion" / _ROW.name).write_text(_ROW.read_text(encoding="utf-8"),
                                                       encoding="utf-8")
     r = c.get("/ready")  # repaired on disk, no restart: nothing unreadable was cached
     assert r.status_code == 200, r.text
+
+
+def test_F10f_a_later_break_leaves_readiness_alone_and_the_act_time_rule_refuses(
+        world, monkeypatch, tmp_path):
+    """gov's question on #494 (08:00 report): readiness read on EVERY probe turns one bad runtime
+    refresh of a mounted overlay into every pod not ready at once, a full outage, against the
+    act-time clause. The ruling's two clauses: at start, not ready; later, refuse only decisions
+    that complete a task and could require fields, and a rejection goes through."""
+    monkeypatch.setattr(gateway, "_UNDECLARED_SERVICE_URLS", {})
+    c = world["client"]
+    r = c.get("/ready")  # the first clean read
+    assert r.status_code == 200 and r.json()["status"] == "ok", r.text
+    _broken_overlay(tmp_path, monkeypatch)  # the overlay goes bad after start
+    assert tc.declarations_unreadable_reason() is not None  # the control: it IS unreadable now
+    r = c.get("/ready")
+    assert r.status_code == 200, r.text  # ...and readiness does not follow it
+    named, other = _verbs()
+    world["task"] = _task(_QUAL, {"replacement_part": "AB-1"})
+    r = _act(world, named, {"replacement_part": "AB-1"})
+    assert r.status_code == 409 and _detail(r)["error"] == "completion_declaration_unreadable"
+    assert world["resolved"] == []
+    world["task"] = _task(_QUAL)
+    r = _act(world, other)  # the rejection goes through
+    assert r.status_code == 200, r.text
+    assert len(world["resolved"]) == 1
 
 
 def test_F10e_health_stays_200_while_the_declarations_are_unreadable(world, monkeypatch, tmp_path):
