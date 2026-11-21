@@ -21,13 +21,25 @@ is a cross-repo release. The family is composed by the SDK's own generic compose
              new environment variable and no chart change: the overlay's task_kinds directory
              already names the overlay's root.
 
-AN UNREADABLE DECLARATION REFUSES COMPLETION (architect ruling 2026-11-20: "an unreadable
-completion declaration refuses completion with a clear error. It does not warn and pass"). When
-the family does not compose, `get_declarations` raises `CompletionDeclarationUnreadable` and the act
-route refuses with 503 `completion_declaration_unreadable`: this process cannot tell which
-completions need fields, so it completes none. It retries the compose on the next call, so a
-fixed row takes effect without a restart. A malformed row is caught before deploy by
-`policy/sync/validate_policy.py`, which composes this family with `compose_completion` directly.
+AN UNREADABLE DECLARATION IS READ AT LOAD AND REFUSES ONLY WHAT IT MUST (architect ruling
+2026-11-21: "At start: the BFF checks the declarations when it loads them, and reports not ready
+if they can't be read. That makes a broken deployment visible before anyone acts. At act time: if
+they become unreadable later, refuse only decisions that complete a task and could require
+fields. A rejection goes through.").
+  * AT START the BFF lifespan calls `declarations_unreadable_reason()` and logs an error; it never
+    raises, so boot does not depend on it. `GET /ready` (the readiness probe only; `/health` stays
+    the liveness probe, so a config fault never restart-loops the pod) answers 503
+    `completion_declarations: <exception class name>` while the family does not compose, and 200
+    once it does, without a restart (nothing unreadable is cached).
+  * AT ACT TIME, when the family does not compose, `get_declarations` raises
+    `CompletionDeclarationUnreadable`. The act route then asks `fields_could_be_required(kind,
+    decision)`: a TOLERANT scan of the same files (no model validation) that is True when the
+    decision is named in a `required_on` of any row of that kind (deleted or not: conservative),
+    and True for every decision when a row cannot be attributed (unparseable file, not a mapping,
+    no usable `kind`, a `required_on` that is not a list of strings). True refuses with 409
+    `completion_declaration_unreadable`; False lets the act proceed with no fields required.
+A malformed row is caught before deploy by `policy/sync/validate_policy.py`, which composes this
+family with `compose_completion` directly.
 
 `TASK_KIND_OVERLAY_DIRS` UNSET IS NOT UNREADABLE: it composes the SEED ALONE, after a loud warning.
 That is `human_tasks._declared_kinds`'s reading of the same variable: seeded species answer from
@@ -140,6 +152,7 @@ def overlay_dirs_from_env(environ: Optional[Mapping[str, str]] = None) -> Option
 
 
 _CACHE: Optional[dict[str, CompletionDeclaration]] = None
+_UNREADABLE = object()
 
 
 def reset_cache() -> None:
@@ -174,6 +187,50 @@ def get_declarations() -> dict[str, CompletionDeclaration]:
             SEED_DIR, overlays, type(exc).__name__, exc)
         raise CompletionDeclarationUnreadable(f"{type(exc).__name__}: {exc}") from exc
     return _CACHE
+
+
+def declarations_unreadable_reason() -> Optional[str]:
+    """None when the declarations read; otherwise the CLASS NAME of the underlying cause and
+    nothing else (no path, no message: the readiness route serves it unauthenticated)."""
+    try:
+        get_declarations()
+    except CompletionDeclarationUnreadable as exc:
+        cause = exc.__cause__
+        return type(cause).__name__ if cause is not None else type(exc).__name__
+    return None
+
+
+def fields_could_be_required(kind: str, decision: str) -> bool:
+    """For use ONLY when the strict compose failed: could `decision` on `kind` require fields?
+
+    A tolerant scan of the directories `get_declarations` composes (the seed, then each overlay),
+    with the composer's own file glob and no model validation. True when `decision` is in the
+    union of the `required_on` lists of every row of `kind` (any layer, deleted or not:
+    conservative); True for every decision when a row cannot be attributed, because a row whose
+    verbs cannot be read could name this one. False otherwise."""
+    import yaml
+    overlays = overlay_dirs_from_env() or []
+    for directory in [SEED_DIR, *overlays]:
+        try:
+            files = sorted(Path(directory).glob("*.yaml"))
+        except OSError:
+            files = []
+        for f in files:
+            try:
+                raw = yaml.safe_load(f.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001 -- a file that cannot be read is unattributable
+                raw = _UNREADABLE
+            row_kind = raw.get("kind") if isinstance(raw, dict) else None
+            verbs = raw.get("required_on") if isinstance(raw, dict) else None
+            if (not isinstance(raw, dict) or not isinstance(row_kind, str) or not row_kind
+                    or (verbs is not None and not (isinstance(verbs, list)
+                                                   and all(isinstance(v, str) for v in verbs)))):
+                logger.warning("task completion row %s cannot be attributed to a kind: every "
+                               "decision is treated as one that may need fields", f.name)
+                return True
+            if row_kind == kind and decision in (verbs or []):
+                return True
+    return False
 
 
 def declaration_for_kind(kind: str) -> Optional[CompletionDeclaration]:

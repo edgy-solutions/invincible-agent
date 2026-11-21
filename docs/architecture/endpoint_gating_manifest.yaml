@@ -2317,6 +2317,14 @@ services:
         class: releasable_by_design
         justification: "liveness only"
       - method: GET
+        path: /ready
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "readiness only"
+      - method: GET
         path: /mesh/config
         identity: get_current_user
         gate: auth-only

@@ -632,20 +632,144 @@ def test_F10_a_malformed_overlay_row_raises_logs_and_is_not_cached(monkeypatch, 
     assert tc.declaration_for_kind(_KIND).blank == _yaml_row()["blank"]
 
 
-@pytest.mark.parametrize("decision", ["approved", "rejected"])
-def test_F10_the_act_is_refused_with_a_clear_error_when_the_declarations_are_unreadable(
-        world, monkeypatch, tmp_path, decision):
-    """Every decision, not only the one the row names: with the row unreadable, this process
-    cannot tell which decisions complete the task. The refusal says why, and the message carries
-    no path and no parse error (those are in the log)."""
+def _verbs():
+    """(a verb the row's `required_on` names, a verb the kind accepts that it does not): both
+    derived from the rows, never typed."""
+    named = _yaml_row()["required_on"][0]
+    kinds = yaml.safe_load((_OVERLAY / "task_kinds" / _ROW.name).read_text(encoding="utf-8"))
+    other = [v for v in kinds["accepts"] if v not in _yaml_row()["required_on"]][0]
+    return named, other
+
+
+def test_F10a_a_decision_the_row_names_is_refused_when_the_declarations_are_unreadable(
+        world, monkeypatch, tmp_path):
+    """With the row unreadable, a decision that completes the task and could require fields is
+    refused, and the message carries no path and no parse error (those are in the log)."""
     _broken_overlay(tmp_path, monkeypatch)
+    named, _ = _verbs()
     world["task"] = _task(_QUAL, {"replacement_part": "AB-1"})
-    r = _act(world, decision, {"replacement_part": "AB-1"})
+    r = _act(world, named, {"replacement_part": "AB-1"})
     d = _detail(r)
     assert r.status_code == 409 and d["error"] == "completion_declaration_unreadable", r.text
-    assert d["kind"] == _KIND and "completed" in d["message"]
+    assert d["kind"] == _KIND and d["message"].startswith("this task cannot be completed: t")
     assert str(tmp_path) not in d["message"] and "float" not in d["message"]
     assert world["resolved"] == []
+
+
+def test_F10b_a_decision_the_row_does_not_name_goes_through_when_unreadable(
+        world, monkeypatch, tmp_path):
+    """A rejection goes through (architect 2026-11-21): the task resolves, no fields are asked."""
+    _broken_overlay(tmp_path, monkeypatch)
+    _, other = _verbs()
+    world["task"] = _task(_QUAL)
+    r = _act(world, other)
+    assert r.status_code == 200, r.text
+    assert len(world["resolved"]) == 1 and world["resolved"][0][1].get("fields") in (None, {})
+
+
+@pytest.mark.parametrize("which", ["named", "other"])
+def test_F10c_an_unattributable_row_refuses_every_decision(world, monkeypatch, tmp_path, which):
+    """A file that does not parse could name any verb: every decision, the rejection included, is
+    refused."""
+    import shutil
+    shutil.copytree(_OVERLAY / "task_kinds", tmp_path / "task_kinds")
+    (tmp_path / "task_completion").mkdir()
+    (tmp_path / "task_completion" / "broken.yaml").write_text("kind: [unclosed\n  - : :",
+                                                              encoding="utf-8")
+    monkeypatch.setenv("TASK_KIND_OVERLAY_DIRS", str(tmp_path / "task_kinds"))
+    _reset_caches()
+    named, other = _verbs()
+    world["task"] = _task(_QUAL)
+    r = _act(world, named if which == "named" else other)
+    assert r.status_code == 409, r.text
+    assert _detail(r)["error"] == "completion_declaration_unreadable"
+    assert world["resolved"] == []
+
+
+def test_F10d_ready_is_503_while_broken_200_when_readable_and_200_once_repaired(
+        world, monkeypatch, tmp_path):
+    monkeypatch.setattr(gateway, "_UNDECLARED_SERVICE_URLS", {})  # the test env declares no URLs
+    c = world["client"]
+    r = c.get("/ready")  # the control: readable
+    assert r.status_code == 200 and r.json()["status"] == "ok", r.text
+    root = _broken_overlay(tmp_path, monkeypatch)
+    r = c.get("/ready")
+    body = r.json()
+    assert r.status_code == 503 and body["status"] == "not_ready", r.text
+    assert body["completion_declarations"] and str(tmp_path) not in r.text
+    (root / "task_completion" / _ROW.name).write_text(_ROW.read_text(encoding="utf-8"),
+                                                      encoding="utf-8")
+    r = c.get("/ready")  # repaired on disk, no restart: nothing unreadable was cached
+    assert r.status_code == 200, r.text
+
+
+def test_F10e_health_stays_200_while_the_declarations_are_unreadable(world, monkeypatch, tmp_path):
+    monkeypatch.setattr(gateway, "_UNDECLARED_SERVICE_URLS", {})  # the test env declares no URLs
+    _broken_overlay(tmp_path, monkeypatch)
+    # the same fault that makes /ready 503 leaves liveness alone: a config fault never restarts the pod
+    assert world["client"].get("/ready").status_code == 503
+    assert world["client"].get("/health").status_code == 200
+
+
+def _scan(tmp_path, monkeypatch, seed_files=None, overlay_files=None):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    for n, t in (seed_files or {}).items():
+        (seed / n).write_text(t, encoding="utf-8")
+    ov = tmp_path / "ov" / "task_completion"
+    ov.mkdir(parents=True)
+    for n, t in (overlay_files or {}).items():
+        (ov / n).write_text(t, encoding="utf-8")
+    (tmp_path / "ov" / "task_kinds").mkdir()
+    monkeypatch.setattr(tc, "SEED_DIR", seed)
+    monkeypatch.setenv("TASK_KIND_OVERLAY_DIRS", str(tmp_path / "ov" / "task_kinds"))
+
+
+def test_F10_scan_names_the_verb_of_the_kind_and_no_other(tmp_path, monkeypatch):
+    _scan(tmp_path, monkeypatch, overlay_files={
+        "a.yaml": "kind: ka\nrequired_on: [v1, v2]\n", "b.yaml": "kind: kb\nrequired_on: [v3]\n"})
+    assert tc.fields_could_be_required("ka", "v1") and tc.fields_could_be_required("ka", "v2")
+    assert not tc.fields_could_be_required("ka", "v3")        # another kind's verb
+    assert not tc.fields_could_be_required("ka", "v9")        # a verb no row names
+    assert not tc.fields_could_be_required("kz", "v1")        # a kind with no row
+
+
+def test_F10_scan_unions_the_layers_and_counts_a_deleted_row(tmp_path, monkeypatch):
+    _scan(tmp_path, monkeypatch,
+          seed_files={"a.yaml": "kind: ka\nrequired_on: [v1]\n"},
+          overlay_files={"a.yaml": "kind: ka\ndeleted: true\nrequired_on: [v2]\n"})
+    assert tc.fields_could_be_required("ka", "v1")            # the seed layer
+    assert tc.fields_could_be_required("ka", "v2")            # deleted overlay row still counts
+
+
+def test_F10_scan_treats_a_row_with_no_required_on_as_naming_nothing(tmp_path, monkeypatch):
+    _scan(tmp_path, monkeypatch, overlay_files={"a.yaml": "kind: ka\ndeleted: true\n"})
+    assert not tc.fields_could_be_required("ka", "v1")
+
+
+@pytest.mark.parametrize("text", [
+    "kind: [unclosed\n  - : :",                  # does not parse
+    "- just\n- a list\n",                       # not a mapping
+    "required_on: [v1]\n",                       # no kind
+    "kind: 7\nrequired_on: [v1]\n",             # kind not a string
+    "kind: ''\nrequired_on: [v1]\n",            # kind empty
+    "kind: ka\nrequired_on: v1\n",              # required_on not a list
+    "kind: ka\nrequired_on: [v1, 2]\n",         # required_on not strings
+])
+def test_F10_scan_refuses_every_decision_for_an_unattributable_row(tmp_path, monkeypatch, caplog,
+                                                                  text):
+    _scan(tmp_path, monkeypatch, overlay_files={"odd.yaml": text})
+    with caplog.at_level(logging.WARNING, logger=tc.logger.name):
+        assert tc.fields_could_be_required("anything", "any")
+    assert any("odd.yaml" in r.getMessage() and str(tmp_path) not in r.getMessage()
+               for r in caplog.records)
+
+
+def test_F10_unreadable_reason_is_the_class_name_alone(monkeypatch, tmp_path):
+    assert tc.declarations_unreadable_reason() is None
+    _broken_overlay(tmp_path, monkeypatch)
+    reason = tc.declarations_unreadable_reason()
+    assert reason and reason.isidentifier() and str(tmp_path) not in reason
 
 
 def test_F10_CONTROL_the_same_act_completes_when_the_row_reads(world):

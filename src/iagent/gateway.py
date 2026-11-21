@@ -618,6 +618,16 @@ async def lifespan(application: FastAPI):
                        type(exc).__name__, exc)
         _regs = ()
     _ps.check_declared_starts(_regs, get_definition=_gwd, modes=_ps.MODES)
+    # Task completion declarations are read now so a broken deployment is visible before anyone
+    # acts (`/ready` reports it). Never raised: boot does not depend on it.
+    try:
+        from . import task_completion as _tc_boot
+        _tc_reason = _tc_boot.declarations_unreadable_reason()
+    except Exception as exc:  # noqa: BLE001
+        _tc_reason = type(exc).__name__
+    if _tc_reason is not None:
+        logger.error("task completion declarations are unreadable (%s): this BFF will report not "
+                     "ready and refuse decisions that may need recorded fields.", _tc_reason)
     # HITL substrate: ensure the human_task_projection table exists in the
     # Electric-replicated Postgres. Non-fatal when PROJECTOR_POSTGRES_DSN is
     # unset (local/dev boot) — the substrate is dormant, never a boot blocker.
@@ -6772,14 +6782,21 @@ async def act_on_human_task(
     try:
         _cdecl = _tc.declaration_for_kind(match.get("kind") or "")
     except _tc.CompletionDeclarationUnreadable:
-        # AN UNREADABLE DECLARATION REFUSES COMPLETION (ruled 2026-11-20). This process cannot
-        # tell which completions need fields, so it completes none, and says why. A 409 for
+        # AN UNREADABLE DECLARATION REFUSES ONLY WHAT IT MUST (ruled 2026-11-21: "if they become
+        # unreadable later, refuse only decisions that complete a task and could require fields.
+        # A rejection goes through."). `fields_could_be_required` scans the files tolerantly: a
+        # decision some row of this kind names in `required_on`, or any decision when a row cannot
+        # be attributed, is refused; any other proceeds with no fields required. A 409 for
         # `task_kind_set_unknown`'s reason: the caller did nothing wrong; this deployment cannot
         # currently answer. The paths and the parse error are in the log, never in the message.
-        raise HTTPException(status_code=409, detail={
-            "error": "completion_declaration_unreadable", "kind": match.get("kind"),
-            "message": "this task cannot be completed: the deployment's task completion "
-                       "declarations could not be read, and an operator must fix them"})
+        if not _tc.fields_could_be_required(match.get("kind") or "", req.decision):
+            _cdecl = None
+        else:
+            raise HTTPException(status_code=409, detail={
+                "error": "completion_declaration_unreadable", "kind": match.get("kind"),
+                "message": "this task cannot be completed: the deployment's task completion "
+                           "declarations could not be read, so a decision that may need recorded "
+                           "fields is refused until an operator fixes them"})
     if _cdecl is not None and req.decision in _cdecl.required_on:
         _finals, _missing, _invalid = _tc.finals_at_act(_cdecl, match.get("payload"), req.fields)
         if _missing:
@@ -13017,6 +13034,31 @@ async def health():
         "service": "cortex-orchestrator-proxy",
         "telemetry_misses": emit_misses(),
     }
+
+
+@app.get("/ready")
+async def ready():
+    """READINESS ONLY (the liveness probe stays on /health, so a config fault never restarts the pod).
+
+    Not ready when a service URL was never declared (the content /health gives), or when the task
+    completion declarations cannot be read (architect ruling 2026-11-21): a deploy fault, made
+    visible before anyone acts. Read on every call, never cached, so a repaired file clears it."""
+    from . import task_completion as _tc_ready
+    faults: dict = {}
+    reasons: list = []
+    if _UNDECLARED_SERVICE_URLS:
+        reasons.append("service URL(s) undeclared — deploy fault, not a runtime fault")
+        faults["undeclared"] = dict(sorted(_UNDECLARED_SERVICE_URLS.items()))
+    unreadable = _tc_ready.declarations_unreadable_reason()
+    if unreadable is not None:
+        reasons.append("task completion declarations could not be read: a deploy fault; "
+                       "decisions that may need recorded fields are refused")
+        faults["completion_declarations"] = unreadable
+    if faults:
+        return JSONResponse(status_code=503, content={
+            "status": "not_ready", "service": "cortex-orchestrator-proxy",
+            "reason": "; ".join(reasons), **faults})
+    return {"status": "ok", "service": "cortex-orchestrator-proxy"}
 
 
 # ══════════════════════════════════════════════════════════

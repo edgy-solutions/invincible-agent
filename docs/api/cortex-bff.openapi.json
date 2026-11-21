@@ -10556,6 +10556,23 @@
         "summary": "Plan State Version"
       }
     },
+    "/ready": {
+      "get": {
+        "description": "READINESS ONLY (the liveness probe stays on /health, so a config fault never restarts the pod).\n\nNot ready when a service URL was never declared (the content /health gives), or when the task\ncompletion declarations cannot be read (architect ruling 2026-11-21): a deploy fault, made\nvisible before anyone acts. Read on every call, never cached, so a repaired file clears it.",
+        "operationId": "ready_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ready"
+      }
+    },
     "/register_frontend_capabilities": {
       "post": {
         "description": "ADR-0017 frontend self-registration of presentation capabilities.\n\ncortex-ui (and any future frontend) POSTs its capability list at\nlogin. We log it structurally so the advertisement is observable in\ncluster logs / Langfuse / Loki, then return an accepted count.\n\nStage 2 will plumb this into the SPO predicate graph alongside the\nengine-side `register_presentation_to_mesh` registrations, at which\npoint Engine F's lookup becomes the live registry rather than its\nin-memory default table.\n\nAuth: requires a valid bearer token. Anyone holding a JWT for the\nrealm can advertise — there is no per-frontend authorization yet.\nFor sandbox that's fine. Production should bind frontend_id to a\nKeycloak client identity or service account once we have multiple\nsurfaces.",
