@@ -108,3 +108,45 @@ def test_CONTROL_UNSET_EACH_LIBRARY_CALLS_HOME(tmp_path):
     assert _library_decision(_MEM0, no_route, tmp_path) == {"on": True, "client": True}
     got = _library_decision(_LITELLM, no_route, tmp_path)
     assert got["is_env_forced"] is False, got
+
+
+# The upload itself, at the wire. Every HTTP request PostHog's client makes goes through
+# `requests.Session.send`; the probe replaces it with a recorder that answers 200 and sends nothing.
+# mem0 then records the event it sends when a Memory starts (`mem0.init`) and flushes its clients the
+# way it does at exit. The hosts the probe saw are the uploads mem0 attempted.
+_MEM0_UPLOAD = r"""
+import json, types, requests
+from urllib.parse import urlparse
+seen = []
+def _send(self, req, **kw):
+    seen.append(urlparse(req.url).netloc)
+    r = requests.Response(); r.status_code = 200; r._content = b"{}"; r.url = req.url; r.request = req
+    return r
+requests.Session.send = _send
+from mem0.memory import telemetry as t
+ns = types.SimpleNamespace
+memory = ns(collection_name="mem0", api_version="v1.1", vector_store=object(), llm=object(),
+            embedding_model=ns(config=ns(embedding_dims=3)))
+t.capture_event("mem0.init", memory, {"sync_type": "sync"})
+t._shutdown_oss_telemetry()
+t.client_telemetry.close()
+print(json.dumps({"hosts": sorted(set(seen)), "analytics_host": urlparse(t.HOST).netloc}))
+"""
+
+
+@needs_helm
+def test_WITH_THE_RENDERED_SETTING_MEM0_ATTEMPTS_NO_UPLOAD(cluster, tmp_path):
+    """The deployment log showed engines attempting an upload to mem0's analytics service. With the
+    value the chart renders, mem0 makes no HTTP request at all: not to its analytics host, not anywhere."""
+    pytest.importorskip("mem0")
+    w = next(p.name for p in cluster.pods if _loads_release_config(cluster, p.name))
+    got = _library_decision(_MEM0_UPLOAD, {"MEM0_TELEMETRY": cluster.env_of(w)["MEM0_TELEMETRY"]}, tmp_path)
+    assert got["hosts"] == [], got
+
+
+def test_CONTROL_WITHOUT_THE_SETTING_MEM0_UPLOADS_TO_ITS_ANALYTICS_HOST(tmp_path):
+    """The same probe with the setting absent (mem0's default): the upload reaches the wire, to the
+    analytics host mem0 itself names. So the subject above is not passing because the probe is deaf."""
+    pytest.importorskip("mem0")
+    got = _library_decision(_MEM0_UPLOAD, {}, tmp_path)
+    assert got["analytics_host"] in got["hosts"], got
