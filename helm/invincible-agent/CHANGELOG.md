@@ -6,6 +6,12 @@
 
 - **The case-runner census decides `POST /access_grants/revoke`** (saf; master was red since #408 added the route). The census flagged `subject` as a person-shaped field. It is the OWNER of the grant being revoked, not a principal the caller acts for; the actor is the caller, asked `can_invoke mesh:revokeAccessGrant`, and no service identity is in the `access-revokers` group. The field is EXCLUDED with that reason, backed by a seal that the case runner is refused at the gate (403 `not_entitled_to_revoke_access`, nothing recorded) and a control that a revoker records. The exclusion is agreed by gov 11-19 (#461, comment 7014541192); architect's agreement pending. Test only; no chart change.
 
+- **engine-o: the input-declared pool upper-cases its scope like its two siblings** (74; #478). `_input_declared_pool`, resolve's input-declared grounding, is the third caller of `predicate_hybrid_search`. It handed the bound grant over as-is, while `/search_predicates` and `/classify_predicate` upper-case it first. The incumbent's domain filter is case-sensitive and the mesh arm's is not, so a lower-case scope made the two arms return different rows. The census in `test_the_migrated_predicate_route_returns_the_same_rows` now names all three callers. Both of 74's known_reds lines leave in the same PR. No chart change.
+
+- **A grouped review can be re-issued from its own source reference** (Lane 1; #481). Restate workflow keys are single-use, so a review that fails when decided cannot be driven again under its old key. `POST /reviews` takes an optional `reissue_of`. The BFF re-composes the workflow id from the request and **the token's** approver. It refuses 422 `reissue_source_mismatch` unless that id equals `reissue_of`, and it refuses 409 at the two conflict sites, classified `CONFLICT` in the refusal ratchet. `human_tasks.supersede_open_task` records `superseded_by` on the old task. The OpenAPI is regenerated. **Without `reissue_of`, nothing changes:** the forwarded body and the idempotency key are as before. The roll re-issues nothing. Re-issuing the sandbox's failing reviews is a separate, sandbox-only act after the roll, touching only the reviews a journal read confirms.
+
+- **engine-fin: the shared contract reader withholds columns a contract marks personal_data by default, and refuses a finance row that names one (#393).**
+
 **What 0.4.91 owes so far:** the 11-18 drain and the 11-19 merges, each merged by sha after the 0.4.90 tag (`36393237`). The cut writes its table.
 
 | PR | merge |
