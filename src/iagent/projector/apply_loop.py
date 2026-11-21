@@ -28,7 +28,9 @@ Discipline this module enforces:
     failure, constraint violation) gets logged AND inserted into
     `projector_skip_log` with structured detail; the cursor advances
     past it (the loop survives). Silent drops are the trap; observable
-    skips with a queryable surface are the right shape.
+    skips with a queryable surface are the right shape. A schema-lag error
+    (undefined column or table) is NOT a bad artifact: it retries the batch
+    and is never skipped.
 
 5.  **Liveness is structural advance** per
     [[liveness-probe-watches-advance-not-just-correctness]]. The
@@ -54,6 +56,23 @@ import psycopg2.extras
 from neo4j import GraphDatabase
 
 logger = logging.getLogger(__name__)
+
+try:
+    from psycopg2.errorcodes import UNDEFINED_COLUMN as _PG_UNDEFINED_COLUMN
+    from psycopg2.errorcodes import UNDEFINED_TABLE as _PG_UNDEFINED_TABLE
+except ImportError:  # literal SQLSTATEs 42703 / 42P01
+    _PG_UNDEFINED_COLUMN, _PG_UNDEFINED_TABLE = "42703", "42P01"
+
+
+def _is_schema_lag(exc: BaseException) -> bool:
+    """True when Postgres says the schema is behind this code: an undefined column or table.
+
+    The db-init hook that applies the SQL is post-upgrade, so it runs AFTER the projector
+    Deployment has rolled; in that window every upsert names a column that does not exist
+    yet. That is not a bad artifact and must not be skipped. Non-psycopg2 errors have no
+    `pgcode` and are False.
+    """
+    return getattr(exc, "pgcode", None) in (_PG_UNDEFINED_COLUMN, _PG_UNDEFINED_TABLE)
 
 
 # Tunable knobs — defaults match the planning doc's §5 Phase A wait
@@ -375,6 +394,19 @@ class ApplyLoop:
                 self._apply_one(art)
                 applied += 1
             except Exception as exc:
+                if _is_schema_lag(exc):
+                    # Fail the BATCH, before the skip record and before the cursor moves:
+                    # run_forever catches this, backs off and retries the same rows once
+                    # db-init has applied the column. The kubelet liveness probe is /health
+                    # (a shape check, projector.yaml), not cursor advance, so the pod is
+                    # not restarted while it waits.
+                    logger.error(
+                        "schema is behind the code (pgcode %s) at artifact %s watermark %s: "
+                        "the batch is retried and nothing is skipped: %s",
+                        getattr(exc, "pgcode", None), art.get("id"),
+                        art.get("watermark"), exc,
+                    )
+                    raise
                 # Per [[feedback-trailing-steps-nonfatal]]: log + skip +
                 # advance cursor past the offending artifact. The skip
                 # is observable — projector_skip_log row inserted so
@@ -434,6 +466,7 @@ class ApplyLoop:
                   .question_text,
                   .summary,
                   .duration_ms,
+                  .intent_ms,
                   .resolved_intent,
                   .routing_inline,
                   .rendered_output,
@@ -535,7 +568,7 @@ class ApplyLoop:
                     INSERT INTO answer_artifact_projection (
                         id, kind, watermark, created_at, updated_at,
                         valid_as_of, valid_until, status, durability_status,
-                        message_id, question_text, summary, duration_ms,
+                        message_id, question_text, summary, duration_ms, intent_ms,
                         resolved_intent,
                         routing, sources, graph_trace, rendered_output,
                         produced_by, produced_for, derived_from_artifact_id,
@@ -545,7 +578,7 @@ class ApplyLoop:
                         %(id)s, %(kind)s, %(watermark)s, %(created_at)s,
                         %(updated_at)s, %(valid_as_of)s, %(valid_until)s,
                         %(status)s, %(durability_status)s, %(message_id)s,
-                        %(question_text)s, %(summary)s, %(duration_ms)s,
+                        %(question_text)s, %(summary)s, %(duration_ms)s, %(intent_ms)s,
                         %(resolved_intent)s,
                         %(routing)s,
                         %(sources)s, %(graph_trace)s, %(rendered_output)s,
@@ -573,6 +606,7 @@ class ApplyLoop:
                         question_text = EXCLUDED.question_text,
                         summary = EXCLUDED.summary,
                         duration_ms = EXCLUDED.duration_ms,
+                        intent_ms = EXCLUDED.intent_ms,
                         resolved_intent = EXCLUDED.resolved_intent,
                         routing = EXCLUDED.routing,
                         sources = EXCLUDED.sources,
@@ -625,6 +659,7 @@ class ApplyLoop:
                         # Zero is a legal VALUE (a cache hit), so absence and
                         # zero stay distinct rather than collapsing on falsy.
                         "duration_ms": art.get("duration_ms"),
+                        "intent_ms": art.get("intent_ms"),
                         "resolved_intent": json.dumps(resolved_intent),
                         "routing": (
                             json.dumps(routing)

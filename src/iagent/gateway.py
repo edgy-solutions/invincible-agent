@@ -9209,6 +9209,9 @@ class ArtifactResponse(_BaseModel):
     question_text: Optional[str] = None
     valid_as_of: Optional[int] = None
     duration_ms: Optional[int] = None
+    # The `/route_intent` call's own time; absent when the turn ran none. Not part of
+    # `duration_ms`: a reader adds them.
+    intent_ms: Optional[int] = None
     derived_from: Optional[str] = None
     # THE FIELD THE CALLER ACTUALLY CAME FOR. `null` when the artifact predates subject
     # capture — absent, not "UNKNOWN", because a reader must be able to tell "this artifact
@@ -9266,6 +9269,7 @@ async def get_artifact(
         question_text=rec.get("question_text"),
         valid_as_of=rec.get("valid_as_of"),
         duration_ms=rec.get("duration_ms"),
+        intent_ms=rec.get("intent_ms"),
         derived_from=rec.get("derived_from"),
         subject_uri=_or_none(intent.get("subject_uri")),
         verb_iri=_or_none(intent.get("verb_iri")),
@@ -10366,6 +10370,11 @@ async def _generate_dagster_stream_inner(
     entity_refs: list[str] = []
     intent_extraction: dict = {}
 
+    # The `/route_intent` call's own time, for the answer artifact (`intent_ms`). Stays None
+    # on every path that makes no such call (interview turn, `_pre_resolved`): a pick after an
+    # ask card ran no intent call, and 0 would claim it ran one instantly.
+    _intent_ms: Optional[int] = None
+
     if is_interview_active:
         mode = "CONVERSATIONAL"
     elif _pre_resolved:
@@ -10387,6 +10396,7 @@ async def _generate_dagster_stream_inner(
     else:
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
+                _intent_t0 = time.monotonic()
                 resp = await client.post(
                     f"{_DAGSONTOLOGY_SVC_URL}/route_intent",
                     json={
@@ -10400,6 +10410,8 @@ async def _generate_dagster_stream_inner(
                 )
                 resp.raise_for_status()
                 intent_extraction = resp.json()
+                _intent_t1 = time.monotonic()
+                _intent_ms = max(0, int(round((_intent_t1 - _intent_t0) * 1000)))
         except Exception as exc:
             logger.error("Failed to extract intent: %s", exc)
             yield _perror(
@@ -10546,6 +10558,8 @@ async def _generate_dagster_stream_inner(
         "question_text": user_query,
         "message_id": session_id,
         "valid_as_of": int(time.time() * 1000),
+        # The `/route_intent` call's own time; None when this turn ran none. Set once, here.
+        "intent_ms": _intent_ms,
         # Per [[optimistic-defaults-are-dishonest]]: status starts
         # 'pending' (the transient in-flight state, honest about
         # not-yet-known). It flips to 'complete' when final_payload
@@ -11972,6 +11986,7 @@ async def _dispatch_answer_artifact(bundle: dict) -> None:
                     "engine_name": _handled.get("engine_name") or "",
                     "endpoint_url": _handled.get("endpoint_url") or "",
                     "duration_ms": bundle.get("duration_ms"),
+                    "intent_ms": bundle.get("intent_ms"),
                     # WHY THERE WAS NO ANSWER, not only where it would have come from. These
                     # four separate "nothing matched" from "nothing was asked": an empty pool
                     # with `classify_called: false` is a turn that never reached the classifier,
@@ -11997,6 +12012,7 @@ async def _dispatch_answer_artifact(bundle: dict) -> None:
                 summary=_compose_answer_summary(bundle["routing"]),
                 message_id=bundle["message_id"],
                 valid_as_of=bundle["valid_as_of"],
+                intent_ms=bundle.get("intent_ms"),
                 status=bundle["status"],
                 produced_by=bundle["produced_by"],
                 produced_for=bundle["produced_for"],
