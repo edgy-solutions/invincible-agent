@@ -123,7 +123,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (65)
+# Generated classes (66)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -385,6 +385,12 @@ class ProjectsIn(BaseModel):
     window: typing.Optional[str] = None
     scope: typing.Optional[str] = None
 
+class ResultConstraint(BaseModel):
+    # The kind of thing the person wants back, when it differs from the subject. Recorded only:
+# nothing routes on it yet (the architect's four-step path is a proposal).
+    kind: typing.Optional[typing.Union[OntologyClass, str]] = Field(default=None, description='The KIND of thing the person wants back, ONLY when it differs from the subject\'s kind. Must be one of the permitted ontology URIs. Null when the answer is about the subject itself.')
+    qualifiers: typing.List[str] = Field(description='Words from the query that narrow the result, copied verbatim: a platform, a time range, a status. Empty when none.')
+
 class SPOInterviewTurn(BaseModel):
     agent_reply: str = Field(description='Conversational text to the user (2-5 sentences). If you refused a pick or something was out-of-set, explain and offer the closest legal options.')
     pick: "SPOPick" = Field(description='The structured pick for this turn. Use action=NoPick (with the question in agent_reply) when you are still clarifying.')
@@ -410,10 +416,11 @@ class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.
 # The resolved_uri is a dynamic ontology URI (not a hardcoded enum) that
 # comes from the RDF graph at runtime.
-    resolved_uri: typing.Union[OntologyClass, str] = Field(description='The ontology URI that best matches the input query. Must be one of the URIs provided in active_ontology_classes.')
+    resolved_uri: typing.Union[OntologyClass, str] = Field(description='The ontology URI of the SUBJECT\'s kind: the thing the question starts from and asks about. When the question names one thing and asks for a different kind of thing related to it, this is the named thing\'s kind, never the kind being asked for. Must be one of the URIs provided in active_ontology_classes.')
     confidence_score: float = Field(description='Model confidence in the match, between 0.0 and 1.0.')
     reasoning: typing.Optional[str] = Field(default=None, description='1-2 sentence explanation of why this class was chosen.')
     instance_identifier: typing.Optional[str] = Field(default=None, description='If the query refers to a SPECIFIC NAMED INDIVIDUAL — a catalog asset, a procedure or work-order code, a data module code (DMC), a tail number, an equipment serial, or a quoted or titled name — copy that exact token here verbatim, INCLUDING any qualifier the user gave it (schema, dataset or path prefix). The phone book normalizes qualifiers and matches on the asset\'s own name, so a qualified token is safer than a guessed bare one. Do NOT extract a word that merely APPEARS NEAR the asset name — a token lifted from the surrounding sentence rather than naming the thing will be refused as non-specific, and that refusal costs the whole answer. Otherwise leave null. This field gates the router\'s instance-resolution pre-step (Recipe v2): when set, the router fans the token out to registered providers and lets the authoritative phone-book class override resolved_uri. Still always resolve resolved_uri as your best guess either way — the phone book may miss.')
+    result: typing.Optional["ResultConstraint"] = Field(default=None, description='Only when the question asks for things of a DIFFERENT kind than the subject. Null otherwise. Never replaces resolved_uri.')
 
 class SetCost(BaseModel):
     project: str

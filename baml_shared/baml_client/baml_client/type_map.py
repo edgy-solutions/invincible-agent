@@ -145,6 +145,9 @@ type_map = {
     "types.ProjectsIn": types.ProjectsIn,
     "stream_types.ProjectsIn": stream_types.ProjectsIn,
 
+    "types.ResultConstraint": types.ResultConstraint,
+    "stream_types.ResultConstraint": stream_types.ResultConstraint,
+
     "types.SPOInterviewTurn": types.SPOInterviewTurn,
     "stream_types.SPOInterviewTurn": stream_types.SPOInterviewTurn,
 
