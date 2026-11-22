@@ -1,5 +1,9 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.92 — not yet cut
+
+- **A follow-on task cannot complete without what it exists to settle** (74). A task kind may declare completion fields: a qualification names the replacement part, and a last-time-buy records quantity and date. Fields are required on the verbs that complete the task and optional at review, where a blank is written as the declared text. A missing or invalid field is refused with a structured `fields` list. The declarations are checked at start, and a running BFF keeps the copy it read. **Chart change:** the BFF's readiness probe reads `/ready` instead of `/health`, so a BFF whose declarations do not compose is not ready. Liveness stays on `/health`, so a configuration fault never restarts the pod.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
