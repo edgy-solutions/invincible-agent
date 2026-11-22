@@ -1,5 +1,9 @@
 # invincible-agent helm chart — changelog
 
+## 0.4.92 — not yet cut
+
+- **engine-fin: `FIN_DATASET_CONTRACT` is now required whenever `FIN_DATASET_URN` is set** (fin; #426, carrying #409). The finance read of that dataset is held to the contract the key names. The shared contract reader refuses `null_value` (a column declared `nullable: false`) and `non_finite` (a `numeric` or `float` column) for every contract, and engine-fin's own two checks retire into them. `values-sandbox.yaml` sets `FIN_DATASET_CONTRACT: "ev_fixture"`. **Before the roll:** engine-fin refuses to start (lifespan `RuntimeError`, "FIN_DATASET_URN is set but the deployment cannot honour it: FIN_DATASET_CONTRACT is required …") on any deployment that sets `FIN_DATASET_URN` without `FIN_DATASET_CONTRACT`; set the contract key in the same values change.
+
 ## 0.4.91 — 2026-11-21
 
 **0.4.91 is 0.4.90 (`36393237`) plus the 64 merges below, `36393237..bee9cbb6`, merged by sha in this order. The set was closed on 2026-11-20; #498 (a dev dependency, no runtime change) joined it on the architect's order of 2026-11-21.**
