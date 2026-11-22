@@ -69,6 +69,11 @@ try:
 except ImportError:  # flattened image layout (/app/utils/...)
     from utils.uvicorn_safe_logging import ensure_stdout_logger  # type: ignore
 
+try:
+    from agent_fleet.utils.identity_prefix import compose_client_id
+except ImportError:  # flattened image layout (/app/utils/...)
+    from utils.identity_prefix import compose_client_id  # type: ignore
+
 logger = ensure_stdout_logger("mesh_registration")
 
 #: Scope stamp for capabilities that are the SYSTEM DEFAULTS rather than any one
@@ -130,7 +135,9 @@ def engine_mint(*, client_id: str, secret_env: str):
     """
     def _mint() -> str:
         from iagent_mesh.service_identity import mint_token
-        return mint_token(client_id=client_id, client_secret=os.environ[secret_env])
+        # The caller names the ROLE; the instance prefix is added here, once, at the last step
+        # before the id leaves the process (empty prefix: the role unchanged).
+        return mint_token(client_id=compose_client_id(client_id), client_secret=os.environ[secret_env])
     return _mint
 
 

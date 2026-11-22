@@ -61,12 +61,20 @@ __all__ = [
 # supervisor dispatching as svc:review-starter with that role's capability grant (3ac573d).
 from iagent_mesh.service_identity import ServiceTokenError, mint_token  # noqa: F401
 
+# THE INSTANCE PREFIX (proposal one-realm-many-instances-the-identity-prefix, section 1): every
+# binding below takes a ROLE name (a literal or an `*_CLIENT_ID` env value) and composes
+# `prefix + role` in the one place before it calls `mint_token`. Callers never compose.
+try:
+    from agent_fleet.utils.identity_prefix import compose_client_id
+except ImportError:  # flattened image layout (/app/utils/...)
+    from utils.identity_prefix import compose_client_id  # type: ignore
+
 
 def mint_supervisor_token(*, timeout: float = 15.0) -> str:
     """The SUPERVISOR's dispatch identity (`svc:supervisor`). Its OWN credentials — not the
     review starter's, which is the bug this function exists to make unrepeatable."""
     return mint_token(
-        client_id=os.environ["SUPERVISOR_CLIENT_ID"],
+        client_id=compose_client_id(os.environ["SUPERVISOR_CLIENT_ID"]),
         client_secret=os.environ["SUPERVISOR_CLIENT_SECRET"],
         timeout=timeout,
     )
@@ -109,7 +117,7 @@ def mint_case_runner_token(*, timeout: float = 15.0) -> str:
 
     Env: ``CASE_RUNNER_CLIENT_ID`` / ``CASE_RUNNER_CLIENT_SECRET``.
     """
-    client_id = os.environ["CASE_RUNNER_CLIENT_ID"]
+    client_id = compose_client_id(os.environ["CASE_RUNNER_CLIENT_ID"])  # cache is keyed by the full id
     with _CASE_RUNNER_TOKENS_LOCK:
         held = _CASE_RUNNER_TOKENS.get(client_id)
         if held is not None and held[1] - _EXPIRY_MARGIN_S > time.time():
@@ -160,7 +168,7 @@ def mint_service_token(*, timeout: float = 15.0) -> str:
     ``KEYCLOAK_REALM_URL``, ``REVIEW_STARTER_CLIENT_ID``, ``REVIEW_STARTER_CLIENT_SECRET``.
     """
     return mint_token(
-        client_id=os.environ["REVIEW_STARTER_CLIENT_ID"],
+        client_id=compose_client_id(os.environ["REVIEW_STARTER_CLIENT_ID"]),
         client_secret=os.environ["REVIEW_STARTER_CLIENT_SECRET"],
         timeout=timeout,
     )
@@ -204,7 +212,7 @@ def outbound_auth_headers(*, client_id: str, secret_env: str, timeout: float = 1
     headers: Dict[str, str] = {}
     try:
         headers["Authorization"] = "Bearer " + mint_token(
-            client_id=client_id,
+            client_id=compose_client_id(client_id),
             client_secret=os.environ[secret_env],
             timeout=timeout,
         )

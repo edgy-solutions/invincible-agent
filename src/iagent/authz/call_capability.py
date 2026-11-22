@@ -42,6 +42,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 from starlette.routing import Match
 
+from agent_fleet.utils.identity_prefix import compose_client_id
+
 from .. import auth
 from ..ingest_api import MCP_TAG
 from .refusal import policy_refusal
@@ -53,9 +55,15 @@ DOOR_CLIENTS_ENV = "CAN_CALL_DOOR_CLIENTS"
 
 
 def door_clients() -> frozenset[str]:
-    """The `azp` values that are doors, read from the env now (not at import)."""
+    """The `azp` values that are doors, read from the env now (not at import).
+
+    The env lists ROLE names; each is composed with the instance prefix, so a door in a prefixed
+    instance is recognised by its full client id. An entry that already carries the prefix raises
+    IdentityPrefixError and is never read as an ordinary caller's list (a door that silently
+    stopped being one would silently stop narrowing).
+    """
     raw = os.getenv(DOOR_CLIENTS_ENV) or ""
-    return frozenset(p.strip() for p in raw.split(",") if p.strip())
+    return frozenset(compose_client_id(p.strip()) for p in raw.split(",") if p.strip())
 
 
 def _identify(token: str) -> tuple[str, str | None] | None:

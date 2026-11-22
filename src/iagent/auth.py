@@ -7,6 +7,7 @@ import jwt
 from jwt import PyJWKClient
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from agent_fleet.utils.identity_prefix import identity_prefix
 from pydantic import BaseModel
 from typing import List, Literal, Optional
 
@@ -256,7 +257,7 @@ def verified_claims(token: str) -> dict:
     if not audiences:
         raise jwt.InvalidAudienceError(f"no accepted audience is configured ({ACCEPTED_AUDIENCES_ENV} is empty)")
     signing_key = _signing_key(token)
-    return jwt.decode(
+    payload = jwt.decode(
         token,
         signing_key.key,
         algorithms=["RS256"],
@@ -264,6 +265,17 @@ def verified_claims(token: str) -> dict:
         audience=audiences,
         options={"require": ["exp", "iss", "aud"]},
     )
+    # Instances that share a realm share an issuer. With a prefix set, the client the token was
+    # issued to must be one of THIS instance's (proposal one-realm-many-instances-the-identity-
+    # prefix, section 2 item 3, ruled Q4). Same refusal as an audience mismatch (a 401 through
+    # get_current_user), a distinct reason. An empty prefix applies no check.
+    prefix = identity_prefix()
+    if prefix:
+        azp = payload.get("azp")
+        if not isinstance(azp, str) or not azp.startswith(prefix):
+            raise jwt.InvalidAudienceError(
+                f"azp_not_this_instance: the token's client does not belong to instance prefix {prefix!r}")
+    return payload
 
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> User:

@@ -35,6 +35,8 @@ from typing import Optional
 
 import httpx
 
+from agent_fleet.utils.identity_prefix import compose_client_id
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["exchange", "entitlement_of"]
@@ -99,6 +101,9 @@ async def exchange(subject_token: str) -> Optional[str]:
     if not subject_token:
         return None
 
+    # IDENTITY_EXCHANGE_CLIENT_ID is a ROLE name; the instance prefix is added here, once, just
+    # before the id leaves the process. An already-prefixed role raises IdentityPrefixError.
+    cid = compose_client_id(cid)
     form = {
         "grant_type": _GRANT,
         "subject_token": subject_token,
